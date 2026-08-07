@@ -1,8 +1,10 @@
 import { assert, it } from "@effect/vitest";
 import type { OrchestrationV2DomainEvent } from "@t3tools/contracts";
 import { ThreadId, WorktreeMutationError } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -98,8 +100,8 @@ it.effect("keeps processing deletion cleanup after an individual failure", () =>
           return Effect.fail(
             new WorktreeMutationError({
               operation: "prune",
+              stage: "revalidate_inventory",
               path,
-              message: "simulated removal failure",
             }),
           );
         }
@@ -120,6 +122,23 @@ it.effect("keeps processing deletion cleanup after an individual failure", () =>
     );
 
     assert.deepEqual(attempted, ["/worktrees/first", "/worktrees/second"]);
+  }),
+);
+
+it.effect("preserves deletion cleanup interruption", () =>
+  Effect.gen(function* () {
+    const exit = yield* Effect.interrupt.pipe(
+      WorktreeDeletionCleanup.__testing.recoverDeletionFailure({
+        threadId,
+        worktreePath: "/worktrees/interrupted",
+      }),
+      Effect.exit,
+    );
+
+    assert.isTrue(Exit.isFailure(exit));
+    if (Exit.isFailure(exit)) {
+      assert.isTrue(Cause.hasInterruptsOnly(exit.cause));
+    }
   }),
 );
 

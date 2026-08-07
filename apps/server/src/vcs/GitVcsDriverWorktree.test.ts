@@ -4,9 +4,12 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { VcsProcessOutputLimitError } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import * as VcsProcess from "./VcsProcess.ts";
 
 const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-git-worktree-driver-test-",
@@ -60,4 +63,35 @@ it.effect("lists registered Git workspaces including the primary checkout", () =
       prunable: false,
     });
   }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("rejects truncated worktree listings instead of parsing partial records", () =>
+  Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const error = yield* driver.listWorkspaces("/repo").pipe(Effect.flip);
+
+    assert.instanceOf(error, VcsProcessOutputLimitError);
+    assert.equal(error.operation, "GitVcsDriver.listWorkspaces");
+    assert.equal(error.command, "git");
+    assert.equal(error.cwd, "/repo");
+    assert.equal(error.stream, "stdout");
+    assert.equal(error.maxBytes, 16 * 1024 * 1024);
+    assert.equal(error.observedBytes, 16 * 1024 * 1024 + 1);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: () =>
+            Effect.succeed({
+              exitCode: ChildProcessSpawner.ExitCode(0),
+              stdout: "worktree /repo\0HEAD deadbeef\0branch refs/heads/main\0\0worktree /partial",
+              stderr: "",
+              stdoutTruncated: true,
+              stderrTruncated: false,
+            }),
+        }),
+      ),
+    ),
+  ),
 );

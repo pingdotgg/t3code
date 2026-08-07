@@ -7,21 +7,22 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import type { WorktreeInventoryChange } from "@t3tools/contracts";
 
-export interface WorktreeLifecycleShape {
-  readonly withMutationPermit: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
-  readonly markInventoryChanged: Effect.Effect<void>;
-  readonly changes: Stream.Stream<WorktreeInventoryChange>;
-}
-
-export class WorktreeLifecycle extends Context.Service<WorktreeLifecycle, WorktreeLifecycleShape>()(
-  "t3/vcs/WorktreeLifecycle",
-) {}
+export class WorktreeLifecycle extends Context.Service<
+  WorktreeLifecycle,
+  {
+    readonly withMutationPermit: <A, E, R>(
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E, R>;
+    readonly markInventoryChanged: Effect.Effect<void>;
+    readonly changes: Stream.Stream<WorktreeInventoryChange>;
+  }
+>()("t3/vcs/WorktreeLifecycle") {}
 
 export const make = Effect.gen(function* () {
   const mutationSemaphore = yield* Semaphore.make(1);
   const revision = yield* SubscriptionRef.make(0);
 
-  const withMutationPermit: WorktreeLifecycleShape["withMutationPermit"] = (effect) =>
+  const withMutationPermit: WorktreeLifecycle["Service"]["withMutationPermit"] = (effect) =>
     mutationSemaphore.withPermit(effect);
   const markInventoryChanged = SubscriptionRef.update(revision, (current) => current + 1);
   const changes = SubscriptionRef.changes(revision).pipe(

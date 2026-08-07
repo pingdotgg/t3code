@@ -16,6 +16,8 @@ import {
   type VcsReviveWorktreeInput,
   type VcsReviveWorktreeResult,
   type WorktreeInfo,
+  type WorktreeInventoryErrorStage,
+  type WorktreeMutationErrorStage,
   type WorktreePruneBlocker,
   type WorktreePruneSkipReason,
   type WorktreeProjectRef,
@@ -115,20 +117,25 @@ function isPathInside(
   path: {
     readonly relative: (from: string, to: string) => string;
     readonly isAbsolute: (value: string) => boolean;
+    readonly sep: string;
   },
 ): boolean {
   const relative = path.relative(root, candidate);
-  return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
+  return (
+    relative.length > 0 &&
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  );
 }
 
 function inventoryError(
-  message: string,
+  stage: WorktreeInventoryErrorStage,
   cause?: unknown,
   context: { readonly projectId?: ProjectId; readonly workspaceRoot?: string } = {},
 ): WorktreeInventoryError {
   return new WorktreeInventoryError({
-    operation: "list",
-    message,
+    stage,
     ...(context.projectId === undefined ? {} : { projectId: context.projectId }),
     ...(context.workspaceRoot === undefined ? {} : { workspaceRoot: context.workspaceRoot }),
     ...(cause === undefined ? {} : { cause }),
@@ -137,7 +144,7 @@ function inventoryError(
 
 function mutationError(
   operation: "prune" | "revive",
-  message: string,
+  stage: WorktreeMutationErrorStage,
   cause?: unknown,
   context: {
     readonly path?: string;
@@ -147,7 +154,7 @@ function mutationError(
 ): WorktreeMutationError {
   return new WorktreeMutationError({
     operation,
-    message,
+    stage,
     ...(context.path === undefined ? {} : { path: context.path }),
     ...(context.workspaceRoot === undefined ? {} : { workspaceRoot: context.workspaceRoot }),
     ...(context.branch === undefined ? {} : { branch: context.branch }),
@@ -258,15 +265,6 @@ export const make = Effect.gen(function* () {
     if (primaryProject === undefined) return [] as WorktreeInfo[];
 
     const entries = yield* git.listWorkspaces(group.canonicalWorkspaceRoot).pipe(
-      Effect.catchCause((cause) =>
-        Effect.gen(function* () {
-          yield* Effect.logWarning("worktrees.inventory.vcs-list-failed", {
-            workspaceRoot: group.canonicalWorkspaceRoot,
-            cause,
-          });
-          return [];
-        }),
-      ),
       Effect.flatMap((rawEntries) =>
         Effect.forEach(rawEntries, (entry) =>
           canonicalizePath(entry.path).pipe(
@@ -419,17 +417,11 @@ export const make = Effect.gen(function* () {
     "WorktreeService.listWorktrees",
   )(function* (input) {
     const projectSnapshot = yield* projectsService.snapshot.pipe(
-      Effect.mapError((cause) =>
-        inventoryError("Failed to load projects for the worktree inventory.", cause),
-      ),
+      Effect.mapError((cause) => inventoryError("load_projects", cause)),
     );
     const shellSnapshot = yield* threadManagement
       .getShellSnapshot()
-      .pipe(
-        Effect.mapError((cause) =>
-          inventoryError("Failed to load V2 thread shells for the worktree inventory.", cause),
-        ),
-      );
+      .pipe(Effect.mapError((cause) => inventoryError("load_threads", cause)));
 
     const normalizedProjects = yield* Effect.forEach(
       projectSnapshot.projects,
@@ -442,7 +434,7 @@ export const make = Effect.gen(function* () {
             ["rev-parse", "--git-common-dir"],
           ).pipe(
             Effect.mapError((cause) =>
-              inventoryError("Failed to identify a project's repository.", cause, {
+              inventoryError("identify_repository", cause, {
                 projectId: project.id,
                 workspaceRoot: canonicalWorkspaceRoot,
               }),
@@ -495,7 +487,7 @@ export const make = Effect.gen(function* () {
       (group) =>
         listGroup(group, [...shellSnapshot.threads, ...shellSnapshot.archivedThreads]).pipe(
           Effect.mapError((cause) =>
-            inventoryError("Failed to inspect a repository for the worktree inventory.", cause, {
+            inventoryError("inspect_repository", cause, {
               workspaceRoot: group.canonicalWorkspaceRoot,
             }),
           ),
@@ -517,9 +509,7 @@ export const make = Effect.gen(function* () {
     // Re-derive the inventory so safety reflects the current state, never a
     // stale client view. Git's non-forced remove is a second safety boundary.
     const { worktrees } = yield* listWorktrees({}).pipe(
-      Effect.mapError((cause) =>
-        mutationError("prune", "Failed to revalidate worktrees before pruning.", cause),
-      ),
+      Effect.mapError((cause) => mutationError("prune", "revalidate_inventory", cause)),
     );
     const byPath = new Map(worktrees.map((worktree) => [worktree.path, worktree]));
     const removed: Array<{ path: string; workspaceRoot: string }> = [];

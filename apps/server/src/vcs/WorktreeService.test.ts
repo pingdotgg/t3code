@@ -173,6 +173,13 @@ it.effect("lists V2-managed worktrees and preserves shared project/thread refere
       newRefName: "feature/safe",
       path: safeWorktreePath,
     });
+    const dottedWorktreePath = path.join(config.worktreesDir, "..cache", "managed");
+    yield* driver.createWorktree({
+      cwd: repositoryRoot,
+      refName: "main",
+      newRefName: "feature/dotted",
+      path: dottedWorktreePath,
+    });
     const unpushedWorktreePath = path.join(config.worktreesDir, "orphan", "unpushed");
     yield* driver.createWorktree({
       cwd: repositoryRoot,
@@ -246,15 +253,17 @@ it.effect("lists V2-managed worktrees and preserves shared project/thread refere
       return yield* service.listWorktrees({});
     }).pipe(Effect.provide(layer));
 
-    assert.equal(inventory.worktrees.length, 4);
+    assert.equal(inventory.worktrees.length, 5);
     const worktree = inventory.worktrees.find((entry) => entry.branch === "feature/shared");
     const unpushedWorktree = inventory.worktrees.find(
       (entry) => entry.branch === "feature/unpushed",
     );
     const settledWorktree = inventory.worktrees.find((entry) => entry.branch === "feature/settled");
+    const dottedWorktree = inventory.worktrees.find((entry) => entry.branch === "feature/dotted");
     assert.isDefined(worktree);
     assert.isDefined(unpushedWorktree);
     assert.isDefined(settledWorktree);
+    assert.equal(dottedWorktree?.path, dottedWorktreePath);
     assert.equal(worktree?.branch, "feature/shared");
     assert.equal(worktree?.projects.length, 2);
     assert.equal(worktree?.threads.length, 2);
@@ -448,5 +457,31 @@ it.effect("combines thread safety across nested projects in the same repository"
     assert.deepEqual(pruneResult.removed, []);
     assert.deepEqual(pruneResult.skipped, [{ path: worktreePath, reason: "active_thread" }]);
     assert.isTrue(yield* fs.exists(worktreePath));
+  }).pipe(Effect.provide(Layer.mergeAll(serverConfigLiveLayer, NodeServices.layer, gitLayer))),
+);
+
+it.effect("fails inventory when a repository worktree listing fails", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const workspaceRoot = yield* fs.makeTempDirectoryScoped({
+      prefix: "t3-worktree-v2-invalid-repo-",
+    });
+    const layer = makeTestLayer(
+      () => [makeProject(projectA, workspaceRoot)],
+      () => [],
+    );
+
+    const error = yield* Effect.gen(function* () {
+      const service = yield* WorktreeService;
+      return yield* service.listWorktrees({});
+    }).pipe(Effect.provide(layer), Effect.flip);
+
+    assert.equal(error._tag, "WorktreeInventoryError");
+    if (error._tag !== "WorktreeInventoryError") {
+      return assert.fail(`Expected WorktreeInventoryError, received ${error._tag}`);
+    }
+    assert.equal(error.stage, "inspect_repository");
+    assert.equal(error.workspaceRoot, workspaceRoot);
+    assert.equal(error.message, "Failed to inspect a repository for the worktree inventory.");
   }).pipe(Effect.provide(Layer.mergeAll(serverConfigLiveLayer, NodeServices.layer, gitLayer))),
 );

@@ -737,7 +737,6 @@ function WorktreeManagementSection() {
   );
   const pruneWorktrees = useAtomCommand(worktreeEnvironment.prune, {
     label: "prune worktrees",
-    reportFailure: false,
   });
   const [pendingPath, setPendingPath] = useState<string | null>(null);
   const [pruneCandidate, setPruneCandidate] = useState<WorktreeInfo | null>(null);

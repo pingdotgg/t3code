@@ -12,6 +12,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   GitCommandError,
   VcsProcessExitError,
+  VcsProcessOutputLimitError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
   type VcsCreateRefInput,
@@ -35,6 +36,8 @@ import { makeGitVcsDriverCore } from "./GitVcsDriverCore.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import { parseGitWorktreeListPorcelain } from "./GitWorktree.ts";
 import * as VcsProcess from "./VcsProcess.ts";
+
+const WORKTREE_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 export interface ExecuteGitInput {
   readonly operation: string;
@@ -526,7 +529,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       ["worktree", "list", "--porcelain", "-z"],
       {
         timeoutMs: 30_000,
-        maxOutputBytes: 16 * 1024 * 1024,
+        maxOutputBytes: WORKTREE_LIST_MAX_OUTPUT_BYTES,
       },
     );
     if (result.exitCode !== 0) {
@@ -536,6 +539,17 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         cwd,
         exitCode: result.exitCode,
         detail: result.stderr.trim() || "git worktree list failed",
+      });
+    }
+    if (result.stdoutTruncated) {
+      return yield* new VcsProcessOutputLimitError({
+        operation: "GitVcsDriver.listWorkspaces",
+        command: "git",
+        cwd,
+        argumentCount: 6,
+        stream: "stdout",
+        maxBytes: WORKTREE_LIST_MAX_OUTPUT_BYTES,
+        observedBytes: WORKTREE_LIST_MAX_OUTPUT_BYTES + 1,
       });
     }
     return parseGitWorktreeListPorcelain(result.stdout) satisfies ReadonlyArray<VcsWorkspace>;

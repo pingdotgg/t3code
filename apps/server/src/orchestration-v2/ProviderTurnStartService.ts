@@ -12,7 +12,6 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
@@ -64,6 +63,7 @@ export const layer: Layer.Layer<
   | ProviderSessionManagerV2
   | RunExecutionServiceV2
   | RuntimePolicyV2
+  | WorktreeRevivalService
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
@@ -74,6 +74,7 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicyV2;
+    const worktreeRevival = yield* WorktreeRevivalService;
     const worktreeGenerationByProviderSession = yield* Ref.make(
       new Map<string, { readonly path: string; readonly generation: number }>(),
     );
@@ -165,16 +166,11 @@ export const layer: Layer.Layer<
         thread: projection.thread,
         modelSelection: run.modelSelection,
       });
-      const worktreeRevival = yield* Effect.serviceOption(WorktreeRevivalService);
       let observedWorktreeGeneration:
         | { readonly path: string; readonly generation: number }
         | undefined;
-      if (
-        Option.isSome(worktreeRevival) &&
-        projection.thread.worktreePath !== null &&
-        projection.thread.branch !== null
-      ) {
-        const revival = yield* worktreeRevival.value.reviveForThread({
+      if (projection.thread.worktreePath !== null && projection.thread.branch !== null) {
+        const revival = yield* worktreeRevival.reviveForThread({
           threadId: projection.thread.id,
           projectId: projection.thread.projectId,
           worktreePath: projection.thread.worktreePath,

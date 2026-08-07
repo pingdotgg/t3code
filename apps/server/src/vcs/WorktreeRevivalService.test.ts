@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 
 import { ProjectId, ThreadId, type Project } from "@t3tools/contracts";
 
@@ -153,6 +154,93 @@ it.effect(
       assert.match(error.message, /outside the managed worktrees directory/);
       assert.isFalse(yield* fs.exists(escapedPath));
     }).pipe(Effect.provide(Layer.mergeAll(serverConfigLiveLayer, NodeServices.layer, gitLayer))),
+);
+
+it.effect("revives worktrees whose first path segment starts with two dots", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const config = yield* ServerConfig.ServerConfig;
+    const repositoryRoot = yield* initializeRepository();
+    const worktreePath = path.join(config.worktreesDir, "..cache", "revived");
+
+    const result = yield* Effect.gen(function* () {
+      const revival = yield* WorktreeRevivalService.WorktreeRevivalService;
+      return yield* revival.reviveWorktree({
+        workspaceRoot: repositoryRoot,
+        worktreePath,
+        branch: "feature/revival",
+      });
+    }).pipe(
+      Effect.provide(
+        makeRevivalLayer(makeProject(repositoryRoot), () =>
+          Effect.succeed({ status: "no-script" }),
+        ),
+      ),
+    );
+
+    assert.isTrue(result.revived);
+    assert.isTrue(yield* fs.exists(worktreePath));
+  }).pipe(Effect.provide(Layer.mergeAll(serverConfigLiveLayer, NodeServices.layer, gitLayer))),
+);
+
+it.effect("publishes inventory invalidation immediately after Git creates a worktree", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const config = yield* ServerConfig.ServerConfig;
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const repositoryRoot = yield* initializeRepository();
+    const worktreePath = path.join(config.worktreesDir, "verification", "missing");
+    const project = makeProject(repositoryRoot);
+    const inventoryChanges = yield* Ref.make(0);
+    const lifecycle = yield* WorktreeLifecycle.make;
+    const instrumentedLifecycle = WorktreeLifecycle.WorktreeLifecycle.of({
+      ...lifecycle,
+      markInventoryChanged: lifecycle.markInventoryChanged.pipe(
+        Effect.tap(() => Ref.update(inventoryChanges, (count) => count + 1)),
+      ),
+    });
+    const createThenRemoveDriver = GitVcsDriver.GitVcsDriver.of({
+      ...driver,
+      createWorktree: (input) =>
+        driver
+          .createWorktree(input)
+          .pipe(Effect.tap(() => fs.remove(input.path, { recursive: true, force: true }))),
+    });
+    const projectLayer = Layer.mock(ProjectService.ProjectService)({
+      snapshot: Effect.succeed({
+        projects: [project],
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    });
+    const layer = WorktreeRevivalService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          serverConfigLiveLayer,
+          NodeServices.layer,
+          Layer.succeed(GitVcsDriver.GitVcsDriver, createThenRemoveDriver),
+          Layer.succeed(WorktreeLifecycle.WorktreeLifecycle, instrumentedLifecycle),
+          projectLayer,
+          Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
+        ),
+      ),
+    );
+
+    const error = yield* Effect.gen(function* () {
+      const revival = yield* WorktreeRevivalService.WorktreeRevivalService;
+      return yield* revival
+        .reviveWorktree({
+          workspaceRoot: repositoryRoot,
+          worktreePath,
+          branch: "feature/revival",
+        })
+        .pipe(Effect.flip);
+    }).pipe(Effect.provide(layer));
+
+    assert.equal(error.stage, "worktree_verification_failed");
+    assert.equal(yield* Ref.get(inventoryChanges), 1);
+  }).pipe(Effect.provide(Layer.mergeAll(serverConfigLiveLayer, NodeServices.layer, gitLayer))),
 );
 
 it.effect("runs project setup after physically recreating a thread worktree", () =>

@@ -11,6 +11,7 @@ import {
   type ThreadId,
   type VcsReviveWorktreeInput,
   type VcsReviveWorktreeResult,
+  type WorktreeMutationErrorStage,
   WorktreeMutationError,
 } from "@t3tools/contracts";
 
@@ -28,27 +29,37 @@ function isPathInside(
   path: {
     readonly relative: (from: string, to: string) => string;
     readonly isAbsolute: (value: string) => boolean;
+    readonly sep: string;
   },
 ): boolean {
   const relative = path.relative(root, candidate);
-  return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
+  return (
+    relative.length > 0 &&
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  );
 }
 
 function mutationError(
-  message: string,
+  stage: WorktreeMutationErrorStage,
   cause?: unknown,
   context: {
     readonly path?: string;
+    readonly conflictingPath?: string;
     readonly workspaceRoot?: string;
     readonly branch?: string;
+    readonly projectId?: ProjectId;
   } = {},
 ): WorktreeMutationError {
   return new WorktreeMutationError({
     operation: "revive",
-    message,
+    stage,
     ...(context.path === undefined ? {} : { path: context.path }),
+    ...(context.conflictingPath === undefined ? {} : { conflictingPath: context.conflictingPath }),
     ...(context.workspaceRoot === undefined ? {} : { workspaceRoot: context.workspaceRoot }),
     ...(context.branch === undefined ? {} : { branch: context.branch }),
+    ...(context.projectId === undefined ? {} : { projectId: context.projectId }),
     ...(cause === undefined ? {} : { cause }),
   });
 }
@@ -60,21 +71,19 @@ export interface WorktreeRevivalForThreadInput {
   readonly branch: string;
 }
 
-export interface WorktreeRevivalServiceShape {
-  readonly reviveWorktree: (
-    input: VcsReviveWorktreeInput,
-  ) => Effect.Effect<VcsReviveWorktreeResult, WorktreeMutationError>;
-  readonly reviveForThread: (
-    input: WorktreeRevivalForThreadInput,
-  ) => Effect.Effect<
-    VcsReviveWorktreeResult & { readonly generation: number },
-    WorktreeMutationError
-  >;
-}
-
 export class WorktreeRevivalService extends Context.Service<
   WorktreeRevivalService,
-  WorktreeRevivalServiceShape
+  {
+    readonly reviveWorktree: (
+      input: VcsReviveWorktreeInput,
+    ) => Effect.Effect<VcsReviveWorktreeResult, WorktreeMutationError>;
+    readonly reviveForThread: (
+      input: WorktreeRevivalForThreadInput,
+    ) => Effect.Effect<
+      VcsReviveWorktreeResult & { readonly generation: number },
+      WorktreeMutationError
+    >;
+  }
 >()("t3/vcs/WorktreeRevivalService") {}
 
 export const make = Effect.gen(function* () {
@@ -121,7 +130,7 @@ export const make = Effect.gen(function* () {
     while (
       !(yield* fs.exists(existingAncestor).pipe(
         Effect.mapError((cause) =>
-          mutationError("Failed to inspect the target worktree path.", cause, {
+          mutationError("inspect_target_path", cause, {
             path: value,
             ...context,
           }),
@@ -130,11 +139,10 @@ export const make = Effect.gen(function* () {
     ) {
       const parent = path.dirname(existingAncestor);
       if (parent === existingAncestor) {
-        return yield* mutationError(
-          `Cannot resolve an existing ancestor for worktree path '${value}'.`,
-          undefined,
-          { path: value, ...context },
-        );
+        return yield* mutationError("resolve_target_path", undefined, {
+          path: value,
+          ...context,
+        });
       }
       unresolvedSegments.unshift(path.basename(existingAncestor));
       existingAncestor = parent;
@@ -142,7 +150,7 @@ export const make = Effect.gen(function* () {
 
     const canonicalAncestor = yield* fs.realPath(existingAncestor).pipe(
       Effect.mapError((cause) =>
-        mutationError("Failed to resolve the target worktree path.", cause, {
+        mutationError("resolve_target_path", cause, {
           path: value,
           ...context,
         }),
@@ -157,7 +165,7 @@ export const make = Effect.gen(function* () {
     const requestedWorkspaceRoot = yield* canonicalizePath(input.workspaceRoot);
     const projectSnapshot = yield* projectsService.snapshot.pipe(
       Effect.mapError((cause) =>
-        mutationError("Failed to load projects before reviving the worktree.", cause, {
+        mutationError("load_projects", cause, {
           workspaceRoot: requestedWorkspaceRoot,
           branch: input.branch,
         }),
@@ -169,11 +177,10 @@ export const make = Effect.gen(function* () {
       { concurrency: PROJECT_SCAN_CONCURRENCY },
     );
     if (!projectRoots.includes(requestedWorkspaceRoot)) {
-      return yield* mutationError(
-        `Cannot revive a worktree for unmanaged workspace '${input.workspaceRoot}'.`,
-        undefined,
-        { workspaceRoot: requestedWorkspaceRoot, branch: input.branch },
-      );
+      return yield* mutationError("unmanaged_workspace", undefined, {
+        workspaceRoot: requestedWorkspaceRoot,
+        branch: input.branch,
+      });
     }
     return requestedWorkspaceRoot;
   });
@@ -182,7 +189,7 @@ export const make = Effect.gen(function* () {
     function* (workspaceRoot: string, branch: string) {
       const entries = yield* git.listWorkspaces(workspaceRoot).pipe(
         Effect.mapError((cause) =>
-          mutationError("Failed to inspect Git worktree registrations.", cause, {
+          mutationError("inspect_registrations", cause, {
             workspaceRoot,
             branch,
           }),
@@ -209,18 +216,14 @@ export const make = Effect.gen(function* () {
       })
       .pipe(
         Effect.mapError((cause) =>
-          mutationError("Failed to validate the worktree branch.", cause, {
+          mutationError("validate_branch", cause, {
             workspaceRoot,
             branch,
           }),
         ),
       );
     if (branchFormat.exitCode !== 0) {
-      return yield* mutationError(
-        `Cannot revive the worktree: '${branch}' is not a valid local branch name.`,
-        undefined,
-        { workspaceRoot, branch },
-      );
+      return yield* mutationError("invalid_branch", undefined, { workspaceRoot, branch });
     }
 
     const branchExists = yield* git
@@ -234,18 +237,14 @@ export const make = Effect.gen(function* () {
       })
       .pipe(
         Effect.mapError((cause) =>
-          mutationError("Failed to check whether the worktree branch exists.", cause, {
+          mutationError("check_branch", cause, {
             workspaceRoot,
             branch,
           }),
         ),
       );
     if (branchExists.exitCode !== 0) {
-      return yield* mutationError(
-        `Cannot recreate the worktree: branch '${branch}' no longer exists.`,
-        undefined,
-        { workspaceRoot, branch },
-      );
+      return yield* mutationError("missing_branch", undefined, { workspaceRoot, branch });
     }
   });
 
@@ -258,16 +257,16 @@ export const make = Effect.gen(function* () {
       branch: input.branch,
     });
     if (!isPathInside(managedWorktreesRoot, worktreePath, path)) {
-      return yield* mutationError(
-        `Cannot revive a worktree outside the managed worktrees directory: '${input.worktreePath}'.`,
-        undefined,
-        { path: worktreePath, workspaceRoot, branch: input.branch },
-      );
+      return yield* mutationError("outside_managed_root", undefined, {
+        path: worktreePath,
+        workspaceRoot,
+        branch: input.branch,
+      });
     }
 
     const exists = yield* fs.exists(worktreePath).pipe(
       Effect.mapError((cause) =>
-        mutationError("Failed to inspect the target worktree path.", cause, {
+        mutationError("inspect_target_path", cause, {
           path: worktreePath,
           workspaceRoot,
           branch: input.branch,
@@ -278,27 +277,27 @@ export const make = Effect.gen(function* () {
     let targetRegistration = registrations.find((entry) => entry.path === worktreePath);
 
     if (targetRegistration !== undefined && targetRegistration.refName !== input.branch) {
-      return yield* mutationError(
-        `Cannot revive '${input.worktreePath}': Git already registers that path for a different ref.`,
-        undefined,
-        { path: worktreePath, workspaceRoot, branch: input.branch },
-      );
+      return yield* mutationError("registered_different_ref", undefined, {
+        path: worktreePath,
+        workspaceRoot,
+        branch: input.branch,
+      });
     }
 
     if (exists) {
       if (targetRegistration === undefined) {
-        return yield* mutationError(
-          `Cannot revive '${input.worktreePath}': the directory exists but is not a registered Git worktree.`,
-          undefined,
-          { path: worktreePath, workspaceRoot, branch: input.branch },
-        );
+        return yield* mutationError("unregistered_existing_path", undefined, {
+          path: worktreePath,
+          workspaceRoot,
+          branch: input.branch,
+        });
       }
       if (targetRegistration.prunable) {
-        return yield* mutationError(
-          `Cannot revive '${input.worktreePath}': the existing directory has a stale Git worktree registration.`,
-          undefined,
-          { path: worktreePath, workspaceRoot, branch: input.branch },
-        );
+        return yield* mutationError("stale_existing_registration", undefined, {
+          path: worktreePath,
+          workspaceRoot,
+          branch: input.branch,
+        });
       }
       return {
         revived: false,
@@ -311,11 +310,12 @@ export const make = Effect.gen(function* () {
       (entry) => entry.refName === input.branch && entry.path !== worktreePath && !entry.prunable,
     );
     if (branchRegisteredElsewhere !== undefined) {
-      return yield* mutationError(
-        `Cannot revive branch '${input.branch}': it is already checked out at '${branchRegisteredElsewhere.path}'.`,
-        undefined,
-        { path: worktreePath, workspaceRoot, branch: input.branch },
-      );
+      return yield* mutationError("branch_in_use", undefined, {
+        path: worktreePath,
+        conflictingPath: branchRegisteredElsewhere.path,
+        workspaceRoot,
+        branch: input.branch,
+      });
     }
 
     // A deleted directory can leave a stale registration in Git's metadata.
@@ -334,7 +334,7 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError((cause) =>
-            mutationError("Failed to clear stale Git worktree metadata.", cause, {
+            mutationError("prune_metadata", cause, {
               path: worktreePath,
               workspaceRoot,
               branch: input.branch,
@@ -344,27 +344,28 @@ export const make = Effect.gen(function* () {
       registrations = yield* listCanonicalWorkspaces(workspaceRoot, input.branch);
       targetRegistration = registrations.find((entry) => entry.path === worktreePath);
       if (targetRegistration !== undefined) {
-        return yield* mutationError(
-          `Cannot revive '${input.worktreePath}': Git still has a worktree registration at that path.`,
-          undefined,
-          { path: worktreePath, workspaceRoot, branch: input.branch },
-        );
+        return yield* mutationError("stale_registration_remaining", undefined, {
+          path: worktreePath,
+          workspaceRoot,
+          branch: input.branch,
+        });
       }
       const branchStillRegisteredElsewhere = registrations.find(
         (entry) => entry.refName === input.branch && entry.path !== worktreePath && !entry.prunable,
       );
       if (branchStillRegisteredElsewhere !== undefined) {
-        return yield* mutationError(
-          `Cannot revive branch '${input.branch}': it is already checked out at '${branchStillRegisteredElsewhere.path}'.`,
-          undefined,
-          { path: worktreePath, workspaceRoot, branch: input.branch },
-        );
+        return yield* mutationError("branch_in_use", undefined, {
+          path: worktreePath,
+          conflictingPath: branchStillRegisteredElsewhere.path,
+          workspaceRoot,
+          branch: input.branch,
+        });
       }
     }
 
     const existsAfterPrune = yield* fs.exists(worktreePath).pipe(
       Effect.mapError((cause) =>
-        mutationError("Failed to recheck the target worktree path.", cause, {
+        mutationError("inspect_target_path", cause, {
           path: worktreePath,
           workspaceRoot,
           branch: input.branch,
@@ -372,11 +373,11 @@ export const make = Effect.gen(function* () {
       ),
     );
     if (existsAfterPrune) {
-      return yield* mutationError(
-        `Cannot revive '${input.worktreePath}': the target directory appeared before creation.`,
-        undefined,
-        { path: worktreePath, workspaceRoot, branch: input.branch },
-      );
+      return yield* mutationError("target_appeared", undefined, {
+        path: worktreePath,
+        workspaceRoot,
+        branch: input.branch,
+      });
     }
 
     yield* validateBranchExists(workspaceRoot, input.branch);
@@ -384,7 +385,7 @@ export const make = Effect.gen(function* () {
       .createWorktree({ cwd: workspaceRoot, refName: input.branch, path: worktreePath })
       .pipe(
         Effect.mapError((cause) =>
-          mutationError("Failed to create the revived Git worktree.", cause, {
+          mutationError("create_worktree", cause, {
             path: worktreePath,
             workspaceRoot,
             branch: input.branch,
@@ -392,10 +393,11 @@ export const make = Effect.gen(function* () {
         ),
       );
     const generation = yield* advanceGeneration(worktreePath);
+    yield* lifecycle.markInventoryChanged;
 
     const finalExists = yield* fs.exists(worktreePath).pipe(
       Effect.mapError((cause) =>
-        mutationError("Failed to verify the revived worktree directory.", cause, {
+        mutationError("verify_worktree", cause, {
           path: worktreePath,
           workspaceRoot,
           branch: input.branch,
@@ -405,18 +407,17 @@ export const make = Effect.gen(function* () {
     const finalRegistrations = yield* listCanonicalWorkspaces(workspaceRoot, input.branch);
     const finalRegistration = finalRegistrations.find((entry) => entry.path === worktreePath);
     if (!finalExists || finalRegistration?.refName !== input.branch || finalRegistration.prunable) {
-      return yield* mutationError(
-        `The worktree was created but could not be verified at '${input.worktreePath}'.`,
-        undefined,
-        { path: worktreePath, workspaceRoot, branch: input.branch },
-      );
+      return yield* mutationError("worktree_verification_failed", undefined, {
+        path: worktreePath,
+        workspaceRoot,
+        branch: input.branch,
+      });
     }
 
     yield* Effect.logInfo("worktree.revived", {
       worktreePath,
       branch: input.branch,
     });
-    yield* lifecycle.markInventoryChanged;
     return { revived: true, generation, worktreePath };
   });
 
@@ -430,18 +431,19 @@ export const make = Effect.gen(function* () {
   ) {
     const project = yield* projectsService.getById(input.projectId).pipe(
       Effect.mapError((cause) =>
-        mutationError("Failed to load the project before reviving the worktree.", cause, {
+        mutationError("load_project", cause, {
           path: input.worktreePath,
           branch: input.branch,
+          projectId: input.projectId,
         }),
       ),
     );
     if (Option.isNone(project)) {
-      return yield* mutationError(
-        `Cannot revive a worktree for project '${input.projectId}': the project was not found.`,
-        undefined,
-        { path: input.worktreePath, branch: input.branch },
-      );
+      return yield* mutationError("project_not_found", undefined, {
+        path: input.worktreePath,
+        branch: input.branch,
+        projectId: input.projectId,
+      });
     }
     const revival = yield* reviveWorktreeUnlocked({
       workspaceRoot: project.value.workspaceRoot,
@@ -466,7 +468,7 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError((cause) =>
-            mutationError("Failed to run the project setup script after revival.", cause, {
+            mutationError("run_setup", cause, {
               path: input.worktreePath,
               workspaceRoot: project.value.workspaceRoot,
               branch: input.branch,
@@ -481,7 +483,7 @@ export const make = Effect.gen(function* () {
     }
     return { revived: revival.revived, generation: revival.generation };
   });
-  const reviveForThread: WorktreeRevivalServiceShape["reviveForThread"] = (input) =>
+  const reviveForThread: WorktreeRevivalService["Service"]["reviveForThread"] = (input) =>
     lifecycle.withMutationPermit(reviveForThreadUnlocked(input));
 
   return WorktreeRevivalService.of({ reviveWorktree, reviveForThread });

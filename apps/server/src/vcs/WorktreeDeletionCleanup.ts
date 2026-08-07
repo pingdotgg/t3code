@@ -18,6 +18,21 @@ export interface ThreadDeletionCleanupRequest {
   readonly worktreePath: string | null;
 }
 
+const recoverDeletionFailure =
+  (request: ThreadDeletionCleanupRequest) =>
+  <E, R>(effect: Effect.Effect<void, E, R>): Effect.Effect<void, E, R> =>
+    effect.pipe(
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) =>
+          Effect.logWarning("worktree.deletion-cleanup.failed", {
+            threadId: request.threadId,
+            worktreePath: request.worktreePath,
+            cause,
+          }),
+      ),
+    );
+
 export function threadDeletionCleanupRequest(
   event: OrchestrationV2DomainEvent,
 ): ThreadDeletionCleanupRequest | null {
@@ -63,15 +78,7 @@ export const makeWorktreeDeletionCleanup = (
     });
 
     const worker = yield* makeDrainableWorker((request: ThreadDeletionCleanupRequest) =>
-      processDeletion(request).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("worktree.deletion-cleanup.failed", {
-            threadId: request.threadId,
-            worktreePath: request.worktreePath,
-            cause,
-          }),
-        ),
-      ),
+      processDeletion(request).pipe(recoverDeletionFailure(request)),
     );
 
     const start: WorktreeDeletionCleanup["Service"]["start"] = Effect.fn(
@@ -116,3 +123,8 @@ export const layer = Layer.effect(
 export const layerWithEventStream = (
   domainEvents: Stream.Stream<OrchestrationV2DomainEvent, unknown>,
 ) => Layer.effect(WorktreeDeletionCleanup, makeWorktreeDeletionCleanup(domainEvents));
+
+/** Exposed for tests. */
+export const __testing = {
+  recoverDeletionFailure,
+};

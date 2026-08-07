@@ -126,7 +126,7 @@ function makeProviderTurnStartFixture(input: {
           ? Effect.fail(
               new WorktreeMutationError({
                 operation: "revive",
-                message: "simulated revival failure",
+                stage: "create_worktree",
               }),
             )
           : Effect.succeed({
@@ -165,11 +165,11 @@ function makeProviderTurnStartFixture(input: {
               cwd: projection.thread.worktreePath,
             }),
         }),
+        worktreeLayer,
       ),
     ),
   );
-  const layer = Layer.merge(providerLayer, worktreeLayer);
-  return { layer, order, open, close, reviveForThread, threadId, runId };
+  return { layer: providerLayer, order, open, close, reviveForThread, threadId, runId };
 }
 
 it("does not commit running state when inherited background routing cannot be read", async () => {
