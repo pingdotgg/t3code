@@ -5,6 +5,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe } from "vite-plus/test";
@@ -14,6 +15,7 @@ import {
   discordModelOptions,
   isDiscordChannelConfigured,
   resolveDiscordModel,
+  taskStatusText,
 } from "./T3CodeDiscordChannel.ts";
 
 const decodeDiscordChannelSettings = Schema.decodeSync(DiscordChannelSettings);
@@ -125,5 +127,22 @@ describe("Discord channel model selection", () => {
       model: "gpt-5.6-sol",
     });
     expect(resolveDiscordModel(models, "codex/missing")).toBeUndefined();
+  });
+
+  it("renders one plain-text status that can be edited as a task progresses", () => {
+    const task = {
+      threadId: ThreadId.make("thread-1"),
+      title: "Fix login",
+      branch: null,
+      threadEnvMode: "local",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.6-sol",
+      },
+      state: "running",
+    } as const;
+
+    expect(taskStatusText(task)).toContain("T3 Code is working");
+    expect(taskStatusText({ ...task, state: "done" }, 2)).toContain("Changed: 2 files");
   });
 });

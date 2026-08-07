@@ -1,16 +1,6 @@
 import { createChannel, defineChannelCommand } from "@copilotkit/channels-core";
 import { discord } from "@copilotkit/channels-discord";
-import {
-  Actions,
-  Button,
-  Context,
-  Field,
-  Fields,
-  Header,
-  Message,
-  Section,
-} from "@copilotkit/channels-ui";
-import type { Thread } from "@copilotkit/channels-ui";
+import type { MessageRef, Thread } from "@copilotkit/channels-ui";
 import {
   CommandId,
   type DiscordChannelSettings,
@@ -37,9 +27,6 @@ import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { forkParked } from "../serverActivation.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 
-const DISCORD_ACCENT = "#5865f2";
-const COMPLETED_ACCENT = "#22c55e";
-const FAILED_ACCENT = "#ef4444";
 const MAX_TITLE_LENGTH = 72;
 const MAX_BRANCH_SLUG_LENGTH = 40;
 
@@ -106,16 +93,16 @@ export function resolveDiscordModel(
   return models.find((model) => model.value === value);
 }
 
-type ChannelThread = Pick<Thread, "post"> & {
+type ChannelThread = Pick<Thread, "post" | "update"> & {
   readonly state: () => Promise<unknown>;
   readonly setState: (value: unknown) => Promise<void>;
 };
 
 interface ActiveDiscordChannel {
   readonly fingerprint: string;
-  readonly notifyCompleted: (input: {
+  readonly refreshTask: (input: {
     readonly threadId: ThreadId;
-    readonly changedFileCount: number;
+    readonly changedFileCount?: number;
   }) => Promise<void>;
   readonly stop: () => Promise<void>;
 }
@@ -162,19 +149,6 @@ function cleanDiscordPrompt(input: string): string {
   return input.replace(/<@!?\d+>/gu, "").trim();
 }
 
-function taskStateLabel(state: ChannelTaskStatus["state"]): string {
-  switch (state) {
-    case "queued":
-      return "Queued";
-    case "running":
-      return "Running";
-    case "done":
-      return "Done";
-    case "failed":
-      return "Failed";
-  }
-}
-
 function modelLabel(selection: ModelSelection): string {
   return `${selection.instanceId}/${selection.model}`;
 }
@@ -194,99 +168,28 @@ function readConversationState(value: unknown): LinkedConversationState {
   return { ...(t3ThreadId ? { t3ThreadId } : {}), ...(modelSelection ? { modelSelection } : {}) };
 }
 
-function statusCard(status: ChannelTaskStatus) {
-  return Message({
-    accent: status.state === "failed" ? FAILED_ACCENT : DISCORD_ACCENT,
-    fallbackText: `${status.title}: ${taskStateLabel(status.state)}`,
-    children: [
-      Header({ children: status.title }),
-      Fields({
-        children: [
-          Field({ label: "Status", children: taskStateLabel(status.state) }),
-          Field({ label: "Model", children: `\`${modelLabel(status.modelSelection)}\`` }),
-          Field({
-            label: status.threadEnvMode === "worktree" ? "Branch" : "Target",
-            children:
-              status.threadEnvMode === "worktree"
-                ? `\`${status.branch ?? "worktree"}\``
-                : "Project checkout",
-          }),
-        ],
-      }),
-      Context({
-        children:
-          status.threadEnvMode === "worktree"
-            ? "This task is running in an isolated worktree."
-            : "This task is running directly in the project's current checkout.",
-      }),
-    ],
-  });
-}
-
-function startedCard(
-  task: StartedChannelTask,
-  onStatus: (thread: Pick<Thread, "post">) => Promise<void>,
-) {
-  return Message({
-    accent: DISCORD_ACCENT,
-    fallbackText: `T3 Code started: ${task.title}`,
-    children: [
-      Header({ children: "T3 Code task started" }),
-      Section({ children: task.title }),
-      Fields({
-        children: [
-          Field({ label: "Status", children: "Queued" }),
-          Field({ label: "Model", children: `\`${modelLabel(task.modelSelection)}\`` }),
-          Field({
-            label: task.threadEnvMode === "worktree" ? "Branch" : "Target",
-            children:
-              task.threadEnvMode === "worktree"
-                ? `\`${task.branch ?? "worktree"}\``
-                : "Project checkout",
-          }),
-        ],
-      }),
-      Actions({
-        children: Button({
-          style: "primary",
-          value: task.threadId,
-          onClick: ({ thread }) => onStatus(thread),
-          children: "Check status",
-        }),
-      }),
-      Context({ children: "T3 Code will reply here when the run and diff are complete." }),
-    ],
-  });
-}
-
-function completedCard(input: {
-  readonly task: ChannelTaskStatus;
-  readonly changedFileCount: number;
-}) {
-  const fileLabel = `${input.changedFileCount} changed ${input.changedFileCount === 1 ? "file" : "files"}`;
-  return Message({
-    accent: COMPLETED_ACCENT,
-    fallbackText: `T3 Code finished: ${input.task.title}`,
-    children: [
-      Header({ children: "T3 Code finished" }),
-      Section({ children: input.task.title }),
-      Fields({
-        children: [
-          Field({ label: "Status", children: "Done" }),
-          Field({ label: "Diff", children: fileLabel }),
-          Field({ label: "Model", children: `\`${modelLabel(input.task.modelSelection)}\`` }),
-          Field({
-            label: input.task.threadEnvMode === "worktree" ? "Branch" : "Target",
-            children:
-              input.task.threadEnvMode === "worktree"
-                ? `\`${input.task.branch ?? "worktree"}\``
-                : "Project checkout",
-          }),
-        ],
-      }),
-      Context({ children: "Open T3 Code to inspect the full transcript and diff." }),
-    ],
-  });
+export function taskStatusText(task: ChannelTaskStatus, changedFileCount?: number): string {
+  const heading = (() => {
+    switch (task.state) {
+      case "queued":
+        return "⏳ **T3 Code queued**";
+      case "running":
+        return "🔄 **T3 Code is working**";
+      case "done":
+        return "✅ **T3 Code finished**";
+      case "failed":
+        return "❌ **T3 Code failed**";
+    }
+  })();
+  const target =
+    task.threadEnvMode === "worktree"
+      ? `Branch: \`${task.branch ?? "worktree"}\``
+      : "Target: project checkout";
+  const diff =
+    task.state === "done" && changedFileCount !== undefined
+      ? `\nChanged: ${changedFileCount} ${changedFileCount === 1 ? "file" : "files"}`
+      : "";
+  return `${heading}\n${task.title}\nModel: \`${modelLabel(task.modelSelection)}\`\n${target}${diff}`;
 }
 
 function createT3CodeChannel(input: {
@@ -294,7 +197,14 @@ function createT3CodeChannel(input: {
   readonly operations: T3CodeChannelOperations;
   readonly models: ReadonlyArray<DiscordModelOption>;
 }) {
-  const linkedThreads = new Map<string, Pick<Thread, "post">>();
+  const linkedTasks = new Map<
+    string,
+    {
+      readonly thread: Pick<Thread, "post" | "update">;
+      messageRef: MessageRef;
+      changedFileCount?: number;
+    }
+  >();
   const channel = createChannel({
     name: "t3-code",
     identifyUser: "platform",
@@ -309,14 +219,19 @@ function createT3CodeChannel(input: {
 
   const postStatus = async (thread: Pick<Thread, "post">, threadId: ThreadId) => {
     const status = await input.operations.getTaskStatus(threadId);
-    await thread.post(
-      status
-        ? statusCard(status)
-        : Message({
-            accent: FAILED_ACCENT,
-            children: Section({ children: "That T3 Code task no longer exists." }),
-          }),
-    );
+    if (!status) {
+      await thread.post("That T3 Code task no longer exists.");
+      return;
+    }
+    const linked = linkedTasks.get(threadId);
+    if (linked) {
+      linked.messageRef = await linked.thread.update(
+        linked.messageRef,
+        taskStatusText(status, linked.changedFileCount),
+      );
+      return;
+    }
+    await thread.post(taskStatusText(status));
   };
 
   const handleText = async (thread: ChannelThread, rawText: string) => {
@@ -338,7 +253,7 @@ function createT3CodeChannel(input: {
     if (state?.t3ThreadId) {
       const current = await input.operations.getTaskStatus(ThreadId.make(state.t3ThreadId));
       if (current?.state === "queued" || current?.state === "running") {
-        await thread.post(statusCard(current));
+        await postStatus(thread, current.threadId);
         return;
       }
     }
@@ -349,23 +264,14 @@ function createT3CodeChannel(input: {
         ...state,
         t3ThreadId: task.threadId,
       } satisfies LinkedConversationState);
-      linkedThreads.set(task.threadId, thread);
-      await thread.post(startedCard(task, (target) => postStatus(target, task.threadId)));
+      const messageRef = await thread.post(taskStatusText(task));
+      linkedTasks.set(task.threadId, { thread, messageRef });
+      await postStatus(thread, task.threadId);
     } catch {
       await thread.post(
-        Message({
-          accent: FAILED_ACCENT,
-          fallbackText: "T3 Code could not start this task.",
-          children: [
-            Header({ children: "Task did not start" }),
-            Section({
-              children:
-                input.config.threadEnvMode === "worktree"
-                  ? "T3 Code could not create an isolated worktree. The task was stopped before the agent ran."
-                  : "T3 Code could not start the task in the project checkout. Check the project and provider configuration.",
-            }),
-          ],
-        }),
+        input.config.threadEnvMode === "worktree"
+          ? "❌ **T3 Code could not start**\nThe isolated worktree could not be created, so the agent did not run."
+          : "❌ **T3 Code could not start**\nCheck the project and provider configuration.",
       );
     }
   };
@@ -438,16 +344,21 @@ function createT3CodeChannel(input: {
 
   return {
     channel,
-    notifyCompleted: async (completion: {
+    refreshTask: async (completion: {
       readonly threadId: ThreadId;
-      readonly changedFileCount: number;
+      readonly changedFileCount?: number;
     }) => {
-      const thread = linkedThreads.get(completion.threadId);
-      if (!thread) return;
+      const linked = linkedTasks.get(completion.threadId);
+      if (!linked) return;
+      if (completion.changedFileCount !== undefined) {
+        linked.changedFileCount = completion.changedFileCount;
+      }
       const task = await input.operations.getTaskStatus(completion.threadId);
       if (!task) return;
-      await thread.post(completedCard({ task, changedFileCount: completion.changedFileCount }));
-      linkedThreads.delete(completion.threadId);
+      linked.messageRef = await linked.thread.update(
+        linked.messageRef,
+        taskStatusText(task, linked.changedFileCount),
+      );
     },
   };
 }
@@ -651,7 +562,7 @@ export const layer = Layer.effectDiscard(
       }
       yield* Ref.set(activeRef, {
         fingerprint,
-        notifyCompleted: created.notifyCompleted,
+        refreshTask: created.refreshTask,
         stop: () => created.channel.ɵruntime.stop(),
       });
     });
@@ -668,14 +579,22 @@ export const layer = Layer.effectDiscard(
     );
     yield* forkParked(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
-        if (event.type !== "thread.turn-diff-completed") return Effect.void;
+        if (
+          event.type !== "thread.turn-start-requested" &&
+          event.type !== "thread.session-set" &&
+          event.type !== "thread.turn-diff-completed"
+        ) {
+          return Effect.void;
+        }
         return Ref.get(activeRef).pipe(
           Effect.flatMap((active) =>
             active
               ? Effect.tryPromise(() =>
-                  active.notifyCompleted({
+                  active.refreshTask({
                     threadId: event.payload.threadId,
-                    changedFileCount: event.payload.files.length,
+                    ...(event.type === "thread.turn-diff-completed"
+                      ? { changedFileCount: event.payload.files.length }
+                      : {}),
                   }),
                 ).pipe(Effect.ignoreCause({ log: true }))
               : Effect.void,
