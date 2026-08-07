@@ -27,7 +27,7 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -846,26 +846,49 @@ export function ResourceTelemetryDiagnostics() {
     reportFailure: false,
   });
   const [signalingKeys, setSignalingKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const signalingKeysRef = useRef<ReadonlySet<string>>(new Set());
+  signalingKeysRef.current = signalingKeys;
   const [isRetrying, setIsRetrying] = useState(false);
   const snapshot = telemetry.data;
   const allT3 = snapshot?.groups.allT3;
 
   const signalProcess = useCallback(
     async (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => {
+      const identityKey = processIdentityKey(process);
+      if (signalingKeysRef.current.has(identityKey)) return;
+      const nextSignalingKeys = new Set(signalingKeysRef.current).add(identityKey);
+      signalingKeysRef.current = nextSignalingKeys;
+      setSignalingKeys(nextSignalingKeys);
+
       if (signal === "SIGKILL") {
-        const confirmed = await ensureLocalApi().dialogs.confirm(
-          `Send SIGKILL to process ${process.identity.pid}? This cannot be handled by the process.`,
-        );
+        let confirmed = false;
+        try {
+          confirmed = await ensureLocalApi().dialogs.confirm(
+            `Send SIGKILL to process ${process.identity.pid}? This cannot be handled by the process.`,
+          );
+        } catch (error) {
+          signalingKeysRef.current = new Set(
+            [...signalingKeysRef.current].filter((key) => key !== identityKey),
+          );
+          setSignalingKeys(signalingKeysRef.current);
+          throw error;
+        }
         if (!confirmed) {
+          signalingKeysRef.current = new Set(
+            [...signalingKeysRef.current].filter((key) => key !== identityKey),
+          );
+          setSignalingKeys(signalingKeysRef.current);
           return;
         }
       }
-      const identityKey = processIdentityKey(process);
       const environmentId = primaryEnvironment?.environmentId;
       if (environmentId === undefined) {
+        signalingKeysRef.current = new Set(
+          [...signalingKeysRef.current].filter((key) => key !== identityKey),
+        );
+        setSignalingKeys(signalingKeysRef.current);
         return;
       }
-      setSignalingKeys((current) => new Set(current).add(identityKey));
       void signalServerProcess({
         environmentId,
         input: {
@@ -897,12 +920,10 @@ export function ResourceTelemetryDiagnostics() {
           });
         })
         .finally(() => {
-          setSignalingKeys((current) => {
-            if (!current.has(identityKey)) return current;
-            const next = new Set(current);
-            next.delete(identityKey);
-            return next;
-          });
+          signalingKeysRef.current = new Set(
+            [...signalingKeysRef.current].filter((key) => key !== identityKey),
+          );
+          setSignalingKeys(signalingKeysRef.current);
         });
     },
     [primaryEnvironment?.environmentId, signalServerProcess],

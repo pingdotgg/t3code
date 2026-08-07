@@ -12,7 +12,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   ServerProcessDiagnosticsEntry,
   ServerProcessResourceHistorySummary,
@@ -858,6 +858,11 @@ export function DiagnosticsSettingsPanel() {
   const [isOpeningLogsDirectory, setIsOpeningLogsDirectory] = useState(false);
   const [openLogsDirectoryError, setOpenLogsDirectoryError] = useState<string | null>(null);
   const [signalingPid, setSignalingPid] = useState<number | null>(null);
+  const signalingPidRef = useRef<number | null>(null);
+  const environmentIdRef = useRef(environmentId);
+  const processDataRef = useRef(processData);
+  environmentIdRef.current = environmentId;
+  processDataRef.current = processData;
 
   const openLogsDirectory = useCallback(() => {
     const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
@@ -897,28 +902,45 @@ export function DiagnosticsSettingsPanel() {
   const isProcessInitialLoading = isProcessPending && processData === null;
   const signalProcess = useCallback(
     async (pid: number, signal: ServerProcessSignal) => {
+      if (signalingPidRef.current === pid) return;
+      signalingPidRef.current = pid;
+      setSignalingPid(pid);
       if (signal === "SIGKILL") {
-        const confirmed = await ensureLocalApi().dialogs.confirm(
-          `Send SIGKILL to process ${pid}? This cannot be handled by the process.`,
-        );
+        let confirmed = false;
+        try {
+          confirmed = await ensureLocalApi().dialogs.confirm(
+            `Send SIGKILL to process ${pid}? This cannot be handled by the process.`,
+          );
+        } catch (error) {
+          signalingPidRef.current = null;
+          setSignalingPid(null);
+          throw error;
+        }
         if (!confirmed) {
+          signalingPidRef.current = null;
+          setSignalingPid(null);
           return;
         }
       }
-      if (environmentId === null) {
+      const currentEnvironmentId = environmentIdRef.current;
+      if (currentEnvironmentId === null) {
+        signalingPidRef.current = null;
+        setSignalingPid(null);
         return;
       }
-      const process = processData?.processes.find((entry) => entry.pid === pid);
+      const process = processDataRef.current?.processes.find((entry) => entry.pid === pid);
       if (process === undefined) {
+        signalingPidRef.current = null;
+        setSignalingPid(null);
         return;
       }
 
-      setSignalingPid(pid);
       void (async () => {
         const result = await signalServerProcess({
-          environmentId,
+          environmentId: currentEnvironmentId,
           input: { pid, startTimeMs: process.startTimeMs, signal },
         });
+        signalingPidRef.current = null;
         setSignalingPid(null);
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {
