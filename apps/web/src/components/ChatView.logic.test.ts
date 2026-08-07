@@ -23,6 +23,7 @@ import {
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
+  reconcilePendingUserInputRequestSnapshot,
   reconcileRetainedMountedThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
@@ -35,6 +36,37 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("reconcilePendingUserInputRequestSnapshot", () => {
+  it("reports requests that stop being pending on the same thread", () => {
+    const result = reconcilePendingUserInputRequestSnapshot({
+      previous: {
+        routeThreadKey: "environment-1:thread-1",
+        requestIds: new Set(["request-1", "request-2"]),
+      },
+      routeThreadKey: "environment-1:thread-1",
+      currentRequestIds: ["request-2"],
+    });
+
+    expect(result.removedRequestIds).toEqual(["request-1"]);
+    expect([...result.next.requestIds]).toEqual(["request-2"]);
+  });
+
+  it("does not report the previous thread's requests when the route changes", () => {
+    const result = reconcilePendingUserInputRequestSnapshot({
+      previous: {
+        routeThreadKey: "environment-1:thread-1",
+        requestIds: new Set(["request-1"]),
+      },
+      routeThreadKey: "environment-1:thread-2",
+      currentRequestIds: ["request-2"],
+    });
+
+    expect(result.removedRequestIds).toEqual([]);
+    expect(result.next.routeThreadKey).toBe("environment-1:thread-2");
+    expect([...result.next.requestIds]).toEqual(["request-2"]);
+  });
+});
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {

@@ -340,6 +340,14 @@ export function createDevRunnerEnv({
       delete output.T3CODE_HOME;
     }
 
+    // A dev-runner server is never launcher-managed. When the shell that runs
+    // this script was itself spawned by the machine's managed t3 service (an
+    // agent working inside T3 Code), these leak through and the child server
+    // fails startup with "The service launcher started a different t3 version"
+    // (serviceLauncherClient.ts resolveStartup).
+    delete output.T3_SERVICE_LAUNCHER_CONTEXT;
+    delete output.T3_BOOT_SERVICE_UNIT;
+
     if (!isDesktopMode) {
       output.T3CODE_PORT = String(serverPort);
       // HOST is Vite's own bind address, and the desktop branch below is the
@@ -779,6 +787,14 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
           // explicit --dev-url still wins.
           if (input.devUrl === undefined) {
             env.VITE_DEV_SERVER_URL = shared.url;
+          }
+          // A shared origin serves a remote browser, where unbundled dev's
+          // per-module requests each pay a tailnet round trip — a cold module
+          // graph takes minutes to first paint. Bundled dev collapses that to
+          // a few chunk requests. Only defaulted, so T3CODE_BUNDLED_DEV=0
+          // still opts a --share run back out.
+          if (env.T3CODE_BUNDLED_DEV === undefined) {
+            env.T3CODE_BUNDLED_DEV = "1";
           }
           yield* Effect.logInfo(`[dev-runner] shared on tailnet: ${shared.url}`);
         }

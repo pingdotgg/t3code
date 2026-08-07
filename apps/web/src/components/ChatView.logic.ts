@@ -28,6 +28,30 @@ export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
+export interface PendingUserInputRequestSnapshot {
+  routeThreadKey: string;
+  requestIds: ReadonlySet<string>;
+}
+
+export function reconcilePendingUserInputRequestSnapshot(input: {
+  previous: PendingUserInputRequestSnapshot;
+  routeThreadKey: string;
+  currentRequestIds: Iterable<string>;
+}): {
+  next: PendingUserInputRequestSnapshot;
+  removedRequestIds: string[];
+} {
+  const requestIds = new Set(input.currentRequestIds);
+  const removedRequestIds =
+    input.previous.routeThreadKey === input.routeThreadKey
+      ? [...input.previous.requestIds].filter((requestId) => !requestIds.has(requestId))
+      : [];
+  return {
+    next: { routeThreadKey: input.routeThreadKey, requestIds },
+    removedRequestIds,
+  };
+}
+
 export function startNewThreadForProject(
   projectRef: ScopedProjectRef | null,
   handleNewThread: (projectRef: ScopedProjectRef) => Promise<void>,
