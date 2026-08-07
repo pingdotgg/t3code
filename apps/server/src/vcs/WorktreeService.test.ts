@@ -18,6 +18,7 @@ import {
 
 import * as ServerConfig from "../config.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import * as WorktreeLifecycle from "./WorktreeLifecycle.ts";
@@ -86,6 +87,9 @@ const makeTestLayer = (
         serverConfigLiveLayer,
         NodeServices.layer,
         projectLayer,
+        Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
+          runForThread: () => Effect.succeed({ status: "no-script" }),
+        }),
         worktreeLifecycleLayer,
       ),
     ),

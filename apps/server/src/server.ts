@@ -333,6 +333,7 @@ const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
 
 const WorktreeRevivalLayerLive = WorktreeRevival.layer.pipe(
   Layer.provideMerge(ProjectServiceLayerLive),
+  Layer.provideMerge(ProjectSetupScriptRunnerLayerLive),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(WorktreeLifecycleLayerLive),
 );

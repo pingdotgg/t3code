@@ -168,6 +168,7 @@ export const layer: Layer.Layer<
         projection.thread.branch !== null
       ) {
         const revival = yield* worktreeRevival.value.reviveForThread({
+          threadId: projection.thread.id,
           projectId: projection.thread.projectId,
           worktreePath: projection.thread.worktreePath,
           branch: projection.thread.branch,

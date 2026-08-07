@@ -7,6 +7,7 @@ import * as Path from "effect/Path";
 
 import {
   type ProjectId,
+  type ThreadId,
   type VcsReviveWorktreeInput,
   type VcsReviveWorktreeResult,
   WorktreeMutationError,
@@ -14,6 +15,7 @@ import {
 
 import * as ServerConfig from "../config.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import * as WorktreeLifecycle from "./WorktreeLifecycle.ts";
 
@@ -55,6 +57,7 @@ export interface WorktreeRevivalServiceShape {
     input: VcsReviveWorktreeInput,
   ) => Effect.Effect<VcsReviveWorktreeResult, WorktreeMutationError>;
   readonly reviveForThread: (input: {
+    readonly threadId: ThreadId;
     readonly projectId: ProjectId;
     readonly worktreePath: string;
     readonly branch: string;
@@ -73,12 +76,58 @@ export const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const lifecycle = yield* WorktreeLifecycle.WorktreeLifecycle;
   const projectsService = yield* ProjectService.ProjectService;
+  const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
 
   // Canonicalize through symlinks so configured roots, Git metadata, and V2
   // thread paths compare equal on hosts such as macOS (/var vs /private/var).
   const canonicalizePath = (value: string) =>
     fs.realPath(value).pipe(Effect.orElseSucceed(() => path.resolve(value)));
   const managedWorktreesRoot = yield* canonicalizePath(config.worktreesDir);
+
+  const resolveEffectiveDestination = Effect.fn(
+    "WorktreeRevivalService.resolveEffectiveDestination",
+  )(function* (
+    value: string,
+    context: {
+      readonly workspaceRoot: string;
+      readonly branch: string;
+    },
+  ) {
+    const unresolvedSegments: string[] = [];
+    let existingAncestor = path.resolve(value);
+
+    while (
+      !(yield* fs.exists(existingAncestor).pipe(
+        Effect.mapError((cause) =>
+          mutationError("Failed to inspect the target worktree path.", cause, {
+            path: value,
+            ...context,
+          }),
+        ),
+      ))
+    ) {
+      const parent = path.dirname(existingAncestor);
+      if (parent === existingAncestor) {
+        return yield* mutationError(
+          `Cannot resolve an existing ancestor for worktree path '${value}'.`,
+          undefined,
+          { path: value, ...context },
+        );
+      }
+      unresolvedSegments.unshift(path.basename(existingAncestor));
+      existingAncestor = parent;
+    }
+
+    const canonicalAncestor = yield* fs.realPath(existingAncestor).pipe(
+      Effect.mapError((cause) =>
+        mutationError("Failed to resolve the target worktree path.", cause, {
+          path: value,
+          ...context,
+        }),
+      ),
+    );
+    return path.resolve(canonicalAncestor, ...unresolvedSegments);
+  });
 
   const resolveManagedWorkspaceRoot = Effect.fn(
     "WorktreeRevivalService.resolveManagedWorkspaceRoot",
@@ -182,7 +231,10 @@ export const make = Effect.gen(function* () {
     "WorktreeRevivalService.reviveWorktree",
   )(function* (input) {
     const workspaceRoot = yield* resolveManagedWorkspaceRoot(input);
-    const worktreePath = yield* canonicalizePath(input.worktreePath);
+    const worktreePath = yield* resolveEffectiveDestination(input.worktreePath, {
+      workspaceRoot,
+      branch: input.branch,
+    });
     if (!isPathInside(managedWorktreesRoot, worktreePath, path)) {
       return yield* mutationError(
         `Cannot revive a worktree outside the managed worktrees directory: '${input.worktreePath}'.`,
@@ -362,11 +414,34 @@ export const make = Effect.gen(function* () {
         { path: input.worktreePath, branch: input.branch },
       );
     }
-    return yield* reviveWorktree({
+    const revival = yield* reviveWorktree({
       workspaceRoot: project.value.workspaceRoot,
       worktreePath: input.worktreePath,
       branch: input.branch,
     });
+    if (revival.revived) {
+      yield* setupScripts
+        .runForThread({
+          threadId: input.threadId,
+          projectId: input.projectId,
+          projectCwd: project.value.workspaceRoot,
+          worktreePath: input.worktreePath,
+          project: {
+            workspaceRoot: project.value.workspaceRoot,
+            scripts: project.value.scripts,
+          },
+        })
+        .pipe(
+          Effect.mapError((cause) =>
+            mutationError("Failed to run the project setup script after revival.", cause, {
+              path: input.worktreePath,
+              workspaceRoot: project.value.workspaceRoot,
+              branch: input.branch,
+            }),
+          ),
+        );
+    }
+    return revival;
   });
 
   return WorktreeRevivalService.of({ reviveWorktree, reviveForThread });
