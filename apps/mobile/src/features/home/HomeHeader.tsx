@@ -21,6 +21,7 @@ import {
   NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../layout/native-mail-search-toolbar";
 import type { HomeProjectSortOrder } from "./homeThreadList";
+import { WorkspaceConnectionTitle } from "./WorkspaceConnectionTitle";
 import {
   buildHomeListFilterMenu,
   type HomeListFilterMenuEnvironment,
@@ -47,6 +48,7 @@ export function HomeHeader(props: {
   readonly onProjectChange: (projectKey: string | null) => void;
   readonly onProjectSortOrderChange: (sortOrder: HomeProjectSortOrder) => void;
   readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
+  readonly onOpenEnvironments: () => void;
   readonly onOpenSettings: () => void;
   readonly onStartNewTask: () => void;
 }) {
@@ -207,18 +209,27 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
       >
         <View className="w-full max-w-[720px] self-center gap-3">
           <View className="flex-row items-center gap-2.5">
-            <View className="flex-1 flex-row items-center gap-2">
-              {/* Mirrors the desktop SidebarBrand: T3 mark + muted "Code". */}
-              <T3Wordmark color={iconColor} height={15} />
-              <RNText className="-ml-0.5 text-[21px] font-t3-medium tracking-[-0.5px] text-foreground-muted">
-                Code
-              </RNText>
-              <View className="rounded-full bg-subtle px-2 py-0.75">
-                <RNText className="text-[11px] font-t3-bold tracking-[1.1px] text-foreground-muted uppercase">
-                  {stageLabel}
-                </RNText>
-              </View>
-            </View>
+            {/* Brand slot doubles as the connection status surface: while an
+                environment reconnects, the lockup fades to a status label in
+                place (no layout shift in the list below). */}
+            <WorkspaceConnectionTitle
+              grow
+              onPress={props.onOpenEnvironments}
+              brand={
+                <View className="flex-row items-center gap-2">
+                  {/* Mirrors the desktop SidebarBrand: T3 mark + muted "Code". */}
+                  <T3Wordmark color={iconColor} height={15} />
+                  <RNText className="-ml-0.5 text-[21px] font-t3-medium tracking-[-0.5px] text-foreground-muted">
+                    Code
+                  </RNText>
+                  <View className="rounded-full bg-subtle px-2 py-0.75">
+                    <RNText className="text-[11px] font-t3-bold tracking-[1.1px] text-foreground-muted uppercase">
+                      {stageLabel}
+                    </RNText>
+                  </View>
+                </View>
+              }
+            />
 
             <ControlPillMenu
               actions={menuActions}
