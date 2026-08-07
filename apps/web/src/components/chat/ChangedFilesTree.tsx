@@ -1,5 +1,5 @@
-import { type TurnId } from "@t3tools/contracts";
-import { memo, useCallback, useMemo, useState } from "react";
+import { type EnvironmentId, type TurnId } from "@t3tools/contracts";
+import { memo, useCallback, useMemo, useState, type MouseEvent } from "react";
 import { type TurnDiffFileChange } from "../../types";
 import {
   buildTurnDiffTree,
@@ -14,7 +14,11 @@ import {
   FolderIcon,
   FolderClosedIcon,
 } from "lucide-react";
+import { useRevealInFileManager } from "~/hooks/useRevealInFileManager";
 import { cn } from "~/lib/utils";
+import { readLocalApi } from "~/localApi";
+import { resolvePathLinkTarget } from "~/terminal-links";
+import { revealInFileExplorerLabel } from "../preview/fileExplorerLabel";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { Button } from "../ui/button";
@@ -34,6 +38,9 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   showCompactPreview: boolean;
   allDirectoriesExpanded: boolean;
   resolvedTheme: "light" | "dark";
+  /** Enables the reveal-in-file-manager context menu together with cwd. */
+  environmentId?: EnvironmentId | undefined;
+  cwd?: string | undefined;
   onExpandedChange: (expanded: boolean) => void;
   onToggleAllDirectories: () => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
@@ -45,6 +52,8 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
     showCompactPreview,
     allDirectoriesExpanded,
     resolvedTheme,
+    environmentId,
+    cwd,
     onExpandedChange,
     onToggleAllDirectories,
     onOpenTurnDiff,
@@ -154,6 +163,8 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
           files={files}
           allDirectoriesExpanded={allDirectoriesExpanded}
           resolvedTheme={resolvedTheme}
+          environmentId={environmentId}
+          cwd={cwd}
           onOpenTurnDiff={onOpenTurnDiff}
         />
       ) : compactPreviewVisible ? (
@@ -206,9 +217,41 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
   files: ReadonlyArray<TurnDiffFileChange>;
   allDirectoriesExpanded: boolean;
   resolvedTheme: "light" | "dark";
+  /** Enables the reveal-in-file-manager context menu together with cwd. */
+  environmentId?: EnvironmentId | undefined;
+  cwd?: string | undefined;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }) {
-  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, turnId } = props;
+  const {
+    files,
+    allDirectoriesExpanded,
+    onOpenTurnDiff,
+    resolvedTheme,
+    turnId,
+    environmentId,
+    cwd,
+  } = props;
+  const revealInFileManager = useRevealInFileManager();
+  const handleFileContextMenu = useCallback(
+    (event: MouseEvent<HTMLElement>, filePath: string) => {
+      if (environmentId === undefined || cwd === undefined) return;
+      const api = readLocalApi();
+      if (!api) return;
+      event.preventDefault();
+      const position = { x: event.clientX, y: event.clientY };
+      void api.contextMenu
+        .show(
+          [{ id: "reveal-in-file-manager", label: revealInFileExplorerLabel(navigator.platform) }],
+          position,
+        )
+        .then((clicked) => {
+          if (clicked === "reveal-in-file-manager") {
+            revealInFileManager(environmentId, resolvePathLinkTarget(filePath, cwd));
+          }
+        });
+    },
+    [cwd, environmentId, revealInFileManager],
+  );
   const treeNodes = useMemo(() => buildTurnDiffTree(files), [files]);
   const directoryPathsKey = useMemo(
     () => collectDirectoryPaths(treeNodes).join("\u0000"),
@@ -294,6 +337,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
         className="group flex w-full items-center gap-1.5 rounded-xl py-1 pr-3 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         style={{ paddingLeft: `${leftPadding}px` }}
         onClick={() => onOpenTurnDiff(turnId, node.path)}
+        onContextMenu={(event) => handleFileContextMenu(event, node.path)}
       >
         {hasDirectoryNodes || depth > 0 ? (
           <span aria-hidden="true" className="size-3.5 shrink-0" />
