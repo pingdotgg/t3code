@@ -1,5 +1,9 @@
 import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessArchitecture,
+  HostProcessEnvironment,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -69,6 +73,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const hostPlatform = yield* HostProcessPlatform;
   const hostArchitecture = yield* HostProcessArchitecture;
+  const hostEnvironment = yield* HostProcessEnvironment;
 
   const readPersistedEnvironmentId = Effect.gen(function* () {
     const exists = yield* fileSystem.exists(serverConfig.environmentIdPath).pipe(
@@ -125,7 +130,16 @@ export const make = Effect.gen(function* () {
 
   const environmentId = EnvironmentId.make(environmentIdRaw);
   const cwdBaseName = path.basename(serverConfig.cwd).trim();
-  const label = yield* resolveServerEnvironmentLabel({ cwdBaseName });
+  const configuredLabel = hostEnvironment.T3CODE_ENVIRONMENT_LABEL?.trim();
+  const label = configuredLabel || (yield* resolveServerEnvironmentLabel({ cwdBaseName }));
+  const cloudProvider = hostEnvironment.T3CODE_CLOUD_PROVIDER?.trim().toLowerCase();
+  const cloud =
+    cloudProvider === "render"
+      ? {
+          provider: "render" as const,
+          workspaceRoot: hostEnvironment.T3CODE_WORKSPACE_DIR?.trim() || serverConfig.cwd,
+        }
+      : undefined;
   const launcher = yield* resolveServiceLauncherMode();
   const serverSelfUpdate = resolveServerSelfUpdateCapability({
     desktopManaged: serverConfig.mode === "desktop",
@@ -139,6 +153,7 @@ export const make = Effect.gen(function* () {
       os: platformOs(hostPlatform),
       arch: platformArch(hostArchitecture),
     },
+    ...(cloud ? { cloud } : {}),
     serverVersion: packageJson.version,
     capabilities: {
       repositoryIdentity: true,

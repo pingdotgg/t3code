@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "./ServerEnvironment.ts";
@@ -70,6 +71,33 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       expect(second.capabilities.repositoryIdentity).toBe(true);
       expect(second.capabilities.connectionProbe).toBe(true);
       expect(second.capabilities.threadTitleRegeneration).toBe(true);
+    }),
+  );
+
+  it.effect("advertises a Render cloud workspace from the host environment", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-render-environment-test-",
+      });
+
+      const descriptor = yield* Effect.gen(function* () {
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        return yield* serverEnvironment.getDescriptor;
+      }).pipe(
+        Effect.provide(makeServerEnvironmentLayer(baseDir)),
+        Effect.provideService(HostProcessEnvironment, {
+          T3CODE_CLOUD_PROVIDER: "render",
+          T3CODE_ENVIRONMENT_LABEL: "Render cloud environment",
+          T3CODE_WORKSPACE_DIR: "/data/workspace",
+        }),
+      );
+
+      expect(descriptor.label).toBe("Render cloud environment");
+      expect(descriptor.cloud).toEqual({
+        provider: "render",
+        workspaceRoot: "/data/workspace",
+      });
     }),
   );
 

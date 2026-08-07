@@ -126,7 +126,7 @@ export function SettingsSection({
   title: string;
   icon?: ReactNode;
   headerAction?: ReactNode;
-  children: ReactNode;
+  children?: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLElement>(sectionProps.id);
 
@@ -144,7 +144,9 @@ export function SettingsSection({
         </h2>
         <div className="flex min-h-7 min-w-7 items-center justify-end">{headerAction}</div>
       </div>
-      <div className="relative space-y-1 overflow-visible text-foreground">{children}</div>
+      {children !== undefined && children !== null ? (
+        <div className="relative space-y-1 overflow-visible text-foreground">{children}</div>
+      ) : null}
     </section>
   );
 }

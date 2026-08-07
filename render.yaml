@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: t3code-cloud-demo
+    runtime: docker
+    plan: free
+    repo: https://github.com/pingdotgg/t3code.git
+    branch: feat/render-cloud-environment
+    autoDeployTrigger: off
+    dockerfilePath: ./infra/render/Dockerfile
+    dockerContext: .
+    healthCheckPath: /.well-known/t3/environment
+    envVars:
+      - key: T3CODE_CLOUD_PROVIDER
+        value: render
+      - key: T3CODE_ENVIRONMENT_LABEL
+        value: Render cloud environment
+      - key: T3CODE_WORKSPACE_DIR
+        value: /data/workspace
+      - key: OPENAI_API_KEY
+        sync: false

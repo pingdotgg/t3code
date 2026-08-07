@@ -121,6 +121,7 @@ import { CommandPaletteContent } from "./CommandPaletteContent";
 import { CommandPaletteResults } from "./CommandPaletteResults";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { RenderLogo } from "./RenderLogo";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
@@ -137,6 +138,13 @@ import { ComposerHandleContext, useComposerHandleContext } from "../composerHand
 import type { ChatComposerHandle } from "./chat/ChatComposer";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
+import {
+  cloudCloneDestination,
+  cloudEnvironmentProvider,
+  cloudEnvironmentProviderLabel,
+  cloudEnvironmentWorkspaceRoot,
+  type CloudEnvironmentProvider,
+} from "../cloud/cloudEnvironment";
 import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
@@ -184,6 +192,7 @@ interface AddProjectEnvironmentOption {
   readonly isPrimary: boolean;
   readonly isConnected: boolean;
   readonly status: string;
+  readonly cloudProvider: CloudEnvironmentProvider | null;
 }
 
 type AddProjectRemoteProviderKind = Extract<
@@ -206,6 +215,7 @@ type AddProjectCloneFlow =
       readonly repository: SourceControlRepositoryInfo | null;
       readonly remoteUrl: string;
     };
+type AddProjectCloneConfirmation = Extract<AddProjectCloneFlow, { readonly step: "confirm" }>;
 
 const REMOTE_PROJECT_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
   "url",
@@ -565,6 +575,10 @@ function OpenCommandPaletteDialog(props: {
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
   });
+  const loadSourceControlDiscovery = useAtomQueryRunner(sourceControlEnvironment.discovery, {
+    reportFailure: false,
+    reportDefect: false,
+  });
   const loadBrowsePath = useAtomQueryRunner(filesystemEnvironment.browse, {
     reportFailure: false,
     reportDefect: false,
@@ -721,6 +735,7 @@ function OpenCommandPaletteDialog(props: {
         isPrimary,
         isConnected: canCreateProjectInEnvironment(environment.connection.phase),
         status: connectionStatusText(environment.connection),
+        cloudProvider: cloudEnvironmentProvider(environment),
       };
     });
 
@@ -1223,7 +1238,7 @@ function OpenCommandPaletteDialog(props: {
   );
 
   const startAddProjectSourceSelection = useCallback(
-    (environmentId: EnvironmentId): void => {
+    async (environmentId: EnvironmentId): Promise<void> => {
       const environment = environments.find(
         (candidate) => candidate.environmentId === environmentId,
       );
@@ -1239,13 +1254,21 @@ function OpenCommandPaletteDialog(props: {
       }
       setAddProjectEnvironmentId(environmentId);
       setAddProjectCloneFlow(null);
+      let discovery = browseEnvironmentId === environmentId ? sourceControlDiscovery.data : null;
+      if (discovery === null) {
+        const discoveryResult = await loadSourceControlDiscovery({
+          environmentId,
+          input: {},
+        });
+        if (discoveryResult._tag === "Success") {
+          discovery = discoveryResult.value;
+        }
+      }
       pushPaletteView({
         addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
         groups: buildAddProjectSourceGroups(
           environmentId,
-          buildAddProjectRemoteSourceReadiness(
-            browseEnvironmentId === environmentId ? sourceControlDiscovery.data : null,
-          ),
+          buildAddProjectRemoteSourceReadiness(discovery),
         ),
       });
     },
@@ -1253,44 +1276,83 @@ function OpenCommandPaletteDialog(props: {
       browseEnvironmentId,
       buildAddProjectSourceGroups,
       environments,
+      loadSourceControlDiscovery,
       pushPaletteView,
       sourceControlDiscovery.data,
     ],
   );
 
-  const addProjectEnvironmentItems: CommandPaletteActionItem[] = addProjectEnvironmentOptions.map(
-    (option) => ({
+  const addProjectEnvironmentGroups = useMemo<CommandPaletteView["groups"]>(() => {
+    const toItem = (option: AddProjectEnvironmentOption): CommandPaletteActionItem => ({
       kind: "action",
       value: `action:add-project:environment:${option.environmentId}`,
-      searchTerms: [option.label, option.environmentId, option.isPrimary ? "this device" : ""],
+      searchTerms: [
+        option.label,
+        option.environmentId,
+        option.isPrimary ? "this device" : "",
+        option.cloudProvider ? "cloud render" : "",
+      ],
       title: option.label,
       description: option.isConnected
-        ? option.isPrimary
-          ? "This device"
-          : option.environmentId
+        ? option.cloudProvider
+          ? `Cloud workspace · Powered by ${cloudEnvironmentProviderLabel(option.cloudProvider)}`
+          : option.isPrimary
+            ? "This device"
+            : option.environmentId
         : option.status,
       disabled: !option.isConnected,
-      icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
+      icon: option.cloudProvider ? (
+        <RenderLogo className={ITEM_ICON_CLASS} />
+      ) : (
+        <FolderPlusIcon className={ITEM_ICON_CLASS} />
+      ),
       keepOpen: true,
       run: async () => {
-        startAddProjectSourceSelection(option.environmentId);
+        if (option.cloudProvider) {
+          startAddProjectClone(option.environmentId, "url");
+          return;
+        }
+        await startAddProjectSourceSelection(option.environmentId);
       },
-    }),
-  );
+    });
+    const cloudItems = addProjectEnvironmentOptions
+      .filter((option) => option.cloudProvider !== null)
+      .map(toItem);
+    const deviceItems = addProjectEnvironmentOptions
+      .filter((option) => option.cloudProvider === null)
+      .map(toItem);
 
-  const addProjectEnvironmentGroups = useMemo<CommandPaletteView["groups"]>(
-    () => [
-      {
-        value: "environments",
-        label: "Environments",
-        items: addProjectEnvironmentItems,
-      },
-    ],
-    [addProjectEnvironmentItems],
+    return [
+      ...(cloudItems.length > 0
+        ? [
+            {
+              value: "cloud-environments",
+              label: "Cloud environments · Powered by Render",
+              items: cloudItems,
+            },
+          ]
+        : []),
+      ...(deviceItems.length > 0
+        ? [
+            {
+              value: "device-environments",
+              label: "Devices",
+              items: deviceItems,
+            },
+          ]
+        : []),
+    ];
+  }, [addProjectEnvironmentOptions, startAddProjectClone, startAddProjectSourceSelection]);
+  const hasCloudAddProjectEnvironment = addProjectEnvironmentOptions.some(
+    (option) => option.cloudProvider !== null,
   );
 
   const openAddProjectFlow = useCallback(() => {
-    if (addProjectEnvironmentOptions.length > 1 || defaultAddProjectEnvironmentId === null) {
+    if (
+      hasCloudAddProjectEnvironment ||
+      addProjectEnvironmentOptions.length > 1 ||
+      defaultAddProjectEnvironmentId === null
+    ) {
       pushPaletteView({
         addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
         groups: addProjectEnvironmentGroups,
@@ -1315,6 +1377,7 @@ function OpenCommandPaletteDialog(props: {
     addProjectEnvironmentGroups,
     addProjectEnvironmentOptions.length,
     defaultAddProjectEnvironmentId,
+    hasCloudAddProjectEnvironment,
     pushPaletteView,
     startAddProjectSourceSelection,
   ]);
@@ -1694,6 +1757,119 @@ function OpenCommandPaletteDialog(props: {
     return getAddProjectInitialQueryForEnvironment(environmentId);
   }
 
+  function getCloudCloneDestination(flow: AddProjectCloneConfirmation): string | null | undefined {
+    const environment = environments.find(
+      (candidate) => candidate.environmentId === flow.environmentId,
+    );
+    if (!environment) {
+      return undefined;
+    }
+    const workspaceRoot = cloudEnvironmentWorkspaceRoot(environment);
+    if (!workspaceRoot) {
+      return undefined;
+    }
+    return cloudCloneDestination({
+      workspaceRoot,
+      repository: flow.repository,
+      remoteUrl: flow.remoteUrl,
+    });
+  }
+
+  async function cloneIntoCloudEnvironmentIfConfigured(
+    flow: AddProjectCloneConfirmation,
+  ): Promise<boolean> {
+    const destination = getCloudCloneDestination(flow);
+    if (destination === undefined) {
+      return false;
+    }
+    if (destination === null) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Unable to name cloud workspace",
+          description: "Use a repository URL whose final path contains the repository name.",
+        }),
+      );
+      return true;
+    }
+    await cloneAndAddRemoteProject(flow, destination);
+    return true;
+  }
+
+  async function cloneAndAddRemoteProject(
+    flow: AddProjectCloneConfirmation,
+    destinationPathInput: string,
+  ): Promise<void> {
+    const rawDestination = destinationPathInput.trim();
+    if (rawDestination.length === 0 || isRemoteProjectCloning) {
+      return;
+    }
+
+    const targetEnvironment = environments.find(
+      (candidate) => candidate.environmentId === flow.environmentId,
+    );
+    const targetPlatform = getEnvironmentBrowsePlatform(
+      targetEnvironment?.serverConfig?.environment.platform.os,
+    );
+    const targetCurrentProjectCwd =
+      currentProjectEnvironmentId === flow.environmentId ? currentProjectCwd : null;
+
+    if (isUnsupportedWindowsProjectPath(rawDestination, targetPlatform)) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Clone failed",
+          description: "Windows-style paths are only supported on Windows.",
+        }),
+      );
+      return;
+    }
+
+    if (isExplicitRelativeProjectPath(rawDestination) && !targetCurrentProjectCwd) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Clone failed",
+          description: "Relative paths require an active project.",
+        }),
+      );
+      return;
+    }
+
+    const destinationPath = resolveProjectPathForDispatch(rawDestination, targetCurrentProjectCwd);
+    if (destinationPath.length === 0) {
+      return;
+    }
+
+    setIsRemoteProjectCloning(true);
+    const cloneResult = await cloneRepository({
+      environmentId: flow.environmentId,
+      input: {
+        remoteUrl: flow.remoteUrl,
+        destinationPath,
+      },
+    });
+    setIsRemoteProjectCloning(false);
+    if (cloneResult._tag === "Failure") {
+      if (!isAtomCommandInterrupted(cloneResult)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Clone failed",
+            description: errorMessage(squashAtomCommandFailure(cloneResult)),
+          }),
+        );
+      }
+      return;
+    }
+    await handleAddProjectForEnvironment({
+      environmentId: flow.environmentId,
+      rawCwd: cloneResult.value.cwd,
+      platform: targetPlatform,
+      currentProjectCwd: targetCurrentProjectCwd,
+    });
+  }
+
   async function submitAddProjectCloneFlow(destinationPathInput?: string): Promise<void> {
     if (!addProjectCloneFlow) {
       return;
@@ -1717,15 +1893,19 @@ function OpenCommandPaletteDialog(props: {
 
       const provider = remoteProjectSourceProvider(addProjectCloneFlow.source);
       if (!provider) {
-        const destinationPath = getDefaultCloneParentPath(addProjectCloneFlow.environmentId);
-        setAddProjectCloneFlow({
+        const confirmation: AddProjectCloneConfirmation = {
           step: "confirm",
           environmentId: addProjectCloneFlow.environmentId,
           source: addProjectCloneFlow.source,
           repositoryInput: rawRepository,
           repository: null,
           remoteUrl: rawRepository,
-        });
+        };
+        if (await cloneIntoCloudEnvironmentIfConfigured(confirmation)) {
+          return;
+        }
+        const destinationPath = getDefaultCloneParentPath(addProjectCloneFlow.environmentId);
+        setAddProjectCloneFlow(confirmation);
         setHighlightedItemValue(null);
         setQuery(destinationPath);
         setBrowseGeneration((generation) => generation + 1);
@@ -1754,78 +1934,32 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
       const repository = lookupResult.value;
-      const destinationPath = getDefaultCloneParentPath(addProjectCloneFlow.environmentId);
-      setAddProjectCloneFlow({
+      const cloneEnvironment = environments.find(
+        (environment) => environment.environmentId === addProjectCloneFlow.environmentId,
+      );
+      const confirmation: AddProjectCloneConfirmation = {
         step: "confirm",
         environmentId: addProjectCloneFlow.environmentId,
         source: addProjectCloneFlow.source,
         repositoryInput: rawRepository,
         repository,
-        remoteUrl: repository.sshUrl,
-      });
+        remoteUrl:
+          cloneEnvironment && cloudEnvironmentWorkspaceRoot(cloneEnvironment)
+            ? repository.url
+            : repository.sshUrl,
+      };
+      if (await cloneIntoCloudEnvironmentIfConfigured(confirmation)) {
+        return;
+      }
+      const destinationPath = getDefaultCloneParentPath(addProjectCloneFlow.environmentId);
+      setAddProjectCloneFlow(confirmation);
       setHighlightedItemValue(null);
       setQuery(destinationPath);
       setBrowseGeneration((generation) => generation + 1);
       return;
     }
 
-    const rawDestination = (destinationPathInput ?? query).trim();
-    if (rawDestination.length === 0 || isRemoteProjectCloning) {
-      return;
-    }
-
-    if (isUnsupportedWindowsProjectPath(rawDestination, browseEnvironmentPlatform)) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Clone failed",
-          description: "Windows-style paths are only supported on Windows.",
-        }),
-      );
-      return;
-    }
-
-    if (isExplicitRelativeProjectPath(rawDestination) && !currentProjectCwdForBrowse) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Clone failed",
-          description: "Relative paths require an active project.",
-        }),
-      );
-      return;
-    }
-
-    const destinationPath = resolveProjectPathForDispatch(
-      rawDestination,
-      currentProjectCwdForBrowse,
-    );
-    if (destinationPath.length === 0) {
-      return;
-    }
-
-    setIsRemoteProjectCloning(true);
-    const cloneResult = await cloneRepository({
-      environmentId: addProjectCloneFlow.environmentId,
-      input: {
-        remoteUrl: addProjectCloneFlow.remoteUrl,
-        destinationPath,
-      },
-    });
-    setIsRemoteProjectCloning(false);
-    if (cloneResult._tag === "Failure") {
-      if (!isAtomCommandInterrupted(cloneResult)) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Clone failed",
-            description: errorMessage(squashAtomCommandFailure(cloneResult)),
-          }),
-        );
-      }
-      return;
-    }
-    await handleAddProject(cloneResult.value.cwd);
+    await cloneAndAddRemoteProject(addProjectCloneFlow, destinationPathInput ?? query);
   }
 
   const browseTo = useCallback(

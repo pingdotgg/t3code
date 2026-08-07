@@ -20,6 +20,16 @@ export const ExecutionEnvironmentPlatform = Schema.Struct({
 });
 export type ExecutionEnvironmentPlatform = typeof ExecutionEnvironmentPlatform.Type;
 
+export const ExecutionEnvironmentCloudProvider = Schema.Literals(["render"]);
+export type ExecutionEnvironmentCloudProvider = typeof ExecutionEnvironmentCloudProvider.Type;
+
+/** Metadata advertised by a backend whose workspace is hosted by a cloud provider. */
+export const ExecutionEnvironmentCloud = Schema.Struct({
+  provider: ExecutionEnvironmentCloudProvider,
+  workspaceRoot: TrimmedNonEmptyString,
+});
+export type ExecutionEnvironmentCloud = typeof ExecutionEnvironmentCloud.Type;
+
 /** How a server can replace itself with another version when asked over RPC.
     New servers only advertise the stable launcher-backed "boot-service" path;
     "respawn" remains decodable for compatibility with older servers. */
@@ -67,6 +77,7 @@ export const ExecutionEnvironmentDescriptor = Schema.Struct({
   environmentId: EnvironmentId,
   label: TrimmedNonEmptyString,
   platform: ExecutionEnvironmentPlatform,
+  cloud: Schema.optionalKey(ExecutionEnvironmentCloud),
   serverVersion: TrimmedNonEmptyString,
   capabilities: ExecutionEnvironmentCapabilities,
 });

@@ -5,6 +5,7 @@ export type SettingsPath =
   | "/settings/providers"
   | "/settings/source-control"
   | "/settings/connections"
+  | "/settings/cloud-environments"
   | "/settings/beta"
   | "/settings/archived";
 
@@ -26,6 +27,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/providers": "Providers",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
+  "/settings/cloud-environments": "Cloud environments",
   "/settings/beta": "Beta",
   "/settings/archived": "Archive",
 };
@@ -170,6 +172,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "source-control",
     title: "Source control",
     to: "/settings/source-control",
+  },
+  {
+    id: "cloud-environments",
+    title: "Cloud environments",
+    to: "/settings/cloud-environments",
   },
   {
     id: "remote-environments",
