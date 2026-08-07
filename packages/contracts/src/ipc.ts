@@ -1021,6 +1021,13 @@ export interface DesktopBridge {
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
+  /**
+   * Hold or release the app's OS sleep-prevention assertion. Driven by the
+   * renderer while a locally hosted agent is working; resolves to the
+   * resulting active state. Optional so a newer renderer degrades gracefully
+   * against an older desktop shell.
+   */
+  setKeepAwake?: (keepAwake: boolean) => Promise<boolean>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },

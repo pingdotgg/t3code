@@ -27,6 +27,8 @@ import {
   toastManager,
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
+import { isElectron } from "../env";
+import { useDesktopCaffeination } from "../state/desktopCaffeinate";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
 import { useClientSettings } from "../hooks/useSettings";
 import {
@@ -130,6 +132,7 @@ function RootRouteView() {
         <DocumentTitleSync />
         <GlassAppearanceSync />
         <FontAppearanceSync />
+        {isElectron ? <DesktopCaffeinationSync /> : null}
         {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
         <RelayClientInstallDialog />
         <ConnectOnboardingDialog />
@@ -142,6 +145,19 @@ function RootRouteView() {
       </AnchoredToastProvider>
     </ToastProvider>
   );
+}
+
+function DesktopCaffeinationSync() {
+  const enabled = useClientSettings((settings) => settings.caffeinateWhileAgentsRunning);
+  // Mount the driver only while the setting is on so the thread-shell scan and
+  // battery listeners cost nothing in the default (off) configuration; the
+  // driver's unmount cleanup releases any held assertion when it flips off.
+  return enabled ? <DesktopCaffeinationDriver /> : null;
+}
+
+function DesktopCaffeinationDriver() {
+  useDesktopCaffeination();
+  return null;
 }
 
 function GlassAppearanceSync() {

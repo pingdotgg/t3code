@@ -32,6 +32,16 @@ export function isDesktopLocalConnectionTarget(
   );
 }
 
+/**
+ * Environments hosted by this desktop app: the same-origin primary backend
+ * plus desktop-local secondaries (e.g. a parallel WSL backend). SSH, relay,
+ * and other remote targets are excluded; their agents keep running on their
+ * own host regardless of what this machine does.
+ */
+export function isDesktopHostedConnectionTarget(target: ConnectionTarget): boolean {
+  return target._tag === "PrimaryConnectionTarget" || isDesktopLocalConnectionTarget(target);
+}
+
 export function desktopLocalBackendId(target: ConnectionTarget): string | null {
   return isDesktopLocalConnectionTarget(target)
     ? target.connectionId.slice(DESKTOP_LOCAL_CONNECTION_ID_PREFIX.length)

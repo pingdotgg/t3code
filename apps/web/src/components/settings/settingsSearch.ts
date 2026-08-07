@@ -111,6 +111,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "caffeinate",
+    title: "Caffeinate while agents are running",
+    to: "/settings/general",
+  },
+  {
     id: "auto-open-task-panel",
     title: "Auto-open task panel",
     to: "/settings/general",
