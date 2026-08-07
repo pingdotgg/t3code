@@ -24,6 +24,7 @@ import {
   type ReviewDiffFileContentsInput,
   type ReviewDiffPreviewInput,
   type ReviewDiffPreviewSource,
+  type VcsProcessExitFailureKind,
   type VcsRef,
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3tools/shared/git";
@@ -397,13 +398,14 @@ function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string):
 }
 
 /**
- * Normalized category for a failing git command, for the log annotation.
+ * Normalized category for a failing git command.
  *
- * Mirrors the vocabulary `VcsProcess.classifyNonZeroExit` already uses, so a
- * log line says *what kind* of failure it was without carrying the text that
- * says so. Kept deliberately coarse: the point is a bounded, safe value.
+ * Reuses the vocabulary `VcsProcess.classifyNonZeroExit` already established,
+ * so the reason a command failed survives as a bounded, non-secret-bearing
+ * value. Reading stderr to produce it is safe; keeping stderr is not, so the
+ * text is read here and goes no further.
  */
-const classifyGitFailure = (stderr: string): "authentication" | "not-found" | "command-failed" => {
+const classifyGitFailure = (stderr: string): VcsProcessExitFailureKind => {
   const normalized = stderr.toLowerCase();
   if (
     normalized.includes("permission denied") ||
@@ -420,13 +422,32 @@ const classifyGitFailure = (stderr: string): "authentication" | "not-found" | "c
 };
 
 /**
+ * Caller-facing `detail` for a failing git command.
+ *
+ * Mirrors `VcsProcessExitError.fromProcessExit`: the classification is what
+ * makes the failure actionable, so it is turned into a fixed sentence rather
+ * than left for the caller to infer from an exit code. Every branch returns a
+ * constant — nothing derived from git's output crosses this boundary.
+ */
+const detailForGitFailure = (failureKind: VcsProcessExitFailureKind, fallback: string): string => {
+  switch (failureKind) {
+    case "authentication":
+      return "Git authentication failed. Check the credentials available to this host for the remote.";
+    case "not-found":
+      return "Git could not find the requested repository, remote, or ref.";
+    case "command-failed":
+      return fallback;
+  }
+};
+
+/**
  * Log annotation for a failing git command.
  *
  * Bounded and safe by construction — a category plus counts, never the output
  * itself. Git echoes back its arguments and any hook output, so `stdout` and
  * `stderr` can carry credentials and are capped only by `maxOutputBytes`
  * (megabytes at some call sites); a log payload has to be as safe as a direct
- * error attribute. The exact text is preserved on the error's `cause`.
+ * error attribute.
  */
 const logFailedGitCommandOutput = (
   command: {
@@ -435,6 +456,7 @@ const logFailedGitCommandOutput = (
     readonly args: ReadonlyArray<string>;
   },
   exitCode: number | null,
+  failureKind: VcsProcessExitFailureKind,
   stdout: string,
   stderr: string,
 ): Effect.Effect<void> =>
@@ -442,7 +464,7 @@ const logFailedGitCommandOutput = (
     `GitVcsDriver.commandFailed: ${command.operation} in ${command.cwd} ` +
       `exited ${exitCode ?? "null"} (${command.args.length} arguments)`,
     {
-      failureKind: classifyGitFailure(stderr),
+      failureKind,
       stdoutLength: stdout.length,
       stderrLength: stderr.length,
     },
@@ -846,14 +868,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         yield* trace2Monitor.flush;
 
         if (!input.allowNonZeroExit && exitCode !== 0) {
-          yield* logFailedGitCommandOutput(commandInput, exitCode, stdout.text, stderr.text);
+          const failureKind = classifyGitFailure(stderr.text);
+          yield* logFailedGitCommandOutput(
+            commandInput,
+            exitCode,
+            failureKind,
+            stdout.text,
+            stderr.text,
+          );
           return yield* new GitCommandError({
             ...gitCommandContext(commandInput),
-            detail: "Git command exited with a non-zero status.",
+            detail: detailForGitFailure(failureKind, "Git command exited with a non-zero status."),
             exitCode,
+            failureKind,
             stdoutLength: stdout.text.length,
             stderrLength: stderr.text.length,
-            cause: stderr.text,
           });
         }
 
@@ -928,9 +957,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         if (options.allowNonZeroExit || result.exitCode === 0) {
           return Effect.succeed(result);
         }
+        const failureKind = classifyGitFailure(result.stderr);
         return logFailedGitCommandOutput(
           { operation, cwd, args },
           result.exitCode,
+          failureKind,
           result.stdout,
           result.stderr,
         ).pipe(
@@ -938,11 +969,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             Effect.fail(
               new GitCommandError({
                 ...gitCommandContext({ operation, cwd, args }),
-                detail: options.fallbackErrorDetail ?? "Git command exited with a non-zero status.",
+                detail: detailForGitFailure(
+                  failureKind,
+                  options.fallbackErrorDetail ?? "Git command exited with a non-zero status.",
+                ),
                 ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+                failureKind,
                 stdoutLength: result.stdout.length,
                 stderrLength: result.stderr.length,
-                cause: result.stderr,
               }),
             ),
           ),

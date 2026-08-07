@@ -42,6 +42,21 @@ const makeNonRepositoryHandle = () =>
     getOutputFd: () => Stream.empty,
   });
 
+const makeFailingHandle = (stderr: string, exitCode = 128) =>
+  ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(1),
+    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
+    isRunning: Effect.succeed(false),
+    kill: () => Effect.void,
+    unref: Effect.succeed(Effect.void),
+    stdin: Sink.drain,
+    stdout: Stream.empty,
+    stderr: Stream.encodeText(Stream.make(stderr)),
+    all: Stream.empty,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+  });
+
 const makeSuccessfulHandle = (stdout: string) =>
   ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(1),
@@ -712,8 +727,66 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.notInclude(error.message, secret);
         assert.notProperty(error, "args");
         assert.notProperty(error, "stderr");
+        // `cause` is part of the RPC error schema, so it reaches clients just
+        // like the direct attributes do. Git echoes the offending argument back
+        // on stderr, so nothing derived from that text may land here.
+        assert.notInclude(String(error.cause), secret);
+        // The failure stays classifiable without retaining the text that
+        // classified it.
+        assert.oneOf(error.failureKind, ["authentication", "not-found", "command-failed"]);
       }),
     );
+
+    it.effect("classifies an authentication failure without retaining the remote it names", () => {
+      // The failure that motivated surfacing this at all: a host with no key
+      // registered for the remote. Git names the remote back on stderr, which
+      // is why the text itself cannot travel with the error.
+      const token = "ghp_secret_token_value";
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          makeFailingHandle(
+            `Cloning into 'projects'...\n` +
+              `remote: Invalid username or password for https://${token}@github.com/owner/repo.git\n` +
+              `git@github.com: Permission denied (publickey).\r\n` +
+              `fatal: Could not read from remote repository.\n`,
+          ),
+        ),
+      );
+      const layer = GitVcsDriver.layer.pipe(
+        Layer.provide(ServerConfigLayer),
+        Layer.provideMerge(
+          Layer.merge(
+            NodeServices.layer,
+            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          ),
+        ),
+      );
+
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const cwd = yield* makeTmpDir();
+          const error = yield* driver
+            .execute({
+              operation: "GitVcsDriver.test.authFailure",
+              cwd,
+              args: ["clone", "git@github.com:owner/repo.git", "projects"],
+            })
+            .pipe(Effect.flip);
+
+          assert.instanceOf(error, GitCommandError);
+          // The reason survives...
+          assert.equal(error.failureKind, "authentication");
+          assert.include(error.detail.toLowerCase(), "authentication");
+          // ...while nothing git wrote does.
+          assert.notInclude(error.detail, token);
+          assert.notInclude(error.message, token);
+          assert.notInclude(String(error.cause), token);
+          assert.notInclude(error.detail, "Permission denied");
+          assert.isAbove(error.stderrLength ?? 0, 0);
+        }),
+      ).pipe(Effect.provide(layer));
+    });
 
     it.effect("recovers a structurally identified missing cwd as a non-repository", () =>
       Effect.gen(function* () {
