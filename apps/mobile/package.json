@@ -67,6 +67,7 @@
     "@t3tools/mobile-review-diff-native": "file:./modules/t3-review-diff",
     "@t3tools/mobile-terminal-native": "file:./modules/t3-terminal",
     "@t3tools/shared": "workspace:*",
+    "@t3tools/themes": "workspace:*",
     "@tabler/icons-react-native": "^3.44.0",
     "clsx": "^2.1.1",
     "diff": "8.0.3",

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { createManagedThemeColors } from "@t3tools/themes";
 
 import type { ReviewRenderableFile } from "./reviewModel";
 import { highlightCodeSnippet, highlightReviewFile } from "./shikiReviewHighlighter";
@@ -136,5 +137,18 @@ describe("highlightCodeSnippet", () => {
         .join(""),
     ).toBe(source);
     expect(highlighted.flat().some((token) => token.color !== null)).toBe(true);
+  });
+
+  it("uses the active theme roles for dynamic syntax highlighting", async () => {
+    const colors = createManagedThemeColors("dark", "#18212b", "#5ba8ff");
+    const highlighted = await highlightCodeSnippet({
+      code: "const answer: number = 42;",
+      language: "ts",
+      theme: "dark",
+      themeColors: colors,
+    });
+
+    const keyword = highlighted.flat().find((token) => token.content === "const");
+    expect(keyword?.color?.toLowerCase()).toBe(colors.accent.toLowerCase());
   });
 });

@@ -1,14 +1,8 @@
 import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
 import type { ReactNode } from "react";
-import {
-  Platform,
-  useColorScheme,
-  View,
-  type ColorValue,
-  type ViewProps,
-  type ViewStyle,
-} from "react-native";
+import { Platform, View, type ColorValue, type ViewProps, type ViewStyle } from "react-native";
 import { useThemeColor } from "../lib/useThemeColor";
+import { useAppearanceColorScheme } from "../lib/useAppearanceColorScheme";
 
 export interface GlassSurfaceProps extends Omit<ViewProps, "className"> {
   readonly children: ReactNode;
@@ -25,7 +19,7 @@ export function GlassSurface({
   style,
   ...props
 }: GlassSurfaceProps) {
-  const isDarkMode = useColorScheme() === "dark";
+  const isDarkMode = useAppearanceColorScheme() === "dark";
   const borderColor = useThemeColor("--color-border");
   const glassSurface = useThemeColor("--color-glass-surface");
   const glassTint = useThemeColor("--color-glass-tint");

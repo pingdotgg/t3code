@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Image, ScrollView, Text, useColorScheme, View } from "react-native";
+import { Image, ScrollView, Text, View } from "react-native";
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
+import type { ThemeColors } from "@t3tools/themes";
 
 import { CopyTextButton } from "./CopyTextButton";
 import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
@@ -13,6 +14,7 @@ import { NativeMarkdownSelectableText } from "./NativeMarkdownSelectableText.ios
 import type {
   MarkdownCodeHighlighter,
   MarkdownHighlightedToken,
+  MarkdownColorScheme,
   NativeMarkdownTextStyle,
 } from "./SelectableMarkdownText.types";
 
@@ -49,12 +51,16 @@ function documentFor(node: MarkdownNode): MarkdownNode {
 function SelectableNode(props: {
   readonly node: MarkdownNode;
   readonly textStyle: NativeMarkdownTextStyle;
+  readonly colorScheme: MarkdownColorScheme;
+  readonly themeColors?: ThemeColors | null;
   readonly onLinkPress?: (href: string) => void;
 }) {
   return (
     <NativeMarkdownSelectableText
       runs={nativeMarkdownDocumentRuns(documentFor(props.node))}
       textStyle={props.textStyle}
+      colorScheme={props.colorScheme}
+      themeColors={props.themeColors}
       onLinkPress={props.onLinkPress}
     />
   );
@@ -63,9 +69,11 @@ function SelectableNode(props: {
 function codeHighlightCacheKey(
   code: string,
   language: string | undefined,
-  theme: "light" | "dark",
+  theme: MarkdownColorScheme,
+  themeColors?: ThemeColors | null,
 ): string {
-  return `${theme}:${language ?? "text"}:${code}`;
+  const colorsKey = themeColors ? Object.values(themeColors).join(",") : "default";
+  return `${theme}:${colorsKey}:${language ?? "text"}:${code}`;
 }
 
 function cacheHighlightedCode(key: string, tokens: HighlightedCode): void {
@@ -84,10 +92,11 @@ function cacheHighlightedCode(key: string, tokens: HighlightedCode): void {
 function loadHighlightedCode(
   code: string,
   language: string | undefined,
-  theme: "light" | "dark",
+  theme: MarkdownColorScheme,
   highlightCode: MarkdownCodeHighlighter,
+  themeColors?: ThemeColors | null,
 ): Promise<HighlightedCode> {
-  const key = codeHighlightCacheKey(code, language, theme);
+  const key = codeHighlightCacheKey(code, language, theme, themeColors);
   const cached = highlightedCodeCache.get(key);
   if (cached) {
     return Promise.resolve(cached);
@@ -98,7 +107,7 @@ function loadHighlightedCode(
     return pending;
   }
 
-  const promise = highlightCode({ code, language, theme })
+  const promise = highlightCode({ code, language, theme, themeColors })
     .then((tokens) => {
       cacheHighlightedCode(key, tokens);
       highlightedCodePromiseCache.delete(key);
@@ -115,10 +124,11 @@ function loadHighlightedCode(
 function useHighlightedCode(
   code: string,
   language: string | undefined,
-  theme: "light" | "dark",
+  theme: MarkdownColorScheme,
   highlightCode: MarkdownCodeHighlighter,
+  themeColors?: ThemeColors | null,
 ): HighlightedCode | null {
-  const key = codeHighlightCacheKey(code, language, theme);
+  const key = codeHighlightCacheKey(code, language, theme, themeColors);
   const [highlighted, setHighlighted] = useState<{
     readonly key: string;
     readonly tokens: HighlightedCode | null;
@@ -138,7 +148,7 @@ function useHighlightedCode(
       };
     }
 
-    void loadHighlightedCode(code, language, theme, highlightCode)
+    void loadHighlightedCode(code, language, theme, highlightCode, themeColors)
       .then((tokens) => {
         if (active) {
           setHighlighted({ key, tokens });
@@ -152,7 +162,7 @@ function useHighlightedCode(
     return () => {
       active = false;
     };
-  }, [code, highlightCode, key, language, theme]);
+  }, [code, highlightCode, key, language, theme, themeColors]);
 
   return highlighted.key === key ? highlighted.tokens : null;
 }
@@ -236,12 +246,18 @@ function NativeCodeBlock(props: {
   readonly node: MarkdownNode;
   readonly textStyle: NativeMarkdownTextStyle;
   readonly highlightCode: MarkdownCodeHighlighter;
+  readonly colorScheme: MarkdownColorScheme;
+  readonly themeColors?: ThemeColors | null;
   readonly compact?: boolean;
 }) {
   const content = nodeText(props.node).replace(/\n$/, "");
-  const colorScheme = useColorScheme();
-  const theme = colorScheme === "dark" ? "dark" : "light";
-  const highlighted = useHighlightedCode(content, props.node.language, theme, props.highlightCode);
+  const highlighted = useHighlightedCode(
+    content,
+    props.node.language,
+    props.colorScheme,
+    props.highlightCode,
+    props.themeColors,
+  );
   const languageLabel = props.node.language?.toUpperCase() ?? "CODE";
   return (
     <View
@@ -323,6 +339,8 @@ function collectTableRows(node: MarkdownNode): MarkdownNode[] {
 function NativeTable(props: {
   readonly node: MarkdownNode;
   readonly textStyle: NativeMarkdownTextStyle;
+  readonly colorScheme: MarkdownColorScheme;
+  readonly themeColors?: ThemeColors | null;
   readonly onLinkPress?: (href: string) => void;
 }) {
   const rows = collectTableRows(props.node);
@@ -363,6 +381,8 @@ function NativeTable(props: {
                     rowIndex === 0 || cell.isHeader ? { ...run, bold: true } : run,
                   )}
                   textStyle={props.textStyle}
+                  colorScheme={props.colorScheme}
+                  themeColors={props.themeColors}
                   onLinkPress={props.onLinkPress}
                 />
               </View>
@@ -377,6 +397,8 @@ function NativeTable(props: {
 function NativeMarkdownImage(props: {
   readonly node: MarkdownNode;
   readonly textStyle: NativeMarkdownTextStyle;
+  readonly colorScheme: MarkdownColorScheme;
+  readonly themeColors?: ThemeColors | null;
   readonly onLinkPress?: (href: string) => void;
 }) {
   const href = props.node.href;
@@ -385,6 +407,8 @@ function NativeMarkdownImage(props: {
       <SelectableNode
         node={props.node}
         textStyle={props.textStyle}
+        colorScheme={props.colorScheme}
+        themeColors={props.themeColors}
         onLinkPress={props.onLinkPress}
       />
     );
@@ -446,6 +470,8 @@ function inlineGroups(nodes: ReadonlyArray<MarkdownNode>): MarkdownNode[] {
 function NativeMixedParagraph(props: {
   readonly node: MarkdownNode;
   readonly textStyle: NativeMarkdownTextStyle;
+  readonly colorScheme: MarkdownColorScheme;
+  readonly themeColors?: ThemeColors | null;
   readonly onLinkPress?: (href: string) => void;
 }) {
   return (
@@ -456,6 +482,8 @@ function NativeMixedParagraph(props: {
             key={nodeKey(child, index)}
             node={child}
             textStyle={props.textStyle}
+            colorScheme={props.colorScheme}
+            themeColors={props.themeColors}
             onLinkPress={props.onLinkPress}
           />
         ) : (
@@ -463,6 +491,8 @@ function NativeMixedParagraph(props: {
             key={nodeKey(child, index)}
             node={child}
             textStyle={props.textStyle}
+            colorScheme={props.colorScheme}
+            themeColors={props.themeColors}
             onLinkPress={props.onLinkPress}
           />
         ),
@@ -475,6 +505,8 @@ function NativeList(props: {
   readonly node: MarkdownNode;
   readonly textStyle: NativeMarkdownTextStyle;
   readonly highlightCode: MarkdownCodeHighlighter;
+  readonly colorScheme: MarkdownColorScheme;
+  readonly themeColors?: ThemeColors | null;
   readonly onLinkPress?: (href: string) => void;
   readonly depth: number;
 }) {
@@ -536,6 +568,8 @@ function NativeList(props: {
                   node={child}
                   textStyle={props.textStyle}
                   highlightCode={props.highlightCode}
+                  colorScheme={props.colorScheme}
+                  themeColors={props.themeColors}
                   onLinkPress={props.onLinkPress}
                   depth={props.depth + 1}
                   compact
@@ -553,6 +587,8 @@ export function NativeMarkdownBlock(props: {
   readonly node: MarkdownNode;
   readonly textStyle: NativeMarkdownTextStyle;
   readonly highlightCode: MarkdownCodeHighlighter;
+  readonly colorScheme: MarkdownColorScheme;
+  readonly themeColors?: ThemeColors | null;
   readonly onLinkPress?: (href: string) => void;
   readonly depth?: number;
   readonly compact?: boolean;
@@ -568,6 +604,8 @@ export function NativeMarkdownBlock(props: {
               node={child}
               textStyle={props.textStyle}
               highlightCode={props.highlightCode}
+              colorScheme={props.colorScheme}
+              themeColors={props.themeColors}
               onLinkPress={props.onLinkPress}
               depth={depth}
             />
@@ -580,6 +618,8 @@ export function NativeMarkdownBlock(props: {
           node={props.node}
           textStyle={props.textStyle}
           highlightCode={props.highlightCode}
+          colorScheme={props.colorScheme}
+          themeColors={props.themeColors}
           compact={props.compact}
         />
       );
@@ -588,6 +628,8 @@ export function NativeMarkdownBlock(props: {
         <NativeTable
           node={props.node}
           textStyle={props.textStyle}
+          colorScheme={props.colorScheme}
+          themeColors={props.themeColors}
           onLinkPress={props.onLinkPress}
         />
       );
@@ -596,6 +638,8 @@ export function NativeMarkdownBlock(props: {
         <NativeMarkdownImage
           node={props.node}
           textStyle={props.textStyle}
+          colorScheme={props.colorScheme}
+          themeColors={props.themeColors}
           onLinkPress={props.onLinkPress}
         />
       );
@@ -626,6 +670,8 @@ export function NativeMarkdownBlock(props: {
               node={child}
               textStyle={props.textStyle}
               highlightCode={props.highlightCode}
+              colorScheme={props.colorScheme}
+              themeColors={props.themeColors}
               onLinkPress={props.onLinkPress}
               depth={depth}
               compact
@@ -639,6 +685,8 @@ export function NativeMarkdownBlock(props: {
           node={props.node}
           textStyle={props.textStyle}
           highlightCode={props.highlightCode}
+          colorScheme={props.colorScheme}
+          themeColors={props.themeColors}
           onLinkPress={props.onLinkPress}
           depth={depth}
         />
@@ -648,12 +696,16 @@ export function NativeMarkdownBlock(props: {
         <NativeMixedParagraph
           node={props.node}
           textStyle={props.textStyle}
+          colorScheme={props.colorScheme}
+          themeColors={props.themeColors}
           onLinkPress={props.onLinkPress}
         />
       ) : (
         <SelectableNode
           node={props.node}
           textStyle={props.textStyle}
+          colorScheme={props.colorScheme}
+          themeColors={props.themeColors}
           onLinkPress={props.onLinkPress}
         />
       );
@@ -674,6 +726,8 @@ export function NativeMarkdownBlock(props: {
           <SelectableNode
             node={props.node}
             textStyle={props.textStyle}
+            colorScheme={props.colorScheme}
+            themeColors={props.themeColors}
             onLinkPress={props.onLinkPress}
           />
         </View>
@@ -692,6 +746,8 @@ export function NativeMarkdownBlock(props: {
               node={child}
               textStyle={props.textStyle}
               highlightCode={props.highlightCode}
+              colorScheme={props.colorScheme}
+              themeColors={props.themeColors}
               onLinkPress={props.onLinkPress}
               depth={depth}
               compact
@@ -704,6 +760,8 @@ export function NativeMarkdownBlock(props: {
         <SelectableNode
           node={props.node}
           textStyle={props.textStyle}
+          colorScheme={props.colorScheme}
+          themeColors={props.themeColors}
           onLinkPress={props.onLinkPress}
         />
       );

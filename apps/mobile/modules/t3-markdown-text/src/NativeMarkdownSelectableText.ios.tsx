@@ -1,9 +1,10 @@
-import { Image, Linking, type TextStyle, useColorScheme } from "react-native";
+import { Image, Linking, type TextStyle } from "react-native";
+import type { ThemeColors } from "@t3tools/themes";
 
 import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
 import { markdownFileIconSource } from "./markdownFileIcons";
 import type { NativeMarkdownTextRun } from "./nativeMarkdownText";
-import type { NativeMarkdownTextStyle } from "./SelectableMarkdownText.types";
+import type { MarkdownColorScheme, NativeMarkdownTextStyle } from "./SelectableMarkdownText.types";
 
 const EXTERNAL_LINK_PREFIX = "◉ ";
 const INLINE_ATTACHMENT_PREFIX = "\uFFFC\u00A0";
@@ -136,9 +137,10 @@ function runStyle(run: NativeMarkdownTextRun, textStyle: NativeMarkdownTextStyle
 export function NativeMarkdownSelectableText(props: {
   readonly runs: ReadonlyArray<NativeMarkdownTextRun>;
   readonly textStyle: NativeMarkdownTextStyle;
+  readonly colorScheme: MarkdownColorScheme;
+  readonly themeColors?: ThemeColors | null;
   readonly onLinkPress?: (href: string) => void;
 }) {
-  const colorScheme = useColorScheme();
   const occurrences = new Map<string, number>();
   const prefixedExternalLinks = new Set<string>();
   const keyedRuns = props.runs.map((run) => {
@@ -161,7 +163,8 @@ export function NativeMarkdownSelectableText(props: {
   // T3MarkdownText only rebuilds its attributed string during native layout. A
   // color-only child update can otherwise leave the previous appearance cached.
   const appearanceKey = [
-    colorScheme ?? "unspecified",
+    props.colorScheme,
+    props.themeColors ? Object.values(props.themeColors).join(",") : "default",
     props.textStyle.fontSize,
     props.textStyle.lineHeight,
     props.textStyle.headingFontSizes?.join(","),

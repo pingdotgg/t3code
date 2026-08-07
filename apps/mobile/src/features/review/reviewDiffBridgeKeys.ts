@@ -23,6 +23,7 @@ export function buildNativeReviewTokensResetKey(input: {
   readonly diff: string | null | undefined;
   readonly fileCount: number;
   readonly rowCount: number;
+  readonly themeKey?: string;
 }): string {
   return [
     input.threadKey ?? "none",
@@ -31,5 +32,6 @@ export function buildNativeReviewTokensResetKey(input: {
     hashReviewDiffKey(input.diff),
     input.fileCount,
     input.rowCount,
+    input.themeKey ?? "default",
   ].join(":");
 }

@@ -5,7 +5,7 @@ import { SymbolView } from "../../components/AppSymbol";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, View, useColorScheme } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import {
   KeyboardController,
   KeyboardEvents,
@@ -34,6 +34,7 @@ import {
   TERMINAL_FONT_SIZE_STEP,
   stepTerminalFontSize,
 } from "../../lib/appearancePreferences";
+import { useThemeColor } from "../../lib/useThemeColor";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   useAttachedTerminalSession,
@@ -44,7 +45,7 @@ import { useSelectedThreadDetail } from "../../state/use-thread-detail";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { TerminalSurface } from "./NativeTerminalSurface";
-import { getPierreTerminalTheme } from "./terminalTheme";
+import { getTerminalThemeForColors } from "./terminalTheme";
 import { terminalDebugLog } from "./terminalDebugLog";
 import {
   getTerminalBufferReplayKey,
@@ -160,13 +161,14 @@ type ThreadTerminalRouteScreenProps = StaticScreenProps<{
 
 export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps) {
   const navigation = useNavigation();
+  const headerBackground = useThemeColor("--color-sheet");
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const resizeTerminal = useAtomCommand(terminalEnvironment.resize, "terminal resize");
   const clearTerminal = useAtomCommand(terminalEnvironment.clear, "terminal clear");
   const closeTerminal = useAtomCommand(terminalEnvironment.close, "terminal close");
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
-  const appearanceScheme = useColorScheme() === "light" ? "light" : "dark";
+  const { colorScheme: appearanceScheme } = useAppearancePreferences();
   const { state: workspaceState } = useWorkspaceState();
   const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const params = props.route.params;
@@ -186,6 +188,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const {
     isReady: hasResolvedFontPreference,
     appearance,
+    themeColors,
     setTerminalFontSize,
   } = useAppearancePreferences();
   const fontSize = appearance.terminalFontSize;
@@ -466,7 +469,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     [selectedEnvironmentConnection?.environmentLabel],
   );
 
-  const terminalTheme = getPierreTerminalTheme(appearanceScheme);
+  const terminalTheme = getTerminalThemeForColors(appearanceScheme, themeColors);
   const usesNativeHeaderGlass = Platform.OS === "ios";
   const pendingModifier =
     pendingModifierState.terminalId === terminalId ? pendingModifierState.value : null;
@@ -1088,6 +1091,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
           // Android draws its own in-flow header (AndroidScreenHeader below);
           // the native stack header stays iOS-only.
           headerShown: Platform.OS !== "android",
+          headerStyle: { backgroundColor: headerBackground as string },
           title: "Terminal",
           unstable_headerSubtitle:
             usesNativeHeaderGlass && headerSubtitle.length > 0 ? headerSubtitle : undefined,

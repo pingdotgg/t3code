@@ -9,6 +9,7 @@ import tsxLanguage from "@shikijs/langs/tsx";
 import typescriptLanguage from "@shikijs/langs/typescript";
 import yamlLanguage from "@shikijs/langs/yaml";
 import * as Schema from "effect/Schema";
+import type { ThemeColors } from "@t3tools/themes";
 
 import type { NativeReviewDiffFile, NativeReviewDiffLanguage } from "./nativeReviewDiffTypes";
 import type { NativeReviewDiffRow, NativeReviewDiffToken } from "./nativeReviewDiffSurface";
@@ -75,6 +76,7 @@ export interface StreamNativeReviewDiffTokenInput {
   readonly rows: ReadonlyArray<NativeReviewDiffRow>;
   readonly files: ReadonlyArray<NativeReviewDiffFile>;
   readonly scheme: NativeReviewDiffHighlightScheme;
+  readonly themeColors?: ThemeColors | null;
   readonly engine?: NativeReviewDiffHighlightEngine;
   readonly chunkSize?: number;
   readonly signal?: AbortSignal;
@@ -85,6 +87,7 @@ export interface HighlightNativeReviewDiffVisibleRowsInput {
   readonly rows: ReadonlyArray<NativeReviewDiffRow>;
   readonly files: ReadonlyArray<NativeReviewDiffFile>;
   readonly scheme: NativeReviewDiffHighlightScheme;
+  readonly themeColors?: ThemeColors | null;
   readonly engine?: NativeReviewDiffHighlightEngine;
   readonly firstRowIndex: number;
   readonly lastRowIndex: number;
@@ -223,6 +226,54 @@ function normalizeTokens(
       color: token.color ?? null,
       fontStyle: token.fontStyle ?? null,
     })),
+  );
+}
+
+/**
+ * The native highlighter keeps Pierre's grammar setup for performance, then
+ * remaps its stable syntax swatches to the selected canonical theme. This
+ * keeps native and JavaScript diff engines visually consistent without
+ * reinitializing a Shiki engine for every theme selection.
+ */
+export function applyNativeReviewDiffTheme(
+  tokens: ReadonlyArray<ReadonlyArray<NativeReviewDiffToken>>,
+  scheme: NativeReviewDiffHighlightScheme,
+  colors: ThemeColors | null | undefined,
+): ReadonlyArray<ReadonlyArray<NativeReviewDiffToken>> {
+  if (!colors) return tokens;
+
+  const roleByColor: Readonly<Record<string, string>> =
+    scheme === "dark"
+      ? {
+          "#adadb1": colors.codeForeground,
+          "#84848a": colors.textMuted,
+          "#ff678d": colors.accent,
+          "#9d6afb": colors.messageAction,
+          "#d568ea": colors.accentSurfaceForeground,
+          "#5ecc71": colors.update,
+          "#68cdf2": colors.focus,
+          "#ffa359": colors.secondaryForeground,
+          "#ff6762": colors.error,
+          "#79797f": colors.textMuted,
+        }
+      : {
+          "#070707": colors.codeForeground,
+          "#84848a": colors.textMuted,
+          "#fc2b73": colors.accent,
+          "#7b43f8": colors.messageAction,
+          "#c635e4": colors.accentSurfaceForeground,
+          "#199f43": colors.update,
+          "#1ca1c7": colors.focus,
+          "#d47628": colors.secondaryForeground,
+          "#d52c36": colors.error,
+          "#79797f": colors.textMuted,
+        };
+
+  return tokens.map((line) =>
+    line.map((token) => {
+      const mappedColor = token.color ? roleByColor[token.color.toLowerCase()] : undefined;
+      return mappedColor ? { ...token, color: mappedColor } : token;
+    }),
   );
 }
 
@@ -447,7 +498,11 @@ export async function highlightNativeReviewDiffVisibleRows(
     }
 
     const code = segmentRows.map(({ row }) => row.content).join("\n");
-    const tokenLines = highlighter.tokenize(code, { lang: segmentFile.language, theme });
+    const tokenLines = applyNativeReviewDiffTheme(
+      highlighter.tokenize(code, { lang: segmentFile.language, theme }),
+      input.scheme,
+      input.themeColors,
+    );
     segmentRows.forEach(({ row }, rowIndex) => {
       tokensByRowId[row.id] = tokenLines[rowIndex] ?? makePlainTokenFallback(row);
     });
@@ -504,7 +559,11 @@ export async function streamNativeReviewDiffTokens(
       const startedAt = performance.now();
       const chunkRows = fileRows.slice(startIndex, startIndex + chunkSize);
       const code = chunkRows.map((row) => row.content).join("\n");
-      const tokenLines = highlighter.tokenize(code, { lang: file.language, theme });
+      const tokenLines = applyNativeReviewDiffTheme(
+        highlighter.tokenize(code, { lang: file.language, theme }),
+        input.scheme,
+        input.themeColors,
+      );
       const tokensByRowId: Record<string, ReadonlyArray<NativeReviewDiffToken>> = {};
 
       chunkRows.forEach((row, rowIndex) => {

@@ -4,8 +4,15 @@ import {
 } from "@t3tools/mobile-markdown-text/renderer";
 
 import { highlightCodeSnippet } from "../features/review/shikiReviewHighlighter";
+import {
+  useAppearanceColorScheme,
+  useAppearancePreferences,
+} from "../features/settings/appearance/AppearancePreferencesProvider";
 
-type MobileSelectableMarkdownTextProps = Omit<SelectableMarkdownTextProps, "highlightCode">;
+type MobileSelectableMarkdownTextProps = Omit<
+  SelectableMarkdownTextProps,
+  "highlightCode" | "colorScheme" | "themeColors"
+>;
 
 export type {
   NativeMarkdownTextStyle,
@@ -17,5 +24,15 @@ export function hasNativeSelectableMarkdownText(): boolean {
 }
 
 export function SelectableMarkdownText(props: MobileSelectableMarkdownTextProps) {
-  return <T3SelectableMarkdownText {...props} highlightCode={highlightCodeSnippet} />;
+  const colorScheme = useAppearanceColorScheme();
+  const { themeColors } = useAppearancePreferences();
+
+  return (
+    <T3SelectableMarkdownText
+      {...props}
+      colorScheme={colorScheme}
+      highlightCode={highlightCodeSnippet}
+      themeColors={themeColors}
+    />
+  );
 }

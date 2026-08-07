@@ -1,11 +1,13 @@
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, usePreventRemove } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, InteractionManager, Platform, View, useColorScheme } from "react-native";
+import { Alert, InteractionManager, Platform, View } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { useAppearanceColorScheme } from "../../lib/useAppearanceColorScheme";
 import { useFontFamily } from "../../lib/useFontFamily";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 import { EnvironmentId } from "@t3tools/contracts";
 import {
@@ -87,7 +89,8 @@ export function NewTaskDraftScreen(props: {
     reserveShare,
   } = useIncomingShare();
   const insets = useSafeAreaInsets();
-  const colorScheme = useColorScheme();
+  const colorScheme = useAppearanceColorScheme();
+  const { themeColors } = useAppearancePreferences();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const controlsBottomPadding = isKeyboardVisible ? 8 : Math.max(insets.bottom, 10);
   const { projectScopes, selectedProject, selectedProjectKey, setProject } = flow;
@@ -225,8 +228,14 @@ export function NewTaskDraftScreen(props: {
   const regularFontFamily = useFontFamily("regular");
   const bodyText = useScaledTextRole("body");
   const headlineText = useScaledTextRole("headline");
-  const sheetFadeOpaque = colorScheme === "dark" ? "rgba(14,14,14,0.98)" : "rgba(242,242,247,0.98)";
-  const sheetFadeTransparent = colorScheme === "dark" ? "rgba(14,14,14,0)" : "rgba(242,242,247,0)";
+  const sheetFadeOpaque =
+    themeColors?.toolbar ??
+    (colorScheme === "dark" ? "rgba(14,14,14,0.98)" : "rgba(242,242,247,0.98)");
+  const sheetFadeTransparent = themeColors
+    ? "transparent"
+    : colorScheme === "dark"
+      ? "rgba(14,14,14,0)"
+      : "rgba(242,242,247,0)";
 
   // A new navigation to this mounted screen delivers a fresh initialProjectRef
   // reference — treat it as a new request and let it apply again.
@@ -928,6 +937,17 @@ export function NewTaskDraftScreen(props: {
 
   const isAndroid = Platform.OS === "android";
   const isDarkMode = colorScheme === "dark";
+  const composerGradientColor = themeColors?.toolbar ?? (isDarkMode ? "#000000" : "#ffffff");
+  const composerFadeOpaque = themeColors
+    ? `${composerGradientColor}f2`
+    : isDarkMode
+      ? "rgba(0,0,0,0.95)"
+      : "rgba(255,255,255,0.95)";
+  const composerFadeTransparent = themeColors
+    ? "transparent"
+    : isDarkMode
+      ? "rgba(0,0,0,0)"
+      : "rgba(255,255,255,0)";
   // Android expansion follows native editor focus so relayout cannot race
   // the touch gesture that opens the keyboard.
   const isExpanded = !isAndroid || isComposerFocused;
@@ -1060,9 +1080,11 @@ export function NewTaskDraftScreen(props: {
             className="px-4 pt-2"
             style={{
               paddingBottom: controlsBottomPadding,
-              experimental_backgroundImage: isDarkMode
-                ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.85) 40%, rgba(0,0,0,0.95) 100%)"
-                : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 40%, rgba(255,255,255,0.95) 100%)",
+              experimental_backgroundImage: themeColors
+                ? `linear-gradient(to bottom, transparent 0%, ${composerGradientColor}d9 40%, ${composerGradientColor}f2 100%)`
+                : isDarkMode
+                  ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.85) 40%, rgba(0,0,0,0.95) 100%)"
+                  : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 40%, rgba(255,255,255,0.95) 100%)",
             }}
           >
             <ComposerSurface
@@ -1110,8 +1132,8 @@ export function NewTaskDraftScreen(props: {
             {isExpanded ? (
               <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
                 <ComposerToolbarScroller
-                  fadeOpaque={isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)"}
-                  fadeTransparent={isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)"}
+                  fadeOpaque={composerFadeOpaque}
+                  fadeTransparent={composerFadeTransparent}
                 >
                   {toolbarPills}
                 </ComposerToolbarScroller>

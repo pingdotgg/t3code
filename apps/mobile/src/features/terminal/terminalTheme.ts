@@ -1,3 +1,5 @@
+import type { ThemeColors } from "@t3tools/themes";
+
 export type TerminalAppearanceScheme = "light" | "dark";
 
 export interface TerminalTheme {
@@ -7,6 +9,7 @@ export interface TerminalTheme {
   readonly border: string;
   readonly cursorForeground: string;
   readonly cursorBackground: string;
+  readonly selectionBackground?: string;
   readonly palette: readonly string[];
 }
 
@@ -70,6 +73,32 @@ export function getPierreTerminalTheme(scheme: TerminalAppearanceScheme): Termin
   return scheme === "light" ? PIERRE_LIGHT_THEME : PIERRE_DARK_THEME;
 }
 
+/**
+ * Keeps Pierre's ANSI-16 palette while replacing the four large terminal
+ * surfaces with the canonical theme roles. The optional colors argument is
+ * null for a fresh install, preserving the existing Pierre appearance.
+ */
+export function getTerminalThemeForColors(
+  scheme: TerminalAppearanceScheme,
+  colors: ThemeColors | null | undefined,
+): TerminalTheme {
+  const pierre = getPierreTerminalTheme(scheme);
+  if (!colors) return pierre;
+
+  return {
+    ...pierre,
+    background: colors.terminalBackground,
+    foreground: colors.terminalForeground,
+    mutedForeground: colors.textMuted,
+    border: colors.border,
+    cursorForeground: colors.terminalCursor,
+    // Ghostty's cursor text uses the terminal foreground role, while the
+    // cursor itself uses terminalCursor.
+    cursorBackground: colors.terminalForeground,
+    selectionBackground: colors.terminalSelection,
+  };
+}
+
 export function buildGhosttyThemeConfig(theme: TerminalTheme): string {
   const lines = [
     `background = ${theme.background}`,
@@ -77,6 +106,9 @@ export function buildGhosttyThemeConfig(theme: TerminalTheme): string {
     `cursor-color = ${theme.cursorForeground}`,
     `cursor-text = ${theme.cursorBackground}`,
   ];
+  if (theme.selectionBackground) {
+    lines.push(`selection-background = ${theme.selectionBackground}`);
+  }
 
   for (const [index, color] of theme.palette.entries()) {
     lines.push(`palette = ${index}=${color}`);

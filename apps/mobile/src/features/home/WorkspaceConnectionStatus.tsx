@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import { workspaceConnectionStatusLabel } from "./workspace-connection-status";
 
@@ -11,12 +12,20 @@ export function WorkspaceConnectionStatus(props: {
   readonly onPress: () => void;
   readonly variant?: "floating" | "sidebar";
 }) {
-  const iconColor = useThemeColor("--color-icon-muted");
+  const iconFallback = useThemeColor("--color-icon-muted");
+  const subtleFallback = useThemeColor("--color-subtle");
+  const foregroundFallback = useThemeColor("--color-foreground");
+  const { themeColors } = useAppearancePreferences();
   const isSynchronizing =
     props.state.networkStatus !== "offline" &&
     props.state.connectionError === null &&
     (props.state.connectingEnvironments.length > 0 || props.state.hasPendingShellSnapshot);
   const variant = props.variant ?? "floating";
+  const iconColor =
+    variant === "sidebar" ? (themeColors?.sidebarMutedForeground ?? iconFallback) : iconFallback;
+  const sidebarControlSurface = themeColors?.sidebarControlSurface ?? subtleFallback;
+  const foregroundColor =
+    variant === "sidebar" ? (themeColors?.sidebarForeground ?? foregroundFallback) : undefined;
 
   return (
     <Pressable
@@ -29,7 +38,8 @@ export function WorkspaceConnectionStatus(props: {
           ? "mx-3 flex-row items-center gap-2 rounded-xl bg-subtle px-3 py-2.5"
           : "flex-row items-center gap-2 rounded-full bg-card px-4 py-2.5"
       }
-      style={
+      style={[
+        variant === "sidebar" ? { backgroundColor: sidebarControlSurface } : undefined,
         variant === "floating"
           ? {
               shadowColor: "#000",
@@ -37,15 +47,19 @@ export function WorkspaceConnectionStatus(props: {
               shadowOpacity: 0.12,
               shadowRadius: 24,
             }
-          : undefined
-      }
+          : undefined,
+      ]}
     >
       {isSynchronizing ? (
         <ActivityIndicator color={iconColor} size="small" />
       ) : (
         <SymbolView name="wifi.slash" size={15} tintColor={iconColor} type="monochrome" />
       )}
-      <Text className="min-w-0 flex-1 text-sm font-t3-bold text-foreground" numberOfLines={1}>
+      <Text
+        className="min-w-0 flex-1 text-sm font-t3-bold text-foreground"
+        numberOfLines={1}
+        style={foregroundColor ? { color: foregroundColor } : undefined}
+      >
         {workspaceConnectionStatusLabel(props.state)}
       </Text>
       {variant === "sidebar" ? (
