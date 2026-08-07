@@ -109,7 +109,7 @@ describe("Open VSX themes", () => {
             { status: 200 },
           );
         }
-        return new Response("not json", { status: 200 });
+        return new Response("{}", { status: 200 });
       }),
     );
 

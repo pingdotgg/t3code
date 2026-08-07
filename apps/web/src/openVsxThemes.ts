@@ -21,6 +21,9 @@ const MAX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024;
 const MAX_COMPRESSION_RATIO = 200;
 const MAX_THEMES_PER_EXTENSION = 40;
 const MAX_INCLUDE_DEPTH = 8;
+const MAX_PACKAGE_PATH_LENGTH = 1_024;
+const MAX_COLOR_VALUE_LENGTH = 128;
+const MAX_RESOLVED_THEME_FILES = MAX_THEMES_PER_EXTENSION * MAX_INCLUDE_DEPTH;
 const SUPPORTED_LICENSES = new Set([
   "0BSD",
   "Apache-2.0",
@@ -31,6 +34,50 @@ const SUPPORTED_LICENSES = new Set([
   "MIT",
   "MPL-2.0",
   "Unlicense",
+]);
+const USED_WORKBENCH_COLORS = new Set([
+  "activityBar.background",
+  "activityBarBadge.background",
+  "badge.background",
+  "button.background",
+  "button.foreground",
+  "contrastBorder",
+  "descriptionForeground",
+  "disabledForeground",
+  "dropdown.background",
+  "dropdown.border",
+  "editor.background",
+  "editor.foreground",
+  "editor.selectionBackground",
+  "editorCursor.foreground",
+  "editorError.foreground",
+  "editorGroup.border",
+  "editorPane.background",
+  "editorWarning.foreground",
+  "editorWidget.background",
+  "errorForeground",
+  "focusBorder",
+  "foreground",
+  "input.border",
+  "input.placeholderForeground",
+  "list.activeSelectionBackground",
+  "list.hoverBackground",
+  "list.inactiveSelectionBackground",
+  "menu.background",
+  "panel.background",
+  "panel.border",
+  "progressBar.background",
+  "quickInput.background",
+  "scrollbarSlider.background",
+  "sideBar.background",
+  "sideBar.border",
+  "sideBar.foreground",
+  "terminal.background",
+  "terminal.foreground",
+  "terminal.selectionBackground",
+  "terminalCursor.foreground",
+  "textCodeBlock.background",
+  "textLink.foreground",
 ]);
 
 export type OpenVsxThemeExtension = {
@@ -65,27 +112,22 @@ function trustedOpenVsxUrl(value: unknown): string | null {
 }
 
 function extensionFromDetail(value: unknown): OpenVsxThemeExtension | null {
-  if (!isRecord(value) || !isRecord(value.files)) return null;
+  if (!isRecord(value) || !isRecord(value.files)) {
+    throw new Error("Open VSX returned malformed theme details.");
+  }
   const namespace = typeof value.namespace === "string" ? value.namespace.trim() : "";
   const extensionName = typeof value.name === "string" ? value.name.trim() : "";
-  const displayName = typeof value.displayName === "string" ? value.displayName.trim() : "";
+  const displayName =
+    (typeof value.displayName === "string" ? value.displayName.trim() : "") || extensionName;
   const version = typeof value.version === "string" ? value.version.trim() : "";
   const license = typeof value.license === "string" ? value.license.trim() : "";
   const manifestUrl = trustedOpenVsxUrl(value.files.manifest);
   const sha256Url = trustedOpenVsxUrl(value.files.sha256);
   const vsixUrl = trustedOpenVsxUrl(value.files.download);
-  if (
-    !namespace ||
-    !extensionName ||
-    !displayName ||
-    !version ||
-    !SUPPORTED_LICENSES.has(license) ||
-    !manifestUrl ||
-    !sha256Url ||
-    !vsixUrl
-  ) {
-    return null;
+  if (!namespace || !extensionName || !version || !manifestUrl || !sha256Url || !vsixUrl) {
+    throw new Error("Open VSX returned malformed theme details.");
   }
+  if (!SUPPORTED_LICENSES.has(license)) return null;
   return {
     id: `${namespace}.${extensionName}`,
     name: displayName,
@@ -167,8 +209,32 @@ function parseJsoncObject(source: string, description: string): Record<string, u
   return value;
 }
 
+function sanitizeThemeObject(value: Record<string, unknown>): Record<string, unknown> {
+  const colors: Record<string, string> = {};
+  if (isRecord(value.colors)) {
+    for (const [key, color] of Object.entries(value.colors)) {
+      if (
+        USED_WORKBENCH_COLORS.has(key) &&
+        typeof color === "string" &&
+        color.length <= MAX_COLOR_VALUE_LENGTH
+      ) {
+        colors[key] = color;
+      }
+    }
+  }
+  return {
+    ...(typeof value.include === "string" ? { include: value.include } : {}),
+    colors,
+  };
+}
+
 function normalizePackagePath(path: string, relativeTo = "extension/"): string {
-  if (path.includes("\0") || path.startsWith("/") || /^[a-zA-Z]:/.test(path)) {
+  if (
+    path.length > MAX_PACKAGE_PATH_LENGTH ||
+    path.includes("\0") ||
+    path.startsWith("/") ||
+    /^[a-zA-Z]:/.test(path)
+  ) {
     throw new Error("Theme path is not a safe relative package path.");
   }
   const normalizedInput = path.replaceAll("\\", "/");
@@ -332,14 +398,19 @@ async function loadThemeObject(
   zip: JSZip,
   path: string,
   cache: Map<string, Record<string, unknown>>,
+  budget: { files: number },
   ancestors: ReadonlySet<string> = new Set(),
 ): Promise<Record<string, unknown>> {
   if (ancestors.size >= MAX_INCLUDE_DEPTH) throw new Error("Theme includes are nested too deeply.");
   if (ancestors.has(path)) throw new Error("Theme includes contain a cycle.");
   const cached = cache.get(path);
   if (cached) return cached;
+  budget.files += 1;
+  if (budget.files > MAX_RESOLVED_THEME_FILES) {
+    throw new Error("That extension references too many theme files.");
+  }
 
-  const value = parseJsoncObject(await readZipText(zip, path, path), path);
+  const value = sanitizeThemeObject(parseJsoncObject(await readZipText(zip, path, path), path));
   if (typeof value.include !== "string") {
     cache.set(path, value);
     return value;
@@ -348,7 +419,7 @@ async function loadThemeObject(
   const includePath = normalizePackagePath(value.include, path);
   const nextAncestors = new Set(ancestors);
   nextAncestors.add(path);
-  const base = await loadThemeObject(zip, includePath, cache, nextAncestors);
+  const base = await loadThemeObject(zip, includePath, cache, budget, nextAncestors);
   const resolved = {
     ...base,
     ...value,
@@ -467,11 +538,12 @@ export async function importOpenVsxThemeExtension(
   const parsed: Array<{ theme: ThemeDefinition; sourceName: string }> = [];
   const failures: string[] = [];
   const themeCache = new Map<string, Record<string, unknown>>();
+  const themeBudget = { files: 0 };
   for (const contribution of contributions as ThemeContribution[]) {
     if (typeof contribution.path !== "string") continue;
     try {
       const path = normalizePackagePath(contribution.path);
-      const themeValue = await loadThemeObject(zip, path, themeCache);
+      const themeValue = await loadThemeObject(zip, path, themeCache, themeBudget);
       const type = contributionType(contribution.uiTheme);
       const label =
         typeof contribution.label === "string" && contribution.label.trim()
