@@ -2,7 +2,9 @@
   "name": "@t3tools/themes",
   "version": "0.0.31",
   "private": true,
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "exports": {
     ".": {
@@ -12,6 +14,7 @@
   },
   "scripts": {
     "typecheck": "tsgo --noEmit",
+    "generate-built-in-themes": "bun scripts/generate-built-in-themes.ts --write",
     "verify-generated": "bun scripts/verify-generated.ts"
   }
 }

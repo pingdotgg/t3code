@@ -4,7 +4,14 @@ import {
   getThemeDefinition,
   THEME_COLOR_ROLES,
 } from "../src/index.ts";
+import { regenerateBuiltInThemesSource } from "./generate-built-in-themes.ts";
 import { PORTED_THEME_SEEDS } from "./portedSeeds.ts";
+
+declare const Bun: {
+  file(path: string | URL): { text(): Promise<string> };
+};
+
+const BUILT_IN_THEME_FILE = new URL("../src/builtInThemes.ts", import.meta.url);
 
 function rgb(value: string): ReadonlyArray<number> {
   return [0, 2, 4].map((index) => Number.parseInt(value.slice(index + 1, index + 3), 16));
@@ -80,6 +87,14 @@ function applyTerminal(
 
 if (BUILT_IN_THEME_DEFINITIONS.length !== 29) {
   throw new Error(`Expected 29 built-in themes, found ${BUILT_IN_THEME_DEFINITIONS.length}.`);
+}
+
+const checkedInSource = await Bun.file(BUILT_IN_THEME_FILE).text();
+const regeneratedSource = await regenerateBuiltInThemesSource();
+if (checkedInSource !== regeneratedSource) {
+  throw new Error(
+    "builtInThemes.ts is not byte-for-byte identical to the deterministic generated output. Run the generator with --write.",
+  );
 }
 
 for (const [id, seed] of Object.entries(PORTED_THEME_SEEDS)) {

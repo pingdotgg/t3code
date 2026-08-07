@@ -472,13 +472,13 @@ export function ThemeLibrary({
           ))}
         </div>
         {(["T3 themes", "Ported themes"] as const).map((section, sectionIndex) => {
-          const query = builtInThemeQuery.trim().toLocaleLowerCase();
+          const query = builtInThemeQuery.trim().toLowerCase();
           const themes = BUILT_IN_THEME_DEFINITIONS.slice(
             sectionIndex === 0 ? 0 : 5,
             sectionIndex === 0 ? 5 : undefined,
           ).filter(
             (builtInTheme) =>
-              query.length === 0 || builtInTheme.label.toLocaleLowerCase().includes(query),
+              query.length === 0 || builtInTheme.label.toLowerCase().includes(query),
           );
           return (
             <section className="mt-4 first:mt-3" key={section}>

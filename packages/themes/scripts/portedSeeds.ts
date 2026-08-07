@@ -162,7 +162,7 @@ export const PORTED_THEME_SEEDS: Readonly<
       appearance: "dark",
       background: "#1e2227",
       accent: "#e5c07b",
-      action: "#abb2bf",
+      action: "#61afef",
       terminal: {
         background: "#1e2227",
         foreground: "#abb2bf",
