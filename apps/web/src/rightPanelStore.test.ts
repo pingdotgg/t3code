@@ -18,6 +18,120 @@ beforeEach(() => {
 });
 
 describe("rightPanelStore", () => {
+  it("restores a failed split close to its original surface and pane order", () => {
+    const store = useRightPanelStore.getState();
+    store.openTerminal(refA, "term-1");
+    store.splitTerminal(refA, "terminal:term-1", "term-2", "vertical");
+    store.splitTerminal(refA, "terminal:term-1", "term-3", "vertical");
+    const snapshot = {
+      surfaceId: "terminal:term-1" as const,
+      resourceId: "term-1",
+      surfaceIndex: 0,
+      terminalIds: ["term-1", "term-2", "term-3"],
+      splitDirection: "vertical" as const,
+    };
+
+    store.closeTerminal(refA, "terminal:term-1", "term-2");
+    store.restoreTerminal(refA, snapshot, "term-2");
+
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      id: "terminal:term-1",
+      kind: "terminal",
+      resourceId: "term-1",
+      terminalIds: ["term-1", "term-2", "term-3"],
+      activeTerminalId: "term-2",
+      splitDirection: "vertical",
+    });
+  });
+
+  it("recreates a terminal surface when a failed close removed its last pane", () => {
+    const store = useRightPanelStore.getState();
+    store.openTerminal(refA, "term-1");
+    const snapshot = {
+      surfaceId: "terminal:term-1" as const,
+      resourceId: "term-1",
+      surfaceIndex: 0,
+      terminalIds: ["term-1"],
+    };
+
+    store.closeTerminal(refA, "terminal:term-1", "term-1");
+    store.restoreTerminal(refA, snapshot, "term-1");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "terminal:term-1",
+      surfaces: [
+        {
+          id: "terminal:term-1",
+          kind: "terminal",
+          resourceId: "term-1",
+          terminalIds: ["term-1"],
+          activeTerminalId: "term-1",
+        },
+      ],
+    });
+  });
+
+  it("preserves pane order when concurrent failed closes resolve out of order", () => {
+    const store = useRightPanelStore.getState();
+    store.openTerminal(refA, "term-a");
+    store.splitTerminal(refA, "terminal:term-a", "term-b");
+    store.splitTerminal(refA, "terminal:term-a", "term-c");
+
+    const firstCloseSnapshot = {
+      surfaceId: "terminal:term-a" as const,
+      resourceId: "term-a",
+      surfaceIndex: 0,
+      terminalIds: ["term-a", "term-b", "term-c"],
+    };
+    store.closeTerminal(refA, "terminal:term-a", "term-b");
+
+    const secondCloseSnapshot = {
+      surfaceId: "terminal:term-a" as const,
+      resourceId: "term-a",
+      surfaceIndex: 0,
+      terminalIds: ["term-a", "term-c"],
+    };
+    store.closeTerminal(refA, "terminal:term-a", "term-a");
+
+    store.restoreTerminal(refA, firstCloseSnapshot, "term-b");
+    store.restoreTerminal(refA, secondCloseSnapshot, "term-a");
+
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({ terminalIds: ["term-a", "term-b", "term-c"] });
+  });
+
+  it("restores a removed terminal surface to its original surface position", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "plan");
+    store.openTerminal(refA, "term-1");
+    store.open(refA, "files");
+    const snapshot = {
+      surfaceId: "terminal:term-1" as const,
+      resourceId: "term-1",
+      surfaceIndex: 1,
+      terminalIds: ["term-1"],
+    };
+
+    store.closeTerminal(refA, "terminal:term-1", "term-1");
+    store.restoreTerminal(refA, snapshot, "term-1");
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([
+      { id: "plan", kind: "plan" },
+      {
+        id: "terminal:term-1",
+        kind: "terminal",
+        resourceId: "term-1",
+        terminalIds: ["term-1"],
+        activeTerminalId: "term-1",
+      },
+      { id: "files", kind: "files" },
+    ]);
+  });
+
   it("drops the legacy singleton terminal surface during migration", () => {
     expect(
       migratePersistedRightPanelState({

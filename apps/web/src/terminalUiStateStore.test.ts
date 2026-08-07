@@ -1,9 +1,11 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { ThreadId } from "@t3tools/contracts";
-import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   migratePersistedTerminalUiStateStoreState,
+  PENDING_TERMINAL_OPEN_TIMEOUT_MS,
+  reconcilableServerTerminalIds,
   selectThreadTerminalUiState,
   useTerminalUiStateStore,
 } from "./terminalUiStateStore";
@@ -13,12 +15,69 @@ const THREAD_ID = ThreadId.make("thread-1");
 const THREAD_REF = scopeThreadRef("environment-a" as never, THREAD_ID);
 const OTHER_THREAD_REF = scopeThreadRef("environment-b" as never, THREAD_ID);
 
+describe("reconcilableServerTerminalIds", () => {
+  it("keeps pending opens while server metadata catches up", () => {
+    expect(
+      reconcilableServerTerminalIds(
+        ["terminal-1"],
+        ["terminal-1", "terminal-2"],
+        [],
+        ["terminal-2"],
+      ),
+    ).toBeNull();
+  });
+
+  it("merges unknown server sessions without dropping a pending split", () => {
+    expect(
+      reconcilableServerTerminalIds(
+        ["terminal-1", "terminal-3"],
+        ["terminal-1", "terminal-2"],
+        [],
+        ["terminal-2"],
+      ),
+    ).toEqual(["terminal-1", "terminal-2", "terminal-3"]);
+  });
+
+  it("removes confirmed server-side closures", () => {
+    expect(
+      reconcilableServerTerminalIds(
+        ["terminal-1", "terminal-3"],
+        ["terminal-1", "terminal-2"],
+        [],
+        [],
+      ),
+    ).toEqual(["terminal-1", "terminal-3"]);
+  });
+
+  it("does not clear populated state from an unloaded empty response", () => {
+    expect(reconcilableServerTerminalIds([], ["terminal-1"], [], [])).toBeNull();
+  });
+
+  it("clears confirmed state from an authoritative empty response", () => {
+    expect(reconcilableServerTerminalIds([], ["terminal-1"], [], [], true)).toEqual([]);
+    expect(reconcilableServerTerminalIds([], ["terminal-2"], [], ["terminal-2"], true)).toBeNull();
+  });
+
+  it("filters suppressed stale sessions from both sides of a merge", () => {
+    expect(
+      reconcilableServerTerminalIds(
+        ["terminal-1", "terminal-stale", "terminal-3"],
+        ["terminal-1", "terminal-2", "terminal-stale"],
+        ["terminal-stale"],
+        ["terminal-2"],
+      ),
+    ).toEqual(["terminal-1", "terminal-2", "terminal-3"]);
+  });
+});
+
 describe("terminalUiStateStore actions", () => {
   beforeEach(() => {
     useTerminalUiStateStore.persist.clearStorage();
     useTerminalUiStateStore.setState({
       terminalUiStateByThreadKey: {},
       suppressedTerminalIdsByThreadKey: {},
+      pendingTerminalIdsByThreadKey: {},
+      pendingTerminalExpiryByThreadKey: {},
     });
   });
 
@@ -243,6 +302,114 @@ describe("terminalUiStateStore actions", () => {
     expect(terminalUiState.terminalGroups).toEqual([
       { id: "group-terminal-2", terminalIds: ["terminal-2"] },
     ]);
+  });
+
+  it("rolls back a failed drawer close", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.setTerminalOpen(THREAD_REF, true);
+    store.splitTerminal(THREAD_REF, "terminal-2");
+    store.closeTerminal(THREAD_REF, "terminal-2");
+
+    store.unsuppressTerminal(THREAD_REF, "terminal-2");
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID, "terminal-2"]);
+
+    expect(
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        THREAD_REF,
+      ).terminalIds,
+    ).toEqual([DEFAULT_THREAD_TERMINAL_ID, "terminal-2"]);
+  });
+
+  it("preserves a pending split until it is confirmed, then removes a later closure", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.setTerminalOpen(THREAD_REF, true);
+    store.splitTerminal(THREAD_REF, "terminal-2");
+
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID]);
+    expect(
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        THREAD_REF,
+      ).terminalIds,
+    ).toEqual([DEFAULT_THREAD_TERMINAL_ID, "terminal-2"]);
+
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID, "terminal-2"]);
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID]);
+    expect(
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        THREAD_REF,
+      ).terminalIds,
+    ).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
+  });
+
+  it("abandons a failed pending open without leaving a phantom tab", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.setTerminalOpen(THREAD_REF, true);
+    store.splitTerminal(THREAD_REF, "terminal-2");
+    store.abandonPendingTerminal(THREAD_REF, "terminal-2");
+
+    expect(
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        THREAD_REF,
+      ).terminalIds,
+    ).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
+    const threadKey = scopedThreadKey(THREAD_REF);
+    expect(
+      useTerminalUiStateStore.getState().pendingTerminalIdsByThreadKey[threadKey] ?? [],
+    ).not.toContain("terminal-2");
+    expect(
+      useTerminalUiStateStore.getState().suppressedTerminalIdsByThreadKey[threadKey] ?? [],
+    ).not.toContain("terminal-2");
+  });
+
+  it("expires an unobserved pending terminal after authoritative metadata settles", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    try {
+      const store = useTerminalUiStateStore.getState();
+      store.setTerminalOpen(THREAD_REF, true);
+      store.splitTerminal(THREAD_REF, "terminal-2");
+
+      now.mockReturnValue(1_000 + PENDING_TERMINAL_OPEN_TIMEOUT_MS + 1);
+      store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID], true);
+
+      const threadKey = scopedThreadKey(THREAD_REF);
+      expect(
+        selectThreadTerminalUiState(
+          useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+          THREAD_REF,
+        ).terminalIds,
+      ).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
+      expect(
+        useTerminalUiStateStore.getState().pendingTerminalIdsByThreadKey[threadKey] ?? [],
+      ).toEqual([]);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("restores a pending drawer terminal after a failed close", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.setTerminalOpen(THREAD_REF, true);
+    store.splitTerminal(THREAD_REF, "terminal-2");
+    store.closeTerminal(THREAD_REF, "terminal-2");
+    store.restorePendingTerminal(THREAD_REF, "terminal-2");
+
+    const threadKey = scopedThreadKey(THREAD_REF);
+    expect(
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        THREAD_REF,
+      ).terminalIds,
+    ).toEqual([DEFAULT_THREAD_TERMINAL_ID, "terminal-2"]);
+    expect(
+      useTerminalUiStateStore.getState().pendingTerminalIdsByThreadKey[threadKey] ?? [],
+    ).toContain("terminal-2");
+    expect(
+      useTerminalUiStateStore.getState().suppressedTerminalIdsByThreadKey[threadKey] ?? [],
+    ).not.toContain("terminal-2");
   });
 
   it("reconciles terminal ids from an external ordered list", () => {
