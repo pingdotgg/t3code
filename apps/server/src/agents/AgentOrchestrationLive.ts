@@ -167,7 +167,56 @@ export const dispatchAgentChildLifecycle = Effect.fn(
 
 export const agentWorktreeBranchName = (runId: AgentRunId): string => `t3code/agent-${runId}`;
 
+export const liveAgentProfileLocator = (profile: AgentProfileRef): AgentProfileLocator => ({
+  id: profile.id,
+  scope: profile.scope,
+});
+
 const MAX_INTEGRATION_PATCH_BYTES = 32 * 1024 * 1024;
+
+const gitFailureDetail = (
+  operation: string,
+  result: Pick<
+    ProcessRunner.ProcessRunOutput,
+    "code" | "timedOut" | "stdoutTruncated" | "stderrTruncated"
+  >,
+) => {
+  if (result.timedOut) return `${operation} timed out.`;
+  if (result.stdoutTruncated || result.stderrTruncated)
+    return `${operation} failed because Git output exceeded the safety limit.`;
+  if (result.code === null) return `${operation} failed without an exit code.`;
+  return `${operation} failed (exit code ${result.code}).`;
+};
+
+/**
+ * Removes only the exact worktree and branch allocated for a failed isolated
+ * run. Cleanup is best-effort so it cannot hide the original spawn failure.
+ */
+export const cleanupCreatedAgentWorktree = Effect.fn(
+  "AgentOrchestration.cleanupCreatedAgentWorktree",
+)(function* (input: {
+  readonly gitWorkflow: Pick<GitWorkflowService.GitWorkflowService["Service"], "removeWorktree">;
+  readonly processRunner: Pick<ProcessRunner.ProcessRunner["Service"], "run">;
+  readonly workspaceRoot: string;
+  readonly worktreePath: string;
+  readonly branch: string;
+}) {
+  yield* input.gitWorkflow
+    .removeWorktree({ cwd: input.workspaceRoot, path: input.worktreePath, force: true })
+    .pipe(
+      Effect.andThen(
+        input.processRunner.run({
+          command: "git",
+          args: ["branch", "--delete", "--force", input.branch],
+          cwd: input.workspaceRoot,
+          timeout: "30 seconds",
+          maxOutputBytes: 32 * 1024,
+          outputMode: "error",
+        }),
+      ),
+      Effect.ignore,
+    );
+});
 
 /**
  * Transfers tracked changes between two worktrees of the same repository.
@@ -223,14 +272,11 @@ export const applyIsolatedWorktreePatch = Effect.fn(
           ) {
             return Effect.succeed(result.stdout);
           }
-          const detail = result.stderr.trim() || result.stdout.trim();
           return Effect.fail(
-            invalid(
-              detail.length > 0
-                ? `${operation} failed: ${detail.slice(0, 4_000)}`
-                : `${operation} failed.`,
-              { operation: "git-command", cause: result },
-            ),
+            invalid(gitFailureDetail(operation, result), {
+              operation: "git-command",
+              cause: result,
+            }),
           );
         }),
       );
@@ -413,11 +459,23 @@ export const make = Effect.gen(function* () {
       ),
       Effect.map(Option.getOrNull),
     );
-    const selectedRef = currentRun?.profile ?? thread.agentProfile ?? null;
-    const profile =
-      selectedRef === null ? null : yield* loadProfile(selectedRef, project.workspaceRoot);
-    return { thread, project, currentRun, profile };
+    return { thread, project, currentRun };
   });
+
+  /**
+   * Delegation is deliberate live configuration: lists and new child runs see
+   * the current profile policy. Existing run lifecycle operations use their
+   * durable run and pinned snapshot instead, so an edit or archive cannot
+   * strand a completed/running child.
+   */
+  const loadLiveDelegationProfile = Effect.fn("AgentOrchestration.loadLiveDelegationProfile")(
+    function* (context: Effect.Success<ReturnType<typeof invocationContext>>) {
+      const selectedRef = context.currentRun?.profile ?? context.thread.agentProfile ?? null;
+      return selectedRef === null
+        ? null
+        : yield* loadProfile(liveAgentProfileLocator(selectedRef), context.project.workspaceRoot);
+    },
+  );
 
   const ensureOwnedRun = Effect.fn("AgentOrchestration.ensureOwnedRun")(function* (
     context: Effect.Success<ReturnType<typeof invocationContext>>,
@@ -466,8 +524,9 @@ export const make = Effect.gen(function* () {
   const list: AgentOrchestration["Service"]["list"] = Effect.fn("AgentOrchestration.list")(
     function* (scope, input) {
       const context = yield* invocationContext(scope);
+      const profile = yield* loadLiveDelegationProfile(context);
       const snapshot = yield* catalog.list({ workspaceRoot: context.project.workspaceRoot });
-      const profiles = allowedProfiles(context.profile, snapshot.profiles)
+      const profiles = allowedProfiles(profile, snapshot.profiles)
         .filter((profile) => input.scope === undefined || profile.scope === input.scope)
         .filter((profile) => input.includeArchived === true || profile.archivedAt === null)
         .slice(0, input.limit ?? snapshot.profiles.length);
@@ -478,7 +537,8 @@ export const make = Effect.gen(function* () {
   const spawn: AgentOrchestration["Service"]["spawn"] = Effect.fn("AgentOrchestration.spawn")(
     function* (scope, input) {
       const context = yield* invocationContext(scope);
-      if (context.profile === null) {
+      const profile = yield* loadLiveDelegationProfile(context);
+      if (profile === null) {
         return yield* invalid("Select an Agent profile for this thread before delegating.");
       }
       if (input.projectId !== undefined && input.projectId !== context.project.id) {
@@ -491,17 +551,17 @@ export const make = Effect.gen(function* () {
       ) {
         return yield* invalid("A child may only attach to the invoking Agent run.");
       }
-      if (context.profile.delegation.policy !== "allowlist") {
-        return yield* invalid(`Agent '${context.profile.name}' does not allow delegation.`);
+      if (profile.delegation.policy !== "allowlist") {
+        return yield* invalid(`Agent '${profile.name}' does not allow delegation.`);
       }
       const requestedKey = `${input.profile.scope}:${input.profile.id}`;
       if (
-        !context.profile.delegation.profiles.some(
+        !profile.delegation.profiles.some(
           (candidate) => `${candidate.scope}:${candidate.id}` === requestedKey,
         )
       ) {
         return yield* invalid(
-          `Agent '${context.profile.name}' may not delegate to '${input.profile.scope}/${input.profile.id}'.`,
+          `Agent '${profile.name}' may not delegate to '${input.profile.scope}/${input.profile.id}'.`,
         );
       }
       const target = yield* loadProfile(input.profile, context.project.workspaceRoot);
@@ -592,10 +652,7 @@ export const make = Effect.gen(function* () {
             ),
           ),
       );
-      const budget = minimumBudgets(
-        target.budgets,
-        context.currentRun?.budget ?? context.profile.budgets,
-      );
+      const budget = minimumBudgets(target.budgets, context.currentRun?.budget ?? profile.budgets);
       const compiled = yield* Effect.try({
         try: () =>
           compileAgentPrompt({
@@ -704,6 +761,7 @@ export const make = Effect.gen(function* () {
         scope: target.scope,
         revision: target.revision,
       };
+      let createdWorktree: { readonly path: string; readonly branch: string } | null = null;
       const failSpawn = Effect.fn("AgentOrchestration.failSpawn")(function* (
         detail: string,
         cause: unknown,
@@ -717,6 +775,15 @@ export const make = Effect.gen(function* () {
           })
           .pipe(Effect.ignore);
         yield* providers.stopSession({ threadId: childThreadId }).pipe(Effect.ignore);
+        if (createdWorktree !== null) {
+          yield* cleanupCreatedAgentWorktree({
+            gitWorkflow,
+            processRunner,
+            workspaceRoot: context.project.workspaceRoot,
+            worktreePath: createdWorktree.path,
+            branch: createdWorktree.branch,
+          });
+        }
         yield* engine
           .dispatch({
             type: "thread.delete",
@@ -766,6 +833,10 @@ export const make = Effect.gen(function* () {
                     }),
                   ),
                 );
+              createdWorktree = {
+                path: worktree.worktree.path,
+                branch: worktree.worktree.refName,
+              };
               yield* engine
                 .dispatch({
                   type: "thread.meta.update",

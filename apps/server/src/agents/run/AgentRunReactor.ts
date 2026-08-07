@@ -18,13 +18,29 @@ import { decide, type AgentRun } from "./AgentRun.ts";
 
 const decodeUsage = Schema.decodeUnknownOption(RuntimeTaskUsage);
 
+export class AgentTerminalHookPrerequisiteError extends Schema.TaggedErrorClass<AgentTerminalHookPrerequisiteError>()(
+  "AgentTerminalHookPrerequisiteError",
+  {
+    stage: Schema.Literals(["afterResult", "onError"]),
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Agent terminal hook prerequisites failed during ${this.stage}: ${this.detail}`;
+  }
+}
+
 export const completeSuccessfulRun = Effect.fn("AgentRunReactor.completeSuccessfulRun")(
   function* (input: {
     readonly run: AgentRun;
     readonly usage: RuntimeTaskUsageType | undefined;
     readonly occurredAt: string;
     readonly repository: AgentRunRepository.AgentRunRepository["Service"];
-    readonly afterResult: Effect.Effect<void, AgentHookRunner.AgentHookBlockedError>;
+    readonly afterResult: Effect.Effect<
+      void,
+      AgentHookRunner.AgentHookBlockedError | AgentTerminalHookPrerequisiteError
+    >;
   }) {
     const command = {
       type: "agent-run.succeed" as const,
@@ -99,16 +115,14 @@ const make = Effect.gen(function* () {
     >,
   ) {
     if (run.childThreadId !== null) {
-      const child = yield* projection.getThreadShellById(run.childThreadId).pipe(
-        Effect.map(Option.getOrNull),
-        Effect.orElseSucceed(() => null),
-      );
+      const child = yield* projection
+        .getThreadShellById(run.childThreadId)
+        .pipe(Effect.map(Option.getOrNull));
       if (child?.worktreePath) return child.worktreePath;
     }
     return yield* projection.getProjectShellById(run.projectId).pipe(
       Effect.map(Option.getOrNull),
       Effect.map((project) => project?.workspaceRoot ?? null),
-      Effect.orElseSucceed(() => null),
     );
   });
 
@@ -120,21 +134,36 @@ const make = Effect.gen(function* () {
   ) {
     const profile = yield* repository.getProfileSnapshot(run.profile.revision).pipe(
       Effect.map(Option.getOrNull),
-      Effect.orElseSucceed(() => null),
+      Effect.mapError(
+        (cause) =>
+          new AgentTerminalHookPrerequisiteError({
+            stage,
+            detail: "Could not load the pinned Agent profile snapshot.",
+            cause,
+          }),
+      ),
     );
-    const workspaceRoot = yield* hookWorkspace(run);
+    const workspaceRoot = yield* hookWorkspace(run).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AgentTerminalHookPrerequisiteError({
+            stage,
+            detail: "Could not resolve the Agent hook workspace.",
+            cause,
+          }),
+      ),
+    );
     if (profile === null || workspaceRoot === null) {
-      yield* Effect.logWarning("Agent run terminal hook prerequisites are unavailable", {
-        runId: run.id,
-        profileRevision: run.profile.revision,
-        missing:
-          profile === null
-            ? workspaceRoot === null
-              ? "profile-snapshot,workspace-root"
-              : "profile-snapshot"
-            : "workspace-root",
+      const missing =
+        profile === null
+          ? workspaceRoot === null
+            ? "profile snapshot and workspace root"
+            : "profile snapshot"
+          : "workspace root";
+      return yield* new AgentTerminalHookPrerequisiteError({
+        stage,
+        detail: `The ${missing} is unavailable.`,
       });
-      return;
     }
     yield* hooks.run({ profile, stage, workspaceRoot });
   });

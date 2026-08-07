@@ -6,6 +6,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import {
+  AgentProfileId,
+  AgentProfileRevision,
+  type AgentProfileSummary,
+  type AgentRuleSummary,
+} from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
@@ -348,4 +354,86 @@ it.layer(NodeServices.layer)("AgentCatalog", (it) => {
       assert.equal(yield* Ref.get(projectLoads), 2);
     }),
   );
+
+  it("bounds oversized RPC catalogs and reports omitted entries", () => {
+    const profiles = Array.from(
+      { length: 101 },
+      (_, index) =>
+        ({
+          id: AgentProfileId.make(`profile-${index}`),
+          scope: "environment",
+          revision: AgentProfileRevision.make("a".repeat(64)),
+          name: `Profile ${index}`,
+          defaultModelSelection: null,
+          chatSelectable: true,
+          sourcePath: null,
+          requirements: { toolRequirement: "none", t3McpCapabilities: [] },
+          archivedAt: null,
+          updatedAt: "2026-08-07T00:00:00.000Z",
+        }) satisfies AgentProfileSummary,
+    );
+
+    const bounded = AgentCatalog.boundAgentCatalog({ profiles, rules: [], diagnostics: [] });
+    assert.equal(bounded.profiles.length, 100);
+    assert.equal(bounded.diagnostics.length, 1);
+    assert.equal(bounded.diagnostics[0]?.code, "truncated");
+    assert.equal(bounded.diagnostics[0]?.id, "profile-100");
+  });
+
+  it("keeps truncation diagnostics visible within the transport diagnostic bound", () => {
+    const profiles = Array.from(
+      { length: 101 },
+      (_, index) =>
+        ({
+          id: AgentProfileId.make(`profile-${index}`),
+          scope: "environment",
+          revision: AgentProfileRevision.make("a".repeat(64)),
+          name: `Profile ${index}`,
+          defaultModelSelection: null,
+          chatSelectable: true,
+          sourcePath: null,
+          requirements: { toolRequirement: "none", t3McpCapabilities: [] },
+          archivedAt: null,
+          updatedAt: "2026-08-07T00:00:00.000Z",
+        }) satisfies AgentProfileSummary,
+    );
+    const rules = Array.from(
+      { length: 101 },
+      (_, index) =>
+        ({
+          id: AgentProfileId.make(`rule-${index}`),
+          scope: "project",
+          revision: AgentProfileRevision.make("b".repeat(64)),
+          name: `Rule ${index}`,
+          globs: [],
+          alwaysApply: true,
+          priority: 0,
+          sourcePath: null,
+          updatedAt: "2026-08-07T00:00:00.000Z",
+          archivedAt: null,
+        }) satisfies AgentRuleSummary,
+    );
+    const diagnostics = Array.from(
+      { length: 100 },
+      () =>
+        ({
+          code: "read-failed",
+          kind: "profile",
+          scope: "environment",
+          message: "Existing diagnostic",
+        }) as const,
+    );
+
+    const bounded = AgentCatalog.boundAgentCatalog({ profiles, rules, diagnostics });
+    assert.equal(bounded.profiles.length, 100);
+    assert.equal(bounded.rules.length, 100);
+    assert.equal(bounded.diagnostics.length, 100);
+    assert.deepEqual(
+      bounded.diagnostics.slice(0, 2).map((entry) => [entry.code, entry.kind, entry.id]),
+      [
+        ["truncated", "profile", "profile-100"],
+        ["truncated", "rule", "rule-100"],
+      ],
+    );
+  });
 });

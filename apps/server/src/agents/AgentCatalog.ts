@@ -17,6 +17,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import {
+  AGENT_PROFILE_MAX_REFERENCES,
   AgentCatalogDiagnostic,
   AgentCatalogEntryKind,
   AgentProfileDocument,
@@ -164,6 +165,38 @@ const sourceSort = (left: Source, right: Source) =>
   left.ref.scope.localeCompare(right.ref.scope) ||
   left.ref.id.localeCompare(right.ref.id) ||
   left.sourcePath.localeCompare(right.sourcePath);
+
+/** Keep the RPC catalog bounded while telling clients that entries were omitted. */
+export const boundAgentCatalog = (catalog: AgentCatalogSnapshot): AgentCatalogSnapshot => {
+  const truncationDiagnostics: Array<AgentCatalogDiagnostic> = [];
+  const profiles = catalog.profiles.slice(0, AGENT_PROFILE_MAX_REFERENCES);
+  const rules = catalog.rules.slice(0, AGENT_PROFILE_MAX_REFERENCES);
+  const addTruncationDiagnostic = <T extends AgentProfileSummary | AgentRuleSummary>(
+    entries: ReadonlyArray<T>,
+    kind: CatalogEntryKind,
+  ) => {
+    const omitted = entries[AGENT_PROFILE_MAX_REFERENCES];
+    if (!omitted) return;
+    truncationDiagnostics.push({
+      code: "truncated",
+      kind,
+      scope: omitted.scope,
+      id: omitted.id,
+      ...(omitted.sourcePath === null ? {} : { sourcePath: omitted.sourcePath }),
+      message: `Only the first ${AGENT_PROFILE_MAX_REFERENCES} ${kind} entries are shown; additional entries were omitted.`,
+    });
+  };
+  addTruncationDiagnostic(catalog.profiles, "profile");
+  addTruncationDiagnostic(catalog.rules, "rule");
+  return {
+    profiles,
+    rules,
+    diagnostics: [...truncationDiagnostics, ...catalog.diagnostics].slice(
+      0,
+      AGENT_PROFILE_MAX_REFERENCES,
+    ),
+  };
+};
 
 /** A read-only catalog. `list` parses only metadata; `get*` loads document bodies on demand. */
 export class AgentCatalog extends Context.Service<

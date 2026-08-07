@@ -335,6 +335,8 @@ export function RuleEditor({
   onSave: () => void;
   onArchiveRestore: () => void;
 }) {
+  const editorDisabled = disabled || isLoading;
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -351,7 +353,7 @@ export function RuleEditor({
               {archived ? "Restore" : "Archive"}
             </Button>
           ) : null}
-          <Button size="xs" onClick={onSave} disabled={disabled || isLoading}>
+          <Button size="xs" onClick={onSave} disabled={editorDisabled}>
             {isLoading ? <Spinner /> : <SaveIcon />} Save
           </Button>
         </div>
@@ -379,7 +381,7 @@ export function RuleEditor({
           <Input
             nativeInput
             value={draft.id}
-            disabled={!isNew}
+            disabled={!isNew || editorDisabled}
             onChange={(event) => onChange("id", event.target.value)}
             aria-label="Rule id"
           />
@@ -389,7 +391,7 @@ export function RuleEditor({
           <Input
             nativeInput
             value={draft.name}
-            disabled={disabled}
+            disabled={editorDisabled}
             onChange={(event) => onChange("name", event.target.value)}
             aria-label="Rule name"
           />
@@ -399,7 +401,7 @@ export function RuleEditor({
           <select
             className={selectClass}
             value={draft.scope}
-            disabled={!isNew}
+            disabled={!isNew || editorDisabled}
             onChange={(event) => onChange("scope", event.target.value as AgentRuleDraft["scope"])}
             aria-label="Rule scope"
           >
@@ -415,7 +417,7 @@ export function RuleEditor({
             min="-100"
             max="100"
             value={draft.priority}
-            disabled={disabled}
+            disabled={editorDisabled}
             onChange={(event) => onChange("priority", event.target.value)}
             aria-label="Rule priority"
           />
@@ -425,7 +427,7 @@ export function RuleEditor({
           <Input
             nativeInput
             value={draft.description}
-            disabled={disabled}
+            disabled={editorDisabled}
             onChange={(event) => onChange("description", event.target.value)}
             aria-label="Rule description"
           />
@@ -435,7 +437,7 @@ export function RuleEditor({
         <input
           type="checkbox"
           checked={draft.alwaysApply}
-          disabled={disabled}
+          disabled={editorDisabled}
           onChange={(event) => onChange("alwaysApply", event.target.checked)}
           aria-label="Always apply rule"
         />{" "}
@@ -445,7 +447,7 @@ export function RuleEditor({
         <span className="text-xs font-medium">File globs</span>
         <Textarea
           value={draft.globs}
-          disabled={disabled}
+          disabled={editorDisabled}
           onChange={(event) => onChange("globs", event.target.value)}
           aria-label="Rule file globs"
           placeholder={"src/**/*.ts\n**/*.test.ts"}
@@ -459,7 +461,7 @@ export function RuleEditor({
         <span className="text-xs font-medium">Profiles</span>
         <Textarea
           value={draft.profiles}
-          disabled={disabled}
+          disabled={editorDisabled}
           onChange={(event) => onChange("profiles", event.target.value)}
           aria-label="Rule profiles"
           className="min-h-24 font-mono text-xs"
@@ -472,7 +474,7 @@ export function RuleEditor({
         <span className="text-xs font-medium">Instructions</span>
         <Textarea
           value={draft.body}
-          disabled={disabled}
+          disabled={editorDisabled}
           onChange={(event) => onChange("body", event.target.value)}
           aria-label="Rule instructions"
           className="min-h-40"

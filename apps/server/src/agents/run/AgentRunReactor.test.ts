@@ -14,7 +14,7 @@ import * as Effect from "effect/Effect";
 import { AgentHookBlockedError } from "../AgentHookRunner.ts";
 import type { AgentRun, AgentRunCommand, AgentRunEvent } from "./AgentRun.ts";
 import type { AgentRunRepository } from "./AgentRunRepository.ts";
-import { completeSuccessfulRun } from "./AgentRunReactor.ts";
+import { AgentTerminalHookPrerequisiteError, completeSuccessfulRun } from "./AgentRunReactor.ts";
 
 const occurredAt = "2026-08-07T12:01:00.000Z";
 const runId = AgentRunId.make("completion-run");
@@ -119,6 +119,34 @@ it.effect("keeps a blocking afterResult hook authoritative after preflight succe
     assert.equal(failure?.type, "agent-run.fail");
     if (failure?.type === "agent-run.fail") {
       assert.equal(failure.failure, "Review hook rejected the result.");
+    }
+  }),
+);
+
+it.effect("fails completion when terminal hook prerequisites cannot be loaded", () =>
+  Effect.gen(function* () {
+    const dispatched: Array<AgentRunCommand> = [];
+    yield* completeSuccessfulRun({
+      run,
+      usage: { totalTokens: 1 },
+      occurredAt,
+      repository: repositoryFor(dispatched),
+      afterResult: Effect.fail(
+        new AgentTerminalHookPrerequisiteError({
+          stage: "afterResult",
+          detail: "Could not load the pinned Agent profile snapshot.",
+        }),
+      ),
+    });
+
+    assert.deepEqual(
+      dispatched.map((command) => command.type),
+      ["agent-run.fail"],
+    );
+    const failure = dispatched[0];
+    assert.equal(failure?.type, "agent-run.fail");
+    if (failure?.type === "agent-run.fail") {
+      assert.equal(failure.failure, "Could not load the pinned Agent profile snapshot.");
     }
   }),
 );

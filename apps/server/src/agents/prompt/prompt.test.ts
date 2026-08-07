@@ -104,6 +104,37 @@ it("does not match archived rules", () => {
   );
 });
 
+it("matches the supported glob syntax without a regexp backtracking engine", () => {
+  const rule = makeRule("glob-syntax", "glob guidance", {
+    globs: ["src/**/{api,worker}/file-?.[tj]s"],
+  });
+
+  const result = matchAgentRules({
+    rules: [rule],
+    contextFiles: ["src/nested/deeper/api/file-a.ts", "src/worker/file-z.js"],
+  });
+
+  assert.deepEqual(
+    result.rules.map((candidate) => candidate.id),
+    ["glob-syntax"],
+  );
+  assert.deepEqual(result.diagnostics, []);
+});
+
+it("bounds non-matching overlapping wildcards by visiting each pattern/path state once", () => {
+  const rule = makeRule("repeated-wildcards", "bounded guidance", {
+    globs: [`${"**a".repeat(48)}z`],
+  });
+
+  const result = matchAgentRules({
+    rules: [rule],
+    contextFiles: [`${"a".repeat(400)}y`],
+  });
+
+  assert.deepEqual(result.rules, []);
+  assert.deepEqual(result.diagnostics, []);
+});
+
 it("fails with a typed error when compiled rule content exceeds the cap", () => {
   const rule = makeRule("large", "12345", { alwaysApply: true });
   let error: unknown;
@@ -114,6 +145,27 @@ it("fails with a typed error when compiled rule content exceeds the cap", () => 
   }
   assert.isTrue(isAgentRuleContentOverflowError(error));
   assert.equal((error as { limitBytes?: number }).limitBytes, 4);
+});
+
+it("counts rule headers, separators, and UTF-8 bodies toward the content cap", () => {
+  const alpha = makeRule("alpha", "é", { alwaysApply: true });
+  const beta = makeRule("beta", "second", { alwaysApply: true });
+  const expected =
+    "<!-- t3-agent-rule: environment/alpha -->\né\n\n" +
+    "<!-- t3-agent-rule: environment/beta -->\nsecond";
+  const expectedBytes = new TextEncoder().encode(expected).byteLength;
+
+  let overflow: unknown;
+  try {
+    compileAgentRules({ rules: [alpha] }, 2);
+  } catch (error) {
+    overflow = error;
+  }
+  assert.isTrue(isAgentRuleContentOverflowError(overflow));
+
+  const result = compileAgentRules({ rules: [alpha, beta] }, expectedBytes);
+  assert.equal(result.content, expected);
+  assert.equal(result.contentBytes, expectedBytes);
 });
 
 it("compiles a stable envelope while preserving the clean task", () => {

@@ -303,6 +303,67 @@ describe("AgentRun", () => {
     }),
   );
 
+  it.effect("refuses a child before it can spawn when lineage tokens or cost are spent", () =>
+    Effect.gen(function* () {
+      const tokenBudget = { ...budget, maxTotalTokens: 5 };
+      const tokenRoot = yield* transition(
+        yield* start(
+          yield* transition(
+            yield* start(
+              yield* transition(emptyAgentRunState(), {
+                ...request("token-root"),
+                budget: tokenBudget,
+              }),
+              "token-root",
+            ),
+            { ...request("token-spent", "token-root"), budget: tokenBudget },
+          ),
+          "token-spent",
+        ),
+        {
+          type: "agent-run.succeed",
+          runId: id("token-spent"),
+          usage: { totalTokens: 5 },
+          occurredAt: later,
+        },
+      );
+      yield* expectInvariantFailure(
+        decide(tokenRoot, { ...request("token-child", "token-root"), budget: tokenBudget }),
+        /total-token budget/,
+        "budget-exhausted",
+      );
+
+      const { maxTotalTokens: _maxTotalTokens, ...withoutTokens } = budget;
+      const costBudget = { ...withoutTokens, maxEstimatedCostUsd: 0.5 };
+      const costRoot = yield* transition(
+        yield* start(
+          yield* transition(
+            yield* start(
+              yield* transition(emptyAgentRunState(), {
+                ...request("cost-root"),
+                budget: costBudget,
+              }),
+              "cost-root",
+            ),
+            { ...request("cost-spent", "cost-root"), budget: costBudget },
+          ),
+          "cost-spent",
+        ),
+        {
+          type: "agent-run.succeed",
+          runId: id("cost-spent"),
+          usage: { totalTokens: 0, estimatedCostUsd: 0.5 },
+          occurredAt: later,
+        },
+      );
+      yield* expectInvariantFailure(
+        decide(costRoot, { ...request("cost-child", "cost-root"), budget: costBudget }),
+        /estimated-cost budget/,
+        "budget-exhausted",
+      );
+    }),
+  );
+
   it.effect("reopens only successful results for follow-up revisions", () =>
     Effect.gen(function* () {
       const completed = yield* transition(

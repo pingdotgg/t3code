@@ -596,6 +596,26 @@ export const decide = Effect.fn("AgentRun.decide")(function* (
           "budget-exhausted",
         );
       const rootRuns = runsInLineage(state, parent.rootRunId);
+      // A child inherits an effective budget for the entire lineage. Do not
+      // create a thread that cannot spend another token or cent.
+      if (
+        command.budget.maxTotalTokens !== undefined &&
+        totalTokens(rootRuns) >= command.budget.maxTotalTokens
+      )
+        return yield* invariant(
+          command,
+          "The total-token budget is exhausted.",
+          "budget-exhausted",
+        );
+      if (
+        command.budget.maxEstimatedCostUsd !== undefined &&
+        totalEstimatedCostUsd(rootRuns) >= command.budget.maxEstimatedCostUsd
+      )
+        return yield* invariant(
+          command,
+          "The estimated-cost budget is exhausted.",
+          "budget-exhausted",
+        );
       if (rootRuns.length >= parent.budget.maxRuns)
         return yield* invariant(
           command,

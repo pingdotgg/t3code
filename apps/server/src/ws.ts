@@ -70,6 +70,10 @@ import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as AgentCatalog from "./agents/AgentCatalog.ts";
 import * as AgentProfileStore from "./agents/AgentProfileStore.ts";
 import * as AgentRuleStore from "./agents/AgentRuleStore.ts";
+import {
+  mapAgentProfileStoreError,
+  mapAgentRuleStoreError,
+} from "./agents/AgentStoreErrorMapping.ts";
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -482,36 +486,6 @@ const makeWsRpcLayer = (
             ? new AgentProfileNotFoundError(ref)
             : new AgentProfileInvalidError({ detail: error.message });
 
-      const mapAgentProfileStoreError = (error: AgentProfileStore.AgentProfileStoreFailure) => {
-        if (
-          error._tag === "AgentProfileStoreRevisionConflictError" &&
-          error.expectedRevision !== undefined &&
-          error.actualRevision !== undefined
-        ) {
-          return new AgentProfileRevisionConflictError({
-            id: error.id,
-            scope: error.scope,
-            expectedRevision: error.expectedRevision,
-            actualRevision: error.actualRevision,
-          });
-        }
-        return new AgentProfileInvalidError({ detail: error.message });
-      };
-      const mapAgentRuleStoreError = (error: AgentRuleStore.AgentRuleStoreFailure) => {
-        if (
-          error._tag === "AgentRuleStoreRevisionConflictError" &&
-          error.expectedRevision !== undefined &&
-          error.actualRevision !== undefined
-        ) {
-          return new AgentProfileRevisionConflictError({
-            id: error.id,
-            scope: error.scope,
-            expectedRevision: error.expectedRevision,
-            actualRevision: error.actualRevision,
-          });
-        }
-        return new AgentProfileInvalidError({ detail: `Rule ${error.id}: ${error.message}` });
-      };
       const observeRpcEffect = <A, E, R>(
         method: string,
         effect: Effect.Effect<A, E, R>,
@@ -1115,7 +1089,7 @@ const makeWsRpcLayer = (
             Effect.gen(function* () {
               const workspaceRoot = yield* agentWorkspaceRoot(input.projectId);
               const catalog = yield* agentCatalog.list({ workspaceRoot });
-              return {
+              return AgentCatalog.boundAgentCatalog({
                 profiles: catalog.profiles.filter(
                   (profile) => input.includeArchived === true || profile.archivedAt === null,
                 ),
@@ -1123,7 +1097,7 @@ const makeWsRpcLayer = (
                   (rule) => input.includeArchived === true || rule.archivedAt === null,
                 ),
                 diagnostics: catalog.diagnostics.slice(0, AGENT_PROFILE_MAX_REFERENCES),
-              };
+              });
             }),
             { "rpc.aggregate": "agents" },
           ),

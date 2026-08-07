@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { NodeServices } from "@effect/platform-node";
 import { it } from "@effect/vitest";
 
@@ -24,7 +25,9 @@ import { OrchestrationCommandInvariantError } from "../orchestration/Errors.ts";
 import {
   agentWorktreeBranchName,
   applyIsolatedWorktreePatch,
+  cleanupCreatedAgentWorktree,
   dispatchAgentChildLifecycle,
+  liveAgentProfileLocator,
   minimumBudgets,
   resolvePinnedAgentRuntimeSettings,
   runtimeSettingsForAgentProfile,
@@ -87,6 +90,13 @@ it("derives restrictive runtime policy from a pinned profile", () => {
   NodeAssert.deepEqual(runtimeSettingsForAgentProfile(restrictiveProfile), {
     runtimeMode: "approval-required",
     interactionMode: "plan",
+  });
+});
+
+it("uses an unpinned locator for live delegation configuration", () => {
+  NodeAssert.deepEqual(liveAgentProfileLocator(restrictiveProfile), {
+    id: restrictiveProfile.id,
+    scope: restrictiveProfile.scope,
   });
 });
 
@@ -209,6 +219,50 @@ it.effect("preserves the orchestration invariant when the child turn cannot star
     NodeAssert.match(
       result._tag === "Failure" ? result.failure.detail : "",
       /could not start.*Thread 'child-thread' does not exist/i,
+    );
+  }),
+);
+
+it.effect("cleans only the isolated worktree and branch that a failed spawn created", () =>
+  Effect.gen(function* () {
+    const removed: Array<{
+      readonly cwd: string;
+      readonly path: string;
+      readonly force?: boolean | undefined;
+    }> = [];
+    const commands: Array<ProcessRunner.ProcessRunInput> = [];
+    yield* cleanupCreatedAgentWorktree({
+      gitWorkflow: {
+        removeWorktree: (input) =>
+          Effect.sync(() => {
+            removed.push(input);
+          }),
+      },
+      processRunner: {
+        run: (input) =>
+          Effect.sync(() => {
+            commands.push(input);
+            return {
+              stdout: "",
+              stderr: "",
+              code: ChildProcessSpawner.ExitCode(0),
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            };
+          }),
+      },
+      workspaceRoot: "/repository",
+      worktreePath: "/repository/.t3/worktrees/agent-run",
+      branch: "t3code/agent-run",
+    });
+
+    NodeAssert.deepEqual(removed, [
+      { cwd: "/repository", path: "/repository/.t3/worktrees/agent-run", force: true },
+    ]);
+    NodeAssert.deepEqual(
+      commands.map((command) => command.args),
+      [["branch", "--delete", "--force", "t3code/agent-run"]],
     );
   }),
 );
@@ -336,4 +390,38 @@ it.effect("refuses untracked isolated-worktree files without touching the target
     NodeAssert.match(result._tag === "Failure" ? result.failure.detail : "", /untracked files/i);
     NodeAssert.equal(yield* fileSystem.readFileString(path.join(root, "tracked.txt")), "base\n");
   }).pipe(Effect.provide(IntegrationTestLayer)),
+);
+
+const GitFailureLayer = Layer.mergeAll(
+  NodeServices.layer,
+  Layer.succeed(
+    ProcessRunner.ProcessRunner,
+    ProcessRunner.ProcessRunner.of({
+      run: () =>
+        Effect.succeed({
+          stdout: "sensitive stdout from the repository",
+          stderr: "sensitive stderr from the repository",
+          code: ChildProcessSpawner.ExitCode(1),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        }),
+    }),
+  ),
+);
+
+it.effect("does not expose Git command output in isolated-worktree failure details", () =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const result = yield* Effect.result(
+      applyIsolatedWorktreePatch({
+        sourceWorktreePath: path.join(process.cwd(), "apps"),
+        targetWorktreePath: process.cwd(),
+      }),
+    );
+    NodeAssert.equal(result._tag, "Failure");
+    const detail = result._tag === "Failure" ? result.failure.detail : "";
+    NodeAssert.match(detail, /Git worktree validation failed \(exit code 1\)/);
+    NodeAssert.doesNotMatch(detail, /sensitive (stdout|stderr)/i);
+  }).pipe(Effect.provide(GitFailureLayer)),
 );

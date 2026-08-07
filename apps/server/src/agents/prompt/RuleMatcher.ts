@@ -114,11 +114,57 @@ const normalizeGlob = (value: string): string => {
   return candidate;
 };
 
-const escapeRegex = (value: string): string => value.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+type CharacterClassPart =
+  | { readonly type: "character"; readonly value: string }
+  | { readonly type: "range"; readonly from: string; readonly to: string };
 
-/** Small, deterministic glob matcher covering the workspace rule syntax. */
-const globRegex = (glob: string): RegExp => {
-  let source = "^";
+type GlobToken =
+  | { readonly type: "literal"; readonly value: string }
+  | { readonly type: "star" }
+  | { readonly type: "deep-star" }
+  | { readonly type: "deep-star-directory" }
+  | { readonly type: "single" }
+  | {
+      readonly type: "class";
+      readonly negated: boolean;
+      readonly parts: readonly CharacterClassPart[];
+    }
+  | { readonly type: "alternatives"; readonly values: readonly string[] };
+
+const parseCharacterClass = (contents: string): GlobToken => {
+  if (contents.length === 0 || contents.includes("[")) {
+    throw new Error("Invalid character class");
+  }
+
+  const negated = contents.startsWith("^");
+  const source = negated ? contents.slice(1) : contents;
+  if (source.length === 0) throw new Error("Invalid character class");
+
+  const parts: CharacterClassPart[] = [];
+  for (let index = 0; index < source.length; index += 1) {
+    const value = source[index];
+    if (value === undefined) break;
+    const rangeEnd = source[index + 2];
+    if (source[index + 1] === "-" && rangeEnd !== undefined) {
+      if (value.codePointAt(0)! > rangeEnd.codePointAt(0)!) {
+        throw new Error("Invalid character class range");
+      }
+      parts.push({ type: "range", from: value, to: rangeEnd });
+      index += 2;
+    } else {
+      parts.push({ type: "character", value });
+    }
+  }
+  return { type: "class", negated, parts };
+};
+
+/**
+ * Parse the small, intentionally portable rule-glob grammar. This is not a
+ * regular-expression compiler: matching uses the bounded state machine below,
+ * so a persisted glob can never make the JavaScript regexp engine backtrack.
+ */
+const parseGlob = (glob: string): readonly GlobToken[] => {
+  const tokens: GlobToken[] = [];
   for (let index = 0; index < glob.length; index += 1) {
     const character = glob[index];
     if (character === undefined) break;
@@ -127,37 +173,118 @@ const globRegex = (glob: string): RegExp => {
         index += 1;
         if (glob[index + 1] === "/") {
           index += 1;
-          source += "(?:.*/)?";
+          tokens.push({ type: "deep-star-directory" });
         } else {
-          source += ".*";
+          tokens.push({ type: "deep-star" });
         }
       } else {
-        source += "[^/]*";
+        tokens.push({ type: "star" });
       }
-    } else if (character === "?") {
-      source += "[^/]";
-    } else if (character === "[") {
+      continue;
+    }
+    if (character === "?") {
+      tokens.push({ type: "single" });
+      continue;
+    }
+    if (character === "[") {
       const end = glob.indexOf("]", index + 1);
       if (end < 0) throw new Error("Unclosed character class");
-      const contents = glob.slice(index + 1, end);
-      if (contents.length === 0 || contents.includes("["))
-        throw new Error("Invalid character class");
-      source += `[${contents.replaceAll("\\", "\\\\")}]`;
+      tokens.push(parseCharacterClass(glob.slice(index + 1, end)));
       index = end;
-    } else if (character === "{") {
+      continue;
+    }
+    if (character === "{") {
       const end = glob.indexOf("}", index + 1);
       if (end < 0) throw new Error("Unclosed alternation");
-      const alternatives = glob.slice(index + 1, end).split(",");
-      if (alternatives.length < 2 || alternatives.some((part) => part.length === 0)) {
+      const values = glob.slice(index + 1, end).split(",");
+      if (values.length < 2 || values.some((value) => value.length === 0)) {
         throw new Error("Invalid alternation");
       }
-      source += `(?:${alternatives.map(escapeRegex).join("|")})`;
+      tokens.push({ type: "alternatives", values });
       index = end;
-    } else {
-      source += escapeRegex(character);
+      continue;
+    }
+    tokens.push({ type: "literal", value: character });
+  }
+  return tokens;
+};
+
+const characterClassMatches = (
+  token: Extract<GlobToken, { readonly type: "class" }>,
+  value: string,
+): boolean => {
+  const codePoint = value.codePointAt(0)!;
+  const matches = token.parts.some((part) =>
+    part.type === "character"
+      ? part.value === value
+      : codePoint >= part.from.codePointAt(0)! && codePoint <= part.to.codePointAt(0)!,
+  );
+  return token.negated ? !matches : matches;
+};
+
+/**
+ * Match by visiting each pattern/path state at most once. This bounded
+ * state-machine evaluation avoids the unbounded backtracking of a regexp
+ * engine; rule glob and path fields are each capped at 512 UTF-16 code units
+ * by the contract, including for adversarial repeated wildcards.
+ */
+const matchesGlob = (tokens: readonly GlobToken[], path: string): boolean => {
+  const pending: Array<readonly [number, number]> = [[0, 0]];
+  const visited = new Set<string>();
+
+  while (pending.length > 0) {
+    const state = pending.pop();
+    if (!state) break;
+    const [tokenIndex, pathIndex] = state;
+    const key = `${tokenIndex}:${pathIndex}`;
+    if (visited.has(key)) continue;
+    visited.add(key);
+
+    if (tokenIndex === tokens.length) {
+      if (pathIndex === path.length) return true;
+      continue;
+    }
+    const token = tokens[tokenIndex];
+    if (!token) continue;
+    const character = path[pathIndex];
+
+    switch (token.type) {
+      case "star":
+        pending.push([tokenIndex + 1, pathIndex]);
+        if (character !== undefined && character !== "/") pending.push([tokenIndex, pathIndex + 1]);
+        break;
+      case "deep-star":
+        pending.push([tokenIndex + 1, pathIndex]);
+        if (character !== undefined) pending.push([tokenIndex, pathIndex + 1]);
+        break;
+      case "deep-star-directory":
+        pending.push([tokenIndex + 1, pathIndex]);
+        if (character !== undefined) {
+          pending.push([tokenIndex, pathIndex + 1]);
+          if (character === "/") pending.push([tokenIndex + 1, pathIndex + 1]);
+        }
+        break;
+      case "literal":
+        if (character === token.value) pending.push([tokenIndex + 1, pathIndex + 1]);
+        break;
+      case "single":
+        if (character !== undefined && character !== "/")
+          pending.push([tokenIndex + 1, pathIndex + 1]);
+        break;
+      case "class":
+        if (character !== undefined && characterClassMatches(token, character)) {
+          pending.push([tokenIndex + 1, pathIndex + 1]);
+        }
+        break;
+      case "alternatives":
+        for (const value of token.values) {
+          if (path.startsWith(value, pathIndex))
+            pending.push([tokenIndex + 1, pathIndex + value.length]);
+        }
+        break;
     }
   }
-  return new RegExp(`${source}$`);
+  return false;
 };
 
 const isTargeted = (
@@ -207,8 +334,8 @@ export const matchAgentRules = (input: AgentRuleMatchInput): AgentRuleMatchResul
     let globMatched = false;
     for (const glob of rule.globs) {
       try {
-        const expression = globRegex(normalizeGlob(glob));
-        globMatched ||= contextFiles.some((file) => expression.test(file));
+        const tokens = parseGlob(normalizeGlob(glob));
+        globMatched ||= contextFiles.some((file) => matchesGlob(tokens, file));
       } catch (error) {
         diagnostics.push({
           code: "invalid-glob",
@@ -240,8 +367,13 @@ export const compileAgentRules = (
   const chunks: string[] = [];
   let contentBytes = 0;
   for (const rule of matched.rules) {
-    const bodyBytes = textEncoder.encode(rule.body).byteLength;
-    const nextBytes = contentBytes + bodyBytes;
+    if (rule.body.length === 0) continue;
+    const chunk = `<!-- t3-agent-rule: ${rule.scope}/${rule.id} -->\n${rule.body}`;
+    const separator = chunks.length === 0 ? "" : "\n\n";
+    const nextBytes =
+      contentBytes +
+      textEncoder.encode(separator).byteLength +
+      textEncoder.encode(chunk).byteLength;
     if (nextBytes > maxBytes) {
       throw new AgentRuleContentOverflowError({
         limitBytes: maxBytes,
@@ -251,9 +383,7 @@ export const compileAgentRules = (
       });
     }
     contentBytes = nextBytes;
-    if (rule.body.length > 0) {
-      chunks.push(`<!-- t3-agent-rule: ${rule.scope}/${rule.id} -->\n${rule.body}`);
-    }
+    chunks.push(chunk);
   }
   return {
     rules: matched.rules,

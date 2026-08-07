@@ -24,4 +24,25 @@ describe("Rules settings editor", () => {
     expect(markup).toContain('aria-label="Rule instructions"');
     expect(markup).toContain("Save");
   });
+
+  it("locks the editor while the selected rule is loading", () => {
+    const markup = renderToStaticMarkup(
+      <RuleEditor
+        draft={draftFromRule()}
+        isNew={false}
+        archived={false}
+        isLoading
+        error={null}
+        notice={null}
+        disabled={false}
+        onChange={() => undefined}
+        onSave={() => undefined}
+        onArchiveRestore={() => undefined}
+      />,
+    );
+
+    expect(markup).toMatch(/<input[^>]*disabled=""[^>]*aria-label="Rule name"/);
+    expect(markup).toMatch(/<textarea[^>]*disabled=""[^>]*aria-label="Rule file globs"/);
+    expect(markup).toMatch(/<textarea[^>]*disabled=""[^>]*aria-label="Rule instructions"/);
+  });
 });

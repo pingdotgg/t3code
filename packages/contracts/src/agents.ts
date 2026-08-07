@@ -280,6 +280,7 @@ export const AgentCatalogDiagnosticCode = Schema.Literals([
   "outside-root",
   "read-failed",
   "root-unavailable",
+  "truncated",
 ]);
 export type AgentCatalogDiagnosticCode = typeof AgentCatalogDiagnosticCode.Type;
 
@@ -423,12 +424,12 @@ export class AgentProfileRevisionConflictError extends Schema.TaggedErrorClass<A
   {
     id: AgentProfileId,
     scope: AgentProfileScope,
-    expectedRevision: AgentProfileRevision,
-    actualRevision: AgentProfileRevision,
+    expectedRevision: Schema.optionalKey(AgentProfileRevision),
+    actualRevision: Schema.optionalKey(AgentProfileRevision),
   },
 ) {
   override get message(): string {
-    return `Agent profile '${this.scope}/${this.id}' changed from revision ${this.expectedRevision} to ${this.actualRevision}.`;
+    return `Agent profile '${this.scope}/${this.id}' changed from revision ${this.expectedRevision ?? "a new entry"} to ${this.actualRevision ?? "no entry"}.`;
   }
 }
 
