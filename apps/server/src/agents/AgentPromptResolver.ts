@@ -104,6 +104,10 @@ const resolutionError = (
 export class AgentPromptResolver extends Context.Service<
   AgentPromptResolver,
   {
+    readonly loadProfile: (input: {
+      readonly profileRef: AgentProfileRef;
+      readonly workspaceRoot: string;
+    }) => Effect.Effect<AgentProfileDocument, AgentPromptResolutionError>;
     readonly resolve: (input: {
       readonly profileRef: AgentProfileRef | null;
       readonly threadId: ThreadId;
@@ -122,7 +126,7 @@ export const make = Effect.gen(function* () {
   const hooks = yield* AgentHookRunner.AgentHookRunner;
   const runs = yield* AgentRunRepository.AgentRunRepository;
 
-  const loadProfile = Effect.fn("AgentPromptResolver.loadProfile")(function* (
+  const loadProfileDocument = Effect.fn("AgentPromptResolver.loadProfileDocument")(function* (
     ref: AgentProfileRef,
     workspaceRoot: string,
   ) {
@@ -131,7 +135,14 @@ export const make = Effect.gen(function* () {
       .pipe(
         Effect.mapError((error) => resolutionError("profile-snapshot", error.message, error, ref)),
       );
-    if (Option.isSome(snapshot)) return snapshot.value;
+    if (Option.isSome(snapshot)) {
+      const cached = snapshot.value;
+      if (cached.id !== ref.id || cached.scope !== ref.scope || cached.revision !== ref.revision) {
+        const detail = `Cached agent profile revision ${ref.revision} belongs to '${cached.scope}/${cached.id}', not '${ref.scope}/${ref.id}'.`;
+        return yield* resolutionError("profile-snapshot", detail, undefined, ref);
+      }
+      return cached;
+    }
 
     const profile = yield* catalog
       .getProfile({ ref, workspaceRoot })
@@ -150,6 +161,11 @@ export const make = Effect.gen(function* () {
     return profile;
   });
 
+  const loadProfile: AgentPromptResolver["Service"]["loadProfile"] = ({
+    profileRef,
+    workspaceRoot,
+  }) => loadProfileDocument(profileRef, workspaceRoot);
+
   const isCompiledAgentTurn = Effect.fn("AgentPromptResolver.isCompiledAgentTurn")(
     function* (input: { readonly threadId: ThreadId; readonly commandId: CommandId | null }) {
       if (input.commandId === null) return false;
@@ -167,7 +183,7 @@ export const make = Effect.gen(function* () {
   )(function* (input) {
     const profileRef = input.profileRef;
     if (profileRef === null) return { message: input.message, profile: null };
-    const profile = yield* loadProfile(profileRef, input.workspaceRoot);
+    const profile = yield* loadProfile({ profileRef, workspaceRoot: input.workspaceRoot });
     if (yield* isCompiledAgentTurn({ threadId: input.threadId, commandId: input.commandId })) {
       return { message: input.message, profile };
     }
@@ -217,7 +233,7 @@ export const make = Effect.gen(function* () {
     return { message, profile };
   });
 
-  return AgentPromptResolver.of({ resolve });
+  return AgentPromptResolver.of({ loadProfile, resolve });
 });
 
 export const layer = Layer.effect(AgentPromptResolver, make);

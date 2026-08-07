@@ -203,6 +203,7 @@ export const matchAgentRules = (input: AgentRuleMatchInput): AgentRuleMatchResul
 
   const matching: AgentRuleDocument[] = [];
   for (const rule of input.rules) {
+    if (rule.archivedAt !== null) continue;
     let globMatched = false;
     for (const glob of rule.globs) {
       try {

@@ -17,6 +17,8 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import {
+  AgentCatalogDiagnostic,
+  AgentCatalogEntryKind,
   AgentProfileDocument,
   AgentProfileLocator,
   AgentProfileSummary,
@@ -31,31 +33,11 @@ import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 const MARKDOWN_EXTENSION = ".md";
 const FRONTMATTER_PATTERN = /^\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
 
-const CatalogEntryKind = Schema.Literals(["profile", "rule"]);
+const CatalogEntryKind = AgentCatalogEntryKind;
 type CatalogEntryKind = typeof CatalogEntryKind.Type;
 
 const CatalogScope = Schema.Literals(["environment", "project"]);
 type CatalogScope = typeof CatalogScope.Type;
-
-const CatalogDiagnosticCode = Schema.Literals([
-  "duplicate",
-  "invalid-document",
-  "invalid-reference",
-  "missing-frontmatter",
-  "outside-root",
-  "read-failed",
-  "root-unavailable",
-]);
-
-export const AgentCatalogDiagnostic = Schema.Struct({
-  code: CatalogDiagnosticCode,
-  kind: CatalogEntryKind,
-  scope: CatalogScope,
-  id: Schema.optionalKey(Schema.String),
-  sourcePath: Schema.optionalKey(Schema.String),
-  message: Schema.String,
-});
-export type AgentCatalogDiagnostic = typeof AgentCatalogDiagnostic.Type;
 
 export const AgentCatalogSnapshot = Schema.Struct({
   profiles: Schema.Array(AgentProfileSummary),

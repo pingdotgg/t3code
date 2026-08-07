@@ -377,12 +377,14 @@ describe("AgentRun", () => {
           targetThreadId: thread("target"),
           occurredAt: later,
         });
+        expect(reintegrating.runs.get(id("root"))?.failure).toBeUndefined();
         const integrated = yield* transition(reintegrating, {
           type: "agent-run.succeed-integration",
           runId: id("root"),
           occurredAt: later,
         });
         expect(integrated.runs.get(id("root"))?.status).toBe("integrated");
+        expect(integrated.runs.get(id("root"))?.failure).toBeUndefined();
       }),
   );
 

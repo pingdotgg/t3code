@@ -7,6 +7,7 @@
  */
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -25,7 +26,7 @@ export const isDeadlineTracked = (run: AgentRun): boolean => ACTIVE_STATUSES.has
 
 /** The wall-time budget starts when a run is requested until it finishes. */
 export const deadlineAtMillis = (run: AgentRun): number => {
-  const origin = Date.parse(run.startedAt ?? run.requestedAt);
+  const origin = Date.parse(run.requestedAt);
   return origin + run.budget.maxWallTimeMinutes * 60_000;
 };
 
@@ -108,8 +109,11 @@ const make = Effect.gen(function* () {
 
     const nowMillis = yield* Clock.currentTimeMillis;
     const delayMillis = Math.max(0, deadlineAtMillis(run) - nowMillis);
-    const fiber = yield* Effect.sleep(Duration.millis(delayMillis)).pipe(
-      Effect.andThen(expireRun(run.id, repository, provider)),
+    const registered = yield* Deferred.make<void>();
+    const fiber = yield* Deferred.await(registered).pipe(
+      Effect.andThen(Effect.sleep(Duration.millis(delayMillis))),
+      Effect.andThen(Effect.sync(() => fibers.delete(run.id))),
+      Effect.andThen(expireRun(run.id, repository, provider).pipe(Effect.uninterruptible)),
       Effect.asVoid,
       Effect.catchCause((cause) =>
         Effect.logWarning("Agent run deadline reactor could not enforce a deadline", {
@@ -120,6 +124,7 @@ const make = Effect.gen(function* () {
       Effect.forkScoped,
     );
     fibers.set(run.id, fiber);
+    yield* Deferred.succeed(registered, undefined);
   });
 
   // listActive is the restart recovery boundary. The change stream is

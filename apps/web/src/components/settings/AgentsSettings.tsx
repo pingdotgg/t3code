@@ -10,7 +10,11 @@ import {
   SaveIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import type { AgentProfileSummary, EnvironmentId } from "@t3tools/contracts";
+import type {
+  AgentCatalogDiagnostic,
+  AgentProfileSummary,
+  EnvironmentId,
+} from "@t3tools/contracts";
 
 import { useActiveEnvironmentId, useProjects } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
@@ -35,6 +39,8 @@ const selectClass =
   "h-8 min-w-40 rounded-lg border border-input bg-background px-2.5 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30";
 const compactInputClass = "w-full sm:w-64";
 const nowKey = (profile: AgentProfileSummary) => `${profile.scope}:${profile.id}`;
+const diagnosticLabel = (diagnostic: AgentCatalogDiagnostic): string =>
+  `${diagnostic.scope} ${diagnostic.kind}${diagnostic.id ? ` '${diagnostic.id}'` : ""}: ${diagnostic.message}`;
 
 function failureMessage(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
@@ -336,6 +342,19 @@ export function AgentsSettingsPanel() {
             </div>
           }
         />
+        {(catalogQuery.data?.diagnostics.length ?? 0) > 0 ? (
+          <div
+            className="mx-3 space-y-1 rounded-lg border border-warning/35 bg-warning/8 px-3 py-2 text-xs text-warning sm:mx-4"
+            role="alert"
+          >
+            <p className="font-medium">Some Agent files could not be loaded.</p>
+            {catalogQuery.data?.diagnostics.slice(0, 3).map((diagnostic, index) => (
+              <p key={`${diagnostic.code}:${diagnostic.sourcePath ?? diagnostic.id ?? index}`}>
+                {diagnosticLabel(diagnostic)}
+              </p>
+            ))}
+          </div>
+        ) : null}
         <div className="grid gap-3 px-3 sm:px-4 lg:grid-cols-[minmax(16rem,0.85fr)_minmax(0,1.6fr)]">
           <div
             className="rounded-xl border border-border/70 bg-muted/15 p-2"

@@ -89,6 +89,21 @@ it("matches always-apply, targeted, and glob rules in deterministic order", () =
   );
 });
 
+it("does not match archived rules", () => {
+  const archived = makeRule("archived", "stale guidance", {
+    alwaysApply: true,
+    archivedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const active = makeRule("active", "current guidance", { alwaysApply: true });
+
+  const result = matchAgentRules({ rules: [archived, active], profile });
+
+  assert.deepEqual(
+    result.rules.map((rule) => rule.id),
+    ["active"],
+  );
+});
+
 it("fails with a typed error when compiled rule content exceeds the cap", () => {
   const rule = makeRule("large", "12345", { alwaysApply: true });
   let error: unknown;

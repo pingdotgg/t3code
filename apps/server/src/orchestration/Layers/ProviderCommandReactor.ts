@@ -753,15 +753,14 @@ const make = Effect.gen(function* () {
     const project = yield* resolveProject(thread.projectId);
     const workspaceRoot =
       resolveThreadWorkspaceCwd({ thread, projects: project ? [project] : [] }) ?? process.cwd();
-    const resolvedPrompt = yield* agentPromptResolver
-      .resolve({
-        profileRef: thread.agentProfile ?? null,
-        threadId: input.threadId,
-        commandId: input.commandId,
-        workspaceRoot,
-        message: input.messageText,
-      })
-      .pipe(
+    const requestedModelSelection =
+      input.modelSelection ?? threadModelSelections.get(input.threadId) ?? thread.modelSelection;
+    const requestedCapabilities = yield* providerService.getCapabilities(
+      requestedModelSelection.instanceId,
+    );
+    const profileRef = thread.agentProfile ?? null;
+    if (profileRef !== null) {
+      const profile = yield* agentPromptResolver.loadProfile({ profileRef, workspaceRoot }).pipe(
         Effect.mapError(
           (error) =>
             new ProviderAdapterRequestError({
@@ -771,13 +770,6 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-    const requestedModelSelection =
-      input.modelSelection ?? threadModelSelections.get(input.threadId) ?? thread.modelSelection;
-    const requestedCapabilities = yield* providerService.getCapabilities(
-      requestedModelSelection.instanceId,
-    );
-    if (resolvedPrompt.profile !== null) {
-      const profile = resolvedPrompt.profile;
       const compatibility = resolveAgentRuntimeCompatibility(requestedCapabilities, {
         delegation: profile.delegation.policy === "allowlist",
         instructionPriority: profile.instructionPriority,
@@ -796,6 +788,24 @@ const make = Effect.gen(function* () {
         });
       }
     }
+    const resolvedPrompt = yield* agentPromptResolver
+      .resolve({
+        profileRef,
+        threadId: input.threadId,
+        commandId: input.commandId,
+        workspaceRoot,
+        message: input.messageText,
+      })
+      .pipe(
+        Effect.mapError(
+          (error) =>
+            new ProviderAdapterRequestError({
+              provider: "agent-profile",
+              method: "thread.turn.start",
+              detail: error.detail,
+            }),
+        ),
+      );
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       pendingTurnStart: true,

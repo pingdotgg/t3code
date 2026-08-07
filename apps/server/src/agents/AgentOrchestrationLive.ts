@@ -57,7 +57,7 @@ const invalid = (
     ...(context?.cause === undefined ? {} : { cause: context.cause }),
   });
 
-const minimumBudgets = (
+export const minimumBudgets = (
   child: AgentProfileBudgets,
   parent: AgentProfileBudgets,
 ): AgentProfileBudgets => ({
@@ -179,6 +179,8 @@ export const applyIsolatedWorktreePatch = Effect.fn(
 )(function* (input: {
   readonly sourceWorktreePath: string;
   readonly targetWorktreePath: string;
+  /** Only a durably integrating run may accept its exact patch on a dirty target. */
+  readonly allowAlreadyApplied?: boolean;
 }): Effect.fn.Return<
   void,
   AgentProfileInvalidError,
@@ -277,17 +279,6 @@ export const applyIsolatedWorktreePatch = Effect.fn(
       "The isolated Agent created untracked files. T3 will not copy untracked files automatically; add them to Git or integrate manually.",
     );
   }
-  const targetStatus = yield* runGit(
-    targetWorktreePath,
-    ["status", "--porcelain=v1", "-z"],
-    "Integration target inspection",
-  );
-  if (targetStatus.length > 0) {
-    return yield* invalid(
-      "The integration target has uncommitted changes. Commit, stash, or manually merge before integrating this Agent result.",
-    );
-  }
-
   const targetHead = (yield* runGit(
     targetWorktreePath,
     ["rev-parse", "HEAD"],
@@ -305,6 +296,26 @@ export const applyIsolatedWorktreePatch = Effect.fn(
     "Agent patch generation",
   );
   if (patch.length === 0) return;
+
+  const targetStatus = yield* runGit(
+    targetWorktreePath,
+    ["status", "--porcelain=v1", "-z"],
+    "Integration target inspection",
+  );
+  if (targetStatus.length > 0) {
+    if (input.allowAlreadyApplied === true) {
+      const alreadyApplied = yield* runGit(
+        targetWorktreePath,
+        ["apply", "--reverse", "--check", "--whitespace=nowarn", "-"],
+        "Agent patch retry inspection",
+        patch,
+      ).pipe(Effect.result);
+      if (Result.isSuccess(alreadyApplied)) return;
+    }
+    return yield* invalid(
+      "The integration target has uncommitted changes. Commit, stash, or manually merge before integrating this Agent result.",
+    );
+  }
 
   yield* runGit(
     targetWorktreePath,
@@ -581,7 +592,10 @@ export const make = Effect.gen(function* () {
             ),
           ),
       );
-      const budget = minimumBudgets(target.budgets, context.profile.budgets);
+      const budget = minimumBudgets(
+        target.budgets,
+        context.currentRun?.budget ?? context.profile.budgets,
+      );
       const compiled = yield* Effect.try({
         try: () =>
           compileAgentPrompt({
@@ -702,6 +716,7 @@ export const make = Effect.gen(function* () {
             occurredAt: yield* nowIso,
           })
           .pipe(Effect.ignore);
+        yield* providers.stopSession({ threadId: childThreadId }).pipe(Effect.ignore);
         yield* engine
           .dispatch({
             type: "thread.delete",
@@ -812,13 +827,17 @@ export const make = Effect.gen(function* () {
       if (Result.isFailure(dispatched)) {
         return yield* failSpawn(dispatched.failure.detail, dispatched.failure);
       }
-      yield* runs
+      const started = yield* runs
         .dispatch({ type: "agent-run.start", runId, occurredAt: yield* nowIso })
         .pipe(
           Effect.mapError((error) =>
             invalid(error.message, { operation: "run-start", cause: error, runId }),
           ),
+          Effect.result,
         );
+      if (Result.isFailure(started)) {
+        return yield* failSpawn(started.failure.detail, started.failure);
+      }
       const run = yield* runs.get(runId).pipe(
         Effect.mapError((cause) =>
           invalid("Could not reload the Agent run.", {
@@ -1095,7 +1114,7 @@ export const make = Effect.gen(function* () {
         integratedAt,
       };
     }
-    if (run.status !== "succeeded") {
+    if (run.status !== "succeeded" && run.status !== "integrating") {
       return yield* new AgentRunInvalidStateError({
         id: run.id,
         status: run.status,
@@ -1103,42 +1122,27 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const targetThreadId = input.targetThreadId ?? run.parentThreadId;
-    const targetThread = yield* projection.getThreadShellById(targetThreadId).pipe(
-      Effect.mapError((cause) =>
-        invalid("Could not resolve the Agent integration target.", {
-          operation: "integration-target-resolve",
-          cause,
-          runId: run.id,
-        }),
-      ),
-      Effect.flatMap(
-        Option.match({
-          onNone: () => Effect.fail(invalid("The Agent integration target was not found.")),
-          onSome: Effect.succeed,
-        }),
-      ),
-    );
-    if (targetThread.projectId !== run.projectId || targetThread.projectId !== context.project.id) {
-      return yield* invalid("Agent results cannot be integrated across project boundaries.");
+    const resumingIntegration = run.status === "integrating";
+    const targetThreadId = resumingIntegration
+      ? run.integrationTargetThreadId
+      : (input.targetThreadId ?? run.parentThreadId);
+    if (targetThreadId === null) {
+      return yield* new AgentRunInvalidStateError({
+        id: run.id,
+        status: run.status,
+        operation: "integrate",
+      });
     }
-
-    yield* runs
-      .dispatch({
-        type: "agent-run.start-integration",
+    if (
+      resumingIntegration &&
+      input.targetThreadId !== undefined &&
+      input.targetThreadId !== targetThreadId
+    ) {
+      return yield* invalid("An in-progress integration must resume against its original target.", {
+        operation: "integration-resume-target",
         runId: run.id,
-        targetThreadId,
-        occurredAt: yield* nowIso,
-      })
-      .pipe(
-        Effect.mapError((error) =>
-          invalid(error.message, {
-            operation: "integration-start",
-            cause: error,
-            runId: run.id,
-          }),
-        ),
-      );
+      });
+    }
 
     const failIntegration = Effect.fn("AgentOrchestration.failIntegration")(function* (
       detail: string,
@@ -1185,11 +1189,62 @@ export const make = Effect.gen(function* () {
       };
     });
 
+    const targetThreadResult = yield* projection.getThreadShellById(targetThreadId).pipe(
+      Effect.mapError((cause) =>
+        invalid("Could not resolve the Agent integration target.", {
+          operation: "integration-target-resolve",
+          cause,
+          runId: run.id,
+        }),
+      ),
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.fail(invalid("The Agent integration target was not found.")),
+          onSome: Effect.succeed,
+        }),
+      ),
+      Effect.result,
+    );
+    if (Result.isFailure(targetThreadResult)) {
+      if (resumingIntegration) {
+        return yield* failIntegration(
+          targetThreadResult.failure.detail,
+          targetThreadResult.failure,
+        );
+      }
+      return yield* targetThreadResult.failure;
+    }
+    const targetThread = targetThreadResult.success;
+    if (targetThread.projectId !== run.projectId || targetThread.projectId !== context.project.id) {
+      const failure = invalid("Agent results cannot be integrated across project boundaries.");
+      if (resumingIntegration) return yield* failIntegration(failure.detail, failure);
+      return yield* failure;
+    }
+
+    if (!resumingIntegration) {
+      yield* runs
+        .dispatch({
+          type: "agent-run.start-integration",
+          runId: run.id,
+          targetThreadId,
+          occurredAt: yield* nowIso,
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            invalid(error.message, {
+              operation: "integration-start",
+              cause: error,
+              runId: run.id,
+            }),
+          ),
+        );
+    }
+
     if (run.workspaceMode === "shared") {
       return yield* succeedIntegration();
     }
 
-    const childThread = yield* projection.getThreadShellById(run.childThreadId).pipe(
+    const childThreadResult = yield* projection.getThreadShellById(run.childThreadId).pipe(
       Effect.mapError((cause) =>
         invalid("Could not resolve the isolated Agent worktree.", {
           operation: "integration-source-resolve",
@@ -1203,14 +1258,19 @@ export const make = Effect.gen(function* () {
           onSome: Effect.succeed,
         }),
       ),
+      Effect.result,
     );
+    if (Result.isFailure(childThreadResult)) {
+      return yield* failIntegration(childThreadResult.failure.detail, childThreadResult.failure);
+    }
+    const childThread = childThreadResult.success;
     const sourceWorktreePath = childThread.worktreePath;
     const targetWorktreePath = targetThread.worktreePath ?? context.project.workspaceRoot;
     if (sourceWorktreePath === null) {
       const detail = "The isolated Agent does not have a prepared Git worktree.";
       return yield* failIntegration(detail, new Error(detail));
     }
-    const profile = yield* runs.getProfileSnapshot(run.profile.revision).pipe(
+    const profileResult = yield* runs.getProfileSnapshot(run.profile.revision).pipe(
       Effect.mapError((cause) =>
         invalid("Could not load the pinned Agent profile for integration.", {
           operation: "integration-profile-load",
@@ -1226,7 +1286,12 @@ export const make = Effect.gen(function* () {
           onSome: Effect.succeed,
         }),
       ),
+      Effect.result,
     );
+    if (Result.isFailure(profileResult)) {
+      return yield* failIntegration(profileResult.failure.detail, profileResult.failure);
+    }
+    const profile = profileResult.success;
     const beforeIntegrate = yield* hooks
       .run({ profile, stage: "beforeIntegrate", workspaceRoot: sourceWorktreePath })
       .pipe(Effect.result);
@@ -1237,6 +1302,7 @@ export const make = Effect.gen(function* () {
     const applied = yield* applyIsolatedWorktreePatch({
       sourceWorktreePath,
       targetWorktreePath,
+      allowAlreadyApplied: resumingIntegration,
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),

@@ -44,6 +44,8 @@ class AgentHookExecutionError extends Schema.TaggedErrorClass<AgentHookExecution
   }
 }
 
+const isAgentHookExecutionError = Schema.is(AgentHookExecutionError);
+
 const executionError =
   (stage: AgentHookStage, hookKind: AgentHook["kind"], category: "filesystem" | "process") =>
   (cause: unknown) =>
@@ -147,51 +149,68 @@ export const make = Effect.gen(function* () {
         detail: "Context hook paths must be workspace-relative.",
       });
     }
-    const root = yield* fileSystem
-      .realPath(workspaceRoot)
-      .pipe(Effect.mapError(executionError(hook.stage, "context", "filesystem")));
-    const requestedPath = path.resolve(root, hook.path);
-    return yield* Effect.scoped(
-      Effect.gen(function* () {
-        // Open first, then validate that the path still names the same object.
-        // Reads stay bound to this handle if a workspace path changes later.
-        const file = yield* fileSystem
-          .open(requestedPath, { flag: "r" })
-          .pipe(Effect.mapError(executionError(hook.stage, "context", "filesystem")));
-        const opened = yield* file.stat.pipe(
-          Effect.mapError(executionError(hook.stage, "context", "filesystem")),
-        );
-        const candidate = yield* fileSystem
-          .realPath(requestedPath)
-          .pipe(Effect.mapError(executionError(hook.stage, "context", "filesystem")));
-        const current = yield* fileSystem
-          .stat(candidate)
-          .pipe(Effect.mapError(executionError(hook.stage, "context", "filesystem")));
-        if (!isContained(path, root, candidate) || !sameFile(opened, current)) {
-          return yield* new AgentHookExecutionError({
-            stage: hook.stage,
-            hookKind: "context",
-            category: "filesystem",
-            detail: "Context hook path changed or resolves outside the workspace.",
-          });
-        }
-        const readLength = Math.min(Number(opened.size), MAX_HOOK_OUTPUT_BYTES + 1);
-        const bytes = new Uint8Array(readLength);
-        let offset = 0;
-        while (offset < bytes.length) {
-          const count = Number(
-            yield* file
-              .read(bytes.subarray(offset))
-              .pipe(Effect.mapError(executionError(hook.stage, "context", "filesystem"))),
+    return yield* Effect.gen(function* () {
+      const root = yield* fileSystem
+        .realPath(workspaceRoot)
+        .pipe(Effect.mapError(executionError(hook.stage, "context", "filesystem")));
+      const requestedPath = path.resolve(root, hook.path);
+      return yield* Effect.scoped(
+        Effect.gen(function* () {
+          // Open first, then validate that the path still names the same object.
+          // Reads stay bound to this handle if a workspace path changes later.
+          const file = yield* fileSystem
+            .open(requestedPath, { flag: "r" })
+            .pipe(Effect.mapError(executionError(hook.stage, "context", "filesystem")));
+          const opened = yield* file.stat.pipe(
+            Effect.mapError(executionError(hook.stage, "context", "filesystem")),
           );
-          if (count === 0) break;
-          offset += count;
-        }
-        const truncated = Number(opened.size) > MAX_HOOK_OUTPUT_BYTES;
-        const visible = bytes.subarray(0, Math.min(offset, MAX_HOOK_OUTPUT_BYTES));
-        const contents = truncated ? decodeUtf8Prefix(visible) : new TextDecoder().decode(visible);
-        return truncated ? `${contents}\n[hook context truncated]` : contents;
-      }),
+          const candidate = yield* fileSystem
+            .realPath(requestedPath)
+            .pipe(Effect.mapError(executionError(hook.stage, "context", "filesystem")));
+          const current = yield* fileSystem
+            .stat(candidate)
+            .pipe(Effect.mapError(executionError(hook.stage, "context", "filesystem")));
+          if (!isContained(path, root, candidate) || !sameFile(opened, current)) {
+            return yield* new AgentHookExecutionError({
+              stage: hook.stage,
+              hookKind: "context",
+              category: "filesystem",
+              detail: "Context hook path changed or resolves outside the workspace.",
+            });
+          }
+          const readLength = Math.min(Number(opened.size), MAX_HOOK_OUTPUT_BYTES + 1);
+          const bytes = new Uint8Array(readLength);
+          let offset = 0;
+          while (offset < bytes.length) {
+            const count = Number(
+              yield* file
+                .read(bytes.subarray(offset))
+                .pipe(Effect.mapError(executionError(hook.stage, "context", "filesystem"))),
+            );
+            if (count === 0) break;
+            offset += count;
+          }
+          const truncated = Number(opened.size) > MAX_HOOK_OUTPUT_BYTES;
+          const visible = bytes.subarray(0, Math.min(offset, MAX_HOOK_OUTPUT_BYTES));
+          const contents = truncated
+            ? decodeUtf8Prefix(visible)
+            : new TextDecoder().decode(visible);
+          return truncated ? `${contents}\n[hook context truncated]` : contents;
+        }),
+      );
+    }).pipe(
+      Effect.timeout(`${hook.timeoutSeconds} seconds`),
+      Effect.mapError((cause) =>
+        isAgentHookExecutionError(cause)
+          ? cause
+          : new AgentHookExecutionError({
+              stage: hook.stage,
+              hookKind: "context",
+              category: "filesystem",
+              detail: `Context hook timed out after ${hook.timeoutSeconds} second${hook.timeoutSeconds === 1 ? "" : "s"}.`,
+              cause,
+            }),
+      ),
     );
   });
 

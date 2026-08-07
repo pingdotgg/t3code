@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import {
   AgentProfileId,
   AgentProfileRevision,
+  type AgentProfileDocument,
   ModelSelection,
   ProviderRuntimeEvent,
   ProviderSession,
@@ -76,6 +77,26 @@ const pinnedAgentProfile = {
   scope: "environment" as const,
   revision: AgentProfileRevision.make("a".repeat(64)),
 };
+const pinnedAgentProfileDocument = {
+  ...pinnedAgentProfile,
+  name: "Reviewer",
+  chatSelectable: true,
+  defaultModelSelection: null,
+  sourcePath: null,
+  requirements: { toolRequirement: "none", t3McpCapabilities: [] },
+  archivedAt: null,
+  instructions: "Review the change.",
+  instructionPriority: "prompt",
+  runtime: { mode: "auto", interactionMode: "default" },
+  workspace: { mode: "shared", access: "read-only" },
+  tools: { policy: "inherit", allowed: [] },
+  delegation: { policy: "disabled", profiles: [] },
+  budgets: { maxRuns: 1, maxConcurrency: 1, maxDepth: 0, maxWallTimeMinutes: 10 },
+  hooks: [],
+  rules: [],
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+} satisfies AgentProfileDocument;
 
 const deriveServerPathsSync = (baseDir: string, devUrl: URL | undefined) =>
   Effect.runSync(deriveServerPaths(baseDir, devUrl).pipe(Effect.provide(NodeServices.layer)));
@@ -159,6 +180,7 @@ describe("ProviderCommandReactor", () => {
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly resolveAgentPrompt?: (message: string) => string;
+    readonly agentRuntimeDeclared?: boolean;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -314,6 +336,9 @@ describe("ProviderCommandReactor", () => {
           profile: null,
         }),
     );
+    const loadAgentProfile = vi.fn<AgentPromptResolver["Service"]["loadProfile"]>(() =>
+      Effect.succeed(pinnedAgentProfileDocument),
+    );
     const providerSnapshots = [
       {
         instanceId: modelSelection.instanceId,
@@ -335,6 +360,17 @@ describe("ProviderCommandReactor", () => {
       getCapabilities: (_provider) =>
         Effect.succeed({
           sessionModelSwitch: input?.sessionModelSwitch ?? "in-session",
+          ...(input?.agentRuntimeDeclared === false
+            ? {}
+            : {
+                agentRuntime: {
+                  mcpServerInjection: true,
+                  instructionDelivery: "system" as const,
+                  nativeToolPolicy: "exact" as const,
+                  tokenUsage: true,
+                  monetaryCost: true,
+                },
+              }),
         }),
       getInstanceInfo: (instanceId) => {
         const raw = String(instanceId);
@@ -431,6 +467,7 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(
         Layer.succeed(AgentPromptResolver, {
+          loadProfile: loadAgentProfile,
           resolve: resolveAgentPrompt,
         }),
       ),
@@ -524,6 +561,7 @@ describe("ProviderCommandReactor", () => {
       generateBranchName,
       generateThreadTitle,
       resolveAgentPrompt,
+      loadAgentProfile,
       runtimeSessions,
       stateDir,
       drain,
@@ -609,6 +647,34 @@ describe("ProviderCommandReactor", () => {
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       input: "agent envelope\ndelegate this",
     });
+  });
+
+  it("rejects an incompatible Agent profile before promptBuild hooks can run", async () => {
+    const harness = await createHarness({ agentRuntimeDeclared: false });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-incompatible-agent-prompt"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-incompatible-agent-prompt"),
+          role: "user",
+          text: "do not run hooks",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        agentProfile: pinnedAgentProfile,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    await harness.drain();
+    expect(harness.loadAgentProfile).toHaveBeenCalledOnce();
+    expect(harness.resolveAgentPrompt).not.toHaveBeenCalled();
+    expect(harness.startSession).not.toHaveBeenCalled();
+    expect(harness.sendTurn).not.toHaveBeenCalled();
   });
 
   effectIt.effect("projects starting before a slow provider session finishes", () =>

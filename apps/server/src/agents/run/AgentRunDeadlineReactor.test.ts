@@ -9,15 +9,24 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import type { AgentRun, AgentRunEvent } from "./AgentRun.ts";
 import type { AgentRunRepository } from "./AgentRunRepository.ts";
-import { deadlineAtMillis, expireRun, isDeadlineExpired } from "./AgentRunDeadlineReactor.ts";
+import * as AgentRunRepositoryService from "./AgentRunRepository.ts";
+import {
+  deadlineAtMillis,
+  expireRun,
+  isDeadlineExpired,
+  layer,
+} from "./AgentRunDeadlineReactor.ts";
 import type { ProviderServiceShape } from "../../provider/Services/ProviderService.ts";
+import * as ProviderService from "../../provider/Services/ProviderService.ts";
 
 const requestedAt = "2026-08-07T12:00:00.000Z";
 const runId = AgentRunId.make("deadline-run");
@@ -93,6 +102,11 @@ it("derives and recognizes a persisted wall-time deadline", () => {
   assert.isTrue(isDeadlineExpired(run, Date.parse(requestedAt) + 60_000));
 });
 
+it("measures wall time from the request even when provider startup is delayed", () => {
+  const delayedStart = { ...run, startedAt: "2026-08-07T12:00:30.000Z" };
+  assert.equal(deadlineAtMillis(delayedStart), Date.parse(requestedAt) + 60_000);
+});
+
 it.effect("cancels and interrupts once when a running run reaches its deadline", () =>
   Effect.gen(function* () {
     let dispatchCount = 0;
@@ -162,4 +176,54 @@ it.effect("does not cancel before the deadline", () =>
     );
     assert.equal(dispatchCount, 0);
   }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("interrupts the provider after its own terminal notification", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cancellationPersisted = yield* Deferred.make<void>();
+      const providerInterrupted = yield* Deferred.make<void>();
+      const expiredRun: AgentRun = {
+        ...run,
+        requestedAt: "1970-01-01T00:00:00.000Z",
+        startedAt: "1970-01-01T00:00:01.000Z",
+      };
+      const cancelledRun: AgentRun = {
+        ...expiredRun,
+        status: "cancelled",
+        revision: expiredRun.revision + 1,
+      };
+      const repository = {
+        ...repositoryFor(
+          () => expiredRun,
+          () => [],
+        ),
+        listActive: () => Effect.succeed([expiredRun]),
+        subscribeChanges: Effect.succeed(
+          Stream.fromEffect(Deferred.await(cancellationPersisted).pipe(Effect.as(cancelledRun))),
+        ),
+        dispatch: () =>
+          Deferred.succeed(cancellationPersisted, undefined).pipe(
+            Effect.as([
+              {
+                type: "agent-run.cancelled",
+                runId,
+                revision: cancelledRun.revision,
+                occurredAt: cancelledRun.updatedAt,
+              } as AgentRunEvent,
+            ]),
+          ),
+      } satisfies AgentRunRepository["Service"];
+      const provider = {
+        interruptTurn: () => Deferred.succeed(providerInterrupted, undefined),
+      } as unknown as ProviderServiceShape;
+
+      yield* TestClock.setTime(deadlineAtMillis(expiredRun));
+      yield* Layer.build(layer).pipe(
+        Effect.provideService(AgentRunRepositoryService.AgentRunRepository, repository),
+        Effect.provideService(ProviderService.ProviderService, provider),
+      );
+      yield* Deferred.await(providerInterrupted);
+    }),
+  ),
 );

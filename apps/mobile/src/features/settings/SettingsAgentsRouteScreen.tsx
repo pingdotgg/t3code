@@ -1,11 +1,12 @@
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useNavigation } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { AgentProfileId } from "@t3tools/contracts";
 import type {
+  AgentCatalogDiagnostic,
   AgentProfileSummary,
   AgentRuleSummary,
   EnvironmentId,
@@ -39,6 +40,9 @@ import {
   type AgentRuleDraft,
 } from "./agentRule.logic";
 
+const diagnosticLabel = (diagnostic: AgentCatalogDiagnostic): string =>
+  `${diagnostic.scope} ${diagnostic.kind}${diagnostic.id ? ` '${diagnostic.id}'` : ""}: ${diagnostic.message}`;
+
 export function SettingsAgentsRouteScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -57,6 +61,10 @@ export function SettingsAgentsRouteScreen() {
   const [isNewRule, setIsNewRule] = useState(false);
   const [ruleNotice, setRuleNotice] = useState<string | null>(null);
   const [ruleError, setRuleError] = useState<string | null>(null);
+  const [profileCommandPending, setProfileCommandPending] = useState(false);
+  const [ruleCommandPending, setRuleCommandPending] = useState(false);
+  const profileCommandInFlight = useRef(false);
+  const ruleCommandInFlight = useRef(false);
   const resolvedEnvironmentId = environmentId ?? environments[0]?.environmentId ?? null;
   const projectOptions = projects.filter(
     (project) => project.environmentId === resolvedEnvironmentId,
@@ -193,7 +201,11 @@ export function SettingsAgentsRouteScreen() {
     [],
   );
   const saveRuleDocument = useCallback(async () => {
-    if (resolvedEnvironmentId === null) return;
+    if (resolvedEnvironmentId === null) {
+      setRuleError("Connect an environment before saving a rule.");
+      return;
+    }
+    if (ruleCommandInFlight.current) return;
     if (!ruleDraft.id.trim() || !ruleDraft.name.trim()) {
       setRuleError("Rule id and name are required.");
       return;
@@ -202,6 +214,8 @@ export function SettingsAgentsRouteScreen() {
       setRuleError("Choose a project for a project-scoped rule.");
       return;
     }
+    ruleCommandInFlight.current = true;
+    setRuleCommandPending(true);
     try {
       const document = buildAgentRuleDocument(
         ruleDraft,
@@ -227,6 +241,9 @@ export function SettingsAgentsRouteScreen() {
       catalog.refresh();
     } catch (caught) {
       setRuleError(caught instanceof Error ? caught.message : "The rule could not be saved.");
+    } finally {
+      ruleCommandInFlight.current = false;
+      setRuleCommandPending(false);
     }
   }, [
     catalog,
@@ -238,25 +255,36 @@ export function SettingsAgentsRouteScreen() {
     selectedProject,
   ]);
   const archiveRestoreRule = useCallback(async () => {
-    if (resolvedEnvironmentId === null || selectedRuleSummary === null) return;
-    const command = selectedRuleSummary.archivedAt ? restoreRule : archiveRule;
-    const result = await command({
-      environmentId: resolvedEnvironmentId,
-      input: {
-        id: AgentProfileId.make(selectedRuleSummary.id),
-        scope: selectedRuleSummary.scope,
-        expectedRevision: selectedRuleSummary.revision,
-        ...(selectedRuleSummary.scope === "project" && selectedProject
-          ? { projectId: selectedProject.id }
-          : {}),
-      },
-    });
-    if (AsyncResult.isFailure(result)) {
-      setRuleError("The rule could not be updated (it may have changed remotely).");
+    if (resolvedEnvironmentId === null) {
+      setRuleError("Connect an environment before updating a rule.");
       return;
     }
-    setRuleNotice(selectedRuleSummary.archivedAt ? "Rule restored." : "Rule archived.");
-    catalog.refresh();
+    if (selectedRuleSummary === null || ruleCommandInFlight.current) return;
+    ruleCommandInFlight.current = true;
+    setRuleCommandPending(true);
+    try {
+      const command = selectedRuleSummary.archivedAt ? restoreRule : archiveRule;
+      const result = await command({
+        environmentId: resolvedEnvironmentId,
+        input: {
+          id: AgentProfileId.make(selectedRuleSummary.id),
+          scope: selectedRuleSummary.scope,
+          expectedRevision: selectedRuleSummary.revision,
+          ...(selectedRuleSummary.scope === "project" && selectedProject
+            ? { projectId: selectedProject.id }
+            : {}),
+        },
+      });
+      if (AsyncResult.isFailure(result)) {
+        setRuleError("The rule could not be updated (it may have changed remotely).");
+        return;
+      }
+      setRuleNotice(selectedRuleSummary.archivedAt ? "Rule restored." : "Rule archived.");
+      catalog.refresh();
+    } finally {
+      ruleCommandInFlight.current = false;
+      setRuleCommandPending(false);
+    }
   }, [
     archiveRule,
     catalog,
@@ -266,7 +294,11 @@ export function SettingsAgentsRouteScreen() {
     selectedRuleSummary,
   ]);
   const save = useCallback(async () => {
-    if (resolvedEnvironmentId === null) return;
+    if (resolvedEnvironmentId === null) {
+      setError("Connect an environment before saving a profile.");
+      return;
+    }
+    if (profileCommandInFlight.current) return;
     if (!draft.id.trim() || !draft.name.trim()) {
       setError("Profile id and name are required.");
       return;
@@ -275,6 +307,8 @@ export function SettingsAgentsRouteScreen() {
       setError("Choose a project for a project-scoped profile.");
       return;
     }
+    profileCommandInFlight.current = true;
+    setProfileCommandPending(true);
     try {
       const document = buildAgentProfileDocument(
         draft,
@@ -299,6 +333,9 @@ export function SettingsAgentsRouteScreen() {
       catalog.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The profile could not be saved.");
+    } finally {
+      profileCommandInFlight.current = false;
+      setProfileCommandPending(false);
     }
   }, [
     catalog,
@@ -310,25 +347,36 @@ export function SettingsAgentsRouteScreen() {
     selectedProject,
   ]);
   const archiveRestore = useCallback(async () => {
-    if (resolvedEnvironmentId === null || selectedSummary === null) return;
-    const command = selectedSummary.archivedAt ? restoreProfile : archiveProfile;
-    const result = await command({
-      environmentId: resolvedEnvironmentId,
-      input: {
-        id: selectedSummary.id,
-        scope: selectedSummary.scope,
-        expectedRevision: selectedSummary.revision,
-        ...(selectedSummary.scope === "project" && selectedProject
-          ? { projectId: selectedProject.id }
-          : {}),
-      },
-    });
-    if (AsyncResult.isFailure(result)) {
-      setError("The profile could not be updated.");
+    if (resolvedEnvironmentId === null) {
+      setError("Connect an environment before updating a profile.");
       return;
     }
-    setNotice(selectedSummary.archivedAt ? "Profile restored." : "Profile archived.");
-    catalog.refresh();
+    if (selectedSummary === null || profileCommandInFlight.current) return;
+    profileCommandInFlight.current = true;
+    setProfileCommandPending(true);
+    try {
+      const command = selectedSummary.archivedAt ? restoreProfile : archiveProfile;
+      const result = await command({
+        environmentId: resolvedEnvironmentId,
+        input: {
+          id: selectedSummary.id,
+          scope: selectedSummary.scope,
+          expectedRevision: selectedSummary.revision,
+          ...(selectedSummary.scope === "project" && selectedProject
+            ? { projectId: selectedProject.id }
+            : {}),
+        },
+      });
+      if (AsyncResult.isFailure(result)) {
+        setError("The profile could not be updated.");
+        return;
+      }
+      setNotice(selectedSummary.archivedAt ? "Profile restored." : "Profile archived.");
+      catalog.refresh();
+    } finally {
+      profileCommandInFlight.current = false;
+      setProfileCommandPending(false);
+    }
   }, [
     archiveProfile,
     catalog,
@@ -391,13 +439,30 @@ export function SettingsAgentsRouteScreen() {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="New agent profile"
+              accessibilityState={{ disabled: resolvedEnvironmentId === null }}
+              disabled={resolvedEnvironmentId === null}
               onPress={startNew}
-              className="rounded-full bg-primary px-3 py-2 active:opacity-70"
+              className="rounded-full bg-primary px-3 py-2 disabled:opacity-40 active:opacity-70"
             >
               <Text className="text-sm font-t3-bold text-primary-foreground">New profile</Text>
             </Pressable>
           </View>
           <View className="overflow-hidden rounded-2xl bg-subtle">
+            {(catalog.data?.diagnostics.length ?? 0) > 0 ? (
+              <View className="gap-1 border-b border-warning/30 bg-warning/10 p-4">
+                <Text accessibilityRole="alert" className="text-sm font-t3-bold text-warning">
+                  Some Agent files could not be loaded.
+                </Text>
+                {catalog.data?.diagnostics.slice(0, 3).map((diagnostic, index) => (
+                  <Text
+                    key={`${diagnostic.code}:${diagnostic.sourcePath ?? diagnostic.id ?? index}`}
+                    className="text-xs text-warning"
+                  >
+                    {diagnosticLabel(diagnostic)}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
             {catalog.isPending && catalog.data === null ? (
               <Text className="p-4 text-sm text-foreground-muted">Loading profiles…</Text>
             ) : null}
@@ -431,6 +496,7 @@ export function SettingsAgentsRouteScreen() {
             draft={draft}
             selectedSummary={selectedSummary}
             loading={profileQuery.isPending}
+            commandPending={profileCommandPending}
             notice={notice}
             error={error}
             onChange={updateDraft}
@@ -448,8 +514,10 @@ export function SettingsAgentsRouteScreen() {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="New agent rule"
+              accessibilityState={{ disabled: resolvedEnvironmentId === null }}
+              disabled={resolvedEnvironmentId === null}
               onPress={startNewRule}
-              className="rounded-full bg-primary px-3 py-2 active:opacity-70"
+              className="rounded-full bg-primary px-3 py-2 disabled:opacity-40 active:opacity-70"
             >
               <Text className="text-sm font-t3-bold text-primary-foreground">New rule</Text>
             </Pressable>
@@ -480,6 +548,7 @@ export function SettingsAgentsRouteScreen() {
             draft={ruleDraft}
             selectedSummary={selectedRuleSummary}
             loading={ruleQuery.isPending}
+            commandPending={ruleCommandPending}
             notice={ruleNotice}
             error={ruleError}
             onChange={updateRuleDraft}
@@ -529,6 +598,7 @@ function ProfileEditor(props: {
   draft: AgentProfileDraft;
   selectedSummary: AgentProfileSummary | null;
   loading: boolean;
+  commandPending: boolean;
   notice: string | null;
   error: string | null;
   onChange: <K extends keyof AgentProfileDraft>(key: K, value: AgentProfileDraft[K]) => void;
@@ -562,8 +632,10 @@ function ProfileEditor(props: {
         {props.selectedSummary ? (
           <Pressable
             accessibilityRole="button"
+            accessibilityState={{ disabled: props.loading || props.commandPending }}
+            disabled={props.loading || props.commandPending}
             onPress={props.onArchiveRestore}
-            className="rounded-full px-2 py-1 active:opacity-70"
+            className="rounded-full px-2 py-1 disabled:opacity-40 active:opacity-70"
           >
             <Text className="text-sm text-primary">
               {props.selectedSummary.archivedAt ? "Restore" : "Archive"}
@@ -616,12 +688,13 @@ function ProfileEditor(props: {
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Save agent profile"
-        disabled={props.loading}
+        accessibilityState={{ disabled: props.loading || props.commandPending }}
+        disabled={props.loading || props.commandPending}
         onPress={props.onSave}
-        className="items-center rounded-xl bg-primary px-4 py-3 active:opacity-70"
+        className="items-center rounded-xl bg-primary px-4 py-3 disabled:opacity-40 active:opacity-70"
       >
         <Text className="font-t3-bold text-primary-foreground">
-          {props.loading ? "Saving…" : "Save profile"}
+          {props.commandPending ? "Saving…" : "Save profile"}
         </Text>
       </Pressable>
     </View>
@@ -656,6 +729,7 @@ function RuleEditor(props: {
   draft: AgentRuleDraft;
   selectedSummary: AgentRuleSummary | null;
   loading: boolean;
+  commandPending: boolean;
   notice: string | null;
   error: string | null;
   onChange: <K extends keyof AgentRuleDraft>(key: K, value: AgentRuleDraft[K]) => void;
@@ -689,8 +763,10 @@ function RuleEditor(props: {
         {props.selectedSummary ? (
           <Pressable
             accessibilityRole="button"
+            accessibilityState={{ disabled: props.loading || props.commandPending }}
+            disabled={props.loading || props.commandPending}
             onPress={props.onArchiveRestore}
-            className="rounded-full px-2 py-1 active:opacity-70"
+            className="rounded-full px-2 py-1 disabled:opacity-40 active:opacity-70"
           >
             <Text className="text-sm text-primary">
               {props.selectedSummary.archivedAt ? "Restore" : "Archive"}
@@ -734,12 +810,13 @@ function RuleEditor(props: {
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Save agent rule"
-        disabled={props.loading}
+        accessibilityState={{ disabled: props.loading || props.commandPending }}
+        disabled={props.loading || props.commandPending}
         onPress={props.onSave}
-        className="items-center rounded-xl bg-primary px-4 py-3 active:opacity-70"
+        className="items-center rounded-xl bg-primary px-4 py-3 disabled:opacity-40 active:opacity-70"
       >
         <Text className="font-t3-bold text-primary-foreground">
-          {props.loading ? "Saving…" : "Save rule"}
+          {props.commandPending ? "Saving…" : "Save rule"}
         </Text>
       </Pressable>
     </View>

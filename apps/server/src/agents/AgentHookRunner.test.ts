@@ -10,6 +10,10 @@ import * as Schema from "effect/Schema";
 import * as ProcessRunner from "../processRunner.ts";
 import * as AgentHookRunner from "./AgentHookRunner.ts";
 
+const RunnerDependencies = Layer.merge(
+  ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer)),
+  NodeServices.layer,
+);
 const TestLayer = AgentHookRunner.layer.pipe(
   Layer.provideMerge(ProcessRunner.layer),
   Layer.provideMerge(NodeServices.layer),
@@ -85,4 +89,34 @@ it.effect("truncates context at a valid UTF-8 boundary", () =>
     assert.isAtMost(Buffer.byteLength(visible, "utf8"), 64 * 1024);
     assert.match(context, /\[hook context truncated\]$/);
   }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("enforces timeoutSeconds while a context filesystem operation is stalled", () =>
+  Effect.gen(function* () {
+    const stalledFileSystem = FileSystem.makeNoop({
+      realPath: () => Effect.never,
+    });
+    const runner = yield* AgentHookRunner.make.pipe(
+      Effect.provideService(FileSystem.FileSystem, stalledFileSystem),
+      Effect.provide(RunnerDependencies),
+    );
+    const profile = profileWithHook({
+      kind: "context",
+      path: "context.txt",
+      stage: "promptBuild",
+      timeoutSeconds: 1,
+      failurePolicy: "block",
+    });
+    const error = yield* runner
+      .run({
+        profile: {
+          ...profile,
+          hooks: [{ ...profile.hooks[0]!, timeoutSeconds: 0 }],
+        },
+        stage: "promptBuild",
+        workspaceRoot: "workspace",
+      })
+      .pipe(Effect.flip);
+    assert.equal(error.detail, "Context hook timed out after 0 seconds.");
+  }),
 );

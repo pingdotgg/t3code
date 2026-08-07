@@ -116,6 +116,58 @@ it.effect("does not trust a compiled-prompt marker supplied by the user", () =>
   }).pipe(Effect.provide(testLayer)),
 );
 
+it.effect("rejects a cached snapshot owned by a different profile", () =>
+  Effect.gen(function* () {
+    const resolver = yield* AgentPromptResolver;
+    const error = yield* resolver
+      .resolve({
+        profileRef: AgentProfileRef.make({
+          id: profile.id,
+          scope: profile.scope,
+          revision: profile.revision,
+        }),
+        threadId: ThreadId.make("user-thread"),
+        commandId: CommandId.make("user-command"),
+        workspaceRoot: process.cwd(),
+        message: "Review this.",
+      })
+      .pipe(Effect.flip);
+
+    expect(error.stage).toBe("profile-snapshot");
+    expect(error.detail).toContain("environment/other-reviewer");
+    expect(error.profileId).toBe(profile.id);
+  }).pipe(
+    Effect.provide(
+      layer.pipe(
+        Layer.provide(
+          Layer.mock(AgentCatalog.AgentCatalog)({
+            list: () => Effect.succeed({ profiles: [], rules: [], diagnostics: [] }),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(AgentHookRunner.AgentHookRunner)({
+            run: () => Effect.succeed({ context: [], warnings: [] }),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(AgentRunRepository.AgentRunRepository)({
+            getProfileSnapshot: () =>
+              Effect.succeed(
+                Option.some(
+                  decodeAgentProfileDocument({
+                    ...profile,
+                    id: "other-reviewer",
+                  }),
+                ),
+              ),
+            getByChildThread: () => Effect.succeed(Option.none()),
+          }),
+        ),
+      ),
+    ),
+  ),
+);
+
 it.effect("reports rule content overflow through the resolver's typed error channel", () =>
   Effect.gen(function* () {
     const resolver = yield* AgentPromptResolver;

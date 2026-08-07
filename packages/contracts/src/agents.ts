@@ -272,11 +272,39 @@ export const AgentProfileCatalogInput = Schema.Struct({
 });
 export type AgentProfileCatalogInput = typeof AgentProfileCatalogInput.Type;
 
+export const AgentCatalogDiagnosticCode = Schema.Literals([
+  "duplicate",
+  "invalid-document",
+  "invalid-reference",
+  "missing-frontmatter",
+  "outside-root",
+  "read-failed",
+  "root-unavailable",
+]);
+export type AgentCatalogDiagnosticCode = typeof AgentCatalogDiagnosticCode.Type;
+
+export const AgentCatalogEntryKind = Schema.Literals(["profile", "rule"]);
+export type AgentCatalogEntryKind = typeof AgentCatalogEntryKind.Type;
+
+/** A recoverable catalog problem surfaced alongside every valid entry. */
+export const AgentCatalogDiagnostic = Schema.Struct({
+  code: AgentCatalogDiagnosticCode,
+  kind: AgentCatalogEntryKind,
+  scope: AgentProfileScope,
+  id: Schema.optionalKey(Schema.String),
+  sourcePath: Schema.optionalKey(Schema.String),
+  message: Schema.String,
+});
+export type AgentCatalogDiagnostic = typeof AgentCatalogDiagnostic.Type;
+
 export const AgentProfileCatalogResult = Schema.Struct({
   profiles: Schema.Array(AgentProfileSummary).check(
     Schema.isMaxLength(AGENT_PROFILE_MAX_REFERENCES),
   ),
   rules: Schema.Array(AgentRuleSummary).check(Schema.isMaxLength(AGENT_PROFILE_MAX_REFERENCES)),
+  diagnostics: Schema.Array(AgentCatalogDiagnostic)
+    .check(Schema.isMaxLength(AGENT_PROFILE_MAX_REFERENCES))
+    .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type AgentProfileCatalogResult = typeof AgentProfileCatalogResult.Type;
 

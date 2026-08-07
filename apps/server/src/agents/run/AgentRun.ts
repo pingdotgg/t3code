@@ -319,8 +319,7 @@ const totalTokens = (runs: ReadonlyArray<AgentRun>) =>
 const totalEstimatedCostUsd = (runs: ReadonlyArray<AgentRun>) =>
   runs.reduce((total, run) => total + run.consumedEstimatedCostUsd, 0);
 const wallTimeExceeded = (run: AgentRun, occurredAt: string) => {
-  const startedAt = run.startedAt ?? run.requestedAt;
-  const elapsedMs = Date.parse(occurredAt) - Date.parse(startedAt);
+  const elapsedMs = Date.parse(occurredAt) - Date.parse(run.requestedAt);
   return Number.isFinite(elapsedMs) && elapsedMs > run.budget.maxWallTimeMinutes * 60_000;
 };
 
@@ -455,6 +454,7 @@ export const evolve = (state: AgentRunState, event: AgentRunEvent): AgentRunStat
         revision: event.revision,
         updatedAt: event.occurredAt,
         integrationTargetThreadId: event.targetThreadId,
+        failure: undefined,
       });
       break;
     case "agent-run.integration-succeeded":
@@ -464,6 +464,7 @@ export const evolve = (state: AgentRunState, event: AgentRunEvent): AgentRunStat
         revision: event.revision,
         updatedAt: event.occurredAt,
         finishedAt: event.occurredAt,
+        failure: undefined,
       });
       break;
     case "agent-run.integration-conflicted":

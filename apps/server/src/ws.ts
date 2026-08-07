@@ -48,6 +48,7 @@ import {
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
+  AGENT_PROFILE_MAX_REFERENCES,
   AgentProfileInvalidError,
   AgentProfileNotFoundError,
   AgentProfileRevisionConflictError,
@@ -1121,6 +1122,7 @@ const makeWsRpcLayer = (
                 rules: catalog.rules.filter(
                   (rule) => input.includeArchived === true || rule.archivedAt === null,
                 ),
+                diagnostics: catalog.diagnostics.slice(0, AGENT_PROFILE_MAX_REFERENCES),
               };
             }),
             { "rpc.aggregate": "agents" },

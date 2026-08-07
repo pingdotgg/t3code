@@ -1,4 +1,8 @@
-import { RuntimeTaskUsage, type ProviderRuntimeEvent } from "@t3tools/contracts";
+import {
+  RuntimeTaskUsage,
+  type ProviderRuntimeEvent,
+  type RuntimeTaskUsage as RuntimeTaskUsageType,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -10,8 +14,78 @@ import * as AgentHookRunner from "../AgentHookRunner.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ProviderService from "../../provider/Services/ProviderService.ts";
 import * as AgentRunRepository from "./AgentRunRepository.ts";
+import { decide, type AgentRun } from "./AgentRun.ts";
 
 const decodeUsage = Schema.decodeUnknownOption(RuntimeTaskUsage);
+
+export const completeSuccessfulRun = Effect.fn("AgentRunReactor.completeSuccessfulRun")(
+  function* (input: {
+    readonly run: AgentRun;
+    readonly usage: RuntimeTaskUsageType | undefined;
+    readonly occurredAt: string;
+    readonly repository: AgentRunRepository.AgentRunRepository["Service"];
+    readonly afterResult: Effect.Effect<void, AgentHookRunner.AgentHookBlockedError>;
+  }) {
+    const command = {
+      type: "agent-run.succeed" as const,
+      runId: input.run.id,
+      ...(input.usage === undefined ? {} : { usage: input.usage }),
+      occurredAt: input.occurredAt,
+    };
+    // Provider completion events are consumed sequentially and their timestamp
+    // is fixed, so this preflight cannot drift while the hook is evaluated.
+    const lineage = yield* input.repository.listByLineage(input.run.rootRunId);
+    const preflight = yield* decide(
+      { runs: new Map(lineage.map((run) => [run.id, run])) },
+      command,
+    ).pipe(Effect.result);
+    if (Result.isFailure(preflight)) {
+      if (
+        preflight.failure._tag === "AgentRunCommandInvariantError" &&
+        preflight.failure.reason === "budget-exhausted"
+      ) {
+        yield* input.repository.dispatch({
+          type: "agent-run.fail",
+          runId: input.run.id,
+          failure: preflight.failure.detail,
+          ...(input.usage === undefined ? {} : { usage: input.usage }),
+          occurredAt: input.occurredAt,
+        });
+        return;
+      }
+      return yield* preflight.failure;
+    }
+
+    const hook = yield* input.afterResult.pipe(Effect.result);
+    if (Result.isFailure(hook)) {
+      yield* input.repository.dispatch({
+        type: "agent-run.fail",
+        runId: input.run.id,
+        failure: hook.failure.detail,
+        ...(input.usage === undefined ? {} : { usage: input.usage }),
+        occurredAt: input.occurredAt,
+      });
+      return;
+    }
+
+    const completion = yield* input.repository.dispatch(command).pipe(Effect.result);
+    if (
+      Result.isFailure(completion) &&
+      completion.failure._tag === "AgentRunCommandInvariantError" &&
+      completion.failure.reason === "budget-exhausted"
+    ) {
+      yield* input.repository.dispatch({
+        type: "agent-run.fail",
+        runId: input.run.id,
+        failure: completion.failure.detail,
+        ...(input.usage === undefined ? {} : { usage: input.usage }),
+        occurredAt: input.occurredAt,
+      });
+      return;
+    }
+    if (Result.isFailure(completion)) return yield* completion.failure;
+  },
+);
 
 const make = Effect.gen(function* () {
   const repository = yield* AgentRunRepository.AgentRunRepository;
@@ -77,40 +151,13 @@ const make = Effect.gen(function* () {
         if (run.status !== "running" && run.status !== "waiting-for-input") return;
         const usage = decodeUsage(event.payload.usage);
         if (event.payload.state === "completed") {
-          const hook = yield* runTerminalHook(run, "afterResult").pipe(Effect.result);
-          if (hook._tag === "Failure") {
-            yield* repository.dispatch({
-              type: "agent-run.fail",
-              runId: run.id,
-              failure: hook.failure.detail,
-              ...(Option.isSome(usage) ? { usage: usage.value } : {}),
-              occurredAt: event.createdAt,
-            });
-            return;
-          }
-          const completion = yield* repository
-            .dispatch({
-              type: "agent-run.succeed",
-              runId: run.id,
-              ...(Option.isSome(usage) ? { usage: usage.value } : {}),
-              occurredAt: event.createdAt,
-            })
-            .pipe(Effect.result);
-          if (
-            Result.isFailure(completion) &&
-            completion.failure._tag === "AgentRunCommandInvariantError" &&
-            completion.failure.reason === "budget-exhausted"
-          ) {
-            yield* repository.dispatch({
-              type: "agent-run.fail",
-              runId: run.id,
-              failure: completion.failure.detail,
-              ...(Option.isSome(usage) ? { usage: usage.value } : {}),
-              occurredAt: event.createdAt,
-            });
-            return;
-          }
-          if (Result.isFailure(completion)) return yield* completion.failure;
+          yield* completeSuccessfulRun({
+            run,
+            usage: Option.getOrUndefined(usage),
+            occurredAt: event.createdAt,
+            repository,
+            afterResult: runTerminalHook(run, "afterResult"),
+          });
           return;
         }
         yield* runTerminalHook(run, "onError").pipe(Effect.ignore);

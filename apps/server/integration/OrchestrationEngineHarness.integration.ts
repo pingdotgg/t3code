@@ -339,6 +339,7 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(serverSettingsLayer),
       Layer.provideMerge(
         Layer.succeed(AgentPromptResolver, {
+          loadProfile: () => Effect.die("Agent profiles are not used by this harness"),
           resolve: ({ message }) => Effect.succeed({ message, profile: null }),
         }),
       ),

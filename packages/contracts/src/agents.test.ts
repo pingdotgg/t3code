@@ -6,6 +6,7 @@ import {
   AgentMcpWaitInput,
   AgentProfile,
   AgentProfileArchiveInput,
+  AgentProfileCatalogResult,
   AgentProfileId,
   AgentProfileInvalidError,
   AgentProfileNotFoundError,
@@ -23,6 +24,7 @@ const revision = AgentProfileRevision.make("a".repeat(64));
 const decodeProfile = Schema.decodeUnknownSync(AgentProfile);
 const decodeRule = Schema.decodeUnknownSync(AgentRuleDocument);
 const decodeArchive = Schema.decodeUnknownSync(AgentProfileArchiveInput);
+const decodeCatalog = Schema.decodeUnknownSync(AgentProfileCatalogResult);
 const decodeSpawn = Schema.decodeUnknownSync(AgentMcpSpawnInput);
 const decodeWait = Schema.decodeUnknownSync(AgentMcpWaitInput);
 const decodeRunList = Schema.decodeUnknownSync(AgentRunListResult);
@@ -165,6 +167,29 @@ describe("native agent contracts", () => {
 
     expect(rule.profiles).toEqual([{ id: "reviewer", scope: "project" }]);
     expect(() => decodeRule({ ...rule, priority: 101 })).toThrow();
+  });
+
+  it("transports bounded catalog diagnostics alongside valid entries", () => {
+    const diagnostic = {
+      code: "invalid-document",
+      kind: "profile",
+      scope: "project",
+      id: "broken",
+      sourcePath: ".t3/agents/broken.md",
+      message: "The profile frontmatter is invalid.",
+    } as const;
+
+    expect(
+      decodeCatalog({ profiles: [], rules: [], diagnostics: [diagnostic] }).diagnostics,
+    ).toEqual([diagnostic]);
+    expect(decodeCatalog({ profiles: [], rules: [] }).diagnostics).toEqual([]);
+    expect(() =>
+      decodeCatalog({
+        profiles: [],
+        rules: [],
+        diagnostics: Array.from({ length: 101 }, () => ({ ...diagnostic })),
+      }),
+    ).toThrow();
   });
 
   it("keeps branded identifiers and pinned refs available to consumers", () => {

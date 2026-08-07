@@ -25,6 +25,7 @@ import {
   agentWorktreeBranchName,
   applyIsolatedWorktreePatch,
   dispatchAgentChildLifecycle,
+  minimumBudgets,
   resolvePinnedAgentRuntimeSettings,
   runtimeSettingsForAgentProfile,
 } from "./AgentOrchestrationLive.ts";
@@ -94,6 +95,29 @@ it("allocates a dedicated branch for each isolated Agent run", () => {
     agentWorktreeBranchName(AgentRunId.make("f4f7030b-4c6f-46dd-8872-3446d653746a")),
     "t3code/agent-f4f7030b-4c6f-46dd-8872-3446d653746a",
   );
+});
+
+it("inherits a nested run's effective budget instead of expanding to profile defaults", () => {
+  const childProfileBudget = {
+    maxRuns: 8,
+    maxConcurrency: 4,
+    maxDepth: 4,
+    maxWallTimeMinutes: 30,
+    maxTotalTokens: 100_000,
+    maxEstimatedCostUsd: 10,
+  };
+  const effectiveParentBudget = {
+    maxRuns: 2,
+    maxConcurrency: 1,
+    maxDepth: 1,
+    maxWallTimeMinutes: 5,
+    maxTotalTokens: 5_000,
+    maxEstimatedCostUsd: 1,
+  };
+
+  NodeAssert.deepEqual(minimumBudgets(childProfileBudget, effectiveParentBudget), {
+    ...effectiveParentBudget,
+  });
 });
 
 const IntegrationTestLayer = Layer.mergeAll(
@@ -257,6 +281,41 @@ it.effect("integrates committed child changes from the original branch point", (
     NodeAssert.equal(
       (yield* fileSystem.readFileString(path.join(root, "tracked.txt"))).trim(),
       "committed child",
+    );
+  }).pipe(Effect.provide(IntegrationTestLayer)),
+);
+
+it.effect("treats an already-applied isolated-worktree patch as a successful retry", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const { root, child } = yield* makeWorktrees();
+    yield* fileSystem.writeFileString(path.join(child, "tracked.txt"), "retry-safe child result\n");
+
+    yield* applyIsolatedWorktreePatch({
+      sourceWorktreePath: child,
+      targetWorktreePath: root,
+    });
+    const ordinaryAttempt = yield* Effect.result(
+      applyIsolatedWorktreePatch({
+        sourceWorktreePath: child,
+        targetWorktreePath: root,
+      }),
+    );
+    NodeAssert.equal(ordinaryAttempt._tag, "Failure");
+    NodeAssert.match(
+      ordinaryAttempt._tag === "Failure" ? ordinaryAttempt.failure.detail : "",
+      /target has uncommitted changes/i,
+    );
+    yield* applyIsolatedWorktreePatch({
+      sourceWorktreePath: child,
+      targetWorktreePath: root,
+      allowAlreadyApplied: true,
+    });
+
+    NodeAssert.equal(
+      (yield* fileSystem.readFileString(path.join(root, "tracked.txt"))).trim(),
+      "retry-safe child result",
     );
   }).pipe(Effect.provide(IntegrationTestLayer)),
 );
