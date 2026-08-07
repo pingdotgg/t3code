@@ -85,6 +85,26 @@ function loadDiffPreviewHtml(theme: DiffThemeName): Promise<readonly string[]> {
   return promise;
 }
 
+// Pierre's prerendered stylesheet bakes its own light/dark surface colors
+// into the shadow root's @layer rules. These unlayered rules win the cascade
+// without !important and re-point the surfaces at the app's code tokens
+// (custom properties inherit across the shadow boundary), so the preview
+// follows the active theme exactly like the real diff panel does.
+const DIFF_PREVIEW_THEME_BRIDGE = `
+  :host {
+    color: var(--code-foreground);
+    background-color: var(--code-background);
+    --diffs-fg: var(--code-foreground);
+    --diffs-bg: var(--code-background);
+    --diffs-light-bg: var(--code-background);
+    --diffs-dark-bg: var(--code-background);
+  }
+  [data-diffs-header] {
+    background-color: var(--code-background);
+    color: var(--code-foreground);
+  }
+`;
+
 function StaticDiffHtml({ html }: { html: string }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -92,6 +112,9 @@ function StaticDiffHtml({ html }: { html: string }) {
     if (host === null) return;
     const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
     shadow.innerHTML = html;
+    const bridge = document.createElement("style");
+    bridge.textContent = DIFF_PREVIEW_THEME_BRIDGE;
+    shadow.append(bridge);
   }, [html]);
   return <div ref={hostRef} />;
 }
@@ -158,7 +181,7 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
   const mountRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<GhosttyTerminalSurface | null>(null);
   const fontRef = useRef({ family, size });
-  const { resolvedTheme } = useTheme();
+  const { theme, resolvedTheme } = useTheme();
 
   useEffect(() => {
     const current = fontRef.current;
@@ -167,12 +190,14 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
     void surfaceRef.current?.setFont(previewTerminalFont(family, size));
   }, [family, size]);
 
+  // Re-read the terminal tokens on any theme change — switching between two
+  // palettes can leave resolvedTheme (light/dark) untouched.
   useEffect(() => {
     const mount = mountRef.current;
     const surface = surfaceRef.current;
     if (!mount || !surface) return;
     surface.setTheme(terminalThemeFromApp(mount));
-  }, [resolvedTheme]);
+  }, [theme, resolvedTheme]);
 
   useEffect(() => {
     const mount = mountRef.current;

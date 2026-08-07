@@ -9,6 +9,7 @@ import {
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
+import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -383,8 +384,8 @@ export function buildThreadListV2Items(input: {
       input.changeRequestStateByKey?.get(`${thread.environmentId}:${thread.id}`) ?? null;
     // Visibility parity with web: snooze outranks everything, including a
     // pin — a snoozed thread leaves the list until it wakes (or raises its
-    // hand). The pin survives underneath, so a woken thread reappears at
-    // its original spot in the creation-ordered pinned block.
+    // hand). The pin (and its pinOrderKey) survives underneath, so a woken
+    // thread reappears at its exact spot in the pinned block.
     if (supportsSnooze && effectiveSnoozed(thread, { now: snoozeNow })) {
       snoozed.push(thread);
       if (
@@ -444,7 +445,7 @@ export function buildThreadListV2Items(input: {
         );
 
   const items: ThreadListV2Item[] = [];
-  for (const thread of sortThreadsForListV2(pinned)) {
+  for (const thread of sortPinnedThreadsByOrderKey(pinned)) {
     items.push({
       thread,
       variant: "card",
