@@ -3,6 +3,7 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   CloudIcon,
+  CopyPlusIcon,
   FolderGit2Icon,
   FolderGitIcon,
   FolderIcon,
@@ -12,6 +13,8 @@ import {
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
+import { countBulkPlaceholders } from "../lib/bulkPrompt";
+import { cn } from "../lib/utils";
 import { useProject, useThread, useThreadShellsForProjectRefs } from "../state/entities";
 import { useIsMobile } from "../hooks/useMediaQuery";
 import {
@@ -57,6 +60,9 @@ interface BranchToolbarProps {
   onComposerFocusRequest?: () => void;
   availableEnvironments?: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  /** Only passed for drafts, which are the only threads that can fan out. */
+  bulk?: boolean;
+  onBulkChange?: (bulk: boolean) => void;
 }
 
 interface MobileRunContextSelectorProps {
@@ -323,6 +329,8 @@ export const BranchToolbar = memo(function BranchToolbar({
   onComposerFocusRequest,
   availableEnvironments,
   onEnvironmentChange,
+  bulk,
+  onBulkChange,
 }: BranchToolbarProps) {
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -333,6 +341,13 @@ export const BranchToolbar = memo(function BranchToolbar({
   );
   const serverThread = useThread(threadRef, { waitForShell: draftThread !== null });
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  // Selecting the count rather than the prompt keeps the toolbar off the
+  // per-keystroke render path: it only rerenders when the number changes.
+  const placeholderCount = useComposerDraftStore((store) =>
+    onBulkChange
+      ? countBulkPlaceholders(store.getComposerDraft(draftId ?? threadRef)?.prompt ?? "")
+      : 0,
+  );
   const activeProjectRef = serverThread
     ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
     : draftThread
@@ -447,6 +462,44 @@ export const BranchToolbar = memo(function BranchToolbar({
           ) : null}
         </div>
       )}
+
+      {onBulkChange ? (
+        <Button
+          aria-pressed={bulk === true}
+          className={cn(
+            "h-6 shrink-0 gap-1 px-1.5 text-xs",
+            bulk === true
+              ? "bg-blue-500/10 text-blue-400 hover:bg-blue-500/15 hover:text-blue-300"
+              : "text-muted-foreground/70 hover:text-foreground/80",
+          )}
+          onClick={() => onBulkChange(bulk !== true)}
+          size="sm"
+          title={
+            bulk === true
+              ? placeholderCount > 0
+                ? `Sending starts one thread per value of ${placeholderCount === 1 ? "the placeholder" : "the placeholders"}`
+                : "Add a {placeholder} to the prompt — that is what fans out into threads"
+              : "Send one thread per {placeholder} value"
+          }
+          type="button"
+          variant="ghost"
+        >
+          <CopyPlusIcon className="size-3 shrink-0" />
+          <span className="group-data-compact/composer-context:sr-only">Bulk</span>
+          {bulk === true ? (
+            // The count is the only feedback that the prompt's placeholder
+            // spelling was understood before the send is attempted.
+            <span
+              className={cn(
+                "rounded-sm px-1 font-medium tabular-nums",
+                placeholderCount === 0 && "text-destructive",
+              )}
+            >
+              {placeholderCount}
+            </span>
+          ) : null}
+        </Button>
+      ) : null}
 
       {showGitControls ? (
         <BranchToolbarBranchSelector

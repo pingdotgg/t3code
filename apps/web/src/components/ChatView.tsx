@@ -238,6 +238,10 @@ import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
+import { BulkLaunchDialog } from "./chat/BulkLaunchDialog";
+import { parseBulkPlaceholders, type BulkPromptRow } from "~/lib/bulkPrompt";
+import type { ThreadLaunchSpec } from "~/lib/threadLaunch";
+import { useBulkThreadLaunch } from "../hooks/useBulkThreadLaunch";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
@@ -1241,6 +1245,10 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
+  const bulkLaunch = useBulkThreadLaunch();
+  // Prompt captured when a bulk send opens its dialog; the composer keeps its
+  // text until the batch actually starts.
+  const [bulkLaunchPrompt, setBulkLaunchPrompt] = useState<string | null>(null);
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
@@ -4793,6 +4801,82 @@ function ChatViewContent(props: ChatViewProps) {
     setTimelineAnchor({ threadKey, messageId });
   }, []);
 
+  const handleBulkLaunchConfirm = async (rows: ReadonlyArray<BulkPromptRow>) => {
+    const sendCtx = composerRef.current?.getSendContext();
+    if (!activeProject || !sendCtx || rows.length === 0) {
+      return;
+    }
+    const project = activeProject;
+    const specs: ThreadLaunchSpec[] = rows.map((row) => ({
+      projectId: project.id,
+      title: truncate(row.prompt),
+      prompt: formatOutgoingPrompt({
+        provider: sendCtx.selectedProvider,
+        model: sendCtx.selectedModel,
+        models: sendCtx.selectedProviderModels,
+        effort: sendCtx.selectedPromptEffort,
+        text: row.prompt,
+      }),
+      modelSelection: createModelSelection(
+        sendCtx.selectedModelSelection.instanceId,
+        sendCtx.selectedModel || project.defaultModelSelection?.model || DEFAULT_MODEL,
+        sendCtx.selectedModelSelection.options,
+      ),
+      runtimeMode,
+      interactionMode,
+      branch: activeThreadBranch,
+      // Each thread gets its own worktree so the agents cannot collide in one
+      // checkout. Repositories without git fall back to the shared checkout.
+      worktree:
+        sendEnvMode === "worktree" && activeThreadBranch
+          ? {
+              projectCwd: project.workspaceRoot,
+              baseBranch: activeThreadBranch,
+              branch: buildTemporaryWorktreeBranchName(randomHex),
+              startFromOrigin,
+            }
+          : null,
+    }));
+
+    const outcome = await bulkLaunch.launch({ environmentId, specs });
+    setBulkLaunchPrompt(null);
+    if (outcome.started.length > 0) {
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+    }
+
+    const failedCount = outcome.failed.length;
+    const cancelledCount = outcome.cancelled.length;
+    if (outcome.started.length === 0) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "No threads started",
+          description:
+            failedCount > 0
+              ? outcome.failed[0]?.error instanceof Error
+                ? outcome.failed[0].error.message
+                : "Starting the first thread failed."
+              : "Starting was stopped before the first thread.",
+        }),
+      );
+      return;
+    }
+    toastManager.add(
+      stackedThreadToast({
+        type: failedCount > 0 ? "warning" : "info",
+        title: `Started ${outcome.started.length} of ${specs.length} threads`,
+        description:
+          failedCount > 0
+            ? `Failed: ${outcome.failed.map((failure) => failure.item.title).join(", ")}`
+            : cancelledCount > 0
+              ? `Stopped before: ${outcome.cancelled.map((spec) => spec.title).join(", ")}`
+              : "They are running in the sidebar.",
+      }),
+    );
+  };
+
   const onSend = async (
     e?: { preventDefault: () => void },
     directAnnotation?: {
@@ -4949,6 +5033,44 @@ function ChatViewContent(props: ChatViewProps) {
       );
       return;
     }
+    // A bulk draft never sends itself: it collects placeholder values first and
+    // then starts one thread per value, leaving this draft untouched.
+    if (isLocalDraftThread && draftThread?.bulk === true) {
+      const hasAttachments =
+        composerImages.length > 0 ||
+        sendableComposerTerminalContexts.length > 0 ||
+        composerElementContexts.length > 0 ||
+        composerPreviewAnnotations.length > 0 ||
+        composerReviewComments.length > 0;
+      if (hasAttachments) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Bulk threads send text only",
+            description: "Remove the attachments, or turn bulk off to send this as one thread.",
+          }),
+        );
+        return;
+      }
+      if (parseBulkPlaceholders(trimmed).length === 0) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Add a placeholder first",
+            description:
+              "Write the part that changes as {placeholder}, for example /rooom:ship {jirakey}.",
+          }),
+        );
+        return;
+      }
+      if (sendEnvMode === "worktree" && !activeThreadBranch) {
+        setThreadError(activeThread.id, "Select a base branch before starting bulk threads.");
+        return;
+      }
+      setBulkLaunchPrompt(trimmed);
+      return;
+    }
+
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
     const baseBranchForWorktree =
@@ -6055,6 +6177,38 @@ function ChatViewContent(props: ChatViewProps) {
       settings,
     ],
   );
+  const handleBulkModeChange = useCallback(
+    (bulk: boolean) => {
+      if (!isLocalDraftThread) {
+        return;
+      }
+      // Bulk always runs each thread in its own worktree; several agents in one
+      // checkout would fight over the same files.
+      setDraftThreadContext(composerDraftTarget, {
+        bulk,
+        ...(bulk
+          ? {
+              envMode: "worktree" as const,
+              startFromOrigin: resolveNewDraftStartFromOrigin({
+                envMode: "worktree",
+                newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
+              }),
+              ...(draftThread?.worktreePath ? { worktreePath: null } : {}),
+            }
+          : {}),
+      });
+      scheduleComposerFocus();
+    },
+    [
+      composerDraftTarget,
+      draftThread?.worktreePath,
+      isLocalDraftThread,
+      primaryServerSettings.newWorktreesStartFromOrigin,
+      scheduleComposerFocus,
+      setDraftThreadContext,
+    ],
+  );
+
   const onEnvModeChange = useCallback(
     (mode: DraftThreadEnvMode) => {
       if (canOverrideServerThreadEnvMode) {
@@ -6553,6 +6707,12 @@ function ChatViewContent(props: ChatViewProps) {
                                   : {})}
                                 {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
                                 availableEnvironments={logicalProjectEnvironments}
+                                {...(isLocalDraftThread
+                                  ? {
+                                      bulk: draftThread?.bulk === true,
+                                      onBulkChange: handleBulkModeChange,
+                                    }
+                                  : {})}
                               />
                             </div>
                           )}
@@ -6621,6 +6781,35 @@ function ChatViewContent(props: ChatViewProps) {
                   }
                 }}
                 onPrepared={handlePreparedPullRequestThread}
+              />
+            ) : null}
+
+            {bulkLaunchPrompt !== null ? (
+              <BulkLaunchDialog
+                open
+                prompt={bulkLaunchPrompt}
+                progress={bulkLaunch.progress}
+                summary={[
+                  { label: "Project", value: activeProject?.title ?? "—" },
+                  sendEnvMode === "worktree"
+                    ? {
+                        label: "New worktree per thread from",
+                        value: activeThreadBranch ?? "current checkout",
+                      }
+                    : {
+                        label: "Workspace",
+                        value: "shared checkout — the threads work in the same files",
+                      },
+                ]}
+                onOpenChange={(open) => {
+                  if (!open) {
+                    setBulkLaunchPrompt(null);
+                  }
+                }}
+                onConfirm={(rows) => {
+                  void handleBulkLaunchConfirm(rows);
+                }}
+                onCancelLaunch={bulkLaunch.cancel}
               />
             ) : null}
           </div>
