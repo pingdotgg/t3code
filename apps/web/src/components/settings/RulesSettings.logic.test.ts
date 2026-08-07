@@ -16,6 +16,14 @@ describe("agent rule settings model", () => {
     expect(rule.globs).toEqual(["src/**/*.ts"]);
     expect(rule.profiles).toEqual([]);
   });
+  it("rejects a blank priority", () => {
+    expect(() =>
+      buildAgentRuleDocument(
+        { ...draftFromRule(), id: "blank", name: "Blank", priority: "   " },
+        null,
+      ),
+    ).toThrow("Priority is required.");
+  });
   it("parses target profiles and preserves revisions", () => {
     const baseline = buildAgentRuleDocument(
       { ...draftFromRule(), id: "typescript", name: "Old" },

@@ -49,7 +49,19 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
     const workspaceRoot = yield* hookWorkspace(run);
-    if (profile === null || workspaceRoot === null) return;
+    if (profile === null || workspaceRoot === null) {
+      yield* Effect.logWarning("Agent run terminal hook prerequisites are unavailable", {
+        runId: run.id,
+        profileRevision: run.profile.revision,
+        missing:
+          profile === null
+            ? workspaceRoot === null
+              ? "profile-snapshot,workspace-root"
+              : "profile-snapshot"
+            : "workspace-root",
+      });
+      return;
+    }
     yield* hooks.run({ profile, stage, workspaceRoot });
   });
 
@@ -87,7 +99,7 @@ const make = Effect.gen(function* () {
           if (
             Result.isFailure(completion) &&
             completion.failure._tag === "AgentRunCommandInvariantError" &&
-            completion.failure.detail.includes("budget is exhausted")
+            completion.failure.reason === "budget-exhausted"
           ) {
             yield* repository.dispatch({
               type: "agent-run.fail",

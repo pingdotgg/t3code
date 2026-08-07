@@ -110,7 +110,7 @@ export function RulesSettingsPanel() {
     try {
       if (draft.scope === "project" && !project)
         throw new Error("Choose a project before saving a project-scoped rule.");
-      const rule = buildAgentRuleDocument(draft, ruleQuery.data?.rule ?? null);
+      const rule = buildAgentRuleDocument(draft, isNew ? null : (ruleQuery.data?.rule ?? null));
       const result = await saveRule({
         environmentId: resolvedEnvironmentId,
         input: {
@@ -154,7 +154,7 @@ export function RulesSettingsPanel() {
       );
       await catalog.refresh();
     } catch (cause) {
-      setError(failureMessage(cause as Cause.Cause<unknown>));
+      setError(cause instanceof Error ? cause.message : "The rule request failed.");
     }
   };
   const rules = sortAgentRules(catalog.data?.rules ?? []);

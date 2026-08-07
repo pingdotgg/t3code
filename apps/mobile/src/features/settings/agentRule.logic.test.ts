@@ -39,6 +39,26 @@ describe("mobile agent rule editor", () => {
       ]).map((rule) => rule.id),
     ).toEqual(["new", "old"]);
   });
+
+  it("rejects blank priorities and preserves the full target after the first colon", () => {
+    expect(() =>
+      buildAgentRuleDocument(
+        { ...draftFromRule(), id: "blank", name: "Blank", priority: "   " },
+        null,
+      ),
+    ).toThrow("Priority is required.");
+    expect(() =>
+      buildAgentRuleDocument(
+        {
+          ...draftFromRule(),
+          id: "target",
+          name: "Target",
+          profiles: "environment:reviewer:truncated",
+        },
+        null,
+      ),
+    ).toThrow();
+  });
   it("keeps commas inside brace alternation and formats globs one per line", () => {
     const rule = buildAgentRuleDocument(
       {

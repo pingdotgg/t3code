@@ -66,6 +66,27 @@ describe("mobile composer drafts", () => {
     });
   });
 
+  it("preserves an explicit profile clear in an otherwise empty draft", () => {
+    expect(
+      decodePersistedComposerDrafts({
+        schemaVersion: 1,
+        drafts: {
+          "environment-1:thread-1": {
+            text: "",
+            attachments: [],
+            agentProfile: null,
+          },
+        },
+      }),
+    ).toEqual({
+      "environment-1:thread-1": {
+        text: "",
+        attachments: [],
+        agentProfile: null,
+      },
+    });
+  });
+
   it("keeps legacy content-only drafts and rejects invalid selector state", () => {
     expect(
       decodePersistedComposerDrafts({

@@ -714,134 +714,118 @@ export const make = Effect.gen(function* () {
     return source;
   });
 
+  const profileDocument = Effect.fn("AgentCatalog.profileDocument")(function* (source: Source) {
+    const { source: contents, markdown } = yield* parsed(source);
+    const frontmatter = yield* decodeProfileFrontmatter(markdown.frontmatter).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AgentCatalogDocumentError({
+            kind: "profile",
+            scope: source.ref.scope,
+            id: source.ref.id,
+            sourcePath: source.sourcePath,
+            code: "invalid-document",
+            cause,
+          }),
+      ),
+    );
+    const revision = yield* revisionOf(source, contents);
+    return yield* decodeProfileDocument({
+      id: source.ref.id,
+      scope: source.ref.scope,
+      revision,
+      sourcePath: source.documentPath,
+      instructions: markdown.body,
+      ...frontmatter,
+      defaultModelSelection: frontmatter.defaultModelSelection ?? null,
+      requirements: frontmatter.requirements ?? {
+        toolRequirement: "none",
+        t3McpCapabilities: [],
+      },
+      instructionPriority: frontmatter.instructionPriority ?? "prompt",
+      createdAt: frontmatter.createdAt ?? CATALOG_EPOCH,
+      updatedAt: frontmatter.updatedAt ?? CATALOG_EPOCH,
+      archivedAt: frontmatter.archivedAt ?? null,
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AgentCatalogDocumentError({
+            kind: "profile",
+            scope: source.ref.scope,
+            id: source.ref.id,
+            sourcePath: source.sourcePath,
+            code: "invalid-document",
+            cause,
+          }),
+      ),
+    );
+  });
+
   const getProfile: AgentCatalog["Service"]["getProfile"] = Effect.fn("AgentCatalog.getProfile")(
     function* (input) {
       const source = yield* find("profile", input.ref, input.workspaceRoot);
-      const { source: contents, markdown } = yield* parsed(source);
-      const frontmatter = yield* decodeProfileFrontmatter(markdown.frontmatter).pipe(
-        Effect.mapError(
-          (cause) =>
-            new AgentCatalogDocumentError({
-              kind: "profile",
-              scope: source.ref.scope,
-              id: source.ref.id,
-              sourcePath: source.sourcePath,
-              code: "invalid-document",
-              cause,
-            }),
-        ),
-      );
-      const revision = yield* revisionOf(source, contents);
-      return yield* decodeProfileDocument({
-        id: source.ref.id,
-        scope: source.ref.scope,
-        revision,
-        sourcePath: source.documentPath,
-        instructions: markdown.body,
-        ...frontmatter,
-        defaultModelSelection: frontmatter.defaultModelSelection ?? null,
-        requirements: frontmatter.requirements ?? {
-          toolRequirement: "none",
-          t3McpCapabilities: [],
-        },
-        instructionPriority: frontmatter.instructionPriority ?? "prompt",
-        createdAt: frontmatter.createdAt ?? CATALOG_EPOCH,
-        updatedAt: frontmatter.updatedAt ?? CATALOG_EPOCH,
-        archivedAt: frontmatter.archivedAt ?? null,
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new AgentCatalogDocumentError({
-              kind: "profile",
-              scope: source.ref.scope,
-              id: source.ref.id,
-              sourcePath: source.sourcePath,
-              code: "invalid-document",
-              cause,
-            }),
-        ),
-      );
+      return yield* profileDocument(source);
     },
   );
+
+  const ruleDocument = Effect.fn("AgentCatalog.ruleDocument")(function* (source: Source) {
+    const { source: contents, markdown } = yield* parsed(source);
+    const frontmatter = yield* decodeRuleFrontmatter(markdown.frontmatter).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AgentCatalogDocumentError({
+            kind: "rule",
+            scope: source.ref.scope,
+            id: source.ref.id,
+            sourcePath: source.sourcePath,
+            code: "invalid-document",
+            cause,
+          }),
+      ),
+    );
+    const revision = yield* revisionOf(source, contents);
+    return yield* decodeRuleDocument({
+      id: source.ref.id,
+      scope: source.ref.scope,
+      revision,
+      sourcePath: source.documentPath,
+      body: markdown.body,
+      ...frontmatter,
+      createdAt: frontmatter.createdAt ?? CATALOG_EPOCH,
+      updatedAt: frontmatter.updatedAt ?? CATALOG_EPOCH,
+      archivedAt: frontmatter.archivedAt ?? null,
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AgentCatalogDocumentError({
+            kind: "rule",
+            scope: source.ref.scope,
+            id: source.ref.id,
+            sourcePath: source.sourcePath,
+            code: "invalid-document",
+            cause,
+          }),
+      ),
+    );
+  });
 
   const getRule: AgentCatalog["Service"]["getRule"] = Effect.fn("AgentCatalog.getRule")(
     function* (input) {
       const source = yield* find("rule", input.ref, input.workspaceRoot);
-      const { source: contents, markdown } = yield* parsed(source);
-      const frontmatter = yield* decodeRuleFrontmatter(markdown.frontmatter).pipe(
-        Effect.mapError(
-          (cause) =>
-            new AgentCatalogDocumentError({
-              kind: "rule",
-              scope: source.ref.scope,
-              id: source.ref.id,
-              sourcePath: source.sourcePath,
-              code: "invalid-document",
-              cause,
-            }),
-        ),
-      );
-      const revision = yield* revisionOf(source, contents);
-      return yield* decodeRuleDocument({
-        id: source.ref.id,
-        scope: source.ref.scope,
-        revision,
-        sourcePath: source.documentPath,
-        body: markdown.body,
-        ...frontmatter,
-        createdAt: frontmatter.createdAt ?? CATALOG_EPOCH,
-        updatedAt: frontmatter.updatedAt ?? CATALOG_EPOCH,
-        archivedAt: frontmatter.archivedAt ?? null,
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new AgentCatalogDocumentError({
-              kind: "rule",
-              scope: source.ref.scope,
-              id: source.ref.id,
-              sourcePath: source.sourcePath,
-              code: "invalid-document",
-              cause,
-            }),
-        ),
-      );
+      return yield* ruleDocument(source);
     },
   );
 
   const validate: AgentCatalog["Service"]["validate"] = Effect.fn("AgentCatalog.validate")(
     function* (input = {}) {
-      const listed = yield* list(input);
-      const diagnostics = [...listed.diagnostics];
-      for (const profile of listed.profiles) {
-        const result = yield* getProfile({
-          ref: { id: profile.id, scope: profile.scope },
-          workspaceRoot: input.workspaceRoot,
-        }).pipe(Effect.result);
-        if (Result.isFailure(result) && result.failure._tag === "AgentCatalogDocumentError") {
-          diagnostics.push(toDiagnostic(result.failure));
-        }
-      }
-      for (const rule of listed.rules) {
-        const locator = yield* decodeProfileLocator({ id: rule.id, scope: rule.scope }).pipe(
-          Effect.result,
-        );
-        if (Result.isFailure(locator)) {
-          diagnostics.push(
-            diagnostic({
-              code: "invalid-reference",
-              kind: "rule",
-              scope: rule.scope,
-              id: rule.id,
-              ...(rule.sourcePath === null ? {} : { sourcePath: rule.sourcePath }),
-              message: "Rule id is not a valid agent locator id.",
-            }),
-          );
-          continue;
-        }
-        const result = yield* getRule({
-          ref: locator.success,
-          workspaceRoot: input.workspaceRoot,
-        }).pipe(Effect.result);
+      const discovered = yield* discover(input.workspaceRoot);
+      const diagnostics = [...discovered.diagnostics];
+      for (const source of discovered.sources) {
+        const document =
+          source.kind === "profile"
+            ? profileDocument(source).pipe(Effect.asVoid)
+            : ruleDocument(source).pipe(Effect.asVoid);
+        const result = yield* document.pipe(Effect.result);
         if (Result.isFailure(result) && result.failure._tag === "AgentCatalogDocumentError") {
           diagnostics.push(toDiagnostic(result.failure));
         }

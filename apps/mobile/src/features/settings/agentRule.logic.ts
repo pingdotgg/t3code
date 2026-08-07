@@ -7,6 +7,8 @@ import {
 } from "@t3tools/contracts";
 import { formatAgentRuleGlobs, parseAgentRuleGlobs } from "@t3tools/shared/agentRuleGlobs";
 
+import { parseRequiredNumber } from "./agentSettings.logic";
+
 const decodeAgentRuleDocument = Schema.decodeUnknownSync(AgentRuleDocumentSchema);
 const decodeAgentProfileLocators = Schema.decodeUnknownSync(
   Schema.Array(AgentProfileLocatorSchema),
@@ -42,7 +44,7 @@ export function draftFromRule(
 }
 
 function parseInteger(value: string): number {
-  const parsed = Number(value);
+  const parsed = parseRequiredNumber(value, "Priority");
   if (!Number.isInteger(parsed) || parsed < -100 || parsed > 100) {
     throw new Error("Priority must be a whole number from -100 to 100.");
   }
@@ -57,7 +59,11 @@ function parseProfiles(
     .map((item) => item.trim())
     .filter(Boolean)
     .map((item) => {
-      const [scope, id] = item.includes(":") ? item.split(":", 2) : ["environment", item];
+      const separator = item.indexOf(":");
+      const [scope, id] =
+        separator === -1
+          ? ["environment", item]
+          : [item.slice(0, separator), item.slice(separator + 1)];
       if ((scope !== "environment" && scope !== "project") || !id) {
         throw new Error("Profile targets must use profile-id or scope:profile-id.");
       }

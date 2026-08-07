@@ -15,6 +15,7 @@ import * as Schema from "effect/Schema";
 import * as AgentCatalog from "./AgentCatalog.ts";
 import * as AgentHookRunner from "./AgentHookRunner.ts";
 import { compileAgentPrompt } from "./prompt/PromptCompiler.ts";
+import { normalizeWorkspaceRelativePath } from "./prompt/RuleMatcher.ts";
 import * as AgentRunRepository from "./run/AgentRunRepository.ts";
 
 const MARKDOWN_LINK = /\[[^\]]*\]\(([^)]+)\)/g;
@@ -28,20 +29,15 @@ const normalizeCandidate = (candidate: string): string | null => {
   } catch {
     decoded = candidate;
   }
-  const withoutLocation = decoded
-    .replace(/:\d+(?::\d+)?$/, "")
-    .replaceAll("\\", "/")
-    .trim();
-  if (
-    withoutLocation.length === 0 ||
-    withoutLocation.length > 512 ||
-    withoutLocation.startsWith("/") ||
-    /^[a-zA-Z]:\//.test(withoutLocation) ||
-    withoutLocation.split("/").includes("..")
-  ) {
+  const withoutLocation = decoded.replace(/:\d+(?::\d+)?$/, "").trim();
+  if (withoutLocation.length > 512) {
     return null;
   }
-  return withoutLocation;
+  try {
+    return normalizeWorkspaceRelativePath(withoutLocation);
+  } catch {
+    return null;
+  }
 };
 
 /** Extracts only explicit workspace-relative file references from the user turn. */
@@ -71,6 +67,7 @@ export class AgentPromptResolutionError extends Schema.TaggedErrorClass<AgentPro
       "prompt-hook",
       "catalog",
       "rule",
+      "compile",
       "agent-run",
     ]),
     detail: Schema.String,
@@ -198,15 +195,25 @@ export const make = Effect.gen(function* () {
         ),
     );
     const contextFiles = extractAgentContextFiles(input.message);
-    const message = compileAgentPrompt({
-      profile,
-      cleanTask: input.message,
-      rules,
-      contextFiles,
-      files: contextFiles,
-      hookContext: hookResult.context,
-      toolNames: profile.tools.allowed,
-    }).portablePrompt.text;
+    const message = yield* Effect.try({
+      try: () =>
+        compileAgentPrompt({
+          profile,
+          cleanTask: input.message,
+          rules,
+          contextFiles,
+          files: contextFiles,
+          hookContext: hookResult.context,
+          toolNames: profile.tools.allowed,
+        }).portablePrompt.text,
+      catch: (error) =>
+        resolutionError(
+          "compile",
+          error instanceof Error ? error.message : "Could not compile the agent prompt.",
+          error,
+          profileRef,
+        ),
+    });
     return { message, profile };
   });
 

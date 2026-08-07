@@ -82,7 +82,7 @@ export function draftFromProfile(source: AgentProfileDraftSource = {}): AgentPro
     chatSelectable: profile?.chatSelectable ?? true,
     toolRequirement: profile?.requirements.toolRequirement ?? "none",
     t3McpCapabilities: csv(profile?.requirements.t3McpCapabilities ?? []),
-    runtimeMode: profile?.runtime.mode ?? "full-access",
+    runtimeMode: profile?.runtime.mode ?? "auto",
     interactionMode: profile?.runtime.interactionMode ?? "default",
     workspaceMode: profile?.workspace.mode ?? "shared",
     workspaceAccess: profile?.workspace.access ?? "workspace-write",
@@ -126,6 +126,7 @@ function parseList(value: string): ReadonlyArray<string> {
 }
 
 function parseInteger(value: string, label: string): number {
+  if (value.trim().length === 0) throw new Error(`${label} is required.`);
   const parsed = Number(value);
   if (!Number.isInteger(parsed)) throw new Error(`${label} must be a whole number.`);
   return parsed;

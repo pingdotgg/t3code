@@ -1,4 +1,5 @@
 import {
+  AgentProfileDocument,
   AgentRunId,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -12,7 +13,9 @@ import * as NodeAssert from "node:assert/strict";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { NodeServices } from "@effect/platform-node";
 import { it } from "@effect/vitest";
 
@@ -22,7 +25,69 @@ import {
   agentWorktreeBranchName,
   applyIsolatedWorktreePatch,
   dispatchAgentChildLifecycle,
+  resolvePinnedAgentRuntimeSettings,
+  runtimeSettingsForAgentProfile,
 } from "./AgentOrchestrationLive.ts";
+
+const decodeAgentProfile = Schema.decodeUnknownSync(AgentProfileDocument);
+const restrictiveProfile = decodeAgentProfile({
+  id: "reviewer",
+  scope: "environment",
+  revision: "a".repeat(64),
+  name: "Reviewer",
+  defaultModelSelection: null,
+  chatSelectable: true,
+  sourcePath: null,
+  requirements: { toolRequirement: "none", t3McpCapabilities: [] },
+  archivedAt: null,
+  updatedAt: "2026-08-07T12:00:00.000Z",
+  instructions: "Review carefully.",
+  instructionPriority: "prompt",
+  runtime: { mode: "full-access", interactionMode: "plan" },
+  workspace: { mode: "shared", access: "read-only" },
+  tools: { policy: "inherit", allowed: [] },
+  delegation: { policy: "disabled", profiles: [] },
+  budgets: { maxRuns: 1, maxConcurrency: 1, maxDepth: 0, maxWallTimeMinutes: 1 },
+  hooks: [],
+  rules: [],
+  createdAt: "2026-08-07T12:00:00.000Z",
+});
+
+it.effect("loads the pinned profile before deriving follow-up turn policy", () =>
+  Effect.gen(function* () {
+    let loadedRevision: string | undefined;
+    const settings = yield* resolvePinnedAgentRuntimeSettings({
+      repository: {
+        getProfileSnapshot: (revision) =>
+          Effect.sync(() => {
+            loadedRevision = revision;
+            return Option.some(restrictiveProfile);
+          }),
+      },
+      run: {
+        id: AgentRunId.make("follow-up-run"),
+        profile: {
+          id: restrictiveProfile.id,
+          scope: restrictiveProfile.scope,
+          revision: restrictiveProfile.revision,
+        },
+      },
+    });
+
+    NodeAssert.equal(loadedRevision, restrictiveProfile.revision);
+    NodeAssert.deepEqual(settings, {
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+    });
+  }),
+);
+
+it("derives restrictive runtime policy from a pinned profile", () => {
+  NodeAssert.deepEqual(runtimeSettingsForAgentProfile(restrictiveProfile), {
+    runtimeMode: "approval-required",
+    interactionMode: "plan",
+  });
+});
 
 it("allocates a dedicated branch for each isolated Agent run", () => {
   NodeAssert.equal(

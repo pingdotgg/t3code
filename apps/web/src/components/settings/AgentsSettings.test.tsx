@@ -27,4 +27,22 @@ describe("Agents settings editor", () => {
     expect(markup).toContain('aria-label="Profile rules"');
     expect(markup).toContain("Save");
   });
+
+  it("locks the scope for an existing profile identity", () => {
+    const markup = renderToStaticMarkup(
+      <ProfileEditor
+        draft={{ ...draftFromProfile(), id: "reviewer", name: "Reviewer" }}
+        isNew={false}
+        selectedSummary={null}
+        canEdit
+        error={null}
+        notice={null}
+        isLoading={false}
+        onChange={() => undefined}
+        onSave={() => undefined}
+        onArchiveRestore={() => undefined}
+      />,
+    );
+    expect(markup).toMatch(/<select[^>]*disabled=""[^>]*aria-label="Profile scope"/);
+  });
 });

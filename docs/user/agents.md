@@ -10,6 +10,8 @@ Open **Settings → Agents**, choose an environment or project, and select **New
 - Project profiles belong to one project and can be checked into the repository with its `t3.json` configuration.
 - A profile's model may come from any configured provider instance. The parent and child do not need to use the same provider.
 
+New profiles start in **Auto** runtime mode. Choose a more permissive mode explicitly when the work requires it; existing profiles keep their configured mode when edited.
+
 The profile editor exposes conservative limits. One orchestration lineage can have at most 32 runs, 8 concurrent runs, 4 delegation levels, and 120 minutes of wall time. A child can lower a parent's remaining budget but cannot raise it.
 
 Archive hides a profile without deleting its document. Archived profiles can be restored.

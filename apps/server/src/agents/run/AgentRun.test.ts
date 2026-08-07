@@ -12,6 +12,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import {
+  AgentRunCommandInvariantError,
   decide,
   emptyAgentRunState,
   evolveAll,
@@ -83,9 +84,19 @@ const start = (state: AgentRunState, runId: string) =>
     });
   });
 
-const expectInvariantFailure = (effect: Effect.Effect<unknown, Error>, pattern: RegExp) =>
+const expectInvariantFailure = (
+  effect: Effect.Effect<unknown, Error>,
+  pattern: RegExp,
+  reason?: AgentRunCommandInvariantError["reason"],
+) =>
   Effect.match(effect, {
-    onFailure: (error) => expect(error.message).toMatch(pattern),
+    onFailure: (error) => {
+      expect(error.message).toMatch(pattern);
+      if (reason !== undefined) {
+        expect(error).toBeInstanceOf(AgentRunCommandInvariantError);
+        expect((error as AgentRunCommandInvariantError).reason).toBe(reason);
+      }
+    },
     onSuccess: () => expect.fail("Expected an AgentRun invariant failure."),
   });
 
@@ -249,6 +260,7 @@ describe("AgentRun", () => {
           occurredAt: later,
         }),
         /total-token budget/,
+        "budget-exhausted",
       );
 
       const { maxTotalTokens: _maxTotalTokens, ...budgetWithoutTokens } = budget;

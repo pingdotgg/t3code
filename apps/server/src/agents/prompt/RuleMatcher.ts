@@ -77,6 +77,7 @@ export const normalizeWorkspaceRelativePath = (value: string): string => {
   if (
     candidate.length === 0 ||
     candidate.startsWith("/") ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:/.test(candidate) ||
     /^[A-Za-z]:\//.test(candidate) ||
     candidate.startsWith("//")
   ) {

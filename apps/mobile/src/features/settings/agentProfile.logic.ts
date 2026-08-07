@@ -5,6 +5,8 @@ import {
   type AgentProfileDocument,
 } from "@t3tools/contracts";
 
+import { parseRequiredNumber } from "./agentSettings.logic";
+
 const decodeAgentProfileDocument = Schema.decodeUnknownSync(AgentProfileDocumentSchema);
 
 export type AgentProfileDraft = {
@@ -37,7 +39,7 @@ export function draftFromProfile(
     instructionPriority: profile?.instructionPriority ?? "prompt",
     scope: profile?.scope ?? scope,
     chatSelectable: profile?.chatSelectable ?? true,
-    runtimeMode: profile?.runtime.mode ?? "full-access",
+    runtimeMode: profile?.runtime.mode ?? "auto",
     interactionMode: profile?.runtime.interactionMode ?? "default",
     workspaceMode: profile?.workspace.mode ?? "shared",
     workspaceAccess: profile?.workspace.access ?? "workspace-write",
@@ -49,7 +51,7 @@ export function draftFromProfile(
 }
 
 function integer(value: string, label: string): number {
-  const parsed = Number(value);
+  const parsed = parseRequiredNumber(value, label);
   if (!Number.isInteger(parsed) || parsed < 0)
     throw new Error(`${label} must be a non-negative whole number.`);
   return parsed;

@@ -14,11 +14,17 @@ describe("agent profile settings model", () => {
     expect(document.id).toBe("default");
     expect(document.scope).toBe("environment");
     expect(document.instructions).toBe("");
-    expect(document.runtime.mode).toBe("full-access");
+    expect(document.runtime.mode).toBe("auto");
     expect(document.workspace.access).toBe("workspace-write");
     expect(document.chatSelectable).toBe(true);
     expect(document.budgets.maxDepth).toBe(0);
     expect(document.hooks).toEqual([]);
+  });
+
+  it("rejects blank required budget inputs", () => {
+    expect(() =>
+      buildAgentProfileDocument({ ...draftFromProfile(), maxRuns: "   " }, null),
+    ).toThrow("Maximum runs is required.");
   });
 
   it("preserves a revision and parses structured policy fields", () => {

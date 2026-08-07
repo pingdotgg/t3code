@@ -24,7 +24,7 @@ describe("mobile agent profile editor", () => {
     expect(document.scope).toBe("project");
     expect(document.instructions).toContain("Review");
     expect(document.budgets.maxRuns).toBe(2);
-    expect(document.runtime.mode).toBe("full-access");
+    expect(document.runtime.mode).toBe("auto");
     expect(document.chatSelectable).toBe(true);
   });
 
@@ -34,6 +34,15 @@ describe("mobile agent profile editor", () => {
       { id: "new", name: "New", scope: "environment", archivedAt: null },
     ]);
     expect(profiles.map((profile) => profile.id)).toEqual(["new", "old"]);
+  });
+
+  it("rejects blank required budget inputs", () => {
+    expect(() =>
+      buildAgentProfileDocument(
+        { ...draftFromProfile(), id: "reviewer", name: "Reviewer", maxRuns: "   " },
+        null,
+      ),
+    ).toThrow("Maximum runs is required.");
   });
 
   it("hides delegation-only profiles except for a thread that already selected one", () => {

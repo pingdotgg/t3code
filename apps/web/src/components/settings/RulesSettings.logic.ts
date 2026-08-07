@@ -51,6 +51,7 @@ export function buildAgentRuleDocument(
   } catch {
     throw new Error("Profiles must contain a JSON array of profile locators.");
   }
+  if (draft.priority.trim().length === 0) throw new Error("Priority is required.");
   const priority = Number(draft.priority);
   if (!Number.isInteger(priority)) throw new Error("Priority must be a whole number.");
   return decodeAgentRuleDocument({

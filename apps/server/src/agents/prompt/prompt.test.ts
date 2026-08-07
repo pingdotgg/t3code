@@ -67,6 +67,8 @@ const makeRule = (
 it("normalizes workspace-relative paths without filesystem access", () => {
   assert.equal(normalizeWorkspaceRelativePath("src\\components\\..\\index.ts"), "src/index.ts");
   assert.throws(() => normalizeWorkspaceRelativePath("../outside.ts"));
+  assert.throws(() => normalizeWorkspaceRelativePath("https://example.com/index.ts"));
+  assert.throws(() => normalizeWorkspaceRelativePath("file:src/index.ts"));
 });
 
 it("matches always-apply, targeted, and glob rules in deterministic order", () => {

@@ -51,6 +51,7 @@ layer("039_AgentRuns", (it) => {
       const indexNames = new Set(indexes.map(({ name }) => name));
       assert.ok(indexNames.has("idx_projection_agent_runs_parent"));
       assert.ok(indexNames.has("idx_projection_agent_runs_lineage"));
+      assert.ok(indexNames.has("idx_projection_agent_runs_root"));
       assert.ok(indexNames.has("idx_projection_agent_runs_child_thread"));
 
       const eventIndexes = yield* sql<{ readonly name: string }>`

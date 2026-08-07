@@ -83,16 +83,51 @@ const minimumBudgets = (
       }),
 });
 
-const runtimeModeFor = (profile: AgentProfileDocument) => {
-  switch (profile.workspace.access) {
-    case "read-only":
-      return "approval-required" as const;
-    case "workspace-write":
-      return profile.runtime.mode === "full-access" ? "auto-accept-edits" : profile.runtime.mode;
-    case "full-access":
-      return profile.runtime.mode;
-  }
+export const runtimeSettingsForAgentProfile = (profile: AgentProfileDocument) => {
+  const runtimeMode = (() => {
+    switch (profile.workspace.access) {
+      case "read-only":
+        return "approval-required" as const;
+      case "workspace-write":
+        return profile.runtime.mode === "full-access" ? "auto-accept-edits" : profile.runtime.mode;
+      case "full-access":
+        return profile.runtime.mode;
+    }
+  })();
+  return { runtimeMode, interactionMode: profile.runtime.interactionMode };
 };
+
+export const resolvePinnedAgentRuntimeSettings = Effect.fn(
+  "AgentOrchestration.resolvePinnedAgentRuntimeSettings",
+)(function* (input: {
+  readonly repository: Pick<AgentRunRepository.AgentRunRepository["Service"], "getProfileSnapshot">;
+  readonly run: Pick<AgentRunDomain.AgentRun, "id" | "profile">;
+}) {
+  const profile = yield* input.repository.getProfileSnapshot(input.run.profile.revision).pipe(
+    Effect.mapError((cause) =>
+      invalid("Could not load the pinned Agent profile for the follow-up turn.", {
+        operation: "follow-up-profile-load",
+        cause,
+        profileId: input.run.profile.id,
+        runId: input.run.id,
+      }),
+    ),
+    Effect.flatMap(
+      Option.match({
+        onNone: () =>
+          Effect.fail(
+            invalid("The pinned Agent profile is unavailable for the follow-up turn.", {
+              operation: "follow-up-profile-load",
+              profileId: input.run.profile.id,
+              runId: input.run.id,
+            }),
+          ),
+        onSome: Effect.succeed,
+      }),
+    ),
+  );
+  return runtimeSettingsForAgentProfile(profile);
+});
 
 type ThreadCreateCommand = Extract<OrchestrationCommand, { readonly type: "thread.create" }>;
 type ThreadTurnStartCommand = Extract<OrchestrationCommand, { readonly type: "thread.turn.start" }>;
@@ -689,8 +724,7 @@ export const make = Effect.gen(function* () {
         projectId: context.project.id,
         title: `${target.name}: ${input.task.trim().slice(0, 80) || "Agent run"}`,
         modelSelection,
-        runtimeMode: runtimeModeFor(target),
-        interactionMode: target.runtime.interactionMode,
+        ...runtimeSettingsForAgentProfile(target),
         branch: context.thread.branch,
         worktreePath: target.workspace.mode === "shared" ? context.thread.worktreePath : null,
         agentProfile: pinnedProfile,
@@ -765,8 +799,7 @@ export const make = Effect.gen(function* () {
           attachments: [],
         },
         modelSelection,
-        runtimeMode: runtimeModeFor(target),
-        interactionMode: target.runtime.interactionMode,
+        ...runtimeSettingsForAgentProfile(target),
         agentProfile: pinnedProfile,
         createdAt: occurredAt,
       };
@@ -928,6 +961,10 @@ export const make = Effect.gen(function* () {
           operation: "send",
         });
       }
+      const pinnedRuntimeSettings = yield* resolvePinnedAgentRuntimeSettings({
+        repository: runs,
+        run,
+      });
       const occurredAt = yield* nowIso;
       yield* runs
         .dispatch({
@@ -977,8 +1014,7 @@ export const make = Effect.gen(function* () {
             attachments: [],
           },
           modelSelection: run.modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
+          ...pinnedRuntimeSettings,
           createdAt: occurredAt,
         })
         .pipe(Effect.result);

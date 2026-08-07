@@ -64,7 +64,14 @@ export const expireRun = Effect.fn("AgentRunDeadlineReactor.expireRun")(function
 
   // An empty event list means another reactor won the terminal race. Do not
   // interrupt a provider session that may now belong to a follow-up turn.
-  if (Result.isFailure(cancellation) || cancellation.success.length === 0) return false;
+  if (Result.isFailure(cancellation)) {
+    yield* Effect.logWarning("Agent run deadline cancellation could not be persisted", {
+      runId: run.id,
+      cause: cancellation.failure,
+    });
+    return false;
+  }
+  if (cancellation.success.length === 0) return false;
 
   if (
     run.childThreadId !== null &&

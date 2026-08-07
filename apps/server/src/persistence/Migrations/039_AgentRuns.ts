@@ -72,6 +72,11 @@ export default Effect.gen(function* () {
   `;
 
   yield* sql`
+    CREATE INDEX IF NOT EXISTS idx_projection_agent_runs_root
+    ON projection_agent_runs(root_run_id, created_at)
+  `;
+
+  yield* sql`
     CREATE INDEX IF NOT EXISTS idx_agent_run_events_run_revision
     ON agent_run_events(agent_run_id, revision)
   `;

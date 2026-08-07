@@ -244,7 +244,12 @@ export type AgentRunCommand = typeof AgentRunCommand.Type;
 
 export class AgentRunCommandInvariantError extends Schema.TaggedErrorClass<AgentRunCommandInvariantError>()(
   "AgentRunCommandInvariantError",
-  { commandType: Schema.String, runId: Schema.optionalKey(AgentRunId), detail: Schema.String },
+  {
+    commandType: Schema.String,
+    runId: Schema.optionalKey(AgentRunId),
+    reason: Schema.optionalKey(Schema.Literal("budget-exhausted")),
+    detail: Schema.String,
+  },
 ) {
   override get message(): string {
     return `Agent run command invariant failed (${this.commandType}): ${this.detail}`;
@@ -480,9 +485,18 @@ export const evolveAll = (
   events: ReadonlyArray<AgentRunEvent>,
 ): AgentRunState => events.reduce(evolve, state);
 
-const invariant = (command: AgentRunCommand, detail: string) =>
+const invariant = (
+  command: AgentRunCommand,
+  detail: string,
+  reason?: AgentRunCommandInvariantError["reason"],
+) =>
   Effect.fail(
-    new AgentRunCommandInvariantError({ commandType: command.type, runId: command.runId, detail }),
+    new AgentRunCommandInvariantError({
+      commandType: command.type,
+      runId: command.runId,
+      ...(reason === undefined ? {} : { reason }),
+      detail,
+    }),
   );
 
 const requireRun = (state: AgentRunState, command: AgentRunCommand) => {
@@ -575,15 +589,27 @@ export const decide = Effect.fn("AgentRun.decide")(function* (
         return yield* invariant(command, "A child budget may not exceed its parent budget.");
       const depth = parent.depth + 1;
       if (depth > parent.budget.maxDepth || depth > command.budget.maxDepth)
-        return yield* invariant(command, "The lineage depth budget is exhausted.");
+        return yield* invariant(
+          command,
+          "The lineage depth budget is exhausted.",
+          "budget-exhausted",
+        );
       const rootRuns = runsInLineage(state, parent.rootRunId);
       if (rootRuns.length >= parent.budget.maxRuns)
-        return yield* invariant(command, "The lineage run budget is exhausted.");
+        return yield* invariant(
+          command,
+          "The lineage run budget is exhausted.",
+          "budget-exhausted",
+        );
       const parentBecomesWaiting = !command.detached && activeForConcurrency(parent);
       const activeCount =
         rootRuns.filter(activeForConcurrency).length - (parentBecomesWaiting ? 1 : 0);
       if (activeCount + 1 > parent.budget.maxConcurrency)
-        return yield* invariant(command, "The lineage concurrency budget is exhausted.");
+        return yield* invariant(
+          command,
+          "The lineage concurrency budget is exhausted.",
+          "budget-exhausted",
+        );
       const requested = nextEvent({
         type: "agent-run.requested",
         runId: command.runId,
@@ -649,19 +675,27 @@ export const decide = Effect.fn("AgentRun.decide")(function* (
       if (run.status !== "running" && run.status !== "waiting-for-input")
         return yield* invariant(command, "Only active runs can succeed.");
       if (wallTimeExceeded(run, command.occurredAt))
-        return yield* invariant(command, "The wall-time budget is exhausted.");
+        return yield* invariant(command, "The wall-time budget is exhausted.", "budget-exhausted");
       const lineage = runsInLineage(state, run.rootRunId);
       if (
         run.budget.maxTotalTokens !== undefined &&
         totalTokens(lineage) + (command.usage?.totalTokens ?? 0) > run.budget.maxTotalTokens
       )
-        return yield* invariant(command, "The total-token budget is exhausted.");
+        return yield* invariant(
+          command,
+          "The total-token budget is exhausted.",
+          "budget-exhausted",
+        );
       if (
         run.budget.maxEstimatedCostUsd !== undefined &&
         totalEstimatedCostUsd(lineage) + (command.usage?.estimatedCostUsd ?? 0) >
           run.budget.maxEstimatedCostUsd
       )
-        return yield* invariant(command, "The estimated-cost budget is exhausted.");
+        return yield* invariant(
+          command,
+          "The estimated-cost budget is exhausted.",
+          "budget-exhausted",
+        );
       const event = nextEvent({
         type: "agent-run.result-succeeded",
         ...withRevision(run, command.occurredAt),
@@ -688,25 +722,37 @@ export const decide = Effect.fn("AgentRun.decide")(function* (
           "Only a successful result can be revised with a follow-up.",
         );
       if (wallTimeExceeded(run, command.occurredAt))
-        return yield* invariant(command, "The wall-time budget is exhausted.");
+        return yield* invariant(command, "The wall-time budget is exhausted.", "budget-exhausted");
       const lineage = runsInLineage(state, run.rootRunId);
       if (
         run.budget.maxTotalTokens !== undefined &&
         totalTokens(lineage) >= run.budget.maxTotalTokens
       )
-        return yield* invariant(command, "The total-token budget is exhausted.");
+        return yield* invariant(
+          command,
+          "The total-token budget is exhausted.",
+          "budget-exhausted",
+        );
       if (
         run.budget.maxEstimatedCostUsd !== undefined &&
         totalEstimatedCostUsd(lineage) >= run.budget.maxEstimatedCostUsd
       )
-        return yield* invariant(command, "The estimated-cost budget is exhausted.");
+        return yield* invariant(
+          command,
+          "The estimated-cost budget is exhausted.",
+          "budget-exhausted",
+        );
       const parent = run.parentRunId === null ? undefined : state.runs.get(run.parentRunId);
       const parentBecomesWaiting =
         parent !== undefined && !run.detached && activeForConcurrency(parent);
       const activeCount =
         lineage.filter(activeForConcurrency).length - (parentBecomesWaiting ? 1 : 0);
       if (activeCount + 1 > run.budget.maxConcurrency)
-        return yield* invariant(command, "The lineage concurrency budget is exhausted.");
+        return yield* invariant(
+          command,
+          "The lineage concurrency budget is exhausted.",
+          "budget-exhausted",
+        );
       const event = nextEvent({
         type: "agent-run.follow-up-revised",
         ...withRevision(run, command.occurredAt),

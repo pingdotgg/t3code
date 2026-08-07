@@ -3,7 +3,9 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 
 import * as ServerConfig from "../config.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
@@ -294,5 +296,56 @@ it.layer(NodeServices.layer)("AgentCatalog", (it) => {
           ["reviewer"],
         );
       }),
+  );
+
+  it.effect("validates a discovered catalog without rediscovering it per document", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-agent-catalog-" });
+      const workspace = path.join(tempDir, "workspace");
+      const stateDir = path.join(tempDir, "userdata");
+      yield* fileSystem.makeDirectory(workspace, { recursive: true });
+      yield* write(
+        path.join(stateDir, "agents", "reviewer.md"),
+        [
+          "---",
+          "name: Reviewer",
+          "runtime: { mode: auto, interactionMode: default }",
+          "workspace: { mode: shared, access: read-only }",
+          "tools: { policy: inherit, allowed: [] }",
+          "delegation: { policy: disabled, profiles: [] }",
+          "budgets: { maxRuns: 1, maxConcurrency: 1, maxDepth: 0, maxWallTimeMinutes: 1 }",
+          "hooks: []",
+          "rules: []",
+          "---",
+          "",
+          "Review carefully.",
+        ].join("\n"),
+      );
+      yield* write(
+        path.join(stateDir, "rules", "typescript.md"),
+        ["---", "name: TypeScript", "alwaysApply: true", "---", "", "Prefer inferred types."].join(
+          "\n",
+        ),
+      );
+
+      const projectLoads = yield* Ref.make(0);
+      const projectLoader = T3ProjectFileLoader.T3ProjectFileLoader.of({
+        load: () => Ref.update(projectLoads, (count) => count + 1).pipe(Effect.as(Option.none())),
+      });
+      const validation = yield* Effect.service(AgentCatalog.AgentCatalog).pipe(
+        Effect.flatMap((catalog) => catalog.validate({ workspaceRoot: workspace })),
+        Effect.provide(
+          AgentCatalog.layer.pipe(
+            Layer.provide(Layer.succeed(T3ProjectFileLoader.T3ProjectFileLoader, projectLoader)),
+            Layer.provide(ServerConfig.layerTest(workspace, tempDir)),
+          ),
+        ),
+      );
+
+      assert.deepEqual(validation.diagnostics, []);
+      assert.equal(yield* Ref.get(projectLoads), 2);
+    }),
   );
 });

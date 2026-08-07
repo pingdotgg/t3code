@@ -4,6 +4,8 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  AgentProfileId,
+  AgentProfileRevision,
   ModelSelection,
   ProviderRuntimeEvent,
   ProviderSession,
@@ -69,6 +71,11 @@ const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
+const pinnedAgentProfile = {
+  id: AgentProfileId.make("reviewer"),
+  scope: "environment" as const,
+  revision: AgentProfileRevision.make("a".repeat(64)),
+};
 
 const deriveServerPathsSync = (baseDir: string, devUrl: URL | undefined) =>
   Effect.runSync(deriveServerPaths(baseDir, devUrl).pipe(Effect.provide(NodeServices.layer)));
@@ -300,11 +307,12 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
     );
-    const resolveAgentPrompt = vi.fn((resolverInput: { readonly message: string }) =>
-      Effect.succeed({
-        message: input?.resolveAgentPrompt?.(resolverInput.message) ?? resolverInput.message,
-        profile: null,
-      }),
+    const resolveAgentPrompt = vi.fn(
+      (resolverInput: Parameters<AgentPromptResolver["Service"]["resolve"]>[0]) =>
+        Effect.succeed({
+          message: input?.resolveAgentPrompt?.(resolverInput.message) ?? resolverInput.message,
+          profile: null,
+        }),
     );
     const providerSnapshots = [
       {
@@ -585,6 +593,7 @@ describe("ProviderCommandReactor", () => {
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
+        agentProfile: pinnedAgentProfile,
         createdAt,
       }),
     );
@@ -593,6 +602,7 @@ describe("ProviderCommandReactor", () => {
     expect(harness.resolveAgentPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
         message: "delegate this",
+        profileRef: pinnedAgentProfile,
         workspaceRoot: "/tmp/provider-project",
       }),
     );
@@ -2914,16 +2924,7 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       });
 
-      yield* Effect.promise(() =>
-        waitFor(async () => {
-          const readModel = await harness.readModel();
-          const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-          if (!thread) return false;
-          return thread.activities.some(
-            (activity) => activity.kind === "provider.user-input.respond.failed",
-          );
-        }),
-      );
+      yield* Effect.promise(() => harness.drain());
 
       const readModel = yield* Effect.promise(() => harness.readModel());
       const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));

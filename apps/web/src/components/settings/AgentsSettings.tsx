@@ -507,6 +507,7 @@ export function ProfileEditor({
           <select
             className={selectClass}
             value={draft.scope}
+            disabled={!isNew}
             onChange={(event) =>
               onChange("scope", event.target.value as AgentProfileDraft["scope"])
             }

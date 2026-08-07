@@ -2384,6 +2384,9 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const agentCatalog = yield* AgentCatalog.AgentCatalog;
     const agentProfileStore = yield* AgentProfileStore.AgentProfileStore;
     const agentRuleStore = yield* AgentRuleStore.AgentRuleStore;
+    // Capture the instances exported by AgentServicesLayerLive, then provide
+    // those same instances to each connection-local RPC layer. Layer.succeed
+    // does not construct another catalog or CAS store.
     const agentProfileServices = Layer.mergeAll(
       Layer.succeed(AgentCatalog.AgentCatalog, agentCatalog),
       Layer.succeed(AgentProfileStore.AgentProfileStore, agentProfileStore),
