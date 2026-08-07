@@ -39,6 +39,8 @@ There's now a board at `/board` (`Cmd/Ctrl+Shift+B`, also in the sidebar and com
 
 **Needs You · Working · Review · Done · Idle · Snoozed**
 
+![Board view with agents grouped into Needs You, Working, Review and Done columns](docs/images/kanbanboard.png)
+
 Columns are derived from live state, not set by hand, so a card moves the moment its thread does. A thread whose subagent fleet is still running after the turn settled shows under **Working**, not Idle. The grouping mirrors the sidebar's exactly, so the two never disagree.
 
 Dragging is limited to the moves that map to a real command — drop on **Done** to settle, on **Snoozed** to snooze, drag back to return to active. The agent-owned columns don't accept drops, and a refused move says why instead of failing after the fact. Cards carry provider and model, branch or worktree, PR state, plan progress, and a link into the thread's Agents panel.
