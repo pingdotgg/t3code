@@ -348,7 +348,29 @@ function resultErrorsText(result: SDKResultMessage): string {
     : "";
 }
 
+/**
+ * First user-facing error from a non-success result. "[ede_diagnostic] ..."
+ * entries are CLI-internal telemetry (the CLI hides them from its own UI too),
+ * so they must never become the error banner.
+ */
+function resultUserFacingError(result: SDKResultMessage): string | undefined {
+  if (result.subtype === "success" || !Array.isArray(result.errors)) {
+    return undefined;
+  }
+  return result.errors.find((error) => !error.startsWith("[ede_diagnostic]"));
+}
+
 function isInterruptedResult(result: SDKResultMessage): boolean {
+  // The CLI stamps user aborts explicitly: interrupting mid-tool-call yields
+  // "aborted_tools" (with an internal "[ede_diagnostic] ..." error and
+  // is_error: true), interrupting mid-stream yields "aborted_streaming".
+  if (
+    result.terminal_reason === "aborted_tools" ||
+    result.terminal_reason === "aborted_streaming"
+  ) {
+    return true;
+  }
+
   const errors = resultErrorsText(result);
   if (errors.includes("interrupt")) {
     return true;
@@ -2919,7 +2941,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     const status = turnStatusFromResult(message);
-    const errorMessage = message.subtype === "success" ? undefined : message.errors[0];
+    const errorMessage = resultUserFacingError(message);
 
     if (status === "failed") {
       yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");
@@ -3034,9 +3056,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     // error rows in client work logs. `background_tasks_changed` is a roster
     // snapshot ({tasks: [...]}) — the task_* lifecycle events carry the
     // authoritative per-agent data and the typed background_tasks control
-    // request is the reconciliation source.
-    if ((message.subtype as string) === "background_tasks_changed") {
-      return;
+    // request is the reconciliation source. `vcs_state_changed`
+    // ({kind: commit|push|rebase}) and `code_change_published`
+    // ({provider, url, repo}) are informational CLI notices; the work log
+    // already shows the underlying git/gh tool calls.
+    switch (message.subtype as string) {
+      case "background_tasks_changed":
+      case "vcs_state_changed":
+      case "code_change_published":
+        return;
     }
 
     switch (message.subtype) {

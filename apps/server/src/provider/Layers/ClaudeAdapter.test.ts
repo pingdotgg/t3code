@@ -1450,6 +1450,67 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("treats aborted_tools results as interrupted and hides ede_diagnostic errors", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      // Exact shape the CLI emits when Stop lands mid-tool-call: is_error
+      // is true and the only error is internal diagnostic telemetry.
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"],
+        stop_reason: "tool_use",
+        terminal_reason: "aborted_tools",
+        session_id: "sdk-session-abort-tools",
+        uuid: "result-abort-tools",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.deepEqual(
+        runtimeEvents.map((event) => event.type),
+        [
+          "session.started",
+          "session.configured",
+          "session.state.changed",
+          "turn.started",
+          "thread.started",
+          "turn.completed",
+        ],
+      );
+
+      const turnCompleted = runtimeEvents[runtimeEvents.length - 1];
+      assert.equal(turnCompleted?.type, "turn.completed");
+      if (turnCompleted?.type === "turn.completed") {
+        assert.equal(String(turnCompleted.turnId), String(turn.turnId));
+        assert.equal(turnCompleted.payload.state, "interrupted");
+        assert.equal(turnCompleted.payload.errorMessage, undefined);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("interruptTurn stops every live task before interrupting the turn", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -2020,6 +2081,24 @@ describe("ClaudeAdapterLive", () => {
           tasks: [{ task_id: "t1", task_type: "local_agent", description: "Say hi" }],
           session_id: "session",
           uuid: "roster",
+        },
+        {
+          type: "system",
+          subtype: "vcs_state_changed",
+          kind: "push",
+          cwd: "/tmp/worktree",
+          session_id: "session",
+          uuid: "vcs",
+        },
+        {
+          type: "system",
+          subtype: "code_change_published",
+          provider: "github",
+          url: "https://github.com/pingdotgg/t3code/pull/1",
+          repo: "pingdotgg/t3code",
+          identifier: "1",
+          session_id: "session",
+          uuid: "ccp",
         },
         {
           type: "system",
