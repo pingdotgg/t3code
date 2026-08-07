@@ -75,6 +75,7 @@ patchedDependencies:
   '@legendapp/list@3.3.3': d162d67b73933ab077d00627cdf52b18ea88b28c4fae4e8340a854df25026f09
   '@pierre/diffs@1.3.0-beta.10': 7ef7cb0cbabb17c15cdb137554068b36f15f6f5265e73fb51452aa3380db91aa
   '@react-native-menu/menu@2.0.0': 5ea3ae4bf1d9baf5443b65c269bb09621c27a68d556f713778f37b1e8d46aaae
+  '@react-native/gradle-plugin@0.85.3': c1b594a16e682d621b6a960926f8ce13fc92edfb397884cfe7fcb0518996a784
   '@react-navigation/native-stack@7.17.6': c7fc101b78d434904425e5a24c22fb0042298dec6f807250486e784f3c717273
   effect@4.0.0-beta.103: af36b7948b6f9c56623074662b51dade5699880c1a7c71245de73e13c3185fb6
   expo-modules-jsi@56.0.10: 9170f8074ae4e35a0a086e756c8f815794fd3abe51eac67ca3ba02804225ec1f
@@ -14198,7 +14199,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@react-native/gradle-plugin@0.85.3': {}
+  '@react-native/gradle-plugin@0.85.3(patch_hash=c1b594a16e682d621b6a960926f8ce13fc92edfb397884cfe7fcb0518996a784)': {}
 
   '@react-native/js-polyfills@0.85.3': {}
 
@@ -20047,7 +20048,7 @@ snapshots:
       '@react-native/assets-registry': 0.85.3
       '@react-native/codegen': 0.85.3(@babel/core@7.29.7)
       '@react-native/community-cli-plugin': 0.85.3(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(utf-8-validate@6.0.6)
-      '@react-native/gradle-plugin': 0.85.3
+      '@react-native/gradle-plugin': 0.85.3(patch_hash=c1b594a16e682d621b6a960926f8ce13fc92edfb397884cfe7fcb0518996a784)
       '@react-native/js-polyfills': 0.85.3
       '@react-native/normalize-colors': 0.85.3
       '@react-native/virtualized-lists': 0.85.3(@types/react@19.2.16)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
@@ -20092,7 +20093,7 @@ snapshots:
       '@react-native/assets-registry': 0.85.3
       '@react-native/codegen': 0.85.3(@babel/core@7.29.7)
       '@react-native/community-cli-plugin': 0.85.3(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(utf-8-validate@6.0.6)
-      '@react-native/gradle-plugin': 0.85.3
+      '@react-native/gradle-plugin': 0.85.3(patch_hash=c1b594a16e682d621b6a960926f8ce13fc92edfb397884cfe7fcb0518996a784)
       '@react-native/js-polyfills': 0.85.3
       '@react-native/normalize-colors': 0.85.3
       '@react-native/virtualized-lists': 0.85.3(@types/react@19.2.16)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.6)(utf-8-validate@6.0.6))(react@19.2.6)
