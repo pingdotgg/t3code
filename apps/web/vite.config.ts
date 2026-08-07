@@ -1,4 +1,4 @@
-import zlib from "node:zlib";
+import * as NodeZlib from "node:zlib";
 
 import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
@@ -134,7 +134,7 @@ function devCompressionPlugin(): Plugin {
       // node http objects Connect actually passes — safe to narrow.
       server.middlewares.use(
         compression({
-          brotli: { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 } },
+          brotli: { params: { [NodeZlib.constants.BROTLI_PARAM_QUALITY]: 5 } },
         }) as unknown as Connect.NextHandleFunction,
       );
     },
