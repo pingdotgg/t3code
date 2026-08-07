@@ -23,7 +23,7 @@ public struct NewThreadView: View {
     @State private var startFromOrigin = true
     @State private var branchesLoading = false
     @State private var branchLoadFailed = false
-    @State private var showingBranchPicker = false
+    @State private var activePicker: NewTaskPicker?
     @State private var isSubmitting = false
     @State private var submissionFailed = false
     @State private var restoredDraftProjectID: String?
@@ -113,19 +113,33 @@ public struct NewThreadView: View {
             guard !submittedSuccessfully else { return }
             persistCurrentDraftImmediately()
         }
-        .sheet(isPresented: $showingBranchPicker) {
-            NewTaskBranchPicker(
-                branches: branches,
-                selection: selectedBranch,
-                isLoading: branchesLoading,
-                loadFailed: branchLoadFailed,
-                onSelect: { branch in
-                    workspaceSelectionIsExplicit = true
-                    selectedBranch = branch
-                    showingBranchPicker = false
-                },
-                onRefresh: { Task { await loadBranches(refresh: true) } }
-            )
+        .sheet(item: $activePicker) { picker in
+            switch picker {
+            case .project:
+                NewTaskProjectPicker(
+                    projects: creationProjects,
+                    environments: creationEnvironments,
+                    selectionID: projectID,
+                    onSelect: { project in
+                        if selectProject(project.id) {
+                            activePicker = nil
+                        }
+                    }
+                )
+            case .branch:
+                NewTaskBranchPicker(
+                    branches: branches,
+                    selection: selectedBranch,
+                    isLoading: branchesLoading,
+                    loadFailed: branchLoadFailed,
+                    onSelect: { branch in
+                        workspaceSelectionIsExplicit = true
+                        selectedBranch = branch
+                        activePicker = nil
+                    },
+                    onRefresh: { Task { await loadBranches(refresh: true) } }
+                )
+            }
         }
         .alert("Couldn’t start task", isPresented: $submissionFailed) {
             Button("OK") {}
@@ -155,18 +169,8 @@ public struct NewThreadView: View {
             Text("What should we build")
             HStack(spacing: 0) {
                 Text("in")
-                Menu {
-                    ForEach(creationProjects) { project in
-                        Button {
-                            selectProject(project.id)
-                        } label: {
-                            if project.id == projectID {
-                                Label(project.name, systemImage: "checkmark")
-                            } else {
-                                Text(project.name)
-                            }
-                        }
-                    }
+                Button {
+                    activePicker = .project
                 } label: {
                     Text(selectedProject?.name ?? "a project")
                         .foregroundStyle(T3Colors.textPrimary)
@@ -183,6 +187,8 @@ public struct NewThreadView: View {
                 .buttonStyle(.plain)
                 .disabled(isSubmitting)
                 .padding(.leading, 5)
+                .accessibilityLabel("Choose project")
+                .accessibilityValue(selectedProject?.name ?? "No project")
                 Text("?")
             }
         }
@@ -291,7 +297,7 @@ public struct NewThreadView: View {
 
             if workspaceMode == .worktree {
                 Button {
-                    showingBranchPicker = true
+                    activePicker = .branch
                 } label: {
                     workspaceControlLabel(
                         selectedBranch?.name
@@ -530,11 +536,14 @@ public struct NewThreadView: View {
         }
     }
 
-    private func selectProject(_ id: String) {
-        guard id != projectID else { return }
+    @discardableResult
+    private func selectProject(_ id: String) -> Bool {
+        guard id != projectID else { return true }
+        guard creationProjects.contains(where: { $0.id == id }) else { return false }
         persistCurrentDraftImmediately()
         projectID = id
         prepareProjectIfNeeded(id)
+        return true
     }
 
     private func selectEnvironment(_ id: String) {
@@ -847,6 +856,80 @@ private struct DottedUnderline: Shape {
         path.move(to: CGPoint(x: rect.minX, y: rect.midY))
         path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
         return path
+    }
+}
+
+private enum NewTaskPicker: String, Identifiable {
+    case project
+    case branch
+
+    var id: String { rawValue }
+}
+
+private struct NewTaskProjectPicker: View {
+    @SwiftUI.Environment(\.dismiss) private var dismiss
+    let projects: [FeatureProject]
+    let environments: [FeatureEnvironment]
+    let selectionID: String
+    let onSelect: (FeatureProject) -> Void
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if projects.isEmpty {
+                    ContentUnavailableView(
+                        "No Projects Available",
+                        systemImage: "folder",
+                        description: Text("Reconnect an environment or add a project to continue.")
+                    )
+                } else {
+                    List(projects) { project in
+                        Button {
+                            onSelect(project)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Text(projectTitle(project))
+                                    .foregroundStyle(T3Colors.textPrimary)
+
+                                Spacer(minLength: 10)
+
+                                if project.id == selectionID {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(T3Colors.accent)
+                                }
+                            }
+                            .frame(minHeight: 34)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(
+                            project.id == selectionID ? .isSelected : []
+                        )
+                        .listRowBackground(T3Colors.background)
+                    }
+                    .listStyle(.plain)
+                }
+            }
+            .background(T3Colors.background)
+            .navigationTitle("Project")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationBackground(T3Colors.background)
+        .preferredColorScheme(.dark)
+    }
+
+    private func projectTitle(_ project: FeatureProject) -> String {
+        guard environments.count > 1,
+              let environment = environments.first(where: { $0.id == project.environmentID }) else {
+            return project.name
+        }
+        return "\(project.name) · \(environment.name)"
     }
 }
 
