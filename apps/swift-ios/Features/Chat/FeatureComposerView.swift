@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct FeatureComposerView: View {
     @State private var isManuallyExpanded = false
     @State private var attachmentPreparation = FeatureAttachmentPreparationState()
+    @State private var pasteQueue = FeatureComposerPasteQueue()
     @State private var pathEntries: [FeatureComposerPathEntry] = []
     @State private var isPathSearchLoading = false
     @State private var pathSearchError: String?
@@ -18,6 +19,7 @@ struct FeatureComposerView: View {
     private let materializesDefaultSelection: Bool
     private let isSending: Bool
     private let isWorking: Bool
+    private let attachmentContextID: String
     private let focused: FocusState<Bool>.Binding
     private let contextUsage: Double?
     private let forceExpanded: Bool
@@ -36,6 +38,7 @@ struct FeatureComposerView: View {
         attachments: Binding<[FeatureDraftAttachment]>,
         providers: [FeatureProvider],
         threadSelection: FeatureSelection?,
+        attachmentContextID: String,
         materializesDefaultSelection: Bool = true,
         isSending: Bool,
         isWorking: Bool,
@@ -56,6 +59,7 @@ struct FeatureComposerView: View {
         _attachments = attachments
         self.providers = providers
         self.threadSelection = threadSelection
+        self.attachmentContextID = attachmentContextID
         self.materializesDefaultSelection = materializesDefaultSelection
         self.isSending = isSending
         self.isWorking = isWorking
@@ -114,6 +118,10 @@ struct FeatureComposerView: View {
             }
             .task(id: pathSearchRequest) {
                 await updatePathSearch()
+            }
+            .onChange(of: attachmentContextID) {
+                pasteQueue.cancelAll()
+                attachmentPreparation.cancelAll()
             }
             .alert(
                 "Couldn’t paste image",
@@ -202,10 +210,12 @@ struct FeatureComposerView: View {
                     .padding(.horizontal, 13)
             }
 
+            let placeholder = isWorking ? "Message to queue…" : "Ask anything…"
             ZStack(alignment: .topLeading) {
                 FeatureComposerTextInput(
                     text: $text,
                     focused: focused,
+                    placeholder: placeholder,
                     acceptsImages: canPasteImages,
                     onPasteImages: loadPastedImages
                 )
@@ -213,12 +223,13 @@ struct FeatureComposerView: View {
                 .padding(.top, 14)
 
                 if text.isEmpty {
-                    Text(isWorking ? "Message to queue…" : "Ask anything…")
+                    Text(placeholder)
                         .font(T3Typography.composer)
                         .foregroundStyle(T3Colors.textTertiary)
                         .padding(.horizontal, 16)
                         .padding(.top, 14)
                         .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
             }
             .padding(.bottom, 7)
@@ -249,42 +260,53 @@ struct FeatureComposerView: View {
 
     private var canPasteImages: Bool {
         imagesAllowed
-            && attachments.count + attachmentPreparation.pendingItemCount < 8
+            && FeatureImageAttachmentPolicy.remainingCapacity(
+                attachmentCount: attachments.count,
+                pendingItemCount: attachmentPreparation.pendingItemCount
+            ) > 0
     }
 
     private func loadPastedImages(_ providers: [NSItemProvider]) {
-        guard canPasteImages else { return }
-        let remainingCount = max(
-            0,
-            8 - attachments.count - attachmentPreparation.pendingItemCount
-        )
-        let imageProviders = Array(
-            providers.filter {
-                $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
-            }.prefix(remainingCount)
-        )
+        guard imagesAllowed else { return }
+        let imageProviders = providers.filter {
+            $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
+        }
         guard !imageProviders.isEmpty else { return }
 
-        let firstOrdinal = attachments.count + attachmentPreparation.pendingItemCount + 1
-        let operation = attachmentPreparation.begin(itemCount: imageProviders.count)
+        guard let operation = attachmentPreparation.reserve(
+            itemCount: imageProviders.count,
+            attachments: attachments
+        ) else {
+            attachmentErrorMessage = "You can attach up to eight images."
+            return
+        }
+        let reservedProviders = Array(imageProviders.prefix(operation.count))
 
-        Task { @MainActor in
-            defer { attachmentPreparation.finish(operation) }
-            for (offset, provider) in imageProviders.enumerated() {
+        pasteQueue.enqueue { @MainActor in
+            defer { self.attachmentPreparation.finish(operation) }
+            var prepared: [FeatureDraftAttachment] = []
+            for provider in reservedProviders {
                 do {
                     let data = try await FeatureImagePasteLoader.data(from: provider)
-                    let attachment = try await Task.detached(priority: .userInitiated) {
-                        try FeatureImageProcessor.attachment(
-                            from: data,
-                            ordinal: firstOrdinal + offset
-                        )
-                    }.value
-                    attachments.append(attachment)
+                    try Task.checkCancellation()
+                    let attachment = try await FeatureImageAttachmentIngestion.prepare(
+                        data: data
+                    )
+                    try Task.checkCancellation()
+                    prepared.append(attachment)
+                } catch is CancellationError {
+                    return
                 } catch {
-                    attachmentErrorMessage = error.localizedDescription
-                    break
+                    guard !Task.isCancelled else { return }
+                    self.attachmentErrorMessage = error.localizedDescription
                 }
             }
+            guard !Task.isCancelled else { return }
+            let accepted = FeatureImageAttachmentPolicy.attachmentsToAppend(
+                prepared,
+                to: self.attachments
+            )
+            self.attachments.append(contentsOf: accepted)
         }
     }
 
@@ -506,9 +528,71 @@ struct FeatureComposerView: View {
 
 }
 
+@MainActor
+final class FeatureComposerPasteQueue {
+    private var tail: Task<Void, Never>?
+    private var tasks: [UUID: Task<Void, Never>] = [:]
+
+    func enqueue(_ work: @escaping @MainActor () async -> Void) {
+        let id = UUID()
+        let previous = tail
+        let task = Task { @MainActor [weak self] in
+            await previous?.value
+            guard !Task.isCancelled else {
+                self?.tasks.removeValue(forKey: id)
+                return
+            }
+            await work()
+            self?.tasks.removeValue(forKey: id)
+        }
+        tasks[id] = task
+        tail = task
+    }
+
+    func cancelAll() {
+        for task in tasks.values {
+            task.cancel()
+        }
+        tasks.removeAll()
+        tail = nil
+    }
+
+    func waitForAll() async {
+        await tail?.value
+    }
+}
+
+final class FeatureComposerUITextView: UITextView {
+    var acceptsImages = false
+    var onPasteImages: (([NSItemProvider]) -> Void)?
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(paste(_:)), acceptsImages, UIPasteboard.general.hasImages {
+            return true
+        }
+        return super.canPerformAction(action, withSender: sender)
+    }
+
+    override func paste(_ sender: Any?) {
+        guard acceptsImages else {
+            super.paste(sender)
+            return
+        }
+        let imageProviders = UIPasteboard.general.itemProviders.filter {
+            $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
+        }
+        guard !imageProviders.isEmpty else {
+            super.paste(sender)
+            return
+        }
+        onPasteImages?(imageProviders)
+    }
+}
+
 private struct FeatureComposerTextInput: UIViewRepresentable {
     @Binding var text: String
     let focused: FocusState<Bool>.Binding
+    let placeholder: String
     let acceptsImages: Bool
     let onPasteImages: ([NSItemProvider]) -> Void
 
@@ -516,67 +600,85 @@ private struct FeatureComposerTextInput: UIViewRepresentable {
         Coordinator(self)
     }
 
-    func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
+    func makeUIView(context: Context) -> FeatureComposerUITextView {
+        let textView = FeatureComposerUITextView()
         textView.delegate = context.coordinator
-        textView.pasteDelegate = context.coordinator
-        textView.pasteConfiguration = pasteConfiguration
+        textView.acceptsImages = acceptsImages
+        textView.onPasteImages = onPasteImages
         textView.backgroundColor = .clear
-        textView.textColor = .white
-        textView.tintColor = .systemBlue
+        textView.textColor = UIColor(T3Colors.textPrimary)
+        textView.tintColor = UIColor(T3Colors.accent)
         textView.font = UIFont.preferredFont(forTextStyle: .body)
         textView.adjustsFontForContentSizeCategory = true
         textView.textContainerInset = .zero
         textView.textContainer.lineFragmentPadding = 0
         textView.isScrollEnabled = false
         textView.accessibilityIdentifier = "message-composer"
+        updateAccessibility(textView)
         return textView
     }
 
-    func updateUIView(_ textView: UITextView, context: Context) {
+    func updateUIView(_ textView: FeatureComposerUITextView, context: Context) {
         context.coordinator.parent = self
-        textView.pasteConfiguration = pasteConfiguration
+        textView.acceptsImages = acceptsImages
+        textView.onPasteImages = onPasteImages
 
         if textView.text != text {
+            let selectedRange = textView.selectedRange
             textView.text = text
+            let location = min(selectedRange.location, textView.text.utf16.count)
+            let length = min(selectedRange.length, textView.text.utf16.count - location)
+            textView.selectedRange = NSRange(location: location, length: length)
         }
+        updateAccessibility(textView)
+        Self.updateScrolling(textView)
 
-        if focused.wrappedValue, !textView.isFirstResponder {
-            textView.becomeFirstResponder()
-        } else if !focused.wrappedValue, textView.isFirstResponder {
-            textView.resignFirstResponder()
+        if context.coordinator.lastAppliedFocus != focused.wrappedValue {
+            context.coordinator.lastAppliedFocus = focused.wrappedValue
+            if focused.wrappedValue, !textView.isFirstResponder {
+                textView.becomeFirstResponder()
+            } else if !focused.wrappedValue, textView.isFirstResponder {
+                textView.resignFirstResponder()
+            }
         }
     }
 
     func sizeThatFits(
         _ proposal: ProposedViewSize,
-        uiView: UITextView,
+        uiView: FeatureComposerUITextView,
         context: Context
     ) -> CGSize? {
-        guard let width = proposal.width else { return nil }
+        guard let width = proposal.width, width.isFinite else { return nil }
         let fittingSize = uiView.sizeThatFits(
             CGSize(width: width, height: .greatestFiniteMagnitude)
         )
         let maximumHeight = (uiView.font?.lineHeight ?? 22) * 7
-        uiView.isScrollEnabled = fittingSize.height > maximumHeight
         return CGSize(width: width, height: min(fittingSize.height, maximumHeight))
     }
 
-    private var pasteConfiguration: UIPasteConfiguration {
-        let acceptableTypes = acceptsImages
-            ? [UTType.text.identifier, UTType.image.identifier]
-            : [UTType.text.identifier]
-        return UIPasteConfiguration(acceptableTypeIdentifiers: acceptableTypes)
+    private func updateAccessibility(_ textView: FeatureComposerUITextView) {
+        textView.accessibilityLabel = "Message agent"
+        textView.accessibilityHint = acceptsImages
+            ? "Enter a message or paste images to attach them."
+            : "Enter a message."
+        textView.accessibilityValue = text.isEmpty ? placeholder : nil
     }
 
-    final class Coordinator: NSObject, UITextViewDelegate, UITextPasteDelegate {
+    private static func updateScrolling(_ textView: UITextView) {
+        let maximumHeight = (textView.font?.lineHeight ?? 22) * 7
+        textView.isScrollEnabled = textView.contentSize.height > maximumHeight
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
         var parent: FeatureComposerTextInput
+        var lastAppliedFocus: Bool?
 
         init(_ parent: FeatureComposerTextInput) {
             self.parent = parent
         }
 
         func textViewDidChange(_ textView: UITextView) {
+            FeatureComposerTextInput.updateScrolling(textView)
             guard parent.text != textView.text else { return }
             parent.text = textView.text
         }
@@ -593,20 +695,6 @@ private struct FeatureComposerTextInput: UIViewRepresentable {
             }
         }
 
-        func textPasteConfigurationSupporting(
-            _ textPasteConfigurationSupporting: any UITextPasteConfigurationSupporting,
-            transform item: any UITextPasteItem
-        ) {
-            let provider = item.itemProvider
-            guard parent.acceptsImages,
-                  provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) else {
-                item.setDefaultResult()
-                return
-            }
-
-            item.setNoResult()
-            parent.onPasteImages([provider])
-        }
     }
 }
 

@@ -5,9 +5,59 @@ import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
 
+enum FeatureImageAttachmentPolicy {
+    static let maximumCount = 8
+
+    static func remainingCapacity(
+        attachmentCount: Int,
+        pendingItemCount: Int = 0,
+        maximumCount: Int = FeatureImageAttachmentPolicy.maximumCount
+    ) -> Int {
+        max(
+            0,
+            maximumCount
+                - max(0, attachmentCount)
+                - max(0, pendingItemCount)
+        )
+    }
+
+    static func nextOrdinal(after attachments: [FeatureDraftAttachment]) -> Int {
+        let generatedOrdinals = attachments.compactMap { attachment -> Int? in
+            let filename = attachment.filename
+            let prefix = "Image "
+            let suffix = ".jpg"
+            guard filename.hasPrefix(prefix), filename.lowercased().hasSuffix(suffix) else {
+                return nil
+            }
+            let ordinal = filename.dropFirst(prefix.count).dropLast(suffix.count)
+            return Int(ordinal)
+        }
+        return max(attachments.count, generatedOrdinals.max() ?? 0) + 1
+    }
+
+    static func attachmentsToAppend(
+        _ prepared: [FeatureDraftAttachment],
+        to existing: [FeatureDraftAttachment],
+        maximumCount: Int = FeatureImageAttachmentPolicy.maximumCount
+    ) -> [FeatureDraftAttachment] {
+        let acceptedCount = min(
+            prepared.count,
+            remainingCapacity(attachmentCount: existing.count, maximumCount: maximumCount)
+        )
+        var nextOrdinal = nextOrdinal(after: existing)
+        return prepared.prefix(acceptedCount).map { attachment in
+            var rebased = attachment
+            rebased.filename = "Image \(nextOrdinal).jpg"
+            nextOrdinal += 1
+            return rebased
+        }
+    }
+}
+
 struct FeatureAttachmentPreparationState: Equatable {
     struct Operation: Hashable {
         fileprivate let id: UUID
+        let count: Int
     }
 
     private var pendingItemsByOperation: [Operation: Int] = [:]
@@ -26,13 +76,36 @@ struct FeatureAttachmentPreparationState: Equatable {
 
     @discardableResult
     mutating func begin(itemCount: Int, id: UUID = UUID()) -> Operation {
-        let operation = Operation(id: id)
-        pendingItemsByOperation[operation] = max(1, itemCount)
+        let count = max(1, itemCount)
+        let operation = Operation(id: id, count: count)
+        pendingItemsByOperation[operation] = count
         return operation
+    }
+
+    @discardableResult
+    mutating func reserve(
+        itemCount: Int,
+        attachments: [FeatureDraftAttachment],
+        maximumCount: Int = FeatureImageAttachmentPolicy.maximumCount,
+        id: UUID = UUID()
+    ) -> Operation? {
+        guard itemCount > 0 else { return nil }
+
+        let availableCount = FeatureImageAttachmentPolicy.remainingCapacity(
+            attachmentCount: attachments.count,
+            pendingItemCount: pendingItemCount,
+            maximumCount: maximumCount
+        )
+        guard availableCount > 0 else { return nil }
+        return begin(itemCount: min(itemCount, availableCount), id: id)
     }
 
     mutating func finish(_ operation: Operation) {
         pendingItemsByOperation.removeValue(forKey: operation)
+    }
+
+    mutating func cancelAll() {
+        pendingItemsByOperation.removeAll()
     }
 }
 
@@ -58,7 +131,7 @@ struct FeatureImageAttachmentPicker: View {
     init(
         attachments: Binding<[FeatureDraftAttachment]>,
         preparationState: Binding<FeatureAttachmentPreparationState>,
-        maximumCount: Int = 8,
+        maximumCount: Int = FeatureImageAttachmentPolicy.maximumCount,
         isEnabled: Bool = true
     ) {
         _attachments = attachments
@@ -135,7 +208,11 @@ struct FeatureImageAttachmentPicker: View {
     }
 
     private var remainingCount: Int {
-        max(0, maximumCount - attachments.count)
+        FeatureImageAttachmentPolicy.remainingCapacity(
+            attachmentCount: attachments.count,
+            pendingItemCount: preparationState.pendingItemCount,
+            maximumCount: maximumCount
+        )
     }
 
     private var canAdd: Bool {
@@ -177,14 +254,26 @@ struct FeatureImageAttachmentPicker: View {
     private func loadPhotoSelections(_ images: [Data]) {
         guard !images.isEmpty, canAdd else { return }
         let selected = Array(images.prefix(remainingCount))
-        let firstOrdinal = attachments.count + preparationState.pendingItemCount + 1
-        let operation = preparationState.begin(itemCount: selected.count)
+        guard let operation = preparationState.reserve(
+            itemCount: selected.count,
+            attachments: attachments,
+            maximumCount: maximumCount
+        ) else { return }
+        let reservedImages = Array(selected.prefix(operation.count))
 
-        Task {
+        Task { @MainActor in
             defer { preparationState.finish(operation) }
-            for (offset, data) in selected.enumerated() {
+            for data in reservedImages {
                 do {
-                    try await appendImage(data, ordinal: firstOrdinal + offset)
+                    let prepared = try await FeatureImageAttachmentIngestion.prepare(
+                        data: data
+                    )
+                    let accepted = FeatureImageAttachmentPolicy.attachmentsToAppend(
+                        [prepared],
+                        to: attachments,
+                        maximumCount: maximumCount
+                    )
+                    attachments.append(contentsOf: accepted)
                 } catch {
                     errorMessage = error.localizedDescription
                 }
@@ -195,9 +284,13 @@ struct FeatureImageAttachmentPicker: View {
     private func loadCapturedImage(_ image: UIImage) {
         isCameraPresented = false
         guard canAdd else { return }
-        let operation = preparationState.begin(itemCount: 1)
+        guard let operation = preparationState.reserve(
+            itemCount: 1,
+            attachments: attachments,
+            maximumCount: maximumCount
+        ) else { return }
 
-        Task {
+        Task { @MainActor in
             defer { preparationState.finish(operation) }
             do {
                 let data = try await Task.detached(priority: .userInitiated) {
@@ -206,7 +299,15 @@ struct FeatureImageAttachmentPicker: View {
                     }
                     return data
                 }.value
-                try await appendImage(data)
+                let prepared = try await FeatureImageAttachmentIngestion.prepare(
+                    data: data
+                )
+                let accepted = FeatureImageAttachmentPolicy.attachmentsToAppend(
+                    [prepared],
+                    to: attachments,
+                    maximumCount: maximumCount
+                )
+                attachments.append(contentsOf: accepted)
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -219,35 +320,39 @@ struct FeatureImageAttachmentPicker: View {
             errorMessage = error.localizedDescription
         case .success(let urls):
             guard !urls.isEmpty, canAdd else { return }
-            let operation = preparationState.begin(itemCount: min(urls.count, remainingCount))
+            guard let operation = preparationState.reserve(
+                itemCount: urls.count,
+                attachments: attachments,
+                maximumCount: maximumCount
+            ) else { return }
+            let reservedURLs = Array(urls.prefix(operation.count))
 
-            Task {
+            Task { @MainActor in
                 defer { preparationState.finish(operation) }
-                for url in urls.prefix(remainingCount) {
+                for url in reservedURLs {
                     do {
-                        let data = try await Task.detached(priority: .userInitiated) {
+                        let loadedData = try await Task.detached(priority: .userInitiated) {
                             let hasAccess = url.startAccessingSecurityScopedResource()
                             defer {
                                 if hasAccess { url.stopAccessingSecurityScopedResource() }
                             }
                             return try Data(contentsOf: url, options: .mappedIfSafe)
                         }.value
-                        try await appendImage(data)
+                        let prepared = try await FeatureImageAttachmentIngestion.prepare(
+                            data: loadedData
+                        )
+                        let accepted = FeatureImageAttachmentPolicy.attachmentsToAppend(
+                            [prepared],
+                            to: attachments,
+                            maximumCount: maximumCount
+                        )
+                        attachments.append(contentsOf: accepted)
                     } catch {
                         errorMessage = error.localizedDescription
-                        break
                     }
                 }
             }
         }
-    }
-
-    private func appendImage(_ data: Data, ordinal: Int? = nil) async throws {
-        let ordinal = ordinal ?? attachments.count + 1
-        let attachment = try await Task.detached(priority: .userInitiated) {
-            try FeatureImageProcessor.attachment(from: data, ordinal: ordinal)
-        }.value
-        attachments.append(attachment)
     }
 }
 
@@ -389,6 +494,15 @@ enum FeatureImagePasteLoader {
                 }
             }
         }
+    }
+
+}
+
+enum FeatureImageAttachmentIngestion {
+    static func prepare(data: Data) async throws -> FeatureDraftAttachment {
+        try await Task.detached(priority: .userInitiated) {
+            try FeatureImageProcessor.attachment(from: data, ordinal: 1)
+        }.value
     }
 }
 
