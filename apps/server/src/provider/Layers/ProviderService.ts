@@ -27,6 +27,7 @@ import {
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -45,7 +46,11 @@ import {
   providerTurnMetricAttributes,
   withMetrics,
 } from "../../observability/Metrics.ts";
-import { type ProviderAdapterError, ProviderValidationError } from "../Errors.ts";
+import {
+  type ProviderAdapterError,
+  ProviderValidationError,
+  ProviderWorkspaceMissingError,
+} from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
@@ -212,6 +217,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+  const fileSystem = yield* FileSystem.FileSystem;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
@@ -589,6 +595,20 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
                 : "none",
           "provider.cwd.effective": effectiveCwd ?? "",
         });
+        if (effectiveCwd !== undefined) {
+          // Fail fast with an actionable error when the workspace folder is
+          // gone (e.g. moved, deleted, or replaced by a plain file).
+          // Otherwise every adapter surfaces this as a misleading "failed to
+          // spawn <binary>" process error. Stat failures other than "missing"
+          // fall through to the adapter.
+          const workspaceIsDirectory = yield* fileSystem.stat(effectiveCwd).pipe(
+            Effect.map((workspaceStat) => workspaceStat.type === "Directory"),
+            Effect.catch((statError) => Effect.succeed(statError.reason._tag !== "NotFound")),
+          );
+          if (!workspaceIsDirectory) {
+            return yield* new ProviderWorkspaceMissingError({ threadId, cwd: effectiveCwd });
+          }
+        }
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
         yield* prepareMcpSession(threadId, resolvedInstanceId);
         const session = yield* adapter
