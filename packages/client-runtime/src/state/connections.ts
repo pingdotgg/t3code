@@ -115,6 +115,15 @@ export function createEnvironmentCatalogAtoms<R, E>(
         Effect.flatMap((registry) => registry.retryNow(environmentId)),
       ),
   });
+  const setEnabled = createRuntimeCommand(runtime, {
+    label: "environment-catalog:set-enabled",
+    scheduler: commandScheduler,
+    concurrency: serial,
+    execute: (input: { readonly environmentId: EnvironmentIdType; readonly enabled: boolean }) =>
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.flatMap((registry) => registry.setEnabled(input.environmentId, input.enabled)),
+      ),
+  });
 
   return {
     catalogAtom,
@@ -126,5 +135,6 @@ export function createEnvironmentCatalogAtoms<R, E>(
     remove,
     removeRelayEnvironments,
     retryNow,
+    setEnabled,
   };
 }

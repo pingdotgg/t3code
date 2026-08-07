@@ -57,6 +57,7 @@ function migrateConnection(
           label: connection.environmentLabel,
         }),
       }),
+      { enabled: true },
     );
   }
 
@@ -84,6 +85,7 @@ function migrateConnection(
         token: connection.bearerToken,
       }),
     }),
+    { enabled: true },
   );
 }
 
