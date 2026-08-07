@@ -6,12 +6,17 @@ import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { useClientSettings, useSidebarV2Enabled } from "../hooks/useSettings";
 import { openCommandPalette } from "../commandPaletteBus";
 import { useProjects } from "../state/entities";
-import { usePrimaryEnvironmentId } from "../state/environments";
-import { selectProjectGroupingSettings } from "../logicalProject";
-import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
+import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
+import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
+import {
+  buildSidebarProjectSnapshots,
+  resolveSidebarProjectTargetRef,
+} from "../sidebarProjectGrouping";
+import { useSidebarProjectScopeStore } from "../sidebarProjectScopeStore";
+import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
-import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import { resolveNewThreadAction, resolveThreadActionProjectRef } from "../lib/chatThreadActions";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
@@ -19,6 +24,7 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
+import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 
@@ -30,18 +36,71 @@ function ChatRouteGlobalShortcuts() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const sidebarV2Enabled = useSidebarV2Enabled();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const sidebarProjectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
   const projects = useProjects();
+  const projectOrder = useUiStateStore((store) => store.projectOrder);
+  const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const projectGroupCount = useMemo(
+  const environmentLabelById = useMemo(
+    () =>
+      new Map(
+        environments.map((environment) => [environment.environmentId, environment.label] as const),
+      ),
+    [environments],
+  );
+  const orderedProjects = useMemo(
+    () =>
+      orderItemsByPreferredIds({
+        items: projects,
+        preferredIds: projectOrder,
+        getId: getProjectOrderKey,
+        getPreferenceIds: (project) => [
+          getProjectOrderKey(project),
+          legacyProjectCwdPreferenceKey(project.workspaceRoot),
+        ],
+      }),
+    [projectOrder, projects],
+  );
+  const projectGroups = useMemo(
     () =>
       buildSidebarProjectSnapshots({
-        projects,
+        projects: sidebarProjectSortOrder === "manual" ? orderedProjects : projects,
         settings: projectGroupingSettings,
         primaryEnvironmentId,
-        resolveEnvironmentLabel: () => null,
-      }).length,
-    [primaryEnvironmentId, projectGroupingSettings, projects],
+        resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
+      }),
+    [
+      environmentLabelById,
+      orderedProjects,
+      primaryEnvironmentId,
+      projectGroupingSettings,
+      projects,
+      sidebarProjectSortOrder,
+    ],
   );
+  const projectScopeKey = useSidebarProjectScopeStore((store) => store.projectScopeKey);
+  const contextualProjectRef = useMemo(
+    () =>
+      resolveThreadActionProjectRef({
+        activeDraftThread,
+        activeThread: activeThread ?? undefined,
+        defaultProjectRef,
+        handleNewThread,
+      }),
+    [activeDraftThread, activeThread, defaultProjectRef, handleNewThread],
+  );
+  const scopedNewThreadProjectRef = useMemo(() => {
+    const scopedProjectGroup =
+      projectScopeKey === null
+        ? null
+        : (projectGroups.find((project) => project.projectKey === projectScopeKey) ?? null);
+    return scopedProjectGroup
+      ? resolveSidebarProjectTargetRef({
+          group: scopedProjectGroup,
+          preferredProjectRef: contextualProjectRef,
+        })
+      : null;
+  }, [contextualProjectRef, projectGroups, projectScopeKey]);
   const terminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
@@ -77,34 +136,21 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
-      if (command === "chat.newLocal") {
+      if (command === "chat.newLocal" || command === "chat.new") {
         event.preventDefault();
         event.stopPropagation();
-        void startNewThreadFromContext({
-          activeDraftThread,
-          activeThread: activeThread ?? undefined,
-          defaultProjectRef,
-          handleNewThread,
+        const action = resolveNewThreadAction({
+          sidebarV2Enabled,
+          projectGroupCount: projectGroups.length,
+          scopedProjectRef: scopedNewThreadProjectRef,
+          contextualProjectRef,
+          pickProjectWhenAmbiguous: command === "chat.new",
         });
-        return;
-      }
-
-      if (command === "chat.new") {
-        event.preventDefault();
-        event.stopPropagation();
-        // Sidebar v2 routes creation through the command palette whenever
-        // there is a real choice to make; v1 (and single-project setups)
-        // keep the immediate contextual create.
-        if (sidebarV2Enabled && projectGroupCount > 1) {
+        if (action.kind === "start") {
+          void handleNewThread(action.projectRef);
+        } else if (action.kind === "pick-project") {
           openCommandPalette({ open: "new-thread-in" });
-          return;
         }
-        void startNewThreadFromContext({
-          activeDraftThread,
-          activeThread: activeThread ?? undefined,
-          defaultProjectRef,
-          handleNewThread,
-        });
         return;
       }
 
@@ -157,16 +203,15 @@ function ChatRouteGlobalShortcuts() {
       window.removeEventListener("keydown", onWindowKeyDown);
     };
   }, [
-    activeDraftThread,
-    activeThread,
     clearSelection,
+    contextualProjectRef,
     handleNewThread,
     keybindings,
-    defaultProjectRef,
     previewOpen,
-    projectGroupCount,
+    projectGroups.length,
     routeThreadRef,
     selectedThreadKeysSize,
+    scopedNewThreadProjectRef,
     sidebarV2Enabled,
     terminalOpen,
   ]);

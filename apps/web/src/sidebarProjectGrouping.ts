@@ -155,3 +155,14 @@ export function buildSidebarProjectPickerEntries(input: {
     ...entries.slice(preferredIndex + 1),
   ];
 }
+
+export function resolveSidebarProjectTargetRef(input: {
+  group: SidebarProjectSnapshot;
+  preferredProjectRef: ScopedProjectRef | null;
+}): ScopedProjectRef | null {
+  const [entry] = buildSidebarProjectPickerEntries({
+    groups: [input.group],
+    preferredProjectRef: input.preferredProjectRef,
+  });
+  return entry ? scopeProjectRef(entry.targetProject.environmentId, entry.targetProject.id) : null;
+}

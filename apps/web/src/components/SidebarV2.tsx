@@ -96,15 +96,17 @@ import {
 } from "../logicalProject";
 import {
   buildSidebarProjectSnapshots,
+  resolveSidebarProjectTargetRef,
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
+import { useSidebarProjectScopeStore } from "../sidebarProjectScopeStore";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
-import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import { resolveNewThreadAction, resolveThreadActionProjectRef } from "../lib/chatThreadActions";
 import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -1572,7 +1574,8 @@ export default function SidebarV2() {
 
   // Project scope: one menu above the list. Scoping filters the list without
   // making the header width depend on the number or length of project names.
-  const [projectScopeKey, setProjectScopeKey] = useState<string | null>(null);
+  const projectScopeKey = useSidebarProjectScopeStore((store) => store.projectScopeKey);
+  const setProjectScopeKey = useSidebarProjectScopeStore((store) => store.setProjectScopeKey);
   const scopedProjectGroup = useMemo(
     () =>
       projectScopeKey === null
@@ -1595,7 +1598,13 @@ export default function SidebarV2() {
     if (projectScopeKey !== null && scopedProjectGroup === null) {
       setProjectScopeKey(null);
     }
-  }, [projectScopeKey, scopedProjectGroup]);
+  }, [projectScopeKey, scopedProjectGroup, setProjectScopeKey]);
+  useEffect(
+    () => () => {
+      setProjectScopeKey(null);
+    },
+    [setProjectScopeKey],
+  );
   // Scope flips drop the selection: rows selected under the old scope may be
   // hidden now, and bulk actions must never count or touch invisible rows.
   useEffect(() => {
@@ -2988,25 +2997,60 @@ export default function SidebarV2() {
     autoAnimate(node, { duration: 150, easing: "ease-out" });
   }, []);
 
-  // New thread defaults to the project you're in (active thread's project,
-  // falling back to the top project) — same resolution the command palette
-  // uses. The command palette already offers a "New thread in..." submenu
-  // for multi-project setups.
-  const handleNewThreadClick = useCallback(() => {
-    // One project: nothing to pick, create immediately.
-    if (projectGroups.length <= 1) {
-      if (isMobile) setOpenMobile(false);
-      void startNewThreadFromContext({
+  const contextualProjectRef = useMemo(
+    () =>
+      resolveThreadActionProjectRef({
         activeDraftThread: newThreadContext.activeDraftThread,
         activeThread: newThreadContext.activeThread ?? undefined,
         defaultProjectRef: newThreadContext.defaultProjectRef,
         handleNewThread: newThreadContext.handleNewThread,
-      });
+      }),
+    [
+      newThreadContext.activeDraftThread,
+      newThreadContext.activeThread,
+      newThreadContext.defaultProjectRef,
+      newThreadContext.handleNewThread,
+    ],
+  );
+  const scopedNewThreadProjectRef = useMemo(
+    () =>
+      scopedProjectGroup
+        ? resolveSidebarProjectTargetRef({
+            group: scopedProjectGroup,
+            preferredProjectRef: contextualProjectRef,
+          })
+        : null,
+    [contextualProjectRef, scopedProjectGroup],
+  );
+
+  // A selected filter is an explicit project choice, so creation can start
+  // immediately. "All projects" still opens the picker when there is a real
+  // choice to make.
+  const handleNewThreadClick = useCallback(() => {
+    const action = resolveNewThreadAction({
+      sidebarV2Enabled: true,
+      projectGroupCount: projectGroups.length,
+      scopedProjectRef: scopedNewThreadProjectRef,
+      contextualProjectRef,
+      pickProjectWhenAmbiguous: true,
+    });
+    if (action.kind === "start") {
+      if (isMobile) setOpenMobile(false);
+      void newThreadContext.handleNewThread(action.projectRef);
       return;
     }
-    if (isMobile) setOpenMobile(false);
-    openCommandPalette({ open: "new-thread-in" });
-  }, [isMobile, newThreadContext, projectGroups.length, setOpenMobile]);
+    if (action.kind === "pick-project") {
+      if (isMobile) setOpenMobile(false);
+      openCommandPalette({ open: "new-thread-in" });
+    }
+  }, [
+    contextualProjectRef,
+    isMobile,
+    newThreadContext.handleNewThread,
+    projectGroups.length,
+    scopedNewThreadProjectRef,
+    setOpenMobile,
+  ]);
 
   // The button mirrors chat.new: in multi-project setups both route through
   // the command palette's "New thread in..." picker, and in single-project
