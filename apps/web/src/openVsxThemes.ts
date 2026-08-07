@@ -13,6 +13,7 @@ import {
 const OPEN_VSX_SEARCH_URL = "https://open-vsx.org/api/-/search";
 const MAX_VSIX_BYTES = 20 * 1024 * 1024;
 const MAX_SEARCH_BYTES = 512 * 1024;
+const MAX_DETAIL_BYTES = 256 * 1024;
 const MAX_MANIFEST_BYTES = 256 * 1024;
 const MAX_THEME_BYTES = 256 * 1024;
 const MAX_ZIP_ENTRIES = 2_000;
@@ -141,7 +142,16 @@ export async function searchOpenVsxThemes(
       const detailUrl = `https://open-vsx.org/api/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`;
       const detailResponse = await fetch(detailUrl, signal ? { signal } : {});
       if (!detailResponse.ok) return null;
-      return extensionFromDetail(await detailResponse.json());
+      const detailBytes = await readCappedResponse(
+        detailResponse,
+        MAX_DETAIL_BYTES,
+        "Open VSX returned an unexpectedly large detail response.",
+      );
+      try {
+        return extensionFromDetail(JSON.parse(new TextDecoder().decode(detailBytes)));
+      } catch {
+        return null;
+      }
     }),
   );
   if (signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
@@ -195,11 +205,15 @@ type InspectableZipObject = JSZip.JSZipObject & {
   internalStream?: (type: "uint8array") => JSZip.JSZipStreamHelper<Uint8Array>;
 };
 
-function inspectZipDirectory(bytes: Uint8Array): void {
+function inspectZipDirectory(bytes: Uint8Array): Uint8Array {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const minimumOffset = Math.max(0, bytes.byteLength - 65_557);
   let endOffset = bytes.byteLength - 22;
-  while (endOffset >= minimumOffset && view.getUint32(endOffset, true) !== 0x06054b50) {
+  while (
+    endOffset >= minimumOffset &&
+    (view.getUint32(endOffset, true) !== 0x06054b50 ||
+      endOffset + 22 + view.getUint16(endOffset + 20, true) !== bytes.byteLength)
+  ) {
     endOffset -= 1;
   }
   if (endOffset < minimumOffset) throw new Error("That extension package has no ZIP directory.");
@@ -228,6 +242,16 @@ function inspectZipDirectory(bytes: Uint8Array): void {
   }
   if (offset !== directoryEnd)
     throw new Error("That extension package has an invalid ZIP directory.");
+
+  const commentLength = view.getUint16(endOffset + 20, true);
+  if (commentLength === 0) return bytes;
+
+  // JSZip mistakes EOCD-like bytes inside an archive comment for the real EOCD.
+  // The comment is not needed for theme import, so remove it before parsing.
+  const withoutComment = bytes.slice(0, endOffset + 22);
+  withoutComment[endOffset + 20] = 0;
+  withoutComment[endOffset + 21] = 0;
+  return withoutComment;
 }
 
 function inspectZip(zip: JSZip): void {
@@ -423,8 +447,8 @@ export async function importOpenVsxThemeExtension(
   }
   let zip: JSZip;
   try {
-    inspectZipDirectory(packageBytes);
-    zip = await JSZip.loadAsync(packageBytes);
+    const inspectedPackageBytes = inspectZipDirectory(packageBytes);
+    zip = await JSZip.loadAsync(inspectedPackageBytes);
     inspectZip(zip);
   } catch (cause) {
     if (cause instanceof Error && cause.message.startsWith("That extension package")) throw cause;

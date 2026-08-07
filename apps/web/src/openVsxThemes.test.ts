@@ -44,6 +44,7 @@ describe("Open VSX themes", () => {
             extensions: [
               { namespace: "demo", name: "theme" },
               { namespace: "closed", name: "theme" },
+              { namespace: "huge", name: "theme" },
             ],
           }),
           { status: 200 },
@@ -54,6 +55,9 @@ describe("Open VSX themes", () => {
           JSON.stringify(extensionDetail({ namespace: "closed", license: "All Rights Reserved" })),
           { status: 200 },
         );
+      }
+      if (url.endsWith("/huge/theme")) {
+        return new Response(JSON.stringify({ padding: "x".repeat(256 * 1024) }), { status: 200 });
       }
       return new Response(JSON.stringify(extensionDetail()), { status: 200 });
     });
@@ -114,7 +118,10 @@ describe("Open VSX themes", () => {
         }
       }`,
     );
-    const packageBytes = await zip.generateAsync({ type: "arraybuffer" });
+    const packageBytes = await zip.generateAsync({
+      type: "arraybuffer",
+      comment: `PK\u0005\u0006${"x".repeat(26)}`,
+    });
     const checksum = [...sha256(new Uint8Array(packageBytes))]
       .map((byte) => byte.toString(16).padStart(2, "0"))
       .join("");
