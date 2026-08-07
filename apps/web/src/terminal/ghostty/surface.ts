@@ -333,7 +333,7 @@ export function isTerminalCopyShortcut(
   platform = navigator.platform,
 ) {
   if (event.key.toLowerCase() !== "c") return false;
-  return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
+  return isMacPlatform(platform) ? event.metaKey : event.ctrlKey;
 }
 
 export function isTerminalPasteShortcut(
@@ -463,7 +463,6 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly onData: (data: string) => void;
   readonly onResize: (cols: number, rows: number) => void;
   readonly onSelectionChange: () => void;
-  readonly onCopy: (text: string) => void;
   readonly beforeKey: (event: KeyboardEvent) => boolean;
   readonly onLinkActivate: (text: string, event: MouseEvent) => void;
 }
@@ -901,9 +900,15 @@ export class GhosttyTerminalSurface {
       return;
     }
     if (isTerminalCopyShortcut(event) && this.hasSelection()) {
-      event.preventDefault();
+      // A plain Ctrl+C/Cmd+C fires the browser's native copy event, caught in
+      // onCopyEvent; not preventing the default keeps that path alive. The
+      // Shift variant has no native event (Chrome binds Ctrl+Shift+C to
+      // inspect), so synthesize one with execCommand("copy").
+      if (event.shiftKey) {
+        event.preventDefault();
+        document.execCommand("copy");
+      }
       this.suppressedKeyCodes.add(event.code);
-      this.options.onCopy(this.getSelection());
       return;
     }
     if (isTerminalPasteShortcut(event)) {
@@ -988,6 +993,12 @@ export class GhosttyTerminalSurface {
     this.dprMedia = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
     this.dprMedia.addEventListener("change", this.onDevicePixelRatioChange);
   }
+
+  private readonly onCopyEvent = (event: ClipboardEvent) => {
+    if (!this.hasSelection()) return;
+    event.preventDefault();
+    event.clipboardData?.setData("text/plain", this.getSelection());
+  };
 
   private readonly onPaste = (event: ClipboardEvent) => {
     // Always suppress the browser's default insertion: content the textarea
@@ -1384,6 +1395,7 @@ export class GhosttyTerminalSurface {
     this.input.addEventListener("blur", this.onBlur);
     this.input.addEventListener("input", this.onInput);
     this.input.addEventListener("paste", this.onPaste);
+    this.input.addEventListener("copy", this.onCopyEvent);
     this.input.addEventListener("compositionstart", this.onCompositionStart);
     this.input.addEventListener("compositionend", this.onCompositionEnd);
     this.canvas.addEventListener("pointerdown", this.onPointerDown);
@@ -1408,6 +1420,7 @@ export class GhosttyTerminalSurface {
     this.input.removeEventListener("blur", this.onBlur);
     this.input.removeEventListener("input", this.onInput);
     this.input.removeEventListener("paste", this.onPaste);
+    this.input.removeEventListener("copy", this.onCopyEvent);
     this.input.removeEventListener("compositionstart", this.onCompositionStart);
     this.input.removeEventListener("compositionend", this.onCompositionEnd);
     this.canvas.removeEventListener("pointerdown", this.onPointerDown);
