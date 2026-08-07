@@ -17,6 +17,7 @@ import {
 } from "./modelPickerKeys";
 import { isModelPickerNewModel } from "./modelPickerModelHighlights";
 import { buildModelPickerSearchText, scoreModelPickerSearch } from "./modelPickerSearch";
+import { isModelPickerItemInSelectedScope } from "./modelPickerScope";
 import {
   Combobox,
   ComboboxEmpty,
@@ -264,7 +265,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     return [...available, ...disabled];
   }, [instanceEntries, isLocked, matchesLockedProvider]);
-  const showSidebar = !isSearching && sidebarInstanceEntries.length > 0;
+  const showSidebar = sidebarInstanceEntries.length > 0;
   const instanceOrder = useMemo(
     () => instanceEntries.map((entry) => entry.instanceId),
     [instanceEntries],
@@ -273,6 +274,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   // Filter models based on search query and selected instance
   const filteredModels = useMemo(() => {
     let result = flatModels;
+
+    if (props.lockedProvider !== null) {
+      result = result.filter((model) => matchesLockedProvider(model));
+    }
+    result = result.filter((model) =>
+      isModelPickerItemInSelectedScope(model, selectedInstanceId, favoritesSet),
+    );
 
     // Apply tokenized fuzzy search across the combined provider/model search fields.
     if (searchQuery.trim()) {
@@ -310,30 +318,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           } => rankedModel.score !== null,
         );
 
-      // When searching, we only respect locked provider (by driver kind),
-      // ignoring sidebar selection so account-scoped searches can find a
-      // model before the user chooses a specific instance rail item.
-      if (props.lockedProvider !== null) {
-        const lockedProviderMatches: Array<(typeof rankedMatches)[number]> = [];
-        for (const rankedModel of rankedMatches) {
-          if (matchesLockedProvider(rankedModel.model)) {
-            lockedProviderMatches.push(rankedModel);
-          }
-        }
-        return lockedProviderMatches
-          .toSorted((a, b) => {
-            const scoreDelta = a.score - b.score;
-            if (scoreDelta !== 0) {
-              return scoreDelta;
-            }
-            if (a.isFavorite !== b.isFavorite) {
-              return a.isFavorite ? -1 : 1;
-            }
-            return a.tieBreaker.localeCompare(b.tieBreaker);
-          })
-          .map((rankedModel) => rankedModel.model);
-      }
-
       return rankedMatches
         .toSorted((a, b) => {
           const scoreDelta = a.score - b.score;
@@ -346,19 +330,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           return a.tieBreaker.localeCompare(b.tieBreaker);
         })
         .map((rankedModel) => rankedModel.model);
-    }
-
-    if (props.lockedProvider !== null) {
-      result = result.filter((m) => matchesLockedProvider(m));
-      if (selectedInstanceId === "favorites") {
-        result = result.filter((m) => favoritesSet.has(providerModelKey(m.instanceId, m.slug)));
-      } else {
-        result = result.filter((m) => m.instanceId === selectedInstanceId);
-      }
-    } else if (selectedInstanceId === "favorites") {
-      result = result.filter((m) => favoritesSet.has(providerModelKey(m.instanceId, m.slug)));
-    } else {
-      result = result.filter((m) => m.instanceId === selectedInstanceId);
     }
 
     return sortProviderModelItems(result, {

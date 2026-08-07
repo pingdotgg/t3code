@@ -8,7 +8,7 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import {
   createProviderVersionAdvisory,
   enrichProviderSnapshotWithVersionAdvisory,
@@ -35,6 +35,14 @@ const packageToolUpdate = makePackageManagedProviderMaintenanceResolver({
   provider: driver("packageTool"),
   npmPackageName: "@example/package-tool",
   homebrewFormula: "package-tool",
+  nativeUpdate: null,
+});
+const nextPackageToolUpdate = makePackageManagedProviderMaintenanceResolver({
+  provider: driver("nextPackageTool"),
+  npmPackageName: "@example/package-tool",
+  npmDistTag: "next",
+  requiresInstallScripts: true,
+  homebrewFormula: null,
   nativeUpdate: null,
 });
 const nativePackageToolUpdate = makePackageManagedProviderMaintenanceResolver({
@@ -68,12 +76,12 @@ const staticToolUpdate = makeStaticProviderMaintenanceResolver(
     updateLockKey: "static-tool",
   }),
 );
-const installedPackageToolProvider: ServerProvider = {
-  instanceId: ProviderInstanceId.make("packageTool"),
-  driver: driver("packageTool"),
+const installedNextPackageToolProvider: ServerProvider = {
+  instanceId: ProviderInstanceId.make("nextPackageTool"),
+  driver: driver("nextPackageTool"),
   enabled: true,
   installed: true,
-  version: "1.0.0",
+  version: "0.0.0-next-16691",
   status: "ready",
   auth: { status: "authenticated" },
   checkedAt: "2026-04-10T00:00:00.000Z",
@@ -89,7 +97,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         ProviderVersionCache,
         new Map([
           [
-            "@example/package-tool",
+            "@example/package-tool@latest",
             {
               expiresAt: Number.MAX_SAFE_INTEGER,
               version: "9.9.9",
@@ -109,10 +117,50 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     ),
   );
 
+  it.effect("resolves npm dist-tags with release-channel-isolated cache entries", () => {
+    const requestedUrls: Array<string> = [];
+    const versionCache = new Map([
+      [
+        "@example/package-tool@latest",
+        {
+          expiresAt: Number.MAX_SAFE_INTEGER,
+          version: "9.9.9",
+        },
+      ],
+    ]);
+
+    return Effect.gen(function* () {
+      const nextVersion = yield* resolveLatestProviderVersion(nextPackageToolUpdate.resolve());
+      const latestVersion = yield* resolveLatestProviderVersion(packageToolUpdate.resolve());
+
+      expect(nextVersion).toBe("0.0.0-next-16694");
+      expect(latestVersion).toBe("9.9.9");
+      expect(requestedUrls).toEqual(["https://registry.npmjs.org/%40example%2Fpackage-tool/next"]);
+      expect(versionCache.get("@example/package-tool@next")?.version).toBe("0.0.0-next-16694");
+    }).pipe(
+      Effect.provideService(ProviderVersionCache, versionCache),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          requestedUrls.push(request.url);
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json(
+                { version: "0.0.0-next-16694" },
+                { headers: { "content-type": "application/json" } },
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+  });
+
   it.effect("does not fetch latest provider versions when update checks are disabled", () =>
     enrichProviderSnapshotWithVersionAdvisory(
-      installedPackageToolProvider,
-      packageToolUpdate.resolve(),
+      installedNextPackageToolProvider,
+      nextPackageToolUpdate.resolve(),
       {
         enableProviderUpdateChecks: false,
       },
@@ -127,8 +175,10 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       Effect.map((provider) => {
         expect(provider.versionAdvisory).toMatchObject({
           status: "unknown",
-          currentVersion: "1.0.0",
+          currentVersion: "0.0.0-next-16691",
           latestVersion: null,
+          updateCommand: "npm install -g @example/package-tool@next",
+          canUpdate: true,
           checkedAt: "2026-04-10T00:00:00.000Z",
         });
       }),
@@ -179,6 +229,23 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       updateCommand: "npm install -g @example/native-package-tool@latest",
       canUpdate: true,
       message: "Install the update now or review provider settings.",
+    });
+  });
+
+  it("compares prerelease versions on the configured npm release channel", () => {
+    expect(
+      createProviderVersionAdvisory({
+        driver: driver("nextPackageTool"),
+        currentVersion: "0.0.0-next-16691",
+        latestVersion: "0.0.0-next-16694",
+        maintenanceCapabilities: nextPackageToolUpdate.resolve(),
+      }),
+    ).toMatchObject({
+      status: "behind_latest",
+      currentVersion: "0.0.0-next-16691",
+      latestVersion: "0.0.0-next-16694",
+      updateCommand: "npm install -g @example/package-tool@next",
+      canUpdate: true,
     });
   });
 

@@ -1216,6 +1216,16 @@ it.layer(SharedApplicationDataPlaneTestLayer)("pending provider interruption", (
       );
       assert.deepEqual(interrupted.providerTurns, []);
       assert.isFalse(yield* effectWorker.runOnce);
+
+      const sequenceBeforeIdleStop = yield* orchestrator.getThreadEventSequence(threadId);
+      const idleStop = yield* threadManagement.interruptThread({
+        projectId,
+        commandId: CommandId.make("runtime-layer-pending-interrupt-idle-stop"),
+        threadId,
+        reason: "Repeated stop after completion",
+      });
+      assert.equal(idleStop.type, "no_active_run");
+      assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequenceBeforeIdleStop);
     }),
   );
 });

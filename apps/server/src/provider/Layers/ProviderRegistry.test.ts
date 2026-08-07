@@ -34,6 +34,8 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+import * as OpenCode2Runtime from "../opencode2Runtime.ts";
+import * as SpawnedProcessReaper from "../SpawnedProcessReaper.ts";
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./ProviderInstanceRegistryHydration.ts";
@@ -682,6 +684,135 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
           ...previousProvider.models,
         ]);
+      });
+
+      it("retains stale OpenCode 2 models while the initial probe is pending", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("opencode2"),
+          driver: ProviderDriverKind.make("opencode2"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-07-28T00:00:00.000Z",
+          version: "0.0.0-next-16383",
+          models: [
+            {
+              slug: "opencode/big-pickle",
+              name: "Big Pickle",
+              subProvider: "OpenCode",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const pendingProvider = {
+          ...previousProvider,
+          status: "warning",
+          installed: false,
+          auth: { status: "unknown" },
+          checkedAt: "2026-07-28T00:01:00.000Z",
+          version: null,
+          models: [],
+          message: "OpenCode 2 provider status has not been checked in this session yet.",
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, pendingProvider).models, [
+          ...previousProvider.models,
+        ]);
+      });
+
+      it("clears stale OpenCode 2 capabilities after a successful refresh", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("opencode2"),
+          driver: ProviderDriverKind.make("opencode2"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "unknown" },
+          checkedAt: "2026-07-28T00:00:00.000Z",
+          version: "0.0.0-next-16383",
+          models: [
+            {
+              slug: "opencode/big-pickle",
+              name: "Big Pickle",
+              subProvider: "OpenCode",
+              isCustom: false,
+              capabilities: createModelCapabilities({
+                optionDescriptors: [
+                  selectDescriptor("agent", "Agent", [
+                    { id: "build", label: "Build", isDefault: true },
+                    { id: "plan", label: "Plan" },
+                  ]),
+                ],
+              }),
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const refreshedProvider = {
+          ...previousProvider,
+          checkedAt: "2026-07-28T00:01:00.000Z",
+          models: [
+            {
+              ...previousProvider.models[0],
+              capabilities: createModelCapabilities({ optionDescriptors: [] }),
+            },
+          ],
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, refreshedProvider).models,
+          refreshedProvider.models,
+        );
+      });
+
+      it("keeps OpenCode 1 capability carry-forward unchanged", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("opencode"),
+          driver: ProviderDriverKind.make("opencode"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-07-28T00:00:00.000Z",
+          version: "1.0.0",
+          models: [
+            {
+              slug: "opencode/big-pickle",
+              name: "Big Pickle",
+              subProvider: "OpenCode",
+              isCustom: false,
+              capabilities: createModelCapabilities({
+                optionDescriptors: [
+                  selectDescriptor("variant", "Variant", [
+                    { id: "high", label: "High", isDefault: true },
+                  ]),
+                ],
+              }),
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const refreshedProvider = {
+          ...previousProvider,
+          checkedAt: "2026-07-28T00:01:00.000Z",
+          models: [
+            {
+              ...previousProvider.models[0],
+              capabilities: createModelCapabilities({ optionDescriptors: [] }),
+            },
+          ],
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, refreshedProvider).models,
+          previousProvider.models,
+        );
       });
 
       it("classifies pending, logout, uninstall, and reconnect OpenCode inventories", () => {
@@ -1486,6 +1617,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               ),
             ),
             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+            Layer.provideMerge(OpenCode2Runtime.layer),
+            Layer.provideMerge(SpawnedProcessReaper.layer),
             Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
             // NO spawner mock — `ChildProcessSpawner` is supplied by the
             // outer `NodeServices.layer` on `it.layer(...)` and will
@@ -1579,6 +1712,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               ),
             ),
             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+            Layer.provideMerge(OpenCode2Runtime.layer),
+            Layer.provideMerge(SpawnedProcessReaper.layer),
             Layer.updateService(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
               ChildProcessSpawner.make((command) => {
                 spawnedCommands.push((command as { readonly command: string }).command);
@@ -1701,6 +1836,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               ),
             ),
             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+            Layer.provideMerge(OpenCode2Runtime.layer),
+            Layer.provideMerge(SpawnedProcessReaper.layer),
             Layer.provideMerge(NodeServices.layer),
             Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
           );
@@ -1763,6 +1900,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 ),
               ),
               Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+              Layer.provideMerge(OpenCode2Runtime.layer),
+              Layer.provideMerge(SpawnedProcessReaper.layer),
               Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
               Layer.provideMerge(
                 mockCommandSpawnerLayer((command, args) => {

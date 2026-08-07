@@ -106,6 +106,18 @@ export const executorLayer: Layer.Layer<
                 ...(effect.request.revokeMcpCredential === undefined
                   ? {}
                   : { revokeMcpCredential: effect.request.revokeMcpCredential }),
+                ...(effect.request.deleteProviderThread === undefined
+                  ? {}
+                  : { deleteProviderThread: effect.request.deleteProviderThread }),
+                ...(effect.request.providerInstanceId === undefined
+                  ? {}
+                  : { providerInstanceId: effect.request.providerInstanceId }),
+                ...(effect.request.providerSession === undefined
+                  ? {}
+                  : { providerSession: effect.request.providerSession }),
+                ...(effect.request.providerThreads === undefined
+                  ? {}
+                  : { providerThreads: effect.request.providerThreads }),
               })
               .pipe(
                 Effect.mapError(

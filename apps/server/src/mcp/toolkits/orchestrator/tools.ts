@@ -219,7 +219,7 @@ export const ThreadWaitTool = Tool.make("t3_thread_wait", {
 
 export const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
   description:
-    "Request interruption of a running turn in a T3 thread in the calling project. Without runId, the newest interruptible run is selected. Terminal runs and threads without an active turn return without another side effect. clientRequestId makes retries idempotent.",
+    "Request interruption of a running turn in a T3 thread in the calling project. Pressing Stop from inside a provider-native child thread interrupts that child's own active provider turn. Without runId, the newest interruptible root run is selected; a waiting root run is excluded from this no-runId selection only when the thread shell reports provider-native background work, while post-terminal-drain root runs remain excluded. When no root run is interruptible, directly-owned provider-native background children are interrupted and the response has runId null. If no active run or resolvable background child remains, the no-op result has status no_active_run. Terminal runs return without another side effect. clientRequestId makes retries idempotent.",
   parameters: OrchestratorMcpThreadInterruptInput,
   success: OrchestratorMcpThreadInterruptResult,
   failure: OrchestratorMcpFailure,

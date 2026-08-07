@@ -10,9 +10,12 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildPendingUserInputAnswers,
   buildThreadFeed,
   deriveThreadFeedPresentation,
+  setPendingUserInputCustomAnswer,
   threadFeedRunIsUnsettled,
+  togglePendingUserInputOptionSelection,
   type ThreadFeedActivity,
   type ThreadFeedEntry,
 } from "./threadActivity";
@@ -20,6 +23,53 @@ import {
 const threadId = ThreadId.make("thread-1");
 const sourceThreadId = ThreadId.make("thread-source");
 const runId = RunId.make("run-1");
+
+const multiSelectQuestion = {
+  id: "areas",
+  header: "Areas",
+  question: "Which areas should this change cover?",
+  options: [
+    { label: "Server", description: "Server" },
+    { label: "Mobile", description: "Mobile" },
+  ],
+  multiSelect: true,
+} as const;
+
+describe("pending user input", () => {
+  it("toggles and submits multiple selected options", () => {
+    const first = togglePendingUserInputOptionSelection(multiSelectQuestion, undefined, "Server");
+    const second = togglePendingUserInputOptionSelection(multiSelectQuestion, first, "Mobile");
+
+    expect(buildPendingUserInputAnswers([multiSelectQuestion], { areas: second })).toEqual({
+      areas: ["Server", "Mobile"],
+    });
+    expect(togglePendingUserInputOptionSelection(multiSelectQuestion, second, "Server")).toEqual({
+      customAnswer: "",
+      selectedOptionLabels: ["Mobile"],
+    });
+  });
+
+  it("normalizes option labels before toggling a selected value", () => {
+    const selected = togglePendingUserInputOptionSelection(
+      multiSelectQuestion,
+      undefined,
+      "  Server  ",
+    );
+
+    expect(
+      togglePendingUserInputOptionSelection(multiSelectQuestion, selected, " Server "),
+    ).toEqual({ customAnswer: "" });
+  });
+
+  it("clears selected options while a custom answer is active", () => {
+    expect(
+      setPendingUserInputCustomAnswer(
+        { selectedOptionLabels: ["Server", "Mobile"] },
+        "No preference",
+      ),
+    ).toEqual({ customAnswer: "No preference" });
+  });
+});
 
 function base(id: string, updatedAt: string, ordinal: number) {
   const timestamp = DateTime.makeUnsafe(updatedAt);

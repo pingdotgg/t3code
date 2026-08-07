@@ -1,6 +1,8 @@
 import { useColorScheme } from "react-native";
 import { Path, Svg } from "react-native-svg";
 
+import { providerIconKind, providerIconPalette } from "./providerIconKind";
+
 type ProviderIconProps = {
   readonly provider: string | null | undefined;
   readonly size?: number;
@@ -10,8 +12,9 @@ export function ProviderIcon(props: ProviderIconProps) {
   const isDarkMode = useColorScheme() === "dark";
   const size = props.size ?? 16;
   const mono = isDarkMode ? "#e5e5e5" : "#171717";
+  const iconKind = providerIconKind(props.provider);
 
-  if (props.provider === "claudeAgent") {
+  if (iconKind === "claude") {
     return (
       <Svg width={size} height={size} viewBox="0 0 256 257" fill="none">
         <Path
@@ -49,11 +52,22 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
-  if (props.provider === "opencode") {
+  if (iconKind === "opencode" || iconKind === "opencode2") {
+    const palette = providerIconPalette(iconKind, isDarkMode);
+    const detailFill = palette === "dark" ? "#4B4646" : "#CFCECD";
+    const frameFill = palette === "dark" ? "#F1ECEC" : "#211E1E";
     return (
       <Svg width={size} height={size} viewBox="0 0 32 40" fill="none">
-        <Path d="M24 32H8V16H24V32Z" fill={isDarkMode ? "#4B4646" : "#CFCECD"} />
-        <Path d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill={isDarkMode ? "#F1ECEC" : "#211E1E"} />
+        {iconKind === "opencode2" ? (
+          <>
+            <Path fill="#2E6CE9" d="M24 32H8V8H24V32Z" />
+            <Path fill="#82C4FF" d="M24 11H8V8H24V11Z" />
+            <Path fill="#0A2055" d="M24 32H8V29H24V32Z" />
+          </>
+        ) : (
+          <Path fill={detailFill} d="M24 32H8V16H24V32Z" />
+        )}
+        <Path fill={frameFill} d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" />
       </Svg>
     );
   }

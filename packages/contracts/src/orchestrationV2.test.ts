@@ -31,6 +31,7 @@ import {
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadShell,
   OrchestrationV2TurnItem,
+  OrchestrationV2UserInputQuestion,
 } from "./orchestrationV2.ts";
 
 const now = DateTime.makeUnsafe("2026-04-20T00:00:00.000Z");
@@ -61,6 +62,44 @@ const decodeOrchestrationV2ProviderThread = Schema.decodeUnknownSync(Orchestrati
 const decodeOrchestrationV2ThreadShell = Schema.decodeUnknownSync(OrchestrationV2ThreadShell);
 
 describe("orchestration V2 contracts", () => {
+  it("defaults legacy user input questions to single-select", () => {
+    const decodeQuestion = Schema.decodeUnknownSync(OrchestrationV2UserInputQuestion);
+
+    expect(
+      decodeQuestion({
+        id: "question-legacy",
+        header: "Legacy question",
+        question: "Choose one option.",
+        options: [{ label: "One", description: "First option" }],
+      }),
+    ).toMatchObject({ multiSelect: false });
+    expect(
+      decodeQuestion({
+        id: "question-multiselect",
+        header: "Multiple choices",
+        question: "Choose every applicable option.",
+        options: [{ label: "One", description: "First option" }],
+        multiSelect: true,
+      }),
+    ).toMatchObject({ multiSelect: true });
+  });
+
+  it("requires every run interrupt to identify its target", () => {
+    const base = {
+      type: "run.interrupt",
+      commandId: "command-interrupt",
+      threadId: "thread-interrupt",
+    } as const;
+
+    expect(decodeOrchestrationV2Command({ ...base, runId: "run-interrupt" })).toMatchObject({
+      runId: "run-interrupt",
+    });
+    expect(decodeOrchestrationV2Command({ ...base, intent: "provider_native_only" })).toMatchObject(
+      { intent: "provider_native_only" },
+    );
+    expect(() => decodeOrchestrationV2Command(base)).toThrow();
+  });
+
   it("lets legacy snapshot decoders ignore enrichment metadata", () => {
     const decoded = decodeLegacyShellStreamItem({
       kind: "snapshot",

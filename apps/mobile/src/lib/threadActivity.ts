@@ -30,7 +30,7 @@ export type PendingUserInput = ThreadPendingUserInput;
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
 
 export interface PendingUserInputDraftAnswer {
-  readonly selectedOptionLabel?: string;
+  readonly selectedOptionLabels?: ReadonlyArray<string>;
   readonly customAnswer?: string;
 }
 
@@ -141,12 +141,25 @@ function normalizeDraftAnswer(value: string | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function resolvePendingUserInputAnswer(
-  draft: PendingUserInputDraftAnswer | undefined,
-): string | null {
-  return (
-    normalizeDraftAnswer(draft?.customAnswer) ?? normalizeDraftAnswer(draft?.selectedOptionLabel)
+function normalizeSelectedOptionLabels(value: ReadonlyArray<string> | undefined): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(value.map((entry) => entry.trim()).filter((entry) => entry.length > 0)),
   );
+}
+
+function resolvePendingUserInputAnswer(
+  question: ThreadUserInputQuestion,
+  draft: PendingUserInputDraftAnswer | undefined,
+): string | string[] | null {
+  const customAnswer = normalizeDraftAnswer(draft?.customAnswer);
+  if (customAnswer) return customAnswer;
+
+  const selectedOptionLabels = normalizeSelectedOptionLabels(draft?.selectedOptionLabels);
+  if (question.multiSelect) {
+    return selectedOptionLabels.length > 0 ? selectedOptionLabels : null;
+  }
+  return selectedOptionLabels[0] ?? null;
 }
 
 function capitalizePhrase(value: string): string {
@@ -655,18 +668,45 @@ export function setPendingUserInputCustomAnswer(
   draft: PendingUserInputDraftAnswer | undefined,
   customAnswer: string,
 ): PendingUserInputDraftAnswer {
-  const selectedOptionLabel =
-    customAnswer.trim().length > 0 ? undefined : draft?.selectedOptionLabel;
-  return { customAnswer, ...(selectedOptionLabel ? { selectedOptionLabel } : {}) };
+  const selectedOptionLabels =
+    customAnswer.trim().length > 0
+      ? undefined
+      : normalizeSelectedOptionLabels(draft?.selectedOptionLabels);
+  return {
+    customAnswer,
+    ...(selectedOptionLabels && selectedOptionLabels.length > 0 ? { selectedOptionLabels } : {}),
+  };
+}
+
+export function togglePendingUserInputOptionSelection(
+  question: ThreadUserInputQuestion,
+  draft: PendingUserInputDraftAnswer | undefined,
+  optionLabel: string,
+): PendingUserInputDraftAnswer {
+  const normalizedOptionLabel = optionLabel.trim();
+  if (question.multiSelect) {
+    const selectedOptionLabels = normalizeSelectedOptionLabels(draft?.selectedOptionLabels);
+    const nextSelectedOptionLabels = selectedOptionLabels.includes(normalizedOptionLabel)
+      ? selectedOptionLabels.filter((label) => label !== normalizedOptionLabel)
+      : [...selectedOptionLabels, normalizedOptionLabel];
+    return {
+      customAnswer: "",
+      ...(nextSelectedOptionLabels.length > 0
+        ? { selectedOptionLabels: nextSelectedOptionLabels }
+        : {}),
+    };
+  }
+
+  return { customAnswer: "", selectedOptionLabels: [normalizedOptionLabel] };
 }
 
 export function buildPendingUserInputAnswers(
   questions: ReadonlyArray<ThreadUserInputQuestion>,
   draftAnswers: Record<string, PendingUserInputDraftAnswer>,
-): Record<string, string> | null {
-  const answers: Record<string, string> = {};
+): Record<string, string | string[]> | null {
+  const answers: Record<string, string | string[]> = {};
   for (const question of questions) {
-    const answer = resolvePendingUserInputAnswer(draftAnswers[question.id]);
+    const answer = resolvePendingUserInputAnswer(question, draftAnswers[question.id]);
     if (!answer) return null;
     answers[question.id] = answer;
   }

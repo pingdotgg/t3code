@@ -3,10 +3,13 @@ import {
   CheckpointScopeId,
   CommandId,
   MessageId,
+  OrchestrationV2ProviderSessionJson,
+  OrchestrationV2ProviderThreadJson,
   ProviderSessionId,
   RunAttemptId,
   ProviderApprovalDecision,
   ProviderUserInputAnswers,
+  ProviderInstanceId,
   ProviderThreadId,
   ProviderTurnId,
   RunId,
@@ -30,6 +33,12 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     detail: Schema.optional(Schema.String),
     /** Set on terminal detaches (thread archive/delete): revoke the thread's MCP credentials. */
     revokeMcpCredential: Schema.optional(Schema.Boolean),
+    /** Set only on thread deletion: remove the provider-native thread before detaching. */
+    deleteProviderThread: Schema.optional(Schema.Boolean),
+    /** Persisted deletion targets for retries after the managed runtime has stopped. */
+    providerInstanceId: Schema.optional(ProviderInstanceId),
+    providerSession: Schema.optional(OrchestrationV2ProviderSessionJson),
+    providerThreads: Schema.optional(Schema.Array(OrchestrationV2ProviderThreadJson)),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-turn.start"),

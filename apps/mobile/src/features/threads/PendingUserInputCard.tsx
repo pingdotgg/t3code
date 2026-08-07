@@ -8,7 +8,7 @@ import type { PendingUserInput, PendingUserInputDraftAnswer } from "../../lib/th
 export interface PendingUserInputCardProps {
   readonly pendingUserInput: PendingUserInput;
   readonly drafts: Record<string, PendingUserInputDraftAnswer>;
-  readonly answers: Record<string, string> | null;
+  readonly answers: Record<string, string | string[]> | null;
   readonly respondingUserInputId: RuntimeRequestId | null;
   readonly onSelectOption: (requestId: RuntimeRequestId, questionId: string, label: string) => void;
   readonly onChangeCustomAnswer: (
@@ -48,7 +48,8 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
             <View className="flex-row flex-wrap gap-2.5">
               {question.options.map((option) => {
                 const selected =
-                  draft?.selectedOptionLabel === option.label && !draft.customAnswer?.trim().length;
+                  draft?.selectedOptionLabels?.includes(option.label) === true &&
+                  !draft.customAnswer?.trim().length;
                 return (
                   <Pressable
                     key={option.label}

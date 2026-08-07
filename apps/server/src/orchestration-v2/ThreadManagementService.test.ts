@@ -1,19 +1,29 @@
 import { expect, it } from "@effect/vitest";
 import {
   CommandId,
+  EventId,
   MessageId,
   NodeId,
   type OrchestrationV2Command,
+  type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadProjection,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
+  ProviderTurnId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { OrchestratorProjectionError, OrchestratorV2 } from "./Orchestrator.ts";
+import {
+  OrchestratorProjectionError,
+  OrchestratorV2,
+  type OrchestratorV2DispatchResult,
+} from "./Orchestrator.ts";
 import {
   existingThreadIdsForCommand,
   layer,
@@ -316,5 +326,132 @@ it.effect("uses thread-not-found only after a projection loads outside the proje
     expect(error).toBeInstanceOf(ThreadManagementThreadNotFoundError);
     expect(error).toMatchObject({ projectId, threadId });
     expect("cause" in error).toBe(false);
+  }).pipe(Effect.provide(testLayer));
+});
+
+it.effect("interrupts an ordinary waiting root run when no native background target exists", () => {
+  const projectId = ProjectId.make("project:thread-management:waiting-root");
+  const threadId = ThreadId.make("thread:thread-management:waiting-root");
+  const waitingRunId = RunId.make("run:thread-management:waiting-root");
+  const projection = {
+    thread: {
+      id: threadId,
+      projectId,
+      deletedAt: null,
+    },
+    runs: [{ id: waitingRunId, ordinal: 1, status: "waiting" }],
+  } as unknown as OrchestrationV2ThreadProjection;
+  const testLayer = layer.pipe(
+    Layer.provide(
+      Layer.mock(OrchestratorV2)({
+        getThreadProjection: () => Effect.succeed(projection),
+        getThreadShell: () =>
+          Effect.succeed({
+            hasInterruptibleProviderNativeBackgroundWork: false,
+          } as OrchestrationV2ThreadShell),
+        dispatch: () => Effect.succeed({ sequence: 1, storedEvents: [] }),
+      }),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const service = yield* ThreadManagementService;
+    const result = yield* service.interruptThread({
+      projectId,
+      commandId: CommandId.make("command:thread-management:waiting-root-stop"),
+      threadId,
+    });
+
+    expect(result).toMatchObject({
+      type: "interrupt_requested",
+      run: { id: waitingRunId, status: "waiting" },
+    });
+  }).pipe(Effect.provide(testLayer));
+});
+
+it.effect("pins run-less background Stop to provider-native targets across a root-run race", () => {
+  const projectId = ProjectId.make("project:thread-management:provider-race");
+  const threadId = ThreadId.make("thread:thread-management:provider-race");
+  const waitingRunId = RunId.make("run:thread-management:provider-race");
+  const providerThreadId = ProviderThreadId.make("provider-thread:thread-management:provider-race");
+  const providerTurnId = ProviderTurnId.make("provider-turn:thread-management:provider-race");
+  const commands: Array<OrchestrationV2Command> = [];
+  const projection = {
+    thread: {
+      id: threadId,
+      projectId,
+      deletedAt: null,
+    },
+    runs: [{ id: waitingRunId, ordinal: 1, status: "waiting" }],
+  } as unknown as OrchestrationV2ThreadProjection;
+  const dispatchResult = {
+    sequence: 1,
+    storedEvents: [
+      {
+        sequence: 1,
+        commandId: CommandId.make("command:thread-management:provider-race"),
+        event: {
+          id: EventId.make("event:thread-management:provider-race"),
+          type: "provider-turn.interrupt-requested",
+          threadId,
+          driver: ProviderDriverKind.make("opencode2"),
+          providerInstanceId: ProviderInstanceId.make("opencode2"),
+          occurredAt: DateTime.makeUnsafe("2026-08-01T12:00:00.000Z"),
+          payload: {
+            targetThreadId: ThreadId.make("thread:thread-management:provider-child"),
+            providerThreadId,
+            providerTurnId,
+            reason: null,
+          },
+        },
+      },
+    ],
+  } satisfies OrchestratorV2DispatchResult;
+  const testLayer = layer.pipe(
+    Layer.provide(
+      Layer.mock(OrchestratorV2)({
+        getThreadProjection: () => Effect.succeed(projection),
+        getThreadShell: () =>
+          Effect.succeed({
+            hasInterruptibleProviderNativeBackgroundWork: true,
+          } as OrchestrationV2ThreadShell),
+        dispatch: (command) => {
+          commands.push(command);
+          return Effect.succeed(dispatchResult);
+        },
+      }),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const service = yield* ThreadManagementService;
+    const result = yield* service.interruptThread({
+      projectId,
+      commandId: CommandId.make("command:thread-management:provider-race"),
+      threadId,
+    });
+
+    expect(result).toMatchObject({
+      type: "provider_interrupt_requested",
+      targets: [
+        {
+          threadId: ThreadId.make("thread:thread-management:provider-child"),
+          providerThreadId,
+          providerTurnId,
+        },
+      ],
+    });
+    expect(commands).toEqual([
+      {
+        type: "run.interrupt",
+        commandId: "command:thread-management:provider-race",
+        threadId,
+        intent: "provider_native_only",
+      },
+    ]);
+    expect(
+      (result as Extract<typeof result, { type: "provider_interrupt_requested" }>).dispatch
+        .storedEvents[0]?.event.type,
+    ).toBe("provider-turn.interrupt-requested");
   }).pipe(Effect.provide(testLayer));
 });
