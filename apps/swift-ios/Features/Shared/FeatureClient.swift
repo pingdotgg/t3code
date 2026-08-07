@@ -108,12 +108,19 @@ public protocol FeatureClient: AnyObject {
         message: String?
     ) async throws -> FeatureSourceControlStatus
 
-    func terminalSnapshot(threadID: String) async throws -> FeatureTerminalSnapshot
-    func terminalEvents(threadID: String) -> AsyncStream<FeatureTerminalSnapshot>
-    func openTerminal(threadID: String, columns: Int, rows: Int) async throws
-    func writeTerminal(threadID: String, data: String) async throws
-    func resizeTerminal(threadID: String, columns: Int, rows: Int) async throws
-    func closeTerminal(threadID: String) async throws
+    func terminalSnapshot(threadID: String, terminalID: String) async throws -> FeatureTerminalSnapshot
+    func terminalEvents(threadID: String, terminalID: String) -> AsyncStream<FeatureTerminalSnapshot>
+    func terminalSessions(threadID: String) -> AsyncStream<[FeatureTerminalSnapshot]>
+    func openTerminal(threadID: String, terminalID: String, columns: Int, rows: Int) async throws
+    func writeTerminal(threadID: String, terminalID: String, data: String) async throws
+    func resizeTerminal(
+        threadID: String,
+        terminalID: String,
+        columns: Int,
+        rows: Int
+    ) async throws
+    func clearTerminal(threadID: String, terminalID: String) async throws
+    func closeTerminal(threadID: String, terminalID: String) async throws
 }
 
 public extension FeatureClient {
@@ -304,27 +311,45 @@ public extension FeatureClient {
         throw FeatureCapabilityUnavailable("Source control actions")
     }
 
-    func terminalSnapshot(threadID: String) async throws -> FeatureTerminalSnapshot {
+    func terminalSnapshot(threadID: String, terminalID _: String) async throws -> FeatureTerminalSnapshot {
         throw FeatureCapabilityUnavailable("Terminal")
     }
 
-    func terminalEvents(threadID: String) -> AsyncStream<FeatureTerminalSnapshot> {
+    func terminalEvents(threadID: String, terminalID _: String) -> AsyncStream<FeatureTerminalSnapshot> {
         AsyncStream { $0.finish() }
     }
 
-    func openTerminal(threadID: String, columns: Int, rows: Int) async throws {
+    func terminalSessions(threadID _: String) -> AsyncStream<[FeatureTerminalSnapshot]> {
+        AsyncStream { $0.finish() }
+    }
+
+    func openTerminal(
+        threadID: String,
+        terminalID _: String,
+        columns: Int,
+        rows: Int
+    ) async throws {
         throw FeatureCapabilityUnavailable("Terminal")
     }
 
-    func writeTerminal(threadID: String, data: String) async throws {
+    func writeTerminal(threadID: String, terminalID _: String, data: String) async throws {
         throw FeatureCapabilityUnavailable("Terminal")
     }
 
-    func resizeTerminal(threadID: String, columns: Int, rows: Int) async throws {
+    func resizeTerminal(
+        threadID: String,
+        terminalID _: String,
+        columns: Int,
+        rows: Int
+    ) async throws {
         throw FeatureCapabilityUnavailable("Terminal")
     }
 
-    func closeTerminal(threadID: String) async throws {
+    func clearTerminal(threadID: String, terminalID _: String) async throws {
+        throw FeatureCapabilityUnavailable("Terminal")
+    }
+
+    func closeTerminal(threadID: String, terminalID _: String) async throws {
         throw FeatureCapabilityUnavailable("Terminal")
     }
 }

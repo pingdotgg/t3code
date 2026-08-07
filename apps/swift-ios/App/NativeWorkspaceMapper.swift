@@ -106,11 +106,26 @@ enum NativeWorkspaceMapper {
     static func terminal(_ snapshot: TerminalSessionSnapshot) -> FeatureTerminalSnapshot {
         FeatureTerminalSnapshot(
             threadID: snapshot.threadId,
+            terminalID: snapshot.terminalId,
             state: terminalState(snapshot.status),
             title: snapshot.label,
             workingDirectory: snapshot.cwd,
-            buffer: terminalText(snapshot.history),
-            exitCode: snapshot.exitCode
+            buffer: snapshot.history,
+            exitCode: snapshot.exitCode,
+            updatedAt: snapshot.updatedAt
+        )
+    }
+
+    static func terminal(_ summary: TerminalSummary) -> FeatureTerminalSnapshot {
+        FeatureTerminalSnapshot(
+            threadID: summary.threadId,
+            terminalID: summary.terminalId,
+            state: terminalState(summary.status),
+            title: summary.label,
+            workingDirectory: summary.cwd,
+            exitCode: summary.exitCode,
+            hasRunningSubprocess: summary.hasRunningSubprocess,
+            updatedAt: summary.updatedAt
         )
     }
 
@@ -120,41 +135,6 @@ enum NativeWorkspaceMapper {
         case .running: .running
         case .exited: .exited
         case .error: .failed
-        }
-    }
-
-    /// This surface is a plain-text terminal viewer, not a VT100 emulator.
-    static func terminalText(_ value: String) -> String {
-        let withoutEscapes = value
-            .replacingOccurrences(
-                of: "\u{1B}\\][^\u{7}\u{1B}]*(?:\u{7}|\u{1B}\\\\)",
-                with: "",
-                options: .regularExpression
-            )
-            .replacingOccurrences(
-                of: "\u{1B}\\[[0-?]*[ -/]*[@-~]",
-                with: "",
-                options: .regularExpression
-            )
-            .replacingOccurrences(
-                of: "\u{1B}[@-_]",
-                with: "",
-                options: .regularExpression
-            )
-        return withoutEscapes.reduce(into: "") { output, character in
-            if character == "\u{8}" || character == "\u{7F}" {
-                if !output.isEmpty { output.removeLast() }
-                return
-            }
-            if character == "\r" { return }
-            if character.unicodeScalars.count == 1,
-               let scalar = character.unicodeScalars.first,
-               scalar.value < 32,
-               character != "\n",
-               character != "\t" {
-                return
-            }
-            output.append(character)
         }
     }
 

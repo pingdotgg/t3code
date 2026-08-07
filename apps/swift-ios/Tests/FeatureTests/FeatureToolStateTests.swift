@@ -259,6 +259,57 @@ struct FeatureToolStateTests {
     @Test
     func terminalPlainTextDropsControlSequences() {
         let prompt = "\u{1B}]0;workspace\u{7}\u{1B}[38;5;221mx\u{8}repo\u{1B}[39m ❯ "
-        #expect(NativeWorkspaceMapper.terminalText(prompt) == "repo ❯ ")
+        #expect(TerminalText.plainText(from: prompt) == "repo ❯ ")
+    }
+
+    @Test
+    func terminalSessionSelectionPrefersAndAllocatesStableIDs() {
+        let sessions = [
+            FeatureTerminalSnapshot(
+                threadID: "thread",
+                terminalID: "term-2",
+                state: .running,
+                title: "Tests"
+            ),
+            FeatureTerminalSnapshot(
+                threadID: "thread",
+                terminalID: "default",
+                state: .running
+            ),
+            FeatureTerminalSnapshot(
+                threadID: "thread",
+                terminalID: "term-3",
+                state: .exited
+            ),
+        ]
+
+        #expect(TerminalSessionList.initialID(in: sessions) == "default")
+        #expect(TerminalSessionList.nextID(occupiedIDs: ["default", "term-2", "term-4"]) == "term-3")
+        #expect(TerminalSessionList.displayTitle(for: sessions[0]) == "Terminal 2 · Tests")
+        #expect(TerminalSessionList.displayTitle(for: sessions[1]) == "Terminal 1")
+        #expect(
+            TerminalSessionList.fallbackID(in: sessions, excluding: "default") == "term-2"
+        )
+    }
+
+    @Test
+    func terminalSnapshotPreservesVTDataForGhostty() {
+        let history = "\u{1B}[31mred\u{1B}[0m\r\n"
+        let snapshot = TerminalSessionSnapshot(
+            threadId: "thread",
+            terminalId: "default",
+            cwd: "/repo",
+            worktreePath: nil,
+            status: .running,
+            pid: 123,
+            history: history,
+            exitCode: nil,
+            exitSignal: nil,
+            label: "Terminal",
+            updatedAt: "2026-08-07T00:00:00Z",
+            sequence: 1
+        )
+
+        #expect(NativeWorkspaceMapper.terminal(snapshot).buffer == history)
     }
 }

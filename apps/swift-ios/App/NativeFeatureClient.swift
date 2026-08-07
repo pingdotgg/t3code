@@ -62,11 +62,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     ] = [:]
     private var approvalRoutes: [String: PendingRequestRoute] = [:]
     private var inputRoutes: [String: PendingRequestRoute] = [:]
-    private var terminalIDs: [String: String] = [:]
-    private var terminalSnapshots: [String: FeatureTerminalSnapshot] = [:]
-    private var terminalContinuations: [
-        String: [UUID: AsyncStream<FeatureTerminalSnapshot>.Continuation]
-    ] = [:]
+    private struct TerminalKey: Hashable {
+        let threadID: String
+        let terminalID: String
+    }
+
+    private var terminalSnapshots: [TerminalKey: FeatureTerminalSnapshot] = [:]
     private var pollingTask: Task<Void, Never>?
     private var fallbackPollingTask: Task<Void, Never>?
     private var configurationTask: Task<Void, Never>?
@@ -399,8 +400,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         pendingTurnSubmissions.removeAll()
         approvalRoutes.removeAll()
         inputRoutes.removeAll()
-        finishTerminalStreams()
-        terminalIDs.removeAll()
         terminalSnapshots.removeAll()
     }
 
@@ -1569,35 +1568,52 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         )
     }
 
-    func terminalSnapshot(threadID: String) async throws -> FeatureTerminalSnapshot {
+    func terminalSnapshot(
+        threadID: String,
+        terminalID: String
+    ) async throws -> FeatureTerminalSnapshot {
         let route = try threadRoute(for: threadID)
-        if let snapshot = terminalSnapshots[route.uiID] {
+        let key = TerminalKey(threadID: route.uiID, terminalID: terminalID)
+        if let snapshot = terminalSnapshots[key] {
             return snapshot
         }
         let context = try workspaceContext(route: route)
         return FeatureTerminalSnapshot(
             threadID: route.uiID,
+            terminalID: terminalID,
             workingDirectory: context.cwd
         )
     }
 
-    func terminalEvents(threadID: String) -> AsyncStream<FeatureTerminalSnapshot> {
-        guard let route = try? threadRoute(for: threadID) else {
+    func terminalEvents(
+        threadID: String,
+        terminalID: String
+    ) -> AsyncStream<FeatureTerminalSnapshot> {
+        guard let route = try? threadRoute(for: threadID),
+              let context = try? workspaceContext(route: route) else {
             return AsyncStream { continuation in continuation.finish() }
         }
         let environmentID = route.environmentID
         let client = route.client
         let uiThreadID = route.uiID
+        let wireThreadID = route.wireID
+        let key = TerminalKey(threadID: uiThreadID, terminalID: terminalID)
         let generation = environmentGeneration
         return AsyncStream { continuation in
-            let subscriptionID = UUID()
-            terminalContinuations[uiThreadID, default: [:]][subscriptionID] = continuation
-            if let snapshot = terminalSnapshots[uiThreadID] {
+            if let snapshot = terminalSnapshots[key] {
                 continuation.yield(snapshot)
             }
             let task = Task { [weak self] in
                 do {
-                    for try await event in await client.terminalEvents() {
+                    let events = try await client.attachTerminal(
+                        threadID: wireThreadID,
+                        terminalID: terminalID,
+                        cwd: context.cwd,
+                        worktreePath: context.worktreePath,
+                        columns: 80,
+                        rows: 24
+                    )
+                    for try await event in events {
                         guard !Task.isCancelled else { break }
                         guard let self else { break }
                         guard self.isKnownClient(
@@ -1607,14 +1623,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                         ) else {
                             break
                         }
-                        guard event.threadId == route.wireID else { continue }
-                        if let terminalID = self.terminalIDs[uiThreadID],
-                           event.terminalId != nil,
-                           event.terminalId != terminalID {
-                            continue
-                        }
-                        let snapshot = self.consumeTerminalEvent(event, threadID: uiThreadID)
-                        self.publishTerminal(snapshot, threadID: uiThreadID)
+                        let snapshot = self.consumeTerminalEvent(
+                            event,
+                            threadID: uiThreadID,
+                            terminalID: terminalID
+                        )
+                        continuation.yield(snapshot)
                     }
                     continuation.finish()
                 } catch is CancellationError {
@@ -1632,35 +1646,99 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                         continuation.finish()
                         return
                     }
-                    var snapshot = self.terminalSnapshots[uiThreadID]
-                        ?? FeatureTerminalSnapshot(threadID: uiThreadID)
+                    var snapshot = self.terminalSnapshots[key]
+                        ?? FeatureTerminalSnapshot(
+                            threadID: uiThreadID,
+                            terminalID: terminalID,
+                            workingDirectory: context.cwd
+                        )
                     snapshot.state = .failed
                     snapshot.error = error.localizedDescription
-                    self.terminalSnapshots[uiThreadID] = snapshot
-                    self.publishTerminal(snapshot, threadID: uiThreadID)
+                    self.terminalSnapshots[key] = snapshot
+                    continuation.yield(snapshot)
                     continuation.finish()
                 }
             }
-            continuation.onTermination = { @Sendable [weak self] _ in
+            continuation.onTermination = { @Sendable _ in
                 task.cancel()
-                Task { @MainActor in
-                    self?.terminalContinuations[uiThreadID]?[subscriptionID] = nil
-                    if self?.terminalContinuations[uiThreadID]?.isEmpty == true {
-                        self?.terminalContinuations[uiThreadID] = nil
-                    }
-                }
             }
         }
     }
 
-    func openTerminal(threadID: String, columns: Int, rows: Int) async throws {
+    func terminalSessions(threadID: String) -> AsyncStream<[FeatureTerminalSnapshot]> {
+        guard let route = try? threadRoute(for: threadID) else {
+            return AsyncStream { continuation in continuation.finish() }
+        }
+        let environmentID = route.environmentID
+        let client = route.client
+        let uiThreadID = route.uiID
+        let wireThreadID = route.wireID
+        let generation = environmentGeneration
+        return AsyncStream { continuation in
+            let task = Task { [weak self] in
+                var summaries = [TerminalSummary]()
+                do {
+                    for try await event in await client.terminalMetadataEvents() {
+                        guard !Task.isCancelled else { break }
+                        guard let self else { break }
+                        guard self.isKnownClient(
+                            client,
+                            environmentID: environmentID,
+                            generation: generation
+                        ) else {
+                            break
+                        }
+
+                        switch event.type {
+                        case "snapshot":
+                            summaries = (event.terminals ?? []).filter {
+                                $0.threadId == wireThreadID
+                            }
+                        case "upsert":
+                            if let summary = event.terminal,
+                               summary.threadId == wireThreadID {
+                                summaries.removeAll { $0.terminalId == summary.terminalId }
+                                summaries.append(summary)
+                            }
+                        case "remove":
+                            if event.threadId == wireThreadID,
+                               let terminalID = event.terminalId {
+                                summaries.removeAll { $0.terminalId == terminalID }
+                            }
+                        default:
+                            break
+                        }
+
+                        let sessions = summaries
+                            .sorted {
+                                $0.terminalId.localizedStandardCompare($1.terminalId)
+                                    == .orderedAscending
+                            }
+                            .map { self.mergeTerminalSummary($0, threadID: uiThreadID) }
+                        continuation.yield(sessions)
+                    }
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish()
+                } catch {
+                    continuation.finish()
+                }
+            }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
+    }
+
+    func openTerminal(
+        threadID: String,
+        terminalID: String,
+        columns: Int,
+        rows: Int
+    ) async throws {
         let route = try threadRoute(for: threadID)
         let client = route.client
         let environmentID = route.environmentID
         let generation = environmentGeneration
         let context = try workspaceContext(route: route)
-        let terminalID = terminalIDs[route.uiID] ?? UUID().uuidString
-        terminalIDs[route.uiID] = terminalID
         let snapshot = try await client.openTerminal(
             threadID: route.wireID,
             terminalID: terminalID,
@@ -1675,13 +1753,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let mapped = NativeWorkspaceMapper.terminal(snapshot)
         var scoped = mapped
         scoped.threadID = route.uiID
-        terminalSnapshots[route.uiID] = scoped
-        publishTerminal(scoped, threadID: route.uiID)
+        terminalSnapshots[TerminalKey(threadID: route.uiID, terminalID: terminalID)] = scoped
     }
 
-    func writeTerminal(threadID: String, data: String) async throws {
+    func writeTerminal(threadID: String, terminalID: String, data: String) async throws {
         let route = try threadRoute(for: threadID)
-        let terminalID = try requireTerminalID(threadID: route.uiID)
         try await route.client.writeTerminal(
             threadID: route.wireID,
             terminalID: terminalID,
@@ -1689,9 +1765,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         )
     }
 
-    func resizeTerminal(threadID: String, columns: Int, rows: Int) async throws {
+    func resizeTerminal(
+        threadID: String,
+        terminalID: String,
+        columns: Int,
+        rows: Int
+    ) async throws {
         let route = try threadRoute(for: threadID)
-        let terminalID = try requireTerminalID(threadID: route.uiID)
         try await route.client.resizeTerminal(
             threadID: route.wireID,
             terminalID: terminalID,
@@ -1700,20 +1780,30 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         )
     }
 
-    func closeTerminal(threadID: String) async throws {
+    func clearTerminal(threadID: String, terminalID: String) async throws {
+        let route = try threadRoute(for: threadID)
+        try await route.client.clearTerminal(
+            threadID: route.wireID,
+            terminalID: terminalID
+        )
+    }
+
+    func closeTerminal(threadID: String, terminalID: String) async throws {
         let route = try threadRoute(for: threadID)
         let client = route.client
         let environmentID = route.environmentID
         let generation = environmentGeneration
-        let terminalID = try requireTerminalID(threadID: route.uiID)
         try await client.closeTerminal(threadID: route.wireID, terminalID: terminalID)
         guard isKnownClient(client, environmentID: environmentID, generation: generation) else {
             throw CancellationError()
         }
-        terminalIDs[route.uiID] = nil
-        let snapshot = FeatureTerminalSnapshot(threadID: route.uiID)
-        terminalSnapshots[route.uiID] = snapshot
-        publishTerminal(snapshot, threadID: route.uiID)
+        let context = try workspaceContext(route: route)
+        terminalSnapshots[TerminalKey(threadID: route.uiID, terminalID: terminalID)] =
+            FeatureTerminalSnapshot(
+                threadID: route.uiID,
+                terminalID: terminalID,
+                workingDirectory: context.cwd
+            )
     }
 
     private func requireClient() throws -> T3Client {
@@ -1907,13 +1997,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         publish(detail, threadID: threadID)
     }
 
-    private func requireTerminalID(threadID: String) throws -> String {
-        guard let terminalID = terminalIDs[threadID] else {
-            throw NativeFeatureClientError.terminalNotOpen
-        }
-        return terminalID
-    }
-
     private func workspaceContext(route: NativeThreadRoute) throws -> (
         cwd: String,
         worktreePath: String?
@@ -1931,22 +2014,23 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     private func consumeTerminalEvent(
         _ event: TerminalEvent,
-        threadID: String
+        threadID: String,
+        terminalID: String
     ) -> FeatureTerminalSnapshot {
+        let key = TerminalKey(threadID: threadID, terminalID: terminalID)
         if let coreSnapshot = event.snapshot {
             var snapshot = NativeWorkspaceMapper.terminal(coreSnapshot)
             snapshot.threadID = threadID
             snapshot.buffer = Self.cappedTerminalBuffer(snapshot.buffer)
-            terminalIDs[threadID] = coreSnapshot.terminalId
-            terminalSnapshots[threadID] = snapshot
+            terminalSnapshots[key] = snapshot
             return snapshot
         }
 
-        var snapshot = terminalSnapshots[threadID]
-            ?? FeatureTerminalSnapshot(threadID: threadID)
+        var snapshot = terminalSnapshots[key]
+            ?? FeatureTerminalSnapshot(threadID: threadID, terminalID: terminalID)
         switch event.type {
         case "output":
-            snapshot.buffer.append(NativeWorkspaceMapper.terminalText(event.data ?? ""))
+            snapshot.buffer.append(event.data ?? "")
             snapshot.buffer = Self.cappedTerminalBuffer(snapshot.buffer)
         case "exited":
             snapshot.state = .exited
@@ -1960,16 +2044,33 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             snapshot.buffer = ""
         case "activity":
             snapshot.title = event.label ?? snapshot.title
+            snapshot.hasRunningSubprocess = event.hasRunningSubprocess
+                ?? snapshot.hasRunningSubprocess
         default:
             break
         }
-        terminalSnapshots[threadID] = snapshot
+        terminalSnapshots[key] = snapshot
+        return snapshot
+    }
+
+    private func mergeTerminalSummary(
+        _ summary: TerminalSummary,
+        threadID: String
+    ) -> FeatureTerminalSnapshot {
+        let key = TerminalKey(threadID: threadID, terminalID: summary.terminalId)
+        var snapshot = NativeWorkspaceMapper.terminal(summary)
+        snapshot.threadID = threadID
+        if let cached = terminalSnapshots[key] {
+            snapshot.buffer = cached.buffer
+            snapshot.error = cached.error
+        }
+        terminalSnapshots[key] = snapshot
         return snapshot
     }
 
     /// A verbose command can stream megabytes; the viewer only ever shows the
     /// tail, so cap retained history to keep layout and memory bounded.
-    private static let terminalBufferLimit = 256 * 1024
+    private static let terminalBufferLimit = 512 * 1024
 
     private static func cappedTerminalBuffer(_ buffer: String) -> String {
         let utf8 = buffer.utf8
@@ -1993,24 +2094,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             return String(tail[tail.index(after: newline)...])
         }
         return String(tail)
-    }
-
-    private func publishTerminal(
-        _ snapshot: FeatureTerminalSnapshot,
-        threadID: String
-    ) {
-        for continuation in terminalContinuations[threadID]?.values ?? [:].values {
-            continuation.yield(snapshot)
-        }
-    }
-
-    private func finishTerminalStreams() {
-        for continuations in terminalContinuations.values {
-            for continuation in continuations.values {
-                continuation.finish()
-            }
-        }
-        terminalContinuations.removeAll()
     }
 
     private func startPolling(_ activeClient: T3Client) {
@@ -5303,7 +5386,6 @@ private enum NativeFeatureClientError: LocalizedError {
     case inputRequestNotFound
     case invalidProjectPath
     case branchRequired
-    case terminalNotOpen
     case deviceSessionNotFound
     case missingScope(String)
     case tooManyAttachments
@@ -5319,7 +5401,6 @@ private enum NativeFeatureClientError: LocalizedError {
         case .inputRequestNotFound: "The input request is no longer active."
         case .invalidProjectPath: "Enter a workspace path on the connected environment."
         case .branchRequired: "Choose a base branch for the new worktree."
-        case .terminalNotOpen: "Open the terminal before sending input."
         case .deviceSessionNotFound: "That device session is no longer active."
         case .missingScope: "This connection does not have permission to manage devices."
         case .tooManyAttachments: "You can attach up to 8 images per message."

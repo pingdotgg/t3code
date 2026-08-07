@@ -893,28 +893,37 @@ public enum FeatureTerminalState: String, Sendable, Codable {
 
 public struct FeatureTerminalSnapshot: Sendable, Equatable, Codable {
     public var threadID: String
+    public var terminalID: String
     public var state: FeatureTerminalState
     public var title: String
     public var workingDirectory: String?
     public var buffer: String
     public var exitCode: Int?
     public var error: String?
+    public var hasRunningSubprocess: Bool
+    public var updatedAt: String?
 
     public init(
         threadID: String,
+        terminalID: String = "default",
         state: FeatureTerminalState = .stopped,
         title: String = "Terminal",
         workingDirectory: String? = nil,
         buffer: String = "",
         exitCode: Int? = nil,
-        error: String? = nil
+        error: String? = nil,
+        hasRunningSubprocess: Bool = false,
+        updatedAt: String? = nil
     ) {
         self.threadID = threadID
+        self.terminalID = terminalID
         self.state = state
         self.title = title
         self.workingDirectory = workingDirectory
         self.buffer = buffer
         self.exitCode = exitCode
         self.error = error
+        self.hasRunningSubprocess = hasRunningSubprocess
+        self.updatedAt = updatedAt
     }
 }

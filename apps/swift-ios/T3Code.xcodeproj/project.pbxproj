@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		B10000000000000000000001 /* ClerkKit in Frameworks */ = {isa = PBXBuildFile; productRef = B30000000000000000000001 /* ClerkKit */; };
 		B10000000000000000000002 /* ClerkKitUI in Frameworks */ = {isa = PBXBuildFile; productRef = B30000000000000000000002 /* ClerkKitUI */; };
+		D10000000000000000000001 /* GhosttyKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = D40000000000000000000001 /* GhosttyKit.xcframework */; };
 		C10000000000000000000001 /* AgentActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000001 /* AgentActivityAttributes.swift */; };
 		C10000000000000000000002 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000002 /* SharedContainer.swift */; };
 		C10000000000000000000003 /* TaskWidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000003 /* TaskWidgetSnapshot.swift */; };
@@ -96,6 +97,7 @@
 			files = (
 				B10000000000000000000001 /* ClerkKit in Frameworks */,
 				B10000000000000000000002 /* ClerkKitUI in Frameworks */,
+				D10000000000000000000001 /* GhosttyKit.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -157,6 +159,7 @@
 				A10000000000000000000005 /* Resources */,
 				A10000000000000000000006 /* Tests */,
 				C30000000000000000000001 /* Extensions */,
+				D40000000000000000000001 /* GhosttyKit.xcframework */,
 				A30000000000000000000002 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -636,6 +639,19 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lc++",
+					"-lz",
+					"-framework",
+					IOSurface,
+					"-framework",
+					Metal,
+					"-framework",
+					MetalKit,
+					"-framework",
+					QuartzCore,
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.dev;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -680,6 +696,19 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lc++",
+					"-lz",
+					"-framework",
+					IOSurface,
+					"-framework",
+					Metal,
+					"-framework",
+					MetalKit,
+					"-framework",
+					QuartzCore,
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -963,6 +992,7 @@
 		C4000000000000000000000F /* T3CodeWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = T3CodeWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		C40000000000000000000010 /* T3CodeShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = T3CodeShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		C40000000000000000000011 /* ExtensionContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionContractTests.swift; sourceTree = "<group>"; };
+		D40000000000000000000001 /* GhosttyKit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = GhosttyKit.xcframework; path = ../mobile/modules/t3-terminal/Vendor/libghostty/GhosttyKit.xcframework; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 	};
 	rootObject = A90000000000000000000001 /* Project object */;

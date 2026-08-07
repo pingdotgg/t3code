@@ -49,7 +49,8 @@ the active selection are stored separately in Application Support.
   photo/camera/file image attachments, turn cancellation, approval decisions, and
   structured user-input requests.
 - Workspace files and previews, working-tree review, Git status and common actions,
-  plus an interactive terminal session scoped to each thread.
+  plus Ghostty-rendered terminal sessions with VT/ANSI output, scrollback, hardware
+  and software keyboard controls, and per-thread session switching.
 - Native settings with persisted appearance and behavior preferences, platform
   deep links, shortcuts, background refresh, and notification routing.
 - A Share extension that imports text, URLs, and images into persistent project
