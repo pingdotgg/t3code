@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import React, { type FormEvent, type KeyboardEvent, useCallback, useMemo, useState } from "react";
 
+import { type DetectedProjectScript } from "~/hooks/usePackageManagerScripts";
 import {
   keybindingValueForCommand,
   decodeProjectScriptKeybindingRule,
@@ -95,6 +96,17 @@ function ScriptIcon({
   return <PlayIcon className={className} />;
 }
 
+/** Best-effort icon guess for a detected package.json/composer.json script, editable afterwards. */
+function guessDetectedScriptIcon(name: string): ProjectScriptIcon {
+  const lower = name.toLowerCase();
+  if (lower.includes("test")) return "test";
+  if (lower.includes("lint")) return "lint";
+  if (lower.includes("build")) return "build";
+  if (lower.includes("debug")) return "debug";
+  if (lower.includes("config") || lower.includes("setup")) return "configure";
+  return "play";
+}
+
 export interface NewProjectScriptInput {
   name: string;
   command: string;
@@ -110,11 +122,14 @@ export interface NewProjectScriptInput {
 export type ProjectScriptActionResult = AtomCommandResult<void, unknown>;
 
 const NO_FILE_SCRIPTS: ReadonlyArray<T3ProjectFileScript> = [];
+const NO_PACKAGE_SCRIPTS: ReadonlyArray<DetectedProjectScript> = [];
 
 interface ProjectScriptsControlProps {
   scripts: ReadonlyArray<ProjectScript>;
   /** Scripts declared in the project's checked-in t3.json, offered for import. */
   fileScripts?: ReadonlyArray<T3ProjectFileScript>;
+  /** Scripts detected in package.json/composer.json, offered for import. */
+  packageScripts?: ReadonlyArray<DetectedProjectScript>;
   keybindings: ResolvedKeybindingsConfig;
   preferredScriptId?: string | null;
   onRunScript: (script: ProjectScript) => void;
@@ -129,6 +144,7 @@ interface ProjectScriptsControlProps {
 export default function ProjectScriptsControl({
   scripts,
   fileScripts = NO_FILE_SCRIPTS,
+  packageScripts = NO_PACKAGE_SCRIPTS,
   keybindings,
   preferredScriptId = null,
   onRunScript,
@@ -143,6 +159,7 @@ export default function ProjectScriptsControl({
     imports: false,
   });
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [scriptPickerOpen, setScriptPickerOpen] = useState(false);
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
   const [icon, setIcon] = useState<ProjectScriptIcon>("play");
@@ -173,6 +190,27 @@ export default function ProjectScriptsControl({
       ),
     [fileScripts, scripts],
   );
+  const importablePackageScripts = useMemo(
+    () =>
+      packageScripts.filter(
+        (detected) =>
+          !scripts.some(
+            (script) =>
+              script.command === detected.command ||
+              script.name.toLowerCase() === detected.name.toLowerCase(),
+          ),
+      ),
+    [packageScripts, scripts],
+  );
+  const npmScripts = useMemo(
+    () => importablePackageScripts.filter((script) => script.source === "npm"),
+    [importablePackageScripts],
+  );
+  const composerScripts = useMemo(
+    () => importablePackageScripts.filter((script) => script.source === "composer"),
+    [importablePackageScripts],
+  );
+  const hasDetectedScripts = npmScripts.length > 0 || composerScripts.length > 0;
   const isEditing = editingScriptId !== null;
   const dropdownItemClassName =
     "data-highlighted:bg-transparent data-highlighted:text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:hover:bg-accent data-highlighted:hover:text-accent-foreground data-highlighted:focus-visible:bg-accent data-highlighted:focus-visible:text-accent-foreground";
@@ -307,6 +345,15 @@ export default function ProjectScriptsControl({
       setValidationError(error instanceof Error ? error.message : "Failed to import action.");
       setDialogOpen(true);
     }
+  };
+
+  const applyDetectedScript = (detected: DetectedProjectScript) => {
+    setCommand(detected.command);
+    if (name.trim().length === 0) {
+      setName(detected.name);
+      setIcon(guessDetectedScriptIcon(detected.name));
+    }
+    setScriptPickerOpen(false);
   };
 
   const importMenuItems = importableScripts.length > 0 && (
@@ -465,6 +512,7 @@ export default function ProjectScriptsControl({
           setDialogOpen(open);
           if (!open) {
             setIconPickerOpen(false);
+            setScriptPickerOpen(false);
           }
         }}
         onOpenChangeComplete={(open) => {
@@ -555,7 +603,71 @@ export default function ProjectScriptsControl({
                 </p>
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="script-command">Command</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="script-command">Command</Label>
+                  {hasDetectedScripts && (
+                    <Popover onOpenChange={setScriptPickerOpen} open={scriptPickerOpen}>
+                      <PopoverTrigger
+                        render={
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label="Insert detected script"
+                          />
+                        }
+                      >
+                        <PlusIcon className="size-3.5" />
+                      </PopoverTrigger>
+                      <PopoverPopup align="end">
+                        <div className="flex w-56 flex-col gap-1">
+                          {npmScripts.length > 0 && (
+                            <div className="flex flex-col gap-0.5">
+                              <span className="px-2 py-1 text-xs font-medium text-muted-foreground">
+                                package.json
+                              </span>
+                              {npmScripts.map((detected) => (
+                                <button
+                                  key={`npm:${detected.name}`}
+                                  type="button"
+                                  className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+                                  onClick={() => applyDetectedScript(detected)}
+                                >
+                                  <ScriptIcon
+                                    icon={guessDetectedScriptIcon(detected.name)}
+                                    className="size-3.5"
+                                  />
+                                  <span className="truncate">{detected.name}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {composerScripts.length > 0 && (
+                            <div className="flex flex-col gap-0.5">
+                              <span className="px-2 py-1 text-xs font-medium text-muted-foreground">
+                                composer.json
+                              </span>
+                              {composerScripts.map((detected) => (
+                                <button
+                                  key={`composer:${detected.name}`}
+                                  type="button"
+                                  className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+                                  onClick={() => applyDetectedScript(detected)}
+                                >
+                                  <ScriptIcon
+                                    icon={guessDetectedScriptIcon(detected.name)}
+                                    className="size-3.5"
+                                  />
+                                  <span className="truncate">{detected.name}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </PopoverPopup>
+                    </Popover>
+                  )}
+                </div>
                 <Textarea
                   id="script-command"
                   placeholder="bun test"

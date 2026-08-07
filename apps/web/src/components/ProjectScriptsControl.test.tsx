@@ -2,6 +2,8 @@ import type { ProjectScript, ResolvedKeybindingsConfig } from "@t3tools/contract
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
+import type { DetectedProjectScript } from "~/hooks/usePackageManagerScripts";
+
 import ProjectScriptsControl from "./ProjectScriptsControl";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
@@ -13,10 +15,14 @@ const PRIMARY_SCRIPT: ProjectScript = {
   runOnWorktreeCreate: false,
 };
 
-function renderControl(scripts: ReadonlyArray<ProjectScript>) {
+function renderControl(
+  scripts: ReadonlyArray<ProjectScript>,
+  packageScripts: ReadonlyArray<DetectedProjectScript> = [],
+) {
   return renderToStaticMarkup(
     <ProjectScriptsControl
       scripts={scripts}
+      packageScripts={packageScripts}
       keybindings={EMPTY_KEYBINDINGS}
       onRunScript={() => {}}
       onAddScript={async () => undefined as never}
@@ -61,5 +67,15 @@ describe("ProjectScriptsControl compact controls", () => {
     expect(html).toContain(
       'class="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5"',
     );
+  });
+
+  it("keeps the standalone Add control even when package scripts are detected", () => {
+    const html = renderControl([], [{ name: "test", command: "npm run test", source: "npm" }]);
+
+    // Detected package.json/composer.json scripts are only offered inside
+    // the Add Action dialog (via the Command field's "+" picker), so they
+    // must not turn the standalone button into a dropdown trigger.
+    expect(buttonTag(html, "Add action")).toBeDefined();
+    expect(buttonTag(html, "Project actions")).toBeUndefined();
   });
 });
