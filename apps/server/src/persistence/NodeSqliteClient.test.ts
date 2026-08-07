@@ -44,6 +44,15 @@ layer("NodeSqliteClient", (it) => {
   );
 });
 
+it.effect("configures sqlite busy timeout on connection open", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly timeout: number }>`PRAGMA busy_timeout`;
+
+    assert.equal(rows[0]?.timeout, 1234);
+  }).pipe(Effect.provide(SqliteClient.layerMemory({ busyTimeoutMs: 1234 }))),
+);
+
 it.effect("returns a typed failure when the database cannot be opened", () =>
   Effect.gen(function* () {
     const error = yield* Effect.flip(
