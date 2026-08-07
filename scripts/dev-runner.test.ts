@@ -227,6 +227,30 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       }),
     );
 
+    it.effect("strips inherited service-launcher context", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev",
+          baseEnv: {
+            T3_SERVICE_LAUNCHER_CONTEXT: '{"childVersion":"9.9.9"}',
+            T3_BOOT_SERVICE_UNIT: "t3code.service",
+          },
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          browser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        });
+
+        assert.equal(env.T3_SERVICE_LAUNCHER_CONTEXT, undefined);
+        assert.equal(env.T3_BOOT_SERVICE_UNIT, undefined);
+      }),
+    );
+
     it.effect("does not force websocket logging on in dev mode when unset", () =>
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({
