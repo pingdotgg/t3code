@@ -1,7 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -244,6 +246,69 @@ it.effect("publishes inventory invalidation immediately after Git creates a work
 
     assert.equal(error.stage, "worktree_verification_failed");
     assert.equal(yield* Ref.get(inventoryChanges), 1);
+  }).pipe(Effect.provide(Layer.mergeAll(serverConfigLiveLayer, NodeServices.layer, gitLayer))),
+);
+
+it.effect("finishes inventory publication when interrupted after Git creates a worktree", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const config = yield* ServerConfig.ServerConfig;
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const repositoryRoot = yield* initializeRepository();
+    const worktreePath = path.join(config.worktreesDir, "interruption", "revived");
+    const project = makeProject(repositoryRoot);
+    const markEntered = yield* Deferred.make<void>();
+    const releaseMark = yield* Deferred.make<void>();
+    const inventoryChanges = yield* Ref.make(0);
+    const lifecycle = yield* WorktreeLifecycle.make;
+    const instrumentedLifecycle = WorktreeLifecycle.WorktreeLifecycle.of({
+      ...lifecycle,
+      markInventoryChanged: Deferred.succeed(markEntered, undefined).pipe(
+        Effect.andThen(Deferred.await(releaseMark)),
+        Effect.andThen(Ref.update(inventoryChanges, (count) => count + 1)),
+        Effect.andThen(lifecycle.markInventoryChanged),
+      ),
+    });
+    const projectLayer = Layer.mock(ProjectService.ProjectService)({
+      snapshot: Effect.succeed({
+        projects: [project],
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    });
+    const layer = WorktreeRevivalService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          serverConfigLiveLayer,
+          NodeServices.layer,
+          Layer.succeed(GitVcsDriver.GitVcsDriver, driver),
+          Layer.succeed(WorktreeLifecycle.WorktreeLifecycle, instrumentedLifecycle),
+          projectLayer,
+          Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const revival = yield* WorktreeRevivalService.WorktreeRevivalService;
+      const revivalFiber = yield* revival
+        .reviveWorktree({
+          workspaceRoot: repositoryRoot,
+          worktreePath,
+          branch: "feature/revival",
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(markEntered);
+      const interruptionFiber = yield* Fiber.interrupt(revivalFiber).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      assert.equal(yield* Ref.get(inventoryChanges), 0);
+      yield* Deferred.succeed(releaseMark, undefined);
+      yield* Fiber.join(interruptionFiber);
+
+      assert.equal(yield* Ref.get(inventoryChanges), 1);
+      assert.isTrue(yield* fs.exists(worktreePath));
+    }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(Layer.mergeAll(serverConfigLiveLayer, NodeServices.layer, gitLayer))),
 );
 

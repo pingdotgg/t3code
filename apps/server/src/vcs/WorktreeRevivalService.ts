@@ -381,19 +381,22 @@ export const make = Effect.gen(function* () {
     }
 
     yield* validateBranchExists(workspaceRoot, input.branch);
-    yield* git
-      .createWorktree({ cwd: workspaceRoot, refName: input.branch, path: worktreePath })
-      .pipe(
-        Effect.mapError((cause) =>
-          mutationError("create_worktree", cause, {
-            path: worktreePath,
-            workspaceRoot,
-            branch: input.branch,
-          }),
+    const generation = yield* Effect.uninterruptibleMask((restore) =>
+      restore(
+        git.createWorktree({ cwd: workspaceRoot, refName: input.branch, path: worktreePath }).pipe(
+          Effect.mapError((cause) =>
+            mutationError("create_worktree", cause, {
+              path: worktreePath,
+              workspaceRoot,
+              branch: input.branch,
+            }),
+          ),
         ),
-      );
-    const generation = yield* advanceGeneration(worktreePath);
-    yield* lifecycle.markInventoryChanged;
+      ).pipe(
+        Effect.andThen(advanceGeneration(worktreePath)),
+        Effect.tap(() => lifecycle.markInventoryChanged),
+      ),
+    );
 
     const finalExists = yield* fs.exists(worktreePath).pipe(
       Effect.mapError((cause) =>
