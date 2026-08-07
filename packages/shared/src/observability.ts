@@ -267,8 +267,7 @@ function truncateTraceAttributes(attributes: TraceAttributes): TraceAttributes {
       : TRACE_ATTRIBUTE_MAX_LENGTH;
     if (value.length <= maxLength) continue;
     truncated ??= { ...attributes };
-    truncated[key] =
-      `${value.slice(0, TRACE_ATTRIBUTE_TRUNCATED_LENGTH)}${TRACE_ATTRIBUTE_TRUNCATION_SUFFIX}`;
+    truncated[key] = `${value.slice(0, maxLength)}${TRACE_ATTRIBUTE_TRUNCATION_SUFFIX}`;
   }
   return truncated ?? attributes;
 }

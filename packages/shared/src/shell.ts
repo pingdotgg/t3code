@@ -499,18 +499,20 @@ function resolveCommandCandidates(
 // cache while any change to the search environment invalidates immediately.
 // Explicit-path resolution is never cached - callers probe paths they have
 // just written (e.g. managed binary installs).
-const COMMAND_RESOLUTION_CACHE_TTL_MS = 30_000;
+// TTL expiry uses the monotonic clock (Clock.currentTimeNanos) so backward
+// wall-clock adjustments cannot keep expired entries alive.
+const COMMAND_RESOLUTION_CACHE_TTL_NANOS = 30_000_000_000n;
 const COMMAND_RESOLUTION_CACHE_MAX_ENTRIES = 512;
 const COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR = String.fromCharCode(0);
 const commandResolutionCache = new Map<
   string,
-  { readonly resolvedPath: string | null; readonly expiresAtEpochMs: number }
+  { readonly resolvedPath: string | null; readonly expiresAtNanos: bigint }
 >();
 
 function cacheCommandResolution(
   cacheKey: string,
   resolvedPath: string | null,
-  nowEpochMs: number,
+  nowNanos: bigint,
 ): void {
   if (commandResolutionCache.size >= COMMAND_RESOLUTION_CACHE_MAX_ENTRIES) {
     const oldestKey = commandResolutionCache.keys().next().value;
@@ -520,7 +522,7 @@ function cacheCommandResolution(
   }
   commandResolutionCache.set(cacheKey, {
     resolvedPath,
-    expiresAtEpochMs: nowEpochMs + COMMAND_RESOLUTION_CACHE_TTL_MS,
+    expiresAtNanos: nowNanos + COMMAND_RESOLUTION_CACHE_TTL_NANOS,
   });
 }
 
@@ -575,9 +577,9 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   const cacheKey = [platform, pathValue, windowsPathExtensions.join(";"), command].join(
     COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR,
   );
-  const nowEpochMs = yield* Clock.currentTimeMillis;
+  const nowNanos = yield* Clock.currentTimeNanos;
   const cached = commandResolutionCache.get(cacheKey);
-  if (cached !== undefined && cached.expiresAtEpochMs > nowEpochMs) {
+  if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
     if (cached.resolvedPath === null) {
       return yield* new CommandResolutionError({ command, reason: "not-found" });
     }
@@ -596,12 +598,12 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     for (const candidate of commandCandidates) {
       const candidatePath = path.join(pathEntry, candidate);
       if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
-        cacheCommandResolution(cacheKey, candidatePath, nowEpochMs);
+        cacheCommandResolution(cacheKey, candidatePath, nowNanos);
         return candidatePath;
       }
     }
   }
-  cacheCommandResolution(cacheKey, null, nowEpochMs);
+  cacheCommandResolution(cacheKey, null, nowNanos);
   return yield* new CommandResolutionError({ command, reason: "not-found" });
 });
 
