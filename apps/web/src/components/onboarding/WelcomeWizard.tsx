@@ -11,10 +11,13 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { ThreadId } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { CheckIcon, ChevronLeftIcon, CopyIcon, TerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { APP_DISPLAY_NAME } from "../../branding";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
@@ -650,6 +653,12 @@ function AgentInstallTerminal({
 }) {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  // Same terminal typography preference the thread drawer honors.
+  const [advancedTypography] = useLocalStorage(
+    TYPOGRAPHY_ADVANCED_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
   const openTerminal = useAtomCommand(terminalEnvironment.open, { reportFailure: false });
   const writeTerminal = useAtomCommand(terminalEnvironment.write, { reportFailure: false });
   const closeTerminal = useAtomCommand(terminalEnvironment.close, { reportFailure: false });
@@ -747,6 +756,7 @@ function AgentInstallTerminal({
           terminalId={terminalId}
           terminalLabel={`Install ${driver}`}
           cwd={cwd}
+          advancedTypography={advancedTypography}
           onSessionExited={onClose}
           onAddTerminalContext={() => undefined}
           focusRequestId={1}
