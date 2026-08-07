@@ -38,6 +38,7 @@ import { runtime } from "../../lib/runtime";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
+import { useAutoSettleCompletedChangeRequests } from "../threads/use-auto-settle-completed-change-requests";
 import {
   type AppUpdateCheckState,
   registerHiddenUpdateTap,
@@ -544,6 +545,7 @@ function GeneralSettingsSection() {
 function BetaSettingsSection() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const threadListV2Enabled = useThreadListV2Enabled();
+  const autoSettleCompletedChangeRequests = useAutoSettleCompletedChangeRequests();
 
   return (
     <View className="gap-3">
@@ -554,11 +556,26 @@ function BetaSettingsSection() {
           value={threadListV2Enabled}
           onValueChange={(value) => savePreferences({ threadListV2Enabled: value })}
         />
+        {threadListV2Enabled ? (
+          <SettingsSwitchRow
+            icon="checkmark.circle"
+            label="Auto-settle completed pull requests"
+            value={autoSettleCompletedChangeRequests}
+            onValueChange={(value) => savePreferences({ autoSettleCompletedChangeRequests: value })}
+          />
+        ) : null}
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
         One flat thread list in creation order. Active work renders as cards; settled threads
         collapse to compact rows. Switch back any time.
       </Text>
+      {threadListV2Enabled ? (
+        <Text className="px-2 text-sm text-foreground-muted">
+          Completed pull-request settle is independent of the three-day inactivity window. Turn it
+          off to keep merged or closed PR threads active until inactivity settle applies, or until
+          you settle them yourself. A manual Un-settle stays active until you settle again.
+        </Text>
+      ) : null}
     </View>
   );
 }

@@ -60,6 +60,9 @@ export function BetaSettingsPanel() {
   const sidebarAutoSettleAfterDays = useClientSettings(
     (settings) => settings.sidebarAutoSettleAfterDays,
   );
+  const sidebarAutoSettleCompletedChangeRequests = useClientSettings(
+    (settings) => settings.sidebarAutoSettleCompletedChangeRequests,
+  );
   const planModeEnabled = useClientSettings((settings) => settings.planModeEnabled);
   const updateSettings = useUpdateClientSettings();
 
@@ -88,7 +91,7 @@ export function BetaSettingsPanel() {
           <>
             <SettingsRow
               title={searchableSetting("auto-settle-inactive-threads").title}
-              description="Threads with no activity for this long settle automatically. Threads on merged or closed PRs always settle."
+              description="Threads with no activity for this long settle automatically. Independent of merged or closed pull requests."
               control={
                 <Switch
                   checked={sidebarAutoSettleAfterDays !== null}
@@ -104,7 +107,7 @@ export function BetaSettingsPanel() {
             {sidebarAutoSettleAfterDays !== null ? (
               <SettingsRow
                 title="Days of inactivity before auto-settle"
-                description="Any new activity un-settles a thread automatically."
+                description="Any new activity un-settles a thread that settled from inactivity. A manual Un-settle stays active until you settle again."
                 control={
                   <AutoSettleDaysInput
                     value={sidebarAutoSettleAfterDays}
@@ -113,6 +116,21 @@ export function BetaSettingsPanel() {
                 }
               />
             ) : null}
+            <SettingsRow
+              {...searchableSetting("auto-settle-completed-pull-requests")}
+              description="Settle threads as soon as their linked pull request is merged or closed. Turn this off to keep those threads active until inactivity settle applies, or until you settle them yourself."
+              control={
+                <Switch
+                  checked={sidebarAutoSettleCompletedChangeRequests}
+                  onCheckedChange={(checked) =>
+                    updateSettings({
+                      sidebarAutoSettleCompletedChangeRequests: Boolean(checked),
+                    })
+                  }
+                  aria-label="Auto-settle completed pull requests"
+                />
+              }
+            />
           </>
         ) : null}
         <SettingsRow

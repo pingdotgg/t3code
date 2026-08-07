@@ -188,6 +188,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "sidebar-v2",
   },
   {
+    id: "auto-settle-completed-pull-requests",
+    title: "Auto-settle completed pull requests",
+    to: "/settings/beta",
+    targetId: "sidebar-v2",
+  },
+  {
     id: "restore-plan-mode",
     title: "Restore plan mode (legacy)",
     to: "/settings/beta",

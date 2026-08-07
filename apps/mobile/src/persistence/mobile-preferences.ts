@@ -33,6 +33,11 @@ export interface Preferences {
    * see `resolveThreadListV2Enabled`.
    */
   readonly threadListV2Enabled?: boolean;
+  /**
+   * Device-local mirror of web's `sidebarAutoSettleCompletedChangeRequests`.
+   * Undefined means never chosen, which resolves to on (historical default).
+   */
+  readonly autoSettleCompletedChangeRequests?: boolean;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedErrorClass<MobilePreferencesLoadError>()(
@@ -72,7 +77,7 @@ export class MobilePreferencesStore extends Context.Service<
   }
 >()("@t3tools/mobile/persistence/MobilePreferencesStore") {}
 
-function sanitizePreferences(parsed: Preferences): Preferences {
+export function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
     liveActivitiesEnabled?: boolean;
     baseFontSize?: number;
@@ -85,6 +90,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     threadListV2Enabled?: boolean;
+    autoSettleCompletedChangeRequests?: boolean;
   } = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
@@ -123,6 +129,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.threadListV2Enabled === "boolean") {
     preferences.threadListV2Enabled = parsed.threadListV2Enabled;
+  }
+  if (typeof parsed.autoSettleCompletedChangeRequests === "boolean") {
+    preferences.autoSettleCompletedChangeRequests = parsed.autoSettleCompletedChangeRequests;
   }
   return preferences;
 }

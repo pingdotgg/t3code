@@ -31,6 +31,7 @@ import { useThemeColor } from "../../lib/useThemeColor";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
 import { useThreadListV2Enabled } from "./use-thread-list-v2-enabled";
+import { useAutoSettleCompletedChangeRequests } from "./use-auto-settle-completed-change-requests";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
@@ -213,6 +214,7 @@ function ThreadNavigationSidebarPane(
     movePinnedThread,
   } = useThreadListActions();
   const threadListV2Enabled = useThreadListV2Enabled();
+  const autoSettleCompletedChangeRequests = useAutoSettleCompletedChangeRequests();
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
@@ -538,6 +540,7 @@ function ThreadNavigationSidebarPane(
       changeRequestStateByKey,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
+      autoSettleCompletedChangeRequests,
       settledLimit: settledVisibleCount,
       now: `${nowMinute}:00.000Z`,
       snoozeNow: new Date().toISOString(),
@@ -546,6 +549,7 @@ function ThreadNavigationSidebarPane(
       selectedThreadKey: props.selectedThreadKey ?? null,
     });
   }, [
+    autoSettleCompletedChangeRequests,
     changeRequestStateByKey,
     nowMinute,
     snoozeWakeTick,

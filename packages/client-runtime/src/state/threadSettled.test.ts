@@ -178,6 +178,50 @@ describe("effectiveSettled", () => {
     }
   });
 
+  it("leaves merged or closed threads on the inactivity path when completed-PR auto-settle is off", () => {
+    const fresh = makeShell({ activityAt: FRESH });
+    const stale = makeShell({ activityAt: STALE });
+    for (const changeRequestState of ["merged", "closed"] as const) {
+      expect(
+        effectiveSettled(fresh, {
+          now: NOW,
+          autoSettleAfterDays: 3,
+          autoSettleCompletedChangeRequests: false,
+          changeRequestState,
+        }),
+      ).toBe(false);
+      expect(
+        effectiveSettled(stale, {
+          now: NOW,
+          autoSettleAfterDays: 3,
+          autoSettleCompletedChangeRequests: false,
+          changeRequestState,
+        }),
+      ).toBe(true);
+      // Inactivity settle remains independently controllable.
+      expect(
+        effectiveSettled(stale, {
+          now: NOW,
+          autoSettleAfterDays: null,
+          autoSettleCompletedChangeRequests: false,
+          changeRequestState,
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it("still blocks inactivity settle for an open PR when completed-PR auto-settle is off", () => {
+    const stale = makeShell({ activityAt: STALE });
+    expect(
+      effectiveSettled(stale, {
+        now: NOW,
+        autoSettleAfterDays: 3,
+        autoSettleCompletedChangeRequests: false,
+        changeRequestState: "open",
+      }),
+    ).toBe(false);
+  });
+
   it("never auto-settles a stale thread with an open change request", () => {
     const stale = makeShell({ activityAt: STALE });
     expect(

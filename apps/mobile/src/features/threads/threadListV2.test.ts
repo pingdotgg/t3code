@@ -16,6 +16,7 @@ import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
+  resolveAutoSettleCompletedChangeRequests,
   resolveThreadListV2Enabled,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
@@ -118,6 +119,41 @@ describe("resolveThreadListV2Enabled", () => {
     expect(resolveThreadListV2Enabled({ preference: undefined, preferencesLoaded: false })).toBe(
       true,
     );
+  });
+});
+
+describe("resolveAutoSettleCompletedChangeRequests", () => {
+  it("defaults on when the device has never chosen", () => {
+    expect(
+      resolveAutoSettleCompletedChangeRequests({
+        preference: undefined,
+        preferencesLoaded: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("honors an explicit device opt-out", () => {
+    expect(
+      resolveAutoSettleCompletedChangeRequests({
+        preference: false,
+        preferencesLoaded: true,
+      }),
+    ).toBe(false);
+    expect(
+      resolveAutoSettleCompletedChangeRequests({
+        preference: true,
+        preferencesLoaded: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("holds the default while preferences are still loading", () => {
+    expect(
+      resolveAutoSettleCompletedChangeRequests({
+        preference: undefined,
+        preferencesLoaded: false,
+      }),
+    ).toBe(true);
   });
 });
 
@@ -286,6 +322,38 @@ describe("buildThreadListV2Items", () => {
     // thread is BACK in the card block and the snoozed one is gone.
     expect(layout.items.map((item) => item.thread.id)).toEqual(["active", "woken"]);
     expect(layout.snoozedCount).toBe(1);
+  });
+
+  it("settles merged PRs by default and keeps them active when completed-PR settle is off", () => {
+    const mergedThread = makeThread({
+      id: ThreadId.make("merged"),
+      title: "Merged",
+      latestUserMessageAt: "2026-06-01T20:00:00.000Z",
+    });
+    const changeRequestStateByKey = new Map([[`${environmentId}:merged`, "merged" as const]]);
+
+    const defaultLayout = buildThreadListV2Items({
+      threads: [mergedThread],
+      environmentId: null,
+      searchQuery: "",
+      changeRequestStateByKey,
+      now: NOW,
+    });
+    expect(defaultLayout.items.map((item) => item.thread.id)).toEqual(["merged"]);
+    expect(defaultLayout.settledCount).toBe(1);
+    expect(defaultLayout.items[0]?.variant).toBe("slim");
+
+    const optedOut = buildThreadListV2Items({
+      threads: [mergedThread],
+      environmentId: null,
+      searchQuery: "",
+      changeRequestStateByKey,
+      autoSettleCompletedChangeRequests: false,
+      now: NOW,
+    });
+    expect(optedOut.settledCount).toBe(0);
+    expect(optedOut.items.map((item) => item.thread.id)).toEqual(["merged"]);
+    expect(optedOut.items[0]?.variant).toBe("card");
   });
 
   it("renders pinned threads first and exempts them from auto-settle — parity with web", () => {

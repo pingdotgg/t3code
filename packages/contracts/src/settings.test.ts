@@ -72,6 +72,7 @@ describe("ClientSettings sidebar v2", () => {
     const settings = decodeClientSettings({});
     expect(settings.sidebarV2Enabled).toBe(false);
     expect(settings.sidebarAutoSettleAfterDays).toBe(3);
+    expect(settings.sidebarAutoSettleCompletedChangeRequests).toBe(true);
   });
 
   it("treats settings written before the beta had a per-channel default as unconfigured", () => {
@@ -104,6 +105,27 @@ describe("ClientSettings sidebar v2", () => {
       decodeClientSettings({ sidebarAutoSettleAfterDays: null }).sidebarAutoSettleAfterDays,
     ).toBeNull();
   });
+
+  it("defaults completed-PR auto-settle on for older stored settings", () => {
+    // Blobs written before this field existed must keep the historical always-on
+    // completed-PR settle behavior.
+    expect(
+      decodeClientSettings({ sidebarAutoSettleAfterDays: 3 })
+        .sidebarAutoSettleCompletedChangeRequests,
+    ).toBe(true);
+  });
+
+  it.each([true, false])(
+    "accepts completed-PR auto-settle patches without changing unrelated settings: %s",
+    (value) => {
+      const patch = decodeClientSettingsPatch({
+        sidebarAutoSettleCompletedChangeRequests: value,
+      });
+      expect(patch.sidebarAutoSettleCompletedChangeRequests).toBe(value);
+      expect(patch).not.toHaveProperty("sidebarAutoSettleAfterDays");
+      expect(patch).not.toHaveProperty("sidebarV2Enabled");
+    },
+  );
 
   it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {
     expect(() => decodeClientSettings({ sidebarAutoSettleAfterDays: value })).toThrow();
