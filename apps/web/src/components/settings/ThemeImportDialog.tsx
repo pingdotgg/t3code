@@ -28,6 +28,7 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
+import { ThemeSearchSection } from "./ThemeSearchSection";
 
 /**
  * A full theme export is a few KB, so anything past this is not a theme file.
@@ -426,7 +427,23 @@ export function ThemeImportDialog({
         <DialogHeader>
           <DialogTitle>Add a theme</DialogTitle>
         </DialogHeader>
-        <DialogPanel className="space-y-4">
+        <DialogPanel className="space-y-5">
+          <ThemeSearchSection
+            onInstalled={(themes) => {
+              onImportedMany(themes, { updated: false });
+              onOpenChange(false);
+            }}
+            open={open}
+          />
+
+          <div className="flex items-center gap-3" aria-hidden>
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-muted-foreground text-[11px] uppercase tracking-wider">
+              or import a file
+            </span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
           {(() => {
             const dropHandlers = {
               onDragEnter: (event: DragEvent<HTMLDivElement>) => {

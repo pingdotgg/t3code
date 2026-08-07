@@ -3,7 +3,6 @@ import {
   DownloadIcon,
   PenLineIcon,
   PlusIcon,
-  SearchIcon,
   Trash2Icon,
   UploadIcon,
 } from "lucide-react";
@@ -36,7 +35,6 @@ import { Button } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { ThemeImportDialog } from "./ThemeImportDialog";
-import { ThemeSearchDialog } from "./ThemeSearchDialog";
 import { useThemeEditorStore } from "./themeEditorStore";
 import {
   STANDARD_THEME_CARDS,
@@ -252,7 +250,6 @@ export function ThemeLibrary({
   setThemeHalf: (appearance: ThemeAppearance, themeId: string | null) => boolean;
 }) {
   const openThemeEditor = useThemeEditorStore((store) => store.openThemeEditor);
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [themeToRemove, setThemeToRemove] = useState<ThemeDefinition | null>(null);
   // Keep the last removal target so the dialog title stays populated while the
   // close animation plays after confirming.
@@ -565,10 +562,6 @@ export function ThemeLibrary({
       <div className="flex min-h-8 flex-wrap items-center justify-between gap-3 px-3 pt-2 sm:px-4">
         <h3 className="text-sm font-medium tracking-[-0.005em] text-foreground">Themes</h3>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button size="xs" variant="outline" onClick={() => setIsSearchOpen(true)}>
-            <SearchIcon />
-            Search themes
-          </Button>
           <Button
             size="xs"
             variant="outline"
@@ -591,22 +584,6 @@ export function ThemeLibrary({
         </div>
       </div>
       {renderPairGrid()}
-      <ThemeSearchDialog
-        onInstalled={(installedThemes) => {
-          toastManager.add(
-            stackedThreadToast({
-              type: "success",
-              title:
-                installedThemes.length === 1
-                  ? `${installedThemes[0]!.label} added`
-                  : `${installedThemes.length} themes added`,
-              description: installedThemes.map((installed) => installed.label).join(", "),
-            }),
-          );
-        }}
-        onOpenChange={setIsSearchOpen}
-        open={isSearchOpen}
-      />
       <ThemeImportDialog
         onImportedMany={(importedThemes, { updated }) => {
           // An updated theme that is showing (as the base or either half)
