@@ -2,7 +2,11 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, usePreventRemove } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, InteractionManager, Platform, View, useColorScheme } from "react-native";
-import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
+import {
+  KeyboardAvoidingView,
+  KeyboardStickyView,
+  useKeyboardState,
+} from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useFontFamily } from "../../lib/useFontFamily";
@@ -1053,9 +1057,15 @@ export function NewTaskDraftScreen(props: {
         <NativeStackScreenOptions options={{ headerShown: false }} />
         <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
 
-        <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
-          <View className="flex-1" />
+        <View className="flex-1" />
 
+        {/* Match the existing-thread composer: Android's IME animation drives
+            the whole composer above the keyboard instead of padding an empty
+            flex layout beneath it. */}
+        <KeyboardStickyView
+          style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
+          offset={{ closed: 0, opened: 0 }}
+        >
           <View
             className="px-4 pt-2"
             style={{
@@ -1119,7 +1129,7 @@ export function NewTaskDraftScreen(props: {
               </ComposerToolbarRow>
             ) : null}
           </View>
-        </KeyboardAvoidingView>
+        </KeyboardStickyView>
       </View>
     );
   }
