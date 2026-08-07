@@ -1,10 +1,13 @@
+import zlib from "node:zlib";
+
 import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
+import compression from "compression";
 import { defineProject, type TestProjectInlineConfiguration } from "vite-plus/test/config";
 import "vite-plus/test/config";
-import { defineConfig } from "vite-plus";
+import { defineConfig, type Connect, type Plugin } from "vite-plus";
 import pkg from "./package.json" with { type: "json" };
 
 import { DEV_PROXIED_PATH_PREFIXES } from "@t3tools/shared/devProxy";
@@ -116,6 +119,28 @@ function resolveDevProxyTarget(
 
 const devProxyTarget = resolveDevProxyTarget(process.env.T3CODE_PORT, configuredWsUrl);
 
+// Vite's dev server sends JS uncompressed. On localhost that is free; over a
+// shared origin (tailnet, LAN) it is the whole cold-start: bundled dev serves
+// one ~25 MB chunk, and a typical uplink moves that in about a minute while
+// both machines sit idle. Compressing turns it into a few seconds of CPU.
+// Brotli quality 5 keeps encode time in the hundreds of ms; the default
+// (quality 11) would trade the transfer stall for an equally long encode stall.
+function devCompressionPlugin(): Plugin {
+  return {
+    name: "t3code:dev-compression",
+    apply: "serve",
+    configureServer(server) {
+      // compression() is typed against Express's req/res, which extend the
+      // node http objects Connect actually passes — safe to narrow.
+      server.middlewares.use(
+        compression({
+          brotli: { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 } },
+        }) as unknown as Connect.NextHandleFunction,
+      );
+    },
+  };
+}
+
 // Vite rejects requests whose Host header isn't localhost, which blocks sharing
 // a dev server over Tailscale/LAN. Tailnet names are safe to allow wholesale:
 // the DNS is controlled by tailscale, so they can't be rebound by an attacker.
@@ -130,6 +155,7 @@ export default defineConfig(() => {
   return {
     assetsInclude: ["**/*.wasm"],
     plugins: [
+      devCompressionPlugin(),
       tanstackRouter(),
       react(),
       babel({
