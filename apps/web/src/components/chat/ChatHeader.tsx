@@ -27,6 +27,7 @@ interface ChatHeaderProps {
   draftId?: DraftId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
+  activeProjectColor: string | null;
   activeProjectCwd: string | null;
   openInCwd: string | null;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
@@ -63,6 +64,7 @@ export const ChatHeader = memo(function ChatHeader({
   draftId,
   activeThreadTitle,
   activeProjectName,
+  activeProjectColor,
   activeProjectCwd,
   openInCwd,
   activeProjectScripts,
@@ -114,6 +116,7 @@ export const ChatHeader = memo(function ChatHeader({
                   environmentId={activeThreadEnvironmentId}
                   cwd={activeProjectCwd ?? ""}
                   className="size-3.5"
+                  accentColor={activeProjectColor}
                 />
                 <span className="max-w-40 truncate text-sm font-medium">{activeProjectName}</span>
               </TooltipTrigger>

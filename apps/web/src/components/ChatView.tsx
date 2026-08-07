@@ -73,6 +73,7 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
+import { resolveProjectGroupColorCss } from "../projectColors";
 import { useDiffPanelStore } from "../diffPanelStore";
 import {
   collapseExpandedComposerCursor,
@@ -1772,6 +1773,18 @@ function ChatViewContent(props: ChatViewProps) {
     return envs;
   }, [activeProject, allProjects, projectGroupingSettings, primaryEnvironmentId, environmentById]);
   const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
+  // Group-level accent color so the header matches the sidebar even when only
+  // another environment's member of the same logical project is colored.
+  const activeProjectColorCss = useMemo(() => {
+    if (!activeProject) return null;
+    const logicalKey = deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings);
+    return resolveProjectGroupColorCss([
+      activeProject,
+      ...allProjects.filter(
+        (p) => deriveLogicalProjectKeyFromSettings(p, projectGroupingSettings) === logicalKey,
+      ),
+    ]);
+  }, [activeProject, allProjects, projectGroupingSettings]);
   const activeEnvironmentOption =
     logicalProjectEnvironments.find(
       (environment) => environment.environmentId === activeThread?.environmentId,
@@ -6061,6 +6074,9 @@ function ChatViewContent(props: ChatViewProps) {
         {/* Top bar */}
         <header
           data-chat-header
+          {...(activeProjectColorCss
+            ? { style: { boxShadow: `inset 0 -2px 0 0 ${activeProjectColorCss}80` } }
+            : {})}
           className={cn(
             "bg-background transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
             isElectron
@@ -6081,6 +6097,7 @@ function ChatViewContent(props: ChatViewProps) {
             {...(routeKind === "draft" && draftId ? { draftId } : {})}
             activeThreadTitle={activeThread.title}
             activeProjectName={activeProject?.title}
+            activeProjectColor={activeProjectColorCss}
             activeProjectCwd={activeProject?.workspaceRoot ?? null}
             openInCwd={gitCwd}
             activeProjectScripts={activeProject?.scripts}
@@ -6098,6 +6115,18 @@ function ChatViewContent(props: ChatViewProps) {
             onDeleteProjectScript={deleteProjectScript}
           />
         </header>
+        {activeProjectColorCss ? (
+          // Soft glow below the accent line: the project color fades downward
+          // into the content so the "where am I" cue reads without a hard edge.
+          <div aria-hidden className="pointer-events-none relative z-10 h-0">
+            <div
+              className="absolute inset-x-0 top-0 h-8 opacity-20"
+              style={{
+                backgroundImage: `linear-gradient(to bottom, ${activeProjectColorCss}, transparent)`,
+              }}
+            />
+          </div>
+        ) : null}
 
         <ThreadErrorBanner
           error={threadError}
