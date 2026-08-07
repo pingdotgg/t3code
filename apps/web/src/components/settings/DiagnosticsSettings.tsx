@@ -902,7 +902,7 @@ export function DiagnosticsSettingsPanel() {
   const isProcessInitialLoading = isProcessPending && processData === null;
   const signalProcess = useCallback(
     async (pid: number, signal: ServerProcessSignal) => {
-      if (signalingPidRef.current === pid) return;
+      if (signalingPidRef.current !== null) return;
       signalingPidRef.current = pid;
       setSignalingPid(pid);
       if (signal === "SIGKILL") {
@@ -914,7 +914,12 @@ export function DiagnosticsSettingsPanel() {
         } catch (error) {
           signalingPidRef.current = null;
           setSignalingPid(null);
-          throw error;
+          toastManager.add({
+            type: "error",
+            title: "Could not confirm signal",
+            description: error instanceof Error ? error.message : `Failed to send ${signal}.`,
+          });
+          return;
         }
         if (!confirmed) {
           signalingPidRef.current = null;
