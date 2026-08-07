@@ -43,10 +43,25 @@ describe("Open VSX themes", () => {
           JSON.stringify({
             extensions: [
               { namespace: "demo", name: "theme" },
+              { namespace: "icons", name: "theme" },
               { namespace: "closed", name: "theme" },
               { namespace: "huge", name: "theme" },
             ],
           }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/icons/theme")) {
+        return new Response(
+          JSON.stringify(
+            extensionDetail({
+              namespace: "icons",
+              files: {
+                ...extensionDetail().files,
+                manifest: `${ASSET_ROOT.replace("demo/theme", "icons/theme")}/package.json`,
+              },
+            }),
+          ),
           { status: 200 },
         );
       }
@@ -58,6 +73,15 @@ describe("Open VSX themes", () => {
       }
       if (url.endsWith("/huge/theme")) {
         return new Response(JSON.stringify({ padding: "x".repeat(256 * 1024) }), { status: 200 });
+      }
+      if (url.endsWith("/icons/theme/1.0.0/file/package.json")) {
+        return new Response(JSON.stringify({ contributes: { iconThemes: [{}] } }), { status: 200 });
+      }
+      if (url.endsWith("/demo/theme/1.0.0/file/package.json")) {
+        return new Response(
+          JSON.stringify({ contributes: { themes: [{ path: "./theme.json" }] } }),
+          { status: 200 },
+        );
       }
       return new Response(JSON.stringify(extensionDetail()), { status: 200 });
     });
@@ -156,14 +180,10 @@ describe("Open VSX themes", () => {
         }
       }`,
     );
-    const packageBytes = await zip.generateAsync({
-      type: "arraybuffer",
-      comment: `PK\u0005\u0006${"x".repeat(26)}`,
-    });
-    const checksum = [...sha256(new Uint8Array(packageBytes))]
-      .map((byte) => byte.toString(16).padStart(2, "0"))
-      .join("");
-    const manifest = {
+    const packagedManifest = {
+      publisher: "demo",
+      name: "theme",
+      version: "1.0.0",
       contributes: {
         themes: [
           { label: "Demo Dark", uiTheme: "vs-dark", path: "./themes/demo-dark.json" },
@@ -171,6 +191,19 @@ describe("Open VSX themes", () => {
           { label: "Demo", uiTheme: "vs-dark", path: "./themes/demo.json" },
         ],
       },
+    };
+    zip.file("extension/package.json", JSON.stringify(packagedManifest));
+    const packageBytes = await zip.generateAsync({
+      type: "arraybuffer",
+      comment: `PK\u0005\u0006${"x".repeat(26)}`,
+    });
+    const checksum = [...sha256(new Uint8Array(packageBytes))]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+    // The public manifest is only a preflight hint. Imports must use the manifest
+    // inside the checksummed VSIX rather than this inconsistent contribution.
+    const manifest = {
+      contributes: { themes: [{ label: "Wrong", path: "./themes/missing.json" }] },
     };
     const extension: OpenVsxThemeExtension = {
       id: "demo.theme",
@@ -212,6 +245,46 @@ describe("Open VSX themes", () => {
     expect(paired.colors.canvas).toBe("#fafafa");
     expect(getThemeColorsForMode(paired, "dark")!.canvas).toBe("#111111");
     expect(getThemeColorsForMode(paired, "dark")!.text).toBe("#eeeeee");
+  });
+
+  it("stops import work when the request is cancelled", async () => {
+    const packageBytes = new Uint8Array([1, 2, 3]);
+    const checksum = [...sha256(packageBytes)]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+    const controller = new AbortController();
+    const extension: OpenVsxThemeExtension = {
+      id: "demo.theme",
+      name: "Demo Theme",
+      publisher: "demo",
+      description: "",
+      downloadCount: 1,
+      license: "MIT",
+      manifestUrl: `${ASSET_ROOT}/package.json`,
+      sha256Url: `${ASSET_ROOT}/demo.theme-1.0.0.sha256`,
+      version: "1.0.0",
+      vsixUrl: `${ASSET_ROOT}/demo.theme-1.0.0.vsix`,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url === extension.manifestUrl) {
+          return new Response(
+            JSON.stringify({ contributes: { themes: [{ path: "./theme.json" }] } }),
+          );
+        }
+        if (url === extension.sha256Url) {
+          controller.abort();
+          return new Response(checksum);
+        }
+        return new Response(packageBytes);
+      }),
+    );
+
+    await expect(importOpenVsxThemeExtension(extension, controller.signal)).rejects.toMatchObject({
+      name: "AbortError",
+    });
   });
 
   it("rejects a package whose Open VSX checksum does not match", async () => {
