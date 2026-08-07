@@ -92,6 +92,10 @@ function ThemeLibraryCard({
     collectionLabel: string;
     index: number;
     count: number;
+    activeAssignments: ReadonlyArray<{
+      mode: ThemeAppearance;
+      label: string;
+    }>;
     onPrevious: () => void;
     onNext: () => void;
   };
@@ -137,12 +141,21 @@ function ThemeLibraryCard({
                 >
                   <ChevronLeftIcon />
                 </Button>
-                <span
-                  className="min-w-0 flex-1 truncate text-center text-xs text-muted-foreground"
+                <div
+                  className="min-w-0 flex-1 text-center text-xs text-muted-foreground"
                   aria-live="polite"
                 >
-                  {theme.label} · {variantNavigation.index + 1} of {variantNavigation.count}
-                </span>
+                  <div className="truncate">
+                    {theme.label} · {variantNavigation.index + 1} of {variantNavigation.count}
+                  </div>
+                  {variantNavigation.activeAssignments.length > 0 ? (
+                    <div className="truncate text-[10px]">
+                      {variantNavigation.activeAssignments
+                        .map(({ mode, label }) => `${mode}: ${label}`)
+                        .join(" · ")}
+                    </div>
+                  ) : null}
+                </div>
                 <Button
                   aria-label={`Next ${variantNavigation.collectionLabel} variant`}
                   size="icon-xs"
@@ -301,6 +314,10 @@ function CustomThemeCollectionCard({
 
   if (!theme) return null;
   const collectionLabel = theme.collection?.label ?? theme.label;
+  const activeAssignments = (["light", "dark"] as const).flatMap((mode) => {
+    const assignedTheme = themes.find((candidate) => activeModesFor(candidate.id).includes(mode));
+    return assignedTheme ? [{ mode, label: assignedTheme.label }] : [];
+  });
   const move = (offset: number) => {
     setVariantIndex((current) => (current + offset + themes.length) % themes.length);
   };
@@ -322,6 +339,7 @@ function CustomThemeCollectionCard({
               collectionLabel,
               index: safeIndex,
               count: themes.length,
+              activeAssignments,
               onPrevious: () => move(-1),
               onNext: () => move(1),
             },
