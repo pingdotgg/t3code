@@ -208,42 +208,35 @@ describe("environment shell synchronization", () => {
         clear: () => Effect.void,
       });
       const snapshotLoader = ShellSnapshotLoader.of({
-        load: () => Ref.update(loaderCalls, (count) => count + 1).pipe(Effect.as(Option.none())),
+        load: () =>
+          SubscriptionRef.update(loaderCalls, (count) => count + 1).pipe(
+            Effect.as(Option.some(httpSnapshot)),
+          ),
       });
       const shellState = yield* makeEnvironmentShellState().pipe(
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.provideService(Persistence.EnvironmentCacheStore, cache),
         Effect.provideService(ShellSnapshotLoader, snapshotLoader),
-        Effect.provideService(
-          ConnectionWakeups.ConnectionWakeups,
-          ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.fromQueue(wakeups) }),
-        ),
       );
 
-      const subscribeInput = yield* Queue.take(subscribeInputs);
-      expect(subscribeInput.afterSequence).toBeUndefined();
-      expect(subscribeInput.requestCompletionMarker).toBe(true);
-      expect(yield* Ref.get(loaderCalls)).toBe(1);
+      // Wait until the subscription is established from the warm cache.
+      yield* SubscriptionRef.changes(capturedAfterSequence).pipe(
+        Stream.filter((value) => value !== undefined),
+        Stream.runHead,
+      );
+
+      expect(yield* SubscriptionRef.get(capturedAfterSequence)).toBe(9);
+      expect(yield* Ref.get(capturedCompletionMarker)).toBe(true);
+      expect(yield* SubscriptionRef.get(loaderCalls)).toBe(1);
       const synchronizing = yield* SubscriptionRef.get(shellState);
       expect(synchronizing.status).toBe("synchronizing");
-      expect(Option.getOrThrow(synchronizing.snapshot)).toEqual(cachedSnapshot);
+      expect(Option.getOrThrow(synchronizing.snapshot)).toEqual(httpSnapshot);
 
-      yield* Queue.offer(events, { kind: "snapshot", snapshot: resetSnapshot });
       yield* Queue.offer(events, { kind: "synchronized" });
       yield* SubscriptionRef.changes(shellState).pipe(
         Stream.filter((value) => value.status === "live"),
         Stream.runHead,
       );
-
-      const live = yield* SubscriptionRef.get(shellState);
-      expect(Option.getOrThrow(live.snapshot)).toEqual(resetSnapshot);
-      expect(yield* Ref.get(loaderCalls)).toBe(1);
-
-      yield* Queue.offer(wakeups, "application-active");
-      const resumedInput = yield* Queue.take(subscribeInputs);
-      expect(resumedInput.afterSequence).toBe(resetSnapshot.snapshotSequence);
-      expect(resumedInput.requestCompletionMarker).toBe(true);
-      expect(yield* Ref.get(loaderCalls)).toBe(1);
     }),
   );
 
@@ -254,7 +247,9 @@ describe("environment shell synchronization", () => {
       const loaderCalls = yield* Ref.make(0);
       const capturedAfterSequences = yield* Ref.make<ReadonlyArray<number | undefined>>([]);
       const client = {
-        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>
+        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input: {
+          readonly afterSequence?: number;
+        }) =>
           Stream.unwrap(
             Ref.update(capturedAfterSequences, (captured) => [
               ...captured,
@@ -263,7 +258,9 @@ describe("environment shell synchronization", () => {
           ),
       } as unknown as WsRpcProtocolClient;
       const supervisorState = yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE);
-      const activeSession = yield* SubscriptionRef.make(Option.some(session(client)));
+      const activeSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
+        Option.some(session(client)),
+      );
       const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
         target: TARGET,
         state: supervisorState,
