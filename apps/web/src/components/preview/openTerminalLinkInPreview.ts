@@ -4,6 +4,7 @@ import { isPreviewableUrl } from "@t3tools/shared/preview";
 import * as Schema from "effect/Schema";
 
 import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
+import { recordVisitForThread } from "~/browserHistoryStore";
 import { applyPreviewServerSnapshot, isPreviewSupportedInRuntime } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 
@@ -98,6 +99,7 @@ export async function openTerminalLinkInPreview<E>(
       input.fallbackToBrowser();
       return;
     }
+    recordVisitForThread(input.threadRef, input.url);
     applyPreviewServerSnapshot(input.threadRef, result.value);
     useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);
     return;
