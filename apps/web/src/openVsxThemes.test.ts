@@ -31,6 +31,7 @@ function extensionDetail(overrides: Record<string, unknown> = {}) {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -164,6 +165,28 @@ describe("Open VSX themes", () => {
     await expect(searchOpenVsxThemes("dracula")).rejects.toThrow(
       "Open VSX theme details are unavailable",
     );
+  });
+
+  it("times out a stalled search request", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_input: RequestInfo | URL, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              reject(new DOMException("The operation was aborted.", "AbortError"));
+            });
+          }),
+      ),
+    );
+
+    const search = expect(searchOpenVsxThemes("dracula")).rejects.toThrow(
+      "Open VSX took too long to respond",
+    );
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await search;
   });
 
   it("downloads a verified VSIX, reads JSONC includes, and pairs contributed variants", async () => {

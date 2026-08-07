@@ -96,14 +96,14 @@ export function ThemeSearchSection({
         const themes = await importOpenVsxThemeExtension(extension, controller.signal);
         if (controller.signal.aborted) return;
         const existingIds = new Set(getCustomThemes().map((theme) => theme.id));
-        const duplicates = themes.filter((theme) => existingIds.has(theme.id));
-        if (duplicates.length > 0) {
-          throw new Error(`${duplicates.map((theme) => theme.label).join(", ")} is already added.`);
+        const missingThemes = themes.filter((theme) => !existingIds.has(theme.id));
+        if (missingThemes.length === 0) {
+          throw new Error(`${extension.name} is already added.`);
         }
 
         const installed: ThemeDefinition[] = [];
         try {
-          for (const theme of themes) installed.push(installCustomTheme(theme));
+          for (const theme of missingThemes) installed.push(installCustomTheme(theme));
         } catch (cause) {
           for (const theme of installed) {
             try {

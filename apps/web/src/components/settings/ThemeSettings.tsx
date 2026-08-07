@@ -160,7 +160,7 @@ function ThemeLibraryCard({
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
                   <button
-                    aria-label={`Use ${theme.label} theme${isActive ? ", currently active" : ""}`}
+                    aria-label={`Use ${variantNavigation ? `${variantNavigation.collectionLabel}, ${theme.label} variant` : `${theme.label} theme`}${isActive ? ", currently active" : ""}`}
                     aria-pressed={isActive}
                     className="min-w-0 cursor-pointer truncate rounded-sm text-left text-sm font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
                     type="button"

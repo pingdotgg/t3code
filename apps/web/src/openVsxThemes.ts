@@ -15,6 +15,7 @@ const MAX_VSIX_BYTES = 20 * 1024 * 1024;
 const MAX_SEARCH_BYTES = 512 * 1024;
 const MAX_DETAIL_BYTES = 256 * 1024;
 const MAX_MANIFEST_BYTES = 256 * 1024;
+const SEARCH_REQUEST_TIMEOUT_MS = 10_000;
 const MAX_THEME_BYTES = 256 * 1024;
 const MAX_ZIP_ENTRIES = 2_000;
 const MAX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024;
@@ -152,6 +153,28 @@ function extensionFromDetail(value: unknown): OpenVsxThemeExtension | null {
   };
 }
 
+async function withSearchTimeout<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  parentSignal?: AbortSignal,
+): Promise<T> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (parentSignal?.aborted) abort();
+  else parentSignal?.addEventListener("abort", abort, { once: true });
+  const timeout = setTimeout(abort, SEARCH_REQUEST_TIMEOUT_MS);
+  try {
+    return await operation(controller.signal);
+  } catch (cause) {
+    if (controller.signal.aborted && !parentSignal?.aborted) {
+      throw new Error("Open VSX took too long to respond.", { cause });
+    }
+    throw cause;
+  } finally {
+    clearTimeout(timeout);
+    parentSignal?.removeEventListener("abort", abort);
+  }
+}
+
 export async function searchOpenVsxThemes(
   query: string,
   signal?: AbortSignal,
@@ -164,19 +187,20 @@ export async function searchOpenVsxThemes(
   // Ask for a few extras because results without a supported SPDX license
   // are intentionally omitted.
   url.searchParams.set("size", "16");
-  const response = await fetch(url, signal ? { signal } : {});
-  if (!response.ok) throw new Error("Open VSX search is unavailable right now.");
-  const searchBytes = await readCappedResponse(
-    response,
-    MAX_SEARCH_BYTES,
-    "Open VSX returned an unexpectedly large response.",
-  );
-  let value: unknown;
-  try {
-    value = JSON.parse(new TextDecoder().decode(searchBytes));
-  } catch {
-    throw new Error("Open VSX returned an unreadable response.");
-  }
+  const value = await withSearchTimeout(async (requestSignal) => {
+    const response = await fetch(url, { signal: requestSignal });
+    if (!response.ok) throw new Error("Open VSX search is unavailable right now.");
+    const searchBytes = await readCappedResponse(
+      response,
+      MAX_SEARCH_BYTES,
+      "Open VSX returned an unexpectedly large response.",
+    );
+    try {
+      return JSON.parse(new TextDecoder().decode(searchBytes)) as unknown;
+    } catch {
+      throw new Error("Open VSX returned an unreadable response.");
+    }
+  }, signal);
   const candidates = isRecord(value) && Array.isArray(value.extensions) ? value.extensions : [];
   const identities = candidates.flatMap((candidate): Array<[string, string]> => {
     if (!isRecord(candidate)) return [];
@@ -185,45 +209,47 @@ export async function searchOpenVsxThemes(
     return namespace && name ? [[namespace, name]] : [];
   });
   const details = await Promise.allSettled(
-    identities.slice(0, 16).map(async ([namespace, name]) => {
-      const detailUrl = `https://open-vsx.org/api/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`;
-      const detailResponse = await fetch(detailUrl, signal ? { signal } : {});
-      if (!detailResponse.ok) throw new Error("Open VSX theme details are unavailable.");
-      const detailBytes = await readCappedResponse(
-        detailResponse,
-        MAX_DETAIL_BYTES,
-        "Open VSX returned an unexpectedly large detail response.",
-      );
-      try {
-        const extension = extensionFromDetail(JSON.parse(new TextDecoder().decode(detailBytes)));
-        if (!extension) return null;
-        const [manifestResponse, packageResponse] = await Promise.all([
-          fetch(extension.manifestUrl, signal ? { signal } : {}),
-          fetch(extension.vsixUrl, { method: "HEAD", ...(signal ? { signal } : {}) }),
-        ]);
-        if (!manifestResponse.ok) throw new Error("manifest unavailable");
-        const packageLength = Number(packageResponse.headers.get("content-length"));
-        if (
-          packageResponse.ok &&
-          Number.isFinite(packageLength) &&
-          packageLength > MAX_VSIX_BYTES
-        ) {
-          return null;
+    identities.slice(0, 16).map(([namespace, name]) =>
+      withSearchTimeout(async (requestSignal) => {
+        const detailUrl = `https://open-vsx.org/api/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`;
+        const detailResponse = await fetch(detailUrl, { signal: requestSignal });
+        if (!detailResponse.ok) throw new Error("Open VSX theme details are unavailable.");
+        const detailBytes = await readCappedResponse(
+          detailResponse,
+          MAX_DETAIL_BYTES,
+          "Open VSX returned an unexpectedly large detail response.",
+        );
+        try {
+          const extension = extensionFromDetail(JSON.parse(new TextDecoder().decode(detailBytes)));
+          if (!extension) return null;
+          const [manifestResponse, packageResponse] = await Promise.all([
+            fetch(extension.manifestUrl, { signal: requestSignal }),
+            fetch(extension.vsixUrl, { method: "HEAD", signal: requestSignal }),
+          ]);
+          if (!manifestResponse.ok) throw new Error("manifest unavailable");
+          const packageLength = Number(packageResponse.headers.get("content-length"));
+          if (
+            packageResponse.ok &&
+            Number.isFinite(packageLength) &&
+            packageLength > MAX_VSIX_BYTES
+          ) {
+            return null;
+          }
+          const manifestBytes = await readCappedResponse(
+            manifestResponse,
+            MAX_MANIFEST_BYTES,
+            "Open VSX returned an unexpectedly large manifest.",
+          );
+          const manifest = parseJsoncObject(
+            new TextDecoder().decode(manifestBytes),
+            "Extension manifest",
+          );
+          return themeContributions(manifest).length > 0 ? extension : null;
+        } catch {
+          throw new Error("Open VSX returned unreadable theme details.");
         }
-        const manifestBytes = await readCappedResponse(
-          manifestResponse,
-          MAX_MANIFEST_BYTES,
-          "Open VSX returned an unexpectedly large manifest.",
-        );
-        const manifest = parseJsoncObject(
-          new TextDecoder().decode(manifestBytes),
-          "Extension manifest",
-        );
-        return themeContributions(manifest).length > 0 ? extension : null;
-      } catch {
-        throw new Error("Open VSX returned unreadable theme details.");
-      }
-    }),
+      }, signal),
+    ),
   );
   if (signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
   const completedDetails = details.filter((result) => result.status === "fulfilled");

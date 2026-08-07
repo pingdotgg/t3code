@@ -676,8 +676,8 @@ export function ThemeEditorPanel({
       } else if (editingTheme) {
         const baseAppearance = editingTheme.appearance;
         const variantAppearance = baseAppearance === "light" ? "dark" : "light";
-        savedTheme = updateCustomTheme(
-          parseThemeFile({
+        savedTheme = updateCustomTheme({
+          ...parseThemeFile({
             version: THEME_FILE_VERSION,
             id: editingTheme.id,
             name,
@@ -688,7 +688,8 @@ export function ThemeEditorPanel({
               : {}),
             ...(isAdvanced ? {} : { managed: true }),
           }),
-        );
+          ...(editingTheme.collection ? { collection: editingTheme.collection } : {}),
+        });
       } else if (mergeTarget) {
         if (takenAppearances.includes(activeAppearance)) {
           setError(
