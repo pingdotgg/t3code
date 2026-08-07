@@ -619,7 +619,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     draftId,
     activeThreadId,
     activeProjectId,
-    activeThreadEnvironmentId: _activeThreadEnvironmentId,
+    activeThreadEnvironmentId,
     activeThread,
     isServerThread: _isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
@@ -680,6 +680,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isSendDisabled = sendDisabledReason !== null;
   const agentSelectionContextKey = composerAgentSelectionKey({
     activeThreadId,
+    activeEnvironmentId: activeThreadEnvironmentId ?? environmentId,
+    activeProjectId,
     draftId,
     composerDraftTarget,
   });
@@ -3180,7 +3182,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
                 <AgentProfilePicker
                   compact={isComposerFooterCompact}
-                  environmentId={environmentId}
+                  environmentId={activeThreadEnvironmentId ?? environmentId}
                   projectId={activeProjectId}
                   value={selectedAgentProfile}
                   disabled={isConnecting || projectSelectionRequired}

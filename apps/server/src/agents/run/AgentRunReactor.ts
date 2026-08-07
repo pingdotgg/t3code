@@ -25,6 +25,15 @@ const TERMINAL_EVENT_RETRY_SCHEDULE = Schedule.exponential("100 millis").pipe(
     Effect.succeed(Duration.min(duration, Duration.seconds(30))),
   ),
 );
+const retryDurable = <A, R>(
+  effect: Effect.Effect<A, AgentRunRepository.AgentRunRepositoryError, R>,
+) =>
+  effect.pipe(
+    Effect.retry({
+      while: (error) => error._tag !== "AgentRunCommandInvariantError",
+      schedule: TERMINAL_EVENT_RETRY_SCHEDULE,
+    }),
+  );
 
 export const hookWorkspaceForRun = (
   run: Pick<AgentRun, "workspaceMode" | "childThreadId">,
@@ -79,7 +88,7 @@ export const completeSuccessfulRun = Effect.fn("AgentRunReactor.completeSuccessf
     };
     // Provider completion events are consumed sequentially and their timestamp
     // is fixed, so this preflight cannot drift while the hook is evaluated.
-    const lineage = yield* input.repository.listByLineage(input.run.rootRunId);
+    const lineage = yield* retryDurable(input.repository.listByLineage(input.run.rootRunId));
     const preflight = yield* decide(
       { runs: new Map(lineage.map((run) => [run.id, run])) },
       command,
@@ -89,13 +98,15 @@ export const completeSuccessfulRun = Effect.fn("AgentRunReactor.completeSuccessf
         preflight.failure._tag === "AgentRunCommandInvariantError" &&
         preflight.failure.reason === "budget-exhausted"
       ) {
-        yield* input.repository.dispatch({
-          type: "agent-run.fail",
-          runId: input.run.id,
-          failure: preflight.failure.detail,
-          ...(input.usage === undefined ? {} : { usage: input.usage }),
-          occurredAt: input.occurredAt,
-        });
+        yield* retryDurable(
+          input.repository.dispatch({
+            type: "agent-run.fail",
+            runId: input.run.id,
+            failure: preflight.failure.detail,
+            ...(input.usage === undefined ? {} : { usage: input.usage }),
+            occurredAt: input.occurredAt,
+          }),
+        );
         return;
       }
       return yield* preflight.failure;
@@ -103,29 +114,33 @@ export const completeSuccessfulRun = Effect.fn("AgentRunReactor.completeSuccessf
 
     const hook = yield* input.afterResult.pipe(Effect.result);
     if (Result.isFailure(hook)) {
-      yield* input.repository.dispatch({
-        type: "agent-run.fail",
-        runId: input.run.id,
-        failure: hook.failure.detail,
-        ...(input.usage === undefined ? {} : { usage: input.usage }),
-        occurredAt: input.occurredAt,
-      });
+      yield* retryDurable(
+        input.repository.dispatch({
+          type: "agent-run.fail",
+          runId: input.run.id,
+          failure: hook.failure.detail,
+          ...(input.usage === undefined ? {} : { usage: input.usage }),
+          occurredAt: input.occurredAt,
+        }),
+      );
       return;
     }
 
-    const completion = yield* input.repository.dispatch(command).pipe(Effect.result);
+    const completion = yield* retryDurable(input.repository.dispatch(command)).pipe(Effect.result);
     if (
       Result.isFailure(completion) &&
       completion.failure._tag === "AgentRunCommandInvariantError" &&
       completion.failure.reason === "budget-exhausted"
     ) {
-      yield* input.repository.dispatch({
-        type: "agent-run.fail",
-        runId: input.run.id,
-        failure: completion.failure.detail,
-        ...(input.usage === undefined ? {} : { usage: input.usage }),
-        occurredAt: input.occurredAt,
-      });
+      yield* retryDurable(
+        input.repository.dispatch({
+          type: "agent-run.fail",
+          runId: input.run.id,
+          failure: completion.failure.detail,
+          ...(input.usage === undefined ? {} : { usage: input.usage }),
+          occurredAt: input.occurredAt,
+        }),
+      );
       return;
     }
     if (Result.isFailure(completion)) return yield* completion.failure;
@@ -204,7 +219,7 @@ const make = Effect.gen(function* () {
   });
 
   const handle = Effect.fn("AgentRunReactor.handle")(function* (event: ProviderRuntimeEvent) {
-    const run = yield* loadAgentRunForProviderEvent(repository, event.threadId);
+    const run = yield* retryDurable(loadAgentRunForProviderEvent(repository, event.threadId));
     if (run === null) return;
 
     switch (event.type) {
@@ -222,56 +237,66 @@ const make = Effect.gen(function* () {
           return;
         }
         yield* runTerminalHook(run, "onError").pipe(Effect.ignore);
-        yield* repository.dispatch({
-          type: "agent-run.fail",
-          runId: run.id,
-          failure:
-            event.payload.errorMessage ??
-            event.payload.stopReason ??
-            `Provider turn ${event.payload.state}.`,
-          ...(Option.isSome(usage) ? { usage: usage.value } : {}),
-          occurredAt: event.createdAt,
-        });
+        yield* retryDurable(
+          repository.dispatch({
+            type: "agent-run.fail",
+            runId: run.id,
+            failure:
+              event.payload.errorMessage ??
+              event.payload.stopReason ??
+              `Provider turn ${event.payload.state}.`,
+            ...(Option.isSome(usage) ? { usage: usage.value } : {}),
+            occurredAt: event.createdAt,
+          }),
+        );
         return;
       }
       case "turn.aborted":
         if (run.status === "running" || run.status === "waiting-for-input") {
           yield* runTerminalHook(run, "onError").pipe(Effect.ignore);
-          yield* repository.dispatch({
-            type: "agent-run.fail",
-            runId: run.id,
-            failure: event.payload.reason,
-            occurredAt: event.createdAt,
-          });
+          yield* retryDurable(
+            repository.dispatch({
+              type: "agent-run.fail",
+              runId: run.id,
+              failure: event.payload.reason,
+              occurredAt: event.createdAt,
+            }),
+          );
         }
         return;
       case "runtime.error":
         if (run.status === "running" || run.status === "waiting-for-input") {
           yield* runTerminalHook(run, "onError").pipe(Effect.ignore);
-          yield* repository.dispatch({
-            type: "agent-run.fail",
-            runId: run.id,
-            failure: event.payload.message,
-            occurredAt: event.createdAt,
-          });
+          yield* retryDurable(
+            repository.dispatch({
+              type: "agent-run.fail",
+              runId: run.id,
+              failure: event.payload.message,
+              occurredAt: event.createdAt,
+            }),
+          );
         }
         return;
       case "user-input.requested":
         if (run.status === "running") {
-          yield* repository.dispatch({
-            type: "agent-run.wait",
-            runId: run.id,
-            occurredAt: event.createdAt,
-          });
+          yield* retryDurable(
+            repository.dispatch({
+              type: "agent-run.wait",
+              runId: run.id,
+              occurredAt: event.createdAt,
+            }),
+          );
         }
         return;
       case "user-input.resolved":
         if (run.status === "waiting-for-input") {
-          yield* repository.dispatch({
-            type: "agent-run.resume",
-            runId: run.id,
-            occurredAt: event.createdAt,
-          });
+          yield* retryDurable(
+            repository.dispatch({
+              type: "agent-run.resume",
+              runId: run.id,
+              occurredAt: event.createdAt,
+            }),
+          );
         }
         return;
       default:
@@ -282,7 +307,6 @@ const make = Effect.gen(function* () {
   yield* provider.streamEvents.pipe(
     Stream.runForEach((event) =>
       handle(event).pipe(
-        Effect.retry(TERMINAL_EVENT_RETRY_SCHEDULE),
         Effect.catchCause((cause) =>
           Effect.logWarning("Agent run reactor could not process provider event", {
             threadId: event.threadId,

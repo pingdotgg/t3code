@@ -217,11 +217,12 @@ it.effect("creates and prepares a child thread before starting its first turn", 
       engine,
       createThread,
       prepareThread: Effect.sync(() => order.push("prepare")),
+      markRunStarted: Effect.sync(() => order.push("run.start")),
       startTurn,
     });
 
-    NodeAssert.deepEqual(order, ["thread.create", "prepare", "thread.turn.start"]);
-    NodeAssert.equal(result.sequence, 3);
+    NodeAssert.deepEqual(order, ["thread.create", "prepare", "run.start", "thread.turn.start"]);
+    NodeAssert.equal(result.sequence, 4);
   }),
 );
 
@@ -244,6 +245,7 @@ it.effect("preserves the orchestration invariant when the child turn cannot star
         engine,
         createThread,
         prepareThread: Effect.void,
+        markRunStarted: Effect.void,
         startTurn,
       }),
     );

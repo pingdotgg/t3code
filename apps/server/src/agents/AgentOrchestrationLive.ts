@@ -199,6 +199,7 @@ export const dispatchAgentChildLifecycle = Effect.fn(
   readonly engine: Pick<OrchestrationEngine.OrchestrationEngineShape, "dispatch">;
   readonly createThread: ThreadCreateCommand;
   readonly prepareThread: Effect.Effect<void, AgentProfileInvalidError>;
+  readonly markRunStarted: Effect.Effect<void, AgentProfileInvalidError>;
   readonly startTurn: ThreadTurnStartCommand;
 }) {
   yield* input.engine.dispatch(input.createThread).pipe(
@@ -210,6 +211,7 @@ export const dispatchAgentChildLifecycle = Effect.fn(
     ),
   );
   yield* input.prepareThread;
+  yield* input.markRunStarted;
   return yield* input.engine.dispatch(input.startTurn).pipe(
     Effect.mapError((error) =>
       invalid(`T3 could not start the child Agent thread: ${error.message}`, {
@@ -975,25 +977,23 @@ export const make = Effect.gen(function* () {
         agentProfile: pinnedProfile,
         createdAt: occurredAt,
       };
+      const markRunStarted = runs
+        .dispatch({ type: "agent-run.start", runId, occurredAt: yield* nowIso })
+        .pipe(
+          Effect.asVoid,
+          Effect.mapError((error) =>
+            invalid(error.message, { operation: "run-start", cause: error, runId }),
+          ),
+        );
       const dispatched = yield* dispatchAgentChildLifecycle({
         engine,
         createThread,
         prepareThread,
+        markRunStarted,
         startTurn,
       }).pipe(Effect.result);
       if (Result.isFailure(dispatched)) {
         return yield* failSpawn(dispatched.failure.detail, dispatched.failure);
-      }
-      const started = yield* runs
-        .dispatch({ type: "agent-run.start", runId, occurredAt: yield* nowIso })
-        .pipe(
-          Effect.mapError((error) =>
-            invalid(error.message, { operation: "run-start", cause: error, runId }),
-          ),
-          Effect.result,
-        );
-      if (Result.isFailure(started)) {
-        return yield* failSpawn(started.failure.detail, started.failure);
       }
       const run = yield* runs.get(runId).pipe(
         Effect.mapError((cause) =>

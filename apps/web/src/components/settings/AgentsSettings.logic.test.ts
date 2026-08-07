@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildAgentProfileDocument,
   draftFromProfile,
+  agentSettingsContextKey,
   resolveProfileBaselineForSave,
   sortAgentProfiles,
 } from "./AgentsSettings.logic";
@@ -78,5 +79,12 @@ describe("agent profile settings model", () => {
     );
     expect(resolveProfileBaselineForSave(false, profile, profile)).toBe(profile);
     expect(resolveProfileBaselineForSave(true, null, undefined)).toBeNull();
+  });
+
+  it("changes when a local editor generation changes", () => {
+    const context = { environmentId: "env", projectId: null, selectionKey: null };
+    expect(agentSettingsContextKey({ ...context, generation: 1 })).not.toBe(
+      agentSettingsContextKey({ ...context, generation: 2 }),
+    );
   });
 });

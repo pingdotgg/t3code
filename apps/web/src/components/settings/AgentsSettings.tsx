@@ -9,7 +9,7 @@ import {
   RotateCcwIcon,
   SaveIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   AgentCatalogDiagnostic,
   AgentProfileSummary,
@@ -30,6 +30,7 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 import {
   buildAgentProfileDocument,
   draftFromProfile,
+  agentSettingsContextKey,
   resolveProfileBaselineForSave,
   sortAgentProfiles,
   type AgentProfileDraft,
@@ -157,10 +158,19 @@ export function AgentsSettingsPanel() {
     (project) => String(project.id) === selectedProjectId,
   );
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [contextGeneration, setContextGeneration] = useState(0);
   const [draft, setDraft] = useState<AgentProfileDraft>(() => draftFromProfile());
   const [isNew, setIsNew] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const settingsContextKey = agentSettingsContextKey({
+    environmentId: resolvedEnvironmentId,
+    projectId: selectedProject?.id?.toString() ?? null,
+    selectionKey: selectedKey,
+    generation: contextGeneration,
+  });
+  const settingsContextKeyRef = useRef(settingsContextKey);
+  settingsContextKeyRef.current = settingsContextKey;
 
   useEffect(() => {
     if (resolvedEnvironmentId !== null && selectedEnvironmentId === null) {
@@ -215,6 +225,7 @@ export function AgentsSettingsPanel() {
     setNotice(null);
   };
   const startNew = () => {
+    setContextGeneration((generation) => generation + 1);
     setSelectedKey(null);
     setDraft(
       draftFromProfile({
@@ -228,6 +239,7 @@ export function AgentsSettingsPanel() {
   };
   const handleSave = async () => {
     if (resolvedEnvironmentId === null) return;
+    const saveContextKey = settingsContextKey;
     try {
       if (draft.scope === "project" && selectedProject === undefined) {
         throw new Error("Choose a project before saving a project-scoped profile.");
@@ -249,17 +261,20 @@ export function AgentsSettingsPanel() {
         },
       });
       if (result._tag === "Failure") throw new Error(failureMessage(result.cause));
+      if (settingsContextKeyRef.current !== saveContextKey) return;
       setNotice("Profile saved.");
       setSelectedKey(nowKey(result.value.profile));
       setIsNew(false);
       catalogQuery.refresh();
       profileQuery.refresh();
     } catch (caught) {
+      if (settingsContextKeyRef.current !== saveContextKey) return;
       setError(caught instanceof Error ? caught.message : "The profile could not be saved.");
     }
   };
   const handleArchiveRestore = async () => {
     if (resolvedEnvironmentId === null || selectedSummary === null) return;
+    const actionContextKey = settingsContextKey;
     const command = selectedSummary.archivedAt ? restoreProfile : archiveProfile;
     const result = await command({
       environmentId: resolvedEnvironmentId,
@@ -273,9 +288,11 @@ export function AgentsSettingsPanel() {
       },
     });
     if (result._tag === "Failure") {
+      if (settingsContextKeyRef.current !== actionContextKey) return;
       setError(failureMessage(result.cause));
       return;
     }
+    if (settingsContextKeyRef.current !== actionContextKey) return;
     setNotice(selectedSummary.archivedAt ? "Profile restored." : "Profile archived.");
     catalogQuery.refresh();
     profileQuery.refresh();
@@ -310,6 +327,7 @@ export function AgentsSettingsPanel() {
                 aria-label="Agent environment"
                 value={resolvedEnvironmentId ?? ""}
                 onChange={(event) => {
+                  setContextGeneration((generation) => generation + 1);
                   setSelectedEnvironmentId((event.target.value || null) as EnvironmentId | null);
                   setSelectedProjectId("");
                   setSelectedKey(null);
@@ -328,6 +346,7 @@ export function AgentsSettingsPanel() {
                 aria-label="Agent project"
                 value={selectedProjectId}
                 onChange={(event) => {
+                  setContextGeneration((generation) => generation + 1);
                   setSelectedProjectId(event.target.value);
                   setSelectedKey(null);
                   setIsNew(false);
@@ -391,6 +410,7 @@ export function AgentsSettingsPanel() {
                     profile={profile}
                     selected={nowKey(profile) === selectedKey}
                     onSelect={() => {
+                      setContextGeneration((generation) => generation + 1);
                       setSelectedKey(nowKey(profile));
                       setIsNew(false);
                       setError(null);

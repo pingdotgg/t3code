@@ -10,3 +10,12 @@ export function parseRequiredNumber(value: string, label: string) {
   }
   return parsed;
 }
+
+export function agentSettingsContextKey(input: {
+  readonly environmentId: string | null;
+  readonly projectId: string | null;
+  readonly selectionKey: string | null;
+  readonly generation: number;
+}): string {
+  return `${input.environmentId ?? ""}:${input.projectId ?? ""}:${input.selectionKey ?? ""}:${input.generation}`;
+}

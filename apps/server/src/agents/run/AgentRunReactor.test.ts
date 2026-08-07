@@ -10,8 +10,11 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as TestClock from "effect/testing/TestClock";
 
 import { AgentHookBlockedError } from "../AgentHookRunner.ts";
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
@@ -170,6 +173,53 @@ it.effect("keeps a blocking afterResult hook authoritative after preflight succe
       assert.equal(failure.failure, "Review hook rejected the result.");
     }
   }),
+);
+
+it.effect("retries terminal persistence without rerunning a successful afterResult hook", () =>
+  Effect.gen(function* () {
+    const dispatched: Array<AgentRunCommand> = [];
+    let completionAttempts = 0;
+    let hookRuns = 0;
+    const repository = {
+      ...repositoryFor(dispatched),
+      dispatch: (command: AgentRunCommand) =>
+        Effect.suspend(() => {
+          if (command.type === "agent-run.succeed") {
+            completionAttempts += 1;
+            if (completionAttempts === 1) {
+              return Effect.fail(
+                new PersistenceSqlError({
+                  operation: "AgentRunRepository.dispatch",
+                  detail: "temporary database failure",
+                }),
+              );
+            }
+          }
+          dispatched.push(command);
+          return Effect.succeed([] as ReadonlyArray<AgentRunEvent>);
+        }),
+    } as unknown as AgentRunRepository["Service"];
+
+    const completion = yield* completeSuccessfulRun({
+      run,
+      usage: { totalTokens: 1 },
+      occurredAt,
+      repository,
+      afterResult: Effect.sync(() => {
+        hookRuns += 1;
+      }),
+    }).pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Effect.yieldNow;
+    yield* TestClock.adjust(Duration.seconds(1));
+    yield* Fiber.join(completion);
+
+    assert.equal(hookRuns, 1);
+    assert.equal(completionAttempts, 2);
+    assert.deepEqual(
+      dispatched.map((command) => command.type),
+      ["agent-run.succeed"],
+    );
+  }).pipe(Effect.provide(TestClock.layer())),
 );
 
 it.effect("fails completion when terminal hook prerequisites cannot be loaded", () =>

@@ -6,11 +6,15 @@ describe("ChatComposer agent selection context", () => {
   it("changes when the draft target changes even without an active thread", () => {
     const first = composerAgentSelectionKey({
       activeThreadId: null,
+      activeEnvironmentId: "environment-a",
+      activeProjectId: null,
       draftId: "draft-a",
       composerDraftTarget: "draft-a",
     });
     const second = composerAgentSelectionKey({
       activeThreadId: null,
+      activeEnvironmentId: "environment-a",
+      activeProjectId: null,
       draftId: "draft-b",
       composerDraftTarget: "draft-b",
     });

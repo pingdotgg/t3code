@@ -34,6 +34,7 @@ import {
   resolveProfileBaselineForSave,
   type AgentProfileDraft,
 } from "./agentProfile.logic";
+import { agentSettingsContextKey } from "./agentSettings.logic";
 import {
   buildAgentRuleDocument,
   draftFromRule,
@@ -55,6 +56,7 @@ export function SettingsAgentsRouteScreen() {
   const [projectId, setProjectId] = useState<ProjectId | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [selectedRuleKey, setSelectedRuleKey] = useState<string | null>(null);
+  const [contextGeneration, setContextGeneration] = useState(0);
   const [draft, setDraft] = useState<AgentProfileDraft>(() => draftFromProfile());
   const [isNew, setIsNew] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -79,6 +81,22 @@ export function SettingsAgentsRouteScreen() {
     catalog.data?.profiles.find((profile) => profileKey(profile) === selectedKey) ?? null;
   const selectedRuleSummary =
     catalog.data?.rules.find((rule) => profileKey(rule) === selectedRuleKey) ?? null;
+  const profileContextKey = agentSettingsContextKey({
+    environmentId: resolvedEnvironmentId,
+    projectId: selectedProject?.id?.toString() ?? null,
+    selectionKey: selectedKey,
+    generation: contextGeneration,
+  });
+  const ruleContextKey = agentSettingsContextKey({
+    environmentId: resolvedEnvironmentId,
+    projectId: selectedProject?.id?.toString() ?? null,
+    selectionKey: selectedRuleKey,
+    generation: contextGeneration,
+  });
+  const profileContextKeyRef = useRef(profileContextKey);
+  const ruleContextKeyRef = useRef(ruleContextKey);
+  profileContextKeyRef.current = profileContextKey;
+  ruleContextKeyRef.current = ruleContextKey;
   const profileQuery = useEnvironmentQuery(
     resolvedEnvironmentId === null || selectedSummary === null
       ? null
@@ -152,6 +170,7 @@ export function SettingsAgentsRouteScreen() {
   ];
   const handleContextMenu = useCallback((event: string) => {
     if (event.startsWith("environment:")) {
+      setContextGeneration((generation) => generation + 1);
       setEnvironmentId(event.slice("environment:".length) as EnvironmentId);
       setProjectId(null);
       setSelectedKey(null);
@@ -159,12 +178,14 @@ export function SettingsAgentsRouteScreen() {
       setIsNew(false);
       setIsNewRule(false);
     } else if (event === "project:none") {
+      setContextGeneration((generation) => generation + 1);
       setProjectId(null);
       setSelectedKey(null);
       setSelectedRuleKey(null);
       setIsNew(false);
       setIsNewRule(false);
     } else if (event.startsWith("project:")) {
+      setContextGeneration((generation) => generation + 1);
       setProjectId(event.slice("project:".length) as ProjectId);
       setSelectedKey(null);
       setSelectedRuleKey(null);
@@ -181,6 +202,7 @@ export function SettingsAgentsRouteScreen() {
     [],
   );
   const startNew = useCallback(() => {
+    setContextGeneration((generation) => generation + 1);
     setSelectedKey(null);
     setIsNew(true);
     setDraft(draftFromProfile(null, projectId === null ? "environment" : "project"));
@@ -188,6 +210,7 @@ export function SettingsAgentsRouteScreen() {
     setNotice(null);
   }, [projectId]);
   const startNewRule = useCallback(() => {
+    setContextGeneration((generation) => generation + 1);
     setSelectedRuleKey(null);
     setIsNewRule(true);
     setRuleDraft(draftFromRule(null, projectId === null ? "environment" : "project"));
@@ -216,6 +239,7 @@ export function SettingsAgentsRouteScreen() {
       setRuleError("Choose a project for a project-scoped rule.");
       return;
     }
+    const saveContextKey = ruleContextKey;
     ruleCommandInFlight.current = true;
     setRuleCommandPending(true);
     try {
@@ -237,11 +261,13 @@ export function SettingsAgentsRouteScreen() {
       });
       if (AsyncResult.isFailure(result))
         throw new Error("The rule could not be saved (it may have changed remotely).");
+      if (ruleContextKeyRef.current !== saveContextKey) return;
       setSelectedRuleKey(profileKey(result.value.rule));
       setIsNewRule(false);
       setRuleNotice("Rule saved.");
       catalog.refresh();
     } catch (caught) {
+      if (ruleContextKeyRef.current !== saveContextKey) return;
       setRuleError(caught instanceof Error ? caught.message : "The rule could not be saved.");
     } finally {
       ruleCommandInFlight.current = false;
@@ -256,6 +282,7 @@ export function SettingsAgentsRouteScreen() {
     saveRule,
     selectedProject,
     selectedRuleSummary,
+    ruleContextKey,
   ]);
   const archiveRestoreRule = useCallback(async () => {
     if (resolvedEnvironmentId === null) {
@@ -263,6 +290,7 @@ export function SettingsAgentsRouteScreen() {
       return;
     }
     if (selectedRuleSummary === null || ruleCommandInFlight.current) return;
+    const actionContextKey = ruleContextKey;
     ruleCommandInFlight.current = true;
     setRuleCommandPending(true);
     try {
@@ -279,9 +307,11 @@ export function SettingsAgentsRouteScreen() {
         },
       });
       if (AsyncResult.isFailure(result)) {
+        if (ruleContextKeyRef.current !== actionContextKey) return;
         setRuleError("The rule could not be updated (it may have changed remotely).");
         return;
       }
+      if (ruleContextKeyRef.current !== actionContextKey) return;
       setRuleNotice(selectedRuleSummary.archivedAt ? "Rule restored." : "Rule archived.");
       catalog.refresh();
     } finally {
@@ -295,6 +325,7 @@ export function SettingsAgentsRouteScreen() {
     restoreRule,
     selectedProject,
     selectedRuleSummary,
+    ruleContextKey,
   ]);
   const save = useCallback(async () => {
     if (resolvedEnvironmentId === null) {
@@ -310,6 +341,7 @@ export function SettingsAgentsRouteScreen() {
       setError("Choose a project for a project-scoped profile.");
       return;
     }
+    const saveContextKey = profileContextKey;
     profileCommandInFlight.current = true;
     setProfileCommandPending(true);
     try {
@@ -330,11 +362,13 @@ export function SettingsAgentsRouteScreen() {
         },
       });
       if (AsyncResult.isFailure(result)) throw new Error("The profile could not be saved.");
+      if (profileContextKeyRef.current !== saveContextKey) return;
       setSelectedKey(profileKey(result.value.profile));
       setIsNew(false);
       setNotice("Profile saved.");
       catalog.refresh();
     } catch (caught) {
+      if (profileContextKeyRef.current !== saveContextKey) return;
       setError(caught instanceof Error ? caught.message : "The profile could not be saved.");
     } finally {
       profileCommandInFlight.current = false;
@@ -349,6 +383,7 @@ export function SettingsAgentsRouteScreen() {
     saveProfile,
     selectedProject,
     selectedSummary,
+    profileContextKey,
   ]);
   const archiveRestore = useCallback(async () => {
     if (resolvedEnvironmentId === null) {
@@ -356,6 +391,7 @@ export function SettingsAgentsRouteScreen() {
       return;
     }
     if (selectedSummary === null || profileCommandInFlight.current) return;
+    const actionContextKey = profileContextKey;
     profileCommandInFlight.current = true;
     setProfileCommandPending(true);
     try {
@@ -372,9 +408,11 @@ export function SettingsAgentsRouteScreen() {
         },
       });
       if (AsyncResult.isFailure(result)) {
+        if (profileContextKeyRef.current !== actionContextKey) return;
         setError("The profile could not be updated.");
         return;
       }
+      if (profileContextKeyRef.current !== actionContextKey) return;
       setNotice(selectedSummary.archivedAt ? "Profile restored." : "Profile archived.");
       catalog.refresh();
     } finally {
@@ -388,6 +426,7 @@ export function SettingsAgentsRouteScreen() {
     restoreProfile,
     selectedProject,
     selectedSummary,
+    profileContextKey,
   ]);
 
   return (
@@ -486,6 +525,7 @@ export function SettingsAgentsRouteScreen() {
                 profile={profile}
                 selected={profileKey(profile) === selectedKey}
                 onPress={() => {
+                  setContextGeneration((generation) => generation + 1);
                   setSelectedKey(profileKey(profile));
                   setIsNew(false);
                   setError(null);
@@ -538,6 +578,7 @@ export function SettingsAgentsRouteScreen() {
                 rule={rule}
                 selected={profileKey(rule) === selectedRuleKey}
                 onPress={() => {
+                  setContextGeneration((generation) => generation + 1);
                   setSelectedRuleKey(profileKey(rule));
                   setIsNewRule(false);
                   setRuleError(null);

@@ -2,6 +2,8 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 
 export function composerAgentSelectionKey(input: {
   readonly activeThreadId: string | null;
+  readonly activeEnvironmentId: string | null;
+  readonly activeProjectId: string | null;
   readonly draftId: string | null;
   readonly composerDraftTarget: ScopedThreadRef | string;
 }): string {
@@ -9,5 +11,5 @@ export function composerAgentSelectionKey(input: {
     typeof input.composerDraftTarget === "string"
       ? input.composerDraftTarget
       : `${input.composerDraftTarget.environmentId}:${input.composerDraftTarget.threadId}`;
-  return `${input.activeThreadId ?? ""}:${input.draftId ?? ""}:${target}`;
+  return `${input.activeEnvironmentId ?? ""}:${input.activeProjectId ?? ""}:${input.activeThreadId ?? ""}:${input.draftId ?? ""}:${target}`;
 }

@@ -8,7 +8,7 @@ import {
   RotateCcwIcon,
   SaveIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AgentProfileId,
   type AgentCatalogDiagnostic,
@@ -26,6 +26,7 @@ import { Input } from "../ui/input";
 import { Spinner } from "../ui/spinner";
 import { Textarea } from "../ui/textarea";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { agentSettingsContextKey } from "./AgentsSettings.logic";
 import {
   buildAgentRuleDocument,
   draftFromRule,
@@ -60,10 +61,19 @@ export function RulesSettingsPanel() {
   );
   const project = environmentProjects.find((item) => String(item.id) === projectId);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [contextGeneration, setContextGeneration] = useState(0);
   const [draft, setDraft] = useState<AgentRuleDraft>(() => draftFromRule());
   const [isNew, setIsNew] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const settingsContextKey = agentSettingsContextKey({
+    environmentId: resolvedEnvironmentId,
+    projectId: project?.id?.toString() ?? null,
+    selectionKey: selectedKey,
+    generation: contextGeneration,
+  });
+  const settingsContextKeyRef = useRef(settingsContextKey);
+  settingsContextKeyRef.current = settingsContextKey;
   useEffect(() => {
     if (resolvedEnvironmentId && environmentId === null) setEnvironmentId(resolvedEnvironmentId);
   }, [environmentId, resolvedEnvironmentId]);
@@ -107,6 +117,7 @@ export function RulesSettingsPanel() {
     setNotice(null);
   };
   const startNew = () => {
+    setContextGeneration((generation) => generation + 1);
     setSelectedKey(null);
     setDraft(draftFromRule(null, project ? "project" : "environment"));
     setIsNew(true);
@@ -115,6 +126,7 @@ export function RulesSettingsPanel() {
   };
   const save = async () => {
     if (!resolvedEnvironmentId) return;
+    const saveContextKey = settingsContextKey;
     try {
       if (draft.scope === "project" && !project)
         throw new Error("Choose a project before saving a project-scoped rule.");
@@ -129,12 +141,14 @@ export function RulesSettingsPanel() {
         },
       });
       if (result._tag === "Failure") throw new Error(failureMessage(result.cause));
+      if (settingsContextKeyRef.current !== saveContextKey) return;
       setDraft(draftFromRule(result.value.rule));
       setSelectedKey(keyOf(result.value.rule));
       setIsNew(false);
       setNotice("Rule saved.");
       await catalog.refresh();
     } catch (cause) {
+      if (settingsContextKeyRef.current !== saveContextKey) return;
       setError(
         cause instanceof Error ? cause.message : failureMessage(cause as Cause.Cause<unknown>),
       );
@@ -142,6 +156,7 @@ export function RulesSettingsPanel() {
   };
   const archiveRestore = async () => {
     if (!resolvedEnvironmentId || !selectedSummary) return;
+    const actionContextKey = settingsContextKey;
     try {
       const command = selectedSummary.archivedAt ? restoreRule : archiveRule;
       const result = await command({
@@ -154,6 +169,7 @@ export function RulesSettingsPanel() {
         },
       });
       if (result._tag === "Failure") throw new Error(failureMessage(result.cause));
+      if (settingsContextKeyRef.current !== actionContextKey) return;
       setDraft(draftFromRule(result.value.rule));
       setSelectedKey(keyOf(result.value.rule));
       setNotice(
@@ -161,6 +177,7 @@ export function RulesSettingsPanel() {
       );
       await catalog.refresh();
     } catch (cause) {
+      if (settingsContextKeyRef.current !== actionContextKey) return;
       setError(cause instanceof Error ? cause.message : "The rule request failed.");
     }
   };
@@ -188,6 +205,7 @@ export function RulesSettingsPanel() {
               aria-label="Rule environment"
               value={resolvedEnvironmentId ?? ""}
               onChange={(event) => {
+                setContextGeneration((generation) => generation + 1);
                 setEnvironmentId((event.target.value || null) as EnvironmentId | null);
                 setProjectId("");
                 setSelectedKey(null);
@@ -205,6 +223,7 @@ export function RulesSettingsPanel() {
               aria-label="Rule project"
               value={projectId}
               onChange={(event) => {
+                setContextGeneration((generation) => generation + 1);
                 setProjectId(event.target.value);
                 setSelectedKey(null);
                 setIsNew(false);
@@ -255,6 +274,7 @@ export function RulesSettingsPanel() {
                   key={keyOf(rule)}
                   type="button"
                   onClick={() => {
+                    setContextGeneration((generation) => generation + 1);
                     setSelectedKey(keyOf(rule));
                     setIsNew(false);
                     setError(null);

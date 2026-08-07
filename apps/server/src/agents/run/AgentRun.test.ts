@@ -447,6 +447,22 @@ describe("AgentRun", () => {
     }),
   );
 
+  it.effect("permits spawn compensation to fail a run after it has started", () =>
+    Effect.gen(function* () {
+      const started = yield* start(
+        yield* transition(emptyAgentRunState(), request("root")),
+        "root",
+      );
+      const compensated = yield* transition(started, {
+        type: "agent-run.fail",
+        runId: id("root"),
+        failure: "T3 could not start the child Agent turn.",
+        occurredAt: later,
+      });
+      expect(compensated.runs.get(id("root"))?.status).toBe("failed");
+    }),
+  );
+
   it.effect(
     "moves through integration, retaining a conflict as a retryable successful result",
     () =>
