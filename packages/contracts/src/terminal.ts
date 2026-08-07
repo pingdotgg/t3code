@@ -87,6 +87,12 @@ export const TerminalCloseInput = Schema.Struct({
   ...TerminalThreadInput.fields,
   terminalId: Schema.optional(TerminalIdSchema),
   deleteHistory: Schema.optional(Schema.Boolean),
+  /**
+   * Also kill the terminal's live subprocess tree (captured by a fresh
+   * inspection at close time), not just the PTY shell. Used by thread
+   * deletion so dev servers started in the thread's terminals do not leak.
+   */
+  killSubprocesses: Schema.optional(Schema.Boolean),
 });
 export type TerminalCloseInput = typeof TerminalCloseInput.Type;
 

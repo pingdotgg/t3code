@@ -6,9 +6,13 @@
  *
  * @module ClaudeAdapterLive
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off - the SDK spawn hook must return a live ChildProcess synchronously; the Effect spawner cannot.
+import * as NodeChildProcess from "node:child_process";
+
 import {
   type CanUseTool,
   query,
+  type SpawnedProcess,
   type Options as ClaudeQueryOptions,
   type PermissionMode,
   type PermissionResult,
@@ -75,6 +79,7 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { AgentSessionRegistry } from "../../process/AgentSessionRegistry.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
@@ -1627,6 +1632,35 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig;
   const crypto = yield* Crypto.Crypto;
+  const agentSessionRegistry = yield* AgentSessionRegistry;
+
+  /**
+   * Mirrors the SDK's default local spawn (stdio, signal, windowsHide) while
+   * capturing the CLI pid, so listeners the agent starts can be attributed to
+   * the thread. The exit listener drops the registration immediately — a dead
+   * pid must never linger, or pid reuse could misattribute foreign processes.
+   */
+  const spawnClaudeProcessForThread =
+    (threadId: ThreadId): NonNullable<ClaudeQueryOptions["spawnClaudeCodeProcess"]> =>
+    (spawnInput) => {
+      const child = NodeChildProcess.spawn(spawnInput.command, spawnInput.args, {
+        ...(spawnInput.cwd !== undefined ? { cwd: spawnInput.cwd } : {}),
+        env: spawnInput.env,
+        stdio: ["pipe", "pipe", spawnInput.env.DEBUG_CLAUDE_AGENT_SDK ? "pipe" : "ignore"],
+        signal: spawnInput.signal,
+        windowsHide: true,
+      });
+      const pid = child.pid;
+      if (pid !== undefined) {
+        Effect.runSync(agentSessionRegistry.register({ threadId, pid }));
+        child.once("exit", () => {
+          Effect.runSync(agentSessionRegistry.unregister({ threadId, pid }));
+        });
+      }
+      // ChildProcess satisfies SpawnedProcess at runtime (per SDK docs); the
+      // cast bridges the nullable stdio typing of the untyped spawn overload.
+      return child as unknown as SpawnedProcess;
+    };
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, options?.environment).pipe(
     Effect.provideService(Path.Path, path),
   );
@@ -4112,6 +4146,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
         canUseTool,
+        spawnClaudeCodeProcess: spawnClaudeProcessForThread(threadId),
         env: claudeEnvironment,
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),

@@ -45,6 +45,7 @@ import {
   selectProvidersByKind,
 } from "./ProviderRegistry.ts";
 import * as ServerConfig from "../../config.ts";
+import * as AgentSessionRegistry from "../../process/AgentSessionRegistry.ts";
 import * as ServerSettingsModule from "../../serverSettings.ts";
 import { readProviderStatusCache, resolveProviderStatusCachePath } from "../providerStatusCache.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
@@ -67,6 +68,7 @@ process.env.T3CODE_CURSOR_ENABLED = "1";
 // ── Test helpers ────────────────────────────────────────────────────
 
 const encoder = new TextEncoder();
+
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
 const TestHttpClientLive = Layer.succeed(
@@ -75,6 +77,8 @@ const TestHttpClientLive = Layer.succeed(
     Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ version: "0.0.0" }))),
   ),
 );
+
+const RegistryInfra = Layer.mergeAll(TestHttpClientLive, AgentSessionRegistry.layer);
 
 const BackgroundPolicyAlwaysRunLayer = Layer.mock(BackgroundPolicy.BackgroundPolicy)({
   reportClientActivity: () => Effect.void,
@@ -338,7 +342,7 @@ function makeMutableServerSettingsService(
   });
 }
 
-it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), TestHttpClientLive))(
+it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), RegistryInfra))(
   "ProviderRegistry",
   (it) => {
     describe("checkCodexProviderStatus", () => {

@@ -34,6 +34,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import * as AgentSessionRegistry from "../../process/AgentSessionRegistry.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
@@ -203,6 +204,7 @@ function makeHarness(config?: {
         ),
       ),
       Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(AgentSessionRegistry.layer),
       Layer.provideMerge(NodeServices.layer),
     ),
     query,
@@ -318,6 +320,7 @@ describe("ClaudeAdapterLive", () => {
     ).pipe(
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
       Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(AgentSessionRegistry.layer),
       Layer.provideMerge(NodeServices.layer),
     );
 
@@ -1896,6 +1899,7 @@ describe("ClaudeAdapterLive", () => {
     ).pipe(
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
       Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(AgentSessionRegistry.layer),
       Layer.provideMerge(NodeServices.layer),
     );
 
@@ -1987,6 +1991,7 @@ describe("ClaudeAdapterLive", () => {
     ).pipe(
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
       Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(AgentSessionRegistry.layer),
       Layer.provideMerge(NodeServices.layer),
     );
 

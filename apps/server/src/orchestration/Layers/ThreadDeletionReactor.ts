@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import * as PortScanner from "../../preview/PortScanner.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
@@ -41,6 +42,16 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
   const terminalManager = yield* TerminalManager.TerminalManager;
+  const portDiscovery = yield* PortScanner.PortDiscovery;
+
+  // Must run BEFORE stopSession: once the session root dies its children are
+  // reparented and can no longer be attributed to the thread.
+  const killAgentProcessTree = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
+    logCleanupCauseUnlessInterrupted({
+      effect: portDiscovery.killThreadAgentTree(threadId),
+      message: "thread deletion cleanup skipped agent process tree kill",
+      threadId,
+    });
 
   const stopProviderSession = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
     logCleanupCauseUnlessInterrupted({
@@ -51,7 +62,7 @@ const make = Effect.gen(function* () {
 
   const closeThreadTerminals = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
     logCleanupCauseUnlessInterrupted({
-      effect: terminalManager.close({ threadId, deleteHistory: true }),
+      effect: terminalManager.close({ threadId, deleteHistory: true, killSubprocesses: true }),
       message: "thread deletion cleanup skipped terminal close",
       threadId,
     });
@@ -60,6 +71,7 @@ const make = Effect.gen(function* () {
     event: ThreadDeletedEvent,
   ) {
     const { threadId } = event.payload;
+    yield* killAgentProcessTree(threadId);
     yield* stopProviderSession(threadId);
     yield* closeThreadTerminals(threadId);
   });

@@ -24,6 +24,7 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeCursorTextGeneration } from "../../textGeneration/CursorTextGeneration.ts";
+import { AgentSessionRegistry } from "../../process/AgentSessionRegistry.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCursorAdapter } from "../Layers/CursorAdapter.ts";
 import {
@@ -65,6 +66,7 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
 };
 
 export type CursorDriverEnv =
+  | AgentSessionRegistry
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto

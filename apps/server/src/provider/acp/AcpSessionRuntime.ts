@@ -70,6 +70,13 @@ export interface AcpSessionRuntimeOptions {
   };
   readonly authMethodId: string;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
+  /**
+   * Observes the spawned agent process: called with the pid right after the
+   * spawn, and released (second callback) when the runtime scope closes. Used
+   * to attribute listeners the agent starts to the owning thread.
+   */
+  readonly onProcessSpawned?: (pid: number) => Effect.Effect<void>;
+  readonly onProcessReleased?: (pid: number) => Effect.Effect<void>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
@@ -352,6 +359,15 @@ export const make = (
             }),
         ),
       );
+
+    if (options.onProcessSpawned) {
+      const spawnedPid = child.pid;
+      yield* options.onProcessSpawned(spawnedPid);
+      const onProcessReleased = options.onProcessReleased;
+      if (onProcessReleased) {
+        yield* Scope.addFinalizer(runtimeScope, onProcessReleased(spawnedPid));
+      }
+    }
 
     const acpContext = yield* Layer.build(
       EffectAcpClient.layerChildProcess(child, {

@@ -266,14 +266,72 @@ export const DiscoveredLocalServer = Schema.Struct({
       terminalId: TrimmedNonEmptyString,
     }),
   ),
+  /**
+   * Set when the listener is a live descendant of a provider session process
+   * (the coding agent spawned it). Optional so pre-existing servers/clients
+   * that do not know the field keep decoding.
+   */
+  agent: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        threadId: ThreadId,
+      }),
+    ),
+  ),
 });
 export type DiscoveredLocalServer = typeof DiscoveredLocalServer.Type;
+
+/**
+ * A live process owned by a thread — a descendant of the thread's provider
+ * session process ("agent") or part of a thread terminal's process tree
+ * ("terminal"). Unlike `DiscoveredLocalServer` this does not require a
+ * listening port, so builds and other non-server subprocesses show up too.
+ */
+export const ThreadOwnedProcess = Schema.Struct({
+  threadId: ThreadId,
+  pid: PositiveInt,
+  processName: Schema.NullOr(TrimmedNonEmptyString),
+  /** Full command line (server-side truncated) when the platform exposes it. */
+  commandLine: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  owner: Schema.Literals(["agent", "terminal"]),
+});
+export type ThreadOwnedProcess = typeof ThreadOwnedProcess.Type;
 
 export const DiscoveredLocalServerList = Schema.Struct({
   servers: Schema.Array(DiscoveredLocalServer),
   scannedAt: Schema.String,
+  /** Optional so pre-existing servers/clients keep decoding. */
+  processes: Schema.optional(Schema.Array(ThreadOwnedProcess)),
 });
 export type DiscoveredLocalServerList = typeof DiscoveredLocalServerList.Type;
+
+/**
+ * Kill request for a discovered local server owned by one of the thread's
+ * terminals. The server verifies ownership against the live terminal process
+ * registry before signaling; PIDs that were never captured from a terminal's
+ * own process tree are refused.
+ */
+export const PreviewKillDiscoveredServerInput = Schema.Struct({
+  threadId: ThreadId,
+  pid: PositiveInt,
+  /** Present when the kill targets a discovered listener; plain thread-owned processes have no port. */
+  port: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThan(65536))),
+});
+export type PreviewKillDiscoveredServerInput = typeof PreviewKillDiscoveredServerInput.Type;
+
+export class DiscoveredServerKillError extends Schema.TaggedErrorClass<DiscoveredServerKillError>()(
+  "DiscoveredServerKillError",
+  {
+    pid: Schema.Int,
+    reason: Schema.Literals(["not-owned", "signal-failed"]),
+  },
+) {
+  override get message() {
+    return this.reason === "not-owned"
+      ? `Process ${this.pid} is not owned by a terminal of this thread.`
+      : `Failed to signal process ${this.pid}.`;
+  }
+}
 
 export class PreviewSessionLookupError extends Schema.TaggedErrorClass<PreviewSessionLookupError>()(
   "PreviewSessionLookupError",

@@ -24,7 +24,7 @@ import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
-import { expect } from "vite-plus/test";
+import { expect, vi } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as TerminalManager from "./Manager.ts";
@@ -1184,6 +1184,71 @@ it.layer(
       ).toBe(false);
     }),
   );
+
+  it.effect("kills the terminal's live subprocess tree when close requests it", () => {
+    const signaled: Array<{ pid: number; signal: string | number | undefined }> = [];
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: string | number,
+    ) => {
+      signaled.push({ pid, signal });
+      return true;
+    }) as typeof process.kill);
+    return Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        subprocessInspector: (terminalPid) =>
+          Effect.succeed({
+            hasRunningSubprocess: true,
+            childCommand: "vite",
+            processIds: [terminalPid, 4243, 4244],
+          }),
+      });
+      yield* manager.open(openInput());
+      const terminalProcess = ptyAdapter.processes[0];
+      expect(terminalProcess).toBeDefined();
+      if (!terminalProcess) return;
+
+      yield* manager.close({ threadId: "thread-1", killSubprocesses: true });
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      const sigterms = signaled.filter((entry) => entry.signal === "SIGTERM");
+      expect(sigterms.map((entry) => entry.pid)).toEqual([4243, 4244]);
+      // The PTY dies through its own escalation, never through the tree kill.
+      expect(signaled.every((entry) => entry.pid !== terminalProcess.pid)).toBe(true);
+      assert.equal(terminalProcess.killSignals[0], "SIGTERM");
+
+      yield* TestClock.adjust("1 millis");
+      yield* Effect.yieldNow;
+      const sigkills = signaled.filter((entry) => entry.signal === "SIGKILL");
+      expect(sigkills.map((entry) => entry.pid)).toEqual([4243, 4244]);
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => killSpy.mockRestore())),
+      Effect.provide(TestClock.layer()),
+    );
+  });
+
+  it.effect("does not touch subprocesses on a plain close", () => {
+    const signaled: number[] = [];
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number) => {
+      signaled.push(pid);
+      return true;
+    }) as typeof process.kill);
+    return Effect.gen(function* () {
+      const { manager } = yield* createManager(5, {
+        subprocessInspector: (terminalPid) =>
+          Effect.succeed({
+            hasRunningSubprocess: true,
+            childCommand: "vite",
+            processIds: [terminalPid, 4243],
+          }),
+      });
+      yield* manager.open(openInput());
+      yield* manager.close({ threadId: "thread-1" });
+      yield* Effect.yieldNow;
+      expect(signaled).toEqual([]);
+    }).pipe(Effect.ensuring(Effect.sync(() => killSpy.mockRestore())));
+  });
 
   it.effect("escalates terminal shutdown to SIGKILL when process does not exit in time", () =>
     Effect.gen(function* () {

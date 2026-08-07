@@ -65,6 +65,7 @@ import {
   parsePermissionRequest,
 } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
+import { AgentSessionRegistry } from "../../process/AgentSessionRegistry.ts";
 import { applyCursorAcpModelSelection, makeCursorAcpRuntime } from "../acp/CursorAcpSupport.ts";
 import {
   CursorAskQuestionRequest,
@@ -321,6 +322,7 @@ export function makeCursorAdapter(
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const serverConfig = yield* Effect.service(ServerConfig);
     const crypto = yield* Crypto.Crypto;
+    const agentSessionRegistry = yield* AgentSessionRegistry;
     const nativeEventLogger =
       options?.nativeEventLogger ??
       (options?.nativeEventLogPath !== undefined
@@ -537,6 +539,10 @@ export function makeCursorAdapter(
             ...(options?.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
             cwd,
+            onProcessSpawned: (pid) =>
+              agentSessionRegistry.register({ threadId: input.threadId, pid }),
+            onProcessReleased: (pid) =>
+              agentSessionRegistry.unregister({ threadId: input.threadId, pid }),
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
             ...(mcpSession

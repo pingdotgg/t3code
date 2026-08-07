@@ -18,6 +18,18 @@ beforeEach(() => {
 });
 
 describe("rightPanelStore", () => {
+  it("opens the processes surface as a singleton", () => {
+    useRightPanelStore.getState().open(refA, "processes");
+    useRightPanelStore.getState().open(refA, "processes");
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.isOpen).toBe(true);
+    expect(state.surfaces).toEqual([{ id: "processes", kind: "processes" }]);
+    expect(state.activeSurfaceId).toBe("processes");
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe(
+      "processes",
+    );
+  });
+
   it("drops the legacy singleton terminal surface during migration", () => {
     expect(
       migratePersistedRightPanelState({
