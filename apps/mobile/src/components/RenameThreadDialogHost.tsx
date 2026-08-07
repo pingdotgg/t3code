@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Modal, Pressable, TextInput, View } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 
 import { useThemeColor } from "../lib/useThemeColor";
 import { cn } from "../lib/cn";
@@ -81,56 +82,60 @@ export function RenameThreadDialogHost() {
       onShow={() => inputRef.current?.focus()}
     >
       {request === null ? null : (
-        <View className="flex-1 items-center justify-center bg-backdrop px-8">
-          <View className="w-full rounded-[24px] bg-card px-6 pb-4 pt-5">
-            <AppText className="text-lg font-t3-medium">{request.title ?? "Rename thread"}</AppText>
-            <AppTextInput
-              ref={inputRef}
-              className="mt-4"
-              value={value}
-              onChangeText={setValue}
-              autoFocus
-              selectTextOnFocus
-              returnKeyType="done"
-              onSubmitEditing={handleConfirm}
-              placeholder="Thread name"
-              accessibilityLabel="Thread name"
-            />
-            <View className="mt-5 flex-row justify-end gap-1">
-              <View className="overflow-hidden rounded-full">
-                <Pressable
-                  accessibilityRole="button"
-                  className="min-h-10 items-center justify-center px-4"
-                  android_ripple={{ color: pressedOverlay }}
-                  onPress={handleCancel}
-                >
-                  <AppText className="text-base font-t3-medium">
-                    {request.cancelText ?? "Cancel"}
-                  </AppText>
-                </Pressable>
-              </View>
-              <View className="overflow-hidden rounded-full">
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ disabled: !canSubmit }}
-                  className="min-h-10 items-center justify-center px-4"
-                  android_ripple={{ color: pressedOverlay }}
-                  disabled={!canSubmit}
-                  onPress={handleConfirm}
-                >
-                  <AppText
-                    className={cn(
-                      "text-base font-t3-medium",
-                      canSubmit || "text-foreground-tertiary",
-                    )}
+        <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
+          <View className="flex-1 items-center justify-center bg-backdrop px-8">
+            <View className="w-full rounded-[24px] bg-card px-6 pb-4 pt-5">
+              <AppText className="text-lg font-t3-medium">
+                {request.title ?? "Rename thread"}
+              </AppText>
+              <AppTextInput
+                ref={inputRef}
+                className="mt-4"
+                value={value}
+                onChangeText={setValue}
+                autoFocus
+                selectTextOnFocus
+                returnKeyType="done"
+                onSubmitEditing={handleConfirm}
+                placeholder="Thread name"
+                accessibilityLabel="Thread name"
+              />
+              <View className="mt-5 flex-row justify-end gap-1">
+                <View className="overflow-hidden rounded-full">
+                  <Pressable
+                    accessibilityRole="button"
+                    className="min-h-10 items-center justify-center px-4"
+                    android_ripple={{ color: pressedOverlay }}
+                    onPress={handleCancel}
                   >
-                    {request.confirmText ?? "Rename"}
-                  </AppText>
-                </Pressable>
+                    <AppText className="text-base font-t3-medium">
+                      {request.cancelText ?? "Cancel"}
+                    </AppText>
+                  </Pressable>
+                </View>
+                <View className="overflow-hidden rounded-full">
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ disabled: !canSubmit }}
+                    className="min-h-10 items-center justify-center px-4"
+                    android_ripple={{ color: pressedOverlay }}
+                    disabled={!canSubmit}
+                    onPress={handleConfirm}
+                  >
+                    <AppText
+                      className={cn(
+                        "text-base font-t3-medium",
+                        canSubmit || "text-foreground-tertiary",
+                      )}
+                    >
+                      {request.confirmText ?? "Rename"}
+                    </AppText>
+                  </Pressable>
+                </View>
               </View>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       )}
     </Modal>
   );
