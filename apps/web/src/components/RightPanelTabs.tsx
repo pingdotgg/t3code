@@ -1,6 +1,6 @@
 import type { ContextMenuItem, PreviewSessionSnapshot } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
-import { Bot, ClipboardList, FileDiff, Files, Globe2, Plus, TerminalSquare, X } from "lucide-react";
+import { Bot, FileDiff, Files, Globe2, Plus, TerminalSquare, X } from "lucide-react";
 import {
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
@@ -213,8 +213,6 @@ function surfaceTitle(
         terminalLabelsById.get(surface.activeTerminalId) ??
         getTerminalLabel(surface.activeTerminalId)
       );
-    case "plan":
-      return "Plan";
     case "agents":
       return "Agents";
     case "preview": {
@@ -276,8 +274,6 @@ function SurfaceIcon({
       );
     case "terminal":
       return <TerminalSquare className="size-3 shrink-0" />;
-    case "plan":
-      return <ClipboardList className="size-3 shrink-0" />;
     case "agents":
       return <Bot className="size-3 shrink-0" />;
   }

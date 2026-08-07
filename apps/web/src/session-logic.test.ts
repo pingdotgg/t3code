@@ -11,12 +11,12 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  deriveTurnPlans,
   derivePendingApprovals,
   derivePendingUserInputs,
   deriveTimelineEntries,
   deriveWorkLogEntries,
   findLatestProposedPlan,
-  findSidebarProposedPlan,
   hasActionableProposedPlan,
   isLatestTurnSettled,
   workEntryIndicatesToolFailure,
@@ -410,6 +410,95 @@ describe("deriveActivePlanState", () => {
   });
 });
 
+describe("deriveTurnPlans", () => {
+  it("keeps one entry per turn, anchored at the first snapshot with the latest steps", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "plan-1a",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          plan: [{ step: "Inspect code", status: "inProgress" }],
+        },
+      }),
+      makeActivity({
+        id: "plan-1b",
+        createdAt: "2026-02-23T00:00:05.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          plan: [{ step: "Inspect code", status: "completed" }],
+        },
+      }),
+      makeActivity({
+        id: "plan-2a",
+        createdAt: "2026-02-23T00:01:00.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-2",
+        payload: {
+          plan: [{ step: "Ship it", status: "pending" }],
+        },
+      }),
+    ];
+
+    const turnPlans = deriveTurnPlans(activities);
+    expect(turnPlans).toHaveLength(2);
+    expect(turnPlans[0]).toMatchObject({
+      id: "turn-plan:turn-1",
+      createdAt: "2026-02-23T00:00:01.000Z",
+      turnId: "turn-1",
+    });
+    expect(turnPlans[0]?.plan.steps).toEqual([{ step: "Inspect code", status: "completed" }]);
+    expect(turnPlans[1]?.plan.steps).toEqual([{ step: "Ship it", status: "pending" }]);
+  });
+
+  it("skips activities without parseable steps", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "plan-bad",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: { plan: [] },
+      }),
+    ];
+    expect(deriveTurnPlans(activities)).toEqual([]);
+  });
+
+  it("drops a turn's chip when a later snapshot clears the plan", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "plan-set",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: { plan: [{ step: "Inspect code", status: "inProgress" }] },
+      }),
+      makeActivity({
+        id: "plan-clear",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: { plan: [] },
+      }),
+    ];
+    expect(deriveTurnPlans(activities)).toEqual([]);
+  });
+});
+
 describe("findLatestProposedPlan", () => {
   it("prefers the latest proposed plan for the active turn", () => {
     expect(
@@ -512,103 +601,6 @@ describe("hasActionableProposedPlan", () => {
         updatedAt: "2026-02-23T00:00:02.000Z",
       }),
     ).toBe(false);
-  });
-});
-
-describe("findSidebarProposedPlan", () => {
-  it("prefers the running turn source proposed plan when available on the same thread", () => {
-    expect(
-      findSidebarProposedPlan({
-        threads: [
-          {
-            id: ThreadId.make("thread-1"),
-            proposedPlans: [
-              {
-                id: "plan-1",
-                turnId: TurnId.make("turn-plan"),
-                planMarkdown: "# Source plan",
-                implementedAt: "2026-02-23T00:00:03.000Z",
-                implementationThreadId: ThreadId.make("thread-2"),
-                createdAt: "2026-02-23T00:00:01.000Z",
-                updatedAt: "2026-02-23T00:00:02.000Z",
-              },
-            ],
-          },
-          {
-            id: ThreadId.make("thread-2"),
-            proposedPlans: [
-              {
-                id: "plan-2",
-                turnId: TurnId.make("turn-other"),
-                planMarkdown: "# Latest elsewhere",
-                implementedAt: null,
-                implementationThreadId: null,
-                createdAt: "2026-02-23T00:00:04.000Z",
-                updatedAt: "2026-02-23T00:00:05.000Z",
-              },
-            ],
-          },
-        ],
-        latestTurn: {
-          turnId: TurnId.make("turn-implementation"),
-          sourceProposedPlan: {
-            threadId: ThreadId.make("thread-1"),
-            planId: "plan-1",
-          },
-        },
-        latestTurnSettled: false,
-        threadId: ThreadId.make("thread-1"),
-      }),
-    ).toEqual({
-      id: "plan-1",
-      turnId: "turn-plan",
-      planMarkdown: "# Source plan",
-      implementedAt: "2026-02-23T00:00:03.000Z",
-      implementationThreadId: "thread-2",
-      createdAt: "2026-02-23T00:00:01.000Z",
-      updatedAt: "2026-02-23T00:00:02.000Z",
-    });
-  });
-
-  it("falls back to the latest proposed plan once the turn is settled", () => {
-    expect(
-      findSidebarProposedPlan({
-        threads: [
-          {
-            id: ThreadId.make("thread-1"),
-            proposedPlans: [
-              {
-                id: "plan-1",
-                turnId: TurnId.make("turn-plan"),
-                planMarkdown: "# Older",
-                implementedAt: null,
-                implementationThreadId: null,
-                createdAt: "2026-02-23T00:00:01.000Z",
-                updatedAt: "2026-02-23T00:00:02.000Z",
-              },
-              {
-                id: "plan-2",
-                turnId: TurnId.make("turn-latest"),
-                planMarkdown: "# Latest",
-                implementedAt: null,
-                implementationThreadId: null,
-                createdAt: "2026-02-23T00:00:03.000Z",
-                updatedAt: "2026-02-23T00:00:04.000Z",
-              },
-            ],
-          },
-        ],
-        latestTurn: {
-          turnId: TurnId.make("turn-implementation"),
-          sourceProposedPlan: {
-            threadId: ThreadId.make("thread-1"),
-            planId: "plan-1",
-          },
-        },
-        latestTurnSettled: true,
-        threadId: ThreadId.make("thread-1"),
-      })?.planMarkdown,
-    ).toBe("# Latest");
   });
 });
 
