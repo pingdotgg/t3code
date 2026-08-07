@@ -176,7 +176,13 @@ export function sortPinnedThreads<T extends PinnedThreadSortInput>(threads: read
     }))
     .sort((left, right) => {
       const order = compareRationalOrder(left.order, right.order);
-      return order !== 0 ? order : left.identity.localeCompare(right.identity);
+      return order !== 0
+        ? order
+        : left.identity < right.identity
+          ? -1
+          : left.identity > right.identity
+            ? 1
+            : 0;
     })
     .map(({ thread }) => thread);
 }

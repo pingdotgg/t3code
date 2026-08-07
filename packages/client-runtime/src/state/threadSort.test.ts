@@ -182,4 +182,13 @@ describe("pinned thread ordering", () => {
       ).map((thread) => thread.id),
     ).toEqual(["a", "c", "b"]);
   });
+
+  it("breaks duplicate position ties independently of the client locale", () => {
+    const duplicated = [
+      { id: "ä", createdAt: pinned[0].createdAt, pinnedOrder: "1/1" as PinnedThreadOrder },
+      { id: "z", createdAt: pinned[1].createdAt, pinnedOrder: "1/1" as PinnedThreadOrder },
+    ];
+
+    expect(sortPinnedThreads(duplicated).map((thread) => thread.id)).toEqual(["z", "ä"]);
+  });
 });
