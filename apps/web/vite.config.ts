@@ -55,6 +55,8 @@ const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
 // Vite 8.1's experimental bundled dev mode: serves rolldown-bundled chunks in
 // dev for much faster startup/reload on large module graphs, with HMR served
 // as hot patches. Opt-in while experimental: T3CODE_BUNDLED_DEV=1 pnpm dev:web
+// The dev runner defaults this on for --share runs (remote browsers pay a
+// round trip per import level in unbundled dev); T3CODE_BUNDLED_DEV=0 opts out.
 const bundledDevEnv = process.env.T3CODE_BUNDLED_DEV?.trim().toLowerCase();
 const bundledDev = bundledDevEnv === "1" || bundledDevEnv === "true";
 
@@ -187,6 +189,13 @@ export default defineConfig(() => {
       port,
       strictPort: true,
       allowedHosts,
+      // Transform the whole module graph at server start instead of on the
+      // first request. Without this, a cold worktree discovers and transforms
+      // modules one import-level at a time while the browser waits — which
+      // over a tailnet origin turns into minutes of waterfall.
+      warmup: {
+        clientFiles: ["./src/main.tsx"],
+      },
       ...(devProxyTarget
         ? {
             // One entry per shared prefix; the server's dev catch-all 404s the
