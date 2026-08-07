@@ -185,6 +185,9 @@ importers:
       '@vercel/config':
         specifier: ^0.3.0
         version: 0.3.0
+      playwright-core:
+        specifier: 1.60.0
+        version: 1.60.0
       typescript:
         specifier: 'catalog:'
         version: 6.0.3

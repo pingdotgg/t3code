@@ -5,6 +5,7 @@ node_modules
 *.log
 *.tsbuildinfo
 apps/*/dist
+apps/marketing/public/sidebar-demo
 infra/*/dist
 .astro
 packages/*/dist
