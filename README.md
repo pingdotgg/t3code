@@ -29,9 +29,27 @@ There's now a dedicated Git tab in the right panel (`Cmd/Ctrl+Shift+G`). Per sel
 
 The panel reads and writes the real git index, so staging done here shows up in a terminal and vice versa — it's not a separate shadow state. The existing chat-header commit flow is unchanged and still commits everything the agent touched.
 
+<img src="docs/images/githistory.png" alt="Right panel surface picker with a Git tile" width="420"> <img src="docs/images/githistory-2.webp" alt="Git panel with staging, commit box, and commit history" width="420">
+
+### Kanban board of every agent
+
+The sidebar answers "what threads exist". It doesn't answer "which ones need me right now" — and once you're driving five or ten agents across several projects, that's the question that matters.
+
+There's now a board at `/board` (`Cmd/Ctrl+Shift+B`, also in the sidebar and command palette) showing every thread across every project and environment as a card, grouped by what its agent is actually doing:
+
+**Needs You · Working · Review · Done · Idle · Snoozed**
+
+Columns are derived from live state, not set by hand, so a card moves the moment its thread does. A thread whose subagent fleet is still running after the turn settled shows under **Working**, not Idle. The grouping mirrors the sidebar's exactly, so the two never disagree.
+
+Dragging is limited to the moves that map to a real command — drop on **Done** to settle, on **Snoozed** to snooze, drag back to return to active. The agent-owned columns don't accept drops, and a refused move says why instead of failing after the fact. Cards carry provider and model, branch or worktree, PR state, plan progress, and a link into the thread's Agents panel.
+
+See [docs/user/board.md](./docs/user/board.md).
+
 ### Multiple source folders per project
 
 A project used to be bound to exactly one directory. Now a project can reference several source folders — e.g. a design-system repo, a sibling service, and a docs folder — with one marked as primary. Every existing single-folder project keeps working identically; this is purely additive.
+
+<img src="docs/images/multiplefoldersinproject.png" alt="Create project dialog with an empty source folders list" width="420"> <img src="docs/images/multiplefoldersinproject2.png" alt="Create project dialog with three source folders and one marked primary" width="420">
 
 ### Selectable color themes (Settings → Appearance)
 
@@ -42,6 +60,8 @@ Nine built-in color palettes on top of the existing light/dark mode, picked from
 - **Midnight**, **Ember**, **Mono**, **Cyberpunk**, **Slate**
 
 Each palette carries its own semantic tokens, nav-panel surfaces, and syntax highlighting theme for chat code blocks, diffs, and file previews.
+
+![Settings → Appearance theme picker showing nine palettes](docs/images/themes.png)
 
 ## Installation
 
@@ -99,6 +119,7 @@ We are (mostly) not accepting contributions yet. Small fixes may be considered. 
 Full docs live in [docs/](./docs). There's no docs site yet.
 
 - [Install and first run](./docs/user/install.md)
+- [Board: every agent at a glance](./docs/user/board.md)
 - [Permission modes](./docs/user/permission-modes.md)
 - [Keyboard shortcuts](./docs/user/keybindings.md)
 - [Remote access from a phone or another machine](./docs/user/remote-access.md)

@@ -63,6 +63,7 @@ const STATIC_KEYBINDING_COMMANDS = [
   "preview.zoomIn",
   "preview.zoomOut",
   "preview.resetZoom",
+  "board.toggle",
   "commandPalette.toggle",
   "filePicker.toggle",
   "projectSearch.toggle",
