@@ -26,16 +26,6 @@ const DEFAULT_THREAD_SNAPSHOT_TIMEOUT_MS = 6_000;
  * WebSocket subscription's first frame. The response is gzip-compressible by
  * the transport and keeps the (potentially multi-KB) snapshot off the socket.
  */
-/**
- * Optional turn window for a snapshot fetch. Only send a window to servers
- * that advertise `threadSnapshotPagination`; older servers reject unknown
- * query parameters.
- */
-export interface ThreadSnapshotWindow {
-  readonly turnLimit: number;
-  readonly beforeCursor?: string;
-}
-
 export const fetchEnvironmentThreadSnapshot = Effect.fn(
   "clientRuntime.state.fetchEnvironmentThreadSnapshot",
 )(function* (input: {
@@ -43,7 +33,6 @@ export const fetchEnvironmentThreadSnapshot = Effect.fn(
   readonly threadId: ThreadId;
   readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
   readonly timeoutMs?: number;
-  readonly window?: ThreadSnapshotWindow;
 }) {
   const requestUrl = environmentEndpointUrl(
     input.prepared.httpBaseUrl,
@@ -63,12 +52,6 @@ export const fetchEnvironmentThreadSnapshot = Effect.fn(
       input.prepared.httpAuthorization,
       client.orchestration.threadSnapshot({
         params: { threadId: input.threadId },
-        payload: {
-          ...(input.window !== undefined ? { turnLimit: input.window.turnLimit } : {}),
-          ...(input.window?.beforeCursor !== undefined
-            ? { beforeCursor: input.window.beforeCursor }
-            : {}),
-        },
         headers,
       }),
     ),

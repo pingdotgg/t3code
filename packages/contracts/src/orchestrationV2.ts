@@ -2236,6 +2236,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   searchThreads: "orchestration.searchThreads",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   getThreadProjection: "orchestration.getThreadProjection",
+  getWorkflowScript: "orchestration.getWorkflowScript",
   launchThread: "orchestration.launchThread",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
   subscribeShell: "orchestration.subscribeShell",
@@ -2428,6 +2429,56 @@ export const OrchestrationV2RpcError = Schema.Union([
 ]);
 export type OrchestrationV2RpcError = typeof OrchestrationV2RpcError.Type;
 
+export const OrchestrationV2GetWorkflowScriptInput = Schema.Struct({
+  threadId: ThreadId,
+  /** Absolute path from the workflow's runHandles.scriptPath. The server
+   * re-derives containment; the client value is a hint, never trusted. */
+  scriptPath: TrimmedNonEmptyString,
+});
+export type OrchestrationV2GetWorkflowScriptInput =
+  typeof OrchestrationV2GetWorkflowScriptInput.Type;
+
+export const OrchestrationV2GetWorkflowScriptResult = Schema.Struct({
+  scriptPath: TrimmedNonEmptyString,
+  contents: Schema.String,
+  truncated: Schema.Boolean,
+});
+export type OrchestrationV2GetWorkflowScriptResult =
+  typeof OrchestrationV2GetWorkflowScriptResult.Type;
+
+const WORKFLOW_SCRIPT_ERROR_MESSAGES = {
+  "invalid-path": "Workflow scripts must be absolute .js paths.",
+  "root-unavailable": "Script root unavailable.",
+  "not-found": "Script not found.",
+  "outside-root": "Script path is outside the workflow scripts root.",
+  "not-js": "Resolved script is not a .js file.",
+  "not-regular-file": "Script is not a regular file.",
+  "changed-during-read": "Script changed between resolution and open.",
+  "read-failed": "Script read failed.",
+} as const;
+
+export class OrchestrationGetWorkflowScriptError extends Schema.TaggedErrorClass<OrchestrationGetWorkflowScriptError>()(
+  "OrchestrationGetWorkflowScriptError",
+  {
+    reason: Schema.Literals([
+      "invalid-path",
+      "root-unavailable",
+      "not-found",
+      "outside-root",
+      "not-js",
+      "not-regular-file",
+      "changed-during-read",
+      "read-failed",
+    ]),
+    scriptPath: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return WORKFLOW_SCRIPT_ERROR_MESSAGES[this.reason];
+  }
+}
+
 export const OrchestrationV2RpcSchemas = {
   dispatchCommand: {
     input: OrchestrationV2Command,
@@ -2448,6 +2499,10 @@ export const OrchestrationV2RpcSchemas = {
   getThreadProjection: {
     input: OrchestrationV2GetThreadProjectionInput,
     output: OrchestrationV2ThreadProjection,
+  },
+  getWorkflowScript: {
+    input: OrchestrationV2GetWorkflowScriptInput,
+    output: OrchestrationV2GetWorkflowScriptResult,
   },
   launchThread: {
     input: OrchestrationV2ThreadLaunchInput,

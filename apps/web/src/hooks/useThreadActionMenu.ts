@@ -251,7 +251,10 @@ export function useThreadActionMenu(input: {
             );
             return;
           case "mark-unread":
-            markThreadUnread(scopedThreadKey(threadRef), thread.latestTurn?.completedAt);
+            markThreadUnread(
+              scopedThreadKey(threadRef),
+              thread.latestRun?.completedAt ?? undefined,
+            );
             return;
           case "copy-path": {
             const workspacePath = thread.worktreePath ?? projectCwd;

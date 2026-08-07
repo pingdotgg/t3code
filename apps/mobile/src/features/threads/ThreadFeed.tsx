@@ -55,7 +55,14 @@ import { FilePreviewModal, type FilePreviewSource } from "../../components/FileP
 import { isPdfFile } from "../../lib/filePreview";
 import { PresentationSource } from "../../components/NativePresentation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Animated, { FadeIn, FadeInUp, type SharedValue } from "react-native-reanimated";
+import Animated, {
+  FadeIn,
+  FadeInUp,
+  useSharedValue,
+  withTiming,
+  type LayoutAnimationsValues,
+  type SharedValue,
+} from "react-native-reanimated";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { useFontFamily } from "../../lib/useFontFamily";
@@ -155,6 +162,14 @@ function formatMessageTime(input: string): string {
   return MESSAGE_TIME_FORMATTER.format(timestamp);
 }
 
+// Rows shift when content above them grows (streaming text, work-log folds);
+// animating the container position turns those jumps into slides. Applied
+// conditionally — see the gated transition in ThreadFeed: while browsing
+// history the animation must NOT run, or every estimate→actual size
+// correction plays as a visible slide against the instant scroll-offset
+// compensation from maintainVisibleContentPosition.
+const FEED_ITEM_LAYOUT_DURATION_MS = 180;
+
 // Pre-measurement heights for getFixedItemSize, mirroring renderFeedEntry's
 // classNames. The fold row's min-h-11 (44px) stays taller than its single
 // text-sm line at every supported base font size (26px at the 22pt maximum),
@@ -196,12 +211,6 @@ export interface ThreadFeedProps {
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
-  readonly onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
-  /** Non-null when older turns exist beyond the loaded window. */
-  readonly loadEarlier?: {
-    readonly loading: boolean;
-    readonly onLoadEarlier: () => void;
-  } | null;
 }
 
 async function waitForThreadShell(
@@ -1671,6 +1680,24 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   );
   const [viewportHeight, setViewportHeight] = useState(0);
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
+  // Live-follow latch (#5566). LegendList's maintainScrollAtEnd alone re-pins
+  // the feed whenever the viewport drifts back inside its geometric threshold,
+  // which yanked users off history they were reading every time a stream chunk
+  // grew a row. Follow breaks when the user scrolls up and away, and re-arms
+  // only when the list actually returns to the end (or on send / thread switch).
+  const [endFollowEnabled, setEndFollowEnabled] = useState(true);
+  const endFollowEnabledRef = useRef(true);
+  // A "user scroll session" spans from drag start through the end of its
+  // momentum; only motion inside a session can break follow, so MVCP
+  // compensations and programmatic scrolls never strand a follower.
+  const userScrollSessionRef = useRef(false);
+  const setEndFollow = useCallback((enabled: boolean) => {
+    if (endFollowEnabledRef.current === enabled) {
+      return;
+    }
+    endFollowEnabledRef.current = enabled;
+    setEndFollowEnabled(enabled);
+  }, []);
   const [interactionState, setInteractionState] = useState<{
     readonly copiedRowId: string | null;
     readonly expandedWorkGroups: Record<string, boolean>;
@@ -1847,6 +1874,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     },
     [props.onHeaderMaterialVisibilityChange],
   );
+  // True while the viewport sits within ~one screen of the list end — the
+  // only region where layout shifts should animate. Starts true because the
+  // list opens pinned to the end.
+  const nearListEnd = useSharedValue(true);
+
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       // anchorTopInset, not topContentInset: under automatic insets the list
@@ -1854,6 +1886,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       // UIKit's adjustedContentInset, so topContentInset is 0 here). Add the
       // header height back or the material toggles a full header too late.
       reportHeaderMaterialVisibility(event.nativeEvent.contentOffset.y + anchorTopInset > 6);
+      const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+      nearListEnd.value =
+        contentSize.height - layoutMeasurement.height - contentOffset.y < layoutMeasurement.height;
       // Latch bookkeeping. LegendList recomputes its inset-aware end distance
       // before invoking this handler, so getState() is current. Returning to
       // the end re-arms follow no matter who scrolled (the user, or our own
@@ -1869,7 +1904,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         }
       }
     },
-    [reportHeaderMaterialVisibility, anchorTopInset, props.listRef, setEndFollow],
+    [reportHeaderMaterialVisibility, anchorTopInset, nearListEnd, props.listRef, setEndFollow],
   );
   const handleScrollBeginDrag = useCallback(() => {
     userScrollSessionRef.current = true;
@@ -1888,18 +1923,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const handleMomentumScrollEnd = useCallback(() => {
     userScrollSessionRef.current = false;
   }, []);
-
-  const handleViewportLayout = useCallback((event: LayoutChangeEvent) => {
-    const nextWidth = Math.round(event.nativeEvent.layout.width);
-    const nextHeight = Math.round(event.nativeEvent.layout.height);
-    setViewportWidth((current) => (Math.abs(current - nextWidth) > 1 ? nextWidth : current));
-    setViewportHeight((current) => (Math.abs(current - nextHeight) > 1 ? nextHeight : current));
-  }, []);
-
-  useEffect(() => {
-    reportHeaderMaterialVisibility(false);
-  }, [props.threadId, reportHeaderMaterialVisibility]);
-
   // A thread switch opens pinned to the end; a send explicitly returns to the
   // live edge (ThreadDetailScreen scrolls the new message into place). Both
   // re-arm follow regardless of where the user had scrolled before.
@@ -1913,6 +1936,44 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       setEndFollow(true);
     }
   }, [props.anchorMessageId, setEndFollow]);
+
+  // Gated variant of the 180ms feed layout slide. Instant while browsing
+  // history: maintainVisibleContentPosition compensates the scroll offset in
+  // the same frame a row's measured size lands, so an instant reposition is
+  // invisible — animating it is exactly what made cold upward scrolls slide
+  // and jump. Near the end the slide stays on: streaming growth and sends
+  // shift rows at rest, where the animation is the thing preventing a hard
+  // visual snap.
+  const feedItemLayoutTransition = useMemo(() => {
+    return (values: LayoutAnimationsValues) => {
+      "worklet";
+      const duration = nearListEnd.value ? FEED_ITEM_LAYOUT_DURATION_MS : 0;
+      return {
+        initialValues: {
+          originX: values.currentOriginX,
+          originY: values.currentOriginY,
+          width: values.currentWidth,
+          height: values.currentHeight,
+        },
+        animations: {
+          originX: withTiming(values.targetOriginX, { duration }),
+          originY: withTiming(values.targetOriginY, { duration }),
+          width: withTiming(values.targetWidth, { duration }),
+          height: withTiming(values.targetHeight, { duration }),
+        },
+      };
+    };
+  }, [nearListEnd]);
+  const handleViewportLayout = useCallback((event: LayoutChangeEvent) => {
+    const nextWidth = Math.round(event.nativeEvent.layout.width);
+    const nextHeight = Math.round(event.nativeEvent.layout.height);
+    setViewportWidth((current) => (Math.abs(current - nextWidth) > 1 ? nextWidth : current));
+    setViewportHeight((current) => (Math.abs(current - nextHeight) > 1 ? nextHeight : current));
+  }, []);
+
+  useEffect(() => {
+    reportHeaderMaterialVisibility(false);
+  }, [props.threadId, reportHeaderMaterialVisibility]);
 
   const presentedFeed = useMemo(
     () =>
@@ -2280,7 +2341,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             // anchor scrolls also lets it correct a scroll that landed on a
             // stale end target once the anchor row finishes measuring.
             maintainScrollAtEnd={
-              disclosureToggleSettling
+              disclosureToggleSettling || !endFollowEnabled
                 ? false
                 : {
                     animated: true,
@@ -2329,6 +2390,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             alignItemsAtEnd
             initialScrollAtEnd
             onScroll={handleScroll}
+            onScrollBeginDrag={handleScrollBeginDrag}
+            onScrollEndDrag={handleScrollEndDrag}
+            onMomentumScrollEnd={handleMomentumScrollEnd}
             scrollEventThrottle={16}
             ListHeaderComponent={
               <>
