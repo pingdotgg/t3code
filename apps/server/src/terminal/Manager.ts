@@ -1144,8 +1144,9 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
   const ptyAdapter = yield* PtyAdapter.PtyAdapter;
   const portDiscovery = yield* PortScanner.PortDiscovery;
   const settingsService = yield* ServerSettings.ServerSettingsService;
+  const settingsChanges = yield* settingsService.subscribeChanges;
   let configuredShell = (yield* settingsService.getSettings).defaultTerminalShell;
-  yield* settingsService.streamChanges.pipe(
+  yield* settingsChanges.pipe(
     Stream.runForEach((settings) =>
       Effect.sync(() => {
         configuredShell = settings.defaultTerminalShell;
@@ -1888,15 +1889,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       increment(terminalSessionsTotal, { lifecycle: eventType }).pipe(
         Effect.andThen(
           Effect.gen(function* () {
+            const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv);
             const shellCandidates = yield* resolveShellCandidates(
               shellResolver,
               platform,
-              baseEnv,
+              terminalEnv,
             ).pipe(
               Effect.provideService(FileSystem.FileSystem, fileSystem),
               Effect.provideService(Path.Path, path),
             );
-            const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv);
             const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
             ptyProcess = spawnResult.process;
             startedShell = spawnResult.shellLabel;
