@@ -1,4 +1,8 @@
-import type { ServerProvider, ServerProviderUsageWindow } from "@t3tools/contracts";
+import type {
+  ProviderDriverKind,
+  ServerProvider,
+  ServerProviderUsageWindow,
+} from "@t3tools/contracts";
 
 export type ProviderUsageTone = "default" | "warning" | "critical";
 
@@ -6,6 +10,8 @@ export interface ProviderUsageWindowView {
   readonly key: string;
   readonly label: string;
   readonly percentLabel: string;
+  /** Clamped 0..100 fill for the progress ring. */
+  readonly usedPercent: number;
   readonly tone: ProviderUsageTone;
   readonly resetsAtLabel: string | undefined;
 }
@@ -13,6 +19,8 @@ export interface ProviderUsageWindowView {
 export interface ProviderUsageRowView {
   readonly key: string;
   readonly name: string;
+  readonly driver: ProviderDriverKind;
+  readonly accentColor: string | undefined;
   readonly windows: ReadonlyArray<ProviderUsageWindowView>;
   readonly updatedAgoLabel: string;
   readonly tone: ProviderUsageTone;
@@ -108,18 +116,22 @@ export function getProviderUsageRows(
     if (!usage || usage.windows.length === 0 || !provider.enabled) {
       continue;
     }
-    const windows = usage.windows.map(
-      (window): ProviderUsageWindowView => ({
+    const windows = usage.windows.map((window): ProviderUsageWindowView => {
+      const usedPercent = Math.min(Math.max(window.usedPercent, 0), 100);
+      return {
         key: window.key,
         label: window.label,
-        percentLabel: `${Math.round(window.usedPercent)}%`,
+        percentLabel: `${Math.round(usedPercent)}%`,
+        usedPercent,
         tone: providerUsageWindowTone(window),
         resetsAtLabel: formatResetsAt(window.resetsAt, nowMs),
-      }),
-    );
+      };
+    });
     rows.push({
       key: provider.instanceId,
       name: providerDisplayName(provider),
+      driver: provider.driver,
+      accentColor: provider.accentColor,
       windows,
       updatedAgoLabel: formatUpdatedAgo(usage.updatedAt, nowMs),
       tone: worstTone(windows.map((window) => window.tone)),

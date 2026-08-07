@@ -97,13 +97,32 @@ describe("getProviderUsageRows", () => {
     const row = rows[0]!;
     expect(row.key).toBe("claudeAgent");
     expect(row.name).toBe("Claude");
+    expect(row.driver).toBe("claudeAgent");
     expect(row.tone).toBe("critical");
     expect(row.updatedAgoLabel).toBe("updated 2m ago");
     expect(row.windows.map((window) => [window.label, window.percentLabel, window.tone])).toEqual([
       ["5h", "42%", "default"],
       ["1w", "91%", "critical"],
     ]);
+    expect(row.windows.map((window) => window.usedPercent)).toEqual([42.4, 91]);
     expect(row.windows[0]!.resetsAtLabel).toBe("resets in 2h");
+  });
+
+  it("passes the provider accent color through and clamps ring percents", () => {
+    const providers = [
+      makeProvider({
+        accentColor: "#d97757",
+        usage: {
+          windows: [{ key: "five_hour", label: "5h", usedPercent: 142 }],
+          updatedAt: "2026-08-06T11:58:00.000Z",
+        },
+      }),
+    ] as ReadonlyArray<ServerProvider>;
+
+    const row = getProviderUsageRows(providers, NOW_MS)[0]!;
+    expect(row.accentColor).toBe("#d97757");
+    expect(row.windows[0]!.usedPercent).toBe(100);
+    expect(row.windows[0]!.percentLabel).toBe("100%");
   });
 
   it("skips disabled providers and empty usage snapshots", () => {

@@ -1,8 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
-import { Fragment } from "react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { primaryServerProvidersAtom } from "../../state/server";
+import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   getProviderUsageRows,
@@ -16,6 +16,44 @@ const TONE_TEXT_STYLES: Record<ProviderUsageTone, string> = {
   critical: "text-destructive",
 };
 
+const RING_SIZE = 14;
+const RING_STROKE = 2;
+const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+
+function UsageRing({ usedPercent }: { usedPercent: number }) {
+  const filled = (usedPercent / 100) * RING_CIRCUMFERENCE;
+  return (
+    <svg
+      aria-hidden="true"
+      className="-rotate-90 shrink-0"
+      height={RING_SIZE}
+      viewBox={`0 0 ${RING_SIZE} ${RING_SIZE}`}
+      width={RING_SIZE}
+    >
+      <circle
+        className="opacity-25"
+        cx={RING_SIZE / 2}
+        cy={RING_SIZE / 2}
+        fill="none"
+        r={RING_RADIUS}
+        stroke="currentColor"
+        strokeWidth={RING_STROKE}
+      />
+      <circle
+        cx={RING_SIZE / 2}
+        cy={RING_SIZE / 2}
+        fill="none"
+        r={RING_RADIUS}
+        stroke="currentColor"
+        strokeDasharray={`${filled} ${RING_CIRCUMFERENCE}`}
+        strokeLinecap="round"
+        strokeWidth={RING_STROKE}
+      />
+    </svg>
+  );
+}
+
 function ProviderUsageRow({ row }: { row: ProviderUsageRowView }) {
   return (
     <Tooltip>
@@ -25,19 +63,24 @@ function ProviderUsageRow({ row }: { row: ProviderUsageRowView }) {
             aria-label={`${row.name} usage`}
             className="flex h-6 w-full cursor-default items-center gap-2 rounded-md px-2 text-xs"
           >
+            <ProviderInstanceIcon
+              className="size-4"
+              displayName={row.name}
+              driverKind={row.driver}
+              iconClassName="size-3.5"
+              {...(row.accentColor !== undefined ? { accentColor: row.accentColor } : {})}
+            />
             <span className="min-w-0 flex-1 truncate text-muted-foreground">{row.name}</span>
-            <span className="flex shrink-0 items-center gap-1 font-medium tabular-nums">
-              {row.windows.map((window, index) => (
-                <Fragment key={window.key}>
-                  {index > 0 ? (
-                    <span aria-hidden="true" className="text-muted-foreground/50">
-                      ·
-                    </span>
-                  ) : null}
-                  <span className={TONE_TEXT_STYLES[window.tone]}>
-                    <span className="opacity-70">{window.label}</span> {window.percentLabel}
-                  </span>
-                </Fragment>
+            <span className="flex shrink-0 items-center gap-1.5 font-medium tabular-nums">
+              {row.windows.map((window) => (
+                <span
+                  key={window.key}
+                  className={`flex items-center gap-1 ${TONE_TEXT_STYLES[window.tone]}`}
+                >
+                  <span className="font-normal opacity-70">{window.label}</span>
+                  <UsageRing usedPercent={window.usedPercent} />
+                  {window.percentLabel}
+                </span>
               ))}
             </span>
           </div>
