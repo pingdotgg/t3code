@@ -3,6 +3,7 @@ import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef } from "@legendapp/list/react";
+import { IMAGE_ONLY_BOOTSTRAP_PROMPT } from "~/lib/userMessage";
 
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
@@ -430,6 +431,197 @@ describe("MessagesTimeline", () => {
     expect(onAnchorReady).toHaveBeenCalledOnce();
     expect(onAnchorReady).toHaveBeenCalledWith(secondEntry.message.id, 1);
     expect(onAnchorSizeChanged).toHaveBeenCalledWith(secondEntry.message.id, 240);
+  });
+
+  it("renders an image-only message without its bootstrap prompt", () => {
+    const imageOnlyEntry = {
+      ...buildUserTimelineEntry(IMAGE_ONLY_BOOTSTRAP_PROMPT),
+      message: {
+        ...buildUserTimelineEntry(IMAGE_ONLY_BOOTSTRAP_PROMPT).message,
+        attachments: [
+          {
+            type: "image" as const,
+            id: "attachment-1",
+            name: "screenshot.png",
+            mimeType: "image/png",
+            sizeBytes: 1,
+            previewUrl: "data:image/png;base64,iVBORw0KGgo=",
+          },
+        ],
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[imageOnlyEntry]} />,
+    );
+
+    expect(markup).toContain('alt="screenshot.png"');
+    expect(markup).toContain('data-user-message-attachments="true"');
+    expect(markup).not.toContain("User attached one or more images");
+    expect(markup).not.toContain('data-user-message-content="true"');
+    expect(markup).not.toContain('data-user-message-body="true"');
+    expect(markup).not.toContain('aria-label="Copy link"');
+  });
+
+  it("renders attachments above a separate text bubble", () => {
+    const captionedImageEntry = {
+      ...buildUserTimelineEntry("Caption for the image."),
+      message: {
+        ...buildUserTimelineEntry("Caption for the image.").message,
+        attachments: [
+          {
+            type: "image" as const,
+            id: "attachment-captioned",
+            name: "captioned.png",
+            mimeType: "image/png",
+            sizeBytes: 1,
+            previewUrl: "data:image/png;base64,iVBORw0KGgo=",
+          },
+        ],
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[captionedImageEntry]} />,
+    );
+    const attachmentsIndex = markup.indexOf('data-user-message-attachments="true"');
+    const contentIndex = markup.indexOf('data-user-message-content="true"');
+
+    expect(attachmentsIndex).toBeGreaterThan(-1);
+    expect(contentIndex).toBeGreaterThan(attachmentsIndex);
+    expect(markup).toContain("Caption for the image.");
+    expect(markup).toContain("grid-cols-1");
+  });
+
+  it("preserves a user caption that matches the readable bootstrap instruction", () => {
+    const caption =
+      "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
+    const captionedImageEntry = {
+      ...buildUserTimelineEntry(caption),
+      message: {
+        ...buildUserTimelineEntry(caption).message,
+        attachments: [
+          {
+            type: "image" as const,
+            id: "attachment-caption-collision",
+            name: "captioned.png",
+            mimeType: "image/png",
+            sizeBytes: 1,
+            previewUrl: "data:image/png;base64,iVBORw0KGgo=",
+          },
+        ],
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[captionedImageEntry]} />,
+    );
+
+    expect(markup).toContain("User attached one or more images without additional text");
+    expect(markup).toContain('data-user-message-content="true"');
+  });
+
+  it("collapses larger attachment sets into a four-tile mosaic", () => {
+    const mosaicEntry = {
+      ...buildUserTimelineEntry(IMAGE_ONLY_BOOTSTRAP_PROMPT),
+      message: {
+        ...buildUserTimelineEntry(IMAGE_ONLY_BOOTSTRAP_PROMPT).message,
+        attachments: Array.from({ length: 6 }, (_, index) => ({
+          type: "image" as const,
+          id: `attachment-${index + 1}`,
+          name: `image-${index + 1}.png`,
+          mimeType: "image/png",
+          sizeBytes: 1,
+          previewUrl: `data:image/png;base64,image-${index + 1}`,
+        })),
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[mosaicEntry]} />,
+    );
+
+    expect(markup).toContain('data-user-message-attachments-collapsed="true"');
+    expect(markup).toContain('alt="image-4.png"');
+    expect(markup).not.toContain('alt="image-5.png"');
+    expect(markup).toContain('aria-label="Preview image-4.png and 2 more images"');
+    expect(markup).toContain("aspect-square");
+    expect(markup).toContain("max-w-[360px]");
+    expect(markup).toContain("grid-cols-2");
+    expect(markup).toContain("backdrop-blur-md");
+    expect(markup).toContain(">+2</span>");
+  });
+
+  it("uses a previewable overflow attachment for the collapsed tile", () => {
+    const attachments = Array.from({ length: 6 }, (_, index) => ({
+      type: "image" as const,
+      id: `attachment-${index + 1}`,
+      name: `image-${index + 1}.png`,
+      mimeType: "image/png",
+      sizeBytes: 1,
+      ...(index === 3 ? {} : { previewUrl: `data:image/png;base64,image-${index + 1}` }),
+    }));
+    const mosaicEntry = {
+      ...buildUserTimelineEntry(IMAGE_ONLY_BOOTSTRAP_PROMPT),
+      message: {
+        ...buildUserTimelineEntry(IMAGE_ONLY_BOOTSTRAP_PROMPT).message,
+        attachments,
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[mosaicEntry]} />,
+    );
+
+    expect(markup).toContain('alt="image-5.png"');
+    expect(markup).toContain('aria-label="Preview image-5.png and 2 more images"');
+    expect(markup).toContain(">+2</span>");
+    expect(markup).toContain('data-user-message-attachments-without-previews="true"');
+    expect(markup).toContain("image-4.png");
+  });
+
+  it("shows the collapsed count when no attachments have previews", () => {
+    const attachments = Array.from({ length: 6 }, (_, index) => ({
+      type: "image" as const,
+      id: `attachment-${index + 1}`,
+      name: `image-${index + 1}.png`,
+      mimeType: "image/png",
+      sizeBytes: 1,
+    }));
+    const mosaicEntry = {
+      ...buildUserTimelineEntry(IMAGE_ONLY_BOOTSTRAP_PROMPT),
+      message: {
+        ...buildUserTimelineEntry(IMAGE_ONLY_BOOTSTRAP_PROMPT).message,
+        attachments,
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[mosaicEntry]} />,
+    );
+
+    expect(markup).toContain("image-4.png");
+    expect(markup).toContain(">+2</span>");
+    expect(markup).toContain('data-user-message-attachments-without-previews="true"');
+    expect(markup).toContain("image-5.png, image-6.png");
+  });
+
+  it("uses one large square and two stacked squares for three attachments", () => {
+    const threeImageEntry = {
+      ...buildUserTimelineEntry(IMAGE_ONLY_BOOTSTRAP_PROMPT),
+      message: {
+        ...buildUserTimelineEntry(IMAGE_ONLY_BOOTSTRAP_PROMPT).message,
+        attachments: Array.from({ length: 3 }, (_, index) => ({
+          type: "image" as const,
+          id: `attachment-${index + 1}`,
+          name: `image-${index + 1}.png`,
+          mimeType: "image/png",
+          sizeBytes: 1,
+          previewUrl: `data:image/png;base64,image-${index + 1}`,
+        })),
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[threeImageEntry]} />,
+    );
+
+    expect(markup).toContain("aspect-[3/2]");
+    expect(markup).toContain("grid-cols-[2fr_1fr]");
+    expect(markup).toContain("row-span-2");
   });
 
   it("renders collapse controls for long user messages", () => {
