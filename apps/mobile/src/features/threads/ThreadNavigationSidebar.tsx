@@ -55,8 +55,10 @@ import { buildHomeProjectScopes, buildHomeThreadGroups } from "../home/homeThrea
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
-import { WorkspaceConnectionStatus } from "../home/WorkspaceConnectionStatus";
-import { shouldShowWorkspaceConnectionStatus } from "../home/workspace-connection-status";
+import {
+  getConnectionAwareBrandHeaderOptions,
+  WorkspaceConnectionTitle,
+} from "../home/WorkspaceConnectionTitle";
 import { SidebarHeaderActions } from "./sidebar-header-actions";
 import { SidebarFilterButton } from "./sidebar-filter-button";
 import { createSidebarHeaderItems } from "./sidebar-native-header-items";
@@ -600,7 +602,6 @@ function ThreadNavigationSidebarPane(
     threadListV2Enabled,
     threadListV2Layout,
   ]);
-  const showsConnectionStatus = shouldShowWorkspaceConnectionStatus(catalogState);
   const listMenuActions = useMemo<MenuAction[]>(
     () => [
       {
@@ -1153,6 +1154,13 @@ function ThreadNavigationSidebarPane(
         <NativeStackScreenOptions
           optionsVersion={nativeHeaderItems}
           options={{
+            // Re-applies the shell's static brand slot with the
+            // connection-status swap so reconnects surface in the header
+            // instead of shifting the list.
+            ...getConnectionAwareBrandHeaderOptions({
+              onOpenEnvironments: props.onOpenEnvironmentSettings,
+              fallbackTitleStyle: { fontSize: 18, fontWeight: "800" },
+            }),
             headerSearchBarOptions: {
               ref: searchBarRef,
               autoCapitalize: "none",
@@ -1203,17 +1211,6 @@ function ThreadNavigationSidebarPane(
                 scrollEventThrottle={16}
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
-                ListHeaderComponent={
-                  showsConnectionStatus ? (
-                    <View className="px-1.5 pt-0.5 pb-2">
-                      <WorkspaceConnectionStatus
-                        onPress={props.onOpenEnvironmentSettings}
-                        state={catalogState}
-                        variant="sidebar"
-                      />
-                    </View>
-                  ) : null
-                }
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>
@@ -1304,9 +1301,19 @@ function ThreadNavigationSidebarPane(
           </Svg>
         </View>
         <View className="h-[50px] flex-row items-end gap-0.5 pr-2 pl-5">
-          <Text className="flex-1 text-[34px] font-t3-bold text-foreground" numberOfLines={1}>
-            Threads
-          </Text>
+          {/* Title slot doubles as the connection status surface: while an
+              environment reconnects, "Threads" fades to a status label in
+              place (no layout shift in the list below). */}
+          <WorkspaceConnectionTitle
+            grow
+            onPress={props.onOpenEnvironmentSettings}
+            size="pageTitle"
+            brand={
+              <Text className="flex-1 text-[34px] font-t3-bold text-foreground" numberOfLines={1}>
+                Threads
+              </Text>
+            }
+          />
           <SidebarHeaderButtonGroup colorScheme={colorScheme}>
             <ControlPillMenu actions={listMenuActions} onPressAction={handleListMenuAction}>
               <SidebarFilterButton
@@ -1335,16 +1342,6 @@ function ThreadNavigationSidebarPane(
             value={props.searchQuery}
           />
         </View>
-
-        {showsConnectionStatus ? (
-          <View className="px-3.5 pt-2.5">
-            <WorkspaceConnectionStatus
-              onPress={props.onOpenEnvironmentSettings}
-              state={catalogState}
-              variant="sidebar"
-            />
-          </View>
-        ) : null}
       </View>
     </View>
   );
