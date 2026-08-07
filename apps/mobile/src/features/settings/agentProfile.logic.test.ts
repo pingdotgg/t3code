@@ -45,6 +45,11 @@ describe("mobile agent profile editor", () => {
       ),
     ).toThrow("Maximum runs is required.");
   });
+  it("reports schema-only invalid profile fields readably", () => {
+    expect(() =>
+      buildAgentProfileDocument({ ...draftFromProfile(), runtimeMode: "invalid" as "auto" }, null),
+    ).toThrow("Profile settings contain an invalid value.");
+  });
 
   it("requires the loaded revision before saving an existing profile", () => {
     const profile = buildAgentProfileDocument(

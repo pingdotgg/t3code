@@ -64,6 +64,11 @@ describe("mobile agent rule editor", () => {
       ),
     ).toThrow();
   });
+  it("reports schema-only invalid rule fields readably", () => {
+    expect(() =>
+      buildAgentRuleDocument({ ...draftFromRule(), scope: "invalid" as "environment" }, null),
+    ).toThrow("Rule settings contain an invalid value.");
+  });
 
   it("requires the loaded revision before saving an existing rule", () => {
     const rule = buildAgentRuleDocument({ ...draftFromRule(), id: "tests", name: "Tests" }, null);

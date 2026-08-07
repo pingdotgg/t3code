@@ -29,6 +29,19 @@ describe("agent rule settings model", () => {
       ),
     ).toThrow("Priority is required.");
   });
+  it("rejects priorities outside the supported range", () => {
+    expect(() => buildAgentRuleDocument({ ...draftFromRule(), priority: "101" }, null)).toThrow(
+      "Priority must be a whole number from -100 to 100.",
+    );
+    expect(() => buildAgentRuleDocument({ ...draftFromRule(), priority: "-101" }, null)).toThrow(
+      "Priority must be a whole number from -100 to 100.",
+    );
+  });
+  it("reports schema-only invalid rule fields readably", () => {
+    expect(() =>
+      buildAgentRuleDocument({ ...draftFromRule(), scope: "invalid" as "environment" }, null),
+    ).toThrow("Rule settings contain an invalid value.");
+  });
   it("parses target profiles and preserves revisions", () => {
     const baseline = buildAgentRuleDocument(
       { ...draftFromRule(), id: "typescript", name: "Old" },

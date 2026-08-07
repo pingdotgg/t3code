@@ -11,7 +11,15 @@ import {
 } from "@t3tools/contracts";
 import { formatAgentRuleGlobs, parseAgentRuleGlobs } from "@t3tools/shared/agentRuleGlobs";
 
-const decodeAgentRuleDocument = Schema.decodeUnknownSync(AgentRuleDocumentSchema);
+const decodeAgentRuleDocumentSchema = Schema.decodeUnknownSync(AgentRuleDocumentSchema);
+
+function decodeAgentRuleDocument(input: unknown): AgentRuleDocument {
+  try {
+    return decodeAgentRuleDocumentSchema(input);
+  } catch {
+    throw new Error("Rule settings contain an invalid value.");
+  }
+}
 const decodeAgentProfileLocators = Schema.decodeUnknownSync(
   Schema.Array(AgentProfileLocatorSchema),
 );
@@ -59,6 +67,9 @@ export function buildAgentRuleDocument(
   if (draft.priority.trim().length === 0) throw new Error("Priority is required.");
   const priority = Number(draft.priority);
   if (!Number.isInteger(priority)) throw new Error("Priority must be a whole number.");
+  if (priority < -100 || priority > 100) {
+    throw new Error("Priority must be a whole number from -100 to 100.");
+  }
   return decodeAgentRuleDocument({
     id: draft.id.trim(),
     scope: draft.scope,

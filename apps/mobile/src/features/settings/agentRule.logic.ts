@@ -10,10 +10,18 @@ import { formatAgentRuleGlobs, parseAgentRuleGlobs } from "@t3tools/shared/agent
 
 import { parseRequiredNumber } from "./agentSettings.logic";
 
-const decodeAgentRuleDocument = Schema.decodeUnknownSync(AgentRuleDocumentSchema);
+const decodeAgentRuleDocumentSchema = Schema.decodeUnknownSync(AgentRuleDocumentSchema);
 const decodeAgentProfileLocators = Schema.decodeUnknownSync(
   Schema.Array(AgentProfileLocatorSchema),
 );
+
+function decodeAgentRuleDocument(input: unknown): AgentRuleDocument {
+  try {
+    return decodeAgentRuleDocumentSchema(input);
+  } catch {
+    throw new Error("Rule settings contain an invalid value.");
+  }
+}
 
 export type AgentRuleDraft = {
   readonly id: string;

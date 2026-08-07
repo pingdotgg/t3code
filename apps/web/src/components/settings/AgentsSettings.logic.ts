@@ -66,7 +66,15 @@ const decodeAgentProfileLocators = Schema.decodeUnknownSync(
 );
 const decodeAgentHooks = Schema.decodeUnknownSync(Schema.Array(AgentHookSchema));
 const decodeAgentRuleRefs = Schema.decodeUnknownSync(Schema.Array(AgentRuleRefSchema));
-const decodeAgentProfileDocument = Schema.decodeUnknownSync(AgentProfileDocumentSchema);
+const decodeAgentProfileDocumentSchema = Schema.decodeUnknownSync(AgentProfileDocumentSchema);
+
+function decodeAgentProfileDocument(input: unknown): AgentProfileDocument {
+  try {
+    return decodeAgentProfileDocumentSchema(input);
+  } catch {
+    throw new Error("Profile settings contain an invalid value.");
+  }
+}
 
 function jsonValue(value: unknown): string {
   return JSON.stringify(value, null, 2) ?? "null";

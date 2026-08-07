@@ -8,7 +8,15 @@ import {
 
 import { parseRequiredNumber } from "./agentSettings.logic";
 
-const decodeAgentProfileDocument = Schema.decodeUnknownSync(AgentProfileDocumentSchema);
+const decodeAgentProfileDocumentSchema = Schema.decodeUnknownSync(AgentProfileDocumentSchema);
+
+function decodeAgentProfileDocument(input: unknown): AgentProfileDocument {
+  try {
+    return decodeAgentProfileDocumentSchema(input);
+  } catch {
+    throw new Error("Profile settings contain an invalid value.");
+  }
+}
 
 export type AgentProfileDraft = {
   readonly id: string;
