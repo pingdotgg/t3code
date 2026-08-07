@@ -178,9 +178,6 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   // from the session config. Gates loadOlderTurns so a reconnect to a
   // pre-pagination server never sends unsupported window parameters.
   const paginationSupported = yield* Ref.make(false);
-  // Revert-triggered window refreshes, drained on a dedicated fiber; sliding
-  // so back-to-back reverts coalesce into one refresh.
-  const windowRefreshRequests = yield* Queue.sliding<void>(1);
   const persistence = yield* Queue.sliding<OrchestrationThreadDetailSnapshot>(1);
 
   const persist = Effect.fn("EnvironmentThreadState.persist")(function* (
@@ -309,10 +306,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     );
   });
 
-  // Body of applyItem, running under applyLock. Split out so
-  // refreshWindowedSnapshot can perform its staleness check and the snapshot
-  // application inside ONE lock acquisition (the check is worthless if an
-  // event can slip in between it and the apply).
+  // Body of applyItem, running under applyLock.
   const applyItemLocked = Effect.fn("EnvironmentThreadState.applyItemLocked")(function* (
     item: OrchestrationThreadStreamItem,
   ) {
@@ -353,21 +347,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     if (item.event.type === "thread.reverted") {
       // A revert rewrites loaded history (whole turns disappear), so an
       // older-page fetch in flight may straddle the removed range; the epoch
-      // bump discards it. Server-side, the revert also rewrites
-      // projection_turns row ids, which invalidates the stored page cursor:
-      // on a windowed thread with more to load, request a fresh cursor. Runs
-      // on a separate fiber (the drain loop below) because the refresh needs
-      // this lock. Skipped when hasMore is false — there is no cursor to
-      // re-mint, and the refresh would discard already-merged older pages
-      // for nothing (review finding).
+      // bump discards it. The stored page cursor stays valid: cursors are an
+      // (anchor, turnId) keyset derived from event content, which survives
+      // the revert projector's row rewrite, so no refresh is needed — the
+      // revert reducer's turn filtering fully handles loaded history.
       yield* Ref.update(historyEpoch, (epoch) => epoch + 1);
-      const needsCursorRefresh = Option.match(current.page, {
-        onNone: () => false,
-        onSome: (page) => page.hasMore,
-      });
-      if (needsCursorRefresh) {
-        Queue.offerUnsafe(windowRefreshRequests, undefined);
-      }
     }
     const result = applyThreadDetailEvent(current.data.value, item.event);
     if (result.kind === "updated") {
@@ -382,47 +366,6 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   ) {
     yield* applyLock.withPermits(1)(applyItemLocked(item));
   });
-
-  // Replaces the loaded window with a fresh one from the server, minting a
-  // valid cursor after a revert invalidated the stored one
-  // (revert-stale-cursor review finding).
-  const refreshWindowedSnapshot = Effect.fn("EnvironmentThreadState.refreshWindowedSnapshot")(
-    function* () {
-      if (!(yield* Ref.get(paginationSupported))) {
-        return;
-      }
-      const prepared = Option.getOrNull(yield* SubscriptionRef.get(supervisor.prepared));
-      if (prepared === null) {
-        return;
-      }
-      const snapshot = yield* snapshotLoader.load(prepared, threadId, {
-        turnLimit: INITIAL_THREAD_USER_TURN_LIMIT,
-      });
-      if (Option.isNone(snapshot)) {
-        return;
-      }
-      // Staleness check and snapshot application share one lock acquisition:
-      // checked outside it, a live event could advance lastSequence between
-      // check and apply, and the refresh would regress the watermark and
-      // swallow that event (review finding). Inside the lock, a snapshot
-      // read from a projection behind the loaded state is dropped — it would
-      // resurrect the just-reverted turns with no event left to remove them.
-      yield* applyLock.withPermits(1)(
-        Effect.gen(function* () {
-          const loadedSequence = yield* SubscriptionRef.get(lastSequence);
-          if (snapshot.value.snapshotSequence < loadedSequence) {
-            return;
-          }
-          yield* applyItemLocked({ kind: "snapshot", snapshot: snapshot.value });
-        }),
-      );
-    },
-  );
-
-  yield* Stream.fromQueue(windowRefreshRequests).pipe(
-    Stream.runForEach(() => refreshWindowedSnapshot()),
-    Effect.forkScoped,
-  );
 
   // Merges an older disjoint page below the currently loaded window. All four
   // windowed collections prepend; identity dedupe guards the (server-bug or

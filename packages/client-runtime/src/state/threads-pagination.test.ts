@@ -133,8 +133,6 @@ type LoaderResponse = Option.Option<OrchestrationThreadDetailSnapshot>;
 const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (options?: {
   readonly paginationCapability?: boolean;
   readonly initialResponse?: LoaderResponse;
-  /** Responses for windowed no-cursor loads after the first (revert refresh). */
-  readonly refreshResponses?: ReadonlyArray<LoaderResponse>;
   /** Cached snapshot returned by the cache store (simulates a warm cache). */
   readonly cached?: OrchestrationThreadDetailSnapshot;
 }) {
@@ -168,19 +166,13 @@ const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (opt
   const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(
     Option.some(PREPARED),
   );
-  const noCursorLoadCount = yield* Ref.make(0);
   const snapshotLoader = ThreadSnapshotLoader.of({
     load: (_prepared, _threadId, window) =>
       Ref.update(loaderWindows, (current) => [...current, window]).pipe(
         Effect.andThen(
           window?.beforeCursor === undefined
-            ? Ref.updateAndGet(noCursorLoadCount, (count) => count + 1).pipe(
-                Effect.map((count) =>
-                  count === 1
-                    ? (options?.initialResponse ?? Option.none<OrchestrationThreadDetailSnapshot>())
-                    : (options?.refreshResponses?.[count - 2] ??
-                      Option.none<OrchestrationThreadDetailSnapshot>()),
-                ),
+            ? Effect.succeed(
+                options?.initialResponse ?? Option.none<OrchestrationThreadDetailSnapshot>(),
               )
             : Deferred.make<LoaderResponse>().pipe(
                 Effect.tap((deferred) => Queue.offer(pendingPageResponses, deferred)),
@@ -434,93 +426,22 @@ describe("thread pagination state", () => {
     }),
   );
 
-  it.effect("refreshes the window after a revert so the cursor stays valid", () =>
+  it.effect("a revert keeps the page cursor and triggers no refresh fetch", () =>
     Effect.gen(function* () {
-      // Server-side, a revert rewrites projection_turns row ids, so the
-      // stored cursor points below every surviving row and older history
-      // becomes unreachable. The machine must re-fetch a fresh window.
-      const refreshed: OrchestrationThreadDetailSnapshot = {
-        snapshotSequence: 11,
-        thread: { ...BASE_THREAD, title: "Refreshed after revert" },
-        page: { beforeCursor: "cursor-fresh", hasMore: true, snapshotSequence: 11 },
-      };
-      const harness = yield* makeHarness({
-        initialResponse: Option.some(WINDOWED_SNAPSHOT),
-        refreshResponses: [Option.some(refreshed)],
-      });
-      yield* harness.awaitState((value) => Option.isSome(value.page));
-
-      yield* Queue.offer(harness.inputs, revertEvent(11));
-
-      const state = yield* harness.awaitState((value) =>
-        Option.match(value.page, {
-          onNone: () => false,
-          onSome: (page) => page.beforeCursor === "cursor-fresh",
-        }),
-      );
-      expect(Option.getOrThrow(state.data).title).toBe("Refreshed after revert");
-    }),
-  );
-
-  it.effect("does not refresh after a revert when the window is fully loaded", () =>
-    Effect.gen(function* () {
-      // With hasMore=false there is no cursor to re-mint, and a refresh would
-      // throw away already-merged older pages to fix nothing: the revert
-      // reducer's own filtering is sufficient.
-      const fullyLoaded: OrchestrationThreadDetailSnapshot = {
-        snapshotSequence: 10,
-        thread: {
-          ...BASE_THREAD,
-          messages: [OLDER_MESSAGE, RECENT_MESSAGE],
-          checkpoints: [checkpoint("turn-1", 1), checkpoint("turn-2", 2)],
-        },
-        page: { beforeCursor: null, hasMore: false, snapshotSequence: 10 },
-      };
-      const harness = yield* makeHarness({ initialResponse: Option.some(fullyLoaded) });
+      // Cursors are an (anchor, turnId) keyset derived from event content, so
+      // they survive the revert projector's row rewrite: the machine keeps
+      // the stored cursor and performs no snapshot re-fetch. The revert
+      // reducer's turn filtering alone handles loaded history.
+      const harness = yield* makeHarness({ initialResponse: Option.some(WINDOWED_SNAPSHOT) });
       yield* harness.awaitState((value) => Option.isSome(value.page));
 
       yield* Queue.offer(harness.inputs, revertEvent(11));
       const state = yield* harness.awaitState((value) => !hasMessage(value, "message-recent"));
 
-      // The revert reducer kept turn-1's history; no refresh replaced it.
-      expect(hasMessage(state, "message-old")).toBe(true);
+      expect(Option.getOrThrow(state.page).beforeCursor).toBe("cursor-1");
       const windows = yield* Ref.get(harness.loaderWindows);
       // Only the initial load hit the loader — no post-revert refresh fetch.
       expect(windows.length).toBe(1);
-    }),
-  );
-
-  it.effect("a revert refresh read from a stale projection is dropped", () =>
-    Effect.gen(function* () {
-      // The refresh snapshot must not resurrect the just-reverted turns: a
-      // response behind the loaded sequence is discarded, keeping the
-      // (revert-reduced) loaded state.
-      const staleRefresh: OrchestrationThreadDetailSnapshot = {
-        snapshotSequence: 5,
-        thread: { ...BASE_THREAD, title: "Stale refresh" },
-        page: { beforeCursor: "cursor-stale", hasMore: true, snapshotSequence: 5 },
-      };
-      const harness = yield* makeHarness({
-        initialResponse: Option.some(WINDOWED_SNAPSHOT),
-        refreshResponses: [Option.some(staleRefresh)],
-      });
-      yield* harness.awaitState((value) => Option.isSome(value.page));
-
-      yield* Queue.offer(harness.inputs, revertEvent(11));
-      const afterRevert = yield* harness.awaitState(
-        (value) => !hasMessage(value, "message-recent"),
-      );
-
-      // The stale refresh is dropped silently: give its fiber a beat, then
-      // confirm no state emission adopted the stale snapshot. A live event
-      // flushes through the same lock the refresh would need, proving order.
-      yield* Queue.offer(harness.inputs, {
-        kind: "synchronized",
-      } satisfies OrchestrationThreadStreamItem);
-      const settled = yield* harness.awaitState((value) => value.status === "live");
-      expect(Option.getOrThrow(afterRevert.data).title).not.toBe("Stale refresh");
-      expect(Option.getOrThrow(settled.data).title).not.toBe("Stale refresh");
-      expect(Option.getOrThrow(settled.page).beforeCursor).not.toBe("cursor-stale");
     }),
   );
 

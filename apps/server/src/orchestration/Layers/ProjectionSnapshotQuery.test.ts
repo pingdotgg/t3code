@@ -2101,6 +2101,62 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
     }),
   );
 
+  it.effect("cursors survive a projection rewrite that reassigns turn row ids", () =>
+    Effect.gen(function* () {
+      // The revert projector (and any projection rebuild) deletes and
+      // re-upserts projection_turns, assigning fresh autoincrement row ids.
+      // The keyset cursor is derived from event content, so a page cursor
+      // minted before the rewrite must keep working after it.
+      yield* seedFanOutThread();
+      const sql = yield* SqlClient.SqlClient;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+      const firstPage = yield* snapshotQuery.getThreadDetailSnapshot(threadW, { turnLimit: 2 });
+      assert.equal(firstPage._tag, "Some");
+      if (firstPage._tag !== "Some") return;
+      const cursor = firstPage.value.page?.beforeCursor;
+      assert.notEqual(cursor, null);
+      if (cursor === null || cursor === undefined) return;
+
+      // Simulate the rewrite: delete and re-insert every turn row with the
+      // same content, which reassigns all row ids.
+      const turnRows = yield* sql`
+        SELECT thread_id, turn_id, pending_message_id, state, requested_at, started_at,
+          completed_at, checkpoint_files_json
+        FROM projection_turns WHERE thread_id = 'thread-w' ORDER BY row_id
+      `;
+      yield* sql`DELETE FROM projection_turns WHERE thread_id = 'thread-w'`;
+      for (const row of turnRows) {
+        yield* sql`
+          INSERT INTO projection_turns (
+            thread_id, turn_id, pending_message_id, state, requested_at, started_at,
+            completed_at, checkpoint_files_json
+          )
+          VALUES (${row.thread_id as string}, ${row.turn_id as string},
+            ${row.pending_message_id as string | null}, ${row.state as string},
+            ${row.requested_at as string}, ${row.started_at as string},
+            ${row.completed_at as string}, ${row.checkpoint_files_json as string})
+        `;
+      }
+
+      const olderPage = yield* snapshotQuery.getThreadDetailSnapshot(threadW, {
+        turnLimit: 1,
+        beforeCursor: cursor,
+      });
+      assert.equal(olderPage._tag, "Some");
+      if (olderPage._tag === "Some") {
+        // Identical older slice to what the pre-rewrite cursor would return.
+        assert.deepEqual(messageIds(olderPage.value), [
+          "turn-1-reply",
+          "turn-2-reply",
+          "turn-3-reply",
+          "user-msg-1",
+        ]);
+        assert.equal(olderPage.value.page?.hasMore, false);
+      }
+    }),
+  );
+
   it.effect("beforeCursor returns the disjoint adjacent older slice", () =>
     Effect.gen(function* () {
       yield* seedFanOutThread();
@@ -2150,8 +2206,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
 
       const foreign = encodeThreadDetailPageCursor({
         threadId: ThreadId.make("thread-other"),
-        beforeRowId: 2,
-        beforeRequestedAt: "2026-03-01T00:01:00.000Z",
+        beforeAnchorAt: "2026-03-01T00:01:00.000Z",
+        beforeTurnId: "turn-2",
       });
       const snapshot = yield* snapshotQuery.getThreadDetailSnapshot(threadW, {
         turnLimit: 2,
