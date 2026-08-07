@@ -206,7 +206,11 @@ it.effect("publishes inventory invalidation immediately after Git creates a work
       createWorktree: (input) =>
         driver
           .createWorktree(input)
-          .pipe(Effect.tap(() => fs.remove(input.path, { recursive: true, force: true }))),
+          .pipe(
+            Effect.tap((result) =>
+              fs.remove(result.worktree.path, { recursive: true, force: true }).pipe(Effect.orDie),
+            ),
+          ),
     });
     const projectLayer = Layer.mock(ProjectService.ProjectService)({
       snapshot: Effect.succeed({
