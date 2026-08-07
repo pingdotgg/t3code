@@ -80,6 +80,9 @@ export function useThreadActionMenu(input: {
   const handleNewThread = useNewThreadHandler();
   const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
+  const autoSettleCompletedChangeRequests = useClientSettings(
+    (s) => s.sidebarAutoSettleCompletedChangeRequests,
+  );
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
@@ -126,6 +129,7 @@ export function useThreadActionMenu(input: {
               // parked-thread banner within the same minute.
               now: `${now.toISOString().slice(0, 16)}:00.000Z`,
               autoSettleAfterDays,
+              autoSettleCompletedChangeRequests,
               changeRequestState,
             }),
           isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
@@ -274,6 +278,7 @@ export function useThreadActionMenu(input: {
     },
     [
       autoSettleAfterDays,
+      autoSettleCompletedChangeRequests,
       changeRequestState,
       confirmThreadDelete,
       copyBranchToClipboard,
