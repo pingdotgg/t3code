@@ -211,6 +211,7 @@ function ThreadNavigationSidebarPane(
     pinThread,
     unpinThread,
     movePinnedThread,
+    renameThread,
   } = useThreadListActions();
   const threadListV2Enabled = useThreadListV2Enabled();
   const pendingTasks = usePendingNewTasks();
@@ -950,6 +951,7 @@ function ThreadNavigationSidebarPane(
               onSelectThread={handleSelectThread}
               onDeleteThread={confirmDeleteThread}
               onArchiveThread={archiveThread}
+              onRenameThread={renameThread}
               settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
               onSettleThread={settleThread}
               snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
@@ -1067,6 +1069,7 @@ function ThreadNavigationSidebarPane(
               fullSwipeWidth={props.width - 20}
               onArchiveThread={archiveThread}
               onDeleteThread={confirmDeleteThread}
+              onRenameThread={renameThread}
               onSelectThread={handleSelectThread}
               onSwipeableClose={handleSwipeableClose}
               onSwipeableWillOpen={handleSwipeableWillOpen}
@@ -1097,6 +1100,7 @@ function ThreadNavigationSidebarPane(
       handleSwipeableWillOpen,
       movePinnedThread,
       openPendingTask,
+      renameThread,
       pinReorderEnvironmentIds,
       pinThread,
       pinningEnvironmentIds,

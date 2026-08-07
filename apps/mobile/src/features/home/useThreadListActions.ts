@@ -6,6 +6,7 @@ import { useCallback, useRef } from "react";
 import { Alert } from "react-native";
 
 import { showConfirmDialog } from "../../components/ConfirmDialogHost";
+import { showRenameThreadDialog } from "../../components/RenameThreadDialogHost";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
 import {
@@ -227,8 +228,12 @@ export function useThreadListActions(): {
     thread: EnvironmentThreadShell,
     direction: "up" | "down",
   ) => Promise<boolean>;
+  readonly renameThread: (thread: EnvironmentThreadShell) => void;
 } {
   const executeAction = useThreadActionExecutor();
+  const updateMetadataMutation = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
   const snoozeMutation = useAtomCommand(threadEnvironment.snooze, { reportFailure: false });
   const unsnoozeMutation = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
   const pinMutation = useAtomCommand(threadEnvironment.pin, { reportFailure: false });
@@ -485,6 +490,33 @@ export function useThreadListActions(): {
     [reorderPinnedMutation],
   );
 
+  const renameThread = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      showRenameThreadDialog({
+        initialValue: thread.title,
+        onSubmit: (title) => {
+          void (async () => {
+            selectionHaptic();
+            const result = await updateMetadataMutation({
+              environmentId: thread.environmentId,
+              input: { threadId: thread.id, title },
+            });
+            if (result._tag === "Failure") {
+              const error = Cause.squash(result.cause);
+              Alert.alert(
+                "Could not rename thread",
+                error instanceof Error && error.message.trim().length > 0
+                  ? error.message
+                  : "The thread could not be renamed.",
+              );
+            }
+          })();
+        },
+      });
+    },
+    [updateMetadataMutation],
+  );
+
   const confirmDeleteThread = useConfirmDeleteThread(executeAction);
 
   return {
@@ -497,6 +529,7 @@ export function useThreadListActions(): {
     pinThread,
     unpinThread,
     movePinnedThread,
+    renameThread,
   };
 }
 
