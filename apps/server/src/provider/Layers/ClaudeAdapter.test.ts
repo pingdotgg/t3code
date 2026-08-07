@@ -1511,7 +1511,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("interruptTurn stops every live task before interrupting the turn", () => {
+  it.effect("interruptTurn settles every acknowledged live task before interrupting", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -1568,11 +1568,28 @@ describe("ClaudeAdapterLive", () => {
 
       yield* Fiber.join(taskEventsFiber);
 
+      const stoppedTaskEventFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "task.completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
       yield* adapter.interruptTurn(session.threadId);
 
       // Only the still-live task is stopped; interrupt always fires after.
       assert.deepEqual(harness.query.stopTaskCalls, ["task-live"]);
       assert.equal(harness.query.interruptCalls.length, 1);
+
+      const stoppedTaskEvents = Array.from(yield* Fiber.join(stoppedTaskEventFiber));
+      assert.equal(stoppedTaskEvents.length, 1);
+      const stoppedTaskEvent = stoppedTaskEvents[0];
+      assert.equal(stoppedTaskEvent?.type, "task.completed");
+      if (stoppedTaskEvent?.type === "task.completed") {
+        assert.equal(String(stoppedTaskEvent.payload.taskId), "task-live");
+        assert.equal(stoppedTaskEvent.payload.status, "stopped");
+        assert.equal(stoppedTaskEvent.payload.taskType, "local_agent");
+        assert.equal(stoppedTaskEvent.payload.title, "Agent A");
+      }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
