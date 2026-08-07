@@ -1,10 +1,12 @@
-import type { DesktopBridge } from "@t3tools/contracts";
+import type { DesktopBridge, DesktopThemePalette } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import {
   applyThemePalette,
   CUSTOM_THEMES_STORAGE_KEY,
+  getThemeColorsForMode,
+  getThemeDefinition,
   invalidateCustomThemes,
   canonicalThemePreference,
   isKnownThemePreference,
@@ -61,6 +63,56 @@ function readStoredThemeHalves(): ThemeHalves | null {
 function themeHalvesSignature(halves: ThemeHalves | null): string {
   return `${halves?.light ?? ""}|${halves?.dark ?? ""}`;
 }
+
+const DEFAULT_DESKTOP_THEME_PALETTES: Readonly<Record<ThemeAppearance, DesktopThemePalette>> = {
+  light: {
+    appearance: "light",
+    background: "#ffffff",
+    foreground: "#262626",
+    accent: "#4f46e5",
+    titlebarSymbol: "#1f2937",
+  },
+  dark: {
+    appearance: "dark",
+    background: "#0a0a0a",
+    foreground: "#f5f5f5",
+    accent: "#818cf8",
+    titlebarSymbol: "#f8fafc",
+  },
+};
+
+function desktopThemePaletteSignature(palette: DesktopThemePalette): string {
+  return `${palette.appearance}|${palette.background}|${palette.foreground}|${palette.accent}|${palette.titlebarSymbol ?? ""}`;
+}
+
+function resolveDesktopThemePalette(
+  theme: Theme,
+  systemDark: boolean,
+  followSystem?: boolean,
+  appearanceMode?: ThemePreferenceMode,
+  halves: ThemeHalves | null = readStoredThemeHalves(),
+): DesktopThemePalette {
+  const appearance = resolveThemeAppearance(
+    theme,
+    systemDark,
+    followSystem,
+    appearanceMode,
+    halves,
+  );
+  const activeTheme = resolveThemeHalf(theme, halves, appearance);
+  const definition = getThemeDefinition(activeTheme);
+  const colors = definition ? getThemeColorsForMode(definition, appearance) : null;
+  if (colors) {
+    return {
+      appearance,
+      background: colors.chrome,
+      foreground: colors.text,
+      accent: colors.accent,
+      titlebarSymbol: colors.toolbarForeground,
+    };
+  }
+  return DEFAULT_DESKTOP_THEME_PALETTES[appearance];
+}
 const THEME_COLOR_META_NAME = "theme-color";
 const DYNAMIC_THEME_COLOR_SELECTOR = `meta[name="${THEME_COLOR_META_NAME}"][data-dynamic-theme-color="true"]`;
 
@@ -97,7 +149,7 @@ export const isDesktopThemeSyncError = Schema.is(DesktopThemeSyncError);
 let listeners: Array<() => void> = [];
 let lastSnapshot: ThemeSnapshot | null = null;
 let snapshotStale = true;
-let lastDesktopTheme: "light" | "dark" | "system" | null = null;
+let lastDesktopThemeSyncKey: string | null = null;
 let lastAppliedTheme: ThemeSnapshot | null = null;
 let themeStorageReadFailure: ThemeStorageError | null = null;
 
@@ -295,7 +347,7 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
     lastAppliedTheme.appearanceMode === appearanceMode &&
     themeHalvesSignature(lastAppliedTheme.themeHalves) === themeHalvesSignature(themeHalves)
   ) {
-    syncDesktopTheme(theme, followSystem, appearanceMode);
+    syncDesktopTheme(theme, followSystem, appearanceMode, systemDark);
     return;
   }
 
@@ -314,7 +366,7 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
   document.documentElement.classList.toggle("dark", isDark);
   lastAppliedTheme = { theme, systemDark, followSystem, appearanceMode, themeHalves };
   syncBrowserChromeTheme();
-  syncDesktopTheme(theme, followSystem, appearanceMode);
+  syncDesktopTheme(theme, followSystem, appearanceMode, systemDark);
   if (suppressTransitions) {
     // Force a reflow so the no-transitions class takes effect before removal
     // oxlint-disable-next-line no-unused-expressions
@@ -331,9 +383,18 @@ export async function syncDesktopThemePreference(
   followSystem?: boolean,
   appearanceMode?: ThemePreferenceMode,
   halves: ThemeHalves | null = readStoredThemeHalves(),
+  systemDark = getSystemDark(),
 ): Promise<void> {
   try {
-    await bridge.setTheme(resolveDesktopTheme(theme, followSystem, appearanceMode, halves));
+    const desktopTheme = resolveDesktopTheme(theme, followSystem, appearanceMode, halves);
+    const palette = resolveDesktopThemePalette(
+      theme,
+      systemDark,
+      followSystem,
+      appearanceMode,
+      halves,
+    );
+    await bridge.setTheme(desktopTheme, palette);
   } catch (cause) {
     throw new DesktopThemeSyncError({ theme, cause });
   }
@@ -343,30 +404,52 @@ export function syncDesktopTheme(
   theme: Theme,
   followSystem?: boolean,
   appearanceMode?: ThemePreferenceMode,
+  systemDark = getSystemDark(),
 ) {
   if (typeof window === "undefined") return;
   const bridge = window.desktopBridge;
   const halves = readStoredThemeHalves();
   const desktopTheme = resolveDesktopTheme(theme, followSystem, appearanceMode, halves);
-  if (!bridge || typeof bridge.setTheme !== "function" || lastDesktopTheme === desktopTheme) {
+  const palette = resolveDesktopThemePalette(
+    theme,
+    systemDark,
+    followSystem,
+    appearanceMode,
+    halves,
+  );
+  const syncKey = JSON.stringify([
+    theme,
+    followSystem ?? theme === "system",
+    appearanceMode ?? "",
+    themeHalvesSignature(halves),
+    systemDark,
+    desktopTheme,
+    desktopThemePaletteSignature(palette),
+  ]);
+  if (!bridge || typeof bridge.setTheme !== "function" || lastDesktopThemeSyncKey === syncKey) {
     return;
   }
 
-  lastDesktopTheme = desktopTheme;
-  void syncDesktopThemePreference(bridge, theme, followSystem, appearanceMode, halves).catch(
-    (cause: unknown) => {
-      const error = isDesktopThemeSyncError(cause)
-        ? cause
-        : new DesktopThemeSyncError({ theme, cause });
-      console.error(error.message, {
-        theme: error.theme,
-        ...safeErrorLogAttributes(error),
-      });
-      if (lastDesktopTheme === desktopTheme) {
-        lastDesktopTheme = null;
-      }
-    },
-  );
+  lastDesktopThemeSyncKey = syncKey;
+  void syncDesktopThemePreference(
+    bridge,
+    theme,
+    followSystem,
+    appearanceMode,
+    halves,
+    systemDark,
+  ).catch((cause: unknown) => {
+    const error = isDesktopThemeSyncError(cause)
+      ? cause
+      : new DesktopThemeSyncError({ theme, cause });
+    console.error(error.message, {
+      theme: error.theme,
+      ...safeErrorLogAttributes(error),
+    });
+    if (lastDesktopThemeSyncKey === syncKey) {
+      lastDesktopThemeSyncKey = null;
+    }
+  });
 }
 
 // Apply immediately on module load to prevent flash
