@@ -184,6 +184,7 @@ public struct ThreadDetailView: View {
                 }
                 .fixedSize(horizontal: true, vertical: false)
             }
+            .padding(.trailing, 10)
             .font(T3Typography.navigationMetadata)
             .foregroundStyle(T3Colors.textTertiary)
         }
@@ -329,6 +330,7 @@ public struct ThreadDetailView: View {
                     activeSubagentCount: detail.activeSubagentCount,
                     backgroundWorkIsActive: detail.backgroundWorkIsActive,
                     isMonitoring: detail.thread.state == .monitoring,
+                    workingStartedAt: detail.thread.workingStartedAt,
                     canLoadEarlier: detail.page?.hasMore == true,
                     isLoadingEarlier: detail.page?.isLoading == true,
                     onLoadEarlier: {
@@ -641,6 +643,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     let activeSubagentCount: Int
     let backgroundWorkIsActive: Bool
     let isMonitoring: Bool
+    let workingStartedAt: Date?
     let canLoadEarlier: Bool
     let isLoadingEarlier: Bool
     let onLoadEarlier: () -> Void
@@ -676,6 +679,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             activeSubagentCount: activeSubagentCount,
             backgroundWorkIsActive: backgroundWorkIsActive,
             isMonitoring: isMonitoring,
+            workingStartedAt: workingStartedAt,
             canLoadEarlier: canLoadEarlier,
             isLoadingEarlier: isLoadingEarlier,
             onLoadEarlier: onLoadEarlier,
@@ -726,6 +730,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var currentActiveSubagentCount = 0
         private var currentBackgroundWorkIsActive = false
         private var currentIsMonitoring = false
+        private var currentWorkingStartedAt: Date?
         private var currentCanLoadEarlier = false
         private var currentIsLoadingEarlier = false
         private var markdownPrefetches: [String: MarkdownPrefetch] = [:]
@@ -756,7 +761,8 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                         FeatureThreadWorkingIndicator(
                             activeSubagentCount: self?.currentActiveSubagentCount ?? 0,
                             backgroundWorkIsActive: self?.currentBackgroundWorkIsActive == true,
-                            isMonitoring: self?.currentIsMonitoring == true
+                            isMonitoring: self?.currentIsMonitoring == true,
+                            startedAt: self?.currentWorkingStartedAt
                         )
                     }
                     .margins(.all, 0)
@@ -800,6 +806,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             activeSubagentCount: Int,
             backgroundWorkIsActive: Bool,
             isMonitoring: Bool,
+            workingStartedAt: Date?,
             canLoadEarlier: Bool,
             isLoadingEarlier: Bool,
             onLoadEarlier: @escaping () -> Void,
@@ -817,10 +824,11 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             let workingDetailChanged = currentActiveSubagentCount != activeSubagentCount
                 || currentBackgroundWorkIsActive != backgroundWorkIsActive
                 || currentIsMonitoring != isMonitoring
+            let workingStartChanged = currentWorkingStartedAt != workingStartedAt
             let loadEarlierChanged = currentCanLoadEarlier != canLoadEarlier
                 || currentIsLoadingEarlier != isLoadingEarlier
             guard threadChanged || typeSizeChanged || revisionChanged || workingChanged
-                || workingDetailChanged || loadEarlierChanged else { return }
+                || workingDetailChanged || workingStartChanged || loadEarlierChanged else { return }
 
             let incremental = !threadChanged
                 ? incrementalState(messages: messages, renderUpdate: renderUpdate)
@@ -838,10 +846,11 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             currentActiveSubagentCount = activeSubagentCount
             currentBackgroundWorkIsActive = backgroundWorkIsActive
             currentIsMonitoring = isMonitoring
+            currentWorkingStartedAt = workingStartedAt
             currentCanLoadEarlier = canLoadEarlier
             currentIsLoadingEarlier = isLoadingEarlier
             guard threadChanged || idsChanged || !changedIDs.isEmpty || workingChanged
-                || workingDetailChanged || loadEarlierChanged else { return }
+                || workingDetailChanged || workingStartChanged || loadEarlierChanged else { return }
 
             if threadChanged {
                 cancelAllMarkdownPrefetches()
@@ -919,7 +928,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                snapshot.indexOfItem(FeatureTranscriptCollectionView.loadEarlierID) != nil {
                 reconfiguredIDs.append(FeatureTranscriptCollectionView.loadEarlierID)
             }
-            if workingDetailChanged,
+            if workingDetailChanged || (workingStartChanged && !workingChanged),
                snapshot.indexOfItem(FeatureTranscriptCollectionView.workingIndicatorID) != nil {
                 reconfiguredIDs.append(FeatureTranscriptCollectionView.workingIndicatorID)
             }
@@ -1205,6 +1214,7 @@ private struct FeatureThreadWorkingIndicator: View {
     let activeSubagentCount: Int
     let backgroundWorkIsActive: Bool
     let isMonitoring: Bool
+    let startedAt: Date?
 
     private var title: String {
         if isMonitoring {
@@ -1224,6 +1234,18 @@ private struct FeatureThreadWorkingIndicator: View {
     }
 
     var body: some View {
+        // The per-second timeline only exists while a start date is known;
+        // without one the row stays static instead of waking every second.
+        if let startedAt {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                content(duration: HomeWorkingDuration.compact(since: startedAt, now: context.date))
+            }
+        } else {
+            content(duration: nil)
+        }
+    }
+
+    private func content(duration: String?) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "circle.dotted")
                 .font(.system(size: 17, weight: .semibold))
@@ -1231,9 +1253,17 @@ private struct FeatureThreadWorkingIndicator: View {
                 .frame(width: 22, height: 22)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(T3Typography.supportingStrong)
-                    .foregroundStyle(T3Colors.statusRunning)
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(T3Typography.supportingStrong)
+                        .foregroundStyle(T3Colors.statusRunning)
+                    if let duration {
+                        Text(duration)
+                            .font(T3Typography.supportingStrong)
+                            .monospacedDigit()
+                            .foregroundStyle(T3Colors.statusRunning)
+                    }
+                }
                 if let detail {
                     Text(detail)
                         .font(T3Typography.supporting)
@@ -1244,7 +1274,12 @@ private struct FeatureThreadWorkingIndicator: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(detail.map { "\(title). \($0)." } ?? "\(title).")
+        .accessibilityLabel(
+            duration.map { duration in
+                detail.map { detail in "\(title) for \(duration). \(detail)." }
+                    ?? "\(title) for \(duration)."
+            } ?? (detail.map { "\(title). \($0)." } ?? "\(title).")
+        )
     }
 }
 
