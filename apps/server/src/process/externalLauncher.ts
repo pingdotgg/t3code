@@ -19,14 +19,17 @@ import {
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
@@ -302,7 +305,20 @@ const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEdit
 // client connect (the server config embeds the available editors). Memoize
 // the discovered set for a bounded window so repeat connects skip even the
 // per-command cache lookups in @t3tools/shared/shell.
-const EDITOR_DISCOVERY_CACHE_TTL = "60 seconds";
+//
+// This deliberately does not use `Effect.cachedWithTTL`: that memoizes the
+// first caller's Exit whatever it is, including an interrupt. Callers run this
+// on the connection fiber under a timeout (`resolveAvailableEditorsForConfig`),
+// so one client disconnecting mid-scan would cache the interrupt and replay it
+// to every later connect for the whole TTL, breaking `server.getConfig`
+// permanently. Storing only on success means an interrupted scan leaves the
+// cache untouched and the next connect simply rescans.
+const EDITOR_DISCOVERY_CACHE_TTL = Duration.seconds(60);
+
+interface EditorDiscoveryCacheEntry {
+  readonly editors: ReadonlyArray<EditorId>;
+  readonly expiresAtMillis: number;
+}
 
 /**
  * ExternalLauncher - Service tag for browser/editor launch operations.
@@ -449,10 +465,25 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
 
-  const cachedAvailableEditors = yield* Effect.cachedWithTTL(
-    provideCommandResolutionServices(resolveAvailableEditors()),
-    EDITOR_DISCOVERY_CACHE_TTL,
+  const editorDiscoveryCache = yield* Ref.make<Option.Option<EditorDiscoveryCacheEntry>>(
+    Option.none(),
   );
+  const cachedAvailableEditors = Effect.gen(function* () {
+    const nowMillis = yield* Clock.currentTimeMillis;
+    const entry = yield* Ref.get(editorDiscoveryCache);
+    if (Option.isSome(entry) && entry.value.expiresAtMillis > nowMillis) {
+      return entry.value.editors;
+    }
+    const editors = yield* provideCommandResolutionServices(resolveAvailableEditors());
+    yield* Ref.set(
+      editorDiscoveryCache,
+      Option.some({
+        editors,
+        expiresAtMillis: nowMillis + Duration.toMillis(EDITOR_DISCOVERY_CACHE_TTL),
+      }),
+    );
+    return editors;
+  });
 
   return ExternalLauncher.of({
     resolveAvailableEditors: () => cachedAvailableEditors,
