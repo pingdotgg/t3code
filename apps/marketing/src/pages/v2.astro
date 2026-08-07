@@ -28,14 +28,16 @@ const endorsementRows = [
   homeVersion="v2"
 >
   <section class="v2-hero">
-    <div class="v2-shell v2-hero-grid">
-      <header class="v2-hero-copy">
-        <p class="v2-kicker">Open-source agent control</p>
-        <h1>Bring the agents.<br />Keep the control.</h1>
-        <p class="v2-lede">
-          Run Claude, Cursor, Codex, Grok, and OpenCode in one fast workspace—using the
-          subscriptions you already have.
-        </p>
+    <div class="v2-shell">
+      <header class="v2-hero-card">
+        <p class="v2-kicker v2-hero-kicker">Open-source agent control</p>
+        <div class="v2-hero-message">
+          <h1>Bring the agents.<br />Keep the control.</h1>
+          <p class="v2-lede">
+            Run Claude, Cursor, Codex, Grok, and OpenCode in one fast workspace—using the
+            subscriptions you already have.
+          </p>
+        </div>
         <div class="v2-actions">
           <div class="v2-download-row">
             <a class="v2-button v2-button--primary" href="/download" data-v2-download>
@@ -59,7 +61,6 @@ const endorsementRows = [
           <a class="v2-button" href="https://github.com/pingdotgg/t3code">View source</a>
         </div>
       </header>
-
     </div>
   </section>
 
@@ -154,7 +155,7 @@ const endorsementRows = [
         Tolerated by over <strong>{MARKETING_STATS.users}</strong> devs
       </h2>
     </div>
-    <div class="v2-endorsement-carousel" aria-label="Developer endorsements">
+    <div class="v2-shell v2-endorsement-carousel" aria-label="Developer endorsements">
       {endorsementRows.map((row, rowIndex) => (
         <div class:list={["v2-endorsement-row", rowIndex === 1 && "is-reverse"]}>
           <div class="v2-endorsement-track">
@@ -301,7 +302,7 @@ const endorsementRows = [
   }
 
   .v2-shell {
-    width: min(100% - 48px, 1440px);
+    width: min(100% - 48px, 1240px);
     margin-inline: auto;
   }
 
@@ -315,19 +316,19 @@ const endorsementRows = [
   }
 
   .v2-hero {
-    min-height: 920px;
-    padding: 142px 0 0;
+    padding: 150px 0 96px;
     border-bottom: 1px solid var(--border);
     overflow: hidden;
   }
 
-  .v2-hero-grid {
-    display: flex;
-    align-items: center;
+  .v2-hero-card {
+    display: grid;
     min-height: 610px;
+    border: 1px solid var(--border-strong);
+    background: #070708;
   }
 
-  .v2-hero-copy h1,
+  .v2-hero-card h1,
   .v2-section-heading h2,
   .v2-connect h2 {
     font-weight: 500;
@@ -335,15 +336,27 @@ const endorsementRows = [
     line-height: 0.98;
   }
 
-  .v2-hero-copy h1 {
-    max-width: 460px;
-    margin-top: 22px;
-    font-size: clamp(48px, 5.4vw, 84px);
+  .v2-hero-kicker {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .v2-hero-message {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(290px, 0.65fr);
+  }
+
+  .v2-hero-card h1 {
+    align-self: end;
+    padding: 58px 42px;
+    font-size: clamp(64px, 7.6vw, 112px);
   }
 
   .v2-lede {
-    max-width: 390px;
-    margin-top: 30px;
+    display: flex;
+    align-items: flex-end;
+    padding: 58px 36px;
+    border-left: 1px solid var(--border);
     color: #8f8f98;
     font-size: 16px;
     line-height: 1.6;
@@ -353,7 +366,8 @@ const endorsementRows = [
     display: flex;
     flex-wrap: wrap;
     gap: 10px;
-    margin-top: 34px;
+    padding: 22px 24px;
+    border-top: 1px solid var(--border);
   }
 
   .v2-download-row {
@@ -504,6 +518,10 @@ const endorsementRows = [
   .v2-surface-tabs button[aria-selected="true"] {
     color: #fff;
     background: #0c0c0e;
+  }
+
+  .v2-surface-tabs button[data-v2-surface="tablet"] {
+    font-weight: 600;
   }
 
   .v2-system-message {
@@ -724,7 +742,7 @@ const endorsementRows = [
     position: absolute;
     inset-block: 0;
     z-index: 2;
-    width: max(48px, calc((100vw - 1440px) / 2 + 56px));
+    width: 56px;
     pointer-events: none;
   }
 
@@ -836,8 +854,25 @@ const endorsementRows = [
     }
 
     .v2-hero {
+      padding: 128px 0 80px;
+    }
+
+    .v2-hero-card {
       min-height: 0;
-      padding-top: 128px;
+    }
+
+    .v2-hero-message {
+      grid-template-columns: 1fr;
+    }
+
+    .v2-hero-card h1 {
+      padding: 48px 28px;
+    }
+
+    .v2-lede {
+      padding: 28px;
+      border-top: 1px solid var(--border);
+      border-left: 0;
     }
 
     .v2-section-heading,
@@ -884,8 +919,12 @@ const endorsementRows = [
       width: min(100% - 32px, 480px);
     }
 
-    .v2-hero-copy h1 {
+    .v2-hero-card h1 {
       font-size: 52px;
+    }
+
+    .v2-actions {
+      padding: 18px;
     }
 
     .v2-download-row {
