@@ -4,6 +4,7 @@ export type SettingsPath =
   | "/settings/keybindings"
   | "/settings/providers"
   | "/settings/source-control"
+  | "/settings/channels"
   | "/settings/connections"
   | "/settings/beta"
   | "/settings/archived";
@@ -25,6 +26,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
   "/settings/source-control": "Source Control",
+  "/settings/channels": "Channels",
   "/settings/connections": "Connections",
   "/settings/beta": "Beta",
   "/settings/archived": "Archive",
@@ -165,6 +167,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "source-control",
     title: "Source control",
     to: "/settings/source-control",
+  },
+  {
+    id: "discord-channel",
+    title: "Discord channel",
+    to: "/settings/channels",
   },
   {
     id: "remote-environments",

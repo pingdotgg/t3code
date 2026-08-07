@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { ProjectId, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import {
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
@@ -534,6 +534,29 @@ export const BackgroundActivitySettings = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 
+export const DiscordChannelSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  projectId: Schema.NullOr(ProjectId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  modelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  threadEnvMode: ThreadEnvMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("worktree" as const satisfies ThreadEnvMode)),
+  ),
+  baseBranch: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed("main"))),
+  branchPrefix: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed("demo/discord"))),
+  applicationId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  guildId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  botToken: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  botTokenRedacted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+export type DiscordChannelSettings = typeof DiscordChannelSettings.Type;
+
+export const ChannelIntegrationSettings = Schema.Struct({
+  discord: DiscordChannelSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type ChannelIntegrationSettings = typeof ChannelIntegrationSettings.Type;
+
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -580,6 +603,7 @@ export const ServerSettings = Schema.Struct({
   sourceControlWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  channelIntegrations: ChannelIntegrationSettings,
 
   // Legacy single-instance-per-driver settings. Continues to be the source
   // of truth until `providerInstances` (below) lands per-driver migration
@@ -723,6 +747,24 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  channelIntegrations: Schema.optionalKey(
+    Schema.Struct({
+      discord: Schema.optionalKey(
+        Schema.Struct({
+          enabled: Schema.optionalKey(Schema.Boolean),
+          projectId: Schema.optionalKey(Schema.NullOr(ProjectId)),
+          modelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+          threadEnvMode: Schema.optionalKey(ThreadEnvMode),
+          baseBranch: Schema.optionalKey(TrimmedString),
+          branchPrefix: Schema.optionalKey(TrimmedString),
+          applicationId: Schema.optionalKey(TrimmedString),
+          guildId: Schema.optionalKey(TrimmedString),
+          botToken: Schema.optionalKey(TrimmedString),
+          botTokenRedacted: Schema.optionalKey(Schema.Boolean),
+        }),
+      ),
+    }),
+  ),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),

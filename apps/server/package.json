@@ -23,6 +23,9 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.170",
+    "@copilotkit/channels-core": "0.7.3",
+    "@copilotkit/channels-discord": "0.7.3",
+    "@copilotkit/channels-ui": "0.7.3",
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/platform-node-shared": "catalog:",
@@ -32,7 +35,8 @@
     "@pierre/diffs": "catalog:",
     "effect": "catalog:",
     "node-pty": "^1.1.0",
-    "yaml": "catalog:"
+    "yaml": "catalog:",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

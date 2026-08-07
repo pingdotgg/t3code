@@ -29,6 +29,7 @@ import { APP_STAGE_LABEL } from "~/branding";
 import { resolveSidebarV2Enabled } from "~/branding.logic";
 import { ensureLocalApi } from "~/localApi";
 import * as Struct from "effect/Struct";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
 import { usePrimaryEnvironment } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -321,6 +322,27 @@ export function useUpdateEnvironmentSettings(environmentId: EnvironmentId) {
 
 export function useUpdatePrimarySettings() {
   return useUpdateSettingsTarget(usePrimaryEnvironment()?.environmentId ?? null);
+}
+
+/** Persist a primary-environment server patch and report when the local write has completed. */
+export function usePersistPrimaryServerSettings() {
+  const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const persistServerSettings = useAtomCommand(
+    serverEnvironment.updateSettings,
+    "server settings update",
+  );
+
+  return useCallback(
+    async (patch: ServerSettingsPatch): Promise<boolean> => {
+      if (environmentId === null) return false;
+      const result = await persistServerSettings({
+        environmentId,
+        input: { patch },
+      });
+      return AsyncResult.isSuccess(result);
+    },
+    [environmentId, persistServerSettings],
+  );
 }
 
 export function useUpdateClientSettings() {

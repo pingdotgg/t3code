@@ -83,6 +83,8 @@ function providerEnvironmentSecretName(input: {
   return `provider-env-${Buffer.from(input.instanceId, "utf8").toString("base64url")}-${Buffer.from(input.name, "utf8").toString("base64url")}`;
 }
 
+const DISCORD_BOT_TOKEN_SECRET_NAME = "channel-discord-bot-token";
+
 function redactProviderEnvironmentVariable(
   variable: ProviderInstanceEnvironmentVariable,
 ): ProviderInstanceEnvironmentVariable {
@@ -109,7 +111,19 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
         : instance,
     ]),
   );
-  return { ...settings, providerInstances };
+  const discord = settings.channelIntegrations.discord;
+  return {
+    ...settings,
+    providerInstances,
+    channelIntegrations: {
+      ...settings.channelIntegrations,
+      discord: {
+        ...discord,
+        botToken: "",
+        botTokenRedacted: discord.botToken.length > 0 || discord.botTokenRedacted,
+      },
+    },
+  };
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -214,6 +228,7 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "providerHealthRefreshInterval",
   "sourceControlWriterModelSelection",
   "textGenerationModelSelection",
+  "channelIntegrations",
 ]);
 
 function stripDefaultServerSettings(current: unknown, defaults: unknown): unknown | undefined {
@@ -358,10 +373,46 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const materializeChannelSecrets = (
+    settings: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      const discord = settings.channelIntegrations.discord;
+      const readSecret = (name: string) =>
+        secretStore.get(name).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServerSettingsError({
+                settingsPath,
+                operation: "read-secret",
+                cause,
+              }),
+          ),
+          Effect.map(Option.map((value) => textDecoder.decode(value))),
+          Effect.map(Option.getOrElse(() => "")),
+        );
+      const botToken = discord.botTokenRedacted
+        ? yield* readSecret(DISCORD_BOT_TOKEN_SECRET_NAME)
+        : discord.botToken;
+      return {
+        ...settings,
+        channelIntegrations: {
+          ...settings.channelIntegrations,
+          discord: {
+            ...discord,
+            botToken,
+          },
+        },
+      };
+    });
+
+  const materializeServerSecrets = (settings: ServerSettings) =>
+    materializeProviderEnvironmentSecrets(settings).pipe(Effect.flatMap(materializeChannelSecrets));
+
   const materializeChanges = (changes: Stream.Stream<ServerSettings>) =>
     changes.pipe(
       Stream.mapEffect((settings) =>
-        materializeProviderEnvironmentSecrets(settings).pipe(
+        materializeServerSecrets(settings).pipe(
           Effect.catch((error: ServerSettingsError) =>
             Effect.logWarning("failed to materialize provider environment secrets", {
               operation: error.operation,
@@ -476,6 +527,62 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const persistChannelSecrets = (
+    next: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      const discord = next.channelIntegrations.discord;
+      const persistSecret = Effect.fn("ServerSettings.persistChannelSecret")(function* (input: {
+        readonly name: string;
+        readonly value: string;
+        readonly redacted: boolean;
+      }) {
+        if (input.redacted) {
+          return { value: "", redacted: true } as const;
+        }
+        if (input.value.length === 0) {
+          yield* secretStore.remove(input.name).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  operation: "remove-secret",
+                  cause,
+                }),
+            ),
+          );
+          return { value: "", redacted: false } as const;
+        }
+        yield* secretStore.set(input.name, textEncoder.encode(input.value)).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServerSettingsError({
+                settingsPath,
+                operation: "write-secret",
+                cause,
+              }),
+          ),
+        );
+        return { value: "", redacted: true } as const;
+      });
+      const botToken = yield* persistSecret({
+        name: DISCORD_BOT_TOKEN_SECRET_NAME,
+        value: discord.botToken,
+        redacted: discord.botTokenRedacted,
+      });
+      return {
+        ...next,
+        channelIntegrations: {
+          ...next.channelIntegrations,
+          discord: {
+            ...discord,
+            botToken: botToken.value,
+            botTokenRedacted: botToken.redacted,
+          },
+        },
+      };
+    });
+
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
       const sparseSettingsJson = yield* encodeServerSettingsJson(
@@ -572,22 +679,23 @@ const make = Effect.gen(function* () {
     start,
     ready: Deferred.await(startedDeferred),
     getSettings: getSettingsFromCache.pipe(
-      Effect.flatMap(materializeProviderEnvironmentSecrets),
+      Effect.flatMap(materializeServerSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
     updateSettings: (patch) =>
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* getSettingsFromCache;
-          const nextPersisted = yield* persistProviderEnvironmentSecrets(
+          const nextProviderSecretsPersisted = yield* persistProviderEnvironmentSecrets(
             current,
             applyServerSettingsPatch(current, patch),
           );
+          const nextPersisted = yield* persistChannelSecrets(nextProviderSecretsPersisted);
           const next = yield* normalizeServerSettings(nextPersisted);
           yield* writeSettingsAtomically(next);
           yield* Cache.set(settingsCache, cacheKey, next);
           yield* emitChange(next);
-          const materialized = yield* materializeProviderEnvironmentSecrets(next);
+          const materialized = yield* materializeServerSecrets(next);
           return resolveTextGenerationProvider(materialized);
         }),
       ),

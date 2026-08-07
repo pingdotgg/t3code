@@ -65,6 +65,7 @@ import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolve
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
+import * as T3CodeDiscordChannel from "./channels/T3CodeDiscordChannel.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
@@ -406,7 +407,11 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   ),
 );
 
-const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
+const RuntimeCoreWithChannelsLive = T3CodeDiscordChannel.layer.pipe(
+  Layer.provideMerge(RuntimeCoreDependenciesLive),
+);
+
+const RuntimeDependenciesLive = RuntimeCoreWithChannelsLive.pipe(
   // Misc.
   Layer.provideMerge(BackgroundLayerLive),
   Layer.provideMerge(ResourceDiagnosticsLayerLive),
