@@ -2521,11 +2521,27 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         },
         () =>
           pictureInPictureSession.window.loadURL(
-            buildPreviewPictureInPictureDataUrl(
-              themePalette.background,
-              themePalette.appearance,
-            ),
+            buildPreviewPictureInPictureDataUrl(themePalette.background, themePalette.appearance),
           ),
+      );
+      const themePaletteAfterLoad = yield* Ref.get(themePaletteRef);
+      yield* attempt(
+        {
+          operation: "pictureInPicture.resendThemeAfterLoad",
+          tabId,
+          webContentsId: pictureInPictureSession.webContentsId,
+        },
+        () => {
+          if (pictureInPictureSession.window.isDestroyed()) return;
+          pictureInPictureSession.window.setBackgroundColor(themePaletteAfterLoad.background);
+          pictureInPictureSession.window.webContents.send(
+            PREVIEW_PICTURE_IN_PICTURE_THEME_CHANNEL,
+            {
+              appearance: themePaletteAfterLoad.appearance,
+              background: themePaletteAfterLoad.background,
+            },
+          );
+        },
       );
       const currentWebContents = yield* requireWebContents(tabId);
       if (

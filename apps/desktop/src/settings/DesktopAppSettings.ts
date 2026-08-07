@@ -1,8 +1,10 @@
 import {
   DesktopServerExposureModeSchema,
+  DesktopThemeSchema,
   DesktopThemePaletteSchema,
   DesktopUpdateChannelSchema,
   type DesktopServerExposureMode,
+  type DesktopTheme,
   type DesktopThemeAppearance,
   type DesktopThemePalette,
   type DesktopUpdateChannel,
@@ -51,6 +53,7 @@ export interface DesktopSettings {
   // this requires a desktop restart because the pool's primary spec is
   // chosen once at layer init.
   readonly wslOnly: boolean;
+  readonly themeSource?: DesktopTheme;
   readonly themePalettes?: DesktopThemePalettes;
 }
 
@@ -117,6 +120,7 @@ const DesktopSettingsDocument = Schema.Struct({
   wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
   wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
   wslOnly: Schema.optionalKey(Schema.Boolean),
+  themeSource: Schema.optionalKey(DesktopThemeSchema),
   themePalettes: Schema.optionalKey(
     Schema.Struct({
       light: Schema.optionalKey(DesktopThemePaletteSchema),
@@ -192,6 +196,9 @@ export class DesktopAppSettings extends Context.Service<
     readonly setThemePalette: (
       palette: DesktopThemePalette,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+    readonly setThemeSource: (
+      theme: DesktopTheme,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly applyWslWindowsFallback: Effect.Effect<
       DesktopSettingsChange,
       DesktopSettingsWriteError
@@ -255,6 +262,7 @@ function normalizeDesktopSettingsDocument(
     wslBackendEnabled,
     wslDistro: normalizeWslDistro(parsed.wslDistro),
     wslOnly: parsed.wslOnly === true,
+    ...(parsed.themeSource === undefined ? {} : { themeSource: parsed.themeSource }),
     ...(parsed.themePalettes === undefined ? {} : { themePalettes: parsed.themePalettes }),
   };
 }
@@ -297,6 +305,9 @@ function toDesktopSettingsDocument(
   }
   if (settings.wslOnly !== defaults.wslOnly) {
     document.wslOnly = settings.wslOnly;
+  }
+  if (settings.themeSource !== undefined) {
+    document.themeSource = settings.themeSource;
   }
   if (settings.themePalettes !== undefined) {
     document.themePalettes = settings.themePalettes;
@@ -415,6 +426,10 @@ function setThemePalette(settings: DesktopSettings, palette: DesktopThemePalette
       [palette.appearance]: palette,
     },
   };
+}
+
+function setThemeSource(settings: DesktopSettings, theme: DesktopTheme): DesktopSettings {
+  return settings.themeSource === theme ? settings : { ...settings, themeSource: theme };
 }
 
 function applyWslWindowsFallback(settings: DesktopSettings): DesktopSettings {
@@ -597,6 +612,10 @@ export const make = Effect.gen(function* () {
           attributes: { appearance: palette.appearance },
         }),
       ),
+    setThemeSource: (theme) =>
+      persist((settings) => setThemeSource(settings, theme)).pipe(
+        Effect.withSpan("desktop.settings.setThemeSource", { attributes: { theme } }),
+      ),
     applyWslWindowsFallback: persist(applyWslWindowsFallback).pipe(
       Effect.withSpan("desktop.settings.applyWslWindowsFallback"),
     ),
@@ -639,6 +658,7 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
         setWslDistro: (distro) => update((settings) => setWslDistro(settings, distro)),
         setWslOnly: (enabled) => update((settings) => setWslOnly(settings, enabled)),
         setThemePalette: (palette) => update((settings) => setThemePalette(settings, palette)),
+        setThemeSource: (theme) => update((settings) => setThemeSource(settings, theme)),
         applyWslWindowsFallback: update(applyWslWindowsFallback),
         applyWslWindowsFallbackInMemory: update(applyWslWindowsFallback),
       });

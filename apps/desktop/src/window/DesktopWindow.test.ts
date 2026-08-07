@@ -220,6 +220,7 @@ function makeTestLayer(input: {
     setWslDistro: () => Effect.die("unexpected WSL distro change"),
     setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
     setThemePalette: () => Effect.die("unexpected theme palette update"),
+    setThemeSource: () => Effect.die("unexpected theme source update"),
     applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
     applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
   } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
@@ -546,7 +547,7 @@ describe("DesktopWindow", () => {
         yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
 
         assert.equal(createdWindowOptions[0]?.backgroundColor, palette.background);
-        yield* desktopWindow.syncAppearance;
+        yield* desktopWindow.syncAppearance();
         assert.deepEqual(fakeWindow.setBackgroundColor.mock.calls.at(-1), [palette.background]);
       }).pipe(Effect.provide(layer));
     }),
@@ -584,6 +585,42 @@ describe("DesktopWindow", () => {
         assert.include(html, "background:#fdf7fd");
         assert.include(html, "color:#501854");
         assert.include(html, "border-top-color:#e33f86");
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("restores an explicit dark source even when the OS is light", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+      const palette = {
+        appearance: "dark" as const,
+        background: "#1f1a24",
+        foreground: "#f9f8fb",
+        accent: "#a3004c",
+        titlebarSymbol: "#f9f8fb",
+      };
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        createdWindowOptions,
+        desktopSettings: {
+          ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+          themeSource: "dark",
+          themePalettes: { dark: palette },
+        },
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        assert.equal(createdWindowOptions[0]?.backgroundColor, palette.background);
+        yield* desktopWindow.syncAppearance();
+        assert.deepEqual(fakeWindow.setBackgroundColor.mock.calls.at(-1), [palette.background]);
       }).pipe(Effect.provide(layer));
     }),
   );

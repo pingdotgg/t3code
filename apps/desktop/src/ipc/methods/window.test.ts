@@ -154,6 +154,7 @@ describe("setTheme", () => {
   it.effect("accepts the palette extension while preserving legacy callers", () => {
     const sources: string[] = [];
     const palettes: Array<unknown> = [];
+    const themeSources: string[] = [];
     let syncCount = 0;
     const palette = {
       appearance: "dark" as const,
@@ -169,6 +170,7 @@ describe("setTheme", () => {
 
       assert.deepEqual(sources, ["dark", "light"]);
       assert.deepEqual(palettes, [palette]);
+      assert.deepEqual(themeSources, ["dark", "light"]);
       assert.equal(syncCount, 1);
     }).pipe(
       Effect.provide(
@@ -188,11 +190,68 @@ describe("setTheme", () => {
                   changed: true,
                 };
               }),
+            setThemeSource: (nextTheme) =>
+              Effect.sync(() => {
+                themeSources.push(nextTheme);
+                return {
+                  settings: DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+                  changed: true,
+                };
+              }),
           }),
           Layer.mock(DesktopWindow.DesktopWindow)({
-            syncAppearance: Effect.sync(() => {
-              syncCount += 1;
-            }),
+            syncAppearance: () =>
+              Effect.sync(() => {
+                syncCount += 1;
+              }),
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("keeps live theme application ahead of best-effort persistence", () => {
+    const events: string[] = [];
+    const palette = {
+      appearance: "dark" as const,
+      background: "#1f1a24",
+      foreground: "#f9f8fb",
+      accent: "#a3004c",
+    };
+    const settingsFailure = new DesktopAppSettings.DesktopSettingsWriteError({
+      operation: "replace-settings-file",
+      path: "/tmp/desktop-settings.json",
+      cause: new Error("read-only settings directory"),
+    });
+
+    return Effect.gen(function* () {
+      yield* setTheme.handler({ theme: "dark", palette });
+
+      assert.deepEqual(events, ["set-source", "sync:#1f1a24", "persist-palette", "persist-source"]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ElectronTheme.ElectronTheme)({
+            setSource: () =>
+              Effect.sync(() => {
+                events.push("set-source");
+              }),
+          }),
+          Layer.mock(DesktopAppSettings.DesktopAppSettings)({
+            setThemePalette: () =>
+              Effect.sync(() => {
+                events.push("persist-palette");
+              }).pipe(Effect.andThen(Effect.fail(settingsFailure))),
+            setThemeSource: () =>
+              Effect.sync(() => {
+                events.push("persist-source");
+              }).pipe(Effect.andThen(Effect.fail(settingsFailure))),
+          }),
+          Layer.mock(DesktopWindow.DesktopWindow)({
+            syncAppearance: (nextPalette) =>
+              Effect.sync(() => {
+                events.push(`sync:${nextPalette?.background ?? "missing"}`);
+              }),
           }),
         ),
       ),

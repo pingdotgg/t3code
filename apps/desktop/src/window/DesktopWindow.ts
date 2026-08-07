@@ -85,7 +85,7 @@ export class DesktopWindow extends Context.Service<
     readonly handleBackendNotReady: Effect.Effect<void>;
     readonly flushMainWindowBounds: Effect.Effect<void>;
     readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
-    readonly syncAppearance: Effect.Effect<void>;
+    readonly syncAppearance: (palette?: DesktopThemePalette) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/window/DesktopWindow") {}
 
@@ -126,7 +126,9 @@ function getThemePalette(
   settings: DesktopAppSettings.DesktopSettings,
   shouldUseDarkColors: boolean,
 ): DesktopThemePalette {
-  const appearance = shouldUseDarkColors ? "dark" : "light";
+  const useDarkColors =
+    settings.themeSource === "dark" || (settings.themeSource !== "light" && shouldUseDarkColors);
+  const appearance = useDarkColors ? "dark" : "light";
   const persistedPalette = settings.themePalettes?.[appearance];
   return persistedPalette?.appearance === appearance
     ? persistedPalette
@@ -138,7 +140,7 @@ function getInitialWindowBackgroundColor(
   palette?: DesktopThemePalette,
 ): string {
   const fallback = getFallbackThemePalette(shouldUseDarkColors);
-  return palette?.appearance === fallback.appearance ? palette.background : fallback.background;
+  return palette?.background ?? fallback.background;
 }
 
 function rgbaWithAlpha(hex: string, alpha: number): string {
@@ -903,38 +905,39 @@ export const make = Effect.gen(function* () {
 
       send();
     }),
-    syncAppearance: Effect.gen(function* () {
-      const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
-      const persistedSettings = yield* desktopSettings.get;
-      const themePalette = getThemePalette(persistedSettings, shouldUseDarkColors);
-      yield* previewManager.setThemePalette(themePalette).pipe(
-        Effect.catch((error) =>
-          logWindowWarning("failed to update preview theme palette", {
-            message: error.message,
-          }),
-        ),
-      );
-      yield* electronWindow.syncAllAppearance((window) =>
-        syncWindowAppearance(window, themePalette, environment.platform),
-      );
-      const splash = yield* Ref.get(splashWindowRef);
-      if (Option.isSome(splash) && !splash.value.isDestroyed()) {
-        yield* Effect.tryPromise({
-          try: () => splash.value.loadURL(buildConnectingSplashDataUrl(themePalette)),
-          catch: (cause) =>
-            new PreviewManager.PreviewOperationError({
-              operation: "connectingSplash.load",
-              cause,
-            }),
-        }).pipe(
+    syncAppearance: (palette) =>
+      Effect.gen(function* () {
+        const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+        const persistedSettings = yield* desktopSettings.get;
+        const themePalette = palette ?? getThemePalette(persistedSettings, shouldUseDarkColors);
+        yield* previewManager.setThemePalette(themePalette).pipe(
           Effect.catch((error) =>
-            logWindowWarning("failed to refresh connecting splash theme", {
-              message: String(error),
+            logWindowWarning("failed to update preview theme palette", {
+              message: error.message,
             }),
           ),
         );
-      }
-    }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
+        yield* electronWindow.syncAllAppearance((window) =>
+          syncWindowAppearance(window, themePalette, environment.platform),
+        );
+        const splash = yield* Ref.get(splashWindowRef);
+        if (Option.isSome(splash) && !splash.value.isDestroyed()) {
+          yield* Effect.tryPromise({
+            try: () => splash.value.loadURL(buildConnectingSplashDataUrl(themePalette)),
+            catch: (cause) =>
+              new PreviewManager.PreviewOperationError({
+                operation: "connectingSplash.load",
+                cause,
+              }),
+          }).pipe(
+            Effect.catch((error) =>
+              logWindowWarning("failed to refresh connecting splash theme", {
+                message: String(error),
+              }),
+            ),
+          );
+        }
+      }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
   });
 });
 

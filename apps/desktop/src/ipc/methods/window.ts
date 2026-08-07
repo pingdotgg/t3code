@@ -20,6 +20,7 @@ import * as Schema from "effect/Schema";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
+import { makeComponentLogger } from "../../app/DesktopObservability.ts";
 import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
@@ -36,6 +37,8 @@ import {
   resolveWslPickFolderDefaultPath,
   wslUncPathToLinuxPath,
 } from "../../wsl/wslPathParsing.ts";
+
+const { logWarning: logWindowWarning } = makeComponentLogger("desktop-ipc-window");
 
 const ContextMenuPosition = Schema.Struct({
   x: Schema.Number,
@@ -249,16 +252,30 @@ export const setTheme = DesktopIpc.makeIpcMethod({
   result: Schema.Void,
   handler: Effect.fn("desktop.ipc.window.setTheme")(function* (input) {
     const theme = typeof input === "string" ? input : input.theme;
-    if (typeof input !== "string" && input.palette !== undefined) {
-      const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
-      yield* desktopSettings.setThemePalette(input.palette);
-    }
     const electronTheme = yield* ElectronTheme.ElectronTheme;
     yield* electronTheme.setSource(theme);
     if (typeof input !== "string" && input.palette !== undefined) {
       const desktopWindow = yield* DesktopWindow.DesktopWindow;
-      yield* desktopWindow.syncAppearance;
+      yield* desktopWindow.syncAppearance(input.palette);
     }
+
+    const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+    if (typeof input !== "string" && input.palette !== undefined) {
+      yield* desktopSettings.setThemePalette(input.palette).pipe(
+        Effect.catch((error) =>
+          logWindowWarning("failed to persist desktop theme palette", {
+            message: error.message,
+          }),
+        ),
+      );
+    }
+    yield* desktopSettings.setThemeSource(theme).pipe(
+      Effect.catch((error) =>
+        logWindowWarning("failed to persist desktop theme source", {
+          message: error.message,
+        }),
+      ),
+    );
   }),
 });
 

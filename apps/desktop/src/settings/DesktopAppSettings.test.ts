@@ -1,4 +1,4 @@
-import { DesktopThemePaletteSchema } from "@t3tools/contracts";
+import { DesktopThemePaletteSchema, DesktopThemeSchema } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -35,6 +35,7 @@ const DesktopSettingsPatch = Schema.Struct({
   wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
   wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
   wslOnly: Schema.optionalKey(Schema.Boolean),
+  themeSource: Schema.optionalKey(DesktopThemeSchema),
   themePalettes: Schema.optionalKey(
     Schema.Struct({
       light: Schema.optionalKey(DesktopThemePaletteSchema),
@@ -104,6 +105,29 @@ describe("DesktopSettings", () => {
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
         assert.deepEqual(yield* settings.load, DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS);
         assert.deepEqual(yield* settings.get, DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS);
+      }),
+    ),
+  );
+
+  it.effect("persists the theme source used to restore native chrome on launch", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+
+        const change = yield* settings.setThemeSource("dark");
+        assert.isTrue(change.changed);
+        assert.equal(change.settings.themeSource, "dark");
+        assert.deepEqual(
+          yield* decodeDesktopSettingsPatch(
+            yield* fileSystem.readFileString(environment.desktopSettingsPath),
+          ),
+          { themeSource: "dark" },
+        );
+
+        const reloaded = yield* settings.load;
+        assert.equal(reloaded.themeSource, "dark");
       }),
     ),
   );
