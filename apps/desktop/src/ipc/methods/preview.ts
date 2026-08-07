@@ -16,7 +16,7 @@ import {
   DesktopPreviewSetColorSchemeInputSchema,
   DesktopPreviewTabInputSchema,
   DesktopPreviewWebviewConfigSchema,
-  PreviewAnnotationPayloadSchema,
+  PreviewAnnotationSubmissionResultSchema,
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
 } from "@t3tools/contracts";
@@ -168,6 +168,16 @@ export const stopRecording = tabMethod(
   "desktop.ipc.preview.stopRecording",
   (manager, tabId) => manager.stopRecording(tabId),
 );
+export const openPictureInPicture = tabMethod(
+  IpcChannels.PREVIEW_PICTURE_IN_PICTURE_OPEN_CHANNEL,
+  "desktop.ipc.preview.openPictureInPicture",
+  (manager, tabId) => manager.openPictureInPicture(tabId),
+);
+export const closePictureInPicture = tabMethod(
+  IpcChannels.PREVIEW_PICTURE_IN_PICTURE_CLOSE_CHANNEL,
+  "desktop.ipc.preview.closePictureInPicture",
+  (manager, tabId) => manager.closePictureInPicture(tabId),
+);
 
 export const clearCookies = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_CLEAR_COOKIES_CHANNEL,
@@ -217,7 +227,7 @@ export const setAnnotationTheme = DesktopIpc.makeIpcMethod({
 export const pickElement = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_PICK_ELEMENT_CHANNEL,
   payload: DesktopPreviewTabInputSchema,
-  result: Schema.NullOr(PreviewAnnotationPayloadSchema),
+  result: Schema.NullOr(PreviewAnnotationSubmissionResultSchema),
   handler: Effect.fn("desktop.ipc.preview.pickElement")(function* ({ tabId }) {
     const manager = yield* PreviewManager.PreviewManager;
     return yield* manager.pickElement(tabId);
@@ -367,6 +377,8 @@ export const methods = [
   captureScreenshot,
   revealArtifact,
   copyArtifactToClipboard,
+  openPictureInPicture,
+  closePictureInPicture,
   automationStatus,
   automationSnapshot,
   automationClick,

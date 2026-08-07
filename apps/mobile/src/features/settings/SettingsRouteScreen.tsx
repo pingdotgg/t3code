@@ -8,8 +8,8 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import * as Effect from "effect/Effect";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { Alert, Linking, Platform, ScrollView, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Alert, Linking, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
@@ -37,6 +37,12 @@ import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { runtime } from "../../lib/runtime";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
+import {
+  type AppUpdateCheckState,
+  registerHiddenUpdateTap,
+  runAppUpdateCheck,
+} from "../updates/app-updates";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
@@ -156,7 +162,7 @@ function ConfiguredSettingsRouteScreen() {
   const environmentCount = connections.length;
   const accountLabel = useMemo(() => {
     if (!isLoaded) return "Checking";
-    if (!isSignedIn) return "Request access";
+    if (!isSignedIn) return "Sign in";
     return user?.primaryEmailAddress?.emailAddress ?? "Signed in";
   }, [isLoaded, isSignedIn, user?.primaryEmailAddress?.emailAddress]);
 
@@ -263,13 +269,13 @@ function ConfiguredSettingsRouteScreen() {
 
   const promptSignIn = useCallback(() => {
     Alert.alert(
-      "Request T3 Connect access",
-      "Live Activity updates require approved T3 Connect access so relay can deliver updates to this device.",
+      "Sign in to T3 Connect",
+      "Live Activity updates require T3 Connect so relay can deliver updates to this device.",
       [
         { text: "Cancel", style: "cancel" },
         {
           text: "Continue",
-          onPress: () => navigation.navigate("SettingsSheet", { screen: "SettingsWaitlist" }),
+          onPress: () => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" }),
         },
       ],
     );
@@ -431,7 +437,8 @@ function ConfiguredSettingsRouteScreen() {
   const openAccount = useCallback(() => {
     if (!isLoaded) return;
     if (!isSignedIn) {
-      navigation.navigate("SettingsSheet", { screen: "SettingsWaitlist" });
+      expandClerkSheet();
+      navigation.navigate("SettingsSheet", { screen: "SettingsAuth" });
       return;
     }
     expandClerkSheet();
@@ -523,20 +530,9 @@ function ConfiguredSettingsRouteScreen() {
 }
 
 function GeneralSettingsSection() {
-  const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
-  const projectGroupingEnabled = AsyncResult.isSuccess(preferencesResult)
-    ? preferencesResult.value.projectGroupingEnabled !== false
-    : true;
-
   return (
     <SettingsSection title="General">
-      <SettingsSwitchRow
-        icon="folder"
-        label="Project Grouping"
-        value={projectGroupingEnabled}
-        onValueChange={(value) => savePreferences({ projectGroupingEnabled: value })}
-      />
+      <SettingsRow icon="folder" label="Project Grouping" target="SettingsProjectGrouping" />
     </SettingsSection>
   );
 }
@@ -546,11 +542,8 @@ function GeneralSettingsSection() {
  * the counterpart of web's Settings → Beta backed by mobile preferences.
  */
 function BetaSettingsSection() {
-  const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
-  const threadListV2Enabled = AsyncResult.isSuccess(preferencesResult)
-    ? preferencesResult.value.threadListV2Enabled === true
-    : false;
+  const threadListV2Enabled = useThreadListV2Enabled();
 
   return (
     <View className="gap-3">
@@ -572,6 +565,9 @@ function BetaSettingsSection() {
 
 function AppSettingsSection() {
   const icon = useThemeColor("--color-icon");
+  const [updateState, setUpdateState] = useState<AppUpdateCheckState>("idle");
+  const updateInFlight = useRef(false);
+  const hiddenUpdateTapCount = useRef(0);
 
   const version = Constants.expoConfig?.version ?? "0.0.0";
   // Fall back to "production" to match resolveAppVariant in app.config.ts, so a
@@ -579,37 +575,87 @@ function AppSettingsSection() {
   const variant = (Constants.expoConfig?.extra?.appVariant as string | undefined) ?? "production";
   const variantLabel = variant === "production" ? "" : capitalize(variant);
   const versionLabel = variantLabel ? `${version} · ${variantLabel}` : version;
-  // Which JS is actually running: the bundle shipped in the binary, or an OTA
-  // update downloaded on top of it. Surfacing this makes "am I even on the
-  // right build?" answerable at a glance.
-  const bundleLabel = Updates.isEnabled
-    ? Updates.isEmbeddedLaunch
-      ? "Embedded"
-      : Updates.updateId
-        ? `OTA ${Updates.updateId.slice(0, 7)}`
-        : null
-    : null;
+  const busy =
+    updateState === "checking" || updateState === "downloading" || updateState === "restarting";
+
+  // "Up to date" is a transient acknowledgement, not a state worth persisting —
+  // return the version row to its normal, deliberately quiet state.
+  useEffect(() => {
+    if (updateState !== "current") return;
+    const timer = setTimeout(() => setUpdateState("idle"), 3000);
+    return () => clearTimeout(timer);
+  }, [updateState]);
+
+  const checkForUpdate = useCallback(async () => {
+    // `disabled={busy}` only takes effect on the next render, so two taps in the
+    // same frame would both get through. The ref closes that window.
+    if (updateInFlight.current) return;
+    updateInFlight.current = true;
+    try {
+      await runAppUpdateCheck({
+        onFailure: (message) => Alert.alert("Update failed", message),
+        onStateChange: setUpdateState,
+      });
+    } finally {
+      updateInFlight.current = false;
+    }
+  }, []);
+
+  const handleVersionPress = useCallback(() => {
+    if (!Updates.isEnabled || updateInFlight.current) return;
+    const tap = registerHiddenUpdateTap(hiddenUpdateTapCount.current);
+    hiddenUpdateTapCount.current = tap.nextCount;
+    if (tap.shouldCheck) {
+      void checkForUpdate();
+    }
+  }, [checkForUpdate]);
+
+  const statusLabel =
+    updateState === "checking"
+      ? "Checking…"
+      : updateState === "downloading"
+        ? "Downloading…"
+        : updateState === "restarting"
+          ? "Restarting…"
+          : updateState === "current"
+            ? "Up to date"
+            : null;
+
+  const versionRow = (
+    <View className="flex-row items-center gap-4 p-4">
+      <SymbolView
+        name="info.circle"
+        size={22}
+        tintColor={icon}
+        type="monochrome"
+        weight="regular"
+      />
+      <Text className="flex-1 text-lg text-foreground">Version</Text>
+      <View className="items-end">
+        <Text className="text-lg text-foreground-muted">{versionLabel}</Text>
+        {statusLabel ? (
+          <Text className="text-xs text-foreground-muted/70">{statusLabel}</Text>
+        ) : null}
+      </View>
+    </View>
+  );
 
   return (
     <SettingsSection title="App">
       <SettingsRow icon="internaldrive" label="Client Storage" target="SettingsClientStorage" />
       <SettingsRow icon="doc.text" label="Legal" fullScreenTarget="SettingsLegal" />
-      <View className="flex-row items-center gap-4 p-4">
-        <SymbolView
-          name="info.circle"
-          size={22}
-          tintColor={icon}
-          type="monochrome"
-          weight="regular"
-        />
-        <Text className="flex-1 text-lg text-foreground">Version</Text>
-        <View className="items-end">
-          <Text className="text-lg text-foreground-muted">{versionLabel}</Text>
-          {bundleLabel ? (
-            <Text className="text-xs text-foreground-muted/70">{bundleLabel}</Text>
-          ) : null}
-        </View>
-      </View>
+      {Updates.isEnabled ? (
+        <Pressable
+          accessibilityLabel={`Version ${versionLabel}`}
+          accessibilityRole="text"
+          disabled={busy}
+          onPress={handleVersionPress}
+        >
+          {versionRow}
+        </Pressable>
+      ) : (
+        versionRow
+      )}
     </SettingsSection>
   );
 }

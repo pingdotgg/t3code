@@ -21,6 +21,7 @@ import {
   Image,
   Platform,
   Pressable,
+  StyleSheet,
   useColorScheme,
   View,
   type ViewStyle,
@@ -53,7 +54,7 @@ import {
 import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
-import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
+import { buildModelMenuActions, buildModelOptions, groupByProvider } from "../../lib/modelOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import {
@@ -518,14 +519,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
-    // Sending a prompt starts agent work: arm the lock-screen card now, while
-    // the app is foregrounded and the activity token can be registered.
-    armAgentAwarenessLiveActivityForLocalWork({
-      threadTitle: props.selectedThread.title,
-      projectTitle: props.environmentLabel ?? "T3 Code",
-    });
     try {
       await onSendMessage();
+      // Sending a prompt starts agent work: arm the lock-screen card while the
+      // app is foregrounded and the activity token can be registered. Armed
+      // after the send so its preference read and native Activity start don't
+      // contend with the queued-message feedback on the tap frame.
+      armAgentAwarenessLiveActivityForLocalWork({
+        threadTitle: props.selectedThread.title,
+        projectTitle: props.environmentLabel ?? "T3 Code",
+      });
     } finally {
       inFlightThreadIdsRef.current.delete(threadKey);
     }
@@ -604,25 +607,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     [providerOptionDescriptors],
   );
   const modelMenuActions = useMemo(
-    () =>
-      providerGroups.map((group) => ({
-        id: `provider:${group.providerKey}`,
-        title: group.providerLabel,
-        subtitle: group.models.find(
-          (model) =>
-            model.selection.instanceId === currentModelSelection.instanceId &&
-            model.selection.model === currentModelSelection.model,
-        )?.label,
-        subactions: group.models.map((option) => ({
-          id: `model:${option.key}`,
-          title: option.label,
-          state:
-            option.selection.instanceId === currentModelSelection.instanceId &&
-            option.selection.model === currentModelSelection.model
-              ? ("on" as const)
-              : undefined,
-        })),
-      })),
+    () => buildModelMenuActions(providerGroups, currentModelSelection),
     [providerGroups, currentModelSelection],
   );
 
@@ -714,11 +699,22 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       style={{
         paddingTop: isExpanded ? 8 : 6,
         paddingBottom: (props.bottomInset ?? 0) + (isExpanded ? 8 : 6),
-        experimental_backgroundImage: isDarkMode
-          ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.6) 55%, rgba(0,0,0,0.9) 100%)"
-          : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.6) 55%, rgba(255,255,255,0.9) 100%)",
       }}
     >
+      {/* The backdrop gradient lives on a plain View: Reanimated's Animated.View
+          silently drops experimental_backgroundImage on Android, which left this
+          strip fully transparent and the feed text legible through the composer. */}
+      <View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFill,
+          {
+            experimental_backgroundImage: isDarkMode
+              ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.6) 55%, rgba(0,0,0,0.9) 100%)"
+              : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.6) 55%, rgba(255,255,255,0.9) 100%)",
+          },
+        ]}
+      />
       <Animated.View
         className="relative w-full self-center"
         layout={COMPOSER_LAYOUT_TRANSITION}

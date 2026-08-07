@@ -1,0 +1,270 @@
+---
+title: HyperPod
+description: Provision SageMaker HyperPod clusters — Slurm or EKS orchestrated — and run ML workloads on them with sbatch, raw manifests, or effectful Jobs with task governance.
+---
+
+**SageMaker HyperPod** is AWS's persistent fleet for ML training
+and inference: a cluster of accelerated instances with automatic
+health checks, faulty-node replacement, and deep health checks
+for GPUs. Where ECS and EKS run application containers, HyperPod
+runs distributed training — and stays up between jobs.
+
+The HyperPod primitives:
+
+- A **Cluster** is the fleet. It is orchestrated by **Slurm**
+  (the default) or by an **EKS** cluster you attach it to.
+- An **instance group** names a set of identical instances — a
+  controller group, a worker group — each with an instance type,
+  count, execution role, and lifecycle script.
+- A **lifecycle script** (`on_create.sh` in S3) runs on every
+  node when it boots. This is where real clusters install
+  schedulers, mount FSx, and wire observability.
+- **Task governance** (EKS orchestration only) arbitrates the
+  fleet between teams: a scheduler policy sets priority classes,
+  and per-team compute quotas reserve capacity.
+
+Alchemy models these with
+[`Cluster`](/providers/aws/sagemaker/cluster),
+[`ClusterSchedulerConfig`](/providers/aws/sagemaker/clusterschedulerconfig),
+and [`ComputeQuota`](/providers/aws/sagemaker/computequota), and
+EKS workloads opt onto HyperPod nodes with the `hyperpod` prop on
+[`Deployment`](/providers/aws/eks/deployment) and
+[`Job`](/providers/aws/eks/job).
+
+## Choose an orchestrator
+
+|                 | Slurm (default)                       | EKS (`orchestrator: { Eks }`)                        |
+| --------------- | ------------------------------------- | ---------------------------------------------------- |
+| Workloads       | `sbatch` on the login node (over SSM) | Kubernetes objects — `Deployment`, `Job`, `Manifest` |
+| High-level DX   | —                                     | `AWS.EKS.Job` / `Deployment` with `hyperpod:` props  |
+| Governance      | Slurm accounting                      | `ClusterSchedulerConfig` + `ComputeQuota` (Kueue)    |
+| Extra plumbing  | Lifecycle bucket + script             | EKS cluster + the HyperPod dependencies Helm chart   |
+
+Pick Slurm for classic HPC-style training queues. Pick EKS when
+your platform is Kubernetes or you want typed workloads and task
+governance.
+
+## Create a Slurm cluster
+
+A Slurm cluster needs three things: an S3 bucket holding the
+lifecycle script, an execution role the nodes assume, and the
+cluster itself. The script must exist in S3 before the cluster
+creates — a deploy-time `Action` uploads it, and the data flow
+(bucket → script → cluster) orders the deploy:
+
+```typescript
+const bucket = yield* AWS.S3.Bucket("LifecycleScripts", {
+  forceDestroy: true,
+});
+
+const script = yield* UploadLifecycleScript({
+  bucketName: bucket.bucketName,
+});
+
+const role = yield* AWS.IAM.Role("HyperPodInstanceRole", {
+  assumeRolePolicyDocument: {
+    Version: "2012-10-17",
+    Statement: [
+      {
+        Effect: "Allow",
+        Principal: { Service: "sagemaker.amazonaws.com" },
+        Action: ["sts:AssumeRole"],
+      },
+    ],
+  },
+  managedPolicyArns: [
+    "arn:aws:iam::aws:policy/AmazonSageMakerClusterInstanceRolePolicy",
+  ],
+});
+
+const cluster = yield* AWS.SageMaker.Cluster("TrainingCluster", {
+  instanceGroups: {
+    controller: {
+      InstanceType: "ml.t3.medium",
+      InstanceCount: 1,
+      ExecutionRole: role.roleArn,
+      LifeCycleConfig: {
+        SourceS3Uri: script.sourceS3Uri,
+        OnCreate: script.onCreate,
+      },
+    },
+  },
+});
+```
+
+Instance groups reconcile in place: change a count or add a group
+and the cluster updates; remove a group from `instanceGroups` and
+it is deleted from the cluster. Changing the VPC replaces the
+cluster. Provisioning takes ~5 minutes for small CPU groups and
+10–25 minutes for large GPU groups.
+
+The full working stack is
+[`examples/aws-hyperpod`](https://github.com/alchemy-run/alchemy/tree/main/examples/aws-hyperpod).
+
+## Submit Slurm jobs
+
+Slurm has no remote submission API — jobs are submitted on the
+cluster. Every node is an SSM target named
+`sagemaker-cluster:<cluster-id>_<instance-group>-<instance-id>`:
+
+```sh
+aws sagemaker list-cluster-nodes --cluster-name <clusterName>
+aws ssm start-session \
+  --target sagemaker-cluster:<cluster-id>_controller-<instance-id>
+# then, on the node:
+sbatch --nodes=4 train.sbatch
+```
+
+## Create an EKS-orchestrated cluster
+
+Under EKS orchestration, HyperPod nodes join an EKS cluster you
+provide and workloads are ordinary Kubernetes objects. The API
+enforces a few constraints, all encoded in the example:
+
+- The EKS cluster must use the **`API`** (or `API_AND_CONFIG_MAP`)
+  authentication mode — EKS's own CONFIG_MAP default is rejected.
+- HyperPod trails the newest Kubernetes version; pin one it
+  supports (1.28–1.35 today).
+- `LifeCycleConfig` is required for EKS-orchestrated instance
+  groups too.
+- The **HyperPod dependencies Helm chart**
+  ([aws/sagemaker-hyperpod-cli](https://github.com/aws/sagemaker-hyperpod-cli))
+  must be installed on the EKS cluster before the HyperPod
+  cluster attaches — SageMaker validates it. The example fetches
+  the chart with an `Action` and applies it with
+  [`HelmChart`](/providers/aws/eks/helmchart).
+
+```typescript
+const eks = yield* AWS.EKS.Cluster("Orchestrator", {
+  roleArn: eksRole.roleArn,
+  version: "1.34",
+  resourcesVpcConfig: { subnetIds: network.privateSubnetIds },
+  accessConfig: {
+    authenticationMode: "API",
+    bootstrapClusterCreatorAdminPermissions: true,
+  },
+});
+
+const hyperpod = yield* AWS.SageMaker.Cluster("HyperPod", {
+  orchestrator: { Eks: { ClusterArn: eks.clusterArn } },
+  vpcConfig: {
+    SecurityGroupIds: [clusterSecurityGroupId],
+    Subnets: network.privateSubnetIds,
+  },
+  instanceGroups: {
+    workers: {
+      InstanceType: "ml.t3.medium",
+      InstanceCount: 1,
+      ExecutionRole: role.roleArn,
+      LifeCycleConfig: {
+        SourceS3Uri: script.sourceS3Uri,
+        OnCreate: script.onCreate,
+      },
+    },
+  },
+});
+```
+
+HyperPod nodes must live in **private subnets** — the
+[`Network`](/providers/aws/ec2/network) helper with `nat:
+"single"` builds a suitable VPC.
+
+## Run workloads on HyperPod nodes
+
+HyperPod nodes are ordinary EKS nodes carrying well-known labels.
+[`Deployment`](/providers/aws/eks/deployment) and
+[`Job`](/providers/aws/eks/job) opt onto them with the `hyperpod`
+prop. The instance-group keys carry through to the cluster's
+attributes as types, so the reference is typed per key (a typo'd
+group name is a compile error), the workload is connected to the
+fleet through the resource graph, and the node selector derives
+from it:
+
+```typescript
+const train = yield* AWS.EKS.Job(
+  "Train",
+  {
+    cluster: eks,
+    main: import.meta.url,
+    hyperpod: { instanceGroup: hyperpod.instanceGroups.workers },
+  },
+  Effect.gen(function* () {
+    return {
+      run: Effect.gen(function* () {
+        // training / eval logic; bindings land IAM on pod identity
+      }),
+    };
+  }),
+);
+```
+
+For anything the typed surface doesn't cover — a Kubeflow
+`PyTorchJob`, a custom operator — apply a raw
+[`Manifest`](/providers/aws/eks/manifest) pinned by the node
+labels directly:
+
+```typescript
+nodeSelector: {
+  "sagemaker.amazonaws.com/node-health-status": "Schedulable",
+  "sagemaker.amazonaws.com/instance-group-name": "workers",
+},
+```
+
+## Task governance
+
+Task governance arbitrates the fleet between teams. It ships as
+the `amazon-sagemaker-hyperpod-taskgovernance` EKS add-on (Kueue
+under the hood), a **scheduler policy** with priority classes,
+and per-team **compute quotas**:
+
+```typescript
+yield* AWS.EKS.Addon("TaskGovernance", {
+  clusterName: eks.clusterName,
+  addonName: "amazon-sagemaker-hyperpod-taskgovernance",
+});
+
+// One policy per cluster — a second create fails with the typed
+// ClusterSchedulerConfigAlreadyExists error.
+const policy = yield* AWS.SageMaker.ClusterSchedulerConfig("Scheduler", {
+  clusterArn: hyperpod.clusterArn,
+  schedulerConfig: {
+    PriorityClasses: [
+      { Name: "inference", Weight: 100 },
+      { Name: "training", Weight: 75 },
+    ],
+    FairShare: "Enabled",
+  },
+});
+
+// Creates the hyperpod-ns-research namespace + its Kueue queue.
+const quota = yield* AWS.SageMaker.ComputeQuota("ResearchQuota", {
+  clusterArn: hyperpod.clusterArn,
+  computeQuotaTarget: { TeamName: "research", FairShareWeight: 10 },
+  computeQuotaConfig: {
+    ComputeQuotaResources: [{ InstanceType: "ml.t3.medium", Count: 1 }],
+  },
+});
+```
+
+A workload submits through governance by passing the quota
+resource — the namespace, Kueue queue label, and quota → workload
+ordering all derive from it:
+
+```typescript
+hyperpod: {
+  instanceGroup: hyperpod.instanceGroups.workers,
+  quota,                     // → hyperpod-ns-research + queue label
+  priorityClass: "training", // → training-priority
+},
+```
+
+## Where next
+
+- [`examples/aws-hyperpod`](https://github.com/alchemy-run/alchemy/tree/main/examples/aws-hyperpod)
+  — both orchestrators, every workload tier, task governance
+- [EKS](/aws/compute/eks) — the Kubernetes surface HyperPod
+  workloads ride on
+- [`Cluster`](/providers/aws/sagemaker/cluster),
+  [`ClusterSchedulerConfig`](/providers/aws/sagemaker/clusterschedulerconfig),
+  [`ComputeQuota`](/providers/aws/sagemaker/computequota) — API
+  reference

@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
 
 import * as MobileDatabase from "./mobile-database";
 import * as MobileSecureStorage from "./mobile-secure-storage";
@@ -22,11 +23,14 @@ export interface Preferences {
   readonly codeWordBreak?: boolean;
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   readonly collapsedProjectGroups?: readonly string[];
+  /** @deprecated Kept temporarily so older OTA bundles retain the selected mode. */
   readonly projectGroupingEnabled?: boolean;
+  readonly projectGroupingMode?: SidebarProjectGroupingMode;
   /**
    * Device-local mirror of the web beta's `sidebarV2Enabled`. Mobile has no
-   * client-settings sync, so the flat v2 thread list is opted into per
-   * device.
+   * client-settings sync, so the flat v2 thread list is opted out of per
+   * device. Undefined means the user has never chosen, which resolves to on —
+   * see `resolveThreadListV2Enabled`.
    */
   readonly threadListV2Enabled?: boolean;
 }
@@ -79,6 +83,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
     collapsedProjectGroups?: readonly string[];
     projectGroupingEnabled?: boolean;
+    projectGroupingMode?: SidebarProjectGroupingMode;
     threadListV2Enabled?: boolean;
   } = {};
 
@@ -108,6 +113,13 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.projectGroupingEnabled === "boolean") {
     preferences.projectGroupingEnabled = parsed.projectGroupingEnabled;
+  }
+  if (
+    parsed.projectGroupingMode === "repository" ||
+    parsed.projectGroupingMode === "repository_path" ||
+    parsed.projectGroupingMode === "separate"
+  ) {
+    preferences.projectGroupingMode = parsed.projectGroupingMode;
   }
   if (typeof parsed.threadListV2Enabled === "boolean") {
     preferences.threadListV2Enabled = parsed.threadListV2Enabled;

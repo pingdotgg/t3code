@@ -49,11 +49,54 @@ describe("ClientSettings glass opacity", () => {
   });
 });
 
+describe("ClientSettings environment identification", () => {
+  it("defaults to artwork and accepts each presentation mode", () => {
+    expect(decodeClientSettings({}).environmentIdentificationMode).toBe("artwork");
+
+    for (const mode of ["artwork", "pill", "none"] as const) {
+      expect(
+        decodeClientSettingsPatch({ environmentIdentificationMode: mode })
+          .environmentIdentificationMode,
+      ).toBe(mode);
+    }
+  });
+
+  it("rejects unsupported presentation modes", () => {
+    expect(() => decodeClientSettings({ environmentIdentificationMode: "badge" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ environmentIdentificationMode: "badge" })).toThrow();
+  });
+});
+
 describe("ClientSettings sidebar v2", () => {
   it("defaults the beta off with a three-day auto-settle threshold", () => {
     const settings = decodeClientSettings({});
     expect(settings.sidebarV2Enabled).toBe(false);
     expect(settings.sidebarAutoSettleAfterDays).toBe(3);
+  });
+
+  it("treats settings written before the beta had a per-channel default as unconfigured", () => {
+    // The stored blob always carries `sidebarV2Enabled`, so only the companion
+    // flag can distinguish "user opted out" from "never touched it".
+    expect(decodeClientSettings({ sidebarV2Enabled: false }).sidebarV2ConfiguredByUser).toBe(false);
+    expect(decodeClientSettings({ sidebarV2Enabled: true }).sidebarV2ConfiguredByUser).toBe(false);
+  });
+
+  it("preserves an explicit beta choice", () => {
+    const settings = decodeClientSettings({
+      sidebarV2Enabled: false,
+      sidebarV2ConfiguredByUser: true,
+    });
+    expect(settings.sidebarV2Enabled).toBe(false);
+    expect(settings.sidebarV2ConfiguredByUser).toBe(true);
+  });
+
+  it("carries an explicit beta opt-out through the patch the beta toggle writes", () => {
+    const patch = decodeClientSettingsPatch({
+      sidebarV2Enabled: false,
+      sidebarV2ConfiguredByUser: true,
+    });
+    expect(patch.sidebarV2Enabled).toBe(false);
+    expect(patch.sidebarV2ConfiguredByUser).toBe(true);
   });
 
   it("allows auto-settle by inactivity to be disabled", () => {
@@ -69,6 +112,14 @@ describe("ClientSettings sidebar v2", () => {
 });
 
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
+  it("defaults text generation to Luna at low reasoning effort", () => {
+    expect(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection).toEqual({
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.6-luna",
+      options: [{ id: "reasoningEffort", value: "low" }],
+    });
+  });
+
   it("defaults to an empty record so legacy configs without the key still decode", () => {
     expect(DEFAULT_SERVER_SETTINGS.providerInstances).toEqual({});
   });
@@ -133,6 +184,33 @@ describe("ServerSettings worktree defaults", () => {
     expect(
       decodeServerSettingsPatch({ newWorktreesStartFromOrigin: false }).newWorktreesStartFromOrigin,
     ).toBe(false);
+  });
+});
+
+describe("ServerSettings.sourceControlWritingStyle", () => {
+  it("defaults all style settings for legacy configs", () => {
+    const settings = decodeServerSettings({});
+
+    expect(settings.sourceControlWritingStyle).toEqual({
+      mode: "repo_conventions",
+      customInstructions: "",
+      followChangeRequestTemplates: true,
+    });
+    expect(settings.sourceControlWriterModelSelection).toBeNull();
+  });
+
+  it("trims partial style updates", () => {
+    const patch = decodeServerSettingsPatch({
+      sourceControlWritingStyle: {
+        mode: "custom",
+        customInstructions: "  Prefer concise wording.  ",
+      },
+    });
+
+    expect(patch.sourceControlWritingStyle).toEqual({
+      mode: "custom",
+      customInstructions: "Prefer concise wording.",
+    });
   });
 });
 

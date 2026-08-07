@@ -8,7 +8,33 @@ const mocks = vi.hoisted(() => ({
   readPreparedConnection: vi.fn(() => ({ httpBaseUrl: "http://172.25.85.75:3773" })),
   submittedUrl: null as ((url: string) => void) | null,
   emptyStateUrl: null as ((url: string) => void) | null,
+  togglePictureInPicture: null as (() => void) | null,
+  toggleNativePictureInPicture: null as (() => void) | null,
+  pictureInPicturePressed: false,
+  miniPlayerTabId: null as string | null,
+  openMiniPlayer: vi.fn(),
+  closeMiniPlayer: vi.fn(),
+  closeRightPanel: vi.fn(),
+  openPictureInPicture: vi.fn(async (_tabId: string): Promise<void> => undefined),
+  closePictureInPicture: vi.fn(async (_tabId: string): Promise<void> => undefined),
+  pickElement: vi.fn(),
+  previewAnnotationScreenshotFile: vi.fn(),
+  addPreviewAnnotation: vi.fn(),
+  addImage: vi.fn(),
+  toggleAnnotation: null as (() => void) | null,
+  pictureInPicture: false,
   showEmptyState: false,
+  recordVisitForThread: vi.fn(),
+}));
+
+const EMPTY_HISTORY: never[] = [];
+
+vi.mock("~/browserHistoryStore", () => ({
+  recordVisitForThread: mocks.recordVisitForThread,
+  setTitleForThreadUrl: vi.fn(),
+  removeUrlForThread: vi.fn(),
+  BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT: 50,
+  useThreadRecentHistory: () => EMPTY_HISTORY,
 }));
 
 vi.mock("~/state/session", () => ({
@@ -18,11 +44,15 @@ vi.mock("~/state/session", () => ({
 vi.mock("~/composerDraftStore", () => ({
   useComposerDraftStore: (
     select: (store: { addPreviewAnnotation: () => void; addImage: () => void }) => unknown,
-  ) => select({ addPreviewAnnotation: vi.fn(), addImage: vi.fn() }),
+  ) =>
+    select({
+      addPreviewAnnotation: mocks.addPreviewAnnotation,
+      addImage: mocks.addImage,
+    }),
 }));
 
 vi.mock("~/lib/previewAnnotation", () => ({
-  previewAnnotationScreenshotFile: vi.fn(),
+  previewAnnotationScreenshotFile: mocks.previewAnnotationScreenshotFile,
 }));
 
 vi.mock("~/localApi", () => ({
@@ -36,10 +66,12 @@ vi.mock("~/previewStateStore", () => ({
     activeTabId: "tab-1",
     desktopByTabId: {
       "tab-1": {
+        hasWebContents: true,
         canGoBack: false,
         canGoForward: false,
         loading: false,
         zoomFactor: 1,
+        pictureInPicture: mocks.pictureInPicture,
         colorScheme: "system",
         controller: "none",
       },
@@ -78,9 +110,10 @@ vi.mock("~/state/use-atom-command", () => ({
 }));
 
 vi.mock("~/browser/browserRecording", () => ({
+  findActiveBrowserRecordingRuntimeTabId: vi.fn(() => null),
   startBrowserRecording: vi.fn(),
   stopBrowserRecording: vi.fn(),
-  useActiveBrowserRecordingTabId: () => null,
+  useActiveBrowserRecordingTabIds: () => new Set(),
 }));
 
 vi.mock("~/browser/browserSurfaceStore", () => ({
@@ -89,18 +122,72 @@ vi.mock("~/browser/browserSurfaceStore", () => ({
   ) => select({ byTabId: {} }),
 }));
 
+vi.mock("~/previewMiniPlayerStore", () => {
+  const usePreviewMiniPlayerStore = Object.assign(
+    (select: (state: unknown) => unknown) =>
+      select({
+        byThreadKey: mocks.miniPlayerTabId
+          ? {
+              "environment-1:thread-1": {
+                tabId: mocks.miniPlayerTabId,
+                position: null,
+              },
+            }
+          : {},
+      }),
+    {
+      getState: () => ({
+        open: mocks.openMiniPlayer,
+        close: mocks.closeMiniPlayer,
+      }),
+    },
+  );
+  return {
+    selectThreadPreviewMiniPlayer: (
+      byThreadKey: Record<string, { tabId: string; position: null }>,
+    ) => byThreadKey["environment-1:thread-1"] ?? null,
+    usePreviewMiniPlayerStore,
+  };
+});
+
+vi.mock("~/rightPanelStore", () => ({
+  useRightPanelStore: {
+    getState: () => ({ close: mocks.closeRightPanel }),
+  },
+}));
+
 vi.mock("~/components/ui/toast", () => ({
   stackedThreadToast: vi.fn(),
   toastManager: { add: vi.fn() },
 }));
 
 vi.mock("./previewBridge", () => ({
-  previewBridge: { navigate: mocks.navigate },
+  previewBridge: {
+    navigate: mocks.navigate,
+    pickElement: mocks.pickElement,
+    pictureInPicture: {
+      open: mocks.openPictureInPicture,
+      close: mocks.closePictureInPicture,
+    },
+  },
 }));
 
 vi.mock("./PreviewChromeRow", () => ({
-  PreviewChromeRow: (props: { onSubmit: (url: string) => void }) => {
+  PreviewChromeRow: (props: {
+    onSubmit: (url: string) => void;
+    onPickElement?: () => void;
+    onPictureInPicture?: () => void;
+    pictureInPicture?: boolean;
+    trailingActions?: {
+      props: { onNativePictureInPicture?: () => void };
+    };
+  }) => {
     mocks.submittedUrl = props.onSubmit;
+    mocks.toggleAnnotation = props.onPickElement ?? null;
+    mocks.togglePictureInPicture = props.onPictureInPicture ?? null;
+    mocks.toggleNativePictureInPicture =
+      props.trailingActions?.props.onNativePictureInPicture ?? null;
+    mocks.pictureInPicturePressed = props.pictureInPicture ?? false;
     return null;
   },
 }));
@@ -111,7 +198,12 @@ vi.mock("./PreviewEmptyState", () => ({
     return null;
   },
 }));
-vi.mock("./PreviewMoreMenu", () => ({ PreviewMoreMenu: () => null }));
+vi.mock("./PreviewMoreMenu", () => ({
+  PreviewMoreMenu: (props: { onNativePictureInPicture: () => void }) => {
+    mocks.toggleNativePictureInPicture = props.onNativePictureInPicture;
+    return null;
+  },
+}));
 vi.mock("./PreviewUnreachable", () => ({ PreviewUnreachable: () => null }));
 vi.mock("./ZoomIndicator", () => ({ ZoomIndicator: () => null }));
 vi.mock("./AgentBrowserCursor", () => ({ AgentBrowserCursor: () => null }));
@@ -120,6 +212,13 @@ vi.mock("./useLoadingProgress", () => ({ useLoadingProgress: () => 0 }));
 vi.mock("./usePreviewSession", () => ({ usePreviewSession: vi.fn() }));
 
 import { PreviewView } from "./PreviewView";
+import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
+
+const TEST_THREAD_REF = {
+  environmentId: EnvironmentId.make("environment-1"),
+  threadId: ThreadId.make("thread-1"),
+} as const;
+const TEST_RUNTIME_TAB_ID = previewRuntimeTabId(TEST_THREAD_REF, null, "tab-1");
 
 describe("PreviewView navigation", () => {
   beforeEach(() => {
@@ -128,7 +227,23 @@ describe("PreviewView navigation", () => {
     mocks.readPreparedConnection.mockClear();
     mocks.submittedUrl = null;
     mocks.emptyStateUrl = null;
+    mocks.togglePictureInPicture = null;
+    mocks.toggleNativePictureInPicture = null;
+    mocks.pictureInPicturePressed = false;
+    mocks.miniPlayerTabId = null;
+    mocks.openMiniPlayer.mockClear();
+    mocks.closeMiniPlayer.mockClear();
+    mocks.closeRightPanel.mockClear();
+    mocks.openPictureInPicture.mockClear();
+    mocks.closePictureInPicture.mockClear();
+    mocks.pickElement.mockReset();
+    mocks.previewAnnotationScreenshotFile.mockReset();
+    mocks.addPreviewAnnotation.mockClear();
+    mocks.addImage.mockClear();
+    mocks.toggleAnnotation = null;
+    mocks.pictureInPicture = false;
     mocks.showEmptyState = false;
+    mocks.recordVisitForThread.mockClear();
   });
 
   it.each([
@@ -152,7 +267,9 @@ describe("PreviewView navigation", () => {
     expect(mocks.submittedUrl).not.toBeNull();
     mocks.submittedUrl?.(submitted);
 
-    await vi.waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith("tab-1", expected));
+    await vi.waitFor(() =>
+      expect(mocks.navigate).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID, expected),
+    );
     expect(mocks.rememberPreviewUrl).toHaveBeenCalledWith(
       {
         environmentId: "environment-1",
@@ -160,6 +277,27 @@ describe("PreviewView navigation", () => {
       },
       expected,
     );
+  });
+
+  it("records a history visit with the normalized requested url on submit", async () => {
+    renderToStaticMarkup(
+      <PreviewView
+        threadRef={{
+          environmentId: EnvironmentId.make("environment-1"),
+          threadId: ThreadId.make("thread-1"),
+        }}
+        tabId="tab-1"
+        visible
+      />,
+    );
+
+    mocks.submittedUrl?.("localhost:3000/admin");
+    await vi.waitFor(() => {
+      expect(mocks.recordVisitForThread).toHaveBeenCalledWith(
+        expect.objectContaining({ threadId: expect.anything() }),
+        "http://localhost:3000/admin",
+      );
+    });
   });
 
   it("maps an empty-state localhost server onto the WSL host", async () => {
@@ -180,7 +318,7 @@ describe("PreviewView navigation", () => {
 
     await vi.waitFor(() =>
       expect(mocks.navigate).toHaveBeenCalledWith(
-        "tab-1",
+        TEST_RUNTIME_TAB_ID,
         "http://172.25.85.75:5173/app?mode=test#top",
       ),
     );
@@ -191,5 +329,124 @@ describe("PreviewView navigation", () => {
       },
       "http://172.25.85.75:5173/app?mode=test#top",
     );
+    await vi.waitFor(() =>
+      expect(mocks.recordVisitForThread).toHaveBeenCalledWith(
+        expect.objectContaining({ threadId: expect.anything() }),
+        "http://localhost:5173/app?mode=test#top",
+      ),
+    );
+  });
+
+  it("opens and closes a thread-scoped floating preview for the active tab", async () => {
+    const props = {
+      threadRef: {
+        environmentId: EnvironmentId.make("environment-1"),
+        threadId: ThreadId.make("thread-1"),
+      },
+      tabId: "tab-1",
+      visible: true,
+    } as const;
+
+    renderToStaticMarkup(<PreviewView {...props} />);
+    expect(mocks.pictureInPicturePressed).toBe(false);
+    mocks.togglePictureInPicture?.();
+    expect(mocks.openMiniPlayer).toHaveBeenCalledWith(props.threadRef, "tab-1");
+    expect(mocks.closeRightPanel).toHaveBeenCalledWith(props.threadRef);
+
+    mocks.miniPlayerTabId = "tab-1";
+    renderToStaticMarkup(<PreviewView {...props} />);
+    expect(mocks.pictureInPicturePressed).toBe(true);
+    mocks.togglePictureInPicture?.();
+    expect(mocks.closeMiniPlayer).toHaveBeenCalledWith(props.threadRef);
+  });
+
+  it("keeps the native preview window as a secondary action", async () => {
+    const props = {
+      threadRef: {
+        environmentId: EnvironmentId.make("environment-1"),
+        threadId: ThreadId.make("thread-1"),
+      },
+      tabId: "tab-1",
+      visible: true,
+    } as const;
+
+    renderToStaticMarkup(<PreviewView {...props} />);
+    mocks.toggleNativePictureInPicture?.();
+    await vi.waitFor(() =>
+      expect(mocks.openPictureInPicture).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID),
+    );
+
+    mocks.pictureInPicture = true;
+    renderToStaticMarkup(<PreviewView {...props} />);
+    mocks.toggleNativePictureInPicture?.();
+    await vi.waitFor(() =>
+      expect(mocks.closePictureInPicture).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID),
+    );
+  });
+
+  it("forwards Cmd/Ctrl+Enter annotations to the composer send path", async () => {
+    const annotation = {
+      id: "annotation-1",
+      pageUrl: "https://example.com/dashboard",
+      pageTitle: "Dashboard",
+      comment: "Tighten this spacing",
+      elements: [],
+      regions: [],
+      strokes: [],
+      styleChanges: [],
+      screenshot: null,
+      createdAt: "2026-07-27T00:00:00.000Z",
+    };
+    const onSendAnnotation = vi.fn();
+    mocks.pickElement.mockResolvedValue({ annotation, submission: "send" });
+
+    renderToStaticMarkup(
+      <PreviewView
+        threadRef={TEST_THREAD_REF}
+        tabId="tab-1"
+        visible
+        onSendAnnotation={onSendAnnotation}
+      />,
+    );
+    mocks.toggleAnnotation?.();
+
+    await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(annotation, null));
+    expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, annotation);
+  });
+
+  it("still sends when screenshot attachment conversion fails", async () => {
+    const annotation = {
+      id: "annotation-2",
+      pageUrl: "https://example.com/dashboard",
+      pageTitle: "Dashboard",
+      comment: "Tighten this spacing",
+      elements: [],
+      regions: [],
+      strokes: [],
+      styleChanges: [],
+      screenshot: {
+        dataUrl: "data:image/png;base64,c2NyZWVuc2hvdA==",
+        width: 10,
+        height: 10,
+        cropRect: { x: 0, y: 0, width: 10, height: 10 },
+      },
+      createdAt: "2026-07-27T00:00:00.000Z",
+    };
+    const onSendAnnotation = vi.fn();
+    mocks.pickElement.mockResolvedValue({ annotation, submission: "send" });
+    mocks.previewAnnotationScreenshotFile.mockRejectedValue(new Error("conversion failed"));
+
+    renderToStaticMarkup(
+      <PreviewView
+        threadRef={TEST_THREAD_REF}
+        tabId="tab-1"
+        visible
+        onSendAnnotation={onSendAnnotation}
+      />,
+    );
+    mocks.toggleAnnotation?.();
+
+    await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(annotation, null));
+    expect(mocks.addImage).not.toHaveBeenCalled();
   });
 });

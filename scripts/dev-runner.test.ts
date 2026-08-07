@@ -1,6 +1,14 @@
+// @effect-diagnostics nodeBuiltinImport:off - builds real worktree layouts on disk.
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as NetService from "@t3tools/shared/Net";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessEnvironment,
+  HostProcessPlatform,
+  HostProcessWorkingDirectory,
+} from "@t3tools/shared/hostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -14,8 +22,10 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   checkPortAvailabilityOnHosts,
   createDevRunnerEnv,
+  devPortProbeHosts,
   findFirstAvailableOffset,
   getDevRunnerModeArgs,
+  isBrowserAllowedPort,
   resolveModePortOffsets,
   resolveOffset,
   runDevRunnerWithInput,
@@ -58,6 +68,7 @@ const devServerInput = {
   port: 13_773,
   devUrl: undefined,
   dryRun: false,
+  share: false,
   runArgs: ["--inspect", "secret-token-value"],
 } as const;
 
@@ -216,6 +227,30 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       }),
     );
 
+    it.effect("strips inherited service-launcher context", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev",
+          baseEnv: {
+            T3_SERVICE_LAUNCHER_CONTEXT: '{"childVersion":"9.9.9"}',
+            T3_BOOT_SERVICE_UNIT: "t3code.service",
+          },
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          browser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        });
+
+        assert.equal(env.T3_SERVICE_LAUNCHER_CONTEXT, undefined);
+        assert.equal(env.T3_BOOT_SERVICE_UNIT, undefined);
+      }),
+    );
+
     it.effect("does not force websocket logging on in dev mode when unset", () =>
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({
@@ -336,8 +371,175 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         });
 
         assert.equal(env.T3CODE_PORT, "13773");
+        assert.equal(env.PORT, "5733");
+      }),
+    );
+
+    // Browser dev is single-origin: Vite proxies the backend, and the client
+    // resolves it from window.location.origin. Baking a localhost URL here is
+    // what breaks sharing a dev server to another device.
+    for (const mode of ["dev", "dev:web"] as const) {
+      it.effect(`leaves the client backend URLs unset in ${mode} mode`, () =>
+        Effect.gen(function* () {
+          const env = yield* createDevRunnerEnv({
+            mode,
+            baseEnv: {
+              VITE_HTTP_URL: "http://localhost:1234",
+              VITE_WS_URL: "ws://localhost:1234",
+            },
+            serverOffset: 0,
+            webOffset: 0,
+            t3Home: undefined,
+            browser: undefined,
+            autoBootstrapProjectFromCwd: undefined,
+            logWebSocketEvents: undefined,
+            host: undefined,
+            port: undefined,
+            devUrl: undefined,
+          });
+
+          assert.equal(env.VITE_HTTP_URL, undefined);
+          assert.equal(env.VITE_WS_URL, undefined);
+          assert.equal(env.T3CODE_PORT, "13773");
+          // Deleting the keys is not sufficient — vite.config.ts merges
+          // `.env`/`.env.local` underneath this env and would revive them, so
+          // the intent has to be stated positively.
+          assert.equal(env.T3CODE_SINGLE_ORIGIN_DEV, "1");
+        }),
+      );
+    }
+
+    // Desktop pins the renderer at loopback deliberately; an ambient marker
+    // must not make Vite discard those URLs.
+    it.effect("clears the single-origin marker in dev:desktop mode", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev:desktop",
+          baseEnv: { T3CODE_SINGLE_ORIGIN_DEV: "1" },
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          browser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        });
+
+        assert.equal(env.T3CODE_SINGLE_ORIGIN_DEV, undefined);
+        assert.equal(env.VITE_HTTP_URL, "http://127.0.0.1:13773");
+      }),
+    );
+
+    it.effect("clears the single-origin marker in dev:server mode", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev:server",
+          baseEnv: { T3CODE_SINGLE_ORIGIN_DEV: "1" },
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          browser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        });
+
+        assert.equal(env.T3CODE_SINGLE_ORIGIN_DEV, undefined);
         assert.equal(env.VITE_HTTP_URL, "http://localhost:13773");
-        assert.equal(env.VITE_WS_URL, "ws://localhost:13773");
+      }),
+    );
+
+    // HOST is Vite's bind address and gates the HMR pin in vite.config.ts. An
+    // inherited one would survive into browser dev and point HMR at the wrong
+    // interface — invisible over a shared origin, since the page still loads.
+    for (const mode of ["dev", "dev:web"] as const) {
+      it.effect(`drops an inherited HOST in ${mode} mode`, () =>
+        Effect.gen(function* () {
+          const env = yield* createDevRunnerEnv({
+            mode,
+            baseEnv: { HOST: "0.0.0.0" },
+            serverOffset: 0,
+            webOffset: 0,
+            t3Home: undefined,
+            browser: undefined,
+            autoBootstrapProjectFromCwd: undefined,
+            logWebSocketEvents: undefined,
+            host: undefined,
+            port: undefined,
+            devUrl: undefined,
+          });
+
+          assert.equal(env.HOST, undefined);
+        }),
+      );
+    }
+
+    // --host configures the *backend* (T3CODE_HOST). It must not become Vite's
+    // bind address by way of an inherited HOST that happens to agree with it.
+    it.effect("drops an inherited HOST even when --host is given", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev",
+          baseEnv: { HOST: "0.0.0.0" },
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          browser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: "0.0.0.0",
+          port: undefined,
+          devUrl: undefined,
+        });
+
+        assert.equal(env.HOST, undefined);
+        assert.equal(env.T3CODE_HOST, "0.0.0.0");
+      }),
+    );
+
+    // Desktop sets HOST itself, so the clearing must not reach it.
+    it.effect("still pins HOST for dev:desktop", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev:desktop",
+          baseEnv: { HOST: "0.0.0.0" },
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          browser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        });
+
+        assert.equal(env.HOST, "127.0.0.1");
+      }),
+    );
+
+    it.effect("keeps explicit backend URLs for the desktop renderer", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev:desktop",
+          baseEnv: {},
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          browser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        });
+
+        assert.equal(env.VITE_HTTP_URL, "http://127.0.0.1:13773");
+        assert.equal(env.VITE_WS_URL, "ws://127.0.0.1:13773");
       }),
     );
   });
@@ -367,6 +569,41 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         });
 
         assert.equal(offset, 2);
+      }),
+    );
+
+    it.effect("skips browser-blocked web ports before probing availability", () =>
+      Effect.gen(function* () {
+        const probed: Array<{ port: number; role: string | undefined }> = [];
+        const offset = yield* findFirstAvailableOffset({
+          // 5733 + 833 = 6566, which browsers block as sane-port.
+          startOffset: 833,
+          requireServerPort: true,
+          requireWebPort: true,
+          checkPortAvailability: (port, role) => {
+            probed.push({ port, role });
+            return Effect.succeed(true);
+          },
+        });
+
+        assert.equal(offset, 834);
+        assert.deepStrictEqual(probed, [
+          { port: 14_607, role: "server" },
+          { port: 6567, role: "web" },
+        ]);
+      }),
+    );
+
+    it.effect("does not reject a server-only offset because its unused web port is blocked", () =>
+      Effect.gen(function* () {
+        const offset = yield* findFirstAvailableOffset({
+          startOffset: 833,
+          requireServerPort: true,
+          requireWebPort: false,
+          checkPortAvailability: () => Effect.succeed(true),
+        });
+
+        assert.equal(offset, 833);
       }),
     );
 
@@ -406,6 +643,19 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
     );
   });
 
+  describe("isBrowserAllowedPort", () => {
+    it.each([6000, 6566, 6665, 6666, 6667, 6668, 6669, 6679, 6697])(
+      "rejects Fetch-blocked web port %s from the worktree offset range",
+      (port) => {
+        assert.equal(isBrowserAllowedPort(port), false);
+      },
+    );
+
+    it.each([5733, 5900, 6567, 6670, 8733])("allows browser-safe web port %s", (port) => {
+      assert.equal(isBrowserAllowedPort(port), true);
+    });
+  });
+
   describe("checkPortAvailabilityOnHosts", () => {
     it.effect("checks overlapping hosts sequentially to avoid self-interference", () =>
       Effect.gen(function* () {
@@ -431,6 +681,59 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           [13_773, "127.0.0.1"],
           [13_773, "0.0.0.0"],
           [13_773, "::"],
+        ]);
+      }),
+    );
+  });
+
+  describe("devPortProbeHosts", () => {
+    it.effect("probes loopback only when no bind host is configured", () =>
+      Effect.sync(() => {
+        assert.deepStrictEqual(devPortProbeHosts(undefined), ["127.0.0.1", "::1"]);
+        assert.deepStrictEqual(devPortProbeHosts("  "), ["127.0.0.1", "::1"]);
+      }),
+    );
+
+    // A port free on loopback can be taken on the interface the server will
+    // actually bind, so --host/T3CODE_HOST has to be probed as well.
+    it.effect("adds a non-loopback bind host to the probe list", () =>
+      Effect.sync(() => {
+        assert.deepStrictEqual(devPortProbeHosts("0.0.0.0"), ["127.0.0.1", "::1", "0.0.0.0"]);
+        assert.deepStrictEqual(devPortProbeHosts("192.168.1.10"), [
+          "127.0.0.1",
+          "::1",
+          "192.168.1.10",
+        ]);
+      }),
+    );
+
+    it.effect("does not probe loopback twice when it is the configured host", () =>
+      Effect.sync(() => {
+        assert.deepStrictEqual(devPortProbeHosts("127.0.0.1"), ["127.0.0.1", "::1"]);
+      }),
+    );
+
+    // Only the backend honours --host/T3CODE_HOST. Vite reads HOST (set for
+    // desktop only), so judging the web port against the backend's interface
+    // would reject ports for a server that never binds there.
+    it.effect("passes the port role so only the server port sees the bind host", () =>
+      Effect.gen(function* () {
+        const probed: Array<{ port: number; role: string | undefined }> = [];
+
+        yield* resolveModePortOffsets({
+          mode: "dev",
+          startOffset: 0,
+          hasExplicitServerPort: false,
+          hasExplicitDevUrl: false,
+          checkPortAvailability: (port, role) => {
+            probed.push({ port, role });
+            return Effect.succeed(true);
+          },
+        });
+
+        assert.deepStrictEqual(probed, [
+          { port: 13_773, role: "server" },
+          { port: 5733, role: "web" },
         ]);
       }),
     );
@@ -569,6 +872,279 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       });
     });
 
+    // `tailscale serve` config outlives the process, so a dry run that shared
+    // would replace and then tear down whatever mapping the port already had.
+    // Base-dir precedence (--home-dir > worktree .t3 > ambient T3CODE_HOME)
+    // lives in runDevRunnerWithInput; the env builder must not consult the
+    // ambient variable on its own, or it would silently outrank the worktree
+    // default and land dev state on the user's real database.
+    it.effect("ignores an ambient T3CODE_HOME when no home is resolved", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev",
+          baseEnv: { T3CODE_HOME: "/home/user/.t3" },
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          browser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        });
+
+        assert.equal(env.T3CODE_HOME, undefined);
+      }),
+    );
+
+    // Sharing dev:desktop would publish a URL whose renderer dials the
+    // visitor's own loopback, and would clobber the VITE_DEV_SERVER_URL that
+    // Electron loads from. It must decline, not half-work.
+    it.effect("declines to share for dev:desktop and still starts the stack", () => {
+      let spawnCount = 0;
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => {
+          spawnCount += 1;
+          return Effect.succeed(mockProcess(0));
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* runDevRunnerWithInput({
+          ...devServerInput,
+          mode: "dev:desktop",
+          port: undefined,
+          share: true,
+        }).pipe(
+          Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
+          Effect.provideService(HostProcessPlatform, "linux"),
+        );
+
+        assert.equal(spawnCount, 1);
+      });
+    });
+
+    // Single-origin browser dev proxies the backend at localhost, so a backend
+    // bound only to a specific interface breaks every proxied request in a way
+    // that looks like a broken server. Reject the combination up front.
+    it.effect("rejects a specific non-loopback --host for browser dev modes", () => {
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => Effect.succeed(mockProcess(0))),
+      );
+
+      return Effect.gen(function* () {
+        const error = yield* runDevRunnerWithInput({
+          ...devServerInput,
+          mode: "dev",
+          port: undefined,
+          host: "192.168.1.10",
+        }).pipe(
+          Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
+          Effect.provideService(HostProcessPlatform, "linux"),
+          Effect.flip,
+        );
+
+        if (error._tag !== "DevRunnerHostNotProxiableError") {
+          assert.fail(`Unexpected error: ${error._tag}`);
+        }
+        assert.equal(error.mode, "dev");
+        assert.equal(error.host, "192.168.1.10");
+        assert.include(error.message, "0.0.0.0");
+        assert.include(error.message, "--share");
+      });
+    });
+
+    // Wildcards keep loopback answering, so the proxy target stays valid and
+    // the combination must keep working — it is the documented way to serve a
+    // LAN interface and the browser proxy at once.
+    it.effect("still spawns the stack for a wildcard --host in dev mode", () => {
+      let spawnCount = 0;
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => {
+          spawnCount += 1;
+          return Effect.succeed(mockProcess(0));
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* runDevRunnerWithInput({
+          ...devServerInput,
+          mode: "dev",
+          port: undefined,
+          host: "0.0.0.0",
+        }).pipe(
+          Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
+          Effect.provideService(HostProcessPlatform, "linux"),
+        );
+
+        assert.equal(spawnCount, 1);
+      });
+    });
+
+    // dev:server does not proxy — the client talks to the backend directly —
+    // so a specific interface bind stays legitimate there.
+    it.effect("keeps a specific --host working for dev:server", () => {
+      let spawnCount = 0;
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => {
+          spawnCount += 1;
+          return Effect.succeed(mockProcess(0));
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* runDevRunnerWithInput({
+          ...devServerInput,
+          host: "192.168.1.10",
+        }).pipe(
+          Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
+          Effect.provideService(HostProcessPlatform, "linux"),
+        );
+
+        assert.equal(spawnCount, 1);
+      });
+    });
+
+    // A shared origin means a remote browser, where unbundled dev's
+    // per-module waterfall pays a tailnet round trip per import level. The
+    // runner defaults bundled dev on for the spawned stack, but only
+    // defaults: an explicit T3CODE_BUNDLED_DEV (even "0") must pass through.
+    describe("--share bundled dev default", () => {
+      const shareSpawnedEnv = (input: { readonly ambientBundledDev: string | undefined }) =>
+        Effect.gen(function* () {
+          let captured: Record<string, string | undefined> | undefined;
+          const spawnerLayer = Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) => {
+              const spawned = command as unknown as {
+                readonly command: string;
+                readonly args: ReadonlyArray<string>;
+                readonly options?: { readonly env?: Record<string, string | undefined> };
+              };
+              if (spawned.command === "vp") {
+                captured = spawned.options?.env;
+                return Effect.succeed(mockProcess(0));
+              }
+              // tailscale: answer `status --json` with a valid tailnet name,
+              // succeed the `serve`/`off` calls.
+              return Effect.succeed(
+                ChildProcessSpawner.makeHandle({
+                  pid: ChildProcessSpawner.ProcessId(2),
+                  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                  isRunning: Effect.succeed(false),
+                  kill: () => Effect.void,
+                  unref: Effect.succeed(Effect.void),
+                  stdin: Sink.drain,
+                  stdout: spawned.args.includes("status")
+                    ? Stream.make(
+                        new TextEncoder().encode(
+                          JSON.stringify({ Self: { DNSName: "host.example.ts.net." } }),
+                        ),
+                      )
+                    : Stream.empty,
+                  stderr: Stream.empty,
+                  all: Stream.empty,
+                  getInputFd: () => Sink.drain,
+                  getOutputFd: () => Stream.empty,
+                }),
+              );
+            }),
+          );
+
+          yield* runDevRunnerWithInput({
+            ...devServerInput,
+            mode: "dev",
+            port: undefined,
+            share: true,
+          }).pipe(
+            Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
+            Effect.provideService(HostProcessPlatform, "linux"),
+            Effect.provideService(
+              HostProcessEnvironment,
+              input.ambientBundledDev === undefined
+                ? {}
+                : { T3CODE_BUNDLED_DEV: input.ambientBundledDev },
+            ),
+          );
+
+          return captured;
+        });
+
+      it.effect("defaults T3CODE_BUNDLED_DEV=1 for a shared run", () =>
+        Effect.gen(function* () {
+          const env = yield* shareSpawnedEnv({ ambientBundledDev: undefined });
+          assert.equal(env?.T3CODE_BUNDLED_DEV, "1");
+        }),
+      );
+
+      it.effect("keeps an explicit T3CODE_BUNDLED_DEV=0 opt-out", () =>
+        Effect.gen(function* () {
+          const env = yield* shareSpawnedEnv({ ambientBundledDev: "0" });
+          assert.equal(env?.T3CODE_BUNDLED_DEV, "0");
+        }),
+      );
+
+      it.effect("leaves T3CODE_BUNDLED_DEV unset without --share", () =>
+        Effect.gen(function* () {
+          let captured: Record<string, string | undefined> | undefined;
+          const spawnerLayer = Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) => {
+              captured = (
+                command as {
+                  readonly options?: { readonly env?: Record<string, string | undefined> };
+                }
+              ).options?.env;
+              return Effect.succeed(mockProcess(0));
+            }),
+          );
+
+          yield* runDevRunnerWithInput({
+            ...devServerInput,
+            mode: "dev",
+            port: undefined,
+          }).pipe(
+            Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
+            Effect.provideService(HostProcessPlatform, "linux"),
+            Effect.provideService(HostProcessEnvironment, {}),
+          );
+
+          assert.equal(captured?.T3CODE_BUNDLED_DEV, undefined);
+        }),
+      );
+    });
+
+    it.effect("spawns nothing when --dry-run is combined with --share", () => {
+      let spawnCount = 0;
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => {
+          spawnCount += 1;
+          return Effect.succeed(mockProcess(0));
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* runDevRunnerWithInput({
+          ...devServerInput,
+          mode: "dev",
+          port: undefined,
+          dryRun: true,
+          share: true,
+        }).pipe(
+          Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
+          Effect.provideService(HostProcessPlatform, "linux"),
+        );
+
+        assert.equal(spawnCount, 0);
+      });
+    });
+
     it.effect("reports non-zero exits without manufacturing a cause", () => {
       const spawnerLayer = Layer.succeed(
         ChildProcessSpawner.ChildProcessSpawner,
@@ -628,6 +1204,114 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.notProperty(error, "args");
         assert.notInclude(error.message, "secret-token-value");
       });
+    });
+
+    describe("t3 home precedence", () => {
+      const makeWorktree = Effect.acquireRelease(
+        Effect.sync(() => {
+          const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-devrunner-"));
+          NodeFS.writeFileSync(
+            NodePath.join(root, ".git"),
+            "gitdir: /elsewhere/.git/worktrees/x\n",
+          );
+          return root;
+        }),
+        (root) => Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+      );
+
+      const spawnedHome = (input: {
+        readonly t3Home: string | undefined;
+        readonly cwd: string;
+        readonly ambientHome: string | undefined;
+      }) =>
+        Effect.gen(function* () {
+          let captured: Record<string, string | undefined> | undefined;
+          const spawnerLayer = Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) => {
+              captured = (
+                command as {
+                  readonly options?: { readonly env?: Record<string, string | undefined> };
+                }
+              ).options?.env;
+              return Effect.succeed(mockProcess(0));
+            }),
+          );
+
+          yield* runDevRunnerWithInput({ ...devServerInput, t3Home: input.t3Home }).pipe(
+            Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
+            Effect.provideService(HostProcessPlatform, "linux"),
+            Effect.provideService(HostProcessWorkingDirectory, input.cwd),
+            Effect.provideService(
+              HostProcessEnvironment,
+              input.ambientHome === undefined ? {} : { T3CODE_HOME: input.ambientHome },
+            ),
+          );
+
+          return captured?.T3CODE_HOME;
+        });
+
+      it.effect("prefers an explicit --home-dir over the worktree default", () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const root = yield* makeWorktree;
+          const home = yield* spawnedHome({
+            t3Home: "/tmp/explicit-home",
+            cwd: root,
+            ambientHome: "/home/user/.t3",
+          });
+          assert.equal(home, path.resolve("/tmp/explicit-home"));
+        }).pipe(Effect.scoped),
+      );
+
+      it.effect("treats a blank --home-dir as unset rather than as a selection", () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const root = yield* makeWorktree;
+          const home = yield* spawnedHome({
+            t3Home: "   ",
+            cwd: root,
+            ambientHome: "/home/user/.t3",
+          });
+          assert.equal(home, path.join(path.resolve(root), ".t3"));
+        }).pipe(Effect.scoped),
+      );
+
+      it.effect("prefers the worktree .t3 over an ambient T3CODE_HOME", () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const root = yield* makeWorktree;
+          const home = yield* spawnedHome({
+            t3Home: undefined,
+            cwd: root,
+            ambientHome: "/home/user/.t3",
+          });
+          assert.equal(home, path.join(path.resolve(root), ".t3"));
+        }).pipe(Effect.scoped),
+      );
+
+      it.effect("falls back to an ambient T3CODE_HOME outside a worktree", () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const home = yield* spawnedHome({
+            t3Home: undefined,
+            cwd: NodeOS.tmpdir(),
+            ambientHome: "/home/user/.t3",
+          });
+          assert.equal(home, path.resolve("/home/user/.t3"));
+        }),
+      );
+
+      it.effect("leaves the home implicit with no worktree and no ambient value", () =>
+        Effect.gen(function* () {
+          const home = yield* spawnedHome({
+            t3Home: undefined,
+            cwd: NodeOS.tmpdir(),
+            ambientHome: undefined,
+          });
+          assert.equal(home, undefined);
+        }),
+      );
     });
   });
 });

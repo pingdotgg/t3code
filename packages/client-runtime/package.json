@@ -123,6 +123,10 @@
       "types": "./src/state/threads.ts",
       "default": "./src/state/threads.ts"
     },
+    "./state/subagentRuntime": {
+      "types": "./src/state/subagentRuntime.ts",
+      "default": "./src/state/subagentRuntime.ts"
+    },
     "./state/thread-sort": {
       "types": "./src/state/threadSort.ts",
       "default": "./src/state/threadSort.ts"
@@ -130,6 +134,10 @@
     "./state/thread-settled": {
       "types": "./src/state/threadSettled.ts",
       "default": "./src/state/threadSettled.ts"
+    },
+    "./state/thread-search": {
+      "types": "./src/state/threadSearch.ts",
+      "default": "./src/state/threadSearch.ts"
     },
     "./state/vcs": {
       "types": "./src/state/vcs.ts",

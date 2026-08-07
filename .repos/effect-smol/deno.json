@@ -18,6 +18,7 @@
     "scripts/",
     "scratchpad/",
     "packages/*/typetest/",
+    "packages/*/typeperf/",
     "packages/*/benchmark/",
     "packages/ai",
     "packages/atom",
