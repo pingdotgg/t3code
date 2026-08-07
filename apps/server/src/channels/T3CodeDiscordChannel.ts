@@ -1,4 +1,4 @@
-import { createChannel } from "@copilotkit/channels-core";
+import { createChannel, defineChannelCommand } from "@copilotkit/channels-core";
 import { discord } from "@copilotkit/channels-discord";
 import {
   Actions,
@@ -15,6 +15,8 @@ import {
   CommandId,
   type DiscordChannelSettings,
   MessageId,
+  type ModelSelection,
+  type ServerProvider,
   type ServerSettings,
   ThreadId,
 } from "@t3tools/contracts";
@@ -26,10 +28,12 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { z } from "zod";
 
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { forkParked } from "../serverActivation.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 
@@ -44,6 +48,7 @@ export interface ChannelTaskStatus {
   readonly title: string;
   readonly branch: string | null;
   readonly threadEnvMode: "local" | "worktree";
+  readonly modelSelection: ModelSelection;
   readonly state: "queued" | "running" | "done" | "failed";
 }
 
@@ -55,12 +60,50 @@ export interface T3CodeChannelOperations {
   readonly startTask: (
     prompt: string,
     config: DiscordChannelSettings,
+    modelSelection?: ModelSelection,
   ) => Promise<StartedChannelTask>;
   readonly getTaskStatus: (threadId: ThreadId) => Promise<ChannelTaskStatus | null>;
+  readonly listModels: () => Promise<ReadonlyArray<DiscordModelOption>>;
 }
 
 interface LinkedConversationState {
-  readonly t3ThreadId: string;
+  readonly t3ThreadId?: string;
+  readonly modelSelection?: ModelSelection;
+}
+
+export interface DiscordModelOption {
+  readonly value: string;
+  readonly label: string;
+  readonly selection: ModelSelection;
+}
+
+export function discordModelOptions(
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<DiscordModelOption> {
+  return providers.flatMap((provider) => {
+    if (
+      !provider.enabled ||
+      !provider.installed ||
+      provider.auth.status === "unauthenticated" ||
+      provider.availability === "unavailable"
+    ) {
+      return [];
+    }
+    return provider.models
+      .filter((model) => model.isLegacy !== true)
+      .map((model) => ({
+        value: `${provider.instanceId}/${model.slug}`,
+        label: `${provider.displayName ?? provider.instanceId} · ${model.name}`,
+        selection: { instanceId: provider.instanceId, model: model.slug },
+      }));
+  });
+}
+
+export function resolveDiscordModel(
+  models: ReadonlyArray<DiscordModelOption>,
+  value: string,
+): DiscordModelOption | undefined {
+  return models.find((model) => model.value === value);
 }
 
 type ChannelThread = Pick<Thread, "post"> & {
@@ -132,6 +175,25 @@ function taskStateLabel(state: ChannelTaskStatus["state"]): string {
   }
 }
 
+function modelLabel(selection: ModelSelection): string {
+  return `${selection.instanceId}/${selection.model}`;
+}
+
+function readConversationState(value: unknown): LinkedConversationState {
+  if (typeof value !== "object" || value === null) return {};
+  const record = value as Record<string, unknown>;
+  const t3ThreadId = typeof record.t3ThreadId === "string" ? record.t3ThreadId : undefined;
+  const candidate = record.modelSelection;
+  const modelSelection =
+    typeof candidate === "object" &&
+    candidate !== null &&
+    typeof (candidate as Record<string, unknown>).instanceId === "string" &&
+    typeof (candidate as Record<string, unknown>).model === "string"
+      ? (candidate as ModelSelection)
+      : undefined;
+  return { ...(t3ThreadId ? { t3ThreadId } : {}), ...(modelSelection ? { modelSelection } : {}) };
+}
+
 function statusCard(status: ChannelTaskStatus) {
   return Message({
     accent: status.state === "failed" ? FAILED_ACCENT : DISCORD_ACCENT,
@@ -141,6 +203,7 @@ function statusCard(status: ChannelTaskStatus) {
       Fields({
         children: [
           Field({ label: "Status", children: taskStateLabel(status.state) }),
+          Field({ label: "Model", children: `\`${modelLabel(status.modelSelection)}\`` }),
           Field({
             label: status.threadEnvMode === "worktree" ? "Branch" : "Target",
             children:
@@ -173,6 +236,7 @@ function startedCard(
       Fields({
         children: [
           Field({ label: "Status", children: "Queued" }),
+          Field({ label: "Model", children: `\`${modelLabel(task.modelSelection)}\`` }),
           Field({
             label: task.threadEnvMode === "worktree" ? "Branch" : "Target",
             children:
@@ -210,6 +274,7 @@ function completedCard(input: {
         children: [
           Field({ label: "Status", children: "Done" }),
           Field({ label: "Diff", children: fileLabel }),
+          Field({ label: "Model", children: `\`${modelLabel(input.task.modelSelection)}\`` }),
           Field({
             label: input.task.threadEnvMode === "worktree" ? "Branch" : "Target",
             children:
@@ -227,6 +292,7 @@ function completedCard(input: {
 function createT3CodeChannel(input: {
   readonly config: DiscordChannelSettings;
   readonly operations: T3CodeChannelOperations;
+  readonly models: ReadonlyArray<DiscordModelOption>;
 }) {
   const linkedThreads = new Map<string, Pick<Thread, "post">>();
   const channel = createChannel({
@@ -255,14 +321,7 @@ function createT3CodeChannel(input: {
 
   const handleText = async (thread: ChannelThread, rawText: string) => {
     const text = cleanDiscordPrompt(rawText);
-    const storedState = await thread.state();
-    const state =
-      typeof storedState === "object" &&
-      storedState !== null &&
-      "t3ThreadId" in storedState &&
-      typeof storedState.t3ThreadId === "string"
-        ? ({ t3ThreadId: storedState.t3ThreadId } satisfies LinkedConversationState)
-        : undefined;
+    const state = readConversationState(await thread.state());
     if (text.toLocaleLowerCase() === "status") {
       if (!state?.t3ThreadId) {
         await thread.post("No T3 Code task is linked to this Discord thread yet.");
@@ -285,8 +344,11 @@ function createT3CodeChannel(input: {
     }
 
     try {
-      const task = await input.operations.startTask(text, input.config);
-      await thread.setState({ t3ThreadId: task.threadId } satisfies LinkedConversationState);
+      const task = await input.operations.startTask(text, input.config, state.modelSelection);
+      await thread.setState({
+        ...state,
+        t3ThreadId: task.threadId,
+      } satisfies LinkedConversationState);
       linkedThreads.set(task.threadId, thread);
       await thread.post(startedCard(task, (target) => postStatus(target, task.threadId)));
     } catch {
@@ -309,7 +371,70 @@ function createT3CodeChannel(input: {
   };
 
   channel.onMention(({ thread, message }) => handleText(thread, message.text));
-  channel.onCommand("t3", ({ thread, text }) => handleText(thread, text));
+  channel.onCommand(
+    defineChannelCommand({
+      name: "t3",
+      description: "Run a coding task in T3 Code with the selected model.",
+      options: z.object({
+        prompt: z.string().min(1).describe("The coding task for T3 Code"),
+      }),
+      handler: ({ thread, text, options }) => handleText(thread, options.prompt ?? text),
+    }),
+  );
+  channel.onCommand(
+    defineChannelCommand({
+      name: "status",
+      description: "Show the status of the T3 Code task linked to this channel.",
+      handler: ({ thread }) => handleText(thread, "status"),
+    }),
+  );
+
+  const selectableModels = input.models.slice(0, 25);
+  const modelValues = selectableModels.map(({ value }) => value);
+  const modelSchema =
+    modelValues.length > 0 ? z.enum(modelValues as [string, ...string[]]) : z.string().min(1);
+  channel.onCommand(
+    defineChannelCommand({
+      name: "model",
+      description: "Choose the model used by future T3 Code tasks in this channel.",
+      options: z.object({
+        model: modelSchema.describe("Provider and model"),
+      }),
+      async handler({ thread, options }) {
+        const selected = resolveDiscordModel(selectableModels, options.model);
+        if (!selected) {
+          await thread.post(
+            "That model is not currently available. Run `/models` to see the list.",
+          );
+          return;
+        }
+        const state = readConversationState(await thread.state());
+        await thread.setState({
+          ...state,
+          modelSelection: selected.selection,
+        } satisfies LinkedConversationState);
+        await thread.post(
+          `Future T3 Code tasks in this channel will use **${selected.label}** (\`${selected.value}\`).`,
+        );
+      },
+    }),
+  );
+  channel.onCommand(
+    defineChannelCommand({
+      name: "models",
+      description: "List models available to T3 Code and show the current selection.",
+      async handler({ thread }) {
+        const state = readConversationState(await thread.state());
+        const current = state.modelSelection ? modelLabel(state.modelSelection) : "project default";
+        const list = selectableModels
+          .map(({ value, label }) => `• \`${value}\` — ${label}`)
+          .join("\n");
+        await thread.post(
+          `**Current model:** ${current === "project default" ? current : `\`${current}\``}\n\n${list || "No runnable models are currently available."}`,
+        );
+      },
+    }),
+  );
 
   return {
     channel,
@@ -332,6 +457,7 @@ const makeOperations = Effect.gen(function* () {
   const gitWorkflow = yield* GitWorkflowService;
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const providerRegistry = yield* ProviderRegistry;
   const runtimeContext = yield* Effect.context<never>();
   const runPromise = Effect.runPromiseWith(runtimeContext);
 
@@ -368,6 +494,7 @@ const makeOperations = Effect.gen(function* () {
   const startTaskEffect = Effect.fn("T3CodeDiscordChannel.startTask")(function* (
     prompt: string,
     config: DiscordChannelSettings,
+    requestedModelSelection?: ModelSelection,
   ) {
     if (config.projectId === null) {
       return yield* new DiscordChannelTaskError({
@@ -381,7 +508,8 @@ const makeOperations = Effect.gen(function* () {
       });
     }
     const project = projectOption.value;
-    if (project.defaultModelSelection === null) {
+    const modelSelection = requestedModelSelection ?? project.defaultModelSelection;
+    if (modelSelection === null) {
       return yield* new DiscordChannelTaskError({
         message: "Discord channel project has no default model",
       });
@@ -400,7 +528,7 @@ const makeOperations = Effect.gen(function* () {
       threadId,
       projectId: project.id,
       title,
-      modelSelection: project.defaultModelSelection,
+      modelSelection,
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: worktree?.worktree.refName ?? null,
@@ -426,6 +554,7 @@ const makeOperations = Effect.gen(function* () {
       title,
       branch: worktree?.worktree.refName ?? null,
       threadEnvMode: config.threadEnvMode,
+      modelSelection,
       state: "queued" as const,
     };
   });
@@ -452,13 +581,17 @@ const makeOperations = Effect.gen(function* () {
       title: thread.title,
       branch: thread.branch,
       threadEnvMode,
+      modelSelection: thread.modelSelection,
       state,
     };
   });
 
   return {
-    startTask: (prompt, config) => runPromise(startTaskEffect(prompt, config)),
+    startTask: (prompt, config, modelSelection) =>
+      runPromise(startTaskEffect(prompt, config, modelSelection)),
     getTaskStatus: (threadId) => runPromise(getTaskStatusEffect(threadId)),
+    listModels: () =>
+      runPromise(providerRegistry.getProviders.pipe(Effect.map(discordModelOptions))),
   } satisfies T3CodeChannelOperations;
 });
 
@@ -498,7 +631,10 @@ export const layer = Layer.effectDiscard(
       yield* stopActive();
       if (!isDiscordChannelConfigured(config)) return;
 
-      const created = createT3CodeChannel({ config, operations });
+      const models = yield* Effect.tryPromise(() => operations.listModels()).pipe(
+        Effect.orElseSucceed(() => []),
+      );
+      const created = createT3CodeChannel({ config, operations, models });
       const connected = yield* Effect.tryPromise(() => created.channel.ɵruntime.start()).pipe(
         Effect.timeout("15 seconds"),
         Effect.as(true),

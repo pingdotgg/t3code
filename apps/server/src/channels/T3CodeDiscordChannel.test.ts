@@ -1,9 +1,20 @@
 import { expect, it } from "@effect/vitest";
-import { DiscordChannelSettings, ProjectId } from "@t3tools/contracts";
+import {
+  DiscordChannelSettings,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe } from "vite-plus/test";
 
-import { channelBranchName, isDiscordChannelConfigured } from "./T3CodeDiscordChannel.ts";
+import {
+  channelBranchName,
+  discordModelOptions,
+  isDiscordChannelConfigured,
+  resolveDiscordModel,
+} from "./T3CodeDiscordChannel.ts";
 
 const decodeDiscordChannelSettings = Schema.decodeSync(DiscordChannelSettings);
 
@@ -57,5 +68,62 @@ describe("Discord channel isolation", () => {
 
   it("refuses to start while the integration is disabled", () => {
     expect(isDiscordChannelConfigured({ ...configuredDiscord, enabled: false })).toBe(false);
+  });
+});
+
+describe("Discord channel model selection", () => {
+  const provider = {
+    instanceId: ProviderInstanceId.make("codex"),
+    driver: ProviderDriverKind.make("codex"),
+    displayName: "Codex",
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    availability: "available",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-08-07T00:00:00.000Z",
+    models: [
+      {
+        slug: "gpt-5.6-sol",
+        name: "GPT-5.6 Sol",
+        isCustom: false,
+        capabilities: null,
+      },
+      {
+        slug: "gpt-5.4",
+        name: "GPT-5.4",
+        isCustom: false,
+        isLegacy: true,
+        capabilities: null,
+      },
+    ],
+    slashCommands: [],
+    skills: [],
+  } satisfies ServerProvider;
+
+  it("offers current models from runnable provider instances", () => {
+    expect(discordModelOptions([provider])).toEqual([
+      {
+        value: "codex/gpt-5.6-sol",
+        label: "Codex · GPT-5.6 Sol",
+        selection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.6-sol",
+        },
+      },
+    ]);
+    expect(
+      discordModelOptions([{ ...provider, auth: { status: "unauthenticated" } } as ServerProvider]),
+    ).toEqual([]);
+  });
+
+  it("routes the selected Discord value to the exact provider and model", () => {
+    const models = discordModelOptions([provider]);
+    expect(resolveDiscordModel(models, "codex/gpt-5.6-sol")?.selection).toEqual({
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.6-sol",
+    });
+    expect(resolveDiscordModel(models, "codex/missing")).toBeUndefined();
   });
 });

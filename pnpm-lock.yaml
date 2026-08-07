@@ -483,6 +483,9 @@ importers:
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@effect/vitest':
         specifier: 4.0.0-beta.103

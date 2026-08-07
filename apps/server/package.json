@@ -35,7 +35,8 @@
     "@pierre/diffs": "catalog:",
     "effect": "catalog:",
     "node-pty": "^1.1.0",
-    "yaml": "catalog:"
+    "yaml": "catalog:",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
