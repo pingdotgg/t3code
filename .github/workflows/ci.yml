@@ -84,7 +84,28 @@ jobs:
         run: vp run --filter @t3tools/desktop ensure:electron
 
       - name: Test
+        env:
+          T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
+          T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
         run: vp run test
+
+      - name: Publish transfer budget report
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/t3code-transfer-budget.md"; then
+            tee -a "$GITHUB_STEP_SUMMARY" < "${{ runner.temp }}/t3code-transfer-budget.md"
+          else
+            echo "Transfer budget report was not produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload thread transfer result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: thread-transfer-results
+          path: ${{ runner.temp }}/thread-transfer-result.json
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Test resource monitor
         run: cargo test --locked --manifest-path native/resource-monitor/Cargo.toml
