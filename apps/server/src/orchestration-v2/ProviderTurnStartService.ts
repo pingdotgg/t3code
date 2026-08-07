@@ -5,6 +5,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
+  type ProviderSessionId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -21,6 +22,7 @@ import {
   providerMessageWithContextHandoffs,
 } from "./ContextHandoffService.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
+import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import {
@@ -75,8 +77,9 @@ export const layer: Layer.Layer<
     const runExecution = yield* RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicyV2;
     const worktreeRevival = yield* WorktreeRevivalService;
+    const providerSessionStarts = yield* makeKeyedSerialExecutor<ProviderSessionId>();
     const worktreeGenerationByProviderSession = yield* Ref.make(
-      new Map<string, { readonly path: string; readonly generation: number }>(),
+      new Map<ProviderSessionId, { readonly path: string; readonly generation: number }>(),
     );
 
     const start = Effect.fn("orchestrationV2.providerTurnStart.start")(function* (input: {
@@ -169,6 +172,7 @@ export const layer: Layer.Layer<
       let observedWorktreeGeneration:
         | { readonly path: string; readonly generation: number }
         | undefined;
+      let revivedWorktree = false;
       if (projection.thread.worktreePath !== null && projection.thread.branch !== null) {
         const revival = yield* worktreeRevival.reviveForThread({
           threadId: projection.thread.id,
@@ -180,41 +184,55 @@ export const layer: Layer.Layer<
           path: projection.thread.worktreePath,
           generation: revival.generation,
         };
-        const previousWorktreeGeneration = (yield* Ref.get(
-          worktreeGenerationByProviderSession,
-        )).get(providerSessionId);
-        if (
-          revival.revived ||
-          (previousWorktreeGeneration !== undefined &&
-            (previousWorktreeGeneration.path !== observedWorktreeGeneration.path ||
-              previousWorktreeGeneration.generation !== observedWorktreeGeneration.generation))
-        ) {
-          // A provider session can retain an adapter process (and its cwd)
-          // across turns. Every session records the worktree generation it
-          // observed, so shared threads also restart after another thread (or
-          // an explicit RPC) recreates the checkout.
-          yield* providerSessions.close(providerSessionId);
-        }
+        revivedWorktree = revival.revived;
       }
       const existingSessionProjection = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
       );
-      const session = yield* providerSessions.open({
-        threadId: projection.thread.id,
+      const session = yield* providerSessionStarts.withLock(
         providerSessionId,
-        modelSelection: run.modelSelection,
-        runtimePolicy: resolvedRuntimePolicy,
-        ...(existingSessionProjection === undefined
-          ? {}
-          : { resumeFromSession: existingSessionProjection }),
-      });
-      if (observedWorktreeGeneration !== undefined) {
-        yield* Ref.update(worktreeGenerationByProviderSession, (current) => {
-          const next = new Map(current);
-          next.set(providerSessionId, observedWorktreeGeneration);
-          return next;
-        });
-      }
+        Effect.gen(function* () {
+          if (!(yield* isCurrentAttemptInStatus("starting"))) return null;
+
+          if (observedWorktreeGeneration !== undefined) {
+            const previousWorktreeGeneration = (yield* Ref.get(
+              worktreeGenerationByProviderSession,
+            )).get(providerSessionId);
+            if (
+              revivedWorktree ||
+              (previousWorktreeGeneration !== undefined &&
+                (previousWorktreeGeneration.path !== observedWorktreeGeneration.path ||
+                  previousWorktreeGeneration.generation !== observedWorktreeGeneration.generation))
+            ) {
+              // A provider session can retain an adapter process (and its cwd)
+              // across turns. Serialize the compare/close/open/update sequence
+              // by session so another starter cannot race this cwd transition.
+              if (!(yield* isCurrentAttemptInStatus("starting"))) return null;
+              yield* providerSessions.close(providerSessionId);
+            }
+          }
+
+          if (!(yield* isCurrentAttemptInStatus("starting"))) return null;
+          const session = yield* providerSessions.open({
+            threadId: projection.thread.id,
+            providerSessionId,
+            modelSelection: run.modelSelection,
+            runtimePolicy: resolvedRuntimePolicy,
+            ...(existingSessionProjection === undefined
+              ? {}
+              : { resumeFromSession: existingSessionProjection }),
+          });
+          if (observedWorktreeGeneration !== undefined) {
+            yield* Ref.update(worktreeGenerationByProviderSession, (current) => {
+              const next = new Map(current);
+              next.set(providerSessionId, observedWorktreeGeneration);
+              return next;
+            });
+          }
+          return session;
+        }),
+      );
+      if (session === null) return;
       let effectiveHandoffs = handoffs;
       const loadedProviderThread = yield* Effect.gen(function* () {
         if (nativeForkTransfer !== undefined) {

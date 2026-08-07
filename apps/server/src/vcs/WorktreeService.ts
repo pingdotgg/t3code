@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import {
+  type GitCommandError,
   type OrchestrationV2ThreadShell,
   type ProjectId,
   type VcsListWorktreesInput,
@@ -244,6 +245,56 @@ export const make = Effect.gen(function* () {
     if (stdout === null) return null;
     const count = Number(stdout.trim());
     return Number.isInteger(count) && count >= 0 ? count : null;
+  });
+
+  const freshPruneBlocker = Effect.fn("WorktreeService.freshPruneBlocker")(function* (
+    worktree: WorktreeInfo,
+  ): Effect.fn.Return<WorktreePruneSkipReason | null, GitCommandError> {
+    const status = yield* git.statusDetailsLocal(worktree.path);
+    if (!status.isRepo || status.branch === null || status.branch !== worktree.branch) {
+      return "status_unavailable";
+    }
+    if (status.hasWorkingTreeChanges) {
+      return "dirty";
+    }
+
+    const branchSyncStdout = yield* executeLenient(
+      "WorktreeService.pruneWorktrees.branchSync",
+      worktree.workspaceRoot,
+      [
+        "for-each-ref",
+        `refs/heads/${status.branch}`,
+        "--format=%(refname:short)%09%(upstream:short)%09%(upstream:track,nobracket)",
+      ],
+    );
+    if (branchSyncStdout === null) {
+      return "status_unavailable";
+    }
+
+    const sync = parseBranchSyncInfo(branchSyncStdout).get(status.branch);
+    if (sync === undefined) {
+      return "status_unavailable";
+    }
+    if (sync.upstream !== null && !sync.upstreamGone) {
+      if (sync.aheadOfUpstreamCount === null) {
+        return "status_unavailable";
+      }
+      return sync.aheadOfUpstreamCount > 0 ? "unpushed" : null;
+    }
+
+    const defaultRef = yield* resolveDefaultRef(worktree.workspaceRoot);
+    if (defaultRef === null) {
+      return "status_unavailable";
+    }
+    const aheadOfDefaultCount = yield* countAheadOfDefault(
+      worktree.workspaceRoot,
+      status.branch,
+      defaultRef,
+    );
+    if (aheadOfDefaultCount === null) {
+      return "status_unavailable";
+    }
+    return aheadOfDefaultCount > 0 ? "unpushed" : null;
   });
 
   const worktreeMtime = (worktreePath: string) =>
@@ -543,6 +594,22 @@ export const make = Effect.gen(function* () {
           path: worktree.path,
           reason: worktree.pruneBlockers[0] ?? "status_unavailable",
         });
+        continue;
+      }
+
+      const freshBlocker = yield* freshPruneBlocker(worktree).pipe(
+        Effect.catchCause((cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logWarning("worktrees.prune.status-failed", {
+              worktreePath: worktree.path,
+              cause,
+            });
+            return "status_unavailable" as const;
+          }),
+        ),
+      );
+      if (freshBlocker !== null) {
+        skipped.push({ path: worktree.path, reason: freshBlocker });
         continue;
       }
 

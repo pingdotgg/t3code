@@ -72,7 +72,10 @@ const makeShell = (input: {
 const makeTestLayer = (
   projects: () => ReadonlyArray<Project>,
   shells: () => OrchestrationV2ThreadShell[],
+  gitDriver?: GitVcsDriver.GitVcsDriver["Service"],
 ) => {
+  const selectedGitLayer =
+    gitDriver === undefined ? gitLayer : Layer.succeed(GitVcsDriver.GitVcsDriver, gitDriver);
   const projectLayer = Layer.mock(ProjectService.ProjectService)({
     getById: () => Effect.succeed(Option.none()),
     snapshot: Effect.sync(() => ({
@@ -83,7 +86,7 @@ const makeTestLayer = (
   const revivalLayer = WorktreeRevivalService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        gitLayer,
+        selectedGitLayer,
         serverConfigLiveLayer,
         NodeServices.layer,
         projectLayer,
@@ -97,7 +100,7 @@ const makeTestLayer = (
   return worktreeServiceLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        gitLayer,
+        selectedGitLayer,
         serverConfigLiveLayer,
         NodeServices.layer,
         projectLayer,
@@ -358,6 +361,105 @@ it.effect("lists V2-managed worktrees and preserves shared project/thread refere
       }).pipe(Effect.provide(layer)),
     );
     assert.isTrue(Exit.isFailure(occupiedReviveExit));
+  }).pipe(Effect.provide(Layer.mergeAll(serverConfigLiveLayer, NodeServices.layer, gitLayer))),
+);
+
+it.effect("rechecks unpublished commits immediately before pruning a worktree", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const config = yield* ServerConfig.ServerConfig;
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+
+    const repositoryRoot = yield* fs.makeTempDirectoryScoped({
+      prefix: "t3-worktree-v2-prune-race-repo-",
+    });
+    yield* driver.execute({
+      operation: "WorktreeServicePruneRaceTest.init",
+      cwd: repositoryRoot,
+      args: ["init", "-b", "main"],
+    });
+    yield* driver.execute({
+      operation: "WorktreeServicePruneRaceTest.userEmail",
+      cwd: repositoryRoot,
+      args: ["config", "user.email", "test@example.com"],
+    });
+    yield* driver.execute({
+      operation: "WorktreeServicePruneRaceTest.userName",
+      cwd: repositoryRoot,
+      args: ["config", "user.name", "T3 Test"],
+    });
+    yield* fs.writeFileString(path.join(repositoryRoot, "README.md"), "hello\n");
+    yield* driver.execute({
+      operation: "WorktreeServicePruneRaceTest.add",
+      cwd: repositoryRoot,
+      args: ["add", "README.md"],
+    });
+    yield* driver.execute({
+      operation: "WorktreeServicePruneRaceTest.commit",
+      cwd: repositoryRoot,
+      args: ["commit", "-m", "initial"],
+    });
+
+    const worktreePath = path.join(config.worktreesDir, "orphan", "prune-race");
+    yield* driver.createWorktree({
+      cwd: repositoryRoot,
+      refName: "main",
+      newRefName: "feature/prune-race",
+      path: worktreePath,
+    });
+    yield* driver.execute({
+      operation: "WorktreeServicePruneRaceTest.addOrigin",
+      cwd: repositoryRoot,
+      args: ["remote", "add", "origin", repositoryRoot],
+    });
+    yield* driver.execute({
+      operation: "WorktreeServicePruneRaceTest.createUpstream",
+      cwd: repositoryRoot,
+      args: [
+        "update-ref",
+        "refs/remotes/origin/feature/prune-race",
+        "refs/heads/feature/prune-race",
+      ],
+    });
+    yield* driver.execute({
+      operation: "WorktreeServicePruneRaceTest.trackUpstream",
+      cwd: repositoryRoot,
+      args: ["branch", "--set-upstream-to=origin/feature/prune-race", "feature/prune-race"],
+    });
+
+    let worktreeStatusChecks = 0;
+    const racingDriver = GitVcsDriver.GitVcsDriver.of({
+      ...driver,
+      statusDetailsLocal: (cwd) => {
+        if (cwd !== worktreePath) return driver.statusDetailsLocal(cwd);
+        worktreeStatusChecks += 1;
+        if (worktreeStatusChecks !== 2) return driver.statusDetailsLocal(cwd);
+        return Effect.gen(function* () {
+          yield* driver.execute({
+            operation: "WorktreeServicePruneRaceTest.lateCommit",
+            cwd: worktreePath,
+            args: ["commit", "--allow-empty", "-m", "late unpublished change"],
+          });
+          return yield* driver.statusDetailsLocal(cwd);
+        });
+      },
+    });
+    const layer = makeTestLayer(
+      () => [makeProject(projectA, repositoryRoot)],
+      () => [],
+      racingDriver,
+    );
+
+    const result = yield* Effect.gen(function* () {
+      const service = yield* WorktreeService;
+      return yield* service.pruneWorktrees({ paths: [worktreePath] });
+    }).pipe(Effect.provide(layer));
+
+    assert.equal(worktreeStatusChecks, 2);
+    assert.deepEqual(result.removed, []);
+    assert.deepEqual(result.skipped, [{ path: worktreePath, reason: "unpushed" }]);
+    assert.isTrue(yield* fs.exists(worktreePath));
   }).pipe(Effect.provide(Layer.mergeAll(serverConfigLiveLayer, NodeServices.layer, gitLayer))),
 );
 
