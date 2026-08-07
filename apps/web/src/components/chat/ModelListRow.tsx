@@ -69,7 +69,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
           </div>
           {props.showNewBadge ? (
             <span
-              className="shrink-0 rounded border border-amber-500/35 bg-amber-500/15 px-0.5 py-px text-[10px] font-bold uppercase leading-none tracking-wide text-amber-800 dark:border-amber-400/30 dark:bg-amber-400/12 dark:text-amber-200"
+              className="shrink-0 rounded border border-update/35 bg-update/15 px-0.5 py-px text-[10px] font-bold uppercase leading-none tracking-wide text-update-foreground"
               aria-label="New model"
             >
               New

@@ -6,7 +6,7 @@ import { Button } from "../ui/button";
 import { SelectTrigger } from "../ui/select";
 
 const composerControlClassName =
-  "h-7 min-h-7 gap-1.5 px-2.5 text-muted-foreground/70 transition-none hover:text-foreground/80 [&_svg[data-composer-control-icon]]:mx-0 [&_svg[data-composer-control-chevron]]:-mx-0.5";
+  "h-7 min-h-7 gap-1.5 px-2.5 text-secondary-label transition-none hover:text-foreground [&_svg[data-composer-control-icon]]:mx-0 [&_svg[data-composer-control-chevron]]:-mx-0.5";
 
 export function ComposerControl({
   className,
@@ -46,7 +46,7 @@ export function ComposerControlChevron() {
   return (
     <ChevronDownIcon
       aria-hidden="true"
-      className="-mx-0.5 size-3.5 shrink-0 text-muted-foreground opacity-70"
+      className="-mx-0.5 size-3.5 shrink-0 text-icon-muted"
       data-composer-control-chevron
       strokeWidth={2.25}
     />

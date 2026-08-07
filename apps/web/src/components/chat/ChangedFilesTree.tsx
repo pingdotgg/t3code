@@ -62,6 +62,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
       }
     >
       <div
+        data-changed-files-header=""
         className={cn(
           "flex items-center justify-between gap-2 rounded-xl px-1",
           expanded &&

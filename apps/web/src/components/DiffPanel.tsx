@@ -36,6 +36,7 @@ import {
   getRenderablePatch,
   resolveDiffThemeName,
   resolveFileDiffPath,
+  DIFF_SURFACE_THEME_UNSAFE_CSS,
 } from "../lib/diffRendering";
 import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
@@ -86,54 +87,7 @@ interface CollapsedDiffFilesState {
 
 const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
 
-const DIFF_PANEL_UNSAFE_CSS = `
-[data-diffs-header],
-[data-diff],
-[data-file],
-[data-error-wrapper],
-[data-virtualizer-buffer] {
-  --diffs-header-font-family: var(--font-sans) !important;
-  --diffs-font-family: var(--font-mono) !important;
-  --diffs-bg: var(--background) !important;
-  --diffs-light-bg: var(--background) !important;
-  --diffs-dark-bg: var(--background) !important;
-  --diffs-token-light-bg: transparent;
-  --diffs-token-dark-bg: transparent;
-
-  --diffs-bg-context-override: color-mix(in srgb, var(--background) 97%, var(--foreground));
-  --diffs-bg-hover-override: color-mix(in srgb, var(--background) 94%, var(--foreground));
-  --diffs-bg-separator-override: color-mix(in srgb, var(--background) 95%, var(--foreground));
-  --diffs-bg-buffer-override: color-mix(in srgb, var(--background) 90%, var(--foreground));
-
-  --diffs-bg-addition-override: light-dark(
-    color-mix(in srgb, var(--background) 50%, var(--success)),
-    color-mix(in srgb, var(--background) 70%, var(--success))
-  );
-  --diffs-bg-addition-number-override: light-dark(
-    color-mix(in srgb, var(--background) 35%, var(--success)),
-    color-mix(in srgb, var(--background) 60%, var(--success))
-  );
-  --diffs-bg-addition-hover-override: color-mix(in srgb, var(--background) 85%, var(--success));
-  --diffs-bg-addition-emphasis-override: color-mix(in srgb, var(--background) 80%, var(--success));
-
-  --diffs-bg-deletion-override: light-dark(
-    color-mix(in srgb, var(--background) 50%, var(--destructive)),
-    color-mix(in srgb, var(--background) 70%, var(--destructive))
-  );
-  --diffs-bg-deletion-number-override: light-dark(
-    color-mix(in srgb, var(--background) 35%, var(--destructive)),
-    color-mix(in srgb, var(--background) 60%, var(--destructive))
-  );
-  --diffs-bg-deletion-hover-override: color-mix(in srgb, var(--background) 85%, var(--destructive));
-  --diffs-bg-deletion-emphasis-override: color-mix(
-    in srgb,
-    var(--background) 80%,
-    var(--destructive)
-  );
-
-  background-color: var(--diffs-bg) !important;
-}
-
+const DIFF_PANEL_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 :is(
   [data-line],
   [data-line-annotation],
@@ -144,13 +98,13 @@ const DIFF_PANEL_UNSAFE_CSS = `
   --diffs-line-bg: light-dark(
     color-mix(
       in lab,
-      var(--background) 88%,
-      color-mix(in srgb, var(--background) 50%, var(--diffs-modified-base))
+      var(--code-background) 88%,
+      color-mix(in srgb, var(--code-background) 50%, var(--diffs-modified-base))
     ),
     color-mix(
       in lab,
-      var(--background) 80%,
-      color-mix(in srgb, var(--background) 70%, var(--diffs-modified-base))
+      var(--code-background) 80%,
+      color-mix(in srgb, var(--code-background) 70%, var(--diffs-modified-base))
     )
   ) !important;
 }
@@ -159,13 +113,13 @@ const DIFF_PANEL_UNSAFE_CSS = `
   --diffs-line-bg: light-dark(
     color-mix(
       in lab,
-      var(--background) 91%,
-      color-mix(in srgb, var(--background) 35%, var(--diffs-modified-base))
+      var(--code-background) 91%,
+      color-mix(in srgb, var(--code-background) 35%, var(--diffs-modified-base))
     ),
     color-mix(
       in lab,
-      var(--background) 85%,
-      color-mix(in srgb, var(--background) 60%, var(--diffs-modified-base))
+      var(--code-background) 85%,
+      color-mix(in srgb, var(--code-background) 60%, var(--diffs-modified-base))
     )
   ) !important;
 }
@@ -192,16 +146,16 @@ const DIFF_PANEL_UNSAFE_CSS = `
 }
 
 [data-file-info] {
-  background-color: var(--background) !important;
+  background-color: var(--code-background) !important;
   border-block-color: transparent !important;
-  color: var(--foreground) !important;
+  color: var(--code-foreground) !important;
 }
 
 [data-diffs-header] {
   position: sticky !important;
   top: 0;
   z-index: 4;
-  background-color: var(--background) !important;
+  background-color: var(--code-background) !important;
   border-bottom-color: transparent !important;
   align-items: center !important;
   font-family: var(--font-sans) !important;
@@ -213,13 +167,13 @@ const DIFF_PANEL_UNSAFE_CSS = `
 }
 
 [data-diffs-header]:hover {
-  background-color: color-mix(in srgb, var(--background) 97%, var(--foreground)) !important;
+  background-color: color-mix(in srgb, var(--code-background) 97%, var(--code-foreground)) !important;
 }
 
 :is([data-separator="line-info"], [data-separator="line-info-basic"]) {
   height: 24px !important;
   margin-block: 0 !important;
-  background-color: var(--background) !important;
+  background-color: var(--code-background) !important;
 }
 
 :is([data-separator="line-info"], [data-separator="line-info-basic"])
@@ -233,7 +187,7 @@ const DIFF_PANEL_UNSAFE_CSS = `
   gap: 8px;
   padding-inline: 0 !important;
   background-color: transparent !important;
-  color: color-mix(in srgb, var(--foreground) 52%, var(--background)) !important;
+  color: color-mix(in srgb, var(--code-foreground) 52%, var(--code-background)) !important;
   font-family: var(--font-sans) !important;
   font-size: 11px !important;
   text-decoration: none !important;
@@ -257,7 +211,7 @@ const DIFF_PANEL_UNSAFE_CSS = `
   height: 1px;
   flex: 1 1 auto;
   content: "";
-  background-color: color-mix(in srgb, var(--background) 92%, var(--foreground));
+  background-color: color-mix(in srgb, var(--code-background) 92%, var(--code-foreground));
 }
 
 :is([data-separator="line-info"], [data-separator="line-info-basic"])[data-expand-index]
@@ -286,7 +240,7 @@ const DIFF_PANEL_UNSAFE_CSS = `
     [data-expand-button]
   ):hover
   [data-separator-content] {
-  color: color-mix(in srgb, var(--foreground) 76%, var(--background)) !important;
+  color: color-mix(in srgb, var(--code-foreground) 76%, var(--code-background)) !important;
 }
 
 :is([data-separator="line-info"], [data-separator="line-info-basic"]):has(
@@ -297,7 +251,7 @@ const DIFF_PANEL_UNSAFE_CSS = `
     [data-expand-button]
   ):hover
   [data-unmodified-lines]::after {
-  background-color: color-mix(in srgb, var(--background) 84%, var(--foreground));
+  background-color: color-mix(in srgb, var(--code-background) 84%, var(--code-foreground));
 }
 
 [data-diffs-header] [data-header-content] {
@@ -337,7 +291,7 @@ const DIFF_PANEL_UNSAFE_CSS = `
 }
 
 [data-title]:hover {
-  color: color-mix(in srgb, var(--foreground) 84%, var(--primary)) !important;
+  color: color-mix(in srgb, var(--code-foreground) 84%, var(--primary)) !important;
   text-decoration-color: currentColor;
 }
 `;
@@ -796,11 +750,11 @@ export default function DiffPanel({
       <div className="flex min-w-0 flex-1 items-center gap-3 [-webkit-app-region:no-drag]">
         <DropdownMenu>
           <DropdownMenuTrigger
-            className="inline-flex h-6 max-w-full items-center gap-1 rounded-md bg-muted/70 px-2 text-xs font-medium text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex h-6 max-w-full items-center gap-1 rounded-md bg-accent px-2 text-xs font-medium text-accent-foreground outline-none transition-colors hover:bg-accent/80 focus-visible:ring-2 focus-visible:ring-ring"
             aria-label={`Diff scope: ${selectedScopeLabel}`}
           >
             <span className="truncate">{selectedScopeLabel}</span>
-            <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+            <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-60">
             <DropdownMenuItem
@@ -1120,7 +1074,7 @@ export default function DiffPanel({
             )}
             {selectedPatchError && !renderablePatch && (
               <div className="px-3">
-                <p className="mb-2 text-[11px] text-red-500/80">{selectedPatchError}</p>
+                <p className="mb-2 text-[11px] text-error/80">{selectedPatchError}</p>
               </div>
             )}
             {!renderablePatch ? (
