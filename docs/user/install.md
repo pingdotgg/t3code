@@ -41,6 +41,8 @@ Arch Linux:
 yay -S t3code-bin
 ```
 
+On Linux, the desktop app plays the system beep when an agent turn completes.
+
 ## Providers
 
 T3 Code drives provider CLIs; it does not ship them. Install the CLI for each provider you want
