@@ -31,6 +31,7 @@ export const layer = (service: Connectivity["Service"]) =>
  */
 export const followNetworkStatus = Effect.fnUntraced(function* (options: {
   readonly apply: (status: NetworkStatus) => Effect.Effect<void>;
+  readonly onWakeup?: (reason: ConnectionWakeups.ConnectionWakeup) => Effect.Effect<void>;
 }) {
   const connectivity = yield* Connectivity;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
@@ -47,6 +48,7 @@ export const followNetworkStatus = Effect.fnUntraced(function* (options: {
     if (changed) {
       yield* options.apply(status);
     }
+    return changed;
   });
 
   const refreshCurrentStatus = Effect.gen(function* () {
@@ -64,8 +66,10 @@ export const followNetworkStatus = Effect.fnUntraced(function* (options: {
   yield* connectivity.changes.pipe(
     Stream.runForEach((status) =>
       applyLock.withPermits(1)(
-        Ref.update(revision, (current) => current + 1).pipe(
-          Effect.andThen(applyStatus(status)),
+        applyStatus(status).pipe(
+          Effect.flatMap((changed) =>
+            changed ? Ref.update(revision, (current) => current + 1) : Effect.void,
+          ),
         ),
       ),
     ),
@@ -74,9 +78,14 @@ export const followNetworkStatus = Effect.fnUntraced(function* (options: {
 
   yield* wakeups.changes.pipe(
     Stream.runForEach((reason) =>
-      ConnectionWakeups.isApplicationActiveWakeup(reason)
-        ? refreshCurrentStatus
-        : Effect.void,
+      Effect.gen(function* () {
+        if (options.onWakeup) {
+          yield* options.onWakeup(reason);
+        }
+        if (ConnectionWakeups.isApplicationActiveWakeup(reason)) {
+          yield* refreshCurrentStatus;
+        }
+      }),
     ),
     Effect.forkScoped({ startImmediately: true }),
   );

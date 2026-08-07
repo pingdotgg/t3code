@@ -31,7 +31,7 @@ describe("followNetworkStatus", () => {
     ),
   );
 
-  it.effect("lets a newer report invalidate an in-flight wakeup snapshot", () =>
+  it.effect("does not let a duplicate report invalidate an in-flight wakeup snapshot", () =>
     Effect.gen(function* () {
       const statusReads = yield* Ref.make(0);
       const wake = yield* Deferred.make<void>();
@@ -55,7 +55,7 @@ describe("followNetworkStatus", () => {
         yield* Deferred.await(wakeHandled);
 
         expect(yield* Ref.get(statusReads)).toBe(2);
-        expect(yield* Ref.get(applied)).toEqual(["offline"]);
+        expect(yield* Ref.get(applied)).toEqual(["offline", "online"]);
       }).pipe(
         Effect.provideService(
           Connectivity.Connectivity,
@@ -75,9 +75,7 @@ describe("followNetworkStatus", () => {
             ).pipe(
               Stream.concat(
                 Stream.fromEffect(
-                  Deferred.succeed(duplicateHandled, undefined).pipe(
-                    Effect.andThen(Effect.never),
-                  ),
+                  Deferred.succeed(duplicateHandled, undefined).pipe(Effect.andThen(Effect.never)),
                 ),
               ),
             ),
@@ -86,16 +84,16 @@ describe("followNetworkStatus", () => {
         Effect.provideService(
           ConnectionWakeups.ConnectionWakeups,
           ConnectionWakeups.ConnectionWakeups.of({
-          changes: Stream.fromEffect(
-            Deferred.await(wake).pipe(Effect.as("application-active" as const)),
-          ).pipe(
-            Stream.concat(
-              Stream.fromEffect(
-                Deferred.succeed(wakeHandled, undefined).pipe(Effect.andThen(Effect.never)),
+            changes: Stream.fromEffect(
+              Deferred.await(wake).pipe(Effect.as("application-active" as const)),
+            ).pipe(
+              Stream.concat(
+                Stream.fromEffect(
+                  Deferred.succeed(wakeHandled, undefined).pipe(Effect.andThen(Effect.never)),
+                ),
               ),
             ),
-          ),
-        }),
+          }),
         ),
         Effect.scoped,
       );
