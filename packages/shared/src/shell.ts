@@ -3,6 +3,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -491,6 +492,38 @@ function resolveCommandCandidates(
   return Array.from(new Set(candidates));
 }
 
+// Session bootstrap resolves the same commands over and over, each PATH scan
+// costing hundreds of 'shell.isExecutableFile' filesystem probes (tens of
+// thousands per connect). Memoize the scan outcome per
+// (platform, PATH, PATHEXT, command) for a short window: repeat scans hit the
+// cache while any change to the search environment invalidates immediately.
+// Explicit-path resolution is never cached - callers probe paths they have
+// just written (e.g. managed binary installs).
+const COMMAND_RESOLUTION_CACHE_TTL_MS = 30_000;
+const COMMAND_RESOLUTION_CACHE_MAX_ENTRIES = 512;
+const COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR = String.fromCharCode(0);
+const commandResolutionCache = new Map<
+  string,
+  { readonly resolvedPath: string | null; readonly expiresAtEpochMs: number }
+>();
+
+function cacheCommandResolution(
+  cacheKey: string,
+  resolvedPath: string | null,
+  nowEpochMs: number,
+): void {
+  if (commandResolutionCache.size >= COMMAND_RESOLUTION_CACHE_MAX_ENTRIES) {
+    const oldestKey = commandResolutionCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      commandResolutionCache.delete(oldestKey);
+    }
+  }
+  commandResolutionCache.set(cacheKey, {
+    resolvedPath,
+    expiresAtEpochMs: nowEpochMs + COMMAND_RESOLUTION_CACHE_TTL_MS,
+  });
+}
+
 const isExecutableFile = Effect.fn("shell.isExecutableFile")(function* (
   filePath: string,
   platform: NodeJS.Platform,
@@ -538,6 +571,19 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   if (pathValue.length === 0) {
     return yield* new CommandResolutionError({ command, reason: "not-found" });
   }
+
+  const cacheKey = [platform, pathValue, windowsPathExtensions.join(";"), command].join(
+    COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR,
+  );
+  const nowEpochMs = yield* Clock.currentTimeMillis;
+  const cached = commandResolutionCache.get(cacheKey);
+  if (cached !== undefined && cached.expiresAtEpochMs > nowEpochMs) {
+    if (cached.resolvedPath === null) {
+      return yield* new CommandResolutionError({ command, reason: "not-found" });
+    }
+    return cached.resolvedPath;
+  }
+
   const pathEntries: string[] = [];
   for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
     const pathEntry = stripWrappingQuotes(entry.trim());
@@ -550,10 +596,12 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     for (const candidate of commandCandidates) {
       const candidatePath = path.join(pathEntry, candidate);
       if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
+        cacheCommandResolution(cacheKey, candidatePath, nowEpochMs);
         return candidatePath;
       }
     }
   }
+  cacheCommandResolution(cacheKey, null, nowEpochMs);
   return yield* new CommandResolutionError({ command, reason: "not-found" });
 });
 
