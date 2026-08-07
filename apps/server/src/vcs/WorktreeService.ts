@@ -18,7 +18,6 @@ import {
   type VcsReviveWorktreeResult,
   type WorktreeInfo,
   type WorktreeInventoryErrorStage,
-  type WorktreeMutationErrorStage,
   type WorktreePruneBlocker,
   type WorktreePruneSkipReason,
   type WorktreeProjectRef,
@@ -139,26 +138,6 @@ function inventoryError(
     stage,
     ...(context.projectId === undefined ? {} : { projectId: context.projectId }),
     ...(context.workspaceRoot === undefined ? {} : { workspaceRoot: context.workspaceRoot }),
-    ...(cause === undefined ? {} : { cause }),
-  });
-}
-
-function mutationError(
-  operation: "prune" | "revive",
-  stage: WorktreeMutationErrorStage,
-  cause?: unknown,
-  context: {
-    readonly path?: string;
-    readonly workspaceRoot?: string;
-    readonly branch?: string;
-  } = {},
-): WorktreeMutationError {
-  return new WorktreeMutationError({
-    operation,
-    stage,
-    ...(context.path === undefined ? {} : { path: context.path }),
-    ...(context.workspaceRoot === undefined ? {} : { workspaceRoot: context.workspaceRoot }),
-    ...(context.branch === undefined ? {} : { branch: context.branch }),
     ...(cause === undefined ? {} : { cause }),
   });
 }
@@ -560,7 +539,14 @@ export const make = Effect.gen(function* () {
     // Re-derive the inventory so safety reflects the current state, never a
     // stale client view. Git's non-forced remove is a second safety boundary.
     const { worktrees } = yield* listWorktrees({}).pipe(
-      Effect.mapError((cause) => mutationError("prune", "revalidate_inventory", cause)),
+      Effect.mapError(
+        (cause) =>
+          new WorktreeMutationError({
+            operation: "prune",
+            stage: "revalidate_inventory",
+            cause,
+          }),
+      ),
     );
     const byPath = new Map(worktrees.map((worktree) => [worktree.path, worktree]));
     const removed: Array<{ path: string; workspaceRoot: string }> = [];

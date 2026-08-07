@@ -50,6 +50,7 @@ const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
 const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = 80_000;
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 120_000;
+const WORKTREE_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 
@@ -236,10 +237,6 @@ function paginateBranches(input: {
     nextCursor,
     totalCount,
   };
-}
-
-function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
-  return parseGitWorktreeBranchPaths(stdout);
 }
 
 function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
@@ -877,15 +874,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const listWorkspaces: GitVcsDriver.GitVcsDriver["Service"]["listWorkspaces"] = Effect.fn(
     "GitVcsDriver.listWorkspaces",
   )(function* (cwd) {
-    const result = yield* executeGit(
-      "GitVcsDriver.listWorkspaces",
-      cwd,
-      ["worktree", "list", "--porcelain", "-z"],
-      {
-        timeoutMs: 30_000,
-        maxOutputBytes: 16 * 1024 * 1024,
-      },
-    );
+    const args = ["worktree", "list", "--porcelain", "-z"] as const;
+    const result = yield* executeGit("GitVcsDriver.listWorkspaces", cwd, args, {
+      timeoutMs: 30_000,
+      maxOutputBytes: WORKTREE_LIST_MAX_OUTPUT_BYTES,
+    });
+    if (result.stdoutTruncated) {
+      return yield* new GitCommandError({
+        ...gitCommandContext({ operation: "GitVcsDriver.listWorkspaces", cwd, args }),
+        detail: `Git worktree output exceeded ${WORKTREE_LIST_MAX_OUTPUT_BYTES} bytes.`,
+        stdoutLength: result.stdout.length,
+        stderrLength: result.stderr.length,
+      });
+    }
     return parseGitWorktreeListPorcelain(result.stdout);
   });
 
@@ -2486,7 +2487,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         : null;
     const parsedWorktreeEntries =
       worktreeListResult.exitCode === 0
-        ? [...parseWorktreeBranchPaths(worktreeListResult.stdout)].map(
+        ? [...parseGitWorktreeBranchPaths(worktreeListResult.stdout)].map(
             ([branchName, worktreePath]) =>
               [branchName, path.normalize(path.resolve(worktreePath))] as const,
           )

@@ -52,9 +52,7 @@ export class WorktreeDeletionCleanup extends Context.Service<
   }
 >()("t3/vcs/WorktreeDeletionCleanup") {}
 
-export const makeWorktreeDeletionCleanup = (
-  domainEvents: Stream.Stream<OrchestrationV2DomainEvent, unknown>,
-) =>
+export const make = (domainEvents: Stream.Stream<OrchestrationV2DomainEvent, unknown>) =>
   Effect.gen(function* () {
     const settings = yield* ServerSettingsService;
     const worktrees = yield* WorktreeService;
@@ -115,14 +113,12 @@ export const makeWorktreeDeletionCleanup = (
 
 export const layer = Layer.effect(
   WorktreeDeletionCleanup,
-  ThreadManagementService.pipe(
-    Effect.flatMap((threads) => makeWorktreeDeletionCleanup(threads.streamDomainEvents)),
-  ),
+  ThreadManagementService.pipe(Effect.flatMap((threads) => make(threads.streamDomainEvents))),
 );
 
 export const layerWithEventStream = (
   domainEvents: Stream.Stream<OrchestrationV2DomainEvent, unknown>,
-) => Layer.effect(WorktreeDeletionCleanup, makeWorktreeDeletionCleanup(domainEvents));
+) => Layer.effect(WorktreeDeletionCleanup, make(domainEvents));
 
 /** Exposed for tests. */
 export const __testing = {

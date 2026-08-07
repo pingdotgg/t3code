@@ -35,7 +35,7 @@ function makeProviderTurnStartFixture(input: {
   readonly revival: "revived" | "unchanged" | "failed";
   readonly generations?: readonly number[];
   readonly revivalGate?: Effect.Effect<void>;
-  readonly openGate?: Effect.Effect<void>;
+  readonly projectionFailureAtRead?: number;
 }) {
   const threadId = ThreadId.make(`thread_provider_turn_start_worktree_${input.revival}`);
   const runId = RunId.make(`run_provider_turn_start_worktree_${input.revival}`);
@@ -121,7 +121,7 @@ function makeProviderTurnStartFixture(input: {
   const open = vi.fn(() =>
     Effect.sync(() => {
       order.push("open");
-    }).pipe(Effect.andThen(input.openGate ?? Effect.void), Effect.as(session)),
+    }).pipe(Effect.as(session)),
   );
   const close = vi.fn(() =>
     Effect.sync(() => {
@@ -152,6 +152,23 @@ function makeProviderTurnStartFixture(input: {
   const worktreeLayer = Layer.mock(WorktreeRevivalService.WorktreeRevivalService)({
     reviveForThread,
   });
+  let projectionReadCount = 0;
+  const getThreadProjection = vi.fn(() => {
+    projectionReadCount += 1;
+    return projectionReadCount === input.projectionFailureAtRead
+      ? Effect.fail(
+          new ProjectionStore.ProjectionStoreReadError({
+            threadId,
+            cause: "simulated current-attempt projection failure",
+          }),
+        )
+      : Effect.sync(currentProjection);
+  });
+  const startRootRun = vi.fn(() =>
+    Effect.sync(() => {
+      order.push("start-root-run");
+    }),
+  );
   const providerLayer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -161,14 +178,11 @@ function makeProviderTurnStartFixture(input: {
         }),
         IdAllocator.layer,
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
-          getThreadProjection: () => Effect.sync(currentProjection),
+          getThreadProjection,
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ open, close }),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({
-          startRootRun: () =>
-            Effect.sync(() => {
-              order.push("start-root-run");
-            }),
+          startRootRun,
         }),
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({
           resolve: () =>
@@ -188,6 +202,8 @@ function makeProviderTurnStartFixture(input: {
     open,
     close,
     reviveForThread,
+    getThreadProjection,
+    startRootRun,
     threadId,
     runId,
     setRunStatus: (status: OrchestrationV2Run["status"]) => {
@@ -195,6 +211,203 @@ function makeProviderTurnStartFixture(input: {
     },
   };
 }
+
+const makeSharedProviderSessionFixture = Effect.gen(function* () {
+  const providerSessionId = ProviderSessionId.make(
+    "provider_session_provider_turn_start_shared_generation",
+  );
+  const providerInstanceId = ProviderInstanceId.make(
+    "provider_instance_provider_turn_start_shared_generation",
+  );
+  const projectId = ProjectId.make("project_provider_turn_start_shared_generation");
+  const worktreePath = "/tmp/t3-worktrees/shared-generation";
+  const branch = "feature/shared-generation";
+  const makeProjection = (key: "first" | "second") => {
+    const threadId = ThreadId.make(`thread_provider_turn_start_shared_generation_${key}`);
+    const runId = RunId.make(`run_provider_turn_start_shared_generation_${key}`);
+    const attemptId = RunAttemptId.make(`attempt_provider_turn_start_shared_generation_${key}`);
+    const rootNodeId = NodeId.make(`node_provider_turn_start_shared_generation_${key}`);
+    const providerThreadId = ProviderThreadId.make(
+      `provider_thread_provider_turn_start_shared_generation_${key}`,
+    );
+    const messageId = MessageId.make(`message_provider_turn_start_shared_generation_${key}`);
+    const checkpointScopeId = CheckpointScopeId.make(
+      `checkpoint_scope_provider_turn_start_shared_generation_${key}`,
+    );
+    const providerThread = {
+      id: providerThreadId,
+      providerSessionId,
+      providerInstanceId,
+      nativeThreadRef: null,
+      handoffIds: [],
+      forkedFrom: null,
+      appThreadId: threadId,
+    };
+    const projection = {
+      thread: {
+        id: threadId,
+        projectId,
+        branch,
+        worktreePath,
+      },
+      runs: [
+        {
+          id: runId,
+          status: "starting",
+          rootNodeId,
+          activeAttemptId: attemptId,
+          providerThreadId,
+          userMessageId: messageId,
+          providerInstanceId,
+          modelSelection: { instanceId: providerInstanceId, model: "test-model" },
+          ordinal: 1,
+        },
+      ],
+      nodes: [{ id: rootNodeId, checkpointScopeId }],
+      attempts: [{ id: attemptId, providerTurnId: null }],
+      providerThreads: [providerThread],
+      providerSessions: [{ id: providerSessionId }],
+      providerTurns: [],
+      messages: [
+        {
+          id: messageId,
+          text: `continue ${key}`,
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+      ],
+      checkpointScopes: [{ id: checkpointScopeId }],
+      contextHandoffs: [],
+      contextTransfers: [],
+      turnItems: [],
+      subagents: [],
+    } as unknown as OrchestrationV2ThreadProjection;
+    return { key, threadId, runId, providerThread, projection };
+  };
+  const first = makeProjection("first");
+  const second = makeProjection("second");
+  const projections = new Map<ThreadId, OrchestrationV2ThreadProjection>([
+    [first.threadId, first.projection],
+    [second.threadId, second.projection],
+  ]);
+  const providerThreads = new Map([
+    [first.threadId, first.providerThread],
+    [second.threadId, second.providerThread],
+  ]);
+  const keyByThreadId = new Map<ThreadId, "first" | "second">([
+    [first.threadId, "first"],
+    [second.threadId, "second"],
+  ]);
+  const order: string[] = [];
+  const firstStartRootRunEntered = yield* Deferred.make<void>();
+  const releaseFirstStartRootRun = yield* Deferred.make<void>();
+  const secondRevivalCompleted = yield* Deferred.make<void>();
+  const secondStartRootRunEntered = yield* Deferred.make<void>();
+
+  const session = {
+    driver: "codex",
+    instanceId: providerInstanceId,
+    providerSessionId,
+    providerSession: { id: providerSessionId },
+    ensureThread: (input: { readonly threadId: ThreadId }) =>
+      Effect.sync(() => {
+        const providerThread = providerThreads.get(input.threadId);
+        if (providerThread === undefined) {
+          throw new Error(`Missing provider thread for ${input.threadId}.`);
+        }
+        return providerThread;
+      }),
+    resumeThread: () => Effect.succeed(first.providerThread),
+    forkThread: () => Effect.succeed(first.providerThread),
+  } as unknown as ProviderAdapterV2SessionRuntime;
+  const open = vi.fn((input: { readonly threadId: ThreadId }) =>
+    Effect.sync(() => {
+      order.push(`open:${keyByThreadId.get(input.threadId)}`);
+      return session;
+    }),
+  );
+  const close = vi.fn(() =>
+    Effect.sync(() => {
+      order.push("close");
+    }),
+  );
+  const reviveForThread = vi.fn((input: { readonly threadId: ThreadId }) => {
+    const key = keyByThreadId.get(input.threadId);
+    return Effect.sync(() => {
+      order.push(`revive:${key}`);
+    }).pipe(
+      Effect.andThen(
+        key === "second" ? Deferred.succeed(secondRevivalCompleted, undefined) : Effect.void,
+      ),
+      Effect.as({ revived: false, generation: key === "second" ? 1 : 0 }),
+    );
+  });
+  const startRootRun = vi.fn((input: { readonly appThread: { readonly id: ThreadId } }) => {
+    const key = keyByThreadId.get(input.appThread.id);
+    return Effect.sync(() => {
+      order.push(`start-root-run:${key}`);
+    }).pipe(
+      Effect.andThen(
+        key === "first"
+          ? Deferred.succeed(firstStartRootRunEntered, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseFirstStartRootRun)),
+              Effect.andThen(
+                Effect.sync(() => {
+                  order.push("start-root-run:first:completed");
+                }),
+              ),
+            )
+          : Deferred.succeed(secondStartRootRunEntered, undefined),
+      ),
+    );
+  });
+  const layer = ProviderTurnStart.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
+        Layer.mock(EventSink.EventSinkV2)({
+          writeIfRunCurrent: () => Effect.succeed({ committed: true, storedEvents: [] } as never),
+        }),
+        IdAllocator.layer,
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadProjection: (threadId) =>
+            Effect.sync(() => {
+              const projection = projections.get(threadId);
+              if (projection === undefined) {
+                throw new Error(`Missing projection for ${threadId}.`);
+              }
+              return projection;
+            }),
+        }),
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ open, close }),
+        Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
+        Layer.mock(RuntimePolicy.RuntimePolicyV2)({
+          resolve: () =>
+            Effect.succeed({
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: worktreePath,
+            }),
+        }),
+        Layer.mock(WorktreeRevivalService.WorktreeRevivalService)({ reviveForThread }),
+      ),
+    ),
+  );
+
+  return {
+    first,
+    second,
+    layer,
+    order,
+    open,
+    close,
+    firstStartRootRunEntered,
+    releaseFirstStartRootRun,
+    secondRevivalCompleted,
+    secondStartRootRunEntered,
+  };
+});
 
 it("does not commit running state when inherited background routing cannot be read", async () => {
   const threadId = ThreadId.make("thread_provider_turn_start_projection_failure");
@@ -277,6 +490,27 @@ it("does not commit running state when inherited background routing cannot be re
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
+effectIt.effect("fails when a current-attempt projection recheck cannot be read", () => {
+  const fixture = makeProviderTurnStartFixture({
+    revival: "unchanged",
+    projectionFailureAtRead: 3,
+  });
+
+  return Effect.gen(function* () {
+    const error = yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2)
+      .start({ threadId: fixture.threadId, runId: fixture.runId })
+      .pipe(Effect.flip);
+
+    expect(error._tag).toBe("ProviderTurnStartError");
+    expect(fixture.getThreadProjection).toHaveBeenCalledTimes(3);
+    expect(fixture.reviveForThread).toHaveBeenCalledOnce();
+    expect(fixture.order).toEqual(["revive"]);
+    expect(fixture.close).not.toHaveBeenCalled();
+    expect(fixture.open).not.toHaveBeenCalled();
+    expect(fixture.startRootRun).not.toHaveBeenCalled();
+  }).pipe(Effect.provide(fixture.layer));
+});
+
 it("restarts the provider session after reviving a missing worktree", async () => {
   const fixture = makeProviderTurnStartFixture({ revival: "revived" });
 
@@ -308,7 +542,7 @@ it("keeps the provider session when the worktree is already present", async () =
   expect(fixture.open).toHaveBeenCalledOnce();
 });
 
-it("restarts a shared provider session after another thread recreates its worktree", async () => {
+it("restarts a provider session after observing a newer worktree generation", async () => {
   const fixture = makeProviderTurnStartFixture({
     revival: "unchanged",
     generations: [0, 1],
@@ -365,36 +599,52 @@ effectIt.effect("does not close a provider session after the starting attempt is
   }),
 );
 
-effectIt.effect("serializes shared provider session generation transitions", () =>
-  Effect.gen(function* () {
-    const openEntered = yield* Deferred.make<void>();
-    const releaseOpen = yield* Deferred.make<void>();
-    const fixture = makeProviderTurnStartFixture({
-      revival: "unchanged",
-      generations: [0, 1],
-      openGate: Deferred.succeed(openEntered, undefined).pipe(
-        Effect.andThen(Deferred.await(releaseOpen)),
-      ),
-    });
+effectIt.effect(
+  "serializes shared-session generation transitions through provider turn startup",
+  () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeSharedProviderSessionFixture;
+      yield* Effect.gen(function* () {
+        const service = yield* ProviderTurnStart.ProviderTurnStartServiceV2;
+        const firstStart = yield* service
+          .start({ threadId: fixture.first.threadId, runId: fixture.first.runId })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(fixture.firstStartRootRunEntered);
 
-    const starts = yield* Effect.gen(function* () {
-      const service = yield* ProviderTurnStart.ProviderTurnStartServiceV2;
-      yield* Effect.all(
-        [
-          service.start({ threadId: fixture.threadId, runId: fixture.runId }),
-          service.start({ threadId: fixture.threadId, runId: fixture.runId }),
-        ],
-        { concurrency: "unbounded" },
-      );
-    }).pipe(Effect.provide(fixture.layer), Effect.forkChild);
-    yield* Deferred.await(openEntered);
-    yield* Effect.yieldNow;
-    yield* Deferred.succeed(releaseOpen, undefined);
-    yield* Fiber.join(starts);
+        const secondStart = yield* service
+          .start({ threadId: fixture.second.threadId, runId: fixture.second.runId })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(fixture.secondRevivalCompleted);
 
-    expect(fixture.close).toHaveBeenCalledOnce();
-    expect(fixture.open).toHaveBeenCalledTimes(2);
-  }),
+        expect(fixture.order).toEqual([
+          "revive:first",
+          "open:first",
+          "start-root-run:first",
+          "revive:second",
+        ]);
+        expect(fixture.close).not.toHaveBeenCalled();
+        expect(fixture.open).toHaveBeenCalledOnce();
+
+        yield* Deferred.succeed(fixture.releaseFirstStartRootRun, undefined);
+        yield* Deferred.await(fixture.secondStartRootRunEntered);
+        yield* Fiber.join(firstStart);
+        yield* Fiber.join(secondStart);
+
+        expect(fixture.order).toEqual([
+          "revive:first",
+          "open:first",
+          "start-root-run:first",
+          "revive:second",
+          "start-root-run:first:completed",
+          "close",
+          "open:second",
+          "start-root-run:second",
+        ]);
+      }).pipe(Effect.provide(fixture.layer));
+
+      expect(fixture.close).toHaveBeenCalledOnce();
+      expect(fixture.open).toHaveBeenCalledTimes(2);
+    }),
 );
 
 it("fails provider start before opening when worktree revival fails", async () => {
