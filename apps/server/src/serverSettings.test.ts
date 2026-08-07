@@ -704,6 +704,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           discord: {
             enabled: true,
             projectId: ProjectId.make("project-1"),
+            threadEnvMode: "local",
             baseBranch: "main",
             branchPrefix: "demo/discord",
             applicationId: "app-1",
@@ -715,6 +716,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       });
 
       assert.equal(next.channelIntegrations.discord.botToken, "discord-secret");
+      assert.equal(next.channelIntegrations.discord.threadEnvMode, "local");
 
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
       assert.notInclude(raw, "discord-secret");

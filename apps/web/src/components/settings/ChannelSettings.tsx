@@ -52,6 +52,7 @@ export function ChannelSettings() {
   );
   const [enabled, setEnabled] = useState(settings.enabled);
   const [projectId, setProjectId] = useState<ProjectId | null>(settings.projectId);
+  const [threadEnvMode, setThreadEnvMode] = useState(settings.threadEnvMode);
   const [baseBranch, setBaseBranch] = useState(settings.baseBranch);
   const [branchPrefix, setBranchPrefix] = useState(settings.branchPrefix);
   const [applicationId, setApplicationId] = useState(settings.applicationId);
@@ -62,6 +63,7 @@ export function ChannelSettings() {
   useEffect(() => {
     setEnabled(settings.enabled);
     setProjectId(settings.projectId);
+    setThreadEnvMode(settings.threadEnvMode);
     setBaseBranch(settings.baseBranch);
     setBranchPrefix(settings.branchPrefix);
     setApplicationId(settings.applicationId);
@@ -71,8 +73,8 @@ export function ChannelSettings() {
   const hasBotToken = botTokenChanged ? botToken.length > 0 : settings.botTokenRedacted;
   const setupComplete =
     projectId !== null &&
-    baseBranch.trim().length > 0 &&
-    branchPrefix.trim().length > 0 &&
+    (threadEnvMode === "local" ||
+      (baseBranch.trim().length > 0 && branchPrefix.trim().length > 0)) &&
     applicationId.trim().length > 0 &&
     hasBotToken;
   const selectedProject = projects.find((project) => project.id === projectId) ?? null;
@@ -83,6 +85,7 @@ export function ChannelSettings() {
         discord: {
           enabled,
           projectId,
+          threadEnvMode,
           baseBranch,
           branchPrefix,
           applicationId,
@@ -173,45 +176,82 @@ export function ChannelSettings() {
         </SettingsRow>
       </SettingsSection>
 
-      <SettingsSection title="Run isolation" icon={<ShieldCheckIcon className="size-4" />}>
+      <SettingsSection title="Run location" icon={<ShieldCheckIcon className="size-4" />}>
         <SettingsRow
-          title="Always create a worktree"
-          description="Channel runs fail closed: if T3 Code cannot create a dedicated worktree and branch, the agent never starts. It never falls back to the base branch."
-          status={
-            <span className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
-              <ShieldCheckIcon className="size-3.5" /> Base branch protected
-            </span>
+          title="Where tasks run"
+          description="Choose whether Discord tasks use a dedicated worktree or the project's current checkout."
+          control={
+            <Select
+              value={threadEnvMode}
+              onValueChange={(value) => setThreadEnvMode(value === "local" ? "local" : "worktree")}
+            >
+              <SelectTrigger className="w-full sm:w-72" aria-label="Discord task run location">
+                <SelectValue>
+                  {threadEnvMode === "worktree" ? "Isolated worktree" : "Project checkout"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="worktree">
+                  Isolated worktree
+                </SelectItem>
+                <SelectItem hideIndicator value="local">
+                  Project checkout
+                </SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
         <SettingsRow
-          title="Branch naming"
-          description="Each request receives a unique branch under this prefix, created from the selected base branch."
-        >
-          <div className="grid gap-3 py-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <label className="flex items-center gap-1.5 text-xs font-medium text-foreground">
-                <GitBranchIcon className="size-3.5 text-muted-foreground" /> Base branch
-              </label>
-              <Input
-                value={baseBranch}
-                onChange={(event) => setBaseBranch(event.currentTarget.value)}
-                placeholder="main"
-                aria-label="Channel base branch"
-              />
+          title={threadEnvMode === "worktree" ? "Base branch protected" : "Direct project access"}
+          description={
+            threadEnvMode === "worktree"
+              ? "If T3 Code cannot create a dedicated worktree and branch, the agent never starts."
+              : "The agent runs in the existing project checkout and can modify its currently checked-out branch, including main."
+          }
+          status={
+            <span
+              className={
+                threadEnvMode === "worktree"
+                  ? "inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400"
+                  : "inline-flex items-center gap-1.5 text-amber-600 dark:text-amber-400"
+              }
+            >
+              <ShieldCheckIcon className="size-3.5" />
+              {threadEnvMode === "worktree" ? "Isolated" : "Not isolated"}
+            </span>
+          }
+        />
+        {threadEnvMode === "worktree" ? (
+          <SettingsRow
+            title="Branch naming"
+            description="Each request receives a unique branch under this prefix, created from the selected base branch."
+          >
+            <div className="grid gap-3 py-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <label className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+                  <GitBranchIcon className="size-3.5 text-muted-foreground" /> Base branch
+                </label>
+                <Input
+                  value={baseBranch}
+                  onChange={(event) => setBaseBranch(event.currentTarget.value)}
+                  placeholder="main"
+                  aria-label="Channel base branch"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+                  <GitBranchIcon className="size-3.5 text-muted-foreground" /> Branch prefix
+                </label>
+                <Input
+                  value={branchPrefix}
+                  onChange={(event) => setBranchPrefix(event.currentTarget.value)}
+                  placeholder="demo/discord"
+                  aria-label="Channel branch prefix"
+                />
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <label className="flex items-center gap-1.5 text-xs font-medium text-foreground">
-                <GitBranchIcon className="size-3.5 text-muted-foreground" /> Branch prefix
-              </label>
-              <Input
-                value={branchPrefix}
-                onChange={(event) => setBranchPrefix(event.currentTarget.value)}
-                placeholder="demo/discord"
-                aria-label="Channel branch prefix"
-              />
-            </div>
-          </div>
-        </SettingsRow>
+          </SettingsRow>
+        ) : null}
         <div className="flex justify-end px-3 pt-3 sm:px-4">
           <Button onClick={save} disabled={enabled && !setupComplete}>
             Save channel configuration

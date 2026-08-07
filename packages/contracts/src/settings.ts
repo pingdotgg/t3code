@@ -537,10 +537,11 @@ export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 export const DiscordChannelSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   projectId: Schema.NullOr(ProjectId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  baseBranch: TrimmedNonEmptyString.pipe(Schema.withDecodingDefault(Effect.succeed("main"))),
-  branchPrefix: TrimmedNonEmptyString.pipe(
-    Schema.withDecodingDefault(Effect.succeed("demo/discord")),
+  threadEnvMode: ThreadEnvMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("worktree" as const satisfies ThreadEnvMode)),
   ),
+  baseBranch: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed("main"))),
+  branchPrefix: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed("demo/discord"))),
   applicationId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   guildId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   botToken: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -749,8 +750,9 @@ export const ServerSettingsPatch = Schema.Struct({
         Schema.Struct({
           enabled: Schema.optionalKey(Schema.Boolean),
           projectId: Schema.optionalKey(Schema.NullOr(ProjectId)),
-          baseBranch: Schema.optionalKey(TrimmedNonEmptyString),
-          branchPrefix: Schema.optionalKey(TrimmedNonEmptyString),
+          threadEnvMode: Schema.optionalKey(ThreadEnvMode),
+          baseBranch: Schema.optionalKey(TrimmedString),
+          branchPrefix: Schema.optionalKey(TrimmedString),
           applicationId: Schema.optionalKey(TrimmedString),
           guildId: Schema.optionalKey(TrimmedString),
           botToken: Schema.optionalKey(TrimmedString),

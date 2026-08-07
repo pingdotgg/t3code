@@ -24,6 +24,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
@@ -41,7 +42,8 @@ const MAX_BRANCH_SLUG_LENGTH = 40;
 export interface ChannelTaskStatus {
   readonly threadId: ThreadId;
   readonly title: string;
-  readonly branch: string;
+  readonly branch: string | null;
+  readonly threadEnvMode: "local" | "worktree";
   readonly state: "queued" | "running" | "done" | "failed";
 }
 
@@ -79,12 +81,17 @@ export function isDiscordChannelConfigured(config: DiscordChannelSettings): bool
   return (
     config.enabled &&
     config.projectId !== null &&
-    config.baseBranch.trim().length > 0 &&
-    config.branchPrefix.trim().length > 0 &&
+    (config.threadEnvMode === "local" ||
+      (config.baseBranch.trim().length > 0 && config.branchPrefix.trim().length > 0)) &&
     config.applicationId.length > 0 &&
     config.botToken.length > 0
   );
 }
+
+class DiscordChannelTaskError extends Schema.TaggedErrorClass<DiscordChannelTaskError>()(
+  "DiscordChannelTaskError",
+  { message: Schema.String },
+) {}
 
 export function channelBranchName(input: {
   readonly prefix: string;
@@ -134,12 +141,20 @@ function statusCard(status: ChannelTaskStatus) {
       Fields({
         children: [
           Field({ label: "Status", children: taskStateLabel(status.state) }),
-          Field({ label: "Branch", children: `\`${status.branch}\`` }),
+          Field({
+            label: status.threadEnvMode === "worktree" ? "Branch" : "Target",
+            children:
+              status.threadEnvMode === "worktree"
+                ? `\`${status.branch ?? "worktree"}\``
+                : "Project checkout",
+          }),
         ],
       }),
       Context({
         children:
-          "This task is running in an isolated worktree. The base branch is never checked out for agent work.",
+          status.threadEnvMode === "worktree"
+            ? "This task is running in an isolated worktree."
+            : "This task is running directly in the project's current checkout.",
       }),
     ],
   });
@@ -158,7 +173,13 @@ function startedCard(
       Fields({
         children: [
           Field({ label: "Status", children: "Queued" }),
-          Field({ label: "Branch", children: `\`${task.branch}\`` }),
+          Field({
+            label: task.threadEnvMode === "worktree" ? "Branch" : "Target",
+            children:
+              task.threadEnvMode === "worktree"
+                ? `\`${task.branch ?? "worktree"}\``
+                : "Project checkout",
+          }),
         ],
       }),
       Actions({
@@ -189,7 +210,13 @@ function completedCard(input: {
         children: [
           Field({ label: "Status", children: "Done" }),
           Field({ label: "Diff", children: fileLabel }),
-          Field({ label: "Branch", children: `\`${input.task.branch}\`` }),
+          Field({
+            label: input.task.threadEnvMode === "worktree" ? "Branch" : "Target",
+            children:
+              input.task.threadEnvMode === "worktree"
+                ? `\`${input.task.branch ?? "worktree"}\``
+                : "Project checkout",
+          }),
         ],
       }),
       Context({ children: "Open T3 Code to inspect the full transcript and diff." }),
@@ -271,7 +298,9 @@ function createT3CodeChannel(input: {
             Header({ children: "Task did not start" }),
             Section({
               children:
-                "T3 Code could not create an isolated worktree. The task was stopped before the agent ran.",
+                input.config.threadEnvMode === "worktree"
+                  ? "T3 Code could not create an isolated worktree. The task was stopped before the agent ran."
+                  : "T3 Code could not start the task in the project checkout. Check the project and provider configuration.",
             }),
           ],
         }),
@@ -311,24 +340,11 @@ const makeOperations = Effect.gen(function* () {
     return `${prefix}-${uuid}`;
   });
 
-  const startTaskEffect = Effect.fn("T3CodeDiscordChannel.startTask")(function* (
+  const createTaskWorktree = Effect.fn("T3CodeDiscordChannel.createTaskWorktree")(function* (
     prompt: string,
     config: DiscordChannelSettings,
+    workspaceRoot: string,
   ) {
-    if (config.projectId === null) {
-      return yield* Effect.fail("Discord channel project is not configured");
-    }
-    const projectOption = yield* projectionSnapshotQuery.getProjectShellById(config.projectId);
-    if (Option.isNone(projectOption)) {
-      return yield* Effect.fail("Discord channel project was not found");
-    }
-    const project = projectOption.value;
-    if (project.defaultModelSelection === null) {
-      return yield* Effect.fail("Discord channel project has no default model");
-    }
-
-    const now = DateTime.formatIso(yield* DateTime.now);
-    const threadId = ThreadId.make(yield* nextId("channel-thread"));
     const suffix = (yield* nextId("branch")).slice(-8);
     const branch = channelBranchName({
       prefix: config.branchPrefix,
@@ -336,16 +352,47 @@ const makeOperations = Effect.gen(function* () {
       suffix,
     });
     if (branch === config.baseBranch) {
-      return yield* Effect.fail("Discord channel branch must differ from its base branch");
+      return yield* new DiscordChannelTaskError({
+        message: "Discord channel branch must differ from its base branch",
+      });
     }
-
-    const worktree = yield* gitWorkflow.createWorktree({
-      cwd: project.workspaceRoot,
+    return yield* gitWorkflow.createWorktree({
+      cwd: workspaceRoot,
       refName: config.baseBranch,
       baseRefName: config.baseBranch,
       newRefName: branch,
       path: null,
     });
+  });
+
+  const startTaskEffect = Effect.fn("T3CodeDiscordChannel.startTask")(function* (
+    prompt: string,
+    config: DiscordChannelSettings,
+  ) {
+    if (config.projectId === null) {
+      return yield* new DiscordChannelTaskError({
+        message: "Discord channel project is not configured",
+      });
+    }
+    const projectOption = yield* projectionSnapshotQuery.getProjectShellById(config.projectId);
+    if (Option.isNone(projectOption)) {
+      return yield* new DiscordChannelTaskError({
+        message: "Discord channel project was not found",
+      });
+    }
+    const project = projectOption.value;
+    if (project.defaultModelSelection === null) {
+      return yield* new DiscordChannelTaskError({
+        message: "Discord channel project has no default model",
+      });
+    }
+
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const threadId = ThreadId.make(yield* nextId("channel-thread"));
+    const worktree =
+      config.threadEnvMode === "worktree"
+        ? yield* createTaskWorktree(prompt, config, project.workspaceRoot)
+        : null;
     const title = promptTitle(prompt);
     yield* orchestrationEngine.dispatch({
       type: "thread.create",
@@ -356,8 +403,8 @@ const makeOperations = Effect.gen(function* () {
       modelSelection: project.defaultModelSelection,
       runtimeMode: "full-access",
       interactionMode: "default",
-      branch: worktree.worktree.refName,
-      worktreePath: worktree.worktree.path,
+      branch: worktree?.worktree.refName ?? null,
+      worktreePath: worktree?.worktree.path ?? null,
       createdAt: now,
     });
     yield* orchestrationEngine.dispatch({
@@ -377,7 +424,8 @@ const makeOperations = Effect.gen(function* () {
     return {
       threadId,
       title,
-      branch: worktree.worktree.refName,
+      branch: worktree?.worktree.refName ?? null,
+      threadEnvMode: config.threadEnvMode,
       state: "queued" as const,
     };
   });
@@ -398,10 +446,12 @@ const makeOperations = Effect.gen(function* () {
       }
       return "queued" as const;
     })();
+    const threadEnvMode = thread.worktreePath === null ? ("local" as const) : ("worktree" as const);
     return {
       threadId,
       title: thread.title,
-      branch: thread.branch ?? "isolated worktree",
+      branch: thread.branch,
+      threadEnvMode,
       state,
     };
   });
@@ -416,6 +466,7 @@ function configFingerprint(config: DiscordChannelSettings): string {
   return [
     config.enabled,
     config.projectId,
+    config.threadEnvMode,
     config.baseBranch,
     config.branchPrefix,
     config.applicationId,
