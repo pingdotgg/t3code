@@ -190,6 +190,30 @@ it.effect("decodes project.meta-updated payloads with explicit default provider"
   }),
 );
 
+it.effect("decodes project.meta-updated payloads with and without a color", () =>
+  Effect.gen(function* () {
+    const colored = yield* decodeProjectMetaUpdatedPayload({
+      projectId: "project-1",
+      color: "teal",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(colored.color, "teal");
+
+    const cleared = yield* decodeProjectMetaUpdatedPayload({
+      projectId: "project-1",
+      color: null,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(cleared.color, null);
+
+    const historical = yield* decodeProjectMetaUpdatedPayload({
+      projectId: "project-1",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(historical.color, undefined);
+  }),
+);
+
 it.effect("rejects command fields that become empty after trim", () =>
   Effect.gen(function* () {
     const result = yield* Effect.exit(

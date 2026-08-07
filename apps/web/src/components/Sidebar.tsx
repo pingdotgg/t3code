@@ -105,6 +105,7 @@ import {
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import { readLocalApi } from "../localApi";
+import { PROJECT_COLOR_OPTIONS, resolveProjectGroupColorCss } from "../projectColors";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
@@ -1576,6 +1577,35 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [memberThreadCountByPhysicalKey, removeProject],
   );
 
+  const applyProjectColorToGroup = useCallback(
+    async (color: string | null) => {
+      const results = await Promise.all(
+        project.memberProjects
+          .filter((member) => (member.color ?? null) !== color)
+          .map((member) =>
+            updateProject({
+              environmentId: member.environmentId,
+              input: { projectId: member.id, color },
+            }),
+          ),
+      );
+      const failure = results.find(
+        (result) => result._tag === "Failure" && !isAtomCommandInterrupted(result),
+      );
+      if (failure && failure._tag === "Failure") {
+        const error = squashAtomCommandFailure(failure);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to update project color",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [project.memberProjects, updateProject],
+  );
+
   const handleProjectButtonContextMenu = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       event.preventDefault();
@@ -1651,10 +1681,26 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           };
         };
 
+        actionHandlers.set("color:none", () => applyProjectColorToGroup(null));
+        for (const option of PROJECT_COLOR_OPTIONS) {
+          actionHandlers.set(`color:${option.value}`, () => applyProjectColorToGroup(option.value));
+        }
+
         const clicked = await api.contextMenu.show(
           [
             buildTargetedItem("rename", "Rename"),
             buildTargetedItem("grouping", "Group into..."),
+            {
+              id: "color:submenu",
+              label: "Color",
+              children: [
+                { id: "color:none", label: "No color" },
+                ...PROJECT_COLOR_OPTIONS.map((option) => ({
+                  id: `color:${option.value}`,
+                  label: option.label,
+                })),
+              ],
+            },
             buildTargetedItem("copy-path", "Copy Path"),
             buildTargetedItem("delete", "Remove", {
               destructive: true,
@@ -1674,6 +1720,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       })();
     },
     [
+      applyProjectColorToGroup,
       copyPathToClipboard,
       handleRemoveProject,
       openProjectGroupingDialog,
@@ -2213,6 +2260,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     ],
   );
 
+  const projectColorCss = resolveProjectGroupColorCss(project.memberProjects);
+
   return (
     <>
       <div className="group/project-header relative">
@@ -2256,7 +2305,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               }`}
             />
           )}
-          <ProjectFavicon environmentId={project.environmentId} cwd={project.workspaceRoot} />
+          <ProjectFavicon
+            environmentId={project.environmentId}
+            cwd={project.workspaceRoot}
+            accentColor={projectColorCss}
+          />
           <span className="flex min-w-0 flex-1 items-center gap-2">
             <span className="truncate text-sm font-medium text-sidebar-foreground/90">
               {project.displayName}
