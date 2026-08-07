@@ -165,6 +165,7 @@ export function ThemeEditorPanel({
   const isEditing = editingTheme !== null;
   const [name, setName] = useState("");
   const [activeAppearance, setActiveAppearance] = useState<ThemeAppearance>(initialAppearance);
+  const [sidebarArtwork, setSidebarArtwork] = useState(false);
   const [isAdvanced, setIsAdvanced] = useState(false);
   const [colorsByAppearance, setColorsByAppearance] = useState<ThemeEditorColorsByAppearance>(() =>
     getThemeEditorColorsByAppearance(),
@@ -259,6 +260,9 @@ export function ThemeEditorPanel({
 
       setName(editingTheme?.label ?? seedName ?? "");
       setActiveAppearance(nextAppearance);
+      // Artwork is opt-in for new themes, including duplicates. Editing keeps
+      // the theme's existing choice.
+      setSidebarArtwork(editingTheme?.sidebarArtwork === true);
       // Themes saved by the guided editor carry the managed flag; anything
       // else (imports, hand-edited files, older saves) opens in advanced mode
       // so guided regeneration cannot silently discard hand-tuned colors. A
@@ -330,8 +334,8 @@ export function ThemeEditorPanel({
   // comes back when the editor closes, including on cancel.
   useEffect(() => {
     if (!open || !isDraftSeeded) return;
-    applyThemeColorPreview(colorsByAppearance[activeAppearance], activeAppearance);
-  }, [activeAppearance, colorsByAppearance, isDraftSeeded, open]);
+    applyThemeColorPreview(colorsByAppearance[activeAppearance], activeAppearance, sidebarArtwork);
+  }, [activeAppearance, colorsByAppearance, isDraftSeeded, open, sidebarArtwork]);
 
   useEffect(() => {
     if (!open) return;
@@ -657,6 +661,7 @@ export function ThemeEditorPanel({
               ...mergeTarget.variants,
               ...Object.fromEntries(editedModes.map((mode) => [mode, colorsForSave[mode]])),
             },
+            ...(sidebarArtwork ? { sidebarArtwork: true } : {}),
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
         );
@@ -687,6 +692,7 @@ export function ThemeEditorPanel({
             ...(getThemeModes(editingTheme).length > 1
               ? { variants: { [variantAppearance]: colorsForSave[variantAppearance] } }
               : {}),
+            ...(sidebarArtwork ? { sidebarArtwork: true } : {}),
             ...(isAdvanced ? {} : { managed: true }),
           }),
         );
@@ -713,6 +719,7 @@ export function ThemeEditorPanel({
               ...mergeTarget.variants,
               [activeAppearance]: colorsForSave[activeAppearance],
             },
+            ...(sidebarArtwork ? { sidebarArtwork: true } : {}),
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
         );
@@ -723,6 +730,7 @@ export function ThemeEditorPanel({
             name,
             appearance: activeAppearance,
             colors: colorsForSave[activeAppearance],
+            ...(sidebarArtwork ? { sidebarArtwork: true } : {}),
             ...(isAdvanced ? {} : { managed: true }),
           }),
         );
@@ -773,6 +781,7 @@ export function ThemeEditorPanel({
     name,
     onOpenChange,
     onSaved,
+    sidebarArtwork,
     simpleColorsDirtyByAppearance,
     takenAppearances,
   ]);
@@ -830,6 +839,20 @@ export function ThemeEditorPanel({
         {renderAppearanceButton("dark")}
       </div>
     </div>
+  );
+
+  const renderSidebarArtworkToggle = () => (
+    <label className="grid cursor-pointer grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-center gap-3">
+      <span className="text-sm font-medium">Sidebar artwork</span>
+      <span className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span>Show T3 Code environment artwork</span>
+        <Switch
+          aria-label="Allow sidebar artwork with this theme"
+          checked={sidebarArtwork}
+          onCheckedChange={(checked) => setSidebarArtwork(Boolean(checked))}
+        />
+      </span>
+    </label>
   );
 
   const renderColorsHeader = () => (
@@ -1088,6 +1111,7 @@ export function ThemeEditorPanel({
               </p>
             ) : null}
             {renderAppearanceButtons()}
+            {renderSidebarArtworkToggle()}
             <div className="space-y-3">
               {renderColorsHeader()}
               {renderColorFields()}
