@@ -1,8 +1,9 @@
-import { BotIcon, GitBranchIcon, ShieldCheckIcon } from "lucide-react";
+import { BotIcon, ExternalLinkIcon, GitBranchIcon, ShieldCheckIcon } from "lucide-react";
 import { ProjectId, type ServerSettingsPatch } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { usePersistPrimaryServerSettings, usePrimarySettings } from "../../hooks/useSettings";
+import { ensureLocalApi } from "../../localApi";
 import { useProjects } from "../../state/entities";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { Badge } from "../ui/badge";
@@ -12,6 +13,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { buildDiscordInstallUrl } from "./discordInstallUrl";
 
 function SecretInput({
   label,
@@ -94,6 +96,7 @@ export function ChannelSettings() {
     applicationId.trim().length > 0 &&
     hasBotToken;
   const selectedProject = projects.find((project) => project.id === projectId) ?? null;
+  const discordInstallUrl = buildDiscordInstallUrl(applicationId, guildId);
 
   const persistDiscordPatch = useCallback(
     async (discord: DiscordChannelPatch, persistedFields: ReadonlyArray<DirtyField> = []) => {
@@ -198,7 +201,7 @@ export function ChannelSettings() {
         />
         <SettingsRow
           title="Discord application"
-          description="Create a Discord bot, enable Message Content and Server Members intents, then copy its credentials here."
+          description="Enter the app credentials, then add the bot to your server. Message Content and Server Members intents must be enabled."
         >
           <div className="grid gap-3 py-3 sm:grid-cols-2">
             <Input
@@ -244,6 +247,20 @@ export function ChannelSettings() {
                 );
               }}
             />
+            <Button
+              variant="outline"
+              className="sm:col-span-2 sm:justify-self-start"
+              disabled={discordInstallUrl === null}
+              onClick={() => {
+                if (!discordInstallUrl) return;
+                void ensureLocalApi()
+                  .shell.openExternal(discordInstallUrl)
+                  .catch(() => undefined);
+              }}
+            >
+              <ExternalLinkIcon className="size-3.5" aria-hidden />
+              Add to Discord server
+            </Button>
           </div>
         </SettingsRow>
       </SettingsSection>
