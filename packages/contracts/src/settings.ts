@@ -537,6 +537,9 @@ export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 export const DiscordChannelSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   projectId: Schema.NullOr(ProjectId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  modelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   threadEnvMode: ThreadEnvMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("worktree" as const satisfies ThreadEnvMode)),
   ),
@@ -750,6 +753,7 @@ export const ServerSettingsPatch = Schema.Struct({
         Schema.Struct({
           enabled: Schema.optionalKey(Schema.Boolean),
           projectId: Schema.optionalKey(Schema.NullOr(ProjectId)),
+          modelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
           threadEnvMode: Schema.optionalKey(ThreadEnvMode),
           baseBranch: Schema.optionalKey(TrimmedString),
           branchPrefix: Schema.optionalKey(TrimmedString),

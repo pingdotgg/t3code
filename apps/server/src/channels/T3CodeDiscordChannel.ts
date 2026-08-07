@@ -1,6 +1,5 @@
 import { createChannel, defineChannelCommand } from "@copilotkit/channels-core";
 import { discord } from "@copilotkit/channels-discord";
-import type { MessageRef, Thread } from "@copilotkit/channels-ui";
 import {
   CommandId,
   type DiscordChannelSettings,
@@ -51,6 +50,7 @@ export interface T3CodeChannelOperations {
   ) => Promise<StartedChannelTask>;
   readonly getTaskStatus: (threadId: ThreadId) => Promise<ChannelTaskStatus | null>;
   readonly listModels: () => Promise<ReadonlyArray<DiscordModelOption>>;
+  readonly setDefaultModel: (modelSelection: ModelSelection) => Promise<void>;
 }
 
 interface LinkedConversationState {
@@ -93,10 +93,20 @@ export function resolveDiscordModel(
   return models.find((model) => model.value === value);
 }
 
-type ChannelThread = Pick<Thread, "post" | "update"> & {
+type ChannelThread = {
   readonly state: () => Promise<unknown>;
   readonly setState: (value: unknown) => Promise<void>;
 };
+
+interface DiscordTextMessageRef {
+  readonly channelId: string;
+  readonly messageId: string;
+}
+
+interface DiscordTextClient {
+  readonly post: (channelId: string, text: string) => Promise<DiscordTextMessageRef>;
+  readonly update: (ref: DiscordTextMessageRef, text: string) => Promise<void>;
+}
 
 interface ActiveDiscordChannel {
   readonly fingerprint: string;
@@ -172,24 +182,75 @@ export function taskStatusText(task: ChannelTaskStatus, changedFileCount?: numbe
   const heading = (() => {
     switch (task.state) {
       case "queued":
-        return "⏳ **T3 Code queued**";
+        return "⏳ T3 Code queued";
       case "running":
-        return "🔄 **T3 Code is working**";
+        return "🔄 T3 Code is working";
       case "done":
-        return "✅ **T3 Code finished**";
+        return "✅ T3 Code finished";
       case "failed":
-        return "❌ **T3 Code failed**";
+        return "❌ T3 Code failed";
     }
   })();
   const target =
     task.threadEnvMode === "worktree"
-      ? `Branch: \`${task.branch ?? "worktree"}\``
+      ? `Branch: ${task.branch ?? "worktree"}`
       : "Target: project checkout";
   const diff =
     task.state === "done" && changedFileCount !== undefined
       ? `\nChanged: ${changedFileCount} ${changedFileCount === 1 ? "file" : "files"}`
       : "";
-  return `${heading}\n${task.title}\nModel: \`${modelLabel(task.modelSelection)}\`\n${target}${diff}`;
+  return `${heading}\n${task.title}\nModel: ${modelLabel(task.modelSelection)}\n${target}${diff}`;
+}
+
+export function createDiscordTextClient(
+  botToken: string,
+  fetchImpl: typeof fetch = fetch,
+): DiscordTextClient {
+  const request = async (url: string, method: "POST" | "PATCH", text: string) => {
+    const response = await fetchImpl(url, {
+      method,
+      headers: {
+        Authorization: `Bot ${botToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ content: text.slice(0, 2_000) }),
+    });
+    if (!response.ok) {
+      throw new Error(`Discord text message request failed (${response.status})`);
+    }
+    return response;
+  };
+
+  return {
+    async post(channelId, text) {
+      const response = await request(
+        `https://discord.com/api/v10/channels/${channelId}/messages`,
+        "POST",
+        text,
+      );
+      const payload = (await response.json()) as { readonly id?: unknown };
+      if (typeof payload.id !== "string") {
+        throw new Error("Discord text message response did not include a message id");
+      }
+      return { channelId, messageId: payload.id };
+    },
+    async update(ref, text) {
+      await request(
+        `https://discord.com/api/v10/channels/${ref.channelId}/messages/${ref.messageId}`,
+        "PATCH",
+        text,
+      );
+    },
+  };
+}
+
+function discordChannelId(thread: ChannelThread): string {
+  const conversationKey = (thread as ChannelThread & { readonly conversationKey?: unknown })
+    .conversationKey;
+  if (typeof conversationKey !== "string" || conversationKey.length === 0) {
+    throw new Error("Discord channel thread did not include a conversation key");
+  }
+  return conversationKey;
 }
 
 function createT3CodeChannel(input: {
@@ -197,11 +258,11 @@ function createT3CodeChannel(input: {
   readonly operations: T3CodeChannelOperations;
   readonly models: ReadonlyArray<DiscordModelOption>;
 }) {
+  const textClient = createDiscordTextClient(input.config.botToken);
   const linkedTasks = new Map<
     string,
     {
-      readonly thread: Pick<Thread, "post" | "update">;
-      messageRef: MessageRef;
+      readonly messageRef: DiscordTextMessageRef;
       changedFileCount?: number;
     }
   >();
@@ -217,21 +278,21 @@ function createT3CodeChannel(input: {
     ],
   });
 
-  const postStatus = async (thread: Pick<Thread, "post">, threadId: ThreadId) => {
+  const postText = (thread: ChannelThread, text: string) =>
+    textClient.post(discordChannelId(thread), text);
+
+  const postStatus = async (thread: ChannelThread, threadId: ThreadId) => {
     const status = await input.operations.getTaskStatus(threadId);
     if (!status) {
-      await thread.post("That T3 Code task no longer exists.");
+      await postText(thread, "That T3 Code task no longer exists.");
       return;
     }
     const linked = linkedTasks.get(threadId);
     if (linked) {
-      linked.messageRef = await linked.thread.update(
-        linked.messageRef,
-        taskStatusText(status, linked.changedFileCount),
-      );
+      await textClient.update(linked.messageRef, taskStatusText(status, linked.changedFileCount));
       return;
     }
-    await thread.post(taskStatusText(status));
+    await postText(thread, taskStatusText(status));
   };
 
   const handleText = async (thread: ChannelThread, rawText: string) => {
@@ -239,14 +300,17 @@ function createT3CodeChannel(input: {
     const state = readConversationState(await thread.state());
     if (text.toLocaleLowerCase() === "status") {
       if (!state?.t3ThreadId) {
-        await thread.post("No T3 Code task is linked to this Discord thread yet.");
+        await postText(thread, "No T3 Code task is linked to this Discord thread yet.");
         return;
       }
       await postStatus(thread, ThreadId.make(state.t3ThreadId));
       return;
     }
     if (text.length === 0) {
-      await thread.post("Mention me with a coding task, or send `status` to check the linked run.");
+      await postText(
+        thread,
+        "Mention me with a coding task, or send `status` to check the linked run.",
+      );
       return;
     }
 
@@ -264,14 +328,15 @@ function createT3CodeChannel(input: {
         ...state,
         t3ThreadId: task.threadId,
       } satisfies LinkedConversationState);
-      const messageRef = await thread.post(taskStatusText(task));
-      linkedTasks.set(task.threadId, { thread, messageRef });
+      const messageRef = await postText(thread, taskStatusText(task));
+      linkedTasks.set(task.threadId, { messageRef });
       await postStatus(thread, task.threadId);
     } catch {
-      await thread.post(
+      await postText(
+        thread,
         input.config.threadEnvMode === "worktree"
-          ? "❌ **T3 Code could not start**\nThe isolated worktree could not be created, so the agent did not run."
-          : "❌ **T3 Code could not start**\nCheck the project and provider configuration.",
+          ? "❌ T3 Code could not start\nThe isolated worktree could not be created, so the agent did not run."
+          : "❌ T3 Code could not start\nCheck the project and provider configuration.",
       );
     }
   };
@@ -309,7 +374,8 @@ function createT3CodeChannel(input: {
       async handler({ thread, options }) {
         const selected = resolveDiscordModel(selectableModels, options.model);
         if (!selected) {
-          await thread.post(
+          await postText(
+            thread,
             "That model is not currently available. Run `/models` to see the list.",
           );
           return;
@@ -319,9 +385,8 @@ function createT3CodeChannel(input: {
           ...state,
           modelSelection: selected.selection,
         } satisfies LinkedConversationState);
-        await thread.post(
-          `Future T3 Code tasks in this channel will use **${selected.label}** (\`${selected.value}\`).`,
-        );
+        await postText(thread, `Default model saved: ${selected.label} (${selected.value}).`);
+        await input.operations.setDefaultModel(selected.selection);
       },
     }),
   );
@@ -331,12 +396,12 @@ function createT3CodeChannel(input: {
       description: "List models available to T3 Code and show the current selection.",
       async handler({ thread }) {
         const state = readConversationState(await thread.state());
-        const current = state.modelSelection ? modelLabel(state.modelSelection) : "project default";
-        const list = selectableModels
-          .map(({ value, label }) => `• \`${value}\` — ${label}`)
-          .join("\n");
-        await thread.post(
-          `**Current model:** ${current === "project default" ? current : `\`${current}\``}\n\n${list || "No runnable models are currently available."}`,
+        const effectiveSelection = state.modelSelection ?? input.config.modelSelection;
+        const current = effectiveSelection ? modelLabel(effectiveSelection) : "project default";
+        const list = selectableModels.map(({ value, label }) => `- ${value} — ${label}`).join("\n");
+        await postText(
+          thread,
+          `Current model: ${current}\n\n${list || "No runnable models are currently available."}`,
         );
       },
     }),
@@ -355,10 +420,7 @@ function createT3CodeChannel(input: {
       }
       const task = await input.operations.getTaskStatus(completion.threadId);
       if (!task) return;
-      linked.messageRef = await linked.thread.update(
-        linked.messageRef,
-        taskStatusText(task, linked.changedFileCount),
-      );
+      await textClient.update(linked.messageRef, taskStatusText(task, linked.changedFileCount));
     },
   };
 }
@@ -369,6 +431,7 @@ const makeOperations = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerRegistry = yield* ProviderRegistry;
+  const settingsService = yield* ServerSettingsService;
   const runtimeContext = yield* Effect.context<never>();
   const runPromise = Effect.runPromiseWith(runtimeContext);
 
@@ -419,7 +482,8 @@ const makeOperations = Effect.gen(function* () {
       });
     }
     const project = projectOption.value;
-    const modelSelection = requestedModelSelection ?? project.defaultModelSelection;
+    const modelSelection =
+      requestedModelSelection ?? config.modelSelection ?? project.defaultModelSelection;
     if (modelSelection === null) {
       return yield* new DiscordChannelTaskError({
         message: "Discord channel project has no default model",
@@ -503,6 +567,12 @@ const makeOperations = Effect.gen(function* () {
     getTaskStatus: (threadId) => runPromise(getTaskStatusEffect(threadId)),
     listModels: () =>
       runPromise(providerRegistry.getProviders.pipe(Effect.map(discordModelOptions))),
+    setDefaultModel: (modelSelection) =>
+      runPromise(
+        settingsService
+          .updateSettings({ channelIntegrations: { discord: { modelSelection } } })
+          .pipe(Effect.asVoid),
+      ),
   } satisfies T3CodeChannelOperations;
 });
 
@@ -510,6 +580,7 @@ function configFingerprint(config: DiscordChannelSettings): string {
   return [
     config.enabled,
     config.projectId,
+    config.modelSelection ? modelLabel(config.modelSelection) : "",
     config.threadEnvMode,
     config.baseBranch,
     config.branchPrefix,

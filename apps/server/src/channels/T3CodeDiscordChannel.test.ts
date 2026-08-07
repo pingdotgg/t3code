@@ -12,6 +12,7 @@ import { describe } from "vite-plus/test";
 
 import {
   channelBranchName,
+  createDiscordTextClient,
   discordModelOptions,
   isDiscordChannelConfigured,
   resolveDiscordModel,
@@ -23,6 +24,7 @@ const decodeDiscordChannelSettings = Schema.decodeSync(DiscordChannelSettings);
 const configuredDiscord = {
   enabled: true,
   projectId: ProjectId.make("project-1"),
+  modelSelection: null,
   threadEnvMode: "worktree",
   baseBranch: "main",
   branchPrefix: "demo/discord",
@@ -34,7 +36,9 @@ const configuredDiscord = {
 
 describe("Discord channel isolation", () => {
   it("keeps isolated worktrees as the default for existing settings", () => {
-    expect(decodeDiscordChannelSettings({}).threadEnvMode).toBe("worktree");
+    const defaults = decodeDiscordChannelSettings({});
+    expect(defaults.threadEnvMode).toBe("worktree");
+    expect(defaults.modelSelection).toBeNull();
   });
 
   it("creates a unique task branch below the configured prefix", () => {
@@ -144,5 +148,26 @@ describe("Discord channel model selection", () => {
 
     expect(taskStatusText(task)).toContain("T3 Code is working");
     expect(taskStatusText({ ...task, state: "done" }, 2)).toContain("Changed: 2 files");
+  });
+
+  it("sends and edits native Discord content without Channels UI components", async () => {
+    const requests: Array<{ readonly url: string; readonly init?: RequestInit }> = [];
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(url), ...(init ? { init } : {}) });
+      return new Response(JSON.stringify({ id: "message-1" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+    const client = createDiscordTextClient("secret", fetchImpl);
+
+    const ref = await client.post("channel-1", "Queued");
+    await client.update(ref, "Running");
+
+    expect(requests.map(({ init }) => init?.method)).toEqual(["POST", "PATCH"]);
+    expect(requests[1]?.url).toContain("/channels/channel-1/messages/message-1");
+    expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({
+      content: "Queued",
+    });
   });
 });

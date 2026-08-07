@@ -1,11 +1,24 @@
+import { useAtomValue } from "@effect/atom-react";
 import { BotIcon, ExternalLinkIcon, GitBranchIcon, ShieldCheckIcon } from "lucide-react";
-import { ProjectId, type ServerSettingsPatch } from "@t3tools/contracts";
+import { type ModelSelection, ProjectId, type ServerSettingsPatch } from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { usePersistPrimaryServerSettings, usePrimarySettings } from "../../hooks/useSettings";
 import { ensureLocalApi } from "../../localApi";
+import {
+  getCustomModelOptionsByInstance,
+  resolveAppModelSelectionState,
+} from "../../modelSelection";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  sortProviderInstanceEntries,
+} from "../../providerInstances";
 import { useProjects } from "../../state/entities";
 import { usePrimaryEnvironment } from "../../state/environments";
+import { primaryServerProvidersAtom } from "../../state/server";
+import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -49,10 +62,12 @@ type SaveStatus = "idle" | "unsaved" | "saving" | "saved" | "error";
 type DirtyField = "applicationId" | "guildId" | "botToken" | "baseBranch" | "branchPrefix";
 
 export function ChannelSettings() {
-  const settings = usePrimarySettings((value) => value.channelIntegrations.discord);
+  const allSettings = usePrimarySettings();
+  const settings = allSettings.channelIntegrations.discord;
   const persistServerSettings = usePersistPrimaryServerSettings();
   const primaryEnvironment = usePrimaryEnvironment();
   const allProjects = useProjects();
+  const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const projects = useMemo(
     () =>
       primaryEnvironment
@@ -64,6 +79,9 @@ export function ChannelSettings() {
   );
   const [enabled, setEnabled] = useState(settings.enabled);
   const [projectId, setProjectId] = useState<ProjectId | null>(settings.projectId);
+  const [modelSelection, setModelSelection] = useState<ModelSelection | null>(
+    settings.modelSelection,
+  );
   const [threadEnvMode, setThreadEnvMode] = useState(settings.threadEnvMode);
   const [baseBranch, setBaseBranch] = useState(settings.baseBranch);
   const [branchPrefix, setBranchPrefix] = useState(settings.branchPrefix);
@@ -78,6 +96,7 @@ export function ChannelSettings() {
   useEffect(() => {
     setEnabled(settings.enabled);
     setProjectId(settings.projectId);
+    setModelSelection(settings.modelSelection);
     setThreadEnvMode(settings.threadEnvMode);
     if (!dirtyFieldsRef.current.has("baseBranch")) setBaseBranch(settings.baseBranch);
     if (!dirtyFieldsRef.current.has("branchPrefix")) setBranchPrefix(settings.branchPrefix);
@@ -96,6 +115,31 @@ export function ChannelSettings() {
     applicationId.trim().length > 0 &&
     hasBotToken;
   const selectedProject = projects.find((project) => project.id === projectId) ?? null;
+  const fallbackModelSelection = useMemo(
+    () => resolveAppModelSelectionState(allSettings, serverProviders),
+    [allSettings, serverProviders],
+  );
+  const activeModelSelection = useMemo(
+    () => modelSelection ?? selectedProject?.defaultModelSelection ?? fallbackModelSelection,
+    [fallbackModelSelection, modelSelection, selectedProject?.defaultModelSelection],
+  );
+  const instanceEntries = useMemo(
+    () =>
+      sortProviderInstanceEntries(
+        applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), allSettings),
+      ),
+    [allSettings, serverProviders],
+  );
+  const modelOptionsByInstance = useMemo(
+    () =>
+      getCustomModelOptionsByInstance(
+        allSettings,
+        serverProviders,
+        activeModelSelection.instanceId,
+        activeModelSelection.model,
+      ),
+    [activeModelSelection.instanceId, activeModelSelection.model, allSettings, serverProviders],
+  );
   const discordInstallUrl = buildDiscordInstallUrl(applicationId, guildId);
 
   const persistDiscordPatch = useCallback(
@@ -116,6 +160,7 @@ export function ChannelSettings() {
       {
         enabled,
         projectId,
+        modelSelection,
         threadEnvMode,
         baseBranch,
         branchPrefix,
@@ -139,6 +184,7 @@ export function ChannelSettings() {
     branchPrefix,
     enabled,
     guildId,
+    modelSelection,
     persistDiscordPatch,
     projectId,
     threadEnvMode,
@@ -197,6 +243,28 @@ export function ChannelSettings() {
                 ))}
               </SelectPopup>
             </Select>
+          }
+        />
+        <SettingsRow
+          title="Default model"
+          description="Every Discord task uses this model unless /model selects a conversation override."
+          control={
+            <ProviderModelPicker
+              activeInstanceId={activeModelSelection.instanceId}
+              model={activeModelSelection.model}
+              lockedProvider={null}
+              instanceEntries={instanceEntries}
+              modelOptionsByInstance={modelOptionsByInstance}
+              disabled={instanceEntries.length === 0}
+              triggerVariant="outline"
+              triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+              triggerAriaLabel="Discord default model"
+              onInstanceModelChange={(instanceId, model) => {
+                const next = createModelSelection(instanceId, model);
+                setModelSelection(next);
+                void persistDiscordPatch({ modelSelection: next });
+              }}
+            />
           }
         />
         <SettingsRow
