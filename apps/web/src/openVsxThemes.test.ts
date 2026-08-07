@@ -231,6 +231,7 @@ describe("Open VSX themes", () => {
       publisher: "demo",
       name: "theme",
       version: "1.0.0",
+      license: "MIT",
       contributes: {
         themes: [
           { label: "Demo Dark", uiTheme: "vs-dark", path: "./themes/demo-dark.json" },
@@ -239,14 +240,19 @@ describe("Open VSX themes", () => {
         ],
       },
     };
-    zip.file("extension/package.json", JSON.stringify(packagedManifest));
-    const packageBytes = await zip.generateAsync({
-      type: "arraybuffer",
-      comment: `PK\u0005\u0006${"x".repeat(26)}`,
-    });
-    const checksum = [...sha256(new Uint8Array(packageBytes))]
-      .map((byte) => byte.toString(16).padStart(2, "0"))
-      .join("");
+    let packageBytes = new ArrayBuffer(0);
+    let checksum = "";
+    const rebuildPackage = async () => {
+      zip.file("extension/package.json", JSON.stringify(packagedManifest));
+      packageBytes = await zip.generateAsync({
+        type: "arraybuffer",
+        comment: `PK\u0005\u0006${"x".repeat(26)}`,
+      });
+      checksum = [...sha256(new Uint8Array(packageBytes))]
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("");
+    };
+    await rebuildPackage();
     // The public manifest is only a preflight hint. Imports must use the manifest
     // inside the checksummed VSIX rather than this inconsistent contribution.
     const manifest = {
@@ -283,6 +289,7 @@ describe("Open VSX themes", () => {
 
     expect(themes).toHaveLength(2);
     expect(new Set(themes.map((theme) => theme.id)).size).toBe(2);
+    expect(themes.every((theme) => /^ovx-[a-z0-9-]+-[0-9a-f]{12}$/.test(theme.id))).toBe(true);
     expect(themes.every((theme) => theme.collection?.id === "open-vsx:demo.theme")).toBe(true);
     const paired = themes.find(
       (theme) =>
@@ -293,6 +300,19 @@ describe("Open VSX themes", () => {
     expect(paired.colors.canvas).toBe("#fafafa");
     expect(getThemeColorsForMode(paired, "dark")!.canvas).toBe("#111111");
     expect(getThemeColorsForMode(paired, "dark")!.text).toBe("#eeeeee");
+
+    packagedManifest.contributes.themes[0]!.label = "Renamed Dark";
+    packagedManifest.contributes.themes[1]!.label = "Renamed Light";
+    packagedManifest.contributes.themes[2]!.label = "Renamed Solo";
+    await rebuildPackage();
+    const renamedThemes = await importOpenVsxThemeExtension(extension);
+    expect(renamedThemes.map((theme) => theme.id)).toEqual(themes.map((theme) => theme.id));
+
+    packagedManifest.license = "Proprietary";
+    await rebuildPackage();
+    await expect(importOpenVsxThemeExtension(extension)).rejects.toThrow(
+      "does not match its advertised license",
+    );
   });
 
   it("stops import work when the request is cancelled", async () => {

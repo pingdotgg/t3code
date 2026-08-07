@@ -100,6 +100,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function shortHash(value: string): string {
+  return [...sha256(new TextEncoder().encode(value))]
+    .slice(0, 6)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function openVsxThemeId(extensionId: string, source: string): string {
+  return `ovx-theme-${shortHash(`${extensionId}:${source}`)}`;
+}
+
+function openVsxCollectionId(extensionId: string): string {
+  const normalized = `open-vsx:${extensionId.toLowerCase()}`;
+  return /^[a-z0-9][a-z0-9.:-]{0,127}$/.test(normalized)
+    ? normalized
+    : `open-vsx:${shortHash(extensionId)}`;
+}
+
 function trustedOpenVsxUrl(value: unknown): string | null {
   if (typeof value !== "string") return null;
   try {
@@ -632,13 +650,19 @@ export async function importOpenVsxThemeExtension(
   ) {
     throw new Error("That extension package does not match the selected Open VSX theme.");
   }
+  if (
+    typeof packagedManifest.license === "string" &&
+    packagedManifest.license.trim() !== extension.license
+  ) {
+    throw new Error("That extension package does not match its advertised license.");
+  }
   const contributions = themeContributions(packagedManifest);
   if (contributions.length === 0) throw new Error("That extension does not contain color themes.");
   if (contributions.length > MAX_THEMES_PER_EXTENSION) {
     throw new Error("That extension contains too many color themes to import safely.");
   }
 
-  const parsed: Array<{ theme: ThemeDefinition; sourceName: string }> = [];
+  const parsed: Array<{ theme: ThemeDefinition; sourceName: string; sourcePath: string }> = [];
   const failures: string[] = [];
   const themeCache = new Map<string, Record<string, unknown>>();
   const themeBudget = { files: 0 };
@@ -666,7 +690,11 @@ export async function importOpenVsxThemeExtension(
         ...(type ? { type } : {}),
       };
       if (!isVsCodeThemeFile(decorated)) throw new Error("not a VS Code color theme");
-      parsed.push({ theme: parseVsCodeThemeFile(decorated), sourceName: path.split("/").at(-1)! });
+      parsed.push({
+        theme: parseVsCodeThemeFile(decorated),
+        sourceName: path.split("/").at(-1)!,
+        sourcePath: path,
+      });
     } catch (cause) {
       signal?.throwIfAborted();
       failures.push(cause instanceof Error ? cause.message : "theme could not be read");
@@ -675,10 +703,17 @@ export async function importOpenVsxThemeExtension(
   if (parsed.length === 0) {
     throw new Error(failures[0] ?? "That extension has no compatible color themes.");
   }
-  const paired = pairVsCodeThemes(resolveThemeLabelCollisions(parsed));
+  const extensionId = extension.id.toLowerCase();
+  const resolved = resolveThemeLabelCollisions(parsed).map((theme, index) => ({
+    ...theme,
+    id: openVsxThemeId(extensionId, parsed[index]!.sourcePath),
+  }));
+  const paired = pairVsCodeThemes(resolved, {
+    pairedId: (light, dark) => openVsxThemeId(extensionId, [light.id, dark.id].sort().join(":")),
+  });
   const themes = resolveThemeLabelCollisions(paired.map((theme) => ({ theme })));
   const collection = {
-    id: `open-vsx:${extension.id.toLowerCase()}`,
+    id: openVsxCollectionId(extension.id),
     label: extension.name.slice(0, 48),
   };
   return themes.map((theme) => ({ ...theme, collection }));

@@ -361,9 +361,16 @@ export function ThemeImportDialog({
           : null;
       for (const theme of conflicts) {
         try {
+          const existingTheme =
+            mode === "update"
+              ? getCustomThemes().find((candidate) => candidate.id === theme.id)
+              : undefined;
+          const themeToUpdate = existingTheme?.collection
+            ? { ...theme, collection: existingTheme.collection }
+            : theme;
           resolved.push(
             mode === "update"
-              ? updateCustomTheme(theme)
+              ? updateCustomTheme(themeToUpdate)
               : installCustomTheme(versionedCopy(theme, preferredName)),
           );
         } catch (cause) {
