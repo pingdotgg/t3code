@@ -549,26 +549,15 @@ const projectAddCommand = Command.make("add", {
           )
           .map((path) => ({ path }) satisfies ProjectSourceFolder);
 
-        // Every folder must be unclaimed, not just the primary — the server
-        // enforces the same rule, so fail here with a clearer message.
-        for (const candidate of [workspaceRoot, ...additionalFolders.map((f) => f.path)]) {
-          const owner = snapshot.projects.find(
-            (project) =>
-              project.deletedAt === null &&
-              projectSourceFolderPaths(project).some(
-                (owned) =>
-                  normalizeProjectPathForComparison(owned) ===
-                  normalizeProjectPathForComparison(candidate),
-              ),
-          );
-          if (owner) {
-            return yield* new ProjectAlreadyExistsError({
-              operation: "addProject",
-              projectId: owner.id,
-              workspaceRoot: candidate,
-            });
-          }
-        }
+        // Folders are shareable across projects, so an existing owner is not an
+        // error — only note it, since adding the same folder twice by accident
+        // is easy to do from the shell.
+        const existingOwner = snapshot.projects.find(
+          (project) =>
+            project.deletedAt === null &&
+            normalizeProjectPathForComparison(project.workspaceRoot) ===
+              normalizeProjectPathForComparison(workspaceRoot),
+        );
 
         const title = yield* resolveProjectTitle(workspaceRoot, Option.getOrUndefined(flags.title));
         const projectId = ProjectId.make(yield* projectCommandUuid);
@@ -582,9 +571,13 @@ const projectAddCommand = Command.make("add", {
           defaultModelSelection: ServerRuntimeStartup.getAutoBootstrapDefaultModelSelection(),
           createdAt: DateTime.formatIso(yield* DateTime.now),
         });
+        const sharedNote =
+          existingOwner === undefined
+            ? ""
+            : ` Note: project ${existingOwner.id} also uses ${workspaceRoot}.`;
         return additionalFolders.length > 0
-          ? `Added project ${projectId} (${title}) at ${workspaceRoot} with ${additionalFolders.length} additional folder(s).`
-          : `Added project ${projectId} (${title}) at ${workspaceRoot}.`;
+          ? `Added project ${projectId} (${title}) at ${workspaceRoot} with ${additionalFolders.length} additional folder(s).${sharedNote}`
+          : `Added project ${projectId} (${title}) at ${workspaceRoot}.${sharedNote}`;
       }),
     ),
   ),

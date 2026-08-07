@@ -220,20 +220,16 @@ export function validateCreateProjectDraft(
   const primaryId = state.primaryFolderId ?? state.folders[0]?.id ?? null;
   const primaryPath = primaryId === null ? undefined : resolved.get(primaryId);
 
-  // Only the primary is checked against existing projects here: a *secondary*
-  // collision is reported by the server, and blocking on it in the dialog would
-  // hide the more useful "open the existing project" affordance.
+  // Folders are shareable across projects, so an existing owner is surfaced as
+  // context (the caller can offer to open it instead) rather than an error.
   let existingProjectId: string | null = null;
   if (state.environmentId !== null && primaryPath !== undefined) {
-    const existing = findExistingAddProject({
-      projects: context.projects,
-      environmentId: state.environmentId,
-      path: primaryPath,
-    });
-    if (existing) {
-      existingProjectId = existing.id;
-      folderErrors.set(primaryId!, "A project already uses this folder.");
-    }
+    existingProjectId =
+      findExistingAddProject({
+        projects: context.projects,
+        environmentId: state.environmentId,
+        path: primaryPath,
+      })?.id ?? null;
   }
 
   if (

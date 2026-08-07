@@ -159,15 +159,25 @@ describe("validateCreateProjectDraft", () => {
     if (!result.ok) expect(result.folderErrors.get("b")).toBe("This folder is already added.");
   });
 
-  it("rejects a primary folder another project already uses", () => {
+  it("allows a primary folder another project already uses", () => {
+    // Several projects may span the same code with different folder sets.
     const state = run(start(), { _tag: "AddFolder", id: "a", rawPath: "/repo/app" });
     const result = validateCreateProjectDraft(state, context([makeProject("/repo/app")]));
 
+    expect(result.ok).toBe(true);
+  });
+
+  it("blocks submit until every row has a path", () => {
+    const state = run(
+      start(),
+      { _tag: "AddFolder", id: "a", rawPath: "/repo/app" },
+      { _tag: "AddFolder", id: "b" },
+    );
+    const result = validateCreateProjectDraft(state, context());
+
+    // An empty row must not be silently dropped from the created project.
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.folderErrors.get("a")).toBe("A project already uses this folder.");
-      expect(result.existingProjectId).toBe("existing");
-    }
+    if (!result.ok) expect(result.formError).toBe("Enter a path for every source folder.");
   });
 
   it("reports a disconnected environment instead of failing at dispatch", () => {

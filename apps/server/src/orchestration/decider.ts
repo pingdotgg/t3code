@@ -12,7 +12,7 @@ import type * as PlatformError from "effect/PlatformError";
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
   listThreadsByProjectId,
-  requireActiveProjectFoldersAbsent,
+  requireProjectFoldersDistinct,
   requireProject,
   requireProjectAbsent,
   requireThread,
@@ -230,7 +230,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         projectId: command.projectId,
       });
-      yield* requireActiveProjectFoldersAbsent({
+      yield* requireProjectFoldersDistinct({
         readModel,
         command,
         folders: [
@@ -273,7 +273,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         // — the Normalizer has no read model and cannot see it.
         const nextPrimary = command.workspaceRoot ?? project.workspaceRoot;
         const nextAdditional = command.additionalFolders ?? project.additionalFolders;
-        yield* requireActiveProjectFoldersAbsent({
+        yield* requireProjectFoldersDistinct({
           readModel,
           command,
           folders: [nextPrimary, ...nextAdditional.map((folder) => folder.path)],
