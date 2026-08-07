@@ -156,7 +156,7 @@ describe("projectActivityPayload", () => {
     );
   }
 
-  it("drops unread bulk while retaining command, file, tool, and summary inputs", () => {
+  it("retains clamped tool detail while dropping unread top-level bulk", () => {
     const projected = projectActivityPayload(fixtures[0]!);
     expect(projected.payload).toEqual({
       itemType: "command_execution",
@@ -167,13 +167,18 @@ describe("projectActivityPayload", () => {
       data: {
         item: {
           command: ["bash", "-lc", "pnpm test"],
-          input: { command: "fallback input" },
-          result: { command: "fallback result" },
+          input: { command: "fallback input", ignored: "input bulk" },
+          result: { command: "fallback result", aggregatedOutput: `${"x".repeat(4_000)}…` },
+          commandActions: [{ type: "unknown", output: `${"y".repeat(4_000)}…` }],
         },
         command: "fallback data",
         toolCallId: "tool-command",
         kind: "execute",
-        rawOutput: { content: "first useful line" },
+        rawOutput: {
+          content: "\n```\nfirst useful line\nsecond line",
+          stdout: "unused stdout",
+          ignored: "raw bulk",
+        },
       },
     });
 

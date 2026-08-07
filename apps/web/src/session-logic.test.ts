@@ -11,6 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  deriveLiveWorkStatus,
   derivePendingApprovals,
   derivePendingUserInputs,
   deriveTimelineEntries,
@@ -1935,5 +1936,985 @@ describe("rerun workflows", () => {
     const spawnRows = entries.filter((entry) => entry.agentSpawn !== undefined);
     expect(spawnRows.map((row) => row.agentSpawn!.workflowId)).toEqual(["wf-run1", "wf-run2"]);
     expect(spawnRows.map((row) => row.turnId)).toEqual(["turn-1", "turn-2"]);
+  });
+});
+
+describe("work log tool metadata", () => {
+  it("extracts toolName, toolInput and result text from payload.data", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Command run",
+        payload: {
+          itemType: "command_execution",
+          title: "Command run",
+          data: {
+            toolName: "Bash",
+            input: { command: "git status" },
+            result: { content: [{ type: "text", text: "On branch main\nnothing to commit" }] },
+          },
+        },
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.toolName).toBe("Bash");
+    expect(entries[0]?.toolInput).toEqual({ command: "git status" });
+    expect(entries[0]?.toolResultText).toBe("On branch main\nnothing to commit");
+  });
+
+  it("builds a diff with real line numbers from the tool result structuredPatch", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "File updated",
+        payload: {
+          itemType: "file_change",
+          title: "File updated",
+          data: {
+            toolName: "Edit",
+            input: {
+              file_path: "/repo/src/a.ts",
+              old_string: "let x = 1",
+              new_string: "let x = 2",
+            },
+            toolUseResult: {
+              filePath: "/repo/src/a.ts",
+              structuredPatch: [
+                { oldStart: 4, newStart: 4, lines: [" context", "-let x = 1", "+let x = 2"] },
+              ],
+            },
+          },
+        },
+      }),
+    ]);
+
+    expect(entries[0]?.toolDiff).toEqual({
+      filePath: "/repo/src/a.ts",
+      hunks: [{ oldStart: 4, newStart: 4, lines: [" context", "-let x = 1", "+let x = 2"] }],
+      truncated: false,
+    });
+  });
+
+  it("reconstructs a numberless diff from streaming Edit input", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.updated",
+        summary: "File update",
+        payload: {
+          itemType: "file_change",
+          status: "inProgress",
+          data: {
+            toolName: "Edit",
+            input: {
+              file_path: "/repo/src/a.ts",
+              old_string: "old line",
+              new_string: "new line one\nnew line two",
+            },
+          },
+        },
+      }),
+    ]);
+
+    expect(entries[0]?.toolDiff).toEqual({
+      filePath: "/repo/src/a.ts",
+      hunks: [
+        { oldStart: null, newStart: null, lines: ["-old line", "+new line one", "+new line two"] },
+      ],
+      truncated: false,
+    });
+  });
+
+  it("keeps the numbered diff when a streaming update collapses into the completed entry", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.updated",
+        summary: "File update",
+        payload: {
+          itemType: "file_change",
+          status: "inProgress",
+          toolCallId: "tool-1",
+          data: {
+            toolCallId: "tool-1",
+            toolName: "Edit",
+            input: { file_path: "/repo/src/a.ts", old_string: "a", new_string: "b" },
+          },
+        },
+      }),
+      makeActivity({
+        kind: "tool.completed",
+        summary: "File updated",
+        payload: {
+          itemType: "file_change",
+          toolCallId: "tool-1",
+          data: {
+            toolCallId: "tool-1",
+            toolName: "Edit",
+            input: { file_path: "/repo/src/a.ts", old_string: "a", new_string: "b" },
+            toolUseResult: {
+              filePath: "/repo/src/a.ts",
+              structuredPatch: [{ oldStart: 9, newStart: 9, lines: ["-a", "+b"] }],
+            },
+          },
+        },
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.toolDiff?.hunks[0]?.oldStart).toBe(9);
+  });
+
+  it("builds an all-additions diff for Write input", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "File created",
+        payload: {
+          itemType: "file_change",
+          data: {
+            toolName: "Write",
+            input: { file_path: "/repo/new.ts", content: "line one\nline two\n" },
+          },
+        },
+      }),
+    ]);
+
+    expect(entries[0]?.toolDiff).toEqual({
+      filePath: "/repo/new.ts",
+      hunks: [{ oldStart: null, newStart: 1, lines: ["+line one", "+line two"] }],
+      truncated: false,
+    });
+  });
+});
+
+describe("thinking burst work log entries", () => {
+  it("omits started/progress and maps completed to a thinking row with detail", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "thinking-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "thinking.started",
+        summary: "Thinking",
+        tone: "info",
+        payload: { burstId: "burst-1", startedAt: "2026-02-23T00:00:01.000Z" },
+      }),
+      makeActivity({
+        id: "thinking-progress",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "thinking.progress",
+        summary: "Thinking",
+        tone: "info",
+        payload: { burstId: "burst-1", chars: 420 },
+      }),
+      makeActivity({
+        id: "thinking-complete",
+        createdAt: "2026-02-23T00:00:05.000Z",
+        kind: "thinking.completed",
+        summary: "Thought for 4s",
+        tone: "info",
+        payload: {
+          burstId: "burst-1",
+          chars: 500,
+          durationMs: 4000,
+          text: "The test asserts the inverse.",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.map((entry) => entry.id)).toEqual(["thinking-complete"]);
+    const entry = entries[0]!;
+    expect(entry.tone).toBe("thinking");
+    expect(entry.label).toBe("Thought for 4s");
+    expect(entry.detail).toBe("The test asserts the inverse.");
+    expect(workEntryIndicatesToolNeutralStatus(entry)).toBe(false);
+  });
+});
+
+describe("deriveLiveWorkStatus", () => {
+  it("returns null when no turn is running", () => {
+    expect(
+      deriveLiveWorkStatus({
+        activities: [
+          makeActivity({
+            id: "thinking-start",
+            kind: "thinking.started",
+            summary: "Thinking",
+            tone: "info",
+            turnId: "turn-1",
+          }),
+        ],
+        runningTurnId: null,
+        streamingMessage: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("reports an open thinking burst with streamed size", () => {
+    const status = deriveLiveWorkStatus({
+      activities: [
+        makeActivity({
+          id: "thinking-start",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          kind: "thinking.started",
+          summary: "Thinking",
+          tone: "info",
+          turnId: "turn-1",
+          payload: { burstId: "burst-1", startedAt: "2026-02-23T00:00:01.000Z" },
+        }),
+        makeActivity({
+          id: "thinking-progress",
+          createdAt: "2026-02-23T00:00:04.000Z",
+          kind: "thinking.progress",
+          summary: "Thinking",
+          tone: "info",
+          turnId: "turn-1",
+          payload: { burstId: "burst-1", chars: 1234 },
+        }),
+      ],
+      runningTurnId: TurnId.make("turn-1"),
+      streamingMessage: null,
+    });
+    expect(status).toEqual({
+      kind: "thinking",
+      label: "Thinking",
+      since: "2026-02-23T00:00:01.000Z",
+      thinkingChars: 1234,
+    });
+  });
+
+  it("re-opens a thinking burst from a progress event after an interleaved tool call", () => {
+    const status = deriveLiveWorkStatus({
+      activities: [
+        makeActivity({
+          id: "thinking-start",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          kind: "thinking.started",
+          summary: "Thinking",
+          tone: "info",
+          turnId: "turn-1",
+          payload: { burstId: "burst-1", startedAt: "2026-02-23T00:00:01.000Z" },
+        }),
+        makeActivity({
+          id: "tool-complete",
+          createdAt: "2026-02-23T00:00:02.000Z",
+          kind: "tool.completed",
+          summary: "Command run completed",
+          tone: "tool",
+          turnId: "turn-1",
+          payload: { itemType: "command_execution", toolCallId: "tool-1" },
+        }),
+        makeActivity({
+          id: "thinking-progress",
+          createdAt: "2026-02-23T00:00:04.000Z",
+          kind: "thinking.progress",
+          summary: "Thinking",
+          tone: "info",
+          turnId: "turn-1",
+          payload: {
+            burstId: "burst-1",
+            startedAt: "2026-02-23T00:00:01.000Z",
+            chars: 640,
+            text: "still reasoning about the fix — full accumulated stream",
+          },
+        }),
+      ],
+      runningTurnId: TurnId.make("turn-1"),
+      streamingMessage: null,
+    });
+    expect(status).toEqual({
+      kind: "thinking",
+      label: "Thinking",
+      since: "2026-02-23T00:00:01.000Z",
+      thinkingChars: 640,
+      thinkingText: "still reasoning about the fix — full accumulated stream",
+    });
+  });
+
+  it("falls back to legacy textTail on thinking.progress when text is absent", () => {
+    const status = deriveLiveWorkStatus({
+      activities: [
+        makeActivity({
+          id: "thinking-start",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          kind: "thinking.started",
+          summary: "Thinking",
+          tone: "info",
+          turnId: "turn-1",
+          payload: { burstId: "burst-1", startedAt: "2026-02-23T00:00:01.000Z" },
+        }),
+        makeActivity({
+          id: "thinking-progress",
+          createdAt: "2026-02-23T00:00:04.000Z",
+          kind: "thinking.progress",
+          summary: "Thinking",
+          tone: "info",
+          turnId: "turn-1",
+          payload: {
+            burstId: "burst-1",
+            startedAt: "2026-02-23T00:00:01.000Z",
+            chars: 120,
+            textTail: "legacy tail only",
+          },
+        }),
+      ],
+      runningTurnId: TurnId.make("turn-1"),
+      streamingMessage: null,
+    });
+    expect(status).toEqual({
+      kind: "thinking",
+      label: "Thinking",
+      since: "2026-02-23T00:00:01.000Z",
+      thinkingChars: 120,
+      thinkingText: "legacy tail only",
+    });
+  });
+
+  it("clears the thinking status once the burst completes", () => {
+    const status = deriveLiveWorkStatus({
+      activities: [
+        makeActivity({
+          id: "thinking-start",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          kind: "thinking.started",
+          summary: "Thinking",
+          tone: "info",
+          turnId: "turn-1",
+        }),
+        makeActivity({
+          id: "thinking-complete",
+          createdAt: "2026-02-23T00:00:05.000Z",
+          kind: "thinking.completed",
+          summary: "Thought for 4s",
+          tone: "info",
+          turnId: "turn-1",
+        }),
+      ],
+      runningTurnId: TurnId.make("turn-1"),
+      streamingMessage: null,
+    });
+    expect(status).toBeNull();
+  });
+
+  it("reports an in-flight command tool and clears it on completion", () => {
+    const inFlight = [
+      makeActivity({
+        id: "tool-update",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Terminal",
+        tone: "tool",
+        turnId: "turn-1",
+        payload: {
+          itemType: "command_execution",
+          status: "inProgress",
+          data: { toolCallId: "call-1", item: { command: "pnpm test" } },
+        },
+      }),
+    ];
+    const running = deriveLiveWorkStatus({
+      activities: inFlight,
+      runningTurnId: TurnId.make("turn-1"),
+      streamingMessage: null,
+    });
+    expect(running?.kind).toBe("tool");
+    expect(running?.label).toBe("Running pnpm test");
+    expect(running?.since).toBe("2026-02-23T00:00:02.000Z");
+
+    const completed = deriveLiveWorkStatus({
+      activities: [
+        ...inFlight,
+        makeActivity({
+          id: "tool-complete",
+          createdAt: "2026-02-23T00:00:06.000Z",
+          kind: "tool.completed",
+          summary: "Terminal",
+          tone: "tool",
+          turnId: "turn-1",
+          payload: {
+            itemType: "command_execution",
+            data: { toolCallId: "call-1", item: { command: "pnpm test" } },
+          },
+        }),
+      ],
+      runningTurnId: TurnId.make("turn-1"),
+      streamingMessage: null,
+    });
+    expect(completed).toBeNull();
+  });
+
+  it("prefers the newest signal and reports streaming responses", () => {
+    const status = deriveLiveWorkStatus({
+      activities: [
+        makeActivity({
+          id: "thinking-start",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          kind: "thinking.started",
+          summary: "Thinking",
+          tone: "info",
+          turnId: "turn-1",
+        }),
+      ],
+      runningTurnId: TurnId.make("turn-1"),
+      streamingMessage: {
+        createdAt: "2026-02-23T00:00:03.000Z",
+        updatedAt: "2026-02-23T00:00:04.000Z",
+      },
+    });
+    expect(status).toEqual({
+      kind: "responding",
+      label: "Writing",
+      since: "2026-02-23T00:00:03.000Z",
+    });
+  });
+
+  it("ignores signals from other turns", () => {
+    const status = deriveLiveWorkStatus({
+      activities: [
+        makeActivity({
+          id: "thinking-start",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          kind: "thinking.started",
+          summary: "Thinking",
+          tone: "info",
+          turnId: "turn-0",
+        }),
+      ],
+      runningTurnId: TurnId.make("turn-1"),
+      streamingMessage: null,
+    });
+    expect(status).toBeNull();
+  });
+
+  it("labels silent stretches as thinking when the provider hides thinking", () => {
+    const status = deriveLiveWorkStatus({
+      activities: [
+        makeActivity({
+          id: "tool-start",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          kind: "tool.started",
+          summary: "Command run started",
+          tone: "tool",
+          turnId: "turn-1",
+          // Claude ingestion stamps toolCallId on the payload root.
+          payload: { itemType: "command_execution", toolCallId: "call-1" },
+        }),
+        makeActivity({
+          id: "tool-complete",
+          createdAt: "2026-02-23T00:00:05.000Z",
+          kind: "tool.completed",
+          summary: "Command run",
+          tone: "tool",
+          turnId: "turn-1",
+          payload: { itemType: "command_execution", toolCallId: "call-1" },
+        }),
+      ],
+      runningTurnId: TurnId.make("turn-1"),
+      streamingMessage: null,
+      assumeThinkingWhenSilent: true,
+    });
+    expect(status).toEqual({
+      kind: "thinking",
+      label: "Thinking",
+      since: "2026-02-23T00:00:05.000Z",
+    });
+  });
+
+  it("keeps the silent fallback quiet without the provider opt-in", () => {
+    const status = deriveLiveWorkStatus({
+      activities: [
+        makeActivity({
+          id: "tool-complete",
+          createdAt: "2026-02-23T00:00:05.000Z",
+          kind: "tool.completed",
+          summary: "Command run",
+          tone: "tool",
+          turnId: "turn-1",
+          payload: { itemType: "command_execution", data: { toolCallId: "call-1" } },
+        }),
+      ],
+      runningTurnId: TurnId.make("turn-1"),
+      streamingMessage: null,
+    });
+    expect(status).toBeNull();
+  });
+
+  it("prefers concrete signals over the silent-thinking fallback", () => {
+    const status = deriveLiveWorkStatus({
+      activities: [
+        makeActivity({
+          id: "tool-start",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          kind: "tool.started",
+          summary: "Command run started",
+          tone: "tool",
+          turnId: "turn-1",
+          payload: {
+            itemType: "command_execution",
+            data: { toolCallId: "call-1", toolName: "Bash", input: { command: "pnpm test" } },
+          },
+        }),
+      ],
+      runningTurnId: TurnId.make("turn-1"),
+      streamingMessage: null,
+      assumeThinkingWhenSilent: true,
+    });
+    expect(status?.kind).toBe("tool");
+  });
+});
+
+describe("codex tool item normalization", () => {
+  it("maps commandExecution items to a Shell tool row with output", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            item: {
+              id: "item-1",
+              type: "commandExecution",
+              command: "pnpm test",
+              cwd: "/repo",
+              aggregatedOutput: "1 passed\n",
+              exitCode: 0,
+              status: "completed",
+            },
+          },
+        },
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.toolName).toBe("Shell");
+    expect(entries[0]?.toolInput).toEqual({ command: "pnpm test" });
+    expect(entries[0]?.toolResultText).toBe("1 passed");
+  });
+
+  it("maps fileChange items to an Edit row with parsed unified diff hunks", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          title: "File change",
+          data: {
+            item: {
+              id: "item-2",
+              type: "fileChange",
+              status: "completed",
+              changes: [
+                {
+                  path: "src/app.ts",
+                  kind: "update",
+                  diff: "--- a/src/app.ts\n+++ b/src/app.ts\n@@ -3,2 +3,2 @@\n-const a = 1;\n+const a = 2;\n context\n",
+                },
+              ],
+            },
+          },
+        },
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.toolName).toBe("Edit");
+    expect(entries[0]?.toolInput).toEqual({ file_path: "src/app.ts" });
+    expect(entries[0]?.toolDiff).toEqual({
+      filePath: "src/app.ts",
+      truncated: false,
+      hunks: [
+        {
+          oldStart: 3,
+          newStart: 3,
+          lines: ["-const a = 1;", "+const a = 2;", " context"],
+        },
+      ],
+    });
+  });
+
+  it("maps all-add fileChange items to a Write row", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          data: {
+            item: {
+              id: "item-3",
+              type: "fileChange",
+              status: "completed",
+              changes: [{ path: "src/new.ts", kind: "add", diff: "@@ -0,0 +1,1 @@\n+hello\n" }],
+            },
+          },
+        },
+      }),
+    ]);
+
+    expect(entries[0]?.toolName).toBe("Write");
+    expect(entries[0]?.toolDiff?.hunks[0]?.lines).toEqual(["+hello"]);
+  });
+
+  it("maps mcpToolCall items to the tool name with block result text", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "MCP tool call",
+        payload: {
+          itemType: "mcp_tool_call",
+          data: {
+            item: {
+              id: "item-4",
+              type: "mcpToolCall",
+              server: "linear",
+              tool: "create_issue",
+              arguments: { title: "Bug" },
+              result: { content: [{ type: "text", text: "created" }] },
+              status: "completed",
+            },
+          },
+        },
+      }),
+    ]);
+
+    expect(entries[0]?.toolName).toBe("create_issue");
+    expect(entries[0]?.toolInput).toEqual({ title: "Bug" });
+    expect(entries[0]?.toolResultText).toBe("created");
+  });
+
+  it("prefers the Claude-style envelope over item normalization", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Command run",
+        payload: {
+          itemType: "command_execution",
+          data: {
+            toolName: "Bash",
+            input: { command: "ls" },
+            item: { id: "item-5", type: "commandExecution", command: "ls", status: "completed" },
+          },
+        },
+      }),
+    ]);
+
+    expect(entries[0]?.toolName).toBe("Bash");
+    expect(entries[0]?.toolInput).toEqual({ command: "ls" });
+  });
+});
+
+describe("acp tool call normalization", () => {
+  it("maps ACP command tool calls without a variant to a Shell row with output", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Tool",
+        payload: {
+          itemType: "dynamic_tool_call",
+          data: {
+            toolCallId: "tool_1",
+            kind: "other",
+            command: "ls -la",
+            rawInput: { command: "ls -la" },
+            rawOutput: { content: [{ type: "text", text: "total 4\n" }] },
+          },
+        },
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.toolName).toBe("Shell");
+    expect(entries[0]?.toolInput).toEqual({ command: "ls -la" });
+    expect(entries[0]?.toolResultText).toBe("total 4");
+  });
+
+  it("maps ACP read tool calls to a Read row with the file path", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Tool",
+        payload: {
+          itemType: "dynamic_tool_call",
+          data: {
+            toolCallId: "tool_2",
+            kind: "read",
+            rawInput: { path: "src/app.ts" },
+            locations: [{ path: "src/app.ts" }],
+          },
+        },
+      }),
+    ]);
+
+    expect(entries[0]?.toolName).toBe("Read");
+    expect(entries[0]?.toolInput).toEqual({ path: "src/app.ts" });
+  });
+
+  it("maps ACP edit tool calls to an Edit row with a reconstructed diff", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Tool",
+        payload: {
+          itemType: "file_change",
+          data: {
+            toolCallId: "tool_3",
+            kind: "edit",
+            rawInput: {
+              file_path: "src/app.ts",
+              old_string: "const a = 1;",
+              new_string: "const a = 2;",
+            },
+          },
+        },
+      }),
+    ]);
+
+    expect(entries[0]?.toolName).toBe("Edit");
+    expect(entries[0]?.toolDiff).toEqual({
+      filePath: "src/app.ts",
+      truncated: false,
+      hunks: [{ oldStart: null, newStart: null, lines: ["-const a = 1;", "+const a = 2;"] }],
+    });
+  });
+
+  it("builds a diff from ACP diff content entries", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Tool",
+        payload: {
+          itemType: "file_change",
+          data: {
+            toolCallId: "tool_4",
+            kind: "edit",
+            content: [
+              { type: "diff", path: "src/app.ts", oldText: "old line", newText: "new line" },
+            ],
+          },
+        },
+      }),
+    ]);
+
+    expect(entries[0]?.toolName).toBe("Edit");
+    expect(entries[0]?.toolDiff).toEqual({
+      filePath: "src/app.ts",
+      truncated: false,
+      hunks: [{ oldStart: 1, newStart: 1, lines: ["-old line", "+new line"] }],
+    });
+  });
+
+  it("reduces full-file ACP diff content to a contextual hunk", () => {
+    const oldText = ["line 1", "line 2", "line 3", "line 4", "line 5", "line 6", "line 7"].join(
+      "\n",
+    );
+    const newText = ["line 1", "line 2", "line 3", "line 4", "changed 5", "line 6", "line 7"].join(
+      "\n",
+    );
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Tool",
+        payload: {
+          itemType: "file_change",
+          data: {
+            toolCallId: "tool_4b",
+            kind: "edit",
+            content: [{ type: "diff", path: "src/app.ts", oldText, newText }],
+          },
+        },
+      }),
+    ]);
+
+    expect(entries[0]?.toolDiff).toEqual({
+      filePath: "src/app.ts",
+      truncated: false,
+      hunks: [
+        {
+          oldStart: 2,
+          newStart: 2,
+          lines: [" line 2", " line 3", " line 4", "-line 5", "+changed 5", " line 6", " line 7"],
+        },
+      ],
+    });
+  });
+
+  it("maps ACP search tool calls with a pattern to a Grep row", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Tool",
+        payload: {
+          itemType: "web_search",
+          data: {
+            toolCallId: "tool_5",
+            kind: "search",
+            rawInput: { pattern: "toolName", path: "src" },
+          },
+        },
+      }),
+    ]);
+
+    expect(entries[0]?.toolName).toBe("Grep");
+  });
+
+  it("still prefers rawInput.variant as the tool name", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Tool",
+        payload: {
+          itemType: "command_execution",
+          data: {
+            toolCallId: "tool_6",
+            kind: "execute",
+            command: "ls",
+            rawInput: { variant: "shell", command: "ls" },
+          },
+        },
+      }),
+    ]);
+
+    expect(entries[0]?.toolName).toBe("shell");
+  });
+});
+
+describe("review regressions", () => {
+  it("ignores a stale unstamped open tool from before the running turn", () => {
+    expect(
+      deriveLiveWorkStatus({
+        activities: [
+          makeActivity({
+            id: "stale-tool",
+            createdAt: "2026-02-23T00:00:00.000Z",
+            kind: "tool.started",
+            summary: "Tool",
+            tone: "tool",
+            payload: { itemType: "dynamic_tool_call", data: { toolName: "Read" } },
+          }),
+          makeActivity({
+            id: "turn-signal",
+            createdAt: "2026-02-23T00:00:05.000Z",
+            kind: "thinking.completed",
+            summary: "Thought for 2s",
+            tone: "info",
+            turnId: "turn-1",
+            payload: { burstId: "burst-1", durationMs: 2000 },
+          }),
+        ],
+        runningTurnId: TurnId.make("turn-1"),
+        streamingMessage: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("splits distant ACP edits into separate contextual hunks", () => {
+    const lines = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`);
+    const newLines = lines.map((line) =>
+      line === "line 3" ? "changed 3" : line === "line 15" ? "changed 15" : line,
+    );
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Tool",
+        payload: {
+          itemType: "file_change",
+          data: {
+            toolCallId: "tool_split",
+            kind: "edit",
+            content: [
+              {
+                type: "diff",
+                path: "src/app.ts",
+                oldText: lines.join("\n"),
+                newText: newLines.join("\n"),
+              },
+            ],
+          },
+        },
+      }),
+    ]);
+
+    expect(entries[0]?.toolDiff).toEqual({
+      filePath: "src/app.ts",
+      truncated: false,
+      hunks: [
+        {
+          oldStart: 1,
+          newStart: 1,
+          lines: [" line 1", " line 2", "-line 3", "+changed 3", " line 4", " line 5", " line 6"],
+        },
+        {
+          oldStart: 12,
+          newStart: 12,
+          lines: [
+            " line 12",
+            " line 13",
+            " line 14",
+            "-line 15",
+            "+changed 15",
+            " line 16",
+            " line 17",
+            " line 18",
+          ],
+        },
+      ],
+    });
+  });
+
+  it("attributes multi-file ACP diff content to the first file only", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Tool",
+        payload: {
+          itemType: "file_change",
+          data: {
+            toolCallId: "tool_multi",
+            kind: "edit",
+            content: [
+              { type: "diff", path: "src/first.ts", oldText: "a1", newText: "a2" },
+              { type: "diff", path: "src/second.ts", oldText: "b1", newText: "b2" },
+            ],
+          },
+        },
+      }),
+    ]);
+
+    expect(entries[0]?.toolDiff).toEqual({
+      filePath: "src/first.ts",
+      truncated: false,
+      hunks: [{ oldStart: 1, newStart: 1, lines: ["-a1", "+a2"] }],
+    });
+  });
+
+  it("attributes multi-file Codex fileChange diffs to the first file only", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Tool",
+        payload: {
+          itemType: "file_change",
+          data: {
+            item: {
+              type: "fileChange",
+              changes: [
+                { path: "src/first.ts", kind: "edit", diff: "@@ -1 +1 @@\n-a\n+b\n" },
+                { path: "src/second.ts", kind: "edit", diff: "@@ -1 +1 @@\n-c\n+d\n" },
+              ],
+            },
+          },
+        },
+      }),
+    ]);
+
+    expect(entries[0]?.toolInput).toEqual({ file_path: "src/first.ts (+1 more)" });
+    expect(entries[0]?.toolDiff).toEqual({
+      filePath: "src/first.ts",
+      truncated: false,
+      hunks: [{ oldStart: 1, newStart: 1, lines: ["-a", "+b"] }],
+    });
   });
 });

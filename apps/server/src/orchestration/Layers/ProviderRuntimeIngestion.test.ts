@@ -3484,4 +3484,153 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime still processed");
   });
+
+  it("tracks reasoning deltas as thinking burst activities", async () => {
+    const harness = await createHarness();
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-delta-1"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-think"),
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "Let me look at the failing test.",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-delta-2"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:03.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-think"),
+      payload: {
+        streamKind: "reasoning_text",
+        delta: " The assertion is inverted.",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-post-thinking-assistant-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:04.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-think"),
+      itemId: asItemId("item-post-thinking"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "Found it.",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.kind === "thinking.completed"),
+    );
+
+    const started = thread.activities.find((activity) => activity.kind === "thinking.started");
+    expect(started?.summary).toBe("Thinking");
+    expect(started?.turnId).toBe("turn-think");
+
+    // Progress uses a stable activity id, so the projected list keeps a single
+    // progress row with the full accumulated reasoning text.
+    const progressActivities = thread.activities.filter(
+      (activity) => activity.kind === "thinking.progress",
+    );
+    expect(progressActivities).toHaveLength(1);
+    expect(progressActivities[0]?.id).toBe("evt-reasoning-delta-1:thinking-progress");
+    const progressPayload = progressActivities[0]?.payload as {
+      chars?: number;
+      text?: string;
+    };
+    expect(progressPayload?.chars).toBe(
+      "Let me look at the failing test. The assertion is inverted.".length,
+    );
+    expect(progressPayload?.text).toBe(
+      "Let me look at the failing test. The assertion is inverted.",
+    );
+
+    const completed = thread.activities.find((activity) => activity.kind === "thinking.completed");
+    expect(completed?.summary).toBe("Thought for 3s");
+    const completedPayload = completed?.payload as {
+      chars?: number;
+      durationMs?: number;
+      text?: string;
+      textTruncated?: boolean;
+    };
+    expect(completedPayload.durationMs).toBe(3000);
+    expect(completedPayload.text).toBe(
+      "Let me look at the failing test. The assertion is inverted.",
+    );
+    expect(completedPayload.textTruncated).toBeUndefined();
+    // The completed row is stamped with the last reasoning delta's timestamp,
+    // not the closing event's.
+    expect(completed?.createdAt).toBe("2026-01-01T00:00:03.000Z");
+  });
+
+  it("does not close a thinking burst on a stale turn.completed for another turn", async () => {
+    const harness = await createHarness();
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-live-reasoning-1"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-live"),
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "First half of the thought.",
+      },
+    });
+    // Stale completion replayed for an earlier turn must not split the burst.
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-stale-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-stale"),
+      status: "completed",
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-live-reasoning-2"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-live"),
+      payload: {
+        streamKind: "reasoning_text",
+        delta: " Second half of the thought.",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-live-assistant"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:03.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-live"),
+      itemId: asItemId("item-live-assistant"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "Done.",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.kind === "thinking.completed"),
+    );
+
+    const completedActivities = thread.activities.filter(
+      (activity) => activity.kind === "thinking.completed",
+    );
+    expect(completedActivities).toHaveLength(1);
+    expect((completedActivities[0]?.payload as { text?: string }).text).toBe(
+      "First half of the thought. Second half of the thought.",
+    );
+  });
 });

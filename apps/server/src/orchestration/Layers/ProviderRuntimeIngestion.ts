@@ -208,6 +208,82 @@ function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
 }
 
+// ---------------------------------------------------------------------------
+// Thinking bursts — reasoning content deltas are far too frequent to persist
+// individually, so ingestion tracks a per-thread "burst" and emits at most a
+// started/throttled-progress/completed activity triple per burst. Progress
+// uses a stable activity id so each update replaces the previous progress
+// payload (full accumulated text) instead of appending O(n) rows. Clients use
+// the open burst for a live streamed "Thinking…" panel and the completed
+// activity for a durable "Thought for Xs" work-log row.
+// ---------------------------------------------------------------------------
+
+const THINKING_PROGRESS_MIN_INTERVAL_MS = 250;
+// Bounds both the in-memory burst state and the size of each persisted
+// progress/completed payload; `chars` keeps counting past the cap so the
+// summary still reflects the real reasoning volume.
+const MAX_THINKING_BURST_TEXT_CHARS = 32_000;
+
+interface ThinkingBurstState {
+  burstId: string;
+  turnId: TurnId | null;
+  startedAt: string;
+  chars: number;
+  /** Accumulated reasoning text, capped at MAX_THINKING_BURST_TEXT_CHARS. */
+  text: string;
+  lastEventAt: string;
+  lastProgressAtMs: number;
+}
+
+function formatThinkingDurationLabel(durationMs: number): string {
+  if (!Number.isFinite(durationMs) || durationMs < 1_000) {
+    return "a moment";
+  }
+  const totalSeconds = Math.round(durationMs / 1_000);
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return seconds === 0 ? `${minutes}m` : `${minutes}m ${seconds}s`;
+}
+
+function isReasoningContentDelta(event: ProviderRuntimeEvent): boolean {
+  return (
+    event.type === "content.delta" &&
+    (event.payload.streamKind === "reasoning_text" ||
+      event.payload.streamKind === "reasoning_summary_text") &&
+    event.payload.delta.length > 0
+  );
+}
+
+/**
+ * Any signal that the model moved on from reasoning ends the open burst:
+ * visible assistant text, a tool call, a request back to the user, or the
+ * turn/session lifecycle closing underneath it.
+ */
+function eventEndsThinkingBurst(event: ProviderRuntimeEvent): boolean {
+  switch (event.type) {
+    case "content.delta":
+      return event.payload.streamKind === "assistant_text" && event.payload.delta.length > 0;
+    case "item.started":
+      return isToolLifecycleItemType(event.payload.itemType);
+    case "item.completed":
+      return (
+        event.payload.itemType === "reasoning" || event.payload.itemType === "assistant_message"
+      );
+    case "request.opened":
+    case "user-input.requested":
+    case "turn.completed":
+    case "turn.aborted":
+    case "runtime.error":
+    case "session.exited":
+      return true;
+    default:
+      return false;
+  }
+}
+
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
   const trimmed = planMarkdown?.trim();
   if (!trimmed) {
@@ -759,6 +835,7 @@ export function runtimeEventToActivities(
             ...(event.payload.parentToolUseId
               ? { parentToolUseId: event.payload.parentToolUseId }
               : {}),
+            ...(event.itemId ? { toolCallId: event.itemId } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -785,6 +862,7 @@ export function runtimeEventToActivities(
             ...(event.payload.parentToolUseId
               ? { parentToolUseId: event.payload.parentToolUseId }
               : {}),
+            ...(event.itemId ? { toolCallId: event.itemId } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -806,10 +884,36 @@ export function runtimeEventToActivities(
           payload: {
             itemType: event.payload.itemType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
             ...(event.payload.agentId ? { agentId: event.payload.agentId } : {}),
             ...(event.payload.parentToolUseId
               ? { parentToolUseId: event.payload.parentToolUseId }
               : {}),
+            ...(event.itemId ? { toolCallId: event.itemId } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "session.state.changed": {
+      // Providers report compaction as an opaque waiting state; surface the
+      // start so clients can show a live "compacting" indicator until the
+      // thread.state.changed "compacted" boundary lands.
+      if (event.payload.reason !== "status:compacting") {
+        return [];
+      }
+
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "context-compaction.started",
+          summary: "Compacting context",
+          payload: {
+            ...(event.payload.detail !== undefined ? { detail: event.payload.detail } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -836,6 +940,159 @@ const make = Effect.gen(function* () {
     crypto.randomUUIDv4.pipe(
       Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
     );
+
+  const thinkingBurstByThreadId = new Map<ThreadId, ThinkingBurstState>();
+
+  const appendThinkingBurstActivity = (
+    event: ProviderRuntimeEvent,
+    threadId: ThreadId,
+    tag: string,
+    activity: OrchestrationThreadActivity,
+  ) =>
+    providerCommandId(event, tag).pipe(
+      Effect.flatMap((commandId) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId,
+          threadId,
+          activity,
+          createdAt: activity.createdAt,
+        }),
+      ),
+    );
+
+  const emitThinkingProgress = (
+    event: ProviderRuntimeEvent,
+    threadId: ThreadId,
+    burst: ThinkingBurstState,
+    createdAt: string = event.createdAt,
+  ) =>
+    appendThinkingBurstActivity(event, threadId, "thinking-progress", {
+      // Stable id so the projector replaces the previous progress row instead of
+      // accumulating one activity per throttle tick (and so full text does not
+      // multiply across the activity list).
+      id: EventId.make(`${burst.burstId}:thinking-progress`),
+      createdAt,
+      tone: "info",
+      kind: "thinking.progress",
+      summary: "Thinking",
+      payload: {
+        burstId: burst.burstId,
+        startedAt: burst.startedAt,
+        chars: burst.chars,
+        ...(burst.text.length > 0 ? { text: burst.text } : {}),
+      },
+      turnId: burst.turnId,
+    });
+
+  const closeThinkingBurst = Effect.fn("closeThinkingBurst")(function* (
+    event: ProviderRuntimeEvent,
+    threadId: ThreadId,
+  ) {
+    const burst = thinkingBurstByThreadId.get(threadId);
+    if (!burst) {
+      return;
+    }
+    const durationMs = Math.max(0, Date.parse(burst.lastEventAt) - Date.parse(burst.startedAt));
+    // Flush full text one last time so the live stream is complete before the
+    // durable "Thought for Xs" row replaces it.
+    if (burst.text.length > 0) {
+      yield* emitThinkingProgress(event, threadId, burst, burst.lastEventAt);
+    }
+    // Stamped with the last reasoning delta's timestamp so the row sorts
+    // before activities produced by the event that ended the burst.
+    yield* appendThinkingBurstActivity(event, threadId, "thinking-completed", {
+      id: EventId.make(`${burst.burstId}:thinking-completed`),
+      createdAt: burst.lastEventAt,
+      tone: "info",
+      kind: "thinking.completed",
+      summary: `Thought for ${formatThinkingDurationLabel(durationMs)}`,
+      payload: {
+        burstId: burst.burstId,
+        startedAt: burst.startedAt,
+        durationMs,
+        chars: burst.chars,
+        ...(burst.text.trim().length > 0 ? { text: burst.text } : {}),
+      },
+      turnId: burst.turnId,
+    });
+    // Deleted only after both dispatches land so a failed close can be retried
+    // by the next burst-ending event (the stable activity ids make retries
+    // idempotent).
+    thinkingBurstByThreadId.delete(threadId);
+  });
+
+  const trackThinkingBurst = Effect.fn("trackThinkingBurst")(function* (
+    event: ProviderRuntimeEvent,
+    threadId: ThreadId,
+  ) {
+    if (event.type === "content.delta" && isReasoningContentDelta(event)) {
+      const eventTurnId = toTurnId(event.turnId) ?? null;
+      const existing = thinkingBurstByThreadId.get(threadId);
+      if (existing && existing.turnId !== eventTurnId) {
+        yield* closeThinkingBurst(event, threadId);
+      }
+      const burst = thinkingBurstByThreadId.get(threadId);
+      const eventAtMs = Date.parse(event.createdAt);
+      if (!burst) {
+        const next: ThinkingBurstState = {
+          burstId: event.eventId,
+          turnId: eventTurnId,
+          startedAt: event.createdAt,
+          chars: event.payload.delta.length,
+          text: event.payload.delta.slice(0, MAX_THINKING_BURST_TEXT_CHARS),
+          lastEventAt: event.createdAt,
+          lastProgressAtMs: Number.isFinite(eventAtMs) ? eventAtMs : 0,
+        };
+        thinkingBurstByThreadId.set(threadId, next);
+        yield* appendThinkingBurstActivity(event, threadId, "thinking-started", {
+          id: EventId.make(`${event.eventId}:thinking-started`),
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "thinking.started",
+          summary: "Thinking",
+          payload: { burstId: next.burstId, startedAt: next.startedAt },
+          turnId: eventTurnId,
+        });
+        // Stream the first chunk immediately so the client can show full
+        // reasoning from the first delta, not only after the throttle window.
+        yield* emitThinkingProgress(event, threadId, next);
+        return;
+      }
+      burst.chars += event.payload.delta.length;
+      if (burst.text.length < MAX_THINKING_BURST_TEXT_CHARS) {
+        burst.text = `${burst.text}${event.payload.delta}`.slice(0, MAX_THINKING_BURST_TEXT_CHARS);
+      }
+      burst.lastEventAt = event.createdAt;
+      if (
+        Number.isFinite(eventAtMs) &&
+        eventAtMs - burst.lastProgressAtMs >= THINKING_PROGRESS_MIN_INTERVAL_MS
+      ) {
+        burst.lastProgressAtMs = eventAtMs;
+        yield* emitThinkingProgress(event, threadId, burst);
+      }
+      return;
+    }
+
+    if (eventEndsThinkingBurst(event)) {
+      // Turn lifecycle events only close a burst belonging to that turn — a
+      // stale completion replayed for an earlier turn must not fold the
+      // active turn's reasoning into a premature "Thought for Xs" row.
+      if (event.type === "turn.completed" || event.type === "turn.aborted") {
+        const burst = thinkingBurstByThreadId.get(threadId);
+        const eventTurnId = toTurnId(event.turnId) ?? null;
+        if (
+          burst &&
+          burst.turnId !== null &&
+          eventTurnId !== null &&
+          burst.turnId !== eventTurnId
+        ) {
+          return;
+        }
+      }
+      yield* closeThinkingBurst(event, threadId);
+    }
+  });
 
   const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
@@ -1452,6 +1709,8 @@ const make = Effect.gen(function* () {
       });
       const hasPendingTurnStart =
         Option.isSome(pendingTurnStart) && thread.session?.status === "starting";
+
+      yield* trackThinkingBurst(event, thread.id);
 
       const conflictsWithActiveTurn =
         activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
