@@ -22,6 +22,7 @@ import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
+import type { RpcSession } from "../rpc/session.ts";
 import { ShellSnapshotLoader } from "./shellSnapshotHttp.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
 import { evictCachedThread, reviveCachedThread } from "./threadCache.ts";
@@ -74,6 +75,8 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   });
   const awaitingCompletion = yield* Ref.make(false);
   const pendingThreadEvictions = yield* Ref.make<ReadonlySet<ThreadId>>(new Set());
+  const lastAuthoritativeSession = yield* Ref.make<RpcSession | null>(null);
+  const activeSubscriptionSession = yield* Ref.make<RpcSession | null>(null);
   const persistence = yield* Queue.sliding<OrchestrationShellSnapshot>(1);
 
   const persist = Effect.fn("EnvironmentShellState.persist")(function* (
@@ -215,6 +218,12 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       status: waiting ? "synchronizing" : "live",
       error: Option.none(),
     });
+    if (item.kind === "snapshot") {
+      const session = yield* Ref.get(activeSubscriptionSession);
+      if (session !== null) {
+        yield* Ref.set(lastAuthoritativeSession, session);
+      }
+    }
     yield* Queue.offer(persistence, nextSnapshot);
   });
 
@@ -229,6 +238,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     subscribeDynamic(
       ORCHESTRATION_WS_METHODS.subscribeShell,
       Effect.fn("EnvironmentShellState.makeSubscribeInput")(function* (session) {
+        yield* Ref.set(activeSubscriptionSession, session);
         const supportsCompletionMarker = yield* session.initialConfig.pipe(
           Effect.map((config) => config.shellResumeCompletionMarker === true),
           Effect.orElseSucceed(() => false),
@@ -236,38 +246,65 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
         yield* setSynchronizing;
 
-        const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
-          Effect.flatMap(
-            Option.match({
-              onSome: Effect.succeed,
-              onNone: () =>
-                SubscriptionRef.changes(supervisor.prepared).pipe(
-                  Stream.filter(Option.isSome),
-                  Stream.map((value) => value.value),
-                  Stream.runHead,
-                  Effect.map(Option.getOrThrow),
-                ),
-            }),
-          ),
-        );
-        const httpSnapshot = yield* snapshotLoader.load(prepared);
-        if (Option.isSome(httpSnapshot)) {
-          yield* applyItem({ kind: "snapshot", snapshot: httpSnapshot.value });
-          // A cold archive can compact the event that removed a thread after
-          // this HTTP snapshot was read but before the socket subscribes. Newer
-          // servers therefore revalidate with a socket-owned snapshot, whose
-          // live buffer is attached before the projection is read. Keep the
-          // cursor resume path only for older servers that do not advertise the
-          // synchronized snapshot handoff.
-          if (supportsCompletionMarker) {
-            return { requestCompletionMarker: true as const };
+        // Foreground resubscriptions on the same live session can resume from
+        // a socket-owned snapshot. A new session reloads the authoritative
+        // HTTP snapshot first so a valid cursor cannot preserve incomplete
+        // cached data.
+        const hasAuthoritativeSnapshot = (yield* Ref.get(lastAuthoritativeSession)) === session;
+        let canResume = hasAuthoritativeSnapshot;
+        let current = yield* SubscriptionRef.get(state);
+        if (
+          !hasAuthoritativeSnapshot ||
+          Option.isNone(current.snapshot) ||
+          !supportsCompletionMarker
+        ) {
+          const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
+            Effect.flatMap(
+              Option.match({
+                onSome: Effect.succeed,
+                onNone: () =>
+                  SubscriptionRef.changes(supervisor.prepared).pipe(
+                    Stream.filter(Option.isSome),
+                    Stream.map((value) => value.value),
+                    Stream.runHead,
+                    Effect.map(Option.getOrThrow),
+                  ),
+              }),
+            ),
+          );
+          const httpSnapshot = yield* snapshotLoader.load(prepared);
+          if (Option.isSome(httpSnapshot)) {
+            yield* applyItem({ kind: "snapshot", snapshot: httpSnapshot.value });
+            canResume = true;
+            current = yield* SubscriptionRef.get(state);
           }
-          return {
-            afterSequence: httpSnapshot.value.snapshotSequence,
-          };
         }
 
-        return supportsCompletionMarker ? { requestCompletionMarker: true as const } : {};
+        // If the authoritative refresh failed, omit the cached cursor so the
+        // socket fallback sends a complete snapshot for this new session.
+        if (!canResume || Option.isNone(current.snapshot)) {
+          return supportsCompletionMarker ? { requestCompletionMarker: true as const } : {};
+        }
+        if (!supportsCompletionMarker) {
+          // Without a completion marker there is no synchronized signal for a
+          // resumed subscription, so report live immediately, like threads.
+          yield* SubscriptionRef.update(state, (value) => ({
+            ...value,
+            status: "live" as const,
+            error: Option.none(),
+          }));
+        }
+        // A cold archive can compact the event that removed a thread after an
+        // HTTP snapshot was read or while the app was backgrounded. Servers
+        // with the synchronized handoff therefore revalidate using a full
+        // socket-owned snapshot instead of resuming from a potentially stale
+        // cursor. Older servers retain the HTTP-refresh cursor path above.
+        if (supportsCompletionMarker) {
+          return { requestCompletionMarker: true as const };
+        }
+        return {
+          afterSequence: current.snapshot.value.snapshotSequence,
+        };
       }),
       {
         onExpectedFailure: (cause) => setStreamError(Cause.squash(cause)),

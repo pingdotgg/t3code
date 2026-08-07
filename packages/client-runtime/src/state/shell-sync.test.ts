@@ -382,25 +382,36 @@ describe("environment shell synchronization", () => {
     }),
   );
 
-  it.effect("refreshes the authoritative shell snapshot when the app becomes active", () =>
+  it.effect("revalidates the shell without trusting a foreground cursor", () =>
     Effect.gen(function* () {
       const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
       const wakeups = yield* Queue.unbounded<ConnectionWakeups.ConnectionWakeup>();
       const loaderCalls = yield* Ref.make(0);
       const subscriptionCount = yield* Ref.make(0);
+      const subscribeInputs = yield* Ref.make<
+        ReadonlyArray<{
+          readonly afterSequence?: number;
+          readonly requestCompletionMarker?: boolean;
+        }>
+      >([]);
       const client = {
-        [ORCHESTRATION_WS_METHODS.subscribeShell]: () =>
+        [ORCHESTRATION_WS_METHODS.subscribeShell]: (input: {
+          readonly afterSequence?: number;
+          readonly requestCompletionMarker?: boolean;
+        }) =>
           Stream.unwrap(
-            Ref.update(subscriptionCount, (count) => count + 1).pipe(
-              Effect.as(Stream.fromQueue(events)),
-            ),
+            Effect.all([
+              Ref.update(subscriptionCount, (count) => count + 1),
+              Ref.update(subscribeInputs, (inputs) => [...inputs, input]),
+            ]).pipe(Effect.as(Stream.fromQueue(events))),
           ),
       } as unknown as WsRpcProtocolClient;
       const supervisorState = yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE);
+      const activeSession = yield* SubscriptionRef.make(Option.some(session(client)));
       const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
         target: TARGET,
         state: supervisorState,
-        session: yield* SubscriptionRef.make(Option.some(session(client))),
+        session: activeSession,
         prepared: yield* SubscriptionRef.make(Option.some(PREPARED)),
         connect: Effect.void,
         disconnect: Effect.void,
@@ -424,7 +435,9 @@ describe("environment shell synchronization", () => {
         load: () =>
           Ref.updateAndGet(loaderCalls, (count) => count + 1).pipe(
             Effect.map((count) =>
-              Option.some({ ...LIVE_SHELL_SNAPSHOT, snapshotSequence: count * 10 }),
+              count === 1
+                ? Option.some({ ...LIVE_SHELL_SNAPSHOT, snapshotSequence: count * 10 })
+                : Option.none(),
             ),
           ),
       });
@@ -452,40 +465,54 @@ describe("environment shell synchronization", () => {
         Stream.filter((value) => value.status === "live"),
         Stream.runHead,
       );
+      expect(yield* Ref.get(subscribeInputs)).toEqual([{ requestCompletionMarker: true }]);
 
       yield* Queue.offer(wakeups, "application-active");
-      yield* SubscriptionRef.changes(shellState).pipe(
-        Stream.filter(
-          (value) =>
-            value.status === "synchronizing" &&
-            Option.isSome(value.snapshot) &&
-            value.snapshot.value.snapshotSequence === 20,
-        ),
-        Stream.runHead,
-      );
-
       for (let attempt = 0; attempt < 100; attempt += 1) {
         if ((yield* Ref.get(subscriptionCount)) >= 2) break;
         yield* Effect.yieldNow;
       }
 
-      expect(yield* Ref.get(loaderCalls)).toBe(2);
+      expect(yield* Ref.get(loaderCalls)).toBe(1);
       expect(yield* Ref.get(subscriptionCount)).toBe(2);
+      expect(yield* Ref.get(subscribeInputs)).toEqual([
+        { requestCompletionMarker: true },
+        { requestCompletionMarker: true },
+      ]);
 
       yield* Queue.offer(wakeups, "application-active-probe");
       for (let attempt = 0; attempt < 100; attempt += 1) {
         if ((yield* Ref.get(subscriptionCount)) >= 3) break;
         yield* Effect.yieldNow;
       }
-      expect(yield* Ref.get(loaderCalls)).toBe(3);
+      expect(yield* Ref.get(loaderCalls)).toBe(1);
       expect(yield* Ref.get(subscriptionCount)).toBe(3);
+      expect(yield* Ref.get(subscribeInputs)).toEqual([
+        { requestCompletionMarker: true },
+        { requestCompletionMarker: true },
+        { requestCompletionMarker: true },
+      ]);
 
       yield* Queue.offer(wakeups, "application-active-reconnect");
       for (let attempt = 0; attempt < 10; attempt += 1) {
         yield* Effect.yieldNow;
       }
-      expect(yield* Ref.get(loaderCalls)).toBe(3);
+      expect(yield* Ref.get(loaderCalls)).toBe(1);
       expect(yield* Ref.get(subscriptionCount)).toBe(3);
+
+      // A new RPC session attempts an authoritative HTTP refresh. If that
+      // refresh fails, it still requests a full socket-owned snapshot rather
+      // than trusting the previous session's cursor.
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(subscriptionCount)) >= 4) break;
+        yield* Effect.yieldNow;
+      }
+      expect(yield* Ref.get(loaderCalls)).toBe(2);
+      expect(yield* Ref.get(subscriptionCount)).toBe(4);
+      expect((yield* Ref.get(subscribeInputs)).at(-1)).toEqual({
+        requestCompletionMarker: true,
+      });
     }),
   );
 });
