@@ -268,7 +268,7 @@ function projectSetupScriptCompatibilityDetail(
   }
 }
 
-function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
+export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
   OrchestrationEvent,
   {
     type:
@@ -908,7 +908,16 @@ const makeWsRpcLayer = (
 
             if (bootstrap?.prepareWorktree) {
               let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
-              if (bootstrap.prepareWorktree.startFromOrigin) {
+              // "Start from origin" is a stored default; repos without an
+              // origin remote fall back to the local base branch instead of
+              // failing the whole bootstrap on `git fetch origin`.
+              const startFromOrigin =
+                bootstrap.prepareWorktree.startFromOrigin === true &&
+                (yield* gitWorkflow.remoteExists({
+                  cwd: bootstrap.prepareWorktree.projectCwd,
+                  remoteName: "origin",
+                }));
+              if (startFromOrigin) {
                 yield* gitWorkflow.fetchRemote({
                   cwd: bootstrap.prepareWorktree.projectCwd,
                   remoteName: "origin",
@@ -1010,6 +1019,7 @@ const makeWsRpcLayer = (
           settings,
           shellResumeCompletionMarker: true,
           threadResumeCompletionMarker: true,
+          threadSnapshotPagination: true,
         };
       });
 
@@ -1342,7 +1352,14 @@ const makeWsRpcLayer = (
               }
 
               const snapshot = yield* projectionSnapshotQuery
-                .getThreadDetailSnapshot(input.threadId)
+                .getThreadDetailSnapshot(
+                  input.threadId,
+                  // Windowing the fallback snapshot is opt-in per subscription:
+                  // clients that don't send turnLimit (including all
+                  // pre-pagination clients) get the full thread, since they
+                  // have no way to load older pages.
+                  input.turnLimit === undefined ? undefined : { turnLimit: input.turnLimit },
+                )
                 .pipe(
                   Effect.mapError(
                     (cause) =>

@@ -135,6 +135,10 @@ function normalizeComputedColor(value: string | null | undefined, fallback: stri
   return value ?? fallback;
 }
 
+function readThemeColor(styles: CSSStyleDeclaration, variable: string, fallback: string): string {
+  return normalizeComputedColor(styles.getPropertyValue(variable), fallback);
+}
+
 /** The surface treats an omitted family or size as "use the built-in default". */
 function terminalFontOptions(family: string, size: number): { family?: string; size: number } {
   const trimmed = family.trim();
@@ -151,6 +155,7 @@ export function terminalThemeFromApp(mountElement?: HTMLElement | null): Ghostty
     document.body;
   const drawerStyles = getComputedStyle(drawerSurface);
   const bodyStyles = getComputedStyle(document.body);
+  const themeStyles = getComputedStyle(document.documentElement);
   const background = normalizeComputedColor(
     drawerStyles.backgroundColor,
     normalizeComputedColor(bodyStyles.backgroundColor, fallbackBackground),
@@ -159,20 +164,32 @@ export function terminalThemeFromApp(mountElement?: HTMLElement | null): Ghostty
     drawerStyles.color,
     normalizeComputedColor(bodyStyles.color, fallbackForeground),
   );
-
+  const terminalBackground = readThemeColor(themeStyles, "--terminal-background", background);
+  const terminalForeground = readThemeColor(themeStyles, "--terminal-foreground", foreground);
+  const terminalCursor = readThemeColor(
+    themeStyles,
+    "--terminal-cursor",
+    isDark ? "rgb(180, 203, 255)" : "rgb(38, 56, 78)",
+  );
+  const terminalSelection = readThemeColor(
+    themeStyles,
+    "--terminal-selection-background",
+    isDark ? "rgba(180, 203, 255, 0.25)" : "rgba(37, 63, 99, 0.2)",
+  );
   return {
     background: parseTerminalColor(
-      background,
+      terminalBackground,
       isDark ? { r: 14, g: 18, b: 24 } : { r: 255, g: 255, b: 255 },
     ),
     foreground: parseTerminalColor(
-      foreground,
+      terminalForeground,
       isDark ? { r: 237, g: 241, b: 247 } : { r: 28, g: 33, b: 41 },
     ),
-    cursor: isDark ? { r: 180, g: 203, b: 255 } : { r: 38, g: 56, b: 78 },
-    // Matches the xterm selection overlays this renderer replaced; the text
-    // color underneath is left unchanged for contrast in both themes.
-    selectionBackground: isDark ? "rgba(180, 203, 255, 0.25)" : "rgba(37, 63, 99, 0.2)",
+    cursor: parseTerminalColor(
+      terminalCursor,
+      isDark ? { r: 180, g: 203, b: 255 } : { r: 38, g: 56, b: 78 },
+    ),
+    selectionBackground: terminalSelection,
   };
 }
 
