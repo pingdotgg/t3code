@@ -1,6 +1,14 @@
 import { createChannel, defineChannelCommand } from "@copilotkit/channels-core";
 import { discord } from "@copilotkit/channels-discord";
 import {
+  Context,
+  Message,
+  Section,
+  type MessageRef,
+  type Renderable,
+  type Thread,
+} from "@copilotkit/channels-ui";
+import {
   CommandId,
   type DiscordChannelSettings,
   MessageId,
@@ -50,7 +58,10 @@ export interface T3CodeChannelOperations {
     config: DiscordChannelSettings,
     modelSelection?: ModelSelection,
   ) => Promise<StartedChannelTask>;
-  readonly getTaskStatus: (threadId: ThreadId) => Promise<ChannelTaskStatus | null>;
+  readonly getTaskStatus: (
+    threadId: ThreadId,
+    assistantMessageId?: MessageId,
+  ) => Promise<ChannelTaskStatus | null>;
   readonly listModels: () => Promise<ReadonlyArray<DiscordModelOption>>;
   readonly setDefaultModel: (modelSelection: ModelSelection) => Promise<void>;
 }
@@ -95,19 +106,12 @@ export function resolveDiscordModel(
   return models.find((model) => model.value === value);
 }
 
-type ChannelThread = {
+type ChannelThread = Pick<Thread, "post" | "update"> & {
   readonly state: () => Promise<unknown>;
   readonly setState: (value: unknown) => Promise<void>;
 };
 
-interface DiscordTextMessageRef {
-  readonly channelId: string;
-  readonly messageId: string;
-}
-
-interface DiscordTextClient {
-  readonly post: (channelId: string, text: string) => Promise<DiscordTextMessageRef>;
-  readonly update: (ref: DiscordTextMessageRef, text: string) => Promise<void>;
+interface DiscordProfileClient {
   readonly ensureBotUsername: (username: string) => Promise<void>;
   readonly setGuildNickname: (guildId: string, nickname: string) => Promise<void>;
 }
@@ -115,6 +119,8 @@ interface DiscordTextClient {
 interface ActiveDiscordChannel {
   readonly fingerprint: string;
   readonly refreshTask: (threadId: ThreadId) => Promise<void>;
+  readonly settleTask: (threadId: ThreadId) => Promise<void>;
+  readonly deliverAssistantMessage: (threadId: ThreadId, messageId: MessageId) => Promise<void>;
   readonly refreshPendingTasks: () => Promise<void>;
   readonly stop: () => Promise<void>;
 }
@@ -193,6 +199,18 @@ export function taskStatusText(task: ChannelTaskStatus): string {
   }
 }
 
+export function taskStatusUi(task: ChannelTaskStatus): Renderable {
+  const text = taskStatusText(task);
+  return Message({
+    fallbackText: text,
+    children: [Section({ children: text }), Context({ children: "Powered by CopilotKit" })],
+  });
+}
+
+export function isDeliverableTaskResponse(settled: boolean, task: ChannelTaskStatus): boolean {
+  return settled && task.state === "done" && task.assistantResponse !== null;
+}
+
 export function assistantResponseText(input: {
   readonly assistantMessageId: string | null | undefined;
   readonly turnId: string | null | undefined;
@@ -215,10 +233,10 @@ export function assistantResponseText(input: {
   return text && text.length > 0 ? text : null;
 }
 
-export function createDiscordTextClient(
+export function createDiscordProfileClient(
   botToken: string,
   fetchImpl: typeof fetch = fetch,
-): DiscordTextClient {
+): DiscordProfileClient {
   const request = async (url: string, method: "GET" | "POST" | "PATCH", body?: unknown) => {
     const response = await fetchImpl(url, {
       method,
@@ -235,25 +253,6 @@ export function createDiscordTextClient(
   };
 
   return {
-    async post(channelId, text) {
-      const response = await request(
-        `https://discord.com/api/v10/channels/${channelId}/messages`,
-        "POST",
-        { content: text.slice(0, 2_000) },
-      );
-      const payload = (await response.json()) as { readonly id?: unknown };
-      if (typeof payload.id !== "string") {
-        throw new Error("Discord text message response did not include a message id");
-      }
-      return { channelId, messageId: payload.id };
-    },
-    async update(ref, text) {
-      await request(
-        `https://discord.com/api/v10/channels/${ref.channelId}/messages/${ref.messageId}`,
-        "PATCH",
-        { content: text.slice(0, 2_000) },
-      );
-    },
     async ensureBotUsername(username) {
       const current = await request("https://discord.com/api/v10/users/@me", "GET");
       const user = (await current.json()) as { readonly username?: unknown };
@@ -268,26 +267,21 @@ export function createDiscordTextClient(
   };
 }
 
-function discordChannelId(thread: ChannelThread): string {
-  const conversationKey = (thread as ChannelThread & { readonly conversationKey?: unknown })
-    .conversationKey;
-  if (typeof conversationKey !== "string" || conversationKey.length === 0) {
-    throw new Error("Discord channel thread did not include a conversation key");
-  }
-  return conversationKey;
-}
-
 function createT3CodeChannel(input: {
   readonly config: DiscordChannelSettings;
   readonly operations: T3CodeChannelOperations;
   readonly models: ReadonlyArray<DiscordModelOption>;
 }) {
-  const textClient = createDiscordTextClient(input.config.botToken);
+  const profileClient = createDiscordProfileClient(input.config.botToken);
   const linkedTasks = new Map<
     string,
     {
-      readonly messageRef: DiscordTextMessageRef;
+      readonly thread: ChannelThread;
+      messageRef: MessageRef;
       lastText: string;
+      settled: boolean;
+      settledPolls: number;
+      candidateAssistantMessageId: MessageId | null;
       terminal: boolean;
     }
   >();
@@ -303,19 +297,21 @@ function createT3CodeChannel(input: {
     ],
   });
 
-  const postText = (thread: ChannelThread, text: string) =>
-    textClient.post(discordChannelId(thread), text);
+  const postText = (thread: ChannelThread, text: string) => thread.post(text);
 
-  const updateLinkedTask = async (threadId: ThreadId, status: ChannelTaskStatus) => {
+  const updateLinkedTask = async (
+    threadId: ThreadId,
+    status: ChannelTaskStatus,
+    terminal = false,
+  ) => {
     const linked = linkedTasks.get(threadId);
     if (!linked) return;
     const nextText = taskStatusText(status);
     if (nextText !== linked.lastText) {
-      await textClient.update(linked.messageRef, nextText);
+      linked.messageRef = await linked.thread.update(linked.messageRef, taskStatusUi(status));
       linked.lastText = nextText;
     }
-    linked.terminal =
-      status.state === "failed" || (status.state === "done" && status.assistantResponse !== null);
+    linked.terminal = terminal || status.state === "failed";
   };
 
   const postStatus = async (thread: ChannelThread, threadId: ThreadId) => {
@@ -326,10 +322,16 @@ function createT3CodeChannel(input: {
     }
     const linked = linkedTasks.get(threadId);
     if (linked) {
-      await updateLinkedTask(threadId, status);
+      if (status.state !== "done" || status.assistantResponse !== null) {
+        await updateLinkedTask(
+          threadId,
+          status,
+          status.state === "failed" || isDeliverableTaskResponse(linked.settled, status),
+        );
+      }
       return;
     }
-    await postText(thread, taskStatusText(status));
+    await thread.post(taskStatusUi(status));
   };
 
   const handleText = async (thread: ChannelThread, rawText: string) => {
@@ -363,8 +365,16 @@ function createT3CodeChannel(input: {
         t3ThreadId: task.threadId,
       } satisfies LinkedConversationState);
       const initialText = taskStatusText(task);
-      const messageRef = await postText(thread, initialText);
-      linkedTasks.set(task.threadId, { messageRef, lastText: initialText, terminal: false });
+      const messageRef = await thread.post(taskStatusUi(task));
+      linkedTasks.set(task.threadId, {
+        thread,
+        messageRef,
+        lastText: initialText,
+        settled: false,
+        settledPolls: 0,
+        candidateAssistantMessageId: null,
+        terminal: false,
+      });
       await postStatus(thread, task.threadId);
     } catch {
       await postText(
@@ -446,23 +456,69 @@ function createT3CodeChannel(input: {
     if (!linked || linked.terminal) return;
     const task = await input.operations.getTaskStatus(threadId);
     if (!task) return;
-    await updateLinkedTask(threadId, task);
+    if (task.state === "failed") {
+      await updateLinkedTask(threadId, task, true);
+      return;
+    }
+    if (task.state === "queued" || task.state === "running") {
+      await updateLinkedTask(threadId, task);
+    }
+  };
+
+  const settleTask = async (threadId: ThreadId) => {
+    const linked = linkedTasks.get(threadId);
+    if (!linked || linked.terminal) return;
+    // ProviderRuntimeIngestion projects `ready` before it flushes the buffered
+    // final assistant message. Mark the lifecycle boundary, but wait for the
+    // subsequent non-streaming message event before completing Discord.
+    linked.settled = true;
+    linked.settledPolls = 0;
+    linked.candidateAssistantMessageId = null;
+    const task = await input.operations.getTaskStatus(threadId);
+    if (task?.state === "failed") {
+      await updateLinkedTask(threadId, task, true);
+    }
+  };
+
+  const deliverAssistantMessage = async (threadId: ThreadId, messageId: MessageId) => {
+    const linked = linkedTasks.get(threadId);
+    if (!linked || linked.terminal || !linked.settled) return;
+    // A turn can flush multiple assistant segments. Keep the newest exact
+    // message id and let the quiet-period poll deliver only the final segment.
+    linked.candidateAssistantMessageId = messageId;
+    linked.settledPolls = 0;
   };
 
   return {
     channel,
     refreshTask,
+    settleTask,
+    deliverAssistantMessage,
     refreshPendingTasks: async () => {
       await Promise.all(
         Array.from(linkedTasks)
           .filter(([, linked]) => !linked.terminal)
-          .map(([threadId]) => refreshTask(ThreadId.make(threadId))),
+          .map(async ([threadId, linked]) => {
+            const id = ThreadId.make(threadId);
+            if (!linked.settled) {
+              await refreshTask(id);
+              return;
+            }
+            linked.settledPolls += 1;
+            if (linked.settledPolls < 2) return;
+            const task = await input.operations.getTaskStatus(
+              id,
+              linked.candidateAssistantMessageId ?? undefined,
+            );
+            if (!task || !isDeliverableTaskResponse(linked.settled, task)) return;
+            await updateLinkedTask(id, task, true);
+          }),
       );
     },
     setDisplayName: async () => {
-      const updates = [textClient.ensureBotUsername("copilot")];
+      const updates = [profileClient.ensureBotUsername("copilot")];
       if (input.config.guildId.length > 0) {
-        updates.push(textClient.setGuildNickname(input.config.guildId, "copilot"));
+        updates.push(profileClient.setGuildNickname(input.config.guildId, "copilot"));
       }
       const results = await Promise.allSettled(updates);
       if (results.some((result) => result.status === "fulfilled")) return;
@@ -585,12 +641,19 @@ const makeOperations = Effect.gen(function* () {
 
   const getTaskStatusEffect = Effect.fn("T3CodeDiscordChannel.getTaskStatus")(function* (
     threadId: ThreadId,
+    preferredAssistantMessageId?: MessageId,
   ) {
     const threadOption = yield* projectionSnapshotQuery.getThreadDetailById(threadId);
     if (Option.isNone(threadOption)) return null;
     const thread = threadOption.value;
     const state = (() => {
-      if (thread.latestTurn?.state === "error" || thread.session?.status === "error") {
+      if (
+        thread.latestTurn?.state === "error" ||
+        thread.latestTurn?.state === "interrupted" ||
+        thread.session?.status === "error" ||
+        thread.session?.status === "interrupted" ||
+        thread.session?.status === "stopped"
+      ) {
         return "failed" as const;
       }
       if (thread.latestTurn?.state === "completed") return "done" as const;
@@ -601,8 +664,8 @@ const makeOperations = Effect.gen(function* () {
     })();
     const threadEnvMode = thread.worktreePath === null ? ("local" as const) : ("worktree" as const);
     const assistantResponse = assistantResponseText({
-      assistantMessageId: thread.latestTurn?.assistantMessageId,
-      turnId: thread.latestTurn?.turnId,
+      assistantMessageId: preferredAssistantMessageId ?? thread.latestTurn?.assistantMessageId,
+      turnId: preferredAssistantMessageId ? undefined : thread.latestTurn?.turnId,
       messages: thread.messages,
     });
     return {
@@ -619,7 +682,8 @@ const makeOperations = Effect.gen(function* () {
   return {
     startTask: (prompt, config, modelSelection) =>
       runPromise(startTaskEffect(prompt, config, modelSelection)),
-    getTaskStatus: (threadId) => runPromise(getTaskStatusEffect(threadId)),
+    getTaskStatus: (threadId, assistantMessageId) =>
+      runPromise(getTaskStatusEffect(threadId, assistantMessageId)),
     listModels: () =>
       runPromise(providerRegistry.getProviders.pipe(Effect.map(discordModelOptions))),
     setDefaultModel: (modelSelection) =>
@@ -691,6 +755,8 @@ export const layer = Layer.effectDiscard(
       yield* Ref.set(activeRef, {
         fingerprint,
         refreshTask: created.refreshTask,
+        settleTask: created.settleTask,
+        deliverAssistantMessage: created.deliverAssistantMessage,
         refreshPendingTasks: created.refreshPendingTasks,
         stop: created.stop,
       });
@@ -708,20 +774,36 @@ export const layer = Layer.effectDiscard(
     );
     yield* forkParked(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
-        if (
-          event.type !== "thread.turn-start-requested" &&
-          event.type !== "thread.session-set" &&
-          event.type !== "thread.turn-diff-completed"
-        ) {
+        if (event.type === "thread.message-sent") {
+          if (event.payload.role !== "assistant" || event.payload.streaming) {
+            return Effect.void;
+          }
+          return Ref.get(activeRef).pipe(
+            Effect.flatMap((active) =>
+              active
+                ? Effect.tryPromise(() =>
+                    active.deliverAssistantMessage(event.payload.threadId, event.payload.messageId),
+                  ).pipe(Effect.ignoreCause({ log: true }))
+                : Effect.void,
+            ),
+          );
+        }
+        if (event.type !== "thread.session-set" && event.type !== "thread.turn-diff-completed") {
           return Effect.void;
         }
         return Ref.get(activeRef).pipe(
           Effect.flatMap((active) =>
-            active
-              ? Effect.tryPromise(() => active.refreshTask(event.payload.threadId)).pipe(
-                  Effect.ignoreCause({ log: true }),
-                )
-              : Effect.void,
+            !active
+              ? Effect.void
+              : event.type === "thread.session-set" &&
+                  (event.payload.session.status === "ready" ||
+                    event.payload.session.status === "idle")
+                ? Effect.tryPromise(() => active.settleTask(event.payload.threadId)).pipe(
+                    Effect.ignoreCause({ log: true }),
+                  )
+                : Effect.tryPromise(() => active.refreshTask(event.payload.threadId)).pipe(
+                    Effect.ignoreCause({ log: true }),
+                  ),
           ),
         );
       }),

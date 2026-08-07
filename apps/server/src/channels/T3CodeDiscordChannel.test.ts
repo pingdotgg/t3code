@@ -9,15 +9,18 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe } from "vite-plus/test";
+import { renderToIR } from "@copilotkit/channels-ui";
 
 import {
   assistantResponseText,
   channelBranchName,
-  createDiscordTextClient,
+  createDiscordProfileClient,
   discordModelOptions,
+  isDeliverableTaskResponse,
   isDiscordChannelConfigured,
   resolveDiscordModel,
   taskStatusText,
+  taskStatusUi,
 } from "./T3CodeDiscordChannel.ts";
 
 const decodeDiscordChannelSettings = Schema.decodeSync(DiscordChannelSettings);
@@ -134,7 +137,7 @@ describe("Discord channel model selection", () => {
     expect(resolveDiscordModel(models, "codex/missing")).toBeUndefined();
   });
 
-  it("renders one plain-text status that can be edited as a task progresses", () => {
+  it("renders a minimal CopilotKit status that can be edited as a task progresses", () => {
     const task = {
       threadId: ThreadId.make("thread-1"),
       title: "Fix login",
@@ -158,6 +161,27 @@ describe("Discord channel model selection", () => {
     ).toBe("Fix login ✅\n\nFixed the login flow and added coverage.");
     expect(taskStatusText(task)).not.toContain("Model:");
     expect(taskStatusText(task)).not.toContain("Target:");
+    const rendered = renderToIR(taskStatusUi(task));
+    expect(rendered).toMatchObject([
+      {
+        type: "message",
+        props: {
+          fallbackText: "Fix login 🔄",
+          children: [{ type: "section" }, { type: "context" }],
+        },
+      },
+    ]);
+    expect(JSON.stringify(rendered)).toContain("Powered by CopilotKit");
+    expect(
+      isDeliverableTaskResponse(false, { ...task, state: "done", assistantResponse: "old" }),
+    ).toBe(false);
+    expect(
+      isDeliverableTaskResponse(true, {
+        ...task,
+        state: "done",
+        assistantResponse: "Final response",
+      }),
+    ).toBe(true);
   });
 
   it("uses the final assistant message as the completed Discord response", () => {
@@ -178,7 +202,7 @@ describe("Discord channel model selection", () => {
     ).toBe("The requested change is complete.");
   });
 
-  it("sends and edits native Discord content without Channels UI components", async () => {
+  it("updates the Discord bot profile without handling message rendering", async () => {
     const requests: Array<{ readonly url: string; readonly init?: RequestInit }> = [];
     const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
       const requestUrl = String(url);
@@ -195,27 +219,15 @@ describe("Discord channel model selection", () => {
         },
       );
     }) as typeof fetch;
-    const client = createDiscordTextClient("secret", fetchImpl);
+    const client = createDiscordProfileClient("secret", fetchImpl);
 
-    const ref = await client.post("channel-1", "Queued");
-    await client.update(ref, "Running");
     await client.ensureBotUsername("copilot");
     await client.setGuildNickname("guild-1", "copilot");
 
-    expect(requests.map(({ init }) => init?.method)).toEqual([
-      "POST",
-      "PATCH",
-      "GET",
-      "PATCH",
-      "PATCH",
-    ]);
-    expect(requests[1]?.url).toContain("/channels/channel-1/messages/message-1");
-    expect(requests[3]?.url).toContain("/users/@me");
-    expect(requests[4]?.url).toContain("/guilds/guild-1/members/@me");
-    expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({
-      content: "Queued",
-    });
-    expect(JSON.parse(String(requests[3]?.init?.body))).toEqual({ username: "copilot" });
-    expect(JSON.parse(String(requests[4]?.init?.body))).toEqual({ nick: "copilot" });
+    expect(requests.map(({ init }) => init?.method)).toEqual(["GET", "PATCH", "PATCH"]);
+    expect(requests[1]?.url).toContain("/users/@me");
+    expect(requests[2]?.url).toContain("/guilds/guild-1/members/@me");
+    expect(JSON.parse(String(requests[1]?.init?.body))).toEqual({ username: "copilot" });
+    expect(JSON.parse(String(requests[2]?.init?.body))).toEqual({ nick: "copilot" });
   });
 });
