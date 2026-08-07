@@ -11,34 +11,34 @@ import {
 
 describe("resolveCodexLaunchArgs", () => {
   it("uses T3CODE_CODEX_LAUNCH_ARGS before configured settings", () => {
-    NodeAssert.equal(
+    NodeAssert.deepStrictEqual(
       resolveCodexLaunchArgs(" --strict-config ", { T3CODE_CODEX_LAUNCH_ARGS: "--enable foo" }),
-      "--enable foo",
+      ["--enable", "foo"],
     );
   });
 
   it("uses configured settings when T3CODE_CODEX_LAUNCH_ARGS is empty", () => {
-    NodeAssert.equal(
+    NodeAssert.deepStrictEqual(
       resolveCodexLaunchArgs(" --strict-config ", { T3CODE_CODEX_LAUNCH_ARGS: "   " }),
-      "--strict-config",
+      ["--strict-config"],
     );
   });
 
   it("ignores whitespace-only environment values", () => {
-    NodeAssert.equal(resolveCodexLaunchArgs("", { T3CODE_CODEX_LAUNCH_ARGS: "   " }), "");
+    NodeAssert.deepStrictEqual(resolveCodexLaunchArgs("", { T3CODE_CODEX_LAUNCH_ARGS: "   " }), []);
   });
 
   it("appends integration arguments without replacing configured settings", () => {
-    NodeAssert.equal(
+    NodeAssert.deepStrictEqual(
       resolveCodexLaunchArgs("--strict-config", {
         T3CODE_CODEX_APPEND_LAUNCH_ARGS: '-c mcp_servers.cua-driver.command="/bin/cua-driver"',
       }),
-      '--strict-config -c mcp_servers.cua-driver.command="/bin/cua-driver"',
+      ["--strict-config", "-c", "mcp_servers.cua-driver.command=/bin/cua-driver"],
     );
   });
 
   it("uses T3's managed Cua Driver when no existing configuration is present", () => {
-    NodeAssert.equal(
+    NodeAssert.deepStrictEqual(
       resolveCodexLaunchArgs(
         "--strict-config",
         {
@@ -46,12 +46,12 @@ describe("resolveCodexLaunchArgs", () => {
         },
         {},
       ),
-      '--strict-config -c mcp_servers.cua-driver.command="/bundled/cua-driver"',
+      ["--strict-config", "-c", "mcp_servers.cua-driver.command=/bundled/cua-driver"],
     );
   });
 
   it("lets an existing Codex Cua Driver configuration win", () => {
-    NodeAssert.equal(
+    NodeAssert.deepStrictEqual(
       resolveCodexLaunchArgs(
         "--strict-config",
         {
@@ -62,12 +62,12 @@ describe("resolveCodexLaunchArgs", () => {
           configToml: '[mcp_servers.cua-driver]\ncommand = "/existing/cua-driver"\n',
         },
       ),
-      "--strict-config --enable foo",
+      ["--strict-config", "--enable", "foo"],
     );
   });
 
   it("lets an explicit Cua Driver launch override win", () => {
-    NodeAssert.equal(
+    NodeAssert.deepStrictEqual(
       resolveCodexLaunchArgs(
         '-c mcp_servers."cua-driver".command="/existing/cua-driver"',
         {
@@ -75,17 +75,26 @@ describe("resolveCodexLaunchArgs", () => {
         },
         {},
       ),
-      '-c mcp_servers."cua-driver".command="/existing/cua-driver"',
+      ["-c", "mcp_servers.cua-driver.command=/existing/cua-driver"],
     );
   });
 
   it("lets an appended Cua Driver launch override win", () => {
-    NodeAssert.equal(
+    NodeAssert.deepStrictEqual(
       resolveCodexLaunchArgs("--strict-config", {
         T3CODE_CODEX_APPEND_LAUNCH_ARGS: '-c mcp_servers.cua-driver.command="/existing/cua-driver"',
         T3CODE_CODEX_CUA_LAUNCH_ARGS: '-c mcp_servers.cua-driver.command="/bundled/cua-driver"',
       }),
-      '--strict-config -c mcp_servers.cua-driver.command="/existing/cua-driver"',
+      ["--strict-config", "-c", "mcp_servers.cua-driver.command=/existing/cua-driver"],
+    );
+  });
+
+  it("preserves argument boundaries when configured args end in a Windows backslash", () => {
+    NodeAssert.deepStrictEqual(
+      resolveCodexLaunchArgs("--config cacheDir=C:\\", {
+        T3CODE_CODEX_APPEND_LAUNCH_ARGS: "--enable foo",
+      }),
+      ["--config", "cacheDir=C:\\", "--enable", "foo"],
     );
   });
 });

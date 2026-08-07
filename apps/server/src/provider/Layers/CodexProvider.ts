@@ -328,7 +328,7 @@ export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
 const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {
   readonly binaryPath: string;
   readonly homePath?: string;
-  readonly launchArgs?: string;
+  readonly launchArgs?: ReadonlyArray<string>;
   readonly cwd: string;
   readonly customModels?: ReadonlyArray<string>;
   readonly environment?: NodeJS.ProcessEnv;
@@ -511,7 +511,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   probe: (input: {
     readonly binaryPath: string;
     readonly homePath?: string;
-    readonly launchArgs?: string;
+    readonly launchArgs?: ReadonlyArray<string>;
     readonly cwd: string;
     readonly customModels: ReadonlyArray<string>;
     readonly environment?: NodeJS.ProcessEnv;

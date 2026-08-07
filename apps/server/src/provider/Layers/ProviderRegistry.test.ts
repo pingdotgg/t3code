@@ -388,7 +388,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
       it.effect("passes configured launch args to the Codex provider probe", () =>
         Effect.gen(function* () {
-          let observedLaunchArgs: string | undefined;
+          let observedLaunchArgs: ReadonlyArray<string> | undefined;
           const settings = decodeCodexSettings({ launchArgs: "--strict-config --enable foo" });
 
           const status = yield* checkCodexProviderStatus(settings, (input) => {
@@ -397,7 +397,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           });
 
           assert.strictEqual(status.status, "ready");
-          assert.strictEqual(observedLaunchArgs, "--strict-config --enable foo");
+          assert.deepStrictEqual(observedLaunchArgs, ["--strict-config", "--enable", "foo"]);
         }),
       );
 

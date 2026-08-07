@@ -12,6 +12,8 @@ export const T3CODE_CODEX_LAUNCH_ARGS_ENV = "T3CODE_CODEX_LAUNCH_ARGS";
 export const T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV = "T3CODE_CODEX_APPEND_LAUNCH_ARGS";
 export const T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV = "T3CODE_CODEX_CUA_LAUNCH_ARGS";
 
+export type CodexLaunchArgs = string | ReadonlyArray<string> | undefined;
+
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -34,8 +36,8 @@ const configOverrideHasCuaDriver = (override: string): boolean => {
   }
 };
 
-const launchArgsHaveCuaDriver = (launchArgs: string): boolean => {
-  const args = tokenizeCliArgs(launchArgs);
+const launchArgsHaveCuaDriver = (launchArgs: CodexLaunchArgs): boolean => {
+  const args = codexLaunchArgv(launchArgs);
   for (let index = 0; index < args.length; index++) {
     const argument = args[index];
     if (argument === undefined) continue;
@@ -56,7 +58,7 @@ const launchArgsHaveCuaDriver = (launchArgs: string): boolean => {
 };
 
 export const hasConfiguredCuaDriver = (
-  launchArgs: string,
+  launchArgs: CodexLaunchArgs,
   configToml: string | undefined,
 ): boolean => {
   if (launchArgsHaveCuaDriver(launchArgs)) return true;
@@ -93,26 +95,27 @@ export const resolveCodexLaunchArgs = (
   const configured = environment[T3CODE_CODEX_LAUNCH_ARGS_ENV]?.trim() || launchArgs?.trim() || "";
   const appended = environment[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV]?.trim() || "";
   const cuaLaunchArgs = environment[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV]?.trim() || "";
+  const configuredArgv = tokenizeCliArgs(configured);
+  const appendedArgv = tokenizeCliArgs(appended);
   const existingCuaDriver =
     cuaLaunchArgs.length > 0 &&
-    hasConfiguredCuaDriver(
-      [configured, appended].filter((value) => value.length > 0).join(" "),
-      options.configToml,
-    );
-  return [configured, appended, existingCuaDriver ? "" : cuaLaunchArgs]
-    .filter((value) => value.length > 0)
-    .join(" ");
+    hasConfiguredCuaDriver([...configuredArgv, ...appendedArgv], options.configToml);
+  return [
+    ...configuredArgv,
+    ...appendedArgv,
+    ...(existingCuaDriver ? [] : tokenizeCliArgs(cuaLaunchArgs)),
+  ];
 };
 
-export const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> =>
-  tokenizeCliArgs(launchArgs);
+export const codexLaunchArgv = (launchArgs: CodexLaunchArgs): ReadonlyArray<string> =>
+  typeof launchArgs === "string" ? tokenizeCliArgs(launchArgs) : (launchArgs ?? []);
 
-export const codexAppServerArgs = (launchArgs?: string) => [
+export const codexAppServerArgs = (launchArgs: CodexLaunchArgs) => [
   "app-server",
   ...codexLaunchArgv(launchArgs),
 ];
 
-export const codexExecLaunchArgs = (launchArgs?: string) => {
+export const codexExecLaunchArgs = (launchArgs: CodexLaunchArgs) => {
   const args = codexLaunchArgv(launchArgs);
   const execArgs: Array<string> = [];
 
@@ -138,7 +141,7 @@ export const codexExecLaunchArgs = (launchArgs?: string) => {
 
 export const codexSessionAppServerArgs = (
   appServerArgs: ReadonlyArray<string> | undefined,
-  launchArgs: string | undefined,
+  launchArgs: CodexLaunchArgs,
 ) => {
   const launchAppServerArgs = codexAppServerArgs(launchArgs);
   return appServerArgs ? [...launchAppServerArgs, ...appServerArgs] : launchAppServerArgs;
