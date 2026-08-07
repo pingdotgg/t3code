@@ -1,4 +1,5 @@
 import {
+  type AgentProfileRef,
   type ApprovalRequestId,
   DEFAULT_MODEL,
   defaultInstanceIdForDriver,
@@ -3483,6 +3484,7 @@ function ChatViewContent(props: ChatViewProps) {
       branch?: string;
       runtimeMode: RuntimeMode;
       interactionMode: ProviderInteractionMode;
+      agentProfile: AgentProfileRef | null;
     }): Promise<AtomCommandResult<void, unknown>> => {
       if (!serverThread) {
         return AsyncResult.success(undefined);
@@ -3494,6 +3496,8 @@ function ChatViewContent(props: ChatViewProps) {
         ...(input.modelSelection ? { nextModelSelection: input.modelSelection } : {}),
         currentBranch: serverThread.branch,
         ...(input.branch ? { nextBranch: input.branch } : {}),
+        currentAgentProfile: serverThread.agentProfile ?? null,
+        nextAgentProfile: input.agentProfile,
       });
       if (metadataUpdate) {
         result = mapAtomCommandResult(
@@ -4821,6 +4825,7 @@ function ChatViewContent(props: ChatViewProps) {
       selectedProviderModels: ctxSelectedProviderModels,
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
+      selectedAgentProfile: ctxSelectedAgentProfile,
     } = sendCtx;
     const composerImages =
       directAnnotation?.image &&
@@ -5089,6 +5094,7 @@ function ChatViewContent(props: ChatViewProps) {
           : {}),
         runtimeMode,
         interactionMode,
+        agentProfile: ctxSelectedAgentProfile,
       });
       if (settingsResult._tag === "Failure") {
         failure = settingsResult;
@@ -5115,6 +5121,7 @@ function ChatViewContent(props: ChatViewProps) {
                       interactionMode,
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
+                      agentProfile: ctxSelectedAgentProfile,
                       createdAt: activeThread.createdAt,
                     },
                   }
@@ -5147,6 +5154,7 @@ function ChatViewContent(props: ChatViewProps) {
           titleSeed: title,
           runtimeMode,
           interactionMode,
+          agentProfile: ctxSelectedAgentProfile,
           ...(bootstrap ? { bootstrap } : {}),
           createdAt: messageCreatedAt,
         },
@@ -5422,6 +5430,7 @@ function ChatViewContent(props: ChatViewProps) {
         selectedProviderModels: ctxSelectedProviderModels,
         selectedPromptEffort: ctxSelectedPromptEffort,
         selectedModelSelection: ctxSelectedModelSelection,
+        selectedAgentProfile: ctxSelectedAgentProfile,
       } = sendCtx;
 
       const threadIdForSend = activeThread.id;
@@ -5475,6 +5484,7 @@ function ChatViewContent(props: ChatViewProps) {
           : {}),
         runtimeMode,
         interactionMode: nextInteractionMode,
+        agentProfile: ctxSelectedAgentProfile,
       });
       let failure: AtomCommandResult<unknown, unknown> | null =
         settingsResult._tag === "Failure" ? settingsResult : null;
@@ -5501,6 +5511,7 @@ function ChatViewContent(props: ChatViewProps) {
             titleSeed: activeThread.title,
             runtimeMode,
             interactionMode: nextInteractionMode,
+            agentProfile: ctxSelectedAgentProfile,
             ...(nextInteractionMode === "default" && activeProposedPlan
               ? {
                   sourceProposedPlan: {
@@ -5578,6 +5589,7 @@ function ChatViewContent(props: ChatViewProps) {
       selectedProviderModels: ctxSelectedProviderModels,
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
+      selectedAgentProfile: ctxSelectedAgentProfile,
     } = sendCtx;
 
     const createdAt = new Date().toISOString();
@@ -5612,6 +5624,7 @@ function ChatViewContent(props: ChatViewProps) {
         interactionMode: "default",
         branch: activeThreadBranch,
         worktreePath: activeThread.worktreePath,
+        agentProfile: ctxSelectedAgentProfile,
         createdAt,
       },
     });
@@ -5633,6 +5646,7 @@ function ChatViewContent(props: ChatViewProps) {
           titleSeed: nextThreadTitle,
           runtimeMode,
           interactionMode: "default",
+          agentProfile: ctxSelectedAgentProfile,
           sourceProposedPlan: {
             threadId: activeThread.id,
             planId: activeProposedPlan.id,
@@ -5729,7 +5743,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
 
   const onProviderModelSelect = useCallback(
-    (instanceId: ProviderInstanceId, model: string) => {
+    (instanceId: ProviderInstanceId, model: string, options?: ModelSelection["options"]) => {
       if (!activeThread) return;
       // Look up the configured instance so model normalization and custom
       // model lookup stay scoped to that exact instance. Unknown instance ids
@@ -5770,6 +5784,7 @@ function ChatViewContent(props: ChatViewProps) {
       const nextModelSelection: ModelSelection = {
         instanceId,
         model: resolvedModel,
+        ...(options === undefined ? {} : { options }),
       };
       const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
         providers: providerStatuses,
@@ -6179,6 +6194,7 @@ function ChatViewContent(props: ChatViewProps) {
                             routeThreadRef={routeThreadRef}
                             draftId={draftId}
                             activeThreadId={activeThreadId}
+                            activeProjectId={activeProject?.id ?? null}
                             activeThreadEnvironmentId={activeThread?.environmentId}
                             activeThread={activeThread}
                             isServerThread={isServerThread}

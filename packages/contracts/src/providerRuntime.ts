@@ -482,6 +482,7 @@ export const RuntimeTaskUsage = Schema.Struct({
   reasoningOutputTokens: Schema.optional(NonNegativeInt),
   toolUses: Schema.optional(NonNegativeInt),
   durationMs: Schema.optional(NonNegativeInt),
+  estimatedCostUsd: Schema.optional(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 export type RuntimeTaskUsage = typeof RuntimeTaskUsage.Type;
 

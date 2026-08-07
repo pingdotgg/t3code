@@ -5,6 +5,7 @@ import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { mapAtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import {
   ThreadId,
+  type AgentProfileRef,
   type ModelSelection,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -35,6 +36,7 @@ export function useCreateProjectThread() {
       readonly startFromOrigin?: boolean;
       readonly runtimeMode: RuntimeMode;
       readonly interactionMode: ProviderInteractionMode;
+      readonly agentProfile?: AgentProfileRef | null;
       readonly initialMessageText: string;
       readonly initialAttachments: ReadonlyArray<DraftComposerImageAttachment>;
       /** Reuse identifiers from a queued pending task instead of minting new ones. */
@@ -70,6 +72,7 @@ export function useCreateProjectThread() {
           modelSelection: input.modelSelection,
           runtimeMode: input.runtimeMode,
           interactionMode: input.interactionMode,
+          agentProfile: input.agentProfile ?? null,
           workspaceMode: input.envMode,
           branch: input.branch,
           worktreePath: input.worktreePath,

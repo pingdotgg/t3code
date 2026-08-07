@@ -5,6 +5,7 @@ import {
   CommandId,
   MessageId,
   type EnvironmentId,
+  type AgentProfileRef,
   type ModelSelection,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -103,6 +104,7 @@ export function useThreadComposerState() {
   const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
   const interactionMode = selectedDraft?.interactionMode ?? selectedThread?.interactionMode ?? null;
+  const agentProfile = selectedDraft?.agentProfile ?? selectedThread?.agentProfile ?? null;
 
   const selectedThreadSessionActivity = useMemo(() => {
     const selectedThread = selectedThreadDetail ?? selectedThreadShell;
@@ -164,6 +166,7 @@ export function useThreadComposerState() {
       modelSelection: draft.modelSelection ?? thread.modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
       interactionMode: draft.interactionMode ?? thread.interactionMode,
+      agentProfile: draft.agentProfile ?? thread.agentProfile ?? null,
       createdAt: metadata.createdAt,
     });
     clearComposerDraftContent(threadKey);
@@ -299,6 +302,14 @@ export function useThreadComposerState() {
     [selectedThreadKey],
   );
 
+  const onUpdateAgentProfile = useCallback(
+    (value: AgentProfileRef | null) => {
+      if (!selectedThreadKey) return;
+      updateComposerDraftSettings(selectedThreadKey, { agentProfile: value });
+    },
+    [selectedThreadKey],
+  );
+
   return {
     selectedThreadFeed,
     selectedThreadQueueCount,
@@ -308,6 +319,7 @@ export function useThreadComposerState() {
     modelSelection,
     runtimeMode,
     interactionMode,
+    agentProfile,
     activeThreadBusy,
     onChangeDraftMessage,
     onPickDraftImages,
@@ -318,5 +330,6 @@ export function useThreadComposerState() {
     onUpdateModelSelection,
     onUpdateRuntimeMode,
     onUpdateInteractionMode,
+    onUpdateAgentProfile,
   };
 }

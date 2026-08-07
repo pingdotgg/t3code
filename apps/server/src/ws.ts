@@ -48,6 +48,9 @@ import {
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
+  AgentProfileInvalidError,
+  AgentProfileNotFoundError,
+  AgentProfileRevisionConflictError,
   RpcClientId,
   EnvironmentAuthorizationError,
   ThreadId,
@@ -63,6 +66,10 @@ import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/uns
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
+import * as AgentCatalog from "./agents/AgentCatalog.ts";
+import * as AgentProfileServices from "./agents/AgentProfileServices.ts";
+import * as AgentProfileStore from "./agents/AgentProfileStore.ts";
+import * as AgentRuleStore from "./agents/AgentRuleStore.ts";
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -355,6 +362,9 @@ const makeWsRpcLayer = (
       const currentSessionId = currentSession.sessionId;
       const crypto = yield* Crypto.Crypto;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+      const agentCatalog = yield* AgentCatalog.AgentCatalog;
+      const agentProfileStore = yield* AgentProfileStore.AgentProfileStore;
+      const agentRuleStore = yield* AgentRuleStore.AgentRuleStore;
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
@@ -432,6 +442,75 @@ const makeWsRpcLayer = (
         currentSession.scopes.includes(requiredScope)
           ? stream
           : Stream.fail(authorizationError(requiredScope));
+
+      const agentWorkspaceRoot = (projectId: ProjectId | undefined) =>
+        projectId === undefined
+          ? Effect.sync((): string | undefined => undefined)
+          : projectionSnapshotQuery.getProjectShellById(projectId).pipe(
+              Effect.flatMap(
+                Option.match({
+                  onNone: () =>
+                    Effect.fail(
+                      new AgentProfileInvalidError({
+                        detail: `Project '${projectId}' was not found.`,
+                      }),
+                    ),
+                  onSome: (project) => Effect.succeed(project.workspaceRoot),
+                }),
+              ),
+              Effect.mapError((error) =>
+                Schema.is(AgentProfileInvalidError)(error)
+                  ? error
+                  : new AgentProfileInvalidError({
+                      detail: `Could not resolve project '${projectId}'.`,
+                    }),
+              ),
+            );
+
+      const mapAgentCatalogError =
+        (ref: {
+          readonly id: Parameters<
+            AgentCatalog.AgentCatalog["Service"]["getProfile"]
+          >[0]["ref"]["id"];
+          readonly scope: Parameters<
+            AgentCatalog.AgentCatalog["Service"]["getProfile"]
+          >[0]["ref"]["scope"];
+        }) =>
+        (error: AgentCatalog.AgentCatalogLoadError) =>
+          error._tag === "AgentCatalogNotFoundError"
+            ? new AgentProfileNotFoundError(ref)
+            : new AgentProfileInvalidError({ detail: error.message });
+
+      const mapAgentProfileStoreError = (error: AgentProfileStore.AgentProfileStoreFailure) => {
+        if (
+          error._tag === "AgentProfileStoreRevisionConflictError" &&
+          error.expectedRevision !== undefined &&
+          error.actualRevision !== undefined
+        ) {
+          return new AgentProfileRevisionConflictError({
+            id: error.id,
+            scope: error.scope,
+            expectedRevision: error.expectedRevision,
+            actualRevision: error.actualRevision,
+          });
+        }
+        return new AgentProfileInvalidError({ detail: error.message });
+      };
+      const mapAgentRuleStoreError = (error: AgentRuleStore.AgentRuleStoreFailure) => {
+        if (
+          error._tag === "AgentRuleStoreRevisionConflictError" &&
+          error.expectedRevision !== undefined &&
+          error.actualRevision !== undefined
+        ) {
+          return new AgentProfileRevisionConflictError({
+            id: error.id,
+            scope: error.scope,
+            expectedRevision: error.expectedRevision,
+            actualRevision: error.actualRevision,
+          });
+        }
+        return new AgentProfileInvalidError({ detail: `Rule ${error.id}: ${error.message}` });
+      };
       const observeRpcEffect = <A, E, R>(
         method: string,
         effect: Effect.Effect<A, E, R>,
@@ -1029,6 +1108,169 @@ const makeWsRpcLayer = (
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({
+        [WS_METHODS.agentsCatalog]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentsCatalog,
+            Effect.gen(function* () {
+              const workspaceRoot = yield* agentWorkspaceRoot(input.projectId);
+              const catalog = yield* agentCatalog.list({ workspaceRoot });
+              return {
+                profiles: catalog.profiles.filter(
+                  (profile) => input.includeArchived === true || profile.archivedAt === null,
+                ),
+                rules: catalog.rules.filter(
+                  (rule) => input.includeArchived === true || rule.archivedAt === null,
+                ),
+              };
+            }),
+            { "rpc.aggregate": "agents" },
+          ),
+        [WS_METHODS.agentsGetProfile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentsGetProfile,
+            Effect.gen(function* () {
+              const workspaceRoot = yield* agentWorkspaceRoot(input.projectId);
+              const profile = yield* agentCatalog
+                .getProfile({
+                  ref: { id: input.id, scope: input.scope },
+                  workspaceRoot,
+                })
+                .pipe(Effect.mapError(mapAgentCatalogError({ id: input.id, scope: input.scope })));
+              if (input.revision !== undefined && input.revision !== profile.revision) {
+                return yield* new AgentProfileRevisionConflictError({
+                  id: input.id,
+                  scope: input.scope,
+                  expectedRevision: input.revision,
+                  actualRevision: profile.revision,
+                });
+              }
+              return { profile };
+            }),
+            { "rpc.aggregate": "agents" },
+          ),
+        [WS_METHODS.agentsSaveProfile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentsSaveProfile,
+            Effect.gen(function* () {
+              const workspaceRoot = yield* agentWorkspaceRoot(input.projectId);
+              const profile = yield* agentProfileStore
+                .save({
+                  profile: input.profile,
+                  ...(input.expectedRevision === undefined
+                    ? {}
+                    : { expectedRevision: input.expectedRevision }),
+                  workspaceRoot,
+                })
+                .pipe(Effect.mapError(mapAgentProfileStoreError));
+              return { profile };
+            }),
+            { "rpc.aggregate": "agents" },
+          ),
+        [WS_METHODS.agentsArchiveProfile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentsArchiveProfile,
+            Effect.gen(function* () {
+              const workspaceRoot = yield* agentWorkspaceRoot(input.projectId);
+              const profile = yield* agentProfileStore
+                .archive({
+                  ref: { id: input.id, scope: input.scope },
+                  expectedRevision: input.expectedRevision,
+                  workspaceRoot,
+                })
+                .pipe(Effect.mapError(mapAgentProfileStoreError));
+              return { profile };
+            }),
+            { "rpc.aggregate": "agents" },
+          ),
+        [WS_METHODS.agentsRestoreProfile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentsRestoreProfile,
+            Effect.gen(function* () {
+              const workspaceRoot = yield* agentWorkspaceRoot(input.projectId);
+              const profile = yield* agentProfileStore
+                .restore({
+                  ref: { id: input.id, scope: input.scope },
+                  expectedRevision: input.expectedRevision,
+                  workspaceRoot,
+                })
+                .pipe(Effect.mapError(mapAgentProfileStoreError));
+              return { profile };
+            }),
+            { "rpc.aggregate": "agents" },
+          ),
+        [WS_METHODS.agentsGetRule]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentsGetRule,
+            Effect.gen(function* () {
+              const workspaceRoot = yield* agentWorkspaceRoot(input.projectId);
+              const rule = yield* agentCatalog
+                .getRule({
+                  ref: { id: input.id, scope: input.scope },
+                  workspaceRoot,
+                })
+                .pipe(Effect.mapError(mapAgentCatalogError({ id: input.id, scope: input.scope })));
+              if (input.revision !== undefined && input.revision !== rule.revision) {
+                return yield* new AgentProfileRevisionConflictError({
+                  id: input.id,
+                  scope: input.scope,
+                  expectedRevision: input.revision,
+                  actualRevision: rule.revision,
+                });
+              }
+              return { rule };
+            }),
+            { "rpc.aggregate": "agents" },
+          ),
+        [WS_METHODS.agentsSaveRule]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentsSaveRule,
+            Effect.gen(function* () {
+              const workspaceRoot = yield* agentWorkspaceRoot(input.projectId);
+              const rule = yield* agentRuleStore
+                .save({
+                  rule: input.rule,
+                  ...(input.expectedRevision === undefined
+                    ? {}
+                    : { expectedRevision: input.expectedRevision }),
+                  workspaceRoot,
+                })
+                .pipe(Effect.mapError(mapAgentRuleStoreError));
+              return { rule };
+            }),
+            { "rpc.aggregate": "agents" },
+          ),
+        [WS_METHODS.agentsArchiveRule]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentsArchiveRule,
+            Effect.gen(function* () {
+              const workspaceRoot = yield* agentWorkspaceRoot(input.projectId);
+              const rule = yield* agentRuleStore
+                .archive({
+                  ref: { id: input.id, scope: input.scope },
+                  expectedRevision: input.expectedRevision,
+                  workspaceRoot,
+                })
+                .pipe(Effect.mapError(mapAgentRuleStoreError));
+              return { rule };
+            }),
+            { "rpc.aggregate": "agents" },
+          ),
+        [WS_METHODS.agentsRestoreRule]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentsRestoreRule,
+            Effect.gen(function* () {
+              const workspaceRoot = yield* agentWorkspaceRoot(input.projectId);
+              const rule = yield* agentRuleStore
+                .restore({
+                  ref: { id: input.id, scope: input.scope },
+                  expectedRevision: input.expectedRevision,
+                  workspaceRoot,
+                })
+                .pipe(Effect.mapError(mapAgentRuleStoreError));
+              return { rule };
+            }),
+            { "rpc.aggregate": "agents" },
+          ),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
@@ -2139,6 +2381,14 @@ export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+    const agentCatalog = yield* AgentCatalog.AgentCatalog;
+    const agentProfileStore = yield* AgentProfileStore.AgentProfileStore;
+    const agentRuleStore = yield* AgentRuleStore.AgentRuleStore;
+    const agentProfileServices = Layer.mergeAll(
+      Layer.succeed(AgentCatalog.AgentCatalog, agentCatalog),
+      Layer.succeed(AgentProfileStore.AgentProfileStore, agentProfileStore),
+      Layer.succeed(AgentRuleStore.AgentRuleStore, agentRuleStore),
+    );
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -2159,6 +2409,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         }).pipe(
           Effect.provide(
             makeWsRpcLayer(session, previewAutomationBroker).pipe(
+              Layer.provide(agentProfileServices),
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
@@ -2198,5 +2449,5 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         }),
       ),
     );
-  }),
+  }).pipe(Effect.provide(AgentProfileServices.layer)),
 );

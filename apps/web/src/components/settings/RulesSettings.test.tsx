@@ -1,0 +1,27 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vite-plus/test";
+import { RuleEditor } from "./RulesSettings";
+import { draftFromRule } from "./RulesSettings.logic";
+
+describe("Rules settings editor", () => {
+  it("renders file targeting and reversible lifecycle controls", () => {
+    const markup = renderToStaticMarkup(
+      <RuleEditor
+        draft={draftFromRule()}
+        isNew
+        archived={false}
+        isLoading={false}
+        error={null}
+        notice={null}
+        disabled={false}
+        onChange={() => undefined}
+        onSave={() => undefined}
+        onArchiveRestore={() => undefined}
+      />,
+    );
+    expect(markup).toContain('aria-label="Rule file globs"');
+    expect(markup).toContain('aria-label="Rule profiles"');
+    expect(markup).toContain('aria-label="Rule instructions"');
+    expect(markup).toContain("Save");
+  });
+});

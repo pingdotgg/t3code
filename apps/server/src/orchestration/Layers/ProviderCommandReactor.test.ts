@@ -45,6 +45,7 @@ import {
 import { makeProviderRegistryLayer } from "../../provider/testUtils/providerRegistryMock.ts";
 import { TextGeneration, type TextGenerationShape } from "../../textGeneration/TextGeneration.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
+import { AgentPromptResolver } from "../../agents/AgentPromptResolver.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
@@ -150,6 +151,7 @@ describe("ProviderCommandReactor", () => {
     readonly requiresNewThreadForModelChange?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
+    readonly resolveAgentPrompt?: (message: string) => string;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -298,6 +300,12 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
     );
+    const resolveAgentPrompt = vi.fn((resolverInput: { readonly message: string }) =>
+      Effect.succeed({
+        message: input?.resolveAgentPrompt?.(resolverInput.message) ?? resolverInput.message,
+        profile: null,
+      }),
+    );
     const providerSnapshots = [
       {
         instanceId: modelSelection.instanceId,
@@ -413,6 +421,11 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
       Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(
+        Layer.succeed(AgentPromptResolver, {
+          resolve: resolveAgentPrompt,
+        }),
+      ),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -502,6 +515,7 @@ describe("ProviderCommandReactor", () => {
       refreshStatus,
       generateBranchName,
       generateThreadTitle,
+      resolveAgentPrompt,
       runtimeSessions,
       stateDir,
       drain,
@@ -550,6 +564,41 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.status).toBe("starting");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("resolves the pinned Agent prompt before sending the provider turn", async () => {
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const harness = await createHarness({
+      resolveAgentPrompt: (message) => `agent envelope\n${message}`,
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-agent-prompt"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-agent-prompt"),
+          role: "user",
+          text: "delegate this",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.resolveAgentPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "delegate this",
+        workspaceRoot: "/tmp/provider-project",
+      }),
+    );
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      input: "agent envelope\ndelegate this",
+    });
   });
 
   effectIt.effect("projects starting before a slow provider session finishes", () =>

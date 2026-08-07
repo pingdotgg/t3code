@@ -12,6 +12,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 import packageJson from "../../package.json" with { type: "json" };
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
+import * as McpToolkit from "./McpToolkit.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import {
   PreviewSnapshotToolkitHandlersLive,
@@ -22,6 +23,8 @@ import {
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
+import { AgentToolkitHandlersLive } from "./toolkits/agents/handlers.ts";
+import { AgentToolkit } from "./toolkits/agents/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -211,9 +214,16 @@ const PreviewSnapshotRegistrationLive = Layer.effectDiscard(registerPreviewSnaps
   Layer.provide(PreviewSnapshotToolkitHandlersLive),
 );
 
-export const PreviewToolkitRegistrationLive = Layer.mergeAll(
-  PreviewStandardToolkitRegistrationLive,
-  PreviewSnapshotRegistrationLive,
+const ToolkitRegistrations = [
+  McpToolkit.makeMcpToolkitRegistration("preview", PreviewStandardToolkitRegistrationLive),
+  McpToolkit.makeMcpToolkitRegistration("preview", PreviewSnapshotRegistrationLive),
+] as const;
+
+export const PreviewToolkitRegistrationLive =
+  McpToolkit.composeMcpToolkitRegistrations(ToolkitRegistrations);
+
+export const AgentToolkitRegistrationLive = McpServer.toolkit(AgentToolkit).pipe(
+  Layer.provide(AgentToolkitHandlersLive),
 );
 
 const McpTransportLive = McpServer.layerHttp({
@@ -223,4 +233,7 @@ const McpTransportLive = McpServer.layerHttp({
   protocols: [McpProtocol.v2025_06_18],
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
-export const layer = PreviewToolkitRegistrationLive.pipe(Layer.provideMerge(McpTransportLive));
+export const layer = Layer.mergeAll(
+  PreviewToolkitRegistrationLive,
+  AgentToolkitRegistrationLive,
+).pipe(Layer.provideMerge(McpTransportLive));

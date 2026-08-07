@@ -45,6 +45,8 @@ import {
 } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import { AgentPromptResolver } from "../../agents/AgentPromptResolver.ts";
+import { resolveAgentRuntimeCompatibility } from "../../provider/AgentRuntimeCompatibility.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -320,6 +322,7 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const agentPromptResolver = yield* AgentPromptResolver;
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
@@ -746,6 +749,50 @@ const make = Effect.gen(function* () {
         new Error(`Thread '${input.threadId}' was not found in read model.`),
       );
     }
+    const project = yield* resolveProject(thread.projectId);
+    const workspaceRoot =
+      resolveThreadWorkspaceCwd({ thread, projects: project ? [project] : [] }) ?? process.cwd();
+    const resolvedPrompt = yield* agentPromptResolver
+      .resolve({
+        profileRef: thread.agentProfile ?? null,
+        workspaceRoot,
+        message: input.messageText,
+      })
+      .pipe(
+        Effect.mapError(
+          (error) =>
+            new ProviderAdapterRequestError({
+              provider: "agent-profile",
+              method: "thread.turn.start",
+              detail: error.detail,
+            }),
+        ),
+      );
+    const requestedModelSelection =
+      input.modelSelection ?? threadModelSelections.get(input.threadId) ?? thread.modelSelection;
+    const requestedCapabilities = yield* providerService.getCapabilities(
+      requestedModelSelection.instanceId,
+    );
+    if (resolvedPrompt.profile !== null) {
+      const profile = resolvedPrompt.profile;
+      const compatibility = resolveAgentRuntimeCompatibility(requestedCapabilities, {
+        delegation: profile.delegation.policy === "allowlist",
+        instructionPriority: profile.instructionPriority,
+        nativeToolPolicy:
+          profile.tools.policy === "allowlist" ? "exact" : profile.requirements.toolRequirement,
+        tokenBudget: profile.budgets.maxTotalTokens !== undefined,
+        monetaryBudget: profile.budgets.maxEstimatedCostUsd !== undefined,
+      });
+      if (!compatibility.compatible) {
+        return yield* new ProviderAdapterRequestError({
+          provider: providerErrorLabelFromInstanceHint({
+            instanceId: String(requestedModelSelection.instanceId),
+          }),
+          method: "thread.turn.start",
+          detail: `The selected Agent profile cannot be enforced by this provider: ${compatibility.issues.join(", ")}.`,
+        });
+      }
+    }
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       pendingTurnStart: true,
@@ -753,26 +800,24 @@ const make = Effect.gen(function* () {
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }
-    const normalizedInput = toNonEmptyProviderInput(input.messageText);
+    const normalizedInput = toNonEmptyProviderInput(resolvedPrompt.message);
     const normalizedAttachments = input.attachments ?? [];
     const activeSession = yield* providerService
       .listSessions()
       .pipe(
         Effect.map((sessions) => sessions.find((session) => session.threadId === input.threadId)),
       );
-    const sessionModelSwitch =
+    const activeCapabilities =
       activeSession === undefined
-        ? "in-session"
+        ? undefined
         : activeSession.providerInstanceId === undefined
           ? yield* new ProviderAdapterRequestError({
               provider: providerErrorLabel(activeSession.provider),
               method: "thread.turn.start",
               detail: `Active provider session '${activeSession.threadId}' is missing a provider instance id.`,
             })
-          : (yield* providerService.getCapabilities(activeSession.providerInstanceId))
-              .sessionModelSwitch;
-    const requestedModelSelection =
-      input.modelSelection ?? threadModelSelections.get(input.threadId) ?? thread.modelSelection;
+          : yield* providerService.getCapabilities(activeSession.providerInstanceId);
+    const sessionModelSwitch = activeCapabilities?.sessionModelSwitch ?? "in-session";
     const modelForTurn =
       sessionModelSwitch === "unsupported" && input.modelSelection === undefined
         ? activeSession?.model !== undefined

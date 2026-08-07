@@ -372,6 +372,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          agentProfile: command.agentProfile ?? null,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -830,6 +831,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           ...(branch !== undefined ? { branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...(command.agentProfile !== undefined ? { agentProfile: command.agentProfile } : {}),
           updatedAt: occurredAt,
         },
       };
@@ -975,6 +977,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           runtimeMode: targetThread.runtimeMode,
           interactionMode: targetThread.interactionMode,
           ...(sourceProposedPlan !== undefined ? { sourceProposedPlan } : {}),
+          ...(command.agentProfile !== undefined ? { agentProfile: command.agentProfile } : {}),
           createdAt: command.createdAt,
         },
       };

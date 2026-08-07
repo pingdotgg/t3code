@@ -10,6 +10,7 @@ import {
 import {
   ArchiveIcon,
   ArrowLeftIcon,
+  BotMessageSquareIcon,
   BotIcon,
   FlaskConicalIcon,
   GitBranchIcon,
@@ -50,6 +51,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/appearance": PaletteIcon,
   "/settings/keybindings": KeyboardIcon,
   "/settings/providers": BotIcon,
+  "/settings/agents": BotMessageSquareIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/connections": Link2Icon,
   "/settings/beta": FlaskConicalIcon,

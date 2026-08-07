@@ -47,6 +47,10 @@
       "types": "./src/state/assets.ts",
       "default": "./src/state/assets.ts"
     },
+    "./state/agents": {
+      "types": "./src/state/agents.ts",
+      "default": "./src/state/agents.ts"
+    },
     "./state/connections": {
       "types": "./src/state/connections.ts",
       "default": "./src/state/connections.ts"

@@ -23,6 +23,7 @@ import { Route as SettingsConnectionsRouteImport } from './routes/settings.conne
 import { Route as SettingsBetaRouteImport } from './routes/settings.beta'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
+import { Route as SettingsAgentsRouteImport } from './routes/settings.agents'
 import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
@@ -96,6 +97,11 @@ const SettingsAppearanceRoute = SettingsAppearanceRouteImport.update({
   path: '/appearance',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsAgentsRoute = SettingsAgentsRouteImport.update({
+  id: '/agents',
+  path: '/agents',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const ConnectCallbackRoute = ConnectCallbackRouteImport.update({
   id: '/connect_/callback',
   path: '/connect/callback',
@@ -119,6 +125,7 @@ export interface FileRoutesByFullPath {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/connect/callback': typeof ConnectCallbackRoute
+  '/settings/agents': typeof SettingsAgentsRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/beta': typeof SettingsBetaRoute
@@ -136,6 +143,7 @@ export interface FileRoutesByTo {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/connect/callback': typeof ConnectCallbackRoute
+  '/settings/agents': typeof SettingsAgentsRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/beta': typeof SettingsBetaRoute
@@ -156,6 +164,7 @@ export interface FileRoutesById {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/connect_/callback': typeof ConnectCallbackRoute
+  '/settings/agents': typeof SettingsAgentsRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/beta': typeof SettingsBetaRoute
@@ -177,6 +186,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/connect/callback'
+    | '/settings/agents'
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/beta'
@@ -194,6 +204,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/connect/callback'
+    | '/settings/agents'
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/beta'
@@ -213,6 +224,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/connect_/callback'
+    | '/settings/agents'
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/beta'
@@ -335,6 +347,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAppearanceRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/agents': {
+      id: '/settings/agents'
+      path: '/agents'
+      fullPath: '/settings/agents'
+      preLoaderRoute: typeof SettingsAgentsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/connect_/callback': {
       id: '/connect_/callback'
       path: '/connect/callback'
@@ -374,6 +393,7 @@ const ChatRouteChildren: ChatRouteChildren = {
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 
 interface SettingsRouteChildren {
+  SettingsAgentsRoute: typeof SettingsAgentsRoute
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
   SettingsArchivedRoute: typeof SettingsArchivedRoute
   SettingsBetaRoute: typeof SettingsBetaRoute
@@ -386,6 +406,7 @@ interface SettingsRouteChildren {
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
+  SettingsAgentsRoute: SettingsAgentsRoute,
   SettingsAppearanceRoute: SettingsAppearanceRoute,
   SettingsArchivedRoute: SettingsArchivedRoute,
   SettingsBetaRoute: SettingsBetaRoute,
