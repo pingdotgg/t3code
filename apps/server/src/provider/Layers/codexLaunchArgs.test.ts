@@ -78,6 +78,16 @@ describe("resolveCodexLaunchArgs", () => {
       '-c mcp_servers."cua-driver".command="/existing/cua-driver"',
     );
   });
+
+  it("lets an appended Cua Driver launch override win", () => {
+    NodeAssert.equal(
+      resolveCodexLaunchArgs("--strict-config", {
+        T3CODE_CODEX_APPEND_LAUNCH_ARGS: '-c mcp_servers.cua-driver.command="/existing/cua-driver"',
+        T3CODE_CODEX_CUA_LAUNCH_ARGS: '-c mcp_servers.cua-driver.command="/bundled/cua-driver"',
+      }),
+      '--strict-config -c mcp_servers.cua-driver.command="/existing/cua-driver"',
+    );
+  });
 });
 
 describe("hasConfiguredCuaDriver", () => {

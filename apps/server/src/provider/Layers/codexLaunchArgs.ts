@@ -94,7 +94,11 @@ export const resolveCodexLaunchArgs = (
   const appended = environment[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV]?.trim() || "";
   const cuaLaunchArgs = environment[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV]?.trim() || "";
   const existingCuaDriver =
-    cuaLaunchArgs.length > 0 && hasConfiguredCuaDriver(configured, options.configToml);
+    cuaLaunchArgs.length > 0 &&
+    hasConfiguredCuaDriver(
+      [configured, appended].filter((value) => value.length > 0).join(" "),
+      options.configToml,
+    );
   return [configured, appended, existingCuaDriver ? "" : cuaLaunchArgs]
     .filter((value) => value.length > 0)
     .join(" ");
