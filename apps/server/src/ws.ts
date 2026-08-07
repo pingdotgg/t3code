@@ -294,10 +294,12 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // When a resuming client's cursor is more than this many events behind the
 // current head, skip the per-event catch-up replay and send a fresh shell
-// snapshot instead. Replaying each intervening event costs a shell refetch;
-// past this gap a single O(active-threads) snapshot is cheaper and bounded.
-// Matches the event store's default page size (DEFAULT_READ_FROM_SEQUENCE_LIMIT).
-const SHELL_RESUME_MAX_GAP = 1_000;
+// snapshot instead. Past this gap a single O(active-threads) snapshot is
+// cheaper and bounded. The shell replay is coalesced per aggregate (see
+// coalesceShellStream), so its cost stays bounded well past the event store's
+// default page size and a wider gap keeps wake/resume on the cheap replay
+// path instead of forcing a full snapshot.
+const SHELL_RESUME_MAX_GAP = 5_000;
 
 // Same bound for thread resume. The replay reads the *global* event range and
 // filters per-thread afterwards, so a stale cursor far behind the head would

@@ -298,6 +298,12 @@ const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEdit
   return yield* buildAvailableEditors(platform, env);
 });
 
+// Editor discovery walks PATH for every known editor and runs for every
+// client connect (the server config embeds the available editors). Memoize
+// the discovered set for a bounded window so repeat connects skip even the
+// per-command cache lookups in @t3tools/shared/shell.
+const EDITOR_DISCOVERY_CACHE_TTL = "60 seconds";
+
 /**
  * ExternalLauncher - Service tag for browser/editor launch operations.
  */
@@ -443,8 +449,13 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
 
+  const cachedAvailableEditors = yield* Effect.cachedWithTTL(
+    provideCommandResolutionServices(resolveAvailableEditors()),
+    EDITOR_DISCOVERY_CACHE_TTL,
+  );
+
   return ExternalLauncher.of({
-    resolveAvailableEditors: () => provideCommandResolutionServices(resolveAvailableEditors()),
+    resolveAvailableEditors: () => cachedAvailableEditors,
     launchBrowser: (target) =>
       launchBrowser(target).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
