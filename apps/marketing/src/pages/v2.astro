@@ -16,9 +16,9 @@ const agents = [
 ] as const;
 
 const surfaces = [
-  { id: "desk", label: "At your desk", image: "/demo-states/inbox-overview-crop.png" },
+  { id: "desk", label: "At your desk", image: null },
   { id: "phone", label: "From your phone", image: "/mobile-states/ios-thread.png" },
-  { id: "review", label: "Inside the diff", image: "/demo-states/review-diff-crop.png" },
+  { id: "tablet", label: "On your tablet too", image: "/mobile-states/ipad-threads.png" },
 ] as const;
 ---
 
@@ -39,31 +39,38 @@ const surfaces = [
           subscriptions you already have.
         </p>
         <div class="v2-actions">
-          <a class="v2-button v2-button--primary" href="/download">Download T3 Code</a>
+          <div class="v2-download-row">
+            <a class="v2-button v2-button--primary" href="/download" data-v2-download>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="currentColor" d="M16.67 13.71c.02 2.25 1.97 3 1.99 3.01-.02.05-.31 1.07-1.03 2.12-.62.91-1.28 1.82-2.31 1.84-1 .02-1.32-.6-2.47-.6-1.16 0-1.51.58-2.46.62-1 .04-1.75-.99-2.38-1.9-1.29-1.86-2.27-5.25-.95-7.54a3.69 3.69 0 0 1 3.13-1.9c.98-.02 1.9.66 2.48.66.57 0 1.65-.82 2.79-.7.47.02 1.8.19 2.65 1.44-.07.04-1.59.93-1.57 2.95ZM14.72 8.1c.52-.63.87-1.51.77-2.39-.75.03-1.66.5-2.2 1.13-.48.55-.9 1.45-.79 2.31.84.07 1.7-.43 2.22-1.05Z" />
+              </svg>
+              <span data-v2-download-label>Download for macOS</span>
+            </a>
+            <div class="v2-channel-picker">
+              <button type="button" aria-haspopup="true" aria-expanded="false" data-v2-channel-trigger>
+                <span data-v2-channel-label>Latest</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+              </button>
+              <div class="v2-channel-menu" hidden data-v2-channel-menu>
+                <button type="button" data-stage="latest" data-active="true">Latest</button>
+                <button type="button" data-stage="nightly">Nightly</button>
+                <button type="button" data-stage="dev">Dev</button>
+              </div>
+            </div>
+          </div>
           <a class="v2-button" href="https://github.com/pingdotgg/t3code">View source</a>
         </div>
       </header>
 
-      <div class="v2-demo-wrap" aria-label="Interactive T3 Code product demo">
-        <div class="v2-demo-glow" aria-hidden="true"></div>
-        <div class="v2-demo-frame">
-          <div class="v2-demo-bar">
-            <span><i></i> Local workspace</span>
-            <code>npx t3</code>
-          </div>
-          <iframe
-            src="/sidebar-demo/demo.html"
-            title="Interactive T3 Code demo"
-            loading="eager"
-            allow="clipboard-write"></iframe>
-        </div>
+      <div class="v2-provider-field" aria-label="Supported coding agents">
+        {agents.map((agent, index) => (
+          <span style={`--provider-index: ${index}`}>
+            <small>{String(index + 1).padStart(2, "0")}</small>
+            <img src={agent.icon} alt="" width="28" height="28" />
+            {agent.name}
+          </span>
+        ))}
       </div>
-
-      <aside class="v2-hero-points" aria-label="T3 Code principles">
-        <p><span>01</span> Your provider accounts</p>
-        <p><span>02</span> Your machine and repos</p>
-        <p><span>03</span> One interface everywhere</p>
-      </aside>
     </div>
 
     <div class="v2-shell v2-proof">
@@ -100,7 +107,7 @@ const surfaces = [
             ))}
           </div>
           <div class="v2-system-message">
-            <p>Start locally. Check the same thread remotely. Review the exact diff without rebuilding context.</p>
+            <p>Enable T3 Connect and use T3 Code from anywhere.</p>
             <code><span>$</span> npx t3</code>
           </div>
         </article>
@@ -115,7 +122,16 @@ const surfaces = [
               data-v2-panel={surface.id}
               hidden={index !== 0}
             >
-              <img src={surface.image} alt={`T3 Code ${surface.label.toLowerCase()} view`} loading="lazy" />
+              {surface.id === "desk" ? (
+                <iframe
+                  src="/sidebar-demo/demo.html"
+                  title="Interactive T3 Code desktop demo"
+                  loading="lazy"
+                  allow="clipboard-write"
+                />
+              ) : (
+                <img src={surface.image} alt={`T3 Code ${surface.label.toLowerCase()} view`} loading="lazy" />
+              )}
             </div>
           ))}
         </div>
@@ -152,17 +168,91 @@ const surfaces = [
     </div>
   </section>
 
-  <section class="v2-final">
-    <div class="v2-shell v2-final-inner">
-      <h2>Five agents.<br />One place to run them.</h2>
-      <div>
-        <p>Open at the core. Local by default. Remote when you need it.</p>
-        <a class="v2-button v2-button--primary" href="/download">Get T3 Code</a>
-      </div>
-    </div>
-  </section>
-
   <script>
+    type Stage = "latest" | "nightly" | "dev";
+
+    const stageNames: Record<Stage, string> = {
+      latest: "Latest",
+      nightly: "Nightly",
+      dev: "Dev",
+    };
+    const downloadButton = document.querySelector<HTMLAnchorElement>("[data-v2-download]");
+    const downloadLabel = document.querySelector<HTMLElement>("[data-v2-download-label]");
+    const channelTrigger = document.querySelector<HTMLButtonElement>("[data-v2-channel-trigger]");
+    const channelLabel = document.querySelector<HTMLElement>("[data-v2-channel-label]");
+    const channelMenu = document.querySelector<HTMLElement>("[data-v2-channel-menu]");
+    const channelOptions = channelMenu?.querySelectorAll<HTMLButtonElement>("button[data-stage]") ?? [];
+
+    const isStage = (value: unknown): value is Stage =>
+      value === "latest" || value === "nightly" || value === "dev";
+    const platformLabel = /Win/i.test(navigator.userAgent)
+      ? "Download for Windows"
+      : /Linux/i.test(navigator.userAgent)
+        ? "Download for Linux"
+        : "Download for macOS";
+    const initialStage = document.documentElement.dataset.stage;
+    let selectedStage: Stage = isStage(initialStage) ? initialStage : "latest";
+
+    const applyDownloadStage = (stage: Stage) => {
+      selectedStage = stage;
+      if (channelLabel) channelLabel.textContent = stageNames[stage];
+      if (downloadLabel) downloadLabel.textContent = stage === "dev" ? "Copy repo link" : platformLabel;
+      if (downloadButton) downloadButton.href = stage === "dev" ? "#" : "/download";
+      for (const option of channelOptions) {
+        option.dataset.active = String(option.dataset.stage === stage);
+      }
+    };
+
+    const setChannelOpen = (open: boolean) => {
+      if (!channelMenu || !channelTrigger) return;
+      channelMenu.hidden = !open;
+      channelTrigger.setAttribute("aria-expanded", String(open));
+    };
+
+    channelTrigger?.addEventListener("click", () =>
+      setChannelOpen(channelMenu?.hasAttribute("hidden") ?? false),
+    );
+    for (const option of channelOptions) {
+      option.addEventListener("click", () => {
+        const stage = option.dataset.stage;
+        if (!isStage(stage)) return;
+        document.dispatchEvent(new CustomEvent("t3-marketing-stage-request", { detail: { stage } }));
+        applyDownloadStage(stage);
+        setChannelOpen(false);
+      });
+    }
+    document.addEventListener("click", (event) => {
+      if (
+        channelMenu &&
+        channelTrigger &&
+        !channelMenu.hidden &&
+        event.target instanceof Node &&
+        !channelMenu.contains(event.target) &&
+        !channelTrigger.contains(event.target)
+      ) {
+        setChannelOpen(false);
+      }
+    });
+    document.addEventListener("t3-marketing-stage-change", (event) => {
+      const stage = (event as CustomEvent<{ stage?: unknown }>).detail?.stage;
+      if (isStage(stage)) applyDownloadStage(stage);
+    });
+    downloadButton?.addEventListener("click", async (event) => {
+      if (selectedStage !== "dev") return;
+      event.preventDefault();
+      const command = "git clone https://github.com/pingdotgg/t3code.git";
+      try {
+        await navigator.clipboard.writeText(command);
+        if (downloadLabel) downloadLabel.textContent = "Copied. Go build.";
+        window.setTimeout(() => {
+          if (selectedStage === "dev" && downloadLabel) downloadLabel.textContent = "Copy repo link";
+        }, 1600);
+      } catch {
+        window.prompt("Copy this command:", command);
+      }
+    });
+    applyDownloadStage(selectedStage);
+
     const surfaceTabs = document.querySelectorAll<HTMLButtonElement>("[data-v2-surface]");
     const surfacePanels = document.querySelectorAll<HTMLElement>("[data-v2-panel]");
 
@@ -210,16 +300,15 @@ const surfaces = [
 
   .v2-hero-grid {
     display: grid;
-    grid-template-columns: minmax(250px, 0.78fr) minmax(560px, 1.72fr) minmax(210px, 0.62fr);
+    grid-template-columns: minmax(330px, 0.8fr) minmax(520px, 1.2fr);
     align-items: center;
-    gap: 42px;
+    gap: 90px;
     min-height: 610px;
   }
 
   .v2-hero-copy h1,
   .v2-section-heading h2,
-  .v2-connect h2,
-  .v2-final h2 {
+  .v2-connect h2 {
     font-weight: 500;
     letter-spacing: -0.055em;
     line-height: 0.98;
@@ -244,6 +333,79 @@ const surfaces = [
     flex-wrap: wrap;
     gap: 10px;
     margin-top: 34px;
+  }
+
+  .v2-download-row {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .v2-download-row .v2-button--primary {
+    min-width: 190px;
+  }
+
+  .v2-download-row .v2-button--primary svg {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    margin-right: 8px;
+  }
+
+  .v2-channel-picker {
+    position: relative;
+  }
+
+  .v2-channel-picker > button {
+    height: 100%;
+    min-width: 92px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 0 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    color: #aaaab2;
+    background: #08080a;
+    font-size: 12px;
+  }
+
+  .v2-channel-picker > button svg {
+    width: 12px;
+    height: 12px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+  }
+
+  .v2-channel-menu {
+    position: absolute;
+    top: calc(100% + 7px);
+    right: 0;
+    z-index: 10;
+    min-width: 112px;
+    padding: 5px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: rgba(8, 8, 10, 0.96);
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(18px);
+  }
+
+  .v2-channel-menu button {
+    width: 100%;
+    padding: 7px 9px;
+    border-radius: 6px;
+    color: #777780;
+    font-size: 12px;
+    text-align: left;
+  }
+
+  .v2-channel-menu button:hover,
+  .v2-channel-menu button[data-active="true"] {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.07);
   }
 
   .v2-button {
@@ -272,85 +434,49 @@ const surfaces = [
     font-weight: 600;
   }
 
-  .v2-demo-wrap {
-    position: relative;
-    min-width: 0;
-    transform: translateX(-1.5%);
-  }
-
-  .v2-demo-glow {
-    position: absolute;
-    inset: 15% 8%;
-    background: rgba(123, 105, 255, 0.22);
-    filter: blur(90px);
-  }
-
-  .v2-demo-frame {
-    position: relative;
-    aspect-ratio: 1.42;
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 18px;
-    background: #09090b;
-    box-shadow: 0 40px 100px rgba(0, 0, 0, 0.72);
-    overflow: hidden;
-    transform: perspective(1600px) rotateY(-2.5deg) scale(1.06);
-  }
-
-  .v2-demo-bar {
-    height: 38px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 14px;
-    border-bottom: 1px solid var(--border);
-    color: #777780;
-    font-size: 10px;
-  }
-
-  .v2-demo-bar span {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-  }
-
-  .v2-demo-bar i {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: #7fe596;
-    box-shadow: 0 0 16px rgba(127, 229, 150, 0.8);
-  }
-
-  .v2-demo-bar code {
-    font-family: var(--font-mono);
-  }
-
-  .v2-demo-frame iframe {
-    width: 100%;
-    height: calc(100% - 38px);
-    border: 0;
-    background: #09090b;
-  }
-
-  .v2-hero-points {
+  .v2-provider-field {
     display: grid;
-    gap: 24px;
-  }
-
-  .v2-hero-points p {
-    padding-top: 14px;
+    align-content: center;
+    min-height: 470px;
     border-top: 1px solid var(--border);
-    color: #b0b0b7;
-    font-size: 13px;
-    line-height: 1.45;
+    border-bottom: 1px solid var(--border);
   }
 
-  .v2-hero-points span {
-    display: block;
-    margin-bottom: 7px;
-    color: #56565f;
+  .v2-provider-field > span {
+    display: grid;
+    grid-template-columns: 34px 30px 1fr;
+    align-items: center;
+    gap: 15px;
+    min-height: 82px;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--border);
+    color: #7e7e87;
+    font-size: clamp(20px, 2vw, 30px);
+    letter-spacing: -0.03em;
+    transition: color 0.18s ease, padding-left 0.18s ease;
+  }
+
+  .v2-provider-field > span:last-child {
+    border-bottom: 0;
+  }
+
+  .v2-provider-field > span:hover {
+    padding-left: 30px;
+    color: #fff;
+  }
+
+  .v2-provider-field small {
+    color: #484850;
     font-family: var(--font-mono);
     font-size: 9px;
+  }
+
+  .v2-provider-field img {
+    width: 24px;
+    height: 24px;
+    object-fit: contain;
+    opacity: 0.75;
+    filter: grayscale(1);
   }
 
   .v2-proof {
@@ -395,8 +521,7 @@ const surfaces = [
   }
 
   .v2-system,
-  .v2-connect,
-  .v2-final {
+  .v2-connect {
     padding: 150px 0;
     border-bottom: 1px solid var(--border);
   }
@@ -497,6 +622,15 @@ const surfaces = [
     display: none;
   }
 
+  .v2-surface-panel iframe {
+    width: 100%;
+    height: 100%;
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    background: #09090b;
+    box-shadow: 0 35px 90px rgba(0, 0, 0, 0.6);
+  }
+
   .v2-surface-panel img {
     max-width: 100%;
     max-height: 530px;
@@ -508,6 +642,11 @@ const surfaces = [
   .v2-surface-panel[data-v2-panel="phone"] img {
     max-width: 285px;
     max-height: 530px;
+  }
+
+  .v2-surface-panel[data-v2-panel="tablet"] img {
+    max-width: 84%;
+    max-height: 510px;
   }
 
   .v2-connect-grid {
@@ -614,35 +753,9 @@ const surfaces = [
     font-size: 9px;
   }
 
-  .v2-final-inner {
-    display: grid;
-    grid-template-columns: 1fr 0.7fr;
-    align-items: end;
-    gap: 60px;
-  }
-
-  .v2-final h2 {
-    font-size: clamp(56px, 8vw, 120px);
-  }
-
-  .v2-final-inner > div {
-    display: grid;
-    justify-items: start;
-    gap: 28px;
-  }
-
-  .v2-final p {
-    max-width: 390px;
-    color: #7e7e86;
-  }
-
   @media (max-width: 1100px) {
     .v2-hero-grid {
       grid-template-columns: minmax(240px, 0.8fr) minmax(480px, 1.4fr);
-    }
-
-    .v2-hero-points {
-      display: none;
     }
 
     .v2-agent-list span {
@@ -668,8 +781,7 @@ const surfaces = [
     .v2-hero-grid,
     .v2-section-heading,
     .v2-system-grid,
-    .v2-connect-grid,
-    .v2-final-inner {
+    .v2-connect-grid {
       grid-template-columns: 1fr;
     }
 
@@ -677,12 +789,8 @@ const surfaces = [
       gap: 70px;
     }
 
-    .v2-demo-wrap {
-      transform: none;
-    }
-
-    .v2-demo-frame {
-      transform: none;
+    .v2-provider-field {
+      min-height: 410px;
     }
 
     .v2-proof {
@@ -690,8 +798,7 @@ const surfaces = [
     }
 
     .v2-system,
-    .v2-connect,
-    .v2-final {
+    .v2-connect {
       padding: 100px 0;
     }
 
@@ -720,10 +827,6 @@ const surfaces = [
     .v2-connect-grid {
       gap: 70px;
     }
-
-    .v2-final-inner > div {
-      margin-top: 20px;
-    }
   }
 
   @media (max-width: 560px) {
@@ -733,6 +836,15 @@ const surfaces = [
 
     .v2-hero-copy h1 {
       font-size: 52px;
+    }
+
+    .v2-download-row {
+      width: 100%;
+    }
+
+    .v2-download-row .v2-button--primary {
+      flex: 1;
+      min-width: 0;
     }
 
     .v2-proof {
