@@ -6,7 +6,6 @@ import { useCallback, useRef } from "react";
 import { Alert } from "react-native";
 
 import { showConfirmDialog } from "../../components/ConfirmDialogHost";
-import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
 import {
   pinOrderKeyBetween,
@@ -458,22 +457,17 @@ export function useThreadListActions(): {
             environmentSupportsPinReorder(shell.environmentId),
         ),
       );
-      const orderedIds = pinned.map((shell) => scopedThreadKey(shell.environmentId, shell.id));
+      const orderedIds = pinned.map(threadActionKey);
       const assignments = planPinnedMove({
         orderedIds,
         keysById: new Map(
-          pinned.map((shell) => [
-            scopedThreadKey(shell.environmentId, shell.id),
-            shell.pinOrderKey ?? null,
-          ]),
+          pinned.map((shell) => [threadActionKey(shell), shell.pinOrderKey ?? null]),
         ),
-        movedId: scopedThreadKey(thread.environmentId, thread.id),
+        movedId: threadActionKey(thread),
         direction,
       });
       if (assignments === null || assignments.length === 0) return false;
-      const shellByKey = new Map(
-        pinned.map((shell) => [scopedThreadKey(shell.environmentId, shell.id), shell]),
-      );
+      const shellByKey = new Map(pinned.map((shell) => [threadActionKey(shell), shell]));
       selectionHaptic();
       movePinnedInFlightRef.current = true;
       try {

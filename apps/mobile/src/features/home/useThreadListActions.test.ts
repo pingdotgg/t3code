@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => {
     "unpin",
     "unsettle",
   );
+  const threadShellsAtom = {};
 
   return {
     alert: vi.fn(),
@@ -49,6 +50,8 @@ const mocks = vi.hoisted(() => {
     impactAsync: vi.fn(),
     refreshArchivedThreadsForEnvironment: vi.fn(),
     serverConfigs: new Map<string, unknown>(),
+    threadShells: [] as EnvironmentThreadShell[],
+    threadShellsAtom,
     threadCommands,
   };
 });
@@ -82,7 +85,8 @@ vi.mock("../archive/useArchivedThreadSnapshots", () => ({
 
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
-    get: () => mocks.serverConfigs,
+    get: (atom: object) =>
+      atom === mocks.threadShellsAtom ? mocks.threadShells : mocks.serverConfigs,
   },
 }));
 
@@ -91,6 +95,7 @@ vi.mock("../../state/server", () => ({
 }));
 
 vi.mock("../../state/threads", () => ({
+  environmentThreadShells: { threadShellsAtom: mocks.threadShellsAtom },
   threadEnvironment: mocks.threadCommands.commands,
 }));
 
@@ -127,6 +132,7 @@ describe("useThreadListActions merged archive and settlement contract", () => {
     mocks.canSnooze.mockReturnValue(true);
     mocks.impactAsync.mockResolvedValue(undefined);
     mocks.serverConfigs.clear();
+    mocks.threadShells.length = 0;
     mocks.serverConfigs.set("environment-1", {
       environment: { capabilities: { threadSettlement: true, threadSnooze: true } },
     });
@@ -259,5 +265,40 @@ describe("useThreadListActions merged archive and settlement contract", () => {
 
     completeFirst(success);
     await expect(first).resolves.toBe(true);
+  });
+
+  it("keeps pinned reorder identities collision-safe across environments", async () => {
+    const firstThread = {
+      ...makeThread("thread", "environment:a"),
+      archivedAt: null,
+      createdAt: "2026-08-07T10:00:00.000Z",
+      pinnedAt: "2026-08-07T10:00:00.000Z",
+      pinOrderKey: "f",
+    };
+    const secondThread = {
+      ...makeThread("a:thread", "environment"),
+      archivedAt: null,
+      createdAt: "2026-08-07T11:00:00.000Z",
+      pinnedAt: "2026-08-07T11:00:00.000Z",
+      pinOrderKey: "m",
+    };
+    mocks.serverConfigs.set("environment:a", {
+      environment: { capabilities: { threadPinReorder: true } },
+    });
+    mocks.serverConfigs.set("environment", {
+      environment: { capabilities: { threadPinReorder: true } },
+    });
+    mocks.threadShells.push(firstThread, secondThread);
+    const actions = useThreadListActions();
+
+    await expect(actions.movePinnedThread(secondThread, "up")).resolves.toBe(true);
+    expect(mocks.threadCommands.mutations.reorderPin).toHaveBeenCalledOnce();
+    expect(mocks.threadCommands.mutations.reorderPin).toHaveBeenCalledWith({
+      environmentId: "environment",
+      input: {
+        threadId: "a:thread",
+        orderKey: expect.any(String),
+      },
+    });
   });
 });
