@@ -387,6 +387,14 @@ function ProjectGroupLabel(props: {
   );
 }
 
+// Long-press row menu, mirroring the home/sidebar thread rows. On Android this
+// is the reliable action affordance (swipe-then-tap on the narrow action button
+// is fiddly), and it is the only non-swipe way to unarchive a thread.
+const ARCHIVED_THREAD_ROW_MENU_ACTIONS: MenuAction[] = [
+  { id: "unarchive", title: "Unarchive", image: "arrow.uturn.backward" },
+  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
+];
+
 function ArchivedThreadRow(props: {
   readonly environmentLabel: string | null;
   readonly isFirst: boolean;
@@ -407,6 +415,14 @@ function ArchivedThreadRow(props: {
   const timestamp = relativeTime(props.thread.archivedAt ?? props.thread.updatedAt);
   const subtitle = [props.environmentLabel, props.thread.branch].filter((part): part is string =>
     Boolean(part),
+  );
+  const { onDelete, onUnarchive } = props;
+  const handleMenuAction = useCallback(
+    ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
+      if (nativeEvent.event === "unarchive") onUnarchive();
+      if (nativeEvent.event === "delete") onDelete();
+    },
+    [onDelete, onUnarchive],
   );
   return (
     <ThreadSwipeable
@@ -430,51 +446,67 @@ function ArchivedThreadRow(props: {
         label: "Unarchive",
         onPress: props.onUnarchive,
       }}
+      resetKey={`${props.thread.environmentId}:${props.thread.id}`}
       simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
       threadTitle={props.thread.title}
     >
       {() => (
-        <View
-          className="flex-row items-center gap-3 bg-card px-4 py-3"
-          style={{
-            borderBottomColor: separatorColor,
-            borderBottomWidth: props.isLast ? 0 : 1,
-          }}
+        // Messages-style long-press actions, matching the home/sidebar rows.
+        // On Android ControlPillMenu injects onLongPress into the row (so the
+        // native dropdown anchors to it); on iOS it renders a context menu.
+        // This is the dependable way to unarchive without the swipe gesture.
+        <ControlPillMenu
+          actions={ARCHIVED_THREAD_ROW_MENU_ACTIONS}
+          onPressAction={handleMenuAction}
+          shouldOpenOnLongPress
         >
-          <View className="h-[34px] w-[34px] items-center justify-center rounded-[11px] bg-subtle">
-            <SymbolView name="archivebox.fill" size={15} tintColor={iconColor} type="monochrome" />
-          </View>
-
-          <View className="min-w-0 flex-1 gap-1">
-            <View className="flex-row items-center gap-2">
-              <Text
-                className="min-w-0 flex-1 text-base font-t3-bold leading-snug text-foreground"
-                numberOfLines={1}
-              >
-                {props.thread.title}
-              </Text>
-              <Text className="min-w-[30px] text-right text-xs tabular-nums text-foreground-tertiary">
-                {timestamp}
-              </Text>
+          <Pressable
+            className="flex-row items-center gap-3 bg-card px-4 py-3"
+            style={{
+              borderBottomColor: separatorColor,
+              borderBottomWidth: props.isLast ? 0 : 1,
+            }}
+          >
+            <View className="h-[34px] w-[34px] items-center justify-center rounded-[11px] bg-subtle">
+              <SymbolView
+                name="archivebox.fill"
+                size={15}
+                tintColor={iconColor}
+                type="monochrome"
+              />
             </View>
-            {subtitle.length > 0 ? (
-              <View className="flex-row items-center gap-1.5">
-                <SymbolView
-                  name="arrow.triangle.branch"
-                  size={10}
-                  tintColor={iconColor}
-                  type="monochrome"
-                />
+
+            <View className="min-w-0 flex-1 gap-1">
+              <View className="flex-row items-center gap-2">
                 <Text
-                  className="min-w-0 flex-1 font-mono text-2xs text-foreground-tertiary"
+                  className="min-w-0 flex-1 text-base font-t3-bold leading-snug text-foreground"
                   numberOfLines={1}
                 >
-                  {subtitle.join(" · ")}
+                  {props.thread.title}
+                </Text>
+                <Text className="min-w-[30px] text-right text-xs tabular-nums text-foreground-tertiary">
+                  {timestamp}
                 </Text>
               </View>
-            ) : null}
-          </View>
-        </View>
+              {subtitle.length > 0 ? (
+                <View className="flex-row items-center gap-1.5">
+                  <SymbolView
+                    name="arrow.triangle.branch"
+                    size={10}
+                    tintColor={iconColor}
+                    type="monochrome"
+                  />
+                  <Text
+                    className="min-w-0 flex-1 font-mono text-2xs text-foreground-tertiary"
+                    numberOfLines={1}
+                  >
+                    {subtitle.join(" · ")}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          </Pressable>
+        </ControlPillMenu>
       )}
     </ThreadSwipeable>
   );
