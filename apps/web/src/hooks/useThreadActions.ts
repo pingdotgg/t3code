@@ -13,7 +13,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef } from "react";
 
-import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
+import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
@@ -29,6 +29,7 @@ import {
   readEnvironmentThreadRefs,
   readProject,
   readThreadShell,
+  readThreadShells,
 } from "../state/entities";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useUiStateStore } from "../uiStateStore";
@@ -96,6 +97,18 @@ export class ThreadSnoozeBlockedError extends Schema.TaggedErrorClass<ThreadSnoo
   override get message(): string {
     return "This thread is waiting on you. Respond to the pending request before snoozing it.";
   }
+}
+
+/** Key that sorts before every arranged pinned thread, so a fresh pin lands
+    at the top of the run. Null (keyless, sorts with the legacy block) when
+    key math can't produce one — pinning must never fail on placement. */
+function topOfPinnedRunOrderKey(): string | undefined {
+  let firstKey: string | null = null;
+  for (const shell of readThreadShells()) {
+    if (shell.pinnedAt == null || shell.pinOrderKey == null) continue;
+    if (firstKey === null || shell.pinOrderKey < firstKey) firstKey = shell.pinOrderKey;
+  }
+  return pinOrderKeyBetween(null, firstKey) ?? undefined;
 }
 
 export class ThreadPinningUnsupportedError extends Schema.TaggedErrorClass<ThreadPinningUnsupportedError>()(
@@ -522,12 +535,15 @@ export function useThreadActions() {
           ),
         );
       }
+      // Every pin path places the thread at the top of the arranged run:
+      // callers with a better anchor (the sidebar, which knows the displayed
+      // order) pass their own key; everyone else (chat header, context menus)
+      // gets the default so the same action never places differently.
       // orderKey rides only to servers that decode it; pre-reorder servers
       // get the bare pin they understand and the thread stays keyless.
-      const orderKey =
-        opts.orderKey !== undefined && readEnvironmentSupportsPinReorder(target.environmentId)
-          ? opts.orderKey
-          : undefined;
+      const orderKey = readEnvironmentSupportsPinReorder(target.environmentId)
+        ? (opts.orderKey ?? topOfPinnedRunOrderKey())
+        : undefined;
       return pinThreadMutation({
         environmentId: target.environmentId,
         input: {

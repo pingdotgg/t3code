@@ -9,6 +9,7 @@ import {
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
+import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -173,33 +174,6 @@ export function sortThreadsForListV2<T extends { readonly id: string; readonly c
       parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
       left.id.localeCompare(right.id),
   );
-}
-
-/**
- * Pinned block order, mirroring web's sortPinnedThreadsForSidebarV2:
- * user-arranged pinOrderKeys first (plain string comparison, id tiebreak),
- * then keyless threads in the standard creation order. Mobile has no drag
- * UI yet, but sorting by the same keys keeps both platforms showing the
- * order the user arranged on web.
- */
-export function sortPinnedThreadsForListV2<
-  T extends {
-    readonly id: string;
-    readonly createdAt: string;
-    readonly pinOrderKey?: string | null | undefined;
-  },
->(threads: readonly T[]): T[] {
-  const keyed: T[] = [];
-  const keyless: T[] = [];
-  for (const thread of threads) {
-    (thread.pinOrderKey != null ? keyed : keyless).push(thread);
-  }
-  keyed.sort((left, right) => {
-    const leftKey = left.pinOrderKey!;
-    const rightKey = right.pinOrderKey!;
-    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : left.id.localeCompare(right.id);
-  });
-  return [...keyed, ...sortThreadsForListV2(keyless)];
 }
 
 export interface ThreadListV2Item {
@@ -471,7 +445,7 @@ export function buildThreadListV2Items(input: {
         );
 
   const items: ThreadListV2Item[] = [];
-  for (const thread of sortPinnedThreadsForListV2(pinned)) {
+  for (const thread of sortPinnedThreadsByOrderKey(pinned)) {
     items.push({
       thread,
       variant: "card",

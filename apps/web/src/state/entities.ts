@@ -282,6 +282,10 @@ export function readThreadRefs(): ReadonlyArray<ScopedThreadRef> {
   return appAtomRegistry.get(environmentThreadShells.threadRefsAtom);
 }
 
+export function readThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
+  return appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
+}
+
 export function findThreadRef(threadId: ThreadId): ScopedThreadRef | null {
   return (
     appAtomRegistry

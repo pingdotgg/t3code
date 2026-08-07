@@ -2272,15 +2272,54 @@ export default function SidebarV2() {
     },
     [unsnoozeThread],
   );
+  // Drag-to-reorder for the pinned block. A drop computes ONE fractional key
+  // for the moved thread and sends it to that thread's own server (see
+  // planPinnedReorder for the keyless-neighbor materialization case). The
+  // optimistic order keeps the card where it was dropped until the
+  // confirming event round-trips; canonical order matching it releases the
+  // override, and a failed write clears it (the card snaps back) with a toast.
+  // ANY membership change (new pin, unpin, snooze/wake) also releases it:
+  // the override can't say where members it never saw belong, and holding it
+  // would misplace them and launder the stale order into later drags.
+  const pinnedDndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  );
+  const [optimisticPinnedOrder, setOptimisticPinnedOrder] = useState<readonly string[] | null>(
+    null,
+  );
+  const orderedPinnedThreads = useMemo(() => {
+    if (optimisticPinnedOrder === null) return pinnedThreads;
+    return orderItemsByPreferredIds({
+      items: pinnedThreads,
+      preferredIds: optimisticPinnedOrder,
+      getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+    });
+  }, [optimisticPinnedOrder, pinnedThreads]);
+  useEffect(() => {
+    if (optimisticPinnedOrder === null) return;
+    const canonical = pinnedThreads
+      .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
+      .filter((key) => reorderablePinnedKeys.has(key));
+    const membershipChanged =
+      canonical.length !== optimisticPinnedOrder.length ||
+      canonical.some((key) => !optimisticPinnedOrder.includes(key));
+    const orderConfirmed =
+      !membershipChanged && canonical.every((key, index) => key === optimisticPinnedOrder[index]);
+    if (membershipChanged || orderConfirmed) {
+      setOptimisticPinnedOrder(null);
+    }
+  }, [optimisticPinnedOrder, pinnedThreads, reorderablePinnedKeys]);
   const attemptPin = useCallback(
     (threadRef: ScopedThreadRef) => {
       void (async () => {
         // Fresh pins take the top of the arranged run (newest pin most
-        // prominent, matching the keyless creation-order feel). Existing
-        // keys stay put; a null fallback just means "keyless", which sorts
-        // with the legacy block, so pinning never fails on key math.
+        // prominent, matching the keyless creation-order feel). Anchored to
+        // the DISPLAYED order so a pin during an in-flight drag lands above
+        // what the user is looking at. Existing keys stay put; a null
+        // fallback just means "keyless", which sorts with the legacy block,
+        // so pinning never fails on key math.
         const firstKey =
-          pinnedThreads.find((thread) => thread.pinOrderKey != null)?.pinOrderKey ?? null;
+          orderedPinnedThreads.find((thread) => thread.pinOrderKey != null)?.pinOrderKey ?? null;
         const orderKey = pinOrderKeyBetween(null, firstKey);
         const result = await pinThread(threadRef, orderKey === null ? {} : { orderKey });
         if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -2295,7 +2334,7 @@ export default function SidebarV2() {
         }
       })();
     },
-    [pinThread, pinnedThreads],
+    [orderedPinnedThreads, pinThread],
   );
   const attemptUnpin = useCallback(
     (threadRef: ScopedThreadRef) => {
@@ -2316,40 +2355,6 @@ export default function SidebarV2() {
     [unpinThread],
   );
 
-  // Drag-to-reorder for the pinned block. A drop computes ONE fractional key
-  // for the moved thread and sends it to that thread's own server (see
-  // planPinnedReorder for the keyless-neighbor materialization case). The
-  // optimistic order keeps the card where it was dropped until the
-  // confirming event round-trips; canonical order matching it releases the
-  // override, and a failed write clears it (the card snaps back) with a toast.
-  const pinnedDndSensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-  );
-  const [optimisticPinnedOrder, setOptimisticPinnedOrder] = useState<readonly string[] | null>(
-    null,
-  );
-  const orderedPinnedThreads = useMemo(() => {
-    if (optimisticPinnedOrder === null) return pinnedThreads;
-    return orderItemsByPreferredIds({
-      items: pinnedThreads,
-      preferredIds: optimisticPinnedOrder,
-      getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-    });
-  }, [optimisticPinnedOrder, pinnedThreads]);
-  useEffect(() => {
-    if (optimisticPinnedOrder === null) return;
-    const canonical = pinnedThreads
-      .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
-      .filter((key) => reorderablePinnedKeys.has(key));
-    const canonicalSet = new Set(canonical);
-    const optimistic = optimisticPinnedOrder.filter((key) => canonicalSet.has(key));
-    if (
-      canonical.length === optimistic.length &&
-      canonical.every((key, index) => key === optimistic[index])
-    ) {
-      setOptimisticPinnedOrder(null);
-    }
-  }, [optimisticPinnedOrder, pinnedThreads, reorderablePinnedKeys]);
   const handlePinnedDragEnd = useCallback(
     (event: DragEndEvent) => {
       const activeKey = String(event.active.id);
