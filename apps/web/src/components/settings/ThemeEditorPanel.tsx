@@ -179,6 +179,7 @@ export function ThemeEditorPanel({
   const [isInspecting, setIsInspecting] = useState(false);
   const [selectedRole, setSelectedRole] = useState<ThemeColorRole | null>(null);
   const [usageCount, setUsageCount] = useState<number | null>(null);
+  const previousMergeTargetIdRef = useRef<string | null>(null);
   // Null parks the panel at its default corner; a value is a dragged spot,
   // kept clamped so the header can always be grabbed again.
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
@@ -319,6 +320,15 @@ export function ThemeEditorPanel({
   // an explanation instead.
   const mergeTargetId = mergeTarget?.id ?? null;
   const takenAppearancesKey = takenAppearances.join(",");
+  useEffect(() => {
+    if (isEditing || previousMergeTargetIdRef.current === mergeTargetId) return;
+    previousMergeTargetIdRef.current = mergeTargetId;
+    // Creating with an existing theme's name adds its missing appearance.
+    // Seed theme-level options from that target so adding a palette does not
+    // silently reset them; the user can still change the toggle afterward.
+    setSidebarArtwork(mergeTarget?.sidebarArtwork === true);
+  }, [isEditing, mergeTarget, mergeTargetId]);
+
   useEffect(() => {
     if (isEditing || mergeTargetId === null) return;
     const taken = takenAppearancesKey.split(",").filter(Boolean) as ThemeAppearance[];
