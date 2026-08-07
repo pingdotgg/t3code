@@ -14,8 +14,16 @@ For the wider system diagram, see
 
 ## Application Keys
 
-T3 Connect is disabled in a fresh clone. To enable it for source builds, add a repository-root `.env`
-or `.env.local` file:
+T3 Connect is disabled in a fresh clone. To enable it for source builds against the production
+deployment, copy the repository-root example file:
+
+```sh
+cp .env.example .env
+```
+
+`.env.example` carries the production public identifiers (the same values baked into official
+release builds). To target a different Clerk application or relay, set the values yourself in a
+repository-root `.env` or `.env.local` file:
 
 ```dotenv
 T3CODE_CLERK_PUBLISHABLE_KEY=<publishable key>
