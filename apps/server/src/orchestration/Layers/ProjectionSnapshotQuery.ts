@@ -55,6 +55,10 @@ import { ProjectionThreadProposedPlan } from "../../persistence/Services/Project
 import { ProjectionThreadSession } from "../../persistence/Services/ProjectionThreadSessions.ts";
 import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectEnrichmentService } from "../../project/ProjectEnrichmentService.ts";
+import {
+  decodeThreadDetailPageCursor,
+  encodeThreadDetailPageCursor,
+} from "../threadDetailCursor.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
   ProjectionSnapshotQuery,
