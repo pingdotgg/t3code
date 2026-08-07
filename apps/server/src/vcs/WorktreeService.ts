@@ -431,11 +431,8 @@ export const make = Effect.gen(function* () {
         ),
       );
 
-    const selectedProjects = projectSnapshot.projects.filter(
-      (project) => input.projectId === undefined || project.id === input.projectId,
-    );
     const normalizedProjects = yield* Effect.forEach(
-      selectedProjects,
+      projectSnapshot.projects,
       (project) =>
         Effect.gen(function* () {
           const canonicalWorkspaceRoot = yield* canonicalizePath(project.workspaceRoot);
@@ -443,6 +440,13 @@ export const make = Effect.gen(function* () {
             "WorktreeService.listWorktrees.repositoryKey",
             canonicalWorkspaceRoot,
             ["rev-parse", "--git-common-dir"],
+          ).pipe(
+            Effect.mapError((cause) =>
+              inventoryError("Failed to identify a project's repository.", cause, {
+                projectId: project.id,
+                workspaceRoot: canonicalWorkspaceRoot,
+              }),
+            ),
           );
           const repositoryKey =
             commonDir === null || commonDir.trim().length === 0
@@ -458,9 +462,20 @@ export const make = Effect.gen(function* () {
         }),
       { concurrency: PROJECT_SCAN_CONCURRENCY },
     );
+    const selectedRepositoryKeys =
+      input.projectId === undefined
+        ? null
+        : new Set(
+            normalizedProjects
+              .filter((project) => project.id === input.projectId)
+              .map((project) => project.repositoryKey),
+          );
 
     const groups = new Map<string, ProjectGroup>();
     for (const project of normalizedProjects) {
+      if (selectedRepositoryKeys !== null && !selectedRepositoryKeys.has(project.repositoryKey)) {
+        continue;
+      }
       const existing = groups.get(project.repositoryKey);
       if (existing === undefined) {
         groups.set(project.repositoryKey, {

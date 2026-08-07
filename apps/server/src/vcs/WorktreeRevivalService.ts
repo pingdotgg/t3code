@@ -4,6 +4,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 
 import {
   type ProjectId,
@@ -52,16 +53,23 @@ function mutationError(
   });
 }
 
+export interface WorktreeRevivalForThreadInput {
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+  readonly worktreePath: string;
+  readonly branch: string;
+}
+
 export interface WorktreeRevivalServiceShape {
   readonly reviveWorktree: (
     input: VcsReviveWorktreeInput,
   ) => Effect.Effect<VcsReviveWorktreeResult, WorktreeMutationError>;
-  readonly reviveForThread: (input: {
-    readonly threadId: ThreadId;
-    readonly projectId: ProjectId;
-    readonly worktreePath: string;
-    readonly branch: string;
-  }) => Effect.Effect<VcsReviveWorktreeResult, WorktreeMutationError>;
+  readonly reviveForThread: (
+    input: WorktreeRevivalForThreadInput,
+  ) => Effect.Effect<
+    VcsReviveWorktreeResult & { readonly generation: number },
+    WorktreeMutationError
+  >;
 }
 
 export class WorktreeRevivalService extends Context.Service<
@@ -77,6 +85,20 @@ export const make = Effect.gen(function* () {
   const lifecycle = yield* WorktreeLifecycle.WorktreeLifecycle;
   const projectsService = yield* ProjectService.ProjectService;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+  const generationByWorktreePath = yield* Ref.make(new Map<string, number>());
+  const setupGenerationByProjectWorktree = yield* Ref.make(new Map<string, number>());
+
+  const currentGeneration = (worktreePath: string) =>
+    Ref.get(generationByWorktreePath).pipe(
+      Effect.map((generations) => generations.get(worktreePath) ?? 0),
+    );
+  const advanceGeneration = (worktreePath: string) =>
+    Ref.modify(generationByWorktreePath, (generations) => {
+      const generation = (generations.get(worktreePath) ?? 0) + 1;
+      const next = new Map(generations);
+      next.set(worktreePath, generation);
+      return [generation, next] as const;
+    });
 
   // Canonicalize through symlinks so configured roots, Git metadata, and V2
   // thread paths compare equal on hosts such as macOS (/var vs /private/var).
@@ -227,9 +249,9 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const reviveWorktreeUnlocked: WorktreeRevivalServiceShape["reviveWorktree"] = Effect.fn(
-    "WorktreeRevivalService.reviveWorktree",
-  )(function* (input) {
+  const reviveWorktreeUnlocked = Effect.fn("WorktreeRevivalService.reviveWorktree")(function* (
+    input: VcsReviveWorktreeInput,
+  ) {
     const workspaceRoot = yield* resolveManagedWorkspaceRoot(input);
     const worktreePath = yield* resolveEffectiveDestination(input.worktreePath, {
       workspaceRoot,
@@ -278,7 +300,11 @@ export const make = Effect.gen(function* () {
           { path: worktreePath, workspaceRoot, branch: input.branch },
         );
       }
-      return { revived: false };
+      return {
+        revived: false,
+        generation: yield* currentGeneration(worktreePath),
+        worktreePath,
+      };
     }
 
     const branchRegisteredElsewhere = registrations.find(
@@ -365,6 +391,7 @@ export const make = Effect.gen(function* () {
           }),
         ),
       );
+    const generation = yield* advanceGeneration(worktreePath);
 
     const finalExists = yield* fs.exists(worktreePath).pipe(
       Effect.mapError((cause) =>
@@ -390,15 +417,17 @@ export const make = Effect.gen(function* () {
       branch: input.branch,
     });
     yield* lifecycle.markInventoryChanged;
-    return { revived: true };
+    return { revived: true, generation, worktreePath };
   });
 
   const reviveWorktree = (input: VcsReviveWorktreeInput) =>
-    lifecycle.withMutationPermit(reviveWorktreeUnlocked(input));
+    lifecycle
+      .withMutationPermit(reviveWorktreeUnlocked(input))
+      .pipe(Effect.map(({ revived }) => ({ revived })));
 
-  const reviveForThread: WorktreeRevivalServiceShape["reviveForThread"] = Effect.fn(
-    "WorktreeRevivalService.reviveForThread",
-  )(function* (input) {
+  const reviveForThreadUnlocked = Effect.fn("WorktreeRevivalService.reviveForThread")(function* (
+    input: WorktreeRevivalForThreadInput,
+  ) {
     const project = yield* projectsService.getById(input.projectId).pipe(
       Effect.mapError((cause) =>
         mutationError("Failed to load the project before reviving the worktree.", cause, {
@@ -414,18 +443,22 @@ export const make = Effect.gen(function* () {
         { path: input.worktreePath, branch: input.branch },
       );
     }
-    const revival = yield* reviveWorktree({
+    const revival = yield* reviveWorktreeUnlocked({
       workspaceRoot: project.value.workspaceRoot,
       worktreePath: input.worktreePath,
       branch: input.branch,
     });
-    if (revival.revived) {
+    const setupGenerationKey = `${input.projectId}\0${revival.worktreePath}`;
+    const setupGeneration = (yield* Ref.get(setupGenerationByProjectWorktree)).get(
+      setupGenerationKey,
+    );
+    if (revival.generation > 0 && setupGeneration !== revival.generation) {
       yield* setupScripts
         .runForThread({
           threadId: input.threadId,
           projectId: input.projectId,
           projectCwd: project.value.workspaceRoot,
-          worktreePath: input.worktreePath,
+          worktreePath: revival.worktreePath,
           project: {
             workspaceRoot: project.value.workspaceRoot,
             scripts: project.value.scripts,
@@ -440,9 +473,16 @@ export const make = Effect.gen(function* () {
             }),
           ),
         );
+      yield* Ref.update(setupGenerationByProjectWorktree, (generations) => {
+        const next = new Map(generations);
+        next.set(setupGenerationKey, revival.generation);
+        return next;
+      });
     }
-    return revival;
+    return { revived: revival.revived, generation: revival.generation };
   });
+  const reviveForThread: WorktreeRevivalServiceShape["reviveForThread"] = (input) =>
+    lifecycle.withMutationPermit(reviveForThreadUnlocked(input));
 
   return WorktreeRevivalService.of({ reviveWorktree, reviveForThread });
 });

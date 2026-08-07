@@ -13,6 +13,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import { EventSinkV2 } from "./EventSink.ts";
@@ -73,6 +74,9 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicyV2;
+    const worktreeGenerationByProviderSession = yield* Ref.make(
+      new Map<string, { readonly path: string; readonly generation: number }>(),
+    );
 
     const start = Effect.fn("orchestrationV2.providerTurnStart.start")(function* (input: {
       readonly threadId: ThreadId;
@@ -162,6 +166,9 @@ export const layer: Layer.Layer<
         modelSelection: run.modelSelection,
       });
       const worktreeRevival = yield* Effect.serviceOption(WorktreeRevivalService);
+      let observedWorktreeGeneration:
+        | { readonly path: string; readonly generation: number }
+        | undefined;
       if (
         Option.isSome(worktreeRevival) &&
         projection.thread.worktreePath !== null &&
@@ -173,10 +180,23 @@ export const layer: Layer.Layer<
           worktreePath: projection.thread.worktreePath,
           branch: projection.thread.branch,
         });
-        if (revival.revived) {
+        observedWorktreeGeneration = {
+          path: projection.thread.worktreePath,
+          generation: revival.generation,
+        };
+        const previousWorktreeGeneration = (yield* Ref.get(
+          worktreeGenerationByProviderSession,
+        )).get(providerSessionId);
+        if (
+          revival.revived ||
+          (previousWorktreeGeneration !== undefined &&
+            (previousWorktreeGeneration.path !== observedWorktreeGeneration.path ||
+              previousWorktreeGeneration.generation !== observedWorktreeGeneration.generation))
+        ) {
           // A provider session can retain an adapter process (and its cwd)
-          // across turns. Closing before open makes a recreated worktree a
-          // real runtime restart instead of an attach to the stale process.
+          // across turns. Every session records the worktree generation it
+          // observed, so shared threads also restart after another thread (or
+          // an explicit RPC) recreates the checkout.
           yield* providerSessions.close(providerSessionId);
         }
       }
@@ -192,6 +212,13 @@ export const layer: Layer.Layer<
           ? {}
           : { resumeFromSession: existingSessionProjection }),
       });
+      if (observedWorktreeGeneration !== undefined) {
+        yield* Ref.update(worktreeGenerationByProviderSession, (current) => {
+          const next = new Map(current);
+          next.set(providerSessionId, observedWorktreeGeneration);
+          return next;
+        });
+      }
       let effectiveHandoffs = handoffs;
       const loadedProviderThread = yield* Effect.gen(function* () {
         if (nativeForkTransfer !== undefined) {

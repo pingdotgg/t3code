@@ -171,27 +171,27 @@ it.effect("runs project setup after physically recreating a thread worktree", ()
       }),
     );
 
-    const first = yield* Effect.gen(function* () {
+    const [first, second] = yield* Effect.gen(function* () {
       const revival = yield* WorktreeRevivalService.WorktreeRevivalService;
-      return yield* revival.reviveForThread({
+      const first = yield* revival.reviveForThread({
         threadId,
         projectId,
         worktreePath,
         branch: "feature/revival",
       });
-    }).pipe(Effect.provide(layer));
-    const second = yield* Effect.gen(function* () {
-      const revival = yield* WorktreeRevivalService.WorktreeRevivalService;
-      return yield* revival.reviveForThread({
+      const second = yield* revival.reviveForThread({
         threadId,
         projectId,
         worktreePath,
         branch: "feature/revival",
       });
+      return [first, second] as const;
     }).pipe(Effect.provide(layer));
 
     assert.isTrue(first.revived);
     assert.isFalse(second.revived);
+    assert.equal(first.generation, 1);
+    assert.equal(second.generation, 1);
     assert.isTrue(yield* fs.exists(worktreePath));
     assert.equal(setupCalls.length, 1);
     assert.deepInclude(setupCalls[0], {
@@ -207,7 +207,7 @@ it.effect("runs project setup after physically recreating a thread worktree", ()
   }).pipe(Effect.provide(Layer.mergeAll(serverConfigLiveLayer, NodeServices.layer, gitLayer))),
 );
 
-it.effect("surfaces setup failure after recreation before revival succeeds", () =>
+it.effect("retries setup after a recreated worktree's first setup attempt fails", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -222,25 +222,41 @@ it.effect("surfaces setup failure after recreation before revival succeeds", () 
       operation: "openTerminal",
       cause: "simulated setup failure",
     });
+    let setupAttempts = 0;
+    const layer = makeRevivalLayer(makeProject(repositoryRoot), () =>
+      Effect.suspend(() => {
+        setupAttempts += 1;
+        return setupAttempts === 1
+          ? Effect.fail(setupFailure)
+          : Effect.succeed({ status: "no-script" as const });
+      }),
+    );
 
-    const error = yield* Effect.gen(function* () {
+    const { error, retry } = yield* Effect.gen(function* () {
       const revival = yield* WorktreeRevivalService.WorktreeRevivalService;
-      return yield* revival.reviveForThread({
+      const error = yield* revival
+        .reviveForThread({
+          threadId,
+          projectId,
+          worktreePath,
+          branch: "feature/revival",
+        })
+        .pipe(Effect.flip);
+      const retry = yield* revival.reviveForThread({
         threadId,
         projectId,
         worktreePath,
         branch: "feature/revival",
       });
-    }).pipe(
-      Effect.provide(
-        makeRevivalLayer(makeProject(repositoryRoot), () => Effect.fail(setupFailure)),
-      ),
-      Effect.flip,
-    );
+      return { error, retry };
+    }).pipe(Effect.provide(layer));
 
     assert.equal(error._tag, "WorktreeMutationError");
     assert.equal(error.message, "Failed to run the project setup script after revival.");
     assert.strictEqual(error.cause, setupFailure);
+    assert.isFalse(retry.revived);
+    assert.equal(retry.generation, 1);
+    assert.equal(setupAttempts, 2);
     assert.isTrue(yield* fs.exists(worktreePath));
   }).pipe(Effect.provide(Layer.mergeAll(serverConfigLiveLayer, NodeServices.layer, gitLayer))),
 );

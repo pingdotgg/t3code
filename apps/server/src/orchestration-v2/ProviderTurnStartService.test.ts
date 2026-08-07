@@ -29,6 +29,7 @@ import type { ProviderAdapterV2SessionRuntime } from "./ProviderAdapter.ts";
 
 function makeProviderTurnStartFixture(input: {
   readonly revival: "revived" | "unchanged" | "failed";
+  readonly generations?: readonly number[];
 }) {
   const threadId = ThreadId.make(`thread_provider_turn_start_worktree_${input.revival}`);
   const runId = RunId.make(`run_provider_turn_start_worktree_${input.revival}`);
@@ -115,6 +116,7 @@ function makeProviderTurnStartFixture(input: {
       order.push("close");
     }),
   );
+  let revivalCallCount = 0;
   const reviveForThread = vi.fn(() =>
     Effect.sync(() => {
       order.push("revive");
@@ -127,7 +129,10 @@ function makeProviderTurnStartFixture(input: {
                 message: "simulated revival failure",
               }),
             )
-          : Effect.succeed({ revived: input.revival === "revived" }),
+          : Effect.succeed({
+              revived: input.revival === "revived",
+              generation: input.generations?.[revivalCallCount++] ?? 0,
+            }),
       ),
     ),
   );
@@ -277,6 +282,31 @@ it("keeps the provider session when the worktree is already present", async () =
   expect(fixture.order).toEqual(["revive", "open", "start-root-run"]);
   expect(fixture.close).not.toHaveBeenCalled();
   expect(fixture.open).toHaveBeenCalledOnce();
+});
+
+it("restarts a shared provider session after another thread recreates its worktree", async () => {
+  const fixture = makeProviderTurnStartFixture({
+    revival: "unchanged",
+    generations: [0, 1],
+  });
+
+  await Effect.gen(function* () {
+    const service = yield* ProviderTurnStart.ProviderTurnStartServiceV2;
+    yield* service.start({ threadId: fixture.threadId, runId: fixture.runId });
+    yield* service.start({ threadId: fixture.threadId, runId: fixture.runId });
+  }).pipe(Effect.provide(fixture.layer), Effect.runPromise);
+
+  expect(fixture.order).toEqual([
+    "revive",
+    "open",
+    "start-root-run",
+    "revive",
+    "close",
+    "open",
+    "start-root-run",
+  ]);
+  expect(fixture.close).toHaveBeenCalledOnce();
+  expect(fixture.open).toHaveBeenCalledTimes(2);
 });
 
 it("fails provider start before opening when worktree revival fails", async () => {

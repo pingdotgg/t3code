@@ -215,7 +215,18 @@ describe("GitWorkflowService", () => {
             ),
         });
         const vcsDriver = yield* VcsDriver.VcsDriver.pipe(
-          Effect.provide(Layer.mock(VcsDriver.VcsDriver)({})),
+          Effect.provide(
+            Layer.mock(VcsDriver.VcsDriver)({
+              capabilities: {
+                kind: "git",
+                supportsWorktrees: true,
+                supportsBookmarks: false,
+                supportsAtomicSnapshot: false,
+                supportsPushDefaultRemote: true,
+                ignoreClassifier: "native",
+              },
+            }),
+          ),
         );
         const expectedResult = {
           pullRequest: {

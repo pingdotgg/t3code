@@ -430,6 +430,17 @@ it.effect("combines thread safety across nested projects in the same repository"
     assert.isFalse(worktree?.safeToPrune);
     assert.deepEqual(worktree?.pruneBlockers, ["active_thread"]);
 
+    const filteredInventory = yield* Effect.gen(function* () {
+      const service = yield* WorktreeService;
+      return yield* service.listWorktrees({ projectId: projectB });
+    }).pipe(Effect.provide(layer));
+    assert.equal(filteredInventory.worktrees.length, 1);
+    assert.deepEqual(
+      filteredInventory.worktrees[0]?.threads.map((thread) => thread.threadId),
+      [activeThread.id],
+    );
+    assert.isFalse(filteredInventory.worktrees[0]?.safeToPrune);
+
     const pruneResult = yield* Effect.gen(function* () {
       const service = yield* WorktreeService;
       return yield* service.pruneWorktrees({ paths: [worktreePath] });

@@ -154,14 +154,18 @@ it.effect("restarts the domain event subscription after a stream failure", () =>
     const firstAttemptStarted = yield* Deferred.make<void>();
     const recoveredPath = yield* Deferred.make<string>();
     const attempts = yield* Ref.make(0);
-    const events = Stream.unwrap(
+    const events: Stream.Stream<OrchestrationV2DomainEvent, string> = Stream.unwrap(
       Ref.getAndUpdate(attempts, (count) => count + 1).pipe(
-        Effect.flatMap((attempt) =>
-          attempt === 0
-            ? Deferred.succeed(firstAttemptStarted, undefined).pipe(
-                Effect.as(Stream.fail("simulated subscription failure")),
-              )
-            : Effect.succeed(Stream.fromIterable([deletionEvent("/worktrees/recovered")])),
+        Effect.map(
+          (attempt): Stream.Stream<OrchestrationV2DomainEvent, string> =>
+            attempt === 0
+              ? Stream.concat(
+                  Stream.fromEffect(Deferred.succeed(firstAttemptStarted, undefined)).pipe(
+                    Stream.drain,
+                  ),
+                  Stream.fail("simulated subscription failure"),
+                )
+              : Stream.fromIterable([deletionEvent("/worktrees/recovered")]),
         ),
       ),
     );
