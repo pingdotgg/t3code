@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 
 import type { EmbeddedDriverConnection, EmbeddedDriverExit } from "@trycua/cua-driver/embedded";
 
-import { T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV } from "../provider/Layers/codexLaunchArgs.ts";
+import { T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV } from "../provider/Layers/codexLaunchArgs.ts";
 
 export const T3CODE_CUA_DRIVER_PATH_ENV = "T3CODE_CUA_DRIVER_PATH";
 export const T3CODE_CUA_DRIVER_HOST_BUNDLE_ID_ENV = "T3CODE_CUA_DRIVER_HOST_BUNDLE_ID";
@@ -68,19 +68,17 @@ export const monitorEmbeddedCuaDriverExit = Effect.fn("server.monitorEmbeddedCua
 export const installCodexLaunchArgs = Effect.fn("server.installCodexLaunchArgs")(function* (
   launchArgs: string,
 ) {
-  const previous = process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
+  const previous = process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV];
   let active = true;
   const deactivate = Effect.sync(() => {
     if (!active) return false;
     active = false;
-    if (previous === undefined) delete process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
-    else process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] = previous;
+    if (previous === undefined) delete process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV];
+    else process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV] = previous;
     return true;
   });
   yield* Effect.addFinalizer(() => deactivate.pipe(Effect.asVoid));
-  process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] = [previous?.trim() ?? "", launchArgs]
-    .filter((value) => value.length > 0)
-    .join(" ");
+  process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV] = launchArgs;
   return () => deactivate;
 });
 

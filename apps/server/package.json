@@ -39,6 +39,7 @@
     "@trycua/cua-driver": "0.12.2",
     "effect": "catalog:",
     "node-pty": "^1.1.0",
+    "smol-toml": "1.7.0",
     "yaml": "catalog:"
   },
   "devDependencies": {

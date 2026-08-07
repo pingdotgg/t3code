@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 
 import type { EmbeddedDriverExit } from "@trycua/cua-driver/embedded";
 
-import { T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV } from "../provider/Layers/codexLaunchArgs.ts";
+import { T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV } from "../provider/Layers/codexLaunchArgs.ts";
 import {
   buildCodexLaunchArgs,
   installCodexLaunchArgs,
@@ -90,27 +90,25 @@ describe("embedded cua-driver Codex configuration", () => {
   });
 
   it.effect("restores prior Codex launch arguments once when Cua becomes unavailable", () => {
-    const original = process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
-    process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] = "--existing";
+    const original = process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV];
+    process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV] = "--existing";
 
     return Effect.scoped(
       Effect.gen(function* () {
         const deactivate = yield* installCodexLaunchArgs("--cua");
-        expect(process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV]).toBe("--existing --cua");
+        expect(process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV]).toBe("--cua");
         expect(yield* deactivate()).toBe(true);
-        expect(process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV]).toBe("--existing");
+        expect(process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV]).toBe("--existing");
         expect(yield* deactivate()).toBe(false);
       }),
     ).pipe(
       Effect.tap(() =>
-        Effect.sync(() =>
-          expect(process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV]).toBe("--existing"),
-        ),
+        Effect.sync(() => expect(process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV]).toBe("--existing")),
       ),
       Effect.ensuring(
         Effect.sync(() => {
-          if (original === undefined) delete process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
-          else process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] = original;
+          if (original === undefined) delete process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV];
+          else process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV] = original;
         }),
       ),
     );

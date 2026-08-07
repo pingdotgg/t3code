@@ -36,7 +36,7 @@ import { ChildProcess } from "effect/unstable/process";
 
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
-import { T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV } from "../../provider/Layers/codexLaunchArgs.ts";
+import { T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV } from "../../provider/Layers/codexLaunchArgs.ts";
 import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
 import {
   ProviderAdapterOpenSessionError,
@@ -505,28 +505,28 @@ describe("CodexAdapterV2 process spawning", () => {
   });
 
   it("uses live integration arguments and removes stale snapshots", () => {
-    const previous = process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
+    const previous = process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV];
     try {
-      process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] =
+      process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV] =
         '-c mcp_servers.cua-driver.command="/bin/cua-driver"';
-      assert.deepEqual(resolveCodexAdapterAppServerArgs("--strict-config", {}), [
-        "app-server",
-        "--strict-config",
-        "-c",
-        "mcp_servers.cua-driver.command=/bin/cua-driver",
-      ]);
-
-      delete process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
       assert.deepEqual(
         resolveCodexAdapterAppServerArgs("--strict-config", {
-          [T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV]:
+          CODEX_HOME: "/tmp/t3code-codex-no-config",
+        }),
+        ["app-server", "--strict-config", "-c", "mcp_servers.cua-driver.command=/bin/cua-driver"],
+      );
+
+      delete process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV];
+      assert.deepEqual(
+        resolveCodexAdapterAppServerArgs("--strict-config", {
+          [T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV]:
             '-c mcp_servers.cua-driver.command="/stale/cua-driver"',
         }),
         ["app-server", "--strict-config"],
       );
     } finally {
-      if (previous === undefined) delete process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
-      else process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] = previous;
+      if (previous === undefined) delete process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV];
+      else process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV] = previous;
     }
   });
 
