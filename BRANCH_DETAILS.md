@@ -11,9 +11,11 @@ Primary files:
 - `apps/web/src/components/SidebarV2.tsx`
 - `apps/web/src/components/Sidebar.logic.ts`
 - `apps/web/src/components/Sidebar.logic.test.ts`
+- `apps/web/src/components/Sidebar.tsx`
 - `apps/web/src/components/threadActionMenu.logic.ts`
 - `apps/web/src/components/threadActionMenu.logic.test.ts`
 - `apps/web/src/hooks/useThreadActions.ts`
+- `apps/web/src/hooks/useThreadActions.test.ts`
 
 ## Development Ports
 
