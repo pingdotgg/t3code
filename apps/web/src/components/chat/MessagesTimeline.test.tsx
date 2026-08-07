@@ -161,6 +161,8 @@ beforeAll(async () => {
     documentElement: {
       classList,
       offsetHeight: 0,
+      // applyTheme writes the active palette here.
+      dataset: {},
     },
   });
 
@@ -188,6 +190,7 @@ function buildProps() {
     activeThreadEnvironmentId: ACTIVE_THREAD_ENVIRONMENT_ID,
     markdownCwd: undefined,
     resolvedTheme: "light" as const,
+    palette: "default" as const,
     timestampFormat: "locale" as const,
     workspaceRoot: undefined,
     anchorMessageId: null,

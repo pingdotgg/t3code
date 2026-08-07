@@ -37,6 +37,7 @@ import {
   resolveDiffThemeName,
   resolveFileDiffPath,
 } from "../../lib/diffRendering";
+import type { ThemePalette } from "~/lib/themePalettes";
 import ChatMarkdown from "../ChatMarkdown";
 import {
   BotIcon,
@@ -127,6 +128,7 @@ interface TimelineRowSharedState {
   threadRef: ScopedThreadRef | null;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
+  palette: ThemePalette;
   workspaceRoot: string | undefined;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
@@ -173,6 +175,7 @@ interface MessagesTimelineProps {
   activeThreadEnvironmentId: EnvironmentId;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
+  palette: ThemePalette;
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
@@ -208,6 +211,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   activeThreadEnvironmentId,
   markdownCwd,
   resolvedTheme,
+  palette,
   timestampFormat,
   workspaceRoot,
   skills = EMPTY_TIMELINE_SKILLS,
@@ -422,6 +426,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       threadRef: parseScopedThreadKey(routeThreadKey),
       markdownCwd,
       resolvedTheme,
+      palette,
       workspaceRoot,
       skills,
       activeThreadEnvironmentId,
@@ -436,6 +441,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       routeThreadKey,
       markdownCwd,
       resolvedTheme,
+      palette,
       workspaceRoot,
       skills,
       activeThreadEnvironmentId,
@@ -1685,7 +1691,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
             options={{
               collapsed: false,
               diffStyle: "unified",
-              theme: resolveDiffThemeName(ctx.resolvedTheme),
+              theme: resolveDiffThemeName(ctx.resolvedTheme, ctx.palette),
             }}
           />
         ))}

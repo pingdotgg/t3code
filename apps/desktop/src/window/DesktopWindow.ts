@@ -99,8 +99,15 @@ function getIconOption(
   });
 }
 
-function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
-  return shouldUseDarkColors ? "#0a0a0a" : "#ffffff";
+function getInitialWindowBackgroundColor(
+  shouldUseDarkColors: boolean,
+  persistedChromeColor?: string | null,
+): string {
+  // The renderer reports its resolved chrome color whenever the theme palette or
+  // mode changes, so a relaunch can open straight into the active palette's
+  // background. Without it the window paints this neutral until the first
+  // frame, which reads as a flash on any strongly tinted palette.
+  return persistedChromeColor ?? (shouldUseDarkColors ? "#0a0a0a" : "#ffffff");
 }
 
 type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
@@ -325,7 +332,10 @@ export const make = Effect.gen(function* () {
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
-      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
+      backgroundColor: getInitialWindowBackgroundColor(
+        shouldUseDarkColors,
+        persistedSettings.chromeBackgroundColor,
+      ),
       ...iconOption,
       title: environment.displayName,
       ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),

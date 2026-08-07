@@ -850,7 +850,78 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   animation-duration: 0s !important;
 }
 
-:root {
+/* ── Palette seeds ────────────────────────────────────────────────
+   Registered so that `inherits: false` holds. That matters for the settings
+   preview cards: a card for palette B nested inside an active palette A must
+   fall back to these initial values for any seed B leaves out, NOT inherit
+   A's. Without the registration an omitted seed silently leaks downward and
+   the card previews the wrong colors.
+
+   Required of every palette: --p-base, --p-text, --p-primary and their -dark
+   twins. Optional, and the reason the initial values exist: --p-surface (what
+   light surfaces mix toward) and --p-primary-fg{,-dark} (for palettes whose
+   primary cannot carry white text). */
+@property --p-base {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #fcfcfc;
+}
+@property --p-surface {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #ffffff;
+}
+@property --p-text {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #27272a;
+}
+@property --p-primary {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: oklch(0.488 0.217 264);
+}
+@property --p-primary-fg {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #ffffff;
+}
+@property --p-base-dark {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #0a0a0a;
+}
+@property --p-text-dark {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #f5f5f5;
+}
+@property --p-primary-dark {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: oklch(0.588 0.217 264);
+}
+@property --p-primary-fg-dark {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #ffffff;
+}
+
+/* The default palette — the design that shipped before palettes existed.
+   Deliberately NOT expressed through the derivation block below: keeping these
+   literal expressions is the only real guarantee that the default renders
+   pixel-identically, so this block is frozen and new palettes use the seeds.
+
+   `:root` stays unqualified on purpose. Every token therefore has a defined
+   value no matter which palette is active, and a token accidentally left out
+   of the derivation block degrades to a slightly-off fallback instead of
+   becoming invalid and breaking layout. Palette blocks are declared after this
+   one and win the equal-specificity tie on source order.
+
+   The name is addressable too, so a preview card can scope the default the
+   same way it scopes every other palette. */
+:root,
+[data-theme-palette="default"] {
   color-scheme: light;
   --radius: 0.625rem;
   --background: var(--color-zinc-25);
@@ -892,6 +963,28 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --sidebar-border: var(--border);
   --sidebar-stage-fade: var(--sidebar);
 
+  /* Nav-panel group, consumed by the [data-sidebar-version] rule below. In
+     light mode the panel is the same hierarchy as the workspace — the old
+     hardcoded light override declared these exact values, so this is the same
+     colors said once instead of twice. Written as literals rather than
+     `var(--card)` etc. so the panel group can never reference a semantic token
+     the panel rule itself writes (that would be a var() cycle). */
+  --panel-background: var(--color-zinc-25);
+  --panel-foreground: var(--color-zinc-800);
+  --panel-card: var(--color-white);
+  --panel-accent: var(--color-zinc-100);
+  --panel-accent-foreground: var(--color-zinc-900);
+  --panel-muted: var(--color-zinc-50);
+  --panel-muted-foreground: var(--color-zinc-500);
+  --panel-border: var(--color-zinc-200);
+  --panel-input: var(--color-zinc-300);
+  --panel-sidebar: var(--color-zinc-50);
+  --panel-control-surface: var(--color-zinc-100);
+  --panel-row-hover: var(--color-zinc-25);
+  --panel-row-active: var(--color-white);
+  --panel-row-selected: var(--color-white);
+  --panel-stage-fade: var(--color-zinc-50);
+
   @variant dark {
     color-scheme: dark;
     /* Keep the workspace in the same neutral-black family as sidebar v2.
@@ -932,61 +1025,295 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --sidebar-row-selected: var(--muted);
     --sidebar-border: var(--border);
     --sidebar-stage-fade: var(--card);
+
+    /* The dark nav panel is the one place the default design deliberately runs
+       deeper than the workspace (pure black against neutral-950). These are the
+       old hardcoded override's values, resolved through its indirections:
+       `--sidebar: var(--card)` was #000, `--sidebar-control-surface:
+       var(--muted)` was #0a0a0a, and the row overlays mixed `var(--foreground)`
+       which was #f1f3f7. */
+    --panel-background: #000;
+    --panel-foreground: #f1f3f7;
+    --panel-card: #000;
+    --panel-accent: #191a1d;
+    --panel-accent-foreground: #f7f9ff;
+    --panel-muted: #0a0a0a;
+    --panel-muted-foreground: #a3a3a3;
+    --panel-border: rgb(255 255 255 / 8%);
+    --panel-input: rgb(255 255 255 / 18%);
+    --panel-sidebar: var(--panel-card);
+    --panel-control-surface: var(--panel-muted);
+    --panel-row-hover: color-mix(in srgb, var(--panel-foreground) 8%, transparent);
+    --panel-row-active: color-mix(in srgb, var(--panel-foreground) 11%, transparent);
+    --panel-row-selected: color-mix(in srgb, var(--panel-foreground) 7%, transparent);
+    --panel-stage-fade: var(--panel-card);
   }
 }
 
-/* Keep both navigation implementations on the same quiet zinc hierarchy:
-   zinc-50 navigation, zinc-25 hover, and white selected/raised surfaces.
-   The version attribute remains useful for layout-specific styling without
-   changing the color system when the beta is toggled. */
-[data-sidebar-version="v1"],
-[data-sidebar-version="v2"] {
-  --background: var(--color-zinc-25);
-  --foreground: var(--color-zinc-800);
-  --card: var(--color-white);
-  --card-foreground: var(--color-zinc-800);
-  --accent: var(--color-zinc-100);
-  --accent-foreground: var(--color-zinc-900);
-  --muted: var(--color-zinc-50);
-  --muted-foreground: var(--color-zinc-500);
-  --border: var(--color-zinc-200);
-  --input: var(--color-zinc-300);
-  --sidebar: var(--color-zinc-50);
-  --sidebar-foreground: var(--color-zinc-800);
-  --sidebar-muted-foreground: var(--color-zinc-500);
-  --sidebar-control-surface: var(--color-zinc-100);
-  --sidebar-row-hover: var(--color-zinc-25);
-  --sidebar-row-active: var(--color-white);
-  --sidebar-row-selected: var(--color-white);
-  --sidebar-border: var(--color-zinc-200);
-  --sidebar-stage-fade: var(--sidebar);
-  background-color: var(--sidebar);
-}
+/* ── Theme palettes ────────────────────────────────────────────────
+   Every palette except `default` is expressed as a handful of seeds
+   (`--p-*`) that this block expands into the full semantic token set. That
+   keeps a new palette to ~8 lines and guarantees all of them share one
+   surface hierarchy, while `default` keeps its literal values above and so
+   cannot drift.
 
-.dark [data-sidebar-version="v1"],
-.dark [data-sidebar-version="v2"] {
-  --background: #000;
-  --foreground: #f1f3f7;
-  --card: #000;
-  --card-foreground: var(--foreground);
-  --accent: #191a1d;
-  --accent-foreground: #f7f9ff;
-  --muted: #0a0a0a;
-  --muted-foreground: #a3a3a3;
-  --border: rgb(255 255 255 / 8%);
-  --input: rgb(255 255 255 / 18%);
-  --sidebar: var(--card);
+   Deliberately NOT derived here: `--destructive`, `--info`, `--success`,
+   `--warning` and their foregrounds. Status colors have to stay recognizable
+   (red means bad in every palette), so they inherit from the block above.
+   `--radius` is not a color and inherits for the same reason.
+
+   Selectors are plain attribute selectors, never `:root[…]`, so that putting
+   the attribute on any wrapper element re-scopes the palette for that
+   subtree. The settings preview cards rely on this. */
+[data-theme-palette]:not([data-theme-palette="default"]) {
+  color-scheme: light;
+  --background: var(--p-base);
+  --app-chrome-background: var(--background);
+  --foreground: var(--p-text);
+  --card: color-mix(in oklab, var(--p-base) 30%, var(--p-surface));
+  --card-foreground: var(--p-text);
+  --popover: color-mix(in oklab, var(--p-base) 20%, var(--p-surface));
+  --popover-foreground: var(--p-text);
+  --surface-raised: color-mix(in srgb, var(--card) 20%, transparent);
+  --primary: var(--p-primary);
+  --primary-foreground: var(--p-primary-fg);
+  --secondary: color-mix(in oklab, var(--p-base) 96%, var(--p-text));
+  --secondary-foreground: var(--p-text);
+  --muted: color-mix(in oklab, var(--p-base) 96%, var(--p-text));
+  --muted-foreground: color-mix(in oklab, var(--p-text) 58%, var(--p-base));
+  --accent: color-mix(in oklab, var(--p-base) 92%, var(--p-text));
+  --accent-foreground: color-mix(in oklab, var(--p-text) 92%, black);
+  --border: color-mix(in oklab, var(--p-base) 86%, var(--p-text));
+  --input: color-mix(in oklab, var(--p-base) 78%, var(--p-text));
+  --ring: var(--p-primary);
+  /* Sidebar sits one step below the workspace, hover returns to the base
+     surface, and selected rows lift to the card surface — the same hierarchy
+     the default palette uses. */
+  --sidebar: color-mix(in oklab, var(--p-base) 96%, var(--p-text));
   --sidebar-foreground: var(--foreground);
   --sidebar-muted-foreground: var(--muted-foreground);
-  --sidebar-control-surface: var(--muted);
-  --sidebar-row-hover: color-mix(in srgb, var(--foreground) 8%, transparent);
-  --sidebar-row-active: color-mix(in srgb, var(--foreground) 11%, transparent);
-  --sidebar-row-selected: color-mix(in srgb, var(--foreground) 7%, transparent);
+  --sidebar-control-surface: color-mix(in oklab, var(--p-base) 92%, var(--p-text));
+  --sidebar-row-hover: var(--p-base);
+  --sidebar-row-active: var(--card);
+  --sidebar-row-selected: var(--card);
   --sidebar-border: var(--border);
-  /* The stage-channel header art must ramp to THIS panel's surface, not the
-     global chrome background, or the fade shows a seam (same rule as the
-     light palette above). */
-  --sidebar-stage-fade: var(--card);
+  --sidebar-stage-fade: var(--sidebar);
+
+  /* Nav-panel group. Mirrors the workspace hierarchy in light mode, matching
+     what the default palette does. Every value derives from seeds, never from
+     a semantic token, so an element carrying both this attribute and
+     `data-sidebar-version` cannot form a var() cycle. */
+  --panel-background: var(--p-base);
+  --panel-foreground: var(--p-text);
+  --panel-card: color-mix(in oklab, var(--p-base) 30%, var(--p-surface));
+  --panel-accent: color-mix(in oklab, var(--p-base) 92%, var(--p-text));
+  --panel-accent-foreground: color-mix(in oklab, var(--p-text) 92%, black);
+  --panel-muted: color-mix(in oklab, var(--p-base) 96%, var(--p-text));
+  --panel-muted-foreground: color-mix(in oklab, var(--p-text) 58%, var(--p-base));
+  --panel-border: color-mix(in oklab, var(--p-base) 86%, var(--p-text));
+  --panel-input: color-mix(in oklab, var(--p-base) 78%, var(--p-text));
+  --panel-sidebar: color-mix(in oklab, var(--p-base) 96%, var(--p-text));
+  --panel-control-surface: color-mix(in oklab, var(--p-base) 92%, var(--p-text));
+  --panel-row-hover: var(--p-base);
+  --panel-row-active: var(--panel-card);
+  --panel-row-selected: var(--panel-card);
+  --panel-stage-fade: var(--panel-sidebar);
+
+  @variant dark {
+    color-scheme: dark;
+    --background: var(--p-base-dark);
+    --app-chrome-background: var(--background);
+    --foreground: var(--p-text-dark);
+    /* Dark surfaces lift off the palette base rather than starting from a
+       separate gray, mirroring the default palette's technique. */
+    --card: color-mix(in oklab, var(--p-base-dark) 96%, var(--p-text-dark));
+    --card-foreground: var(--p-text-dark);
+    --popover: color-mix(in oklab, var(--p-base-dark) 92%, var(--p-text-dark));
+    --popover-foreground: var(--p-text-dark);
+    --surface-raised: var(--secondary);
+    --primary: var(--p-primary-dark);
+    --primary-foreground: var(--p-primary-fg-dark);
+    /* Overlay tokens mix into `transparent`, which is why these use `in srgb`
+       rather than `in oklab`: oklab premultiplies and shifts the result. This
+       matches how the default palette expresses the same overlays. */
+    --secondary: color-mix(in srgb, var(--p-text-dark) 6%, transparent);
+    --secondary-foreground: var(--p-text-dark);
+    --muted: color-mix(in srgb, var(--p-text-dark) 6%, transparent);
+    --muted-foreground: color-mix(in oklab, var(--p-text-dark) 62%, var(--p-base-dark));
+    --accent: color-mix(in srgb, var(--p-text-dark) 6%, transparent);
+    --accent-foreground: var(--p-text-dark);
+    --border: color-mix(in srgb, var(--p-text-dark) 10%, transparent);
+    --input: color-mix(in srgb, var(--p-text-dark) 16%, transparent);
+    --ring: var(--p-primary-dark);
+    /* The workspace sidebar surface lifts above the page, same as the default
+       palette. Going deeper than the page is the nav panel's job, below. */
+    --sidebar: var(--card);
+    --sidebar-foreground: var(--foreground);
+    --sidebar-muted-foreground: var(--muted-foreground);
+    --sidebar-control-surface: var(--muted);
+    --sidebar-row-hover: var(--accent);
+    --sidebar-row-active: var(--accent);
+    --sidebar-row-selected: var(--muted);
+    --sidebar-border: var(--border);
+    --sidebar-stage-fade: var(--card);
+
+    /* The dark nav panel runs deeper than the workspace — the relationship the
+       default palette expresses as pure black against neutral-950. */
+    --panel-background: color-mix(in oklab, var(--p-base-dark) 55%, black);
+    --panel-foreground: var(--p-text-dark);
+    --panel-card: var(--panel-background);
+    --panel-accent: color-mix(in srgb, var(--p-text-dark) 8%, transparent);
+    --panel-accent-foreground: var(--p-text-dark);
+    --panel-muted: color-mix(in oklab, var(--p-base-dark) 72%, black);
+    --panel-muted-foreground: color-mix(in oklab, var(--p-text-dark) 62%, var(--p-base-dark));
+    --panel-border: color-mix(in srgb, var(--p-text-dark) 10%, transparent);
+    --panel-input: color-mix(in srgb, var(--p-text-dark) 18%, transparent);
+    --panel-sidebar: var(--panel-card);
+    --panel-control-surface: var(--panel-muted);
+    --panel-row-hover: color-mix(in srgb, var(--p-text-dark) 8%, transparent);
+    --panel-row-active: color-mix(in srgb, var(--p-text-dark) 11%, transparent);
+    --panel-row-selected: color-mix(in srgb, var(--p-text-dark) 7%, transparent);
+    /* The stage-channel header art must ramp to the panel's own surface, or
+       the fade shows a seam. */
+    --panel-stage-fade: var(--panel-card);
+  }
+}
+
+/* The palettes. Each is only its seeds — see the @property block above for
+   which are required and which have usable initial values. If a palette needs
+   one derived token to be exact (a brand primary, a contrast-pinned
+   foreground), override that semantic token in the same block and say why;
+   pinned tokens are what makes palettes drift apart, so keep them rare. */
+/* Anthropic's ivory/slate neutrals with the Claude clay accent. Ivory Light
+   #faf9f5 and Ivory Medium #f0eee6 are the brand off-whites; #d97757 is the
+   Claude accent, darkened for light mode so white button text still passes
+   contrast, and kept bright in dark mode with dark text on top instead. */
+[data-theme-palette="claude"] {
+  --p-base: #faf9f5;
+  --p-surface: #ffffff;
+  --p-text: #262625;
+  --p-primary: #bd5d3a;
+  --p-base-dark: #262624;
+  --p-text-dark: #f0eee6;
+  --p-primary-dark: #d97757;
+  --p-primary-fg-dark: #241f1c;
+}
+
+/* OpenAI's near-monochrome surfaces (#0d0d0d workspace, #ececec text) with the
+   signature green. Deepened for light mode, and the bright dark-mode green
+   carries dark text because white on it is unreadable. */
+[data-theme-palette="codex"] {
+  --p-base: #ffffff;
+  --p-surface: #ffffff;
+  --p-text: #0d0d0d;
+  --p-primary: #0a7a5e;
+  --p-base-dark: #0d0d0d;
+  --p-text-dark: #ececec;
+  --p-primary-dark: #19c37d;
+  --p-primary-fg-dark: #06231a;
+}
+
+/* Zed's One themes: One Dark's #282c34 / #c8ccd4 with its #74ade8 blue, and
+   One Light's #fafafa / #383a41. The light blue is deepened from #5c79e2 so
+   white button text stays legible. */
+[data-theme-palette="zed"] {
+  --p-base: #fafafa;
+  --p-surface: #ffffff;
+  --p-text: #383a41;
+  --p-primary: #4c6acb;
+  --p-base-dark: #282c34;
+  --p-text-dark: #c8ccd4;
+  --p-primary-dark: #74ade8;
+  --p-primary-fg-dark: #1b222c;
+}
+
+[data-theme-palette="midnight"] {
+  --p-base: oklch(97.8% 0.011 285);
+  --p-text: oklch(28% 0.035 285);
+  --p-primary: oklch(52% 0.19 285);
+  --p-base-dark: oklch(17.5% 0.032 285);
+  --p-text-dark: oklch(93% 0.016 285);
+  --p-primary-dark: oklch(68% 0.16 285);
+}
+
+[data-theme-palette="ember"] {
+  --p-base: oklch(98% 0.012 45);
+  --p-text: oklch(29% 0.04 35);
+  --p-primary: oklch(53% 0.19 27);
+  --p-base-dark: oklch(17% 0.028 35);
+  --p-text-dark: oklch(93% 0.018 55);
+  --p-primary-dark: oklch(68% 0.16 40);
+}
+
+[data-theme-palette="mono"] {
+  --p-base: oklch(98.5% 0 0);
+  --p-text: oklch(27% 0 0);
+  --p-primary: oklch(42% 0 0);
+  --p-base-dark: oklch(16% 0 0);
+  --p-text-dark: oklch(93% 0 0);
+  --p-primary-dark: oklch(78% 0 0);
+  --p-primary-fg-dark: oklch(14% 0 0);
+}
+
+[data-theme-palette="cyberpunk"] {
+  --p-base: oklch(98% 0.02 145);
+  --p-text: oklch(26% 0.05 150);
+  --p-primary: oklch(48% 0.16 150);
+  --p-base-dark: oklch(13% 0.025 150);
+  --p-text-dark: oklch(92% 0.06 150);
+  --p-primary-dark: oklch(82% 0.24 145);
+  /* Neon green is far too light to carry white text. */
+  --p-primary-fg-dark: oklch(14% 0.04 150);
+}
+
+[data-theme-palette="slate"] {
+  --p-base: oklch(98% 0.008 240);
+  --p-text: oklch(29% 0.028 245);
+  --p-primary: oklch(50% 0.13 235);
+  --p-base-dark: oklch(19% 0.022 245);
+  --p-text-dark: oklch(92% 0.012 240);
+  --p-primary-dark: oklch(70% 0.12 235);
+}
+
+/* Nav-panel color indirection.
+   The app sidebar (AppSidebarLayout.tsx) runs on its own surface hierarchy,
+   deliberately deeper than the workspace in dark mode. It used to hardcode
+   that hierarchy here, which meant no palette could ever reach this subtree:
+   custom properties inherit, so a descendant's own declaration always wins for
+   its subtree no matter how specific the ancestor selector is — specificity is
+   simply the wrong lever. This rule now contains no colors at all, only
+   dereferences of the `--panel-*` group that the active palette owns, so it
+   can never fight a palette again.
+
+   Both versions share the color system on purpose; the attribute stays useful
+   for layout-only styling when the beta is toggled.
+
+   Do not express any `--panel-*` value in terms of a token written here — an
+   element carrying both `data-theme-palette` and `data-sidebar-version` would
+   then self-reference, which per spec is invalid-at-computed-value-time rather
+   than a graceful fallback, and the subtree would render unstyled. */
+[data-sidebar-version="v1"],
+[data-sidebar-version="v2"] {
+  --background: var(--panel-background);
+  --foreground: var(--panel-foreground);
+  --card: var(--panel-card);
+  --card-foreground: var(--panel-foreground);
+  --accent: var(--panel-accent);
+  --accent-foreground: var(--panel-accent-foreground);
+  --muted: var(--panel-muted);
+  --muted-foreground: var(--panel-muted-foreground);
+  --border: var(--panel-border);
+  --input: var(--panel-input);
+  --sidebar: var(--panel-sidebar);
+  --sidebar-foreground: var(--panel-foreground);
+  --sidebar-muted-foreground: var(--panel-muted-foreground);
+  --sidebar-control-surface: var(--panel-control-surface);
+  --sidebar-row-hover: var(--panel-row-hover);
+  --sidebar-row-active: var(--panel-row-active);
+  --sidebar-row-selected: var(--panel-row-selected);
+  --sidebar-border: var(--panel-border);
+  --sidebar-stage-fade: var(--panel-stage-fade);
+  background-color: var(--sidebar);
 }
 
 body {

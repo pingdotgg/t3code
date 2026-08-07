@@ -1002,6 +1002,13 @@ export interface DesktopBridge {
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
+  /**
+   * Records the renderer's resolved chrome color so the next launch can open
+   * the native window in the active palette's background instead of a
+   * hardcoded neutral. Kept separate from `setTheme` because it fires whenever
+   * the palette changes, not only on a light/dark switch.
+   */
+  setChromeBackgroundColor: (color: string) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },

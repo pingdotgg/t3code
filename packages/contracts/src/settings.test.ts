@@ -50,8 +50,8 @@ describe("ClientSettings glass opacity", () => {
 });
 
 describe("ClientSettings environment identification", () => {
-  it("defaults to artwork and accepts each presentation mode", () => {
-    expect(decodeClientSettings({}).environmentIdentificationMode).toBe("artwork");
+  it("defaults to none and accepts each presentation mode", () => {
+    expect(decodeClientSettings({}).environmentIdentificationMode).toBe("none");
 
     for (const mode of ["artwork", "pill", "none"] as const) {
       expect(

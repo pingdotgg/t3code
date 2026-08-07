@@ -24,6 +24,7 @@ import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
+import type { ThemePalette } from "~/lib/themePalettes";
 import { cn } from "~/lib/utils";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 import { resolvePathLinkTarget } from "~/terminal-links";
@@ -378,6 +379,7 @@ interface EditableFileSurfaceProps {
   composerDraftTarget: ScopedThreadRef | DraftId;
   contents: string;
   resolvedTheme: "light" | "dark";
+  palette: ThemePalette;
   revealRequestId: number;
   wordWrap: boolean;
   onPostRender: FilePostRender;
@@ -427,6 +429,7 @@ function EditableFileSurface({
   composerDraftTarget,
   contents,
   resolvedTheme,
+  palette,
   revealRequestId,
   wordWrap,
   onPostRender,
@@ -658,7 +661,7 @@ function EditableFileSurface({
               onLineSelectionChange: setSelectedRange,
               onLineSelectionEnd: handleLineSelectionEnd,
               overflow: wordWrap ? "wrap" : "scroll",
-              theme: resolveDiffThemeName(resolvedTheme),
+              theme: resolveDiffThemeName(resolvedTheme, palette),
               themeType: resolvedTheme,
               unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
               onPostRender: handlePostRender,
@@ -699,6 +702,7 @@ function RenderedMarkdownSurface({
 }: Omit<
   EditableFileSurfaceProps,
   | "resolvedTheme"
+  | "palette"
   | "composerDraftTarget"
   | "revealLine"
   | "revealRequestId"
@@ -758,7 +762,7 @@ export default function FilePreviewPanel({
   onOpenFile,
   onPendingChange,
 }: FilePreviewPanelProps) {
-  const { resolvedTheme } = useTheme();
+  const { resolvedTheme, palette } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
@@ -1014,7 +1018,7 @@ export default function FilePreviewPanel({
                   options={{
                     disableFileHeader: true,
                     overflow: wordWrap ? "wrap" : "scroll",
-                    theme: resolveDiffThemeName(resolvedTheme),
+                    theme: resolveDiffThemeName(resolvedTheme, palette),
                     themeType: resolvedTheme,
                     unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
                     onPostRender: onFilePostRender,
@@ -1031,6 +1035,7 @@ export default function FilePreviewPanel({
                 composerDraftTarget={composerDraftTarget}
                 contents={file.data.contents}
                 resolvedTheme={resolvedTheme}
+                palette={palette}
                 revealRequestId={revealRequestId}
                 wordWrap={wordWrap}
                 onPostRender={onFilePostRender}

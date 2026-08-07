@@ -7,7 +7,9 @@ import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 
 export class DiffWorkerError extends Schema.TaggedErrorClass<DiffWorkerError>()("DiffWorkerError", {
   operation: Schema.Literals(["create-worker", "get-render-options", "set-render-options"]),
-  themeName: Schema.Literals(["pierre-light", "pierre-dark"]),
+  // Any registered Shiki theme name — each theme palette brings its own pair,
+  // so this can no longer be the old two-name union.
+  themeName: Schema.String,
   cause: Schema.Defect(),
 }) {
   override get message(): string {
@@ -46,8 +48,8 @@ function DiffWorkerThemeSync({ themeName }: { themeName: DiffThemeName }) {
 }
 
 export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
-  const { resolvedTheme } = useTheme();
-  const diffThemeName = resolveDiffThemeName(resolvedTheme);
+  const { resolvedTheme, palette } = useTheme();
+  const diffThemeName = resolveDiffThemeName(resolvedTheme, palette);
   const workerPoolSize = useMemo(() => {
     const cores =
       typeof navigator === "undefined" ? 4 : Math.max(1, navigator.hardwareConcurrency || 4);

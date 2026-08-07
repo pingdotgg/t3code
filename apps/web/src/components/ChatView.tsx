@@ -1235,7 +1235,7 @@ function ChatViewContent(props: ChatViewProps) {
   const timestampFormat = settings.timestampFormat;
   const autoOpenPlanSidebar = settings.autoOpenPlanSidebar;
   const navigate = useNavigate();
-  const { resolvedTheme } = useTheme();
+  const { resolvedTheme, palette } = useTheme();
   // Granular store selectors — avoid subscribing to prompt changes.
   const composerRuntimeMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.runtimeMode ?? null,
@@ -5825,6 +5825,7 @@ function ChatViewContent(props: ChatViewProps) {
                 onImageExpand={onExpandTimelineImage}
                 markdownCwd={gitCwd ?? undefined}
                 resolvedTheme={resolvedTheme}
+                palette={palette}
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeWorkspaceRoot}
                 skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}

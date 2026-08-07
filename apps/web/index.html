@@ -12,26 +12,64 @@
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <script>
+      // Runs before the stylesheet and before React, so the first paint is
+      // already in the user's mode AND palette. Anything read here has to come
+      // from a flat localStorage key — see the note on PALETTE_STORAGE_KEY in
+      // src/hooks/useTheme.ts.
       (() => {
         const LIGHT_BACKGROUND = "#ffffff";
         const DARK_BACKGROUND = "#0a0a0a";
+        // Must match THEME_PALETTE_IDS in src/lib/themePalettes.ts. This script
+        // cannot import, so themePalettes.test.ts asserts the two agree.
+        const PALETTES = [
+          "default",
+          "claude",
+          "codex",
+          "zed",
+          "midnight",
+          "ember",
+          "mono",
+          "cyberpunk",
+          "slate",
+        ];
         const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+        const paint = (chromeColor) => {
+          document.documentElement.style.backgroundColor = chromeColor;
+          // The inline <style> below paints the splash from this, since <body>
+          // does not exist yet and cannot be styled directly.
+          document.documentElement.style.setProperty("--boot-chrome", chromeColor);
+          themeColorMeta?.setAttribute("content", chromeColor);
+        };
         try {
           const storedTheme = window.localStorage.getItem("t3code:theme");
           const theme =
             storedTheme === "light" || storedTheme === "dark" || storedTheme === "system"
               ? storedTheme
               : "system";
+          const storedPalette = window.localStorage.getItem("t3code:theme-palette");
+          const palette = PALETTES.includes(storedPalette) ? storedPalette : "default";
           const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           const isDark = theme === "dark" || (theme === "system" && prefersDark);
           document.documentElement.classList.toggle("dark", isDark);
-          const chromeColor = isDark ? DARK_BACKGROUND : LIGHT_BACKGROUND;
-          document.documentElement.style.backgroundColor = chromeColor;
-          themeColorMeta?.setAttribute("content", chromeColor);
+          document.documentElement.dataset.themePalette = palette;
+
+          // The palette's real chrome color can only be known once the
+          // stylesheet has applied, so the app caches the last resolved value
+          // (see syncBrowserChromeTheme). Use it only when it was recorded for
+          // this exact palette and mode; otherwise fall back to the neutral
+          // pair, which is correct for the default palette.
+          const cached = window.localStorage.getItem("t3code:theme-chrome");
+          const prefix = palette + ":" + (isDark ? "dark" : "light") + ":";
+          paint(
+            cached && cached.startsWith(prefix)
+              ? cached.slice(prefix.length)
+              : isDark
+                ? DARK_BACKGROUND
+                : LIGHT_BACKGROUND,
+          );
         } catch {
           document.documentElement.classList.add("dark");
-          document.documentElement.style.backgroundColor = DARK_BACKGROUND;
-          themeColorMeta?.setAttribute("content", DARK_BACKGROUND);
+          paint(DARK_BACKGROUND);
         }
       })();
     </script>
@@ -44,8 +82,11 @@
         margin: 0;
       }
 
+      /* --boot-chrome is set by the script above from the active palette; the
+         literals remain the fallback for the default palette and for a first
+         load that has nothing cached yet. */
       body {
-        background: #ffffff;
+        background: var(--boot-chrome, #ffffff);
         color: #262626;
         font-family:
           "DM Sans Variable",
@@ -58,7 +99,7 @@
       }
 
       html.dark body {
-        background: #0a0a0a;
+        background: var(--boot-chrome, #0a0a0a);
         color: #f5f5f5;
       }
 
@@ -84,7 +125,7 @@
         object-fit: contain;
       }
     </style>
-    <title>T3 Code (Alpha)</title>
+    <title>T3 Code Custom (Alpha)</title>
   </head>
   <body>
     <div id="root">

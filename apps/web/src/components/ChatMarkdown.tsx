@@ -54,6 +54,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
+import type { ThemePalette } from "../lib/themePalettes";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
@@ -653,6 +654,7 @@ interface SuspenseShikiCodeBlockProps {
   className: string | undefined;
   code: string;
   themeName: DiffThemeName;
+  palette: ThemePalette;
   isStreaming: boolean;
 }
 
@@ -660,6 +662,7 @@ function SuspenseShikiCodeBlock({
   className,
   code,
   themeName,
+  palette,
   isStreaming,
 }: SuspenseShikiCodeBlockProps) {
   const language = extractFenceLanguage(className);
@@ -680,6 +683,7 @@ function SuspenseShikiCodeBlock({
       code={code}
       language={language}
       themeName={themeName}
+      palette={palette}
       cacheKey={cacheKey}
       isStreaming={isStreaming}
     />
@@ -690,6 +694,7 @@ interface UncachedShikiCodeBlockProps {
   code: string;
   language: string;
   themeName: DiffThemeName;
+  palette: ThemePalette;
   cacheKey: string;
   isStreaming: boolean;
 }
@@ -698,10 +703,11 @@ function UncachedShikiCodeBlock({
   code,
   language,
   themeName,
+  palette,
   cacheKey,
   isStreaming,
 }: UncachedShikiCodeBlockProps) {
-  const highlighter = use(getSyntaxHighlighterPromise(language));
+  const highlighter = use(getSyntaxHighlighterPromise(language, palette));
   const highlightedHtml = useMemo(() => {
     try {
       return highlighter.codeToHtml(code, { lang: language, theme: themeName });
@@ -1261,7 +1267,7 @@ function ChatMarkdown({
   className,
   lineBreaks = false,
 }: ChatMarkdownProps) {
-  const { resolvedTheme } = useTheme();
+  const { resolvedTheme, palette } = useTheme();
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
   });
@@ -1275,7 +1281,7 @@ function ChatMarkdown({
     environmentId,
     serverConfig?.availableEditors ?? [],
   );
-  const diffThemeName = resolveDiffThemeName(resolvedTheme);
+  const diffThemeName = resolveDiffThemeName(resolvedTheme, palette);
   const markdownFileLinkMetaByHref = useMemo(() => {
     const metaByHref = new Map<
       string,
@@ -1569,6 +1575,7 @@ function ChatMarkdown({
                   className={codeBlock.className}
                   code={codeBlock.code}
                   themeName={diffThemeName}
+                  palette={palette}
                   isStreaming={isStreaming}
                 />
               </Suspense>
@@ -1583,6 +1590,7 @@ function ChatMarkdown({
     fileLinkParentSuffixByPath,
     inlineCodeFileLinkMetaByText,
     isStreaming,
+    palette,
     markdownFileLinkMetaByHref,
     onTaskListChange,
     openInPreferredEditor,

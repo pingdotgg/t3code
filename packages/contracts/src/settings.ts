@@ -60,7 +60,10 @@ export type GlassOpacity = typeof GlassOpacity.Type;
 export const DEFAULT_GLASS_OPACITY: GlassOpacity = 80;
 export const EnvironmentIdentificationMode = Schema.Literals(["artwork", "pill", "none"]);
 export type EnvironmentIdentificationMode = typeof EnvironmentIdentificationMode.Type;
-export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationMode = "artwork";
+// The blueprint artwork behind the sidebar header reads as a background image
+// rather than an environment cue, so this fork ships it off. Users who want the
+// Dev/Nightly distinction back can pick "artwork" or "pill" in Settings.
+export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationMode = "none";
 
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),

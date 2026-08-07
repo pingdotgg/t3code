@@ -39,6 +39,11 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
 export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "theme",
+    title: "Color mode",
+    to: "/settings/appearance",
+  },
+  {
+    id: "theme-palette",
     title: "Theme",
     to: "/settings/appearance",
   },

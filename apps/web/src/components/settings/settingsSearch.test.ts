@@ -70,7 +70,12 @@ describe("searchSettings", () => {
   });
 
   it("routes appearance settings to their current section", () => {
+    // "Theme" is the palette picker; the light/dark switch is "Color mode".
     expect(searchSettings("theme")[0]).toMatchObject({
+      id: "theme-palette",
+      to: "/settings/appearance",
+    });
+    expect(searchSettings("color mode")[0]).toMatchObject({
       id: "theme",
       to: "/settings/appearance",
     });

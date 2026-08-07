@@ -194,7 +194,7 @@ export default function DiffPanel({
   composerDraftTarget,
   initialGitScope: initialGitScopeProp,
 }: DiffPanelProps) {
-  const { resolvedTheme } = useTheme();
+  const { resolvedTheme, palette } = useTheme();
   const settings = useClientSettings();
   const [initialGitScope] = useState(initialGitScopeProp);
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
@@ -919,7 +919,7 @@ export default function DiffPanel({
                     diffStyle: diffRenderMode === "split" ? "split" : "unified",
                     lineDiffType: "none",
                     overflow: wordWrap ? "wrap" : "scroll",
-                    theme: resolveDiffThemeName(resolvedTheme),
+                    theme: resolveDiffThemeName(resolvedTheme, palette),
                     themeType: resolvedTheme as DiffThemeType,
                     unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
                     stickyHeaders: true,

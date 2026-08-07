@@ -3,9 +3,12 @@ import {
   ArchiveX,
   InfoIcon,
   LoaderIcon,
+  MonitorIcon,
+  MoonIcon,
   PlusIcon,
   RefreshCwIcon,
   SettingsIcon,
+  SunIcon,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { CSSProperties } from "react";
@@ -64,6 +67,7 @@ import {
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { useTheme } from "../../hooks/useTheme";
+import { DEFAULT_THEME_PALETTE, themePaletteLabel } from "../../lib/themePalettes";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
@@ -106,6 +110,8 @@ import {
 } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { ThemePalettePicker } from "./ThemePalettePicker";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
@@ -142,16 +148,19 @@ import { useAtomCommand } from "../../state/use-atom-command";
 
 const THEME_OPTIONS = [
   {
-    value: "system",
-    label: "System",
-  },
-  {
     value: "light",
     label: "Light",
+    icon: SunIcon,
   },
   {
     value: "dark",
     label: "Dark",
+    icon: MoonIcon,
+  },
+  {
+    value: "system",
+    label: "System",
+    icon: MonitorIcon,
   },
 ] as const;
 
@@ -557,7 +566,7 @@ function AboutVersionSection() {
 }
 
 export function useSettingsRestore(onRestored?: () => void) {
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, palette, setPalette } = useTheme();
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
 
@@ -569,7 +578,8 @@ export function useSettingsRestore(onRestored?: () => void) {
 
   const changedSettingLabels = useMemo(
     () => [
-      ...(theme !== "system" ? ["Theme"] : []),
+      ...(theme !== "system" ? ["Color mode"] : []),
+      ...(palette !== DEFAULT_THEME_PALETTE ? [`Theme (${themePaletteLabel(palette)})`] : []),
       ...(settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? ["Glass opacity"] : []),
       ...(settings.environmentIdentificationMode !==
       DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode
@@ -637,6 +647,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.timestampFormat,
       settings.wordWrap,
       theme,
+      palette,
     ],
   );
 
@@ -651,6 +662,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     if (!confirmed) return;
 
     setTheme("system");
+    setPalette(DEFAULT_THEME_PALETTE);
     updateSettings({
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
@@ -674,7 +686,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
     });
     onRestored?.();
-  }, [changedSettingLabels, onRestored, setTheme, updateSettings]);
+  }, [changedSettingLabels, onRestored, setPalette, setTheme, updateSettings]);
 
   return {
     changedSettingLabels,
@@ -949,7 +961,7 @@ function BackgroundActivityAdvancedDialog({
 }
 
 export function AppearanceSettingsPanel() {
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, palette, setPalette } = useTheme();
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const environmentStageLabel = useEnvironmentStageLabel();
@@ -967,36 +979,52 @@ export function AppearanceSettingsPanel() {
       <SettingsSection id="appearance" title="Appearance">
         <SettingsRow
           {...searchableSetting("theme")}
-          description="Choose how T3 Code looks across the app."
+          description="Pick a fixed brightness or follow your system setting."
           resetAction={
             theme !== "system" ? (
-              <SettingResetButton label="theme" onClick={() => setTheme("system")} />
+              <SettingResetButton label="color mode" onClick={() => setTheme("system")} />
             ) : null
           }
           control={
-            <Select
-              value={theme}
-              onValueChange={(value) => {
+            <ToggleGroup
+              aria-label="Color mode"
+              value={[theme]}
+              onValueChange={(groupValue) => {
+                // Single-select group. Clicking the pressed item yields an
+                // empty array; ignoring that keeps a mode always selected.
+                const [value] = groupValue;
                 if (value === "system" || value === "light" || value === "dark") {
                   setTheme(value);
                 }
               }}
+              variant="outline"
             >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Theme preference">
-                <SelectValue>
-                  {THEME_OPTIONS.find((option) => option.value === theme)?.label ?? "System"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {THEME_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
+              {THEME_OPTIONS.map((option) => (
+                <Toggle
+                  key={option.value}
+                  value={option.value}
+                  aria-label={option.label}
+                  className="gap-1.5 px-2.5"
+                >
+                  <option.icon className="size-3.5" />
+                  {option.label}
+                </Toggle>
+              ))}
+            </ToggleGroup>
           }
         />
+
+        <SettingsRow
+          {...searchableSetting("theme-palette")}
+          description="Choose the color palette T3 Code uses across the app, including code blocks and diffs. The color mode above is applied on top."
+          resetAction={
+            palette !== DEFAULT_THEME_PALETTE ? (
+              <SettingResetButton label="theme" onClick={() => setPalette(DEFAULT_THEME_PALETTE)} />
+            ) : null
+          }
+        >
+          <ThemePalettePicker value={palette} onValueChange={setPalette} />
+        </SettingsRow>
 
         <SettingsRow
           {...searchableSetting("setting-glass-opacity")}
