@@ -722,34 +722,53 @@ it.effect("classifies an authentication failure without retaining the remote it 
   ).pipe(Effect.provide(failing.layer));
 });
 
-it.effect("does not read a local permission error as an authentication failure", () => {
-  // `git init` into an unwritable directory says "Permission denied" too.
-  // Matching that bare phrase would answer a filesystem problem with advice
-  // about remote credentials, which is worse than saying nothing.
-  const failing = makeFailingGitLayer(
-    `error: could not create work tree dir 'projects': Permission denied\n`,
-  );
+// Git writes a bare "Permission denied" for local filesystem problems, using
+// the same two words ssh uses for a rejected key. Matching the phrase alone
+// would answer an unwritable directory or a stale lock with advice about
+// remote credentials, which is worse than saying nothing.
+const localPermissionFailures = [
+  {
+    name: "an unwritable clone target",
+    args: ["init", "projects"],
+    stderr: `error: could not create work tree dir 'projects': Permission denied\n`,
+  },
+  {
+    name: "a lock file it cannot take",
+    args: ["commit", "-m", "wip"],
+    stderr: `fatal: Unable to create '/repo/.git/index.lock': Permission denied\n`,
+  },
+  {
+    name: "a ref file it cannot write",
+    args: ["fetch", "origin"],
+    stderr: `error: cannot open .git/FETCH_HEAD: Permission denied\n`,
+  },
+] as const;
 
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const driver = yield* GitVcsDriver.GitVcsDriver;
-      const cwd = yield* makeTmpDir();
-      const error = yield* driver
-        .execute({
-          operation: "GitVcsDriver.test.localPermissionFailure",
-          cwd,
-          args: ["init", "projects"],
-        })
-        .pipe(Effect.flip);
+for (const failure of localPermissionFailures) {
+  it.effect(`reads ${failure.name} as a command failure, not an auth failure`, () => {
+    const failing = makeFailingGitLayer(failure.stderr);
 
-      assert.equal(failing.spawns.length, 1);
-      assert.instanceOf(error, GitCommandError);
-      assert.equal(error.failureKind, "command-failed");
-      assert.notInclude(error.detail.toLowerCase(), "authentication");
-      assert.notInclude(error.detail.toLowerCase(), "credentials");
-    }),
-  ).pipe(Effect.provide(failing.layer));
-});
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const cwd = yield* makeTmpDir();
+        const error = yield* driver
+          .execute({
+            operation: "GitVcsDriver.test.localPermissionFailure",
+            cwd,
+            args: [...failure.args],
+          })
+          .pipe(Effect.flip);
+
+        assert.equal(failing.spawns.length, 1);
+        assert.instanceOf(error, GitCommandError);
+        assert.equal(error.failureKind, "command-failed");
+        assert.notInclude(error.detail.toLowerCase(), "authentication");
+        assert.notInclude(error.detail.toLowerCase(), "credentials");
+      }),
+    ).pipe(Effect.provide(failing.layer));
+  });
+}
 
 it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   describe("process environment", () => {
