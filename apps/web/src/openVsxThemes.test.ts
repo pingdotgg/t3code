@@ -260,6 +260,7 @@ describe("Open VSX themes", () => {
 
     expect(themes).toHaveLength(2);
     expect(new Set(themes.map((theme) => theme.id)).size).toBe(2);
+    expect(themes.every((theme) => theme.collection?.id === "open-vsx:demo.theme")).toBe(true);
     const paired = themes.find(
       (theme) =>
         getThemeColorsForMode(theme, "light") !== null &&

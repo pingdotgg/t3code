@@ -587,6 +587,7 @@ export async function importOpenVsxThemeExtension(
     signal?.throwIfAborted();
     inspectZip(zip);
   } catch (cause) {
+    if (signal?.aborted) signal.throwIfAborted();
     if (cause instanceof Error && cause.message.startsWith("That extension package")) throw cause;
     throw new Error("That Open VSX extension package could not be opened.", { cause });
   }
@@ -649,5 +650,10 @@ export async function importOpenVsxThemeExtension(
     throw new Error(failures[0] ?? "That extension has no compatible color themes.");
   }
   const paired = pairVsCodeThemes(resolveThemeLabelCollisions(parsed));
-  return resolveThemeLabelCollisions(paired.map((theme) => ({ theme })));
+  const themes = resolveThemeLabelCollisions(paired.map((theme) => ({ theme })));
+  const collection = {
+    id: `open-vsx:${extension.id.toLowerCase()}`,
+    label: extension.name.slice(0, 48),
+  };
+  return themes.map((theme) => ({ ...theme, collection }));
 }

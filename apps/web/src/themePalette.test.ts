@@ -491,6 +491,42 @@ describe("theme files", () => {
     vi.unstubAllGlobals();
   });
 
+  it("preserves valid imported-theme collections and drops malformed metadata", () => {
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) =>
+          key === CUSTOM_THEMES_STORAGE_KEY
+            ? JSON.stringify([
+                {
+                  id: "github-dark",
+                  label: "GitHub Dark",
+                  appearance: "dark",
+                  colors: { canvas: "#0d1117" },
+                  collection: { id: "open-vsx:github.github-vscode-theme", label: "GitHub Theme" },
+                },
+                {
+                  id: "github-light",
+                  label: "GitHub Light",
+                  appearance: "light",
+                  colors: { canvas: "#ffffff" },
+                  collection: { id: "bad collection id", label: "GitHub Theme" },
+                },
+              ])
+            : null,
+      },
+    });
+
+    invalidateCustomThemes();
+    expect(getCustomThemes()).toMatchObject([
+      { collection: { id: "open-vsx:github.github-vscode-theme", label: "GitHub Theme" } },
+      { id: "github-light" },
+    ]);
+    expect(getCustomThemes()[1]).not.toHaveProperty("collection");
+
+    vi.unstubAllGlobals();
+    invalidateCustomThemes();
+  });
+
   it("canonicalizes explicit writes without migrating untouched themes", () => {
     const stored = new Map<string, string>();
     const untouchedTheme = {
