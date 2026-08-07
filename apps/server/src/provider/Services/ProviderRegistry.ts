@@ -11,6 +11,7 @@ import type {
   ProviderDriverKind,
   ServerProvider,
   ServerProviderUpdateState,
+  ServerProviderUsage,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -67,6 +68,16 @@ export interface ProviderRegistryShape {
     readonly instanceId: ProviderInstanceId;
     readonly action: ProviderMaintenanceActionKind;
     readonly state: ServerProviderUpdateState | null;
+  }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+  /**
+   * Apply volatile account-usage state (rate-limit windows) to one
+   * configured instance. Projected onto `ServerProvider.usage` at
+   * aggregation time; never persisted to disk.
+   */
+  readonly setProviderInstanceUsage: (input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly usage: ServerProviderUsage;
   }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**

@@ -28,6 +28,7 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderUpdateState,
+  type ServerProviderUsage,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -54,6 +55,7 @@ import {
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import type { ProviderSnapshotSource } from "../builtInProviderCatalog.ts";
+import { pickNewestUsage } from "../providerUsage.ts";
 
 const loadProviders = (
   providerSources: ReadonlyArray<ProviderSnapshotSource>,
@@ -292,6 +294,13 @@ export const ProviderRegistryLive = Layer.effect(
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
     >(new Map());
+    // Volatile account-usage overlay (rate-limit windows). Snapshot
+    // refreshes don't carry live usage, so the overlay reattaches it on
+    // every upsert; snapshot-borne usage (e.g. a Codex probe read) wins
+    // only while it is newer.
+    const usageOverlayRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ServerProviderUsage>>(
+      new Map(),
+    );
 
     // Live-source registry — the dynamic counterpart to the boot-time
     // `bootSources`. Keyed by `instanceId`; the stored `ProviderInstance`
@@ -344,6 +353,25 @@ export const ProviderRegistryLive = Layer.effect(
       };
     });
 
+    // Merge the usage overlay with any snapshot-borne usage (e.g. a Codex
+    // probe read); the newest wins. The winner is written back to the
+    // overlay so later refresh snapshots without usage don't drop it.
+    const applyProviderUsage = Effect.fn("applyProviderUsage")(function* (
+      provider: ServerProvider,
+    ) {
+      const overlayUsage = (yield* Ref.get(usageOverlayRef)).get(provider.instanceId);
+      const usage = pickNewestUsage(provider.usage, overlayUsage);
+      if (!usage) {
+        return provider;
+      }
+      if (usage !== overlayUsage) {
+        yield* Ref.update(usageOverlayRef, (previous) =>
+          new Map(previous).set(provider.instanceId, usage),
+        );
+      }
+      return usage === provider.usage ? provider : { ...provider, usage };
+    });
+
     const upsertProviders = Effect.fn("upsertProviders")(function* (
       nextProviders: ReadonlyArray<ServerProvider>,
       options?: {
@@ -354,7 +382,7 @@ export const ProviderRegistryLive = Layer.effect(
     ) {
       const nextProvidersWithUpdateState = yield* Effect.forEach(
         nextProviders,
-        applyProviderUpdateState,
+        (provider) => applyProviderUpdateState(provider).pipe(Effect.flatMap(applyProviderUsage)),
         {
           concurrency: "unbounded",
         },
@@ -448,6 +476,27 @@ export const ProviderRegistryLive = Layer.effect(
         });
       },
     );
+
+    const setProviderInstanceUsage = Effect.fn("setProviderInstanceUsage")(function* (input: {
+      readonly instanceId: ProviderInstanceId;
+      readonly usage: ServerProviderUsage;
+    }) {
+      yield* Ref.update(usageOverlayRef, (previous) =>
+        new Map(previous).set(input.instanceId, input.usage),
+      );
+
+      const existingProviders = yield* Ref.get(providersRef);
+      const matchingProvider = existingProviders.find(
+        (candidate) => candidate.instanceId === input.instanceId,
+      );
+      if (!matchingProvider) {
+        return existingProviders;
+      }
+
+      return yield* upsertProviders([matchingProvider], {
+        persist: false,
+      });
+    });
 
     const refreshOneSource = Effect.fn("refreshOneSource")(function* (
       providerSource: ProviderSnapshotSource,
@@ -627,6 +676,15 @@ export const ProviderRegistryLive = Layer.effect(
           }
           return next;
         });
+        yield* Ref.update(usageOverlayRef, (previous) => {
+          const next = new Map(previous);
+          for (const instanceId of previous.keys()) {
+            if (!knownInstanceIds.has(instanceId)) {
+              next.delete(instanceId);
+            }
+          }
+          return next;
+        });
       }),
     );
     const syncLiveSourcesAndContinue = syncLiveSources.pipe(
@@ -712,6 +770,7 @@ export const ProviderRegistryLive = Layer.effect(
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
+      setProviderInstanceUsage,
       get streamChanges() {
         return Stream.fromPubSub(changesPubSub);
       },

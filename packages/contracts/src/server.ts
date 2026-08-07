@@ -158,6 +158,36 @@ export const ServerProviderUpdateState = Schema.Struct({
 });
 export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 
+export const ServerProviderUsageWindowStatus = Schema.Literals(["ok", "warning", "exhausted"]);
+export type ServerProviderUsageWindowStatus = typeof ServerProviderUsageWindowStatus.Type;
+
+/**
+ * One metered rate-limit window of a provider account (e.g. Claude's
+ * rolling 5-hour session window or a weekly cap). `key` is the stable
+ * provider-native identifier used for merging sparse updates; `label` is
+ * the compact display string ("5h", "1w", "1w Opus").
+ */
+export const ServerProviderUsageWindow = Schema.Struct({
+  key: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  usedPercent: Schema.Number,
+  status: Schema.optional(ServerProviderUsageWindowStatus),
+  resetsAt: Schema.optional(IsoDateTime),
+});
+export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
+
+/**
+ * Account-level usage snapshot for a provider instance. Volatile runtime
+ * state: populated from provider rate-limit events (and startup reads
+ * where the provider supports them), never persisted to the on-disk
+ * provider status cache.
+ */
+export const ServerProviderUsage = Schema.Struct({
+  windows: Schema.Array(ServerProviderUsageWindow),
+  updatedAt: IsoDateTime,
+});
+export type ServerProviderUsage = typeof ServerProviderUsage.Type;
+
 export const ServerProvider = Schema.Struct({
   // Routing key for the configured instance this snapshot represents. This
   // is the only stable identity consumers may use for provider routing.
@@ -194,6 +224,9 @@ export const ServerProvider = Schema.Struct({
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
+  // Volatile account usage (rate-limit windows). Like `updateState`, this
+  // is projected onto snapshots at aggregation time and never persisted.
+  usage: Schema.optionalKey(ServerProviderUsage),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 
