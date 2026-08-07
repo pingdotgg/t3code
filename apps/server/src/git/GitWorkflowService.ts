@@ -291,10 +291,13 @@ export const make = Effect.gen(function* () {
       "GitWorkflowService.resolvePullRequest",
       gitManager.resolvePullRequest,
     ),
-    preparePullRequestThread: routeGitManager(
-      "GitWorkflowService.preparePullRequestThread",
-      gitManager.preparePullRequestThread,
-    ),
+    preparePullRequestThread: (input) =>
+      worktreeLifecycle.withMutationPermit(
+        ensureGit("GitWorkflowService.preparePullRequestThread", input.cwd).pipe(
+          Effect.andThen(gitManager.preparePullRequestThread(input)),
+          Effect.tap(() => worktreeLifecycle.markInventoryChanged),
+        ),
+      ),
     listRefs: (input) =>
       detectGitRepositoryForCommand("GitWorkflowService.listRefs", input.cwd).pipe(
         Effect.flatMap((isGitRepository) =>
