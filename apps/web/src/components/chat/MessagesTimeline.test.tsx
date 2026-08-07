@@ -297,7 +297,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("1 changed file");
   });
 
-  it("uses LegendList isNearEnd when deciding whether the live edge is visible", async () => {
+  it("treats the follow re-arm band above the content bottom as the live edge", async () => {
     const {
       resolveTimelineIsAtEnd,
       resolveTimelineMinimapHasPersistentGutter,
@@ -308,10 +308,37 @@ describe("MessagesTimeline", () => {
       resolveTimelineMinimapTopPercent,
     } = await import("./MessagesTimeline.logic");
 
-    expect(resolveTimelineIsAtEnd({ isNearEnd: true, isAtEnd: false })).toBe(true);
-    expect(resolveTimelineIsAtEnd({ isNearEnd: false, isAtEnd: true })).toBe(false);
     expect(resolveTimelineIsAtEnd({ isAtEnd: true })).toBe(true);
     expect(resolveTimelineIsAtEnd(undefined)).toBeUndefined();
+    // Within the pixel band above the content bottom counts as the end...
+    expect(
+      resolveTimelineIsAtEnd({
+        isAtEnd: false,
+        contentLength: 2000,
+        scroll: 1170,
+        scrollLength: 800,
+      }),
+    ).toBe(true);
+    // ...but half a viewport up (LegendList's isNearEnd territory) does not.
+    expect(
+      resolveTimelineIsAtEnd({
+        isAtEnd: false,
+        contentLength: 2000,
+        scroll: 900,
+        scrollLength: 800,
+      }),
+    ).toBe(false);
+    // The composer inset is part of contentLength and must not count as
+    // distance-to-end.
+    expect(
+      resolveTimelineIsAtEnd(
+        { isAtEnd: false, contentLength: 2100, scroll: 1170, scrollLength: 800 },
+        100,
+      ),
+    ).toBe(true);
+    // Geometry missing (older state shape): fall back to the nearEnd/strict flags.
+    expect(resolveTimelineIsAtEnd({ isNearEnd: true, isAtEnd: false })).toBe(true);
+    expect(resolveTimelineIsAtEnd({ isAtEnd: false })).toBe(false);
 
     expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, calc(100vh - 18rem))");
     expect(resolveTimelineMinimapTopPercent(2, 5)).toBe(50);
