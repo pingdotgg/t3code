@@ -615,6 +615,32 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       }),
   );
 
+  it.effect("keeps the displayed update command copyable when the install path has spaces", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-native-spaced-path-capabilities");
+      const nativeBinDir = NodePath.join(tempDir, "Alice Smith", ".scoped-package-tool", "bin");
+      NodeFS.mkdirSync(nativeBinDir, { recursive: true });
+      const configuredPath = NodePath.join(nativeBinDir, "scoped-package-tool");
+      NodeFS.writeFileSync(configuredPath, "#!/bin/sh\n");
+      NodeFS.chmodSync(configuredPath, 0o755);
+
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+        scopedPackageToolUpdate,
+        {
+          binaryPath: configuredPath,
+          env: {
+            PATH: "",
+          },
+        },
+      ).pipe(Effect.provideService(HostProcessPlatform, "darwin"));
+
+      // The spawned executable stays unquoted - it is passed as a list entry,
+      // never through a shell - while the copyable string quotes it.
+      expect(capabilities.update?.executable).toBe(configuredPath);
+      expect(capabilities.update?.command).toBe(`"${configuredPath}" upgrade`);
+    }),
+  );
+
   it("disables one-click updates for explicit custom binary paths it cannot safely map", () => {
     expect(
       packageToolUpdate.resolve({

@@ -94,6 +94,20 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+/**
+ * `command` is a display string — the UI renders it and users copy it into a
+ * terminal as the manual update. Execution never goes through it: the runner
+ * spawns `executable` with `args` as a list, so nothing here is a shell
+ * injection surface. Native updates do carry an absolute executable path
+ * though, and those can contain spaces (`/Users/Alice Smith/.local/bin/codex`),
+ * which would otherwise render as a command that splits into the wrong tokens
+ * when pasted. Double quotes rather than POSIX single quotes, since these
+ * paths are just as likely to be pasted into a Windows shell.
+ */
+function quoteCommandToken(token: string): string {
+  return /\s/.test(token) ? `"${token}"` : token;
+}
+
 export function makeProviderMaintenanceCapabilities(input: {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
@@ -105,7 +119,7 @@ export function makeProviderMaintenanceCapabilities(input: {
     input.updateExecutable === null || input.updateLockKey === null
       ? null
       : {
-          command: [input.updateExecutable, ...input.updateArgs].join(" "),
+          command: [input.updateExecutable, ...input.updateArgs].map(quoteCommandToken).join(" "),
           executable: input.updateExecutable,
           args: input.updateArgs,
           lockKey: input.updateLockKey,
