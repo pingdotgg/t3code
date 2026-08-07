@@ -148,7 +148,7 @@ export async function searchOpenVsxThemes(
       try {
         return extensionFromDetail(JSON.parse(new TextDecoder().decode(detailBytes)));
       } catch {
-        return null;
+        throw new Error("Open VSX returned unreadable theme details.");
       }
     }),
   );

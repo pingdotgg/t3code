@@ -99,6 +99,25 @@ describe("Open VSX themes", () => {
     );
   });
 
+  it("reports an unavailable search when every detail response is malformed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).includes("/-/search?")) {
+          return new Response(
+            JSON.stringify({ extensions: [{ namespace: "demo", name: "theme" }] }),
+            { status: 200 },
+          );
+        }
+        return new Response("not json", { status: 200 });
+      }),
+    );
+
+    await expect(searchOpenVsxThemes("dracula")).rejects.toThrow(
+      "Open VSX theme details are unavailable",
+    );
+  });
+
   it("downloads a verified VSIX, reads JSONC includes, and pairs contributed variants", async () => {
     const zip = new JSZip();
     zip.file(
