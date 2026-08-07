@@ -67,6 +67,12 @@ import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
 
 type WorkspaceMode = "local" | "worktree";
 
+type ResolvedWorkspace = {
+  readonly mode: WorkspaceMode;
+  readonly branch: string | null;
+  readonly worktreePath: string | null;
+};
+
 const EMPTY_BRANCH_REFS: ReadonlyArray<VcsRef> = [];
 
 function pendingTaskDraftKey(messageId: string): string {
@@ -150,6 +156,13 @@ type NewTaskFlowContextValue = {
   readonly setSelectedModelKey: (key: string | null) => void;
   readonly setWorkspaceMode: (mode: WorkspaceMode) => void;
   readonly selectBranch: (branch: VcsRef) => void;
+  /**
+   * Resolve the workspace configuration to actually start a thread with, so a
+   * task can always be sent regardless of what the user has (or has not)
+   * picked. A worktree thread with no branch resolves to the best available
+   * branch, falling back to a current-checkout thread when no branch is known.
+   */
+  readonly resolveStartWorkspace: (input: ResolvedWorkspace) => ResolvedWorkspace;
   readonly setStartFromOrigin: (value: boolean) => void;
   readonly beginEditingPendingTask: (messageId: string) => boolean;
   readonly finishEditingPendingTask: () => void;
@@ -600,6 +613,36 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     [selectedBranchName, selectedProjectDraftKey, selectedWorktreePath, workspaceMode],
   );
 
+  const resolveStartWorkspace = useCallback(
+    (input: ResolvedWorkspace): ResolvedWorkspace => {
+      // Only a worktree thread with no chosen branch needs resolving: the repo
+      // default may still be loading, or the auto-select below found no
+      // default / current ref to pre-pick. Everything else starts as-is.
+      if (input.mode !== "worktree" || input.branch !== null) {
+        return input;
+      }
+      const preferredBranch =
+        allBranchRefs.find((branch) => branch.isDefault) ??
+        availableBranches.find((branch) => branch.current) ??
+        availableBranches[0] ??
+        null;
+      // No branch is known at all (branches not loaded, or not a branchy repo):
+      // a current-checkout thread needs none, so fall back to it rather than
+      // stranding the user with an unstartable worktree.
+      if (!preferredBranch) {
+        return { mode: "local", branch: null, worktreePath: input.worktreePath };
+      }
+      return {
+        mode: "worktree",
+        branch: preferredBranch.name,
+        worktreePath: selectedProject
+          ? normalizeSelectedWorktreePath(selectedProject, preferredBranch)
+          : input.worktreePath,
+      };
+    },
+    [allBranchRefs, availableBranches, selectedProject],
+  );
+
   const refreshBranches = branchState.refresh;
   const loadBranches = useCallback(async () => {
     if (!selectedProject) {
@@ -691,9 +734,17 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         return null;
       }
       const workspaceSelection = draft.workspaceSelection;
-      // Fall back to the resolved mode (server default) so queued tasks drain
-      // with the same mode the composer displayed.
-      const mode = workspaceSelection?.mode ?? workspaceMode;
+      // Resolve the same way the interactive send does, so an offline task
+      // queued without a branch drains as a real thread (default branch, or a
+      // current-checkout fallback) instead of an unstartable worktree.
+      const resolvedWorkspace = resolveStartWorkspace({
+        // Fall back to the resolved mode (server default) so queued tasks drain
+        // with the same mode the composer displayed.
+        mode: workspaceSelection?.mode ?? workspaceMode,
+        branch: workspaceSelection?.branch ?? null,
+        worktreePath: workspaceSelection?.worktreePath ?? null,
+      });
+      const mode = resolvedWorkspace.mode;
       // When the selection is the stand-in built from the queued snapshot,
       // persist the original (possibly absent) snapshot values — the
       // stand-in's placeholder title/workspaceRoot must never be written back
@@ -720,8 +771,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           ...(projectTitle !== undefined ? { projectTitle } : {}),
           ...(projectCwd !== undefined ? { projectCwd } : {}),
           workspaceMode: mode,
-          branch: workspaceSelection?.branch ?? null,
-          worktreePath: mode === "worktree" ? null : (workspaceSelection?.worktreePath ?? null),
+          branch: resolvedWorkspace.branch,
+          worktreePath: mode === "worktree" ? null : resolvedWorkspace.worktreePath,
           // The draft only carries the flag when the user touched it; fall
           // back to the resolved default (server settings) so queued tasks
           // drain with the same origin mode the composer displayed.
@@ -735,6 +786,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     [
       editingPendingProject,
       editingPendingTask,
+      resolveStartWorkspace,
       selectedEnvironmentServerConfig,
       selectedModel,
       selectedProject,
@@ -869,6 +921,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       setSelectedModelKey,
       setWorkspaceMode,
       selectBranch,
+      resolveStartWorkspace,
       setStartFromOrigin,
       beginEditingPendingTask,
       finishEditingPendingTask,
@@ -908,6 +961,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       providerGroups,
       replaceAttachments,
       reset,
+      resolveStartWorkspace,
       runtimeMode,
       selectedBranchName,
       selectedEnvironmentId,
