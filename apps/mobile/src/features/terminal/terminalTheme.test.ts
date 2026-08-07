@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildGhosttyThemeConfig, getPierreTerminalTheme } from "./terminalTheme";
+import {
+  buildGhosttyThemeConfig,
+  getPierreTerminalTheme,
+  getTerminalThemeForColors,
+} from "./terminalTheme";
+import { createManagedThemeColors } from "@t3tools/themes";
 
 describe("getPierreTerminalTheme", () => {
   it("returns the Pierre light terminal palette", () => {
@@ -32,5 +37,30 @@ describe("buildGhosttyThemeConfig", () => {
     expect(config).toContain("palette = 0=#141415");
     expect(config).toContain("palette = 15=#c6c6c8");
     expect(config.endsWith("\n")).toBe(true);
+  });
+
+  it("uses canonical terminal roles without changing ANSI-16", () => {
+    const colors = createManagedThemeColors("dark", "#18212b", "#5ba8ff");
+    const theme = getTerminalThemeForColors("dark", colors);
+    const config = buildGhosttyThemeConfig(theme);
+    const selectionEntry = config
+      .split("\n")
+      .find((line) => line.startsWith("selection-background = "));
+
+    expect(config).toContain(`background = ${colors.terminalBackground}`);
+    expect(config).toContain(`foreground = ${colors.terminalForeground}`);
+    expect(config).toContain(`cursor-color = ${colors.terminalCursor}`);
+    expect(selectionEntry?.split("=", 2)[1]?.trim()).toBe(colors.terminalSelection);
+    expect(theme.palette).toEqual(getPierreTerminalTheme("dark").palette);
+  });
+
+  it("preserves CSS channel order for translucent terminal selections", () => {
+    const colors = {
+      ...createManagedThemeColors("dark", "#18212b", "#5ba8ff"),
+      terminalSelection: "#21b56880",
+    };
+    const config = buildGhosttyThemeConfig(getTerminalThemeForColors("dark", colors));
+
+    expect(config).toContain("selection-background = #21b56880");
   });
 });

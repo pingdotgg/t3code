@@ -11,7 +11,7 @@ import {
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
 import { useEffect, useRef } from "react";
-import { DynamicColorIOS, Platform, Pressable, ScrollView, StyleSheet } from "react-native";
+import { Platform, Pressable, ScrollView, StyleSheet } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
 import { AppText as Text } from "./components/AppText";
@@ -66,13 +66,6 @@ import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
-// Matches --color-sheet in global.css (light/dark). DynamicColorIOS lets the header
-// background stay STATIC config while still adapting to appearance changes.
-const SHEET_BACKGROUND_COLOR =
-  Platform.OS === "ios"
-    ? DynamicColorIOS({ light: "rgba(242, 242, 247, 0.98)", dark: "rgba(14, 14, 14, 0.98)" })
-    : undefined;
-
 type AppScreenOptions = NativeStackNavigationOptions & {
   readonly unstable_navigationItemStyle?: "editor";
 };
@@ -89,11 +82,7 @@ const GLASS_HEADER_OPTIONS: AppScreenOptions = {
   headerLargeTitle: false,
   headerShadowVisible: false,
   headerShown: true,
-  headerStyle: NATIVE_LIQUID_GLASS_SUPPORTED
-    ? { backgroundColor: "transparent" }
-    : SHEET_BACKGROUND_COLOR !== undefined
-      ? { backgroundColor: SHEET_BACKGROUND_COLOR as unknown as string }
-      : undefined,
+  ...(NATIVE_LIQUID_GLASS_SUPPORTED ? { headerStyle: { backgroundColor: "transparent" } } : {}),
   headerTitleStyle: { fontSize: 18, fontWeight: "800" },
   headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,
   scrollEdgeEffects: NATIVE_LIQUID_GLASS_SUPPORTED ? HEADER_SCROLL_EDGE_EFFECTS : undefined,
@@ -108,12 +97,6 @@ const SOLID_HEADER_OPTIONS: AppScreenOptions = {
   headerLargeTitle: false,
   headerShadowVisible: false,
   headerShown: true,
-  headerStyle:
-    SHEET_BACKGROUND_COLOR !== undefined
-      ? // native-stack types this as `string`, but the native side accepts any
-        // ColorValue including DynamicColorIOS.
-        { backgroundColor: SHEET_BACKGROUND_COLOR as unknown as string }
-      : undefined,
   headerTitleStyle: { fontSize: 18, fontWeight: "800" },
   headerTransparent: false,
   unstable_navigationItemStyle: Platform.OS === "ios" ? "editor" : undefined,
@@ -135,11 +118,15 @@ const LEGAL_DOCUMENT_HEADER_OPTIONS: AppScreenOptions = {
 
 const SettingsSheetStack = createNativeStackNavigator({
   initialRouteName: "Settings",
-  screenOptions: {
+  screenOptions: ({ theme }) => ({
     ...GLASS_HEADER_OPTIONS,
+    contentStyle: { backgroundColor: theme.colors.card },
+    ...(NATIVE_LIQUID_GLASS_SUPPORTED
+      ? { headerStyle: { backgroundColor: "transparent" } }
+      : { headerStyle: { backgroundColor: theme.colors.card } }),
     // Sheets read better with the iOS-default centered title (no editor style).
     unstable_navigationItemStyle: undefined,
-  },
+  }),
   screens: {
     Settings: createNativeStackScreen({
       screen: SettingsRouteScreen,
@@ -220,11 +207,15 @@ const THREAD_LINKING_PREFIX = "threads/:environmentId/:threadId";
 // in-sheet pushes come from this nested stack).
 const NewTaskSheetStack = createNativeStackNavigator({
   initialRouteName: "NewTask",
-  screenOptions: {
+  screenOptions: ({ theme }) => ({
     ...GLASS_HEADER_OPTIONS,
+    contentStyle: { backgroundColor: theme.colors.card },
+    ...(NATIVE_LIQUID_GLASS_SUPPORTED
+      ? { headerStyle: { backgroundColor: "transparent" } }
+      : { headerStyle: { backgroundColor: theme.colors.card } }),
     // Sheets read better with the iOS-default centered title (no editor style).
     unstable_navigationItemStyle: undefined,
-  },
+  }),
   screens: {
     NewTask: createNativeStackScreen({
       screen: NewTaskRouteScreen,
@@ -390,9 +381,14 @@ function NotFoundScreen() {
 export const RootStack = createNativeStackNavigator({
   initialRouteName: "Home",
   layout: RootStackLayout,
-  screenOptions: {
+  screenOptions: ({ theme }) => ({
     headerShown: false,
-  },
+    // The root content view also becomes the native presentation/sheet
+    // background. Individual screens can still opt into transparency for the
+    // glass header treatment.
+    contentStyle: { backgroundColor: theme.colors.card },
+    headerStyle: { backgroundColor: theme.colors.card },
+  }),
   screens: {
     Home: createNativeStackScreen({
       screen: HomeRouteScreen,
@@ -435,10 +431,6 @@ export const RootStack = createNativeStackNavigator({
       linking: `${THREAD_LINKING_PREFIX}/files`,
       options: {
         ...GLASS_HEADER_OPTIONS,
-        contentStyle:
-          SHEET_BACKGROUND_COLOR !== undefined
-            ? { backgroundColor: SHEET_BACKGROUND_COLOR }
-            : undefined,
         title: "Files",
       },
     }),

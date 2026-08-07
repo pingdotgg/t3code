@@ -124,6 +124,11 @@ internal class TerminalCanvasView(context: Context) : View(context) {
   var onRequestKeyboard: (() -> Unit)? = null
   var onCellMetricsChanged: (() -> Unit)? = null
   var selectionDelegate: TerminalSelectionDelegate? = null
+  var selectionColor: Int = Color.parseColor("#009FFF")
+    set(value) {
+      field = value
+      invalidate()
+    }
 
   private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG)
   private var selectionActive = false
@@ -222,7 +227,7 @@ internal class TerminalCanvasView(context: Context) : View(context) {
         val flags = currentFrame.cellFlags[index]
         paint.style = Paint.Style.FILL
         paint.color = if (flags and FLAG_SELECTED != 0) {
-          blend(currentFrame.cursorColor, background, 0.32f)
+          blend(selectionColor, background, 0.32f)
         } else {
           background
         }
@@ -569,11 +574,12 @@ internal class TerminalCanvasView(context: Context) : View(context) {
   }
 
   private fun blend(foreground: Int, background: Int, amount: Float): Int {
-    val inverseAmount = 1f - amount
+    val effectiveAmount = amount * (Color.alpha(foreground) / 255f)
+    val inverseAmount = 1f - effectiveAmount
     return Color.rgb(
-      (Color.red(foreground) * amount + Color.red(background) * inverseAmount).toInt(),
-      (Color.green(foreground) * amount + Color.green(background) * inverseAmount).toInt(),
-      (Color.blue(foreground) * amount + Color.blue(background) * inverseAmount).toInt(),
+      (Color.red(foreground) * effectiveAmount + Color.red(background) * inverseAmount).toInt(),
+      (Color.green(foreground) * effectiveAmount + Color.green(background) * inverseAmount).toInt(),
+      (Color.blue(foreground) * effectiveAmount + Color.blue(background) * inverseAmount).toInt(),
     )
   }
 

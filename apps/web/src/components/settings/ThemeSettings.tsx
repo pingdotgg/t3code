@@ -13,14 +13,10 @@ import {
   getThemeModes,
   removeCustomTheme,
   serializeThemeFile,
+  BUILT_IN_THEME_DEFINITIONS,
   type ThemeAppearance,
   type ThemeDefinition,
   type ThemeHalves,
-  T3_CHAT_THEME,
-  EMBER_THEME,
-  GROVE_THEME,
-  IRIS_THEME,
-  OCEAN_THEME,
 } from "../../themePalette";
 import {
   AlertDialog,
@@ -45,14 +41,6 @@ import {
   type ThemeMode,
 } from "./ThemePreviewCircles";
 import { ThemeWireframe } from "./ThemeWireframe";
-
-const MAINTAINER_THEMES: ReadonlyArray<ThemeDefinition> = [
-  T3_CHAT_THEME,
-  GROVE_THEME,
-  OCEAN_THEME,
-  EMBER_THEME,
-  IRIS_THEME,
-];
 
 function downloadThemeFile(filename: string, contents: string): void {
   const url = URL.createObjectURL(new Blob([contents], { type: "application/json" }));
@@ -251,6 +239,7 @@ export function ThemeLibrary({
 }) {
   const openThemeEditor = useThemeEditorStore((store) => store.openThemeEditor);
   const [themeToRemove, setThemeToRemove] = useState<ThemeDefinition | null>(null);
+  const [builtInThemeQuery, setBuiltInThemeQuery] = useState("");
   // Keep the last removal target so the dialog title stays populated while the
   // close animation plays after confirming.
   const lastThemeToRemoveRef = useRef<ThemeDefinition | null>(null);
@@ -466,78 +455,115 @@ export function ThemeLibrary({
     // tooltip briefly showing while crossing between a card's two circles is
     // accepted — scoping the group tighter makes the handoffs feel sluggish.
     <TooltipProvider>
-      <div
-        className="mx-auto grid w-full max-w-[56rem] gap-2 px-3 sm:px-4"
-        style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 17rem), 1fr))" }}
-      >
-        {STANDARD_THEME_CARDS.map((standardTheme) => (
-          <ThemeLibraryCard
-            activeModes={pickedModesFor(null)}
-            isActive={false}
-            key={standardTheme.id}
-            onUse={() => persistTheme(appearanceMode === "system" ? "system" : appearanceMode)}
-            onUseMode={handlePairPick(null)}
-            theme={standardTheme}
-          />
-        ))}
-        {MAINTAINER_THEMES.map((maintainerTheme) => {
-          const card = getThemeCardDefinition(maintainerTheme);
-          return (
+      <div className="mx-auto w-full max-w-[56rem] px-3 sm:px-4">
+        <div
+          className="grid gap-2"
+          style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 17rem), 1fr))" }}
+        >
+          {STANDARD_THEME_CARDS.map((standardTheme) => (
             <ThemeLibraryCard
-              activeModes={pickedModesFor(maintainerTheme.id)}
+              activeModes={pickedModesFor(null)}
               isActive={false}
-              key={maintainerTheme.id}
-              onDuplicate={() =>
-                openThemeEditor({
-                  editingThemeId: null,
-                  seedThemeId: maintainerTheme.id,
-                  seedName: `${maintainerTheme.label} copy`,
-                  initialAppearance,
-                })
-              }
-              onUse={() => persistTheme(maintainerTheme.id)}
-              onUseMode={handlePairPick(maintainerTheme.id)}
-              theme={card}
+              key={standardTheme.id}
+              onUse={() => persistTheme(appearanceMode === "system" ? "system" : appearanceMode)}
+              onUseMode={handlePairPick(null)}
+              theme={standardTheme}
             />
+          ))}
+        </div>
+        {(["T3 themes", "Ported themes"] as const).map((section, sectionIndex) => {
+          const query = builtInThemeQuery.trim().toLowerCase();
+          const themes = BUILT_IN_THEME_DEFINITIONS.slice(
+            sectionIndex === 0 ? 0 : 5,
+            sectionIndex === 0 ? 5 : undefined,
+          ).filter(
+            (builtInTheme) =>
+              query.length === 0 || builtInTheme.label.toLowerCase().includes(query),
+          );
+          return (
+            <section className="mt-4 first:mt-3" key={section}>
+              <h3 className="mb-2 text-sm font-medium tracking-[-0.005em] text-foreground">
+                {section}
+              </h3>
+              {themes.length > 0 ? (
+                <div
+                  className="grid gap-2"
+                  style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 17rem), 1fr))" }}
+                >
+                  {themes.map((builtInTheme) => {
+                    const card = getThemeCardDefinition(builtInTheme);
+                    return (
+                      <ThemeLibraryCard
+                        activeModes={pickedModesFor(builtInTheme.id)}
+                        isActive={false}
+                        key={builtInTheme.id}
+                        onDuplicate={() =>
+                          openThemeEditor({
+                            editingThemeId: null,
+                            seedThemeId: builtInTheme.id,
+                            seedName: `${builtInTheme.label} copy`,
+                            initialAppearance,
+                          })
+                        }
+                        onUse={() => persistTheme(builtInTheme.id)}
+                        onUseMode={handlePairPick(builtInTheme.id)}
+                        theme={card}
+                      />
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="rounded-lg border border-dashed border-border/70 px-3 py-4 text-sm text-muted-foreground">
+                  No themes match “{builtInThemeQuery}”.
+                </p>
+              )}
+            </section>
           );
         })}
-        {customThemes.map((customTheme) => {
-          const card = getThemeCardDefinition(customTheme);
-          return (
-            <ThemeLibraryCard
-              activeModes={pickedModesFor(customTheme.id)}
-              isActive={false}
-              key={customTheme.id}
-              onDuplicate={() =>
-                openThemeEditor({
-                  editingThemeId: null,
-                  seedThemeId: customTheme.id,
-                  seedName: `${customTheme.label} copy`,
-                  initialAppearance,
-                })
-              }
-              onEdit={() =>
-                openThemeEditor({
-                  editingThemeId: customTheme.id,
-                  seedThemeId: null,
-                  seedName: null,
-                  initialAppearance,
-                })
-              }
-              onDownload={() =>
-                downloadThemeFile(`${customTheme.id}.json`, serializeThemeFile(customTheme))
-              }
-              onRemove={() => handleRemoveTheme(customTheme)}
-              onUse={() => {
-                const modes = getThemeModes(customTheme);
-                if (modes.length === 1) assignHalf(modes[0]!, customTheme.id);
-                else persistTheme(customTheme.id);
-              }}
-              onUseMode={handlePairPick(customTheme.id)}
-              theme={card}
-            />
-          );
-        })}
+        {customThemes.length > 0 ? (
+          <div
+            className="mt-4 grid gap-2"
+            style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 17rem), 1fr))" }}
+          >
+            {customThemes.map((customTheme) => {
+              const card = getThemeCardDefinition(customTheme);
+              return (
+                <ThemeLibraryCard
+                  activeModes={pickedModesFor(customTheme.id)}
+                  isActive={false}
+                  key={customTheme.id}
+                  onDuplicate={() =>
+                    openThemeEditor({
+                      editingThemeId: null,
+                      seedThemeId: customTheme.id,
+                      seedName: `${customTheme.label} copy`,
+                      initialAppearance,
+                    })
+                  }
+                  onEdit={() =>
+                    openThemeEditor({
+                      editingThemeId: customTheme.id,
+                      seedThemeId: null,
+                      seedName: null,
+                      initialAppearance,
+                    })
+                  }
+                  onDownload={() =>
+                    downloadThemeFile(`${customTheme.id}.json`, serializeThemeFile(customTheme))
+                  }
+                  onRemove={() => handleRemoveTheme(customTheme)}
+                  onUse={() => {
+                    const modes = getThemeModes(customTheme);
+                    if (modes.length === 1) assignHalf(modes[0]!, customTheme.id);
+                    else persistTheme(customTheme.id);
+                  }}
+                  onUseMode={handlePairPick(customTheme.id)}
+                  theme={card}
+                />
+              );
+            })}
+          </div>
+        ) : null}
       </div>
     </TooltipProvider>
   );
@@ -575,6 +601,20 @@ export function ThemeLibrary({
             Import theme
           </Button>
         </div>
+      </div>
+      <div className="px-3 sm:px-4">
+        <label className="sr-only" htmlFor="theme-library-filter">
+          Filter built-in themes
+        </label>
+        <input
+          aria-label="Filter built-in themes"
+          className="h-8 w-full rounded-md border border-border/70 bg-background px-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring sm:max-w-xs"
+          id="theme-library-filter"
+          placeholder="Filter built-in themes"
+          type="search"
+          value={builtInThemeQuery}
+          onChange={(event) => setBuiltInThemeQuery(event.currentTarget.value)}
+        />
       </div>
       {renderPairGrid()}
       <ThemeImportDialog

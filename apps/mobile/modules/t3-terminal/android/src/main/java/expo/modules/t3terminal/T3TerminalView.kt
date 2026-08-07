@@ -33,6 +33,8 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   private var foregroundColorValue = Color.parseColor("#D1D5DA")
   private var mutedForegroundColorValue = Color.parseColor("#959DA5")
   private var cursorColorValue = Color.parseColor("#009FFF")
+  private val defaultSelectionColorValue = Color.parseColor("#009FFF")
+  private var selectionColorValue = defaultSelectionColorValue
   private var paletteColors = IntArray(0)
 
   var terminalKey: String = ""
@@ -390,6 +392,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     setBackgroundColor(backgroundColorValue)
     container.setBackgroundColor(backgroundColorValue)
     terminalCanvas.setBackgroundColor(backgroundColorValue)
+    terminalCanvas.selectionColor = selectionColorValue
     if (terminalHandle != 0L) {
       GhosttyBridge.nativeSetTheme(
         terminalHandle,
@@ -404,6 +407,10 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
 
   @Suppress("LoopWithTooManyJumpStatements")
   private fun parseThemeConfig(config: String) {
+    // Pierre's config has no selection-background entry. Reset first so a
+    // previously selected theme cannot leak its selection color into the
+    // stock terminal when the user clears the theme.
+    selectionColorValue = defaultSelectionColorValue
     val palette = sortedMapOf<Int, Int>()
     for (line in config.lineSequence()) {
       val parts = line.split('=', limit = 2)
@@ -412,6 +419,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       val value = parts[1].trim()
       when (key) {
         "cursor-color" -> cursorColorValue = parseColor(value, cursorColorValue)
+        "selection-background" -> selectionColorValue = parseColor(value, selectionColorValue)
         "palette" -> {
           val paletteParts = value.split('=', limit = 2)
           val index = paletteParts.firstOrNull()?.trim()?.toIntOrNull() ?: continue
@@ -428,10 +436,34 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     }
   }
 
-  private fun parseColor(value: String, fallback: Int): Int =
-    try {
-      Color.parseColor(value)
+  private fun parseColor(value: String, fallback: Int): Int {
+    val trimmed = value.trim()
+    val hex = trimmed.removePrefix("#")
+    return try {
+      when {
+        trimmed.startsWith("#") && hex.length == 3 -> Color.rgb(
+          hex[0].digitToInt(16) * 17,
+          hex[1].digitToInt(16) * 17,
+          hex[2].digitToInt(16) * 17,
+        )
+        // CSS hex colors are RRGGBBAA, while Android's packed color format
+        // is AARRGGBB.
+        trimmed.startsWith("#") && hex.length == 4 -> Color.argb(
+          hex[3].digitToInt(16) * 17,
+          hex[0].digitToInt(16) * 17,
+          hex[1].digitToInt(16) * 17,
+          hex[2].digitToInt(16) * 17,
+        )
+        trimmed.startsWith("#") && hex.length == 8 -> Color.argb(
+          hex.substring(6, 8).toInt(16),
+          hex.substring(0, 2).toInt(16),
+          hex.substring(2, 4).toInt(16),
+          hex.substring(4, 6).toInt(16),
+        )
+        else -> Color.parseColor(trimmed)
+      }
     } catch (_: IllegalArgumentException) {
       fallback
     }
+  }
 }

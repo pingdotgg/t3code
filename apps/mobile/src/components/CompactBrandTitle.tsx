@@ -34,11 +34,14 @@ export function brandTitleOffset(nativeLeadingItem: boolean): number {
 export function CompactBrandTitle(
   props: {
     readonly nativeLeadingItem?: boolean;
+    readonly sidebar?: boolean;
   } = {},
 ) {
-  const iconColor = useThemeColor("--color-icon");
-  const mutedColor = useThemeColor("--color-foreground-muted");
-  const subtleColor = useThemeColor("--color-subtle");
+  const iconColor = useThemeColor(props.sidebar ? "--color-sidebar-foreground" : "--color-icon");
+  const mutedColor = useThemeColor(
+    props.sidebar ? "--color-sidebar-muted-foreground" : "--color-foreground-muted",
+  );
+  const subtleColor = useThemeColor(props.sidebar ? "--color-sidebar-control" : "--color-subtle");
   const stageLabel = resolveMobileStageLabel(Constants.expoConfig?.extra?.appVariant);
   const titleOffset = brandTitleOffset(props.nativeLeadingItem === true);
 
@@ -94,6 +97,10 @@ export function renderCompactBrandTitle() {
   return <CompactBrandTitle />;
 }
 
+function renderSidebarCompactBrandTitle() {
+  return <CompactBrandTitle sidebar />;
+}
+
 export function renderCompactBrandHeaderItems(): NativeStackHeaderItem[] {
   return [
     {
@@ -104,20 +111,33 @@ export function renderCompactBrandHeaderItems(): NativeStackHeaderItem[] {
   ];
 }
 
+function renderSidebarCompactBrandHeaderItems(): NativeStackHeaderItem[] {
+  return [
+    {
+      element: <CompactBrandTitle nativeLeadingItem sidebar />,
+      hidesSharedBackground: true,
+      type: "custom",
+    },
+  ];
+}
+
 export function getCompactBrandHeaderOptions(
   fallbackTitleStyle?: NativeStackNavigationOptions["headerTitleStyle"],
+  options: { readonly sidebar?: boolean } = {},
 ): NativeStackNavigationOptions {
   if (Platform.OS === "ios" && NATIVE_LIQUID_GLASS_SUPPORTED) {
     return {
       headerTitle: "Threads",
       headerTitleStyle: { color: "transparent", fontSize: 18, fontWeight: "800" },
       title: "Threads",
-      unstable_headerLeftItems: renderCompactBrandHeaderItems,
+      unstable_headerLeftItems: options.sidebar
+        ? renderSidebarCompactBrandHeaderItems
+        : renderCompactBrandHeaderItems,
     };
   }
 
   return {
-    headerTitle: renderCompactBrandTitle,
+    headerTitle: options.sidebar ? renderSidebarCompactBrandTitle : renderCompactBrandTitle,
     headerTitleStyle: fallbackTitleStyle,
     title: "Threads",
   };

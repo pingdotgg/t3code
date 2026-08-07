@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS } from "react-native-reanimated";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 const ACCESSIBILITY_RESIZE_STEP = 24;
 
@@ -24,6 +25,12 @@ interface WorkspacePaneDividerProps {
 
 /** A forgiving divider target for touch, pointer, and VoiceOver users. */
 export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
+  const { themeColors } = useAppearancePreferences();
+  const dividerColor =
+    themeColors?.border ??
+    (Platform.OS === "ios" ? PlatformColor("separator") : "rgba(120, 120, 128, 0.28)");
+  const activeDividerColor =
+    themeColors?.accent ?? (Platform.OS === "ios" ? PlatformColor("systemBlueColor") : "#0a84ff");
   const latestProps = useRef(props);
   latestProps.current = props;
   const [hovered, setHovered] = useState(false);
@@ -84,7 +91,13 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
         onHoverIn={() => setHovered(true)}
         onHoverOut={() => setHovered(false)}
       >
-        <View style={[styles.line, (hovered || dragging) && styles.activeLine]} />
+        <View
+          style={[
+            styles.line,
+            (hovered || dragging) && styles.activeLine,
+            { backgroundColor: hovered || dragging ? activeDividerColor : dividerColor },
+          ]}
+        />
       </Pressable>
     </GestureDetector>
   );
@@ -93,14 +106,11 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
 const styles = StyleSheet.create({
   line: {
     alignSelf: "center",
-    backgroundColor:
-      Platform.OS === "ios" ? PlatformColor("separator") : "rgba(120, 120, 128, 0.28)",
     height: "100%",
     opacity: 0.7,
     width: StyleSheet.hairlineWidth,
   },
   activeLine: {
-    backgroundColor: Platform.OS === "ios" ? PlatformColor("systemBlueColor") : "#0a84ff",
     opacity: 1,
     width: 2,
   },

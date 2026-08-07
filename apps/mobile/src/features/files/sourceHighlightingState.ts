@@ -1,6 +1,7 @@
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { Atom } from "effect/unstable/reactivity";
+import type { ThemeColors } from "@t3tools/themes";
 
 import {
   highlightSourceFile,
@@ -14,6 +15,7 @@ export interface SourceHighlightInput {
   readonly path: string;
   readonly contents: string;
   readonly theme: ReviewDiffTheme;
+  readonly themeColors?: ThemeColors | null;
 }
 
 export type SourceHighlightTokens = ReadonlyArray<ReadonlyArray<ReviewHighlightedToken>>;

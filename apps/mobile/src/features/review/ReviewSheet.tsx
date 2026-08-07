@@ -26,7 +26,6 @@ import {
   ScrollView,
   type NativeSyntheticEvent,
   StyleSheet,
-  useColorScheme,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -39,6 +38,8 @@ import { environmentCatalog } from "../../connection/catalog";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { useAppearanceColorScheme } from "../../lib/useAppearanceColorScheme";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useThreadDraftForThread } from "../../state/use-thread-composer-state";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import {
@@ -78,12 +79,26 @@ const REVIEW_HEADER_SPACING = 0;
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 
 const ReviewNotice = memo(function ReviewNotice(props: { readonly notice: string }) {
+  const { themeColors } = useAppearancePreferences();
   return (
-    <View className="border-b border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/60 dark:bg-amber-950/40">
-      <Text className="text-xs font-t3-bold uppercase text-amber-700 dark:text-amber-300">
+    <View
+      className="border-b border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/60 dark:bg-amber-950/40"
+      style={
+        themeColors
+          ? { backgroundColor: themeColors.warningSurface, borderBottomColor: themeColors.warning }
+          : undefined
+      }
+    >
+      <Text
+        className="text-xs font-t3-bold uppercase text-amber-700 dark:text-amber-300"
+        style={themeColors ? { color: themeColors.warningForeground } : undefined}
+      >
         Partial diff
       </Text>
-      <Text className="text-xs leading-normal text-amber-800 dark:text-amber-200">
+      <Text
+        className="text-xs leading-normal text-amber-800 dark:text-amber-200"
+        style={themeColors ? { color: themeColors.warningForeground } : undefined}
+      >
         {props.notice}
       </Text>
     </View>
@@ -96,6 +111,10 @@ function ReviewSelectionActionBar(props: {
   readonly onOpenComment: (() => void) | null;
   readonly onClear: () => void;
 }) {
+  const { themeColors } = useAppearancePreferences();
+  const actionColor = themeColors?.messageAction ?? "#2563eb";
+  const actionForeground = themeColors?.messageActionForeground ?? "#ffffff";
+
   if (!props.title) {
     return null;
   }
@@ -105,10 +124,12 @@ function ReviewSelectionActionBar(props: {
       <SymbolView
         name={props.onOpenComment ? "text.bubble" : "line.3.horizontal.decrease.circle"}
         size={16}
-        tintColor="#ffffff"
+        tintColor={actionForeground}
         type="monochrome"
       />
-      <Text className="text-base font-t3-bold text-white">{props.title}</Text>
+      <Text className="text-base font-t3-bold text-white" style={{ color: actionForeground }}>
+        {props.title}
+      </Text>
     </>
   );
 
@@ -128,21 +149,26 @@ function ReviewSelectionActionBar(props: {
       {props.onOpenComment ? (
         <Pressable
           className="h-12 flex-1 flex-row items-center justify-center gap-2 rounded-full bg-blue-600 px-5"
+          style={{ backgroundColor: actionColor }}
           onPress={props.onOpenComment}
         >
           {content}
         </Pressable>
       ) : (
-        <View className="h-12 flex-1 flex-row items-center justify-center gap-2 rounded-full bg-blue-600 px-5">
+        <View
+          className="h-12 flex-1 flex-row items-center justify-center gap-2 rounded-full bg-blue-600 px-5"
+          style={{ backgroundColor: actionColor }}
+        >
           {content}
         </View>
       )}
 
       <Pressable
         className="h-12 w-12 items-center justify-center rounded-full bg-blue-600"
+        style={{ backgroundColor: actionColor }}
         onPress={props.onClear}
       >
-        <SymbolView name="xmark" size={16} tintColor="#ffffff" type="monochrome" />
+        <SymbolView name="xmark" size={16} tintColor={actionForeground} type="monochrome" />
       </Pressable>
     </View>
   );
@@ -343,8 +369,9 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const { panes, showAuxiliaryPane, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const colorScheme = useColorScheme();
+  const colorScheme = useAppearanceColorScheme();
   const headerIcon = String(useThemeColor("--color-icon"));
+  const headerBackground = useThemeColor("--color-sheet");
   const { environmentId, threadId } = props.route.params;
   const environment = useEnvironmentPresentation(environmentId);
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
@@ -645,6 +672,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
                 // diff scrolls internally, nothing for glass to sample). Only dynamic values
                 // here.
                 headerTintColor: headerIcon,
+                headerStyle: { backgroundColor: headerBackground as string },
                 headerTitle: headerTitleText,
                 title: headerTitleText,
                 unstable_headerSubtitle:

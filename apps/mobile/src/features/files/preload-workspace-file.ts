@@ -1,5 +1,6 @@
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { ThemeColors } from "@t3tools/themes";
 
 import { appAtomRegistry } from "../../state/atom-registry";
 import { projectEnvironment } from "../../state/projects";
@@ -15,8 +16,16 @@ function preloadKey(input: {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
   readonly relativePath: string;
+  readonly theme: ReviewDiffTheme;
+  readonly themeColors?: ThemeColors | null;
 }): string {
-  return JSON.stringify([input.environmentId, input.cwd, input.relativePath]);
+  return JSON.stringify([
+    input.environmentId,
+    input.cwd,
+    input.relativePath,
+    input.theme,
+    input.themeColors ?? null,
+  ]);
 }
 
 export function preloadWorkspaceFileContents(input: {
@@ -24,6 +33,7 @@ export function preloadWorkspaceFileContents(input: {
   readonly environmentId: EnvironmentId;
   readonly relativePath: string;
   readonly theme: ReviewDiffTheme;
+  readonly themeColors?: ThemeColors | null;
 }): void {
   if (isBrowserPreviewFile(input.relativePath) || isImagePreviewFile(input.relativePath)) {
     return;
@@ -56,6 +66,7 @@ export function preloadWorkspaceFileContents(input: {
               path: input.relativePath,
               contents: document.contents,
               theme: input.theme,
+              themeColors: input.themeColors,
             }),
             {
               label: "workspace source highlight preload",

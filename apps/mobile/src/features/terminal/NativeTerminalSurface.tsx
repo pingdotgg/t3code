@@ -7,10 +7,11 @@ import {
   type LayoutChangeEvent,
   type NativeSyntheticEvent,
   type ViewProps,
-  useColorScheme,
 } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
+import { useAppearanceColorScheme } from "../../lib/useAppearanceColorScheme";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import {
   getNativeTerminalHardwareKeyRevision,
@@ -18,7 +19,7 @@ import {
 } from "./nativeTerminalModule";
 import {
   buildGhosttyThemeConfig,
-  getPierreTerminalTheme,
+  getTerminalThemeForColors,
   type TerminalTheme,
 } from "./terminalTheme";
 import { terminalDebugLog } from "./terminalDebugLog";
@@ -60,8 +61,9 @@ function estimateGridSize(input: {
 const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: TerminalSurfaceProps) {
   const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
   const inputRef = useRef<TextInput>(null);
-  const appearanceScheme = useColorScheme() === "light" ? "light" : "dark";
-  const theme = props.theme ?? getPierreTerminalTheme(appearanceScheme);
+  const appearanceScheme = useAppearanceColorScheme();
+  const { themeColors } = useAppearancePreferences();
+  const theme = props.theme ?? getTerminalThemeForColors(appearanceScheme, themeColors);
   const statusLabel = props.isRunning
     ? "Native terminal unavailable. Using text fallback."
     : "Open terminal to start a shell.";
@@ -173,8 +175,9 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
 
 export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurfaceProps) {
   const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
-  const appearanceScheme = useColorScheme() === "light" ? "light" : "dark";
-  const theme = props.theme ?? getPierreTerminalTheme(appearanceScheme);
+  const appearanceScheme = useAppearanceColorScheme();
+  const { themeColors } = useAppearancePreferences();
+  const theme = props.theme ?? getTerminalThemeForColors(appearanceScheme, themeColors);
   const { onInput, onResize } = props;
   const NativeTerminalSurfaceView = resolveNativeTerminalSurfaceView();
   const hasNativeSurface = Boolean(NativeTerminalSurfaceView);

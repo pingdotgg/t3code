@@ -1,3 +1,5 @@
+import type { ThemeColors } from "@t3tools/themes";
+
 export interface NativeMarkdownTextStyle {
   readonly color: string;
   readonly strongColor: string;
@@ -25,10 +27,13 @@ export interface MarkdownHighlightedToken {
   readonly fontStyle: number | null;
 }
 
+export type MarkdownColorScheme = "light" | "dark";
+
 export type MarkdownCodeHighlighter = (input: {
   readonly code: string;
   readonly language?: string | null;
-  readonly theme: "light" | "dark";
+  readonly theme: MarkdownColorScheme;
+  readonly themeColors?: ThemeColors | null;
 }) => Promise<ReadonlyArray<ReadonlyArray<MarkdownHighlightedToken>>>;
 
 export interface SelectableMarkdownSkill {
@@ -40,6 +45,9 @@ export interface SelectableMarkdownTextProps {
   readonly markdown: string;
   readonly textStyle: NativeMarkdownTextStyle;
   readonly highlightCode: MarkdownCodeHighlighter;
+  /** Supplied by the app so this reusable renderer never reads OS-only state. */
+  readonly colorScheme: MarkdownColorScheme;
+  readonly themeColors?: ThemeColors | null;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly preserveSoftBreaks?: boolean;
   readonly onLinkPress?: (href: string) => void;

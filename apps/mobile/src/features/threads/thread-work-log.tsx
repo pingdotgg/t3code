@@ -1,10 +1,12 @@
 import * as Haptics from "expo-haptics";
 import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
-import { LayoutAnimation, Pressable, ScrollView, useColorScheme, View } from "react-native";
+import { LayoutAnimation, Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { scaledTypographyLineHeight } from "../../lib/appearancePreferences";
 import { cn } from "../../lib/cn";
+import { useAppearanceColorScheme } from "../../lib/useAppearanceColorScheme";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import Animated, { FadeIn } from "react-native-reanimated";
@@ -127,8 +129,11 @@ export function ThreadWorkLog(props: {
   readonly onCopyRow: (rowId: string, value: string) => void;
   readonly onToggleRow: (rowId: string) => void;
 }) {
-  const colorScheme = useColorScheme();
-  const pressedBackground = colorScheme === "dark" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.035)";
+  const colorScheme = useAppearanceColorScheme();
+  const { themeColors } = useAppearancePreferences();
+  const pressedBackground =
+    themeColors?.muted ?? (colorScheme === "dark" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.035)");
+  const destructiveColor = themeColors?.errorForeground ?? "#e11d48";
   const rows = visibleWorkLogActivities(props.activities).map((activity) => ({
     ...activity,
     detail: compactActivityDetail(activity.detail),
@@ -189,7 +194,7 @@ export function ThreadWorkLog(props: {
                       name={workRowSymbolName(row.icon)}
                       size={13}
                       weight="medium"
-                      tintColor={iconIsDestructive ? "#e11d48" : props.iconSubtleColor}
+                      tintColor={iconIsDestructive ? destructiveColor : props.iconSubtleColor}
                       type="monochrome"
                     />
                   </View>
@@ -239,7 +244,9 @@ export function ThreadWorkLog(props: {
                                 : { ios: "minus", android: "remove" }
                           }
                           size={11}
-                          tintColor={row.status === "failure" ? "#e11d48" : props.iconSubtleColor}
+                          tintColor={
+                            row.status === "failure" ? destructiveColor : props.iconSubtleColor
+                          }
                           type="monochrome"
                         />
                       ) : null}
@@ -281,8 +288,10 @@ export function ThreadWorkGroupToggle(props: {
   readonly onlyToolActivities: boolean;
   readonly onToggle: () => void;
 }) {
-  const colorScheme = useColorScheme();
-  const pressedBackground = colorScheme === "dark" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.035)";
+  const colorScheme = useAppearanceColorScheme();
+  const { themeColors } = useAppearancePreferences();
+  const pressedBackground =
+    themeColors?.muted ?? (colorScheme === "dark" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.035)");
   const noun = props.onlyToolActivities
     ? props.hiddenCount === 1
       ? "tool call"
