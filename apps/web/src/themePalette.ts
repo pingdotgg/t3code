@@ -240,7 +240,11 @@ function legacyThemeMode(theme: ThemePreference): ThemeAppearance | null {
 
 export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | null {
   const themeId = themeIdFromPreference(theme);
-  return getBuiltInThemeDefinition(themeId) ?? getCustomThemes().find((item) => item.id === themeId) ?? null;
+  return (
+    getBuiltInThemeDefinition(themeId) ??
+    getCustomThemes().find((item) => item.id === themeId) ??
+    null
+  );
 }
 
 export function getThemePreferenceMode(theme: ThemePreference): ThemeAppearance | null {
@@ -314,11 +318,14 @@ function parseThemeColorOverrides(value: unknown): ThemeColorOverrides {
   if (!isRecord(value)) throw new Error("Theme colors must be objects.");
   const overrides: Partial<Record<ThemeColorRole, string>> = {};
   for (const [role, color] of Object.entries(value)) {
-    if (!THEME_COLOR_ROLE_SET.has(role)) throw new Error(`"${role}" is not a supported theme color role.`);
-    if (!isThemeColor(color)) throw new Error(`The color for "${role}" must be a hex color such as #8b5cf6.`);
+    if (!THEME_COLOR_ROLE_SET.has(role))
+      throw new Error(`"${role}" is not a supported theme color role.`);
+    if (!isThemeColor(color))
+      throw new Error(`The color for "${role}" must be a hex color such as #8b5cf6.`);
     overrides[role as ThemeColorRole] = color;
   }
-  if (Object.keys(overrides).length === 0) throw new Error("Add at least one color role to the theme file.");
+  if (Object.keys(overrides).length === 0)
+    throw new Error("Add at least one color role to the theme file.");
   return overrides;
 }
 
@@ -331,15 +338,20 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
   const appearance = value.appearance;
   const rawColors = value.colors;
   if (!isThemeLabel(name)) throw new Error("Theme files need a name (48 characters or fewer).");
-  if (!isThemeAppearance(appearance)) throw new Error('Theme files need an appearance of "light" or "dark".');
+  if (!isThemeAppearance(appearance))
+    throw new Error('Theme files need an appearance of "light" or "dark".');
   if (!isRecord(rawColors)) throw new Error("Theme files need a colors object.");
   const id = value.id === undefined ? themeIdFromName(name) : value.id;
-  if (!isThemeId(id)) throw new Error("Theme ids may only contain lowercase letters, numbers, and hyphens.");
-  // Parsing also feeds the VS Code importer, which may need to compose a
-  // newly ported theme whose human name matches a built-in. The original
-  // built-in ids retain their parser guard, while installCustomTheme remains
-  // the policy boundary that rejects every reserved id before persistence.
-  if (LEGACY_RESERVED_THEME_IDS.has(id)) {
+  if (!isThemeId(id))
+    throw new Error("Theme ids may only contain lowercase letters, numbers, and hyphens.");
+  // Parsing also feeds the VS Code importer, which may compose a newly ported
+  // theme whose human name matches a built-in. A reserved pair must fail here
+  // so the importer can fall back to its two non-reserved single themes before
+  // installCustomTheme rejects the colliding id.
+  if (
+    LEGACY_RESERVED_THEME_IDS.has(id) ||
+    (value.variants !== undefined && RESERVED_THEME_IDS.has(id))
+  ) {
     throw new Error(`The theme id "${id}" is reserved.`);
   }
   const overrides = parseThemeColorOverrides(rawColors);
@@ -348,8 +360,10 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
   if (value.variants !== undefined) {
     if (!isRecord(value.variants)) throw new Error("Theme variants must be an object.");
     for (const [variantAppearance, variantColors] of Object.entries(value.variants)) {
-      if (!isThemeAppearance(variantAppearance)) throw new Error('Theme variants may only be named "light" or "dark".');
-      if (variantAppearance === appearance) throw new Error(`Theme variants must not repeat the base appearance "${appearance}".`);
+      if (!isThemeAppearance(variantAppearance))
+        throw new Error('Theme variants may only be named "light" or "dark".');
+      if (variantAppearance === appearance)
+        throw new Error(`Theme variants must not repeat the base appearance "${appearance}".`);
       variants[variantAppearance] = {
         ...getDefaultThemeColors(variantAppearance),
         ...parseThemeColorOverrides(variantColors),
@@ -509,8 +523,12 @@ export function resolveDesktopTheme(
   const mode = appearanceMode ?? ((followSystem ?? theme === "system") ? "system" : null);
   if (mode === "system") {
     const definition = getThemeDefinition(theme);
-    const hasLightMode = halves?.light !== undefined || (definition !== null && getThemeColorsForMode(definition, "light") !== null);
-    const hasDarkMode = halves?.dark !== undefined || (definition !== null && getThemeColorsForMode(definition, "dark") !== null);
+    const hasLightMode =
+      halves?.light !== undefined ||
+      (definition !== null && getThemeColorsForMode(definition, "light") !== null);
+    const hasDarkMode =
+      halves?.dark !== undefined ||
+      (definition !== null && getThemeColorsForMode(definition, "dark") !== null);
     return definition && (!hasLightMode || !hasDarkMode) ? definition.appearance : "system";
   }
   if (mode === "light" || mode === "dark") {
@@ -540,7 +558,8 @@ export function parseThemeHalves(raw: string | null): ThemeHalves | null {
       const themeId = value[appearance];
       if (typeof themeId !== "string") continue;
       const definition = getThemeDefinition(themeId);
-      if (definition && getThemeColorsForMode(definition, appearance) !== null) halves[appearance] = definition.id;
+      if (definition && getThemeColorsForMode(definition, appearance) !== null)
+        halves[appearance] = definition.id;
     }
     return halves.light !== undefined || halves.dark !== undefined ? halves : null;
   } catch {

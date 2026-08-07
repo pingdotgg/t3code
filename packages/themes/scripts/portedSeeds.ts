@@ -1,8 +1,14 @@
 import type { ThemeAppearance } from "../src/index.ts";
 
-export type PortedThemeSeed = Readonly<{ background: string; accent: string; action: string; terminal: Readonly<{ background: string; foreground: string; cursor: string; selection: string }> }> & { appearance: ThemeAppearance };
-export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: string; light: PortedThemeSeed; dark: PortedThemeSeed }>>> = 
-{
+export type PortedThemeSeed = Readonly<{
+  background: string;
+  accent: string;
+  action: string;
+  terminal: Readonly<{ background: string; foreground: string; cursor: string; selection: string }>;
+}> & { appearance: ThemeAppearance };
+export const PORTED_THEME_SEEDS: Readonly<
+  Record<string, Readonly<{ label: string; light: PortedThemeSeed; dark: PortedThemeSeed }>>
+> = {
   catppuccin: {
     label: "Catppuccin",
     light: {
@@ -14,8 +20,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#eff1f5",
         foreground: "#4c4f69",
         cursor: "#8839ef",
-        selection: "#ccd0da"
-      }
+        selection: "#ccd0da",
+      },
     },
     dark: {
       appearance: "dark",
@@ -26,9 +32,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#1e1e2e",
         foreground: "#cdd6f4",
         cursor: "#fab387",
-        selection: "#313244"
-      }
-    }
+        selection: "#313244",
+      },
+    },
   },
   "tokyo-night": {
     label: "Tokyo Night",
@@ -41,8 +47,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#e1e2e7",
         foreground: "#3760bf",
         cursor: "#118c74",
-        selection: "#b7c1e3"
-      }
+        selection: "#b7c1e3",
+      },
     },
     dark: {
       appearance: "dark",
@@ -53,9 +59,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#1a1b26",
         foreground: "#a9b1d6",
         cursor: "#bb9af7",
-        selection: "#2a2f41"
-      }
-    }
+        selection: "#2a2f41",
+      },
+    },
   },
   dracula: {
     label: "Dracula",
@@ -68,8 +74,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#f8f8f2",
         foreground: "#282a36",
         cursor: "#644ac9",
-        selection: "#e8e1d2"
-      }
+        selection: "#e8e1d2",
+      },
     },
     dark: {
       appearance: "dark",
@@ -80,9 +86,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#1e1f29",
         foreground: "#f8f8f2",
         cursor: "#bd93f9",
-        selection: "#44475a"
-      }
-    }
+        selection: "#44475a",
+      },
+    },
   },
   nord: {
     label: "Nord",
@@ -95,8 +101,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#eceff4",
         foreground: "#2e3440",
         cursor: "#5e81ac",
-        selection: "#d8dee9"
-      }
+        selection: "#d8dee9",
+      },
     },
     dark: {
       appearance: "dark",
@@ -107,9 +113,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#2e3440",
         foreground: "#d8dee9",
         cursor: "#88c0d0",
-        selection: "#3b4252"
-      }
-    }
+        selection: "#3b4252",
+      },
+    },
   },
   gruvbox: {
     label: "Gruvbox",
@@ -122,8 +128,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#f9f5d7",
         foreground: "#3c3836",
         cursor: "#689d6a",
-        selection: "#d5c4a1"
-      }
+        selection: "#d5c4a1",
+      },
     },
     dark: {
       appearance: "dark",
@@ -134,9 +140,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#1d2021",
         foreground: "#ebdbb2",
         cursor: "#fe8019",
-        selection: "#3c3836"
-      }
-    }
+        selection: "#3c3836",
+      },
+    },
   },
   "one-dark": {
     label: "One Dark",
@@ -149,8 +155,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#fafafa",
         foreground: "#3e4451",
         cursor: "#0184bc",
-        selection: "#e5e5e6"
-      }
+        selection: "#e5e5e6",
+      },
     },
     dark: {
       appearance: "dark",
@@ -161,9 +167,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#1e2227",
         foreground: "#abb2bf",
         cursor: "#e5c07b",
-        selection: "#3e4451"
-      }
-    }
+        selection: "#3e4451",
+      },
+    },
   },
   solarized: {
     label: "Solarized",
@@ -176,8 +182,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#002b36",
         foreground: "#839496",
         cursor: "#2aa198",
-        selection: "#e3dcc8"
-      }
+        selection: "#e3dcc8",
+      },
     },
     dark: {
       appearance: "dark",
@@ -188,9 +194,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#002b36",
         foreground: "#839496",
         cursor: "#268bd2",
-        selection: "#073642"
-      }
-    }
+        selection: "#073642",
+      },
+    },
   },
   kanagawa: {
     label: "Kanagawa",
@@ -203,8 +209,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#f2ecbc",
         foreground: "#545464",
         cursor: "#43436c",
-        selection: "#54648080"
-      }
+        selection: "#54648080",
+      },
     },
     dark: {
       appearance: "dark",
@@ -215,9 +221,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#1f1f28",
         foreground: "#dcd7ba",
         cursor: "#c8c093",
-        selection: "#d7ba8080"
-      }
-    }
+        selection: "#d7ba8080",
+      },
+    },
   },
   "rose-pine": {
     label: "Rosé Pine",
@@ -230,21 +236,21 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#faf4ed",
         foreground: "#575279",
         cursor: "#575279",
-        selection: "#57527980"
-      }
+        selection: "#57527980",
+      },
     },
     dark: {
       appearance: "dark",
       background: "#191724",
       accent: "#c4a7e7",
-      action: "#d0679d",
+      action: "#f6c177",
       terminal: {
         background: "#191724",
         foreground: "#e0def4",
         cursor: "#c4a7e7",
-        selection: "#26233a"
-      }
-    }
+        selection: "#26233a",
+      },
+    },
   },
   vesper: {
     label: "Vesper",
@@ -257,8 +263,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#fffdf6",
         foreground: "#3d2a1e",
         cursor: "#a5642c",
-        selection: "#f1dcc4"
-      }
+        selection: "#f1dcc4",
+      },
     },
     dark: {
       appearance: "dark",
@@ -269,9 +275,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#101010",
         foreground: "#d6d6d6",
         cursor: "#ffc799",
-        selection: "#3b3028"
-      }
-    }
+        selection: "#3b3028",
+      },
+    },
   },
   terminal: {
     label: "Terminal",
@@ -284,8 +290,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#f6f0e4",
         foreground: "#4d4d4c",
         cursor: "#d19a66",
-        selection: "#efe6d5"
-      }
+        selection: "#efe6d5",
+      },
     },
     dark: {
       appearance: "dark",
@@ -296,9 +302,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#050505",
         foreground: "#cccccc",
         cursor: "#00ff00",
-        selection: "#111111"
-      }
-    }
+        selection: "#111111",
+      },
+    },
   },
   github: {
     label: "GitHub",
@@ -311,8 +317,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#f6f8fa",
         foreground: "#1f2328",
         cursor: "#0969da",
-        selection: "#e8eaed"
-      }
+        selection: "#e8eaed",
+      },
     },
     dark: {
       appearance: "dark",
@@ -323,9 +329,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#0d1117",
         foreground: "#c9d1d9",
         cursor: "#58a6ff",
-        selection: "#1c2128"
-      }
-    }
+        selection: "#1c2128",
+      },
+    },
   },
   monokai: {
     label: "Monokai",
@@ -338,8 +344,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#fafafa",
         foreground: "#272822",
         cursor: "#9d1f66",
-        selection: "#e6e6d8"
-      }
+        selection: "#e6e6d8",
+      },
     },
     dark: {
       appearance: "dark",
@@ -350,9 +356,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#1a1b17",
         foreground: "#f8f8f2",
         cursor: "#fd971f",
-        selection: "#49483e"
-      }
-    }
+        selection: "#49483e",
+      },
+    },
   },
   poimandres: {
     label: "Poimandres",
@@ -365,8 +371,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#e4f0fb",
         foreground: "#a6accd",
         cursor: "#00ced1",
-        selection: "#717cb425"
-      }
+        selection: "#717cb425",
+      },
     },
     dark: {
       appearance: "dark",
@@ -377,9 +383,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#1b1e28",
         foreground: "#a6accd",
         cursor: "#00ced1",
-        selection: "#717cb425"
-      }
-    }
+        selection: "#717cb425",
+      },
+    },
   },
   synthwave: {
     label: "Synthwave",
@@ -392,8 +398,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#fef6ff",
         foreground: "#8b7a9e",
         cursor: "#ff71ce",
-        selection: "#ffe6f7"
-      }
+        selection: "#ffe6f7",
+      },
     },
     dark: {
       appearance: "dark",
@@ -404,9 +410,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#0c0c0c",
         foreground: "#c0c0c8",
         cursor: "#ff2975",
-        selection: "#2a1342"
-      }
-    }
+        selection: "#2a1342",
+      },
+    },
   },
   monochrome: {
     label: "Monochrome",
@@ -419,8 +425,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#fafafa",
         foreground: "#2d2d2d",
         cursor: "#3b82f6",
-        selection: "#e8e8e8"
-      }
+        selection: "#e8e8e8",
+      },
     },
     dark: {
       appearance: "dark",
@@ -431,9 +437,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#0d0d0d",
         foreground: "#e0e0e0",
         cursor: "#5fafaf",
-        selection: "#3a3a3a"
-      }
-    }
+        selection: "#3a3a3a",
+      },
+    },
   },
   lavender: {
     label: "Lavender",
@@ -446,8 +452,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#f3e5f5",
         foreground: "#4527a0",
         cursor: "#7e57c2",
-        selection: "#ede7f6"
-      }
+        selection: "#ede7f6",
+      },
     },
     dark: {
       appearance: "dark",
@@ -458,9 +464,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#1e1f29",
         foreground: "#f8f8f2",
         cursor: "#bd93f9",
-        selection: "#282a36"
-      }
-    }
+        selection: "#282a36",
+      },
+    },
   },
   sunset: {
     label: "Sunset",
@@ -473,8 +479,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#fffcf5",
         foreground: "#d4a259",
         cursor: "#d4a259",
-        selection: "#ffdec9"
-      }
+        selection: "#ffdec9",
+      },
     },
     dark: {
       appearance: "dark",
@@ -485,9 +491,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#120d18",
         foreground: "#ffc345",
         cursor: "#ff9e4a",
-        selection: "#2d2436"
-      }
-    }
+        selection: "#2d2436",
+      },
+    },
   },
   aurora: {
     label: "Aurora",
@@ -500,8 +506,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#fbfcfd",
         foreground: "#2f3b3a",
         cursor: "#8bcbb8",
-        selection: "#eef6f5"
-      }
+        selection: "#eef6f5",
+      },
     },
     dark: {
       appearance: "dark",
@@ -512,9 +518,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#0f0f1a",
         foreground: "#a0a0a0",
         cursor: "#bd00ff",
-        selection: "#1a1a2e"
-      }
-    }
+        selection: "#1a1a2e",
+      },
+    },
   },
   retro: {
     label: "Retro",
@@ -527,8 +533,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#f4f1e8",
         foreground: "#2b2b2b",
         cursor: "#ffbb00",
-        selection: "#e8e4d8"
-      }
+        selection: "#e8e4d8",
+      },
     },
     dark: {
       appearance: "dark",
@@ -539,9 +545,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#0a0a0a",
         foreground: "#ffc633",
         cursor: "#ffc633",
-        selection: "#1f1a10"
-      }
-    }
+        selection: "#1f1a10",
+      },
+    },
   },
   termius: {
     label: "Termius",
@@ -554,8 +560,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#d5dde0",
         foreground: "#32364a",
         cursor: "#32364a",
-        selection: "#32364a80"
-      }
+        selection: "#32364a80",
+      },
     },
     dark: {
       appearance: "dark",
@@ -566,9 +572,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#141729",
         foreground: "#21b568",
         cursor: "#21b568",
-        selection: "#21b56880"
-      }
-    }
+        selection: "#21b56880",
+      },
+    },
   },
   manhattan: {
     label: "Manhattan",
@@ -581,8 +587,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#f4f4f0",
         foreground: "#2e2e2b",
         cursor: "#4f4f4c",
-        selection: "#deded680"
-      }
+        selection: "#deded680",
+      },
     },
     dark: {
       appearance: "dark",
@@ -593,9 +599,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#0a0a0a",
         foreground: "#b8b9b4",
         cursor: "#dfe0db",
-        selection: "#b8b9b480"
-      }
-    }
+        selection: "#b8b9b480",
+      },
+    },
   },
   cyberpunk: {
     label: "Cyberpunk",
@@ -608,8 +614,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#f5f5f7",
         foreground: "#6b6b70",
         cursor: "#ea00d9",
-        selection: "#f0e8ff"
-      }
+        selection: "#f0e8ff",
+      },
     },
     dark: {
       appearance: "dark",
@@ -620,9 +626,9 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#091833",
         foreground: "#00ffb3",
         cursor: "#ff007a",
-        selection: "#1b1b2a"
-      }
-    }
+        selection: "#1b1b2a",
+      },
+    },
   },
   winter: {
     label: "Winter",
@@ -635,8 +641,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#ece3d1",
         foreground: "#1a2720",
         cursor: "#5c6370",
-        selection: "#abb2bf80"
-      }
+        selection: "#abb2bf80",
+      },
     },
     dark: {
       appearance: "dark",
@@ -647,9 +653,8 @@ export const PORTED_THEME_SEEDS: Readonly<Record<string, Readonly<{ label: strin
         background: "#00192c",
         foreground: "#e4d5cc",
         cursor: "#f8cfa6",
-        selection: "#e4d5cc80"
-      }
-    }
-  }
-}
-;
+        selection: "#e4d5cc80",
+      },
+    },
+  },
+};

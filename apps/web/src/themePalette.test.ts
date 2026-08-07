@@ -29,6 +29,7 @@ import {
   getDefaultThemeColors,
   THEME_FILE_VERSION,
 } from "./themePalette";
+import { pairVsCodeThemes, parseVsCodeThemeFile } from "./vscodeThemeImport";
 
 function contrastRatio(first: string, second: string): number {
   const toRgb = (value: string) => {
@@ -227,6 +228,37 @@ describe("theme files", () => {
       canvas: "#101827",
       text: "#eef5ff",
     });
+  });
+
+  it("keeps a VS Code pair separate when its stripped id is reserved", () => {
+    const make = (name: string, type: "light" | "dark") =>
+      parseVsCodeThemeFile({
+        name,
+        type,
+        colors: {
+          "editor.background": type === "dark" ? "#282a36" : "#f8f8f2",
+          "editor.foreground": type === "dark" ? "#f8f8f2" : "#282a36",
+        },
+      });
+    const paired = pairVsCodeThemes([make("Dracula Light", "light"), make("Dracula Dark", "dark")]);
+
+    expect(paired.map((theme) => theme.id)).toEqual(["dracula-light", "dracula-dark"]);
+
+    const stored = new Map<string, string>();
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => stored.get(key) ?? null,
+        setItem: (key: string, value: string) => stored.set(key, value),
+      },
+    });
+    invalidateCustomThemes();
+    try {
+      for (const theme of paired) installCustomTheme(theme);
+      expect(getCustomThemes().map((theme) => theme.id)).toEqual(["dracula-light", "dracula-dark"]);
+    } finally {
+      vi.unstubAllGlobals();
+      invalidateCustomThemes();
+    }
   });
 
   it("keeps the T3 Chat palette faithful and readable", () => {
