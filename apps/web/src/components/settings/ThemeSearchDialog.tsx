@@ -1,4 +1,4 @@
-import { CheckCircle2Icon, PlusIcon, SearchIcon, ShieldCheckIcon } from "lucide-react";
+import { CheckCircle2Icon, PaletteIcon, PlusIcon, SearchIcon, ShieldCheckIcon } from "lucide-react";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -223,17 +223,9 @@ export function ThemeSearchDialog({
                       key={extension.id}
                     >
                       <div className="flex min-w-0 gap-3">
-                        {extension.iconUrl ? (
-                          <img
-                            alt=""
-                            className="size-10 shrink-0 rounded-lg bg-muted object-cover"
-                            src={extension.iconUrl}
-                          />
-                        ) : (
-                          <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                            <SearchIcon className="size-4" />
-                          </div>
-                        )}
+                        <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                          <PaletteIcon className="size-4" />
+                        </div>
                         <div className="min-w-0 flex-1">
                           <h4 className="truncate text-sm font-medium">{extension.name}</h4>
                           <p className="truncate text-muted-foreground text-xs">

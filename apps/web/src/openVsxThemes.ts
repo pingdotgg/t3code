@@ -39,7 +39,6 @@ export type OpenVsxThemeExtension = {
   publisher: string;
   description: string;
   downloadCount: number;
-  iconUrl: string | null;
   manifestUrl: string;
   sha256Url: string;
   vsixUrl: string;
@@ -96,7 +95,6 @@ function extensionFromDetail(value: unknown): OpenVsxThemeExtension | null {
       typeof value.downloadCount === "number" && Number.isFinite(value.downloadCount)
         ? value.downloadCount
         : 0,
-    iconUrl: trustedOpenVsxUrl(value.files.icon),
     manifestUrl,
     sha256Url,
     vsixUrl,
@@ -141,7 +139,7 @@ export async function searchOpenVsxThemes(
     identities.slice(0, 16).map(async ([namespace, name]) => {
       const detailUrl = `https://open-vsx.org/api/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`;
       const detailResponse = await fetch(detailUrl, signal ? { signal } : {});
-      if (!detailResponse.ok) return null;
+      if (!detailResponse.ok) throw new Error("Open VSX theme details are unavailable.");
       const detailBytes = await readCappedResponse(
         detailResponse,
         MAX_DETAIL_BYTES,
@@ -155,9 +153,11 @@ export async function searchOpenVsxThemes(
     }),
   );
   if (signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
-  return details
-    .flatMap((result) => (result.status === "fulfilled" && result.value ? [result.value] : []))
-    .slice(0, 8);
+  const completedDetails = details.filter((result) => result.status === "fulfilled");
+  if (identities.length > 0 && completedDetails.length === 0) {
+    throw new Error("Open VSX theme details are unavailable right now.");
+  }
+  return completedDetails.flatMap((result) => (result.value ? [result.value] : [])).slice(0, 8);
 }
 
 function parseJsoncObject(source: string, description: string): Record<string, unknown> {
@@ -331,18 +331,25 @@ async function readZipText(zip: JSZip, path: string, description: string): Promi
 async function loadThemeObject(
   zip: JSZip,
   path: string,
+  cache: Map<string, Record<string, unknown>>,
   ancestors: ReadonlySet<string> = new Set(),
 ): Promise<Record<string, unknown>> {
   if (ancestors.size >= MAX_INCLUDE_DEPTH) throw new Error("Theme includes are nested too deeply.");
   if (ancestors.has(path)) throw new Error("Theme includes contain a cycle.");
+  const cached = cache.get(path);
+  if (cached) return cached;
+
   const value = parseJsoncObject(await readZipText(zip, path, path), path);
-  if (typeof value.include !== "string") return value;
+  if (typeof value.include !== "string") {
+    cache.set(path, value);
+    return value;
+  }
 
   const includePath = normalizePackagePath(value.include, path);
   const nextAncestors = new Set(ancestors);
   nextAncestors.add(path);
-  const base = await loadThemeObject(zip, includePath, nextAncestors);
-  return {
+  const base = await loadThemeObject(zip, includePath, cache, nextAncestors);
+  const resolved = {
     ...base,
     ...value,
     colors: {
@@ -350,6 +357,8 @@ async function loadThemeObject(
       ...(isRecord(value.colors) ? value.colors : {}),
     },
   };
+  cache.set(path, resolved);
+  return resolved;
 }
 
 async function readCappedResponse(
@@ -457,11 +466,12 @@ export async function importOpenVsxThemeExtension(
 
   const parsed: Array<{ theme: ThemeDefinition; sourceName: string }> = [];
   const failures: string[] = [];
+  const themeCache = new Map<string, Record<string, unknown>>();
   for (const contribution of contributions as ThemeContribution[]) {
     if (typeof contribution.path !== "string") continue;
     try {
       const path = normalizePackagePath(contribution.path);
-      const themeValue = await loadThemeObject(zip, path);
+      const themeValue = await loadThemeObject(zip, path, themeCache);
       const type = contributionType(contribution.uiTheme);
       const label =
         typeof contribution.label === "string" && contribution.label.trim()

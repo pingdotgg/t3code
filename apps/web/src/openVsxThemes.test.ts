@@ -80,6 +80,25 @@ describe("Open VSX themes", () => {
     expect(searchUrl.searchParams.get("size")).toBe("16");
   });
 
+  it("reports an unavailable search when every detail request fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).includes("/-/search?")) {
+          return new Response(
+            JSON.stringify({ extensions: [{ namespace: "demo", name: "theme" }] }),
+            { status: 200 },
+          );
+        }
+        return new Response(null, { status: 429 });
+      }),
+    );
+
+    await expect(searchOpenVsxThemes("dracula")).rejects.toThrow(
+      "Open VSX theme details are unavailable",
+    );
+  });
+
   it("downloads a verified VSIX, reads JSONC includes, and pairs contributed variants", async () => {
     const zip = new JSZip();
     zip.file(
@@ -140,7 +159,6 @@ describe("Open VSX themes", () => {
       publisher: "demo",
       description: "",
       downloadCount: 1,
-      iconUrl: null,
       license: "MIT",
       manifestUrl: `${ASSET_ROOT}/package.json`,
       sha256Url: `${ASSET_ROOT}/demo.theme-1.0.0.sha256`,
@@ -184,7 +202,6 @@ describe("Open VSX themes", () => {
       publisher: "demo",
       description: "",
       downloadCount: 1,
-      iconUrl: null,
       license: "MIT",
       manifestUrl: `${ASSET_ROOT}/package.json`,
       sha256Url: `${ASSET_ROOT}/demo.theme-1.0.0.sha256`,
