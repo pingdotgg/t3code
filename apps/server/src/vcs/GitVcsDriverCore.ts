@@ -49,6 +49,7 @@ const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
 const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = 80_000;
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 120_000;
+const WORKTREE_FAILURE_OUTPUT_MAX_CHARS = 4_000;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 
@@ -291,6 +292,19 @@ function sanitizeRemoteName(value: string): string {
     .replace(/[^A-Za-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return sanitized.length > 0 ? sanitized : "fork";
+}
+
+function worktreeFailureDetail(result: GitVcsDriver.ExecuteGitResult): string {
+  const output = [result.stderr.trim(), result.stdout.trim()].filter((value) => value.length > 0);
+  if (output.length === 0) {
+    return "git worktree add failed";
+  }
+  const combined = output.join("\n\n");
+  const bounded =
+    combined.length <= WORKTREE_FAILURE_OUTPUT_MAX_CHARS
+      ? combined
+      : `[truncated]\n${combined.slice(-WORKTREE_FAILURE_OUTPUT_MAX_CHARS)}`;
+  return `git worktree add failed:\n${bounded}`;
 }
 
 function parseRemoteFetchUrls(stdout: string): Map<string, string> {
@@ -2749,9 +2763,22 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
       : ["worktree", "add", worktreePath, input.refName];
 
-    yield* executeGit("GitVcsDriver.createWorktree", input.cwd, args, {
-      fallbackErrorDetail: "git worktree add failed",
+    const output = yield* executeGit("GitVcsDriver.createWorktree", input.cwd, args, {
+      allowNonZeroExit: true,
     });
+    if (output.exitCode !== 0) {
+      return yield* new GitCommandError({
+        ...gitCommandContext({
+          operation: "GitVcsDriver.createWorktree",
+          cwd: input.cwd,
+          args,
+        }),
+        detail: worktreeFailureDetail(output),
+        ...(output.exitCode === null ? {} : { exitCode: output.exitCode }),
+        stdoutLength: output.stdout.length,
+        stderrLength: output.stderr.length,
+      });
+    }
 
     if (input.newRefName && input.baseRefName) {
       const remoteNames = yield* listRemoteNames(input.cwd).pipe(Effect.orElseSucceed(() => []));
@@ -2771,6 +2798,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       worktree: {
         path: worktreePath,
         refName: targetBranch,
+      },
+      output: {
+        stdout: output.stdout,
+        stderr: output.stderr,
+        stdoutTruncated: output.stdoutTruncated,
+        stderrTruncated: output.stderrTruncated,
       },
     };
   });
