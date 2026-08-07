@@ -14,6 +14,8 @@ import * as ProjectEnrichment from "../../project/ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "../../project/ProjectFaviconResolver.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 
 it.effect("keeps shell snapshots and later deltas moving while project enrichment is hung", () =>
@@ -41,6 +43,8 @@ it.effect("keeps shell snapshots and later deltas moving while project enrichmen
       }),
     );
     const testLayer = OrchestrationProjectionSnapshotQueryLive.pipe(
+      Layer.provideMerge(ThreadBackgroundLiveness.layer),
+      Layer.provideMerge(ThreadPlanProgress.layer),
       Layer.provideMerge(ProjectEnrichment.layer),
       Layer.provideMerge(metadataLayer),
       Layer.provideMerge(SqlitePersistenceMemory),
