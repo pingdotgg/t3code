@@ -100,11 +100,35 @@ const BrowserLaunchEnvConfig = Config.all({
 }).pipe(Config.map(compactEnv));
 
 const CommandLookupEnvConfig = Config.all({
+  HOME: Config.string("HOME").pipe(Config.option),
   PATH: Config.string("PATH").pipe(Config.option),
   Path: Config.string("Path").pipe(Config.option),
   path: Config.string("path").pipe(Config.option),
   PATHEXT: Config.string("PATHEXT").pipe(Config.option),
 }).pipe(Config.map(compactEnv));
+
+const MAC_EDITOR_APP_BUNDLE_NAMES: Partial<Record<EditorId, readonly [string, ...string[]]>> = {
+  antigravity: ["Google Antigravity.app", "Antigravity.app"],
+  aqua: ["Aqua.app"],
+  clion: ["CLion.app"],
+  cursor: ["Cursor.app"],
+  datagrip: ["DataGrip.app"],
+  dataspell: ["DataSpell.app"],
+  goland: ["GoLand.app"],
+  idea: ["IntelliJ IDEA.app", "IntelliJ IDEA Ultimate.app", "IntelliJ IDEA CE.app"],
+  kiro: ["Kiro.app"],
+  phpstorm: ["PhpStorm.app"],
+  pycharm: ["PyCharm.app"],
+  rider: ["Rider.app"],
+  rubymine: ["RubyMine.app"],
+  rustrover: ["RustRover.app"],
+  trae: ["Trae.app"],
+  vscode: ["Visual Studio Code.app"],
+  "vscode-insiders": ["Visual Studio Code - Insiders.app"],
+  vscodium: ["VSCodium.app"],
+  webstorm: ["WebStorm.app"],
+  zed: ["Zed.app"],
+};
 
 const readBrowserLaunchEnv = BrowserLaunchEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
 const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
@@ -168,6 +192,42 @@ const resolveAvailableCommand = Effect.fn("externalLauncher.resolveAvailableComm
   }
   return Option.none();
 });
+
+export function resolveMacApplicationDirectories(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
+  const home = env.HOME?.trim();
+  return home ? [`${home}/Applications`, "/Applications"] : ["/Applications"];
+}
+
+const resolveMacEditorApplication = Effect.fn("externalLauncher.resolveMacEditorApplication")(
+  function* (
+    editorId: EditorId,
+    env: NodeJS.ProcessEnv,
+  ): Effect.fn.Return<Option.Option<string>, never, FileSystem.FileSystem | Path.Path> {
+    const appBundleNames = MAC_EDITOR_APP_BUNDLE_NAMES[editorId];
+    if (!appBundleNames) {
+      return Option.none();
+    }
+
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    for (const directory of resolveMacApplicationDirectories(env)) {
+      for (const appBundleName of appBundleNames) {
+        const appPath = path.join(directory, appBundleName);
+        if (yield* fileSystem.exists(appPath).pipe(Effect.orElseSucceed(() => false))) {
+          return Option.some(appPath);
+        }
+      }
+    }
+    return Option.none();
+  },
+);
+
+function resolveMacAppEditorTarget(target: string): string {
+  return Option.match(parseTargetPathAndPosition(target), {
+    onNone: () => target,
+    onSome: ({ path }) => path,
+  });
+}
 
 function encodeUtf16LeBase64(input: string): string {
   const bytes = new Uint8Array(input.length * 2);
@@ -278,6 +338,14 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
     const command = yield* resolveAvailableCommand(editor.commands, env);
     if (Option.isSome(command)) {
       available.push(editor.id);
+      continue;
+    }
+
+    if (
+      platform === "darwin" &&
+      Option.isSome(yield* resolveMacEditorApplication(editor.id, env))
+    ) {
+      available.push(editor.id);
     }
   }
 
@@ -336,17 +404,31 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   }
 
   if (editorDef.commands) {
-    const command = Option.getOrElse(
-      yield* resolveAvailableCommand(editorDef.commands, env),
-      () => editorDef.commands[0],
-    );
-    return {
-      editor: editorDef.id,
-      target: input.cwd,
-      command,
-      args: resolveEditorArgs(editorDef, input.cwd),
-    };
-  }
+    const availableCommand = yield* resolveAvailableCommand(editorDef.commands, env);
+    if (Option.isSome(availableCommand)) {
+      return {
+        command: availableCommand.value,
+        args: resolveEditorArgs(editorDef, input.cwd),
+      };
+    }
+
+    const macApplication =
+      platform === "darwin"
+        ? yield* resolveMacEditorApplication(editorDef.id, env)
+        : Option.none<string>();
+    if (Option.isSome(macApplication)) {
+      return {
+        command: "open",
+        args: ["-a", macApplication.value, resolveMacAppEditorTarget(input.cwd)],
+      };
+    }
+
+return {
+  editor: editorDef.id,
+  target: input.cwd,
+  command: editorDef.commands[0],
+  args: resolveEditorArgs(editorDef, input.cwd),
+};
 
   if (editorDef.id !== "file-manager") {
     return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
