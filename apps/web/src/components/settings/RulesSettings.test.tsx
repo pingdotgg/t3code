@@ -14,6 +14,7 @@ describe("Rules settings editor", () => {
         error={null}
         notice={null}
         disabled={false}
+        isMutating={false}
         onChange={() => undefined}
         onSave={() => undefined}
         onArchiveRestore={() => undefined}
@@ -35,6 +36,7 @@ describe("Rules settings editor", () => {
         error={null}
         notice={null}
         disabled={false}
+        isMutating={false}
         onChange={() => undefined}
         onSave={() => undefined}
         onArchiveRestore={() => undefined}
@@ -44,5 +46,26 @@ describe("Rules settings editor", () => {
     expect(markup).toMatch(/<input[^>]*disabled=""[^>]*aria-label="Rule name"/);
     expect(markup).toMatch(/<textarea[^>]*disabled=""[^>]*aria-label="Rule file globs"/);
     expect(markup).toMatch(/<textarea[^>]*disabled=""[^>]*aria-label="Rule instructions"/);
+  });
+
+  it("locks both lifecycle actions while a mutation is in flight", () => {
+    const markup = renderToStaticMarkup(
+      <RuleEditor
+        draft={draftFromRule()}
+        isNew={false}
+        archived={false}
+        isLoading={false}
+        error={null}
+        notice={null}
+        disabled={false}
+        isMutating
+        onChange={() => undefined}
+        onSave={() => undefined}
+        onArchiveRestore={() => undefined}
+      />,
+    );
+
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>.*Archive.*<\/button>/);
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>.*Save.*<\/button>/);
   });
 });

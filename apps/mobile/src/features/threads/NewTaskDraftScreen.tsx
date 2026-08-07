@@ -53,6 +53,7 @@ import { useCreateProjectThread } from "./use-project-actions";
 import { resolveDraftProjectSelection } from "./new-task-project-selection";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { profileKey, selectChatAgentProfiles, useAgentProfileCatalog } from "../../state/agents";
+import { resolveAgentProfileSelection } from "../../state/agentProfileSelection";
 
 function formatWorkspaceLabel(input: {
   readonly workspaceMode: string;
@@ -925,7 +926,7 @@ export function NewTaskDraftScreen(props: {
       startFromOrigin,
       runtimeMode,
       interactionMode,
-      agentProfile: draft.agentProfile ?? flow.agentProfile,
+      agentProfile: resolveAgentProfileSelection(draft.agentProfile, flow.agentProfile),
       initialMessageText,
       initialAttachments: draft.attachments,
       ...(editingPendingTask

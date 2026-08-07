@@ -30,6 +30,7 @@ import {
   dispatchAgentChildLifecycle,
   liveAgentProfileLocator,
   minimumBudgets,
+  requireAgentResultThread,
   requestAgentFollowUp,
   resolvePinnedAgentRuntimeSettings,
   runtimeSettingsForAgentProfile,
@@ -132,6 +133,19 @@ it("uses an unpinned locator for live delegation configuration", () => {
     scope: restrictiveProfile.scope,
   });
 });
+
+it.effect("fails closed when a run's child thread projection is missing", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.result(
+      requireAgentResultThread(Option.none(), AgentRunId.make("missing-child-thread-run")),
+    );
+    NodeAssert.equal(result._tag, "Failure");
+    NodeAssert.match(
+      result._tag === "Failure" ? result.failure.detail : "",
+      /child Agent thread is unavailable/i,
+    );
+  }),
+);
 
 it("allocates a dedicated branch for each isolated Agent run", () => {
   NodeAssert.equal(

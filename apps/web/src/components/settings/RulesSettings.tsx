@@ -66,6 +66,8 @@ export function RulesSettingsPanel() {
   const [isNew, setIsNew] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [isMutating, setIsMutating] = useState(false);
+  const mutationInFlight = useRef(false);
   const settingsContextKey = agentSettingsContextKey({
     environmentId: resolvedEnvironmentId,
     projectId: project?.id?.toString() ?? null,
@@ -125,8 +127,10 @@ export function RulesSettingsPanel() {
     setNotice(null);
   };
   const save = async () => {
-    if (!resolvedEnvironmentId) return;
+    if (!resolvedEnvironmentId || mutationInFlight.current) return;
     const saveContextKey = settingsContextKey;
+    mutationInFlight.current = true;
+    setIsMutating(true);
     try {
       if (draft.scope === "project" && !project)
         throw new Error("Choose a project before saving a project-scoped rule.");
@@ -152,11 +156,16 @@ export function RulesSettingsPanel() {
       setError(
         cause instanceof Error ? cause.message : failureMessage(cause as Cause.Cause<unknown>),
       );
+    } finally {
+      mutationInFlight.current = false;
+      setIsMutating(false);
     }
   };
   const archiveRestore = async () => {
-    if (!resolvedEnvironmentId || !selectedSummary) return;
+    if (!resolvedEnvironmentId || !selectedSummary || mutationInFlight.current) return;
     const actionContextKey = settingsContextKey;
+    mutationInFlight.current = true;
+    setIsMutating(true);
     try {
       const command = selectedSummary.archivedAt ? restoreRule : archiveRule;
       const result = await command({
@@ -179,6 +188,9 @@ export function RulesSettingsPanel() {
     } catch (cause) {
       if (settingsContextKeyRef.current !== actionContextKey) return;
       setError(cause instanceof Error ? cause.message : "The rule request failed.");
+    } finally {
+      mutationInFlight.current = false;
+      setIsMutating(false);
     }
   };
   const rules = sortAgentRules(catalog.data?.rules ?? []);
@@ -315,6 +327,7 @@ export function RulesSettingsPanel() {
               error={error ?? ruleQuery.error}
               notice={notice}
               disabled={disabled}
+              isMutating={isMutating}
               onChange={update}
               onSave={() => void save()}
               onArchiveRestore={() => void archiveRestore()}
@@ -340,6 +353,7 @@ export function RuleEditor({
   error,
   notice,
   disabled,
+  isMutating,
   onChange,
   onSave,
   onArchiveRestore,
@@ -351,11 +365,12 @@ export function RuleEditor({
   error: string | null;
   notice: string | null;
   disabled: boolean;
+  isMutating: boolean;
   onChange: <K extends keyof AgentRuleDraft>(key: K, value: AgentRuleDraft[K]) => void;
   onSave: () => void;
   onArchiveRestore: () => void;
 }) {
-  const editorDisabled = disabled || isLoading;
+  const editorDisabled = disabled || isLoading || isMutating;
 
   return (
     <div className="space-y-5">
@@ -368,13 +383,18 @@ export function RuleEditor({
         </div>
         <div className="flex gap-2">
           {!isNew ? (
-            <Button size="xs" variant="outline" onClick={onArchiveRestore} disabled={isLoading}>
+            <Button
+              size="xs"
+              variant="outline"
+              onClick={onArchiveRestore}
+              disabled={isLoading || isMutating}
+            >
               {archived ? <RotateCcwIcon /> : <ArchiveIcon />}
               {archived ? "Restore" : "Archive"}
             </Button>
           ) : null}
           <Button size="xs" onClick={onSave} disabled={editorDisabled}>
-            {isLoading ? <Spinner /> : <SaveIcon />} Save
+            {isLoading || isMutating ? <Spinner /> : <SaveIcon />} Save
           </Button>
         </div>
       </div>

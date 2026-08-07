@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   buildAgentProfileDocument,
   draftFromProfile,
+  isProfileDocumentForSummary,
   resolveProfileBaselineForSave,
   selectChatAgentProfiles,
   sortAgentProfiles,
@@ -61,6 +62,20 @@ describe("mobile agent profile editor", () => {
     );
     expect(resolveProfileBaselineForSave(false, profile, profile)).toBe(profile);
     expect(resolveProfileBaselineForSave(true, null, undefined)).toBeNull();
+  });
+
+  it("does not hydrate a profile from a stale revision", () => {
+    const profile = buildAgentProfileDocument(
+      { ...draftFromProfile(), id: "reviewer", name: "Reviewer" },
+      null,
+    );
+    expect(isProfileDocumentForSummary(profile, profile)).toBe(true);
+    expect(
+      isProfileDocumentForSummary(profile, {
+        ...profile,
+        revision: "b".repeat(64) as typeof profile.revision,
+      }),
+    ).toBe(false);
   });
 
   it("hides delegation-only profiles except for a thread that already selected one", () => {

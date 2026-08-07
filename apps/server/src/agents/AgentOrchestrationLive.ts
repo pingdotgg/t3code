@@ -224,6 +224,21 @@ export const dispatchAgentChildLifecycle = Effect.fn(
 
 export const agentWorktreeBranchName = (runId: AgentRunId): string => `t3code/agent-${runId}`;
 
+export const requireAgentResultThread = <A>(
+  thread: Option.Option<A>,
+  runId: AgentRunId,
+): Effect.Effect<A, AgentProfileInvalidError> =>
+  Option.match(thread, {
+    onNone: () =>
+      Effect.fail(
+        invalid("The child Agent thread is unavailable; its result cannot be read.", {
+          operation: "child-thread-read",
+          runId,
+        }),
+      ),
+    onSome: Effect.succeed,
+  });
+
 export const liveAgentProfileLocator = (profile: AgentProfileRef): AgentProfileLocator => ({
   id: profile.id,
   scope: profile.scope,
@@ -1077,26 +1092,23 @@ export const make = Effect.gen(function* () {
             runId: run.id,
           }),
         ),
-        Effect.map(Option.getOrNull),
+        Effect.flatMap((detail) => requireAgentResultThread(detail, run.id)),
       );
-      const allEntries: AgentMcpResultEntry[] = (thread?.messages ?? []).map(
-        (message, sequence) => ({
-          sequence,
-          kind: "message",
-          text: message.text.slice(0, 32_000),
-          createdAt: message.createdAt,
-        }),
-      );
+      const allEntries: AgentMcpResultEntry[] = thread.messages.map((message, sequence) => ({
+        sequence,
+        kind: "message",
+        text: message.text.slice(0, 32_000),
+        createdAt: message.createdAt,
+      }));
       const cursor = input.cursor ?? 0;
       const limit = input.limit ?? 16;
       const entries = allEntries.slice(cursor, cursor + limit);
       const nextCursor =
         cursor + entries.length < allEntries.length ? cursor + entries.length : null;
       const finalMessage =
-        (thread?.messages ?? []).toReversed().find((message) => message.role === "assistant")
-          ?.text ?? null;
+        thread.messages.toReversed().find((message) => message.role === "assistant")?.text ?? null;
       const latestTurnCount =
-        thread?.checkpoints.reduce(
+        thread.checkpoints.reduce(
           (maximum, checkpoint) => Math.max(maximum, checkpoint.checkpointTurnCount),
           0,
         ) ?? 0;

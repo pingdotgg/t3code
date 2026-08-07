@@ -121,6 +121,19 @@ export function resolveRuleBaselineForSave(
   return loaded;
 }
 
+export function isRuleDocumentForSummary(
+  rule: AgentRuleDocument | undefined,
+  summary: Pick<AgentRuleSummary, "id" | "scope" | "revision"> | null,
+): rule is AgentRuleDocument {
+  return (
+    rule !== undefined &&
+    summary !== null &&
+    rule.id === summary.id &&
+    rule.scope === summary.scope &&
+    rule.revision === summary.revision
+  );
+}
+
 export function sortAgentRules<
   T extends { readonly id: string; readonly name: string; readonly archivedAt: string | null },
 >(rules: ReadonlyArray<T>): ReadonlyArray<T> {

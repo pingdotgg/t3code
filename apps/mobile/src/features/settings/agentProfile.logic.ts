@@ -131,6 +131,19 @@ export function resolveProfileBaselineForSave(
   return loaded;
 }
 
+export function isProfileDocumentForSummary(
+  profile: AgentProfileDocument | undefined,
+  summary: Pick<AgentProfileSummary, "id" | "scope" | "revision"> | null,
+): profile is AgentProfileDocument {
+  return (
+    profile !== undefined &&
+    summary !== null &&
+    profile.id === summary.id &&
+    profile.scope === summary.scope &&
+    profile.revision === summary.revision
+  );
+}
+
 export function sortAgentProfiles<
   T extends { id: string; name: string; scope: string; archivedAt: string | null },
 >(profiles: ReadonlyArray<T>): ReadonlyArray<T> {

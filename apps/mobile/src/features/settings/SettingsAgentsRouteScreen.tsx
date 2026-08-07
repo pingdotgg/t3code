@@ -31,6 +31,7 @@ import { ComposerToolbarTrigger } from "../../components/ComposerToolbarTrigger"
 import {
   buildAgentProfileDocument,
   draftFromProfile,
+  isProfileDocumentForSummary,
   resolveProfileBaselineForSave,
   type AgentProfileDraft,
 } from "./agentProfile.logic";
@@ -38,6 +39,7 @@ import { agentSettingsContextKey } from "./agentSettings.logic";
 import {
   buildAgentRuleDocument,
   draftFromRule,
+  isRuleDocumentForSummary,
   resolveRuleBaselineForSave,
   sortAgentRules,
   type AgentRuleDraft,
@@ -118,11 +120,41 @@ export function SettingsAgentsRouteScreen() {
   const restoreRule = useAtomCommand(agentEnvironment.restoreRule, { reportFailure: false });
 
   useEffect(() => {
-    if (profileQuery.data?.profile && selectedSummary !== null) {
+    if (
+      environmentId !== null &&
+      !environments.some((environment) => environment.environmentId === environmentId)
+    ) {
+      setContextGeneration((generation) => generation + 1);
+      setEnvironmentId(null);
+      setProjectId(null);
+      setSelectedKey(null);
+      setSelectedRuleKey(null);
+      setIsNew(false);
+      setIsNewRule(false);
+      setDraft(draftFromProfile());
+      setRuleDraft(draftFromRule());
+      setNotice(null);
+      setError(null);
+      setRuleNotice(null);
+      setRuleError(null);
+    }
+  }, [environmentId, environments]);
+
+  useEffect(() => {
+    if (!environments.some((environment) => environment.environmentId === resolvedEnvironmentId)) {
+      return;
+    }
+    if (isProfileDocumentForSummary(profileQuery.data?.profile, selectedSummary)) {
       setDraft(draftFromProfile(profileQuery.data.profile));
       setIsNew(false);
     }
-  }, [profileQuery.data, selectedSummary]);
+  }, [
+    environments,
+    profileQuery.data,
+    resolvedEnvironmentId,
+    selectedProject?.id,
+    selectedSummary,
+  ]);
   const ruleQuery = useEnvironmentQuery(
     resolvedEnvironmentId === null || selectedRuleSummary === null
       ? null
@@ -137,13 +169,31 @@ export function SettingsAgentsRouteScreen() {
         }),
   );
   useEffect(() => {
-    if (ruleQuery.data?.rule && selectedRuleSummary !== null) {
+    if (!environments.some((environment) => environment.environmentId === resolvedEnvironmentId)) {
+      return;
+    }
+    if (isRuleDocumentForSummary(ruleQuery.data?.rule, selectedRuleSummary)) {
       setRuleDraft(draftFromRule(ruleQuery.data.rule));
       setIsNewRule(false);
     }
-  }, [ruleQuery.data, selectedRuleSummary]);
+  }, [
+    environments,
+    resolvedEnvironmentId,
+    ruleQuery.data,
+    selectedProject?.id,
+    selectedRuleSummary,
+  ]);
   useEffect(() => {
-    if (projectId !== null && selectedProject === null) setProjectId(null);
+    if (projectId !== null && selectedProject === null) {
+      setContextGeneration((generation) => generation + 1);
+      setProjectId(null);
+      setSelectedKey(null);
+      setSelectedRuleKey(null);
+      setIsNew(false);
+      setIsNewRule(false);
+      setDraft(draftFromProfile());
+      setRuleDraft(draftFromRule());
+    }
   }, [projectId, selectedProject]);
 
   const profiles = useMemo(
@@ -314,6 +364,9 @@ export function SettingsAgentsRouteScreen() {
       if (ruleContextKeyRef.current !== actionContextKey) return;
       setRuleNotice(selectedRuleSummary.archivedAt ? "Rule restored." : "Rule archived.");
       catalog.refresh();
+    } catch (caught) {
+      if (ruleContextKeyRef.current !== actionContextKey) return;
+      setRuleError(caught instanceof Error ? caught.message : "The rule could not be updated.");
     } finally {
       ruleCommandInFlight.current = false;
       setRuleCommandPending(false);
@@ -415,6 +468,9 @@ export function SettingsAgentsRouteScreen() {
       if (profileContextKeyRef.current !== actionContextKey) return;
       setNotice(selectedSummary.archivedAt ? "Profile restored." : "Profile archived.");
       catalog.refresh();
+    } catch (caught) {
+      if (profileContextKeyRef.current !== actionContextKey) return;
+      setError(caught instanceof Error ? caught.message : "The profile could not be updated.");
     } finally {
       profileCommandInFlight.current = false;
       setProfileCommandPending(false);
@@ -567,7 +623,15 @@ export function SettingsAgentsRouteScreen() {
             </Pressable>
           </View>
           <View className="overflow-hidden rounded-2xl bg-subtle">
-            {rules.length === 0 ? (
+            {catalog.isPending && catalog.data === null ? (
+              <Text className="p-4 text-sm text-foreground-muted">Loading rules…</Text>
+            ) : null}
+            {catalog.error ? (
+              <Text accessibilityRole="alert" className="p-4 text-sm text-danger">
+                {catalog.error}
+              </Text>
+            ) : null}
+            {!catalog.isPending && !catalog.error && rules.length === 0 ? (
               <Text className="p-4 text-sm text-foreground-muted">
                 No rules yet. Create one to apply reusable instructions by path.
               </Text>
@@ -657,7 +721,7 @@ function ProfileEditor(props: {
         accessibilityLabel={label}
         multiline={multiline}
         value={String(props.draft[key])}
-        editable={key !== "id" || props.selectedSummary === null}
+        editable={!props.loading && (key !== "id" || props.selectedSummary === null)}
         onChangeText={(value) => props.onChange(key, value as never)}
         className={multiline ? "min-h-32" : undefined}
       />
@@ -715,8 +779,9 @@ function ProfileEditor(props: {
           accessibilityRole="switch"
           accessibilityLabel="Show in chat Agent picker"
           accessibilityState={{ checked: props.draft.chatSelectable }}
+          disabled={props.loading || props.commandPending}
           onPress={() => props.onChange("chatSelectable", !props.draft.chatSelectable)}
-          className={`rounded-full px-3 py-1 ${props.draft.chatSelectable ? "bg-primary" : "bg-subtle-strong"}`}
+          className={`rounded-full px-3 py-1 disabled:opacity-40 ${props.draft.chatSelectable ? "bg-primary" : "bg-subtle-strong"}`}
         >
           <Text
             className={`text-sm font-t3-bold ${props.draft.chatSelectable ? "text-primary-foreground" : "text-foreground-muted"}`}
@@ -788,7 +853,7 @@ function RuleEditor(props: {
         accessibilityLabel={label}
         multiline={multiline}
         value={String(props.draft[key])}
-        editable={key !== "id" || props.selectedSummary === null}
+        editable={!props.loading && (key !== "id" || props.selectedSummary === null)}
         onChangeText={(value) => props.onChange(key, value as never)}
         className={multiline ? "min-h-32" : undefined}
       />
@@ -840,11 +905,15 @@ function RuleEditor(props: {
         <Text className="text-base text-foreground">Always apply</Text>
         <Pressable
           accessibilityRole="switch"
+          accessibilityLabel="Always apply"
           accessibilityState={{ checked: props.draft.alwaysApply }}
+          disabled={props.loading || props.commandPending}
           onPress={() => props.onChange("alwaysApply", !props.draft.alwaysApply)}
-          className="rounded-full bg-primary px-3 py-1"
+          className={`rounded-full px-3 py-1 disabled:opacity-40 ${props.draft.alwaysApply ? "bg-primary" : "bg-subtle-strong"}`}
         >
-          <Text className="text-sm font-t3-bold text-primary-foreground">
+          <Text
+            className={`text-sm font-t3-bold ${props.draft.alwaysApply ? "text-primary-foreground" : "text-foreground-muted"}`}
+          >
             {props.draft.alwaysApply ? "On" : "Off"}
           </Text>
         </Pressable>
