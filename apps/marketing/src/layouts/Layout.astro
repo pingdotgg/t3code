@@ -11,6 +11,7 @@ interface Props {
   favicon?: string;
   socialImage?: string;
   socialImageAlt?: string;
+  homeVersion?: "v1" | "v2";
 }
 
 const {
@@ -20,6 +21,7 @@ const {
   favicon = stableAppIcon,
   socialImage = "/og-image.png",
   socialImageAlt = "T3 Code model picker shown in cinematic perspective",
+  homeVersion,
 } = Astro.props;
 
 const siteUrl = Astro.site ?? Astro.url;
@@ -103,6 +105,26 @@ const socialImageUrl = new URL(socialImage, siteUrl);
             </svg>
             <span class="nav-brand-name">Code</span>
           </a>
+          {
+            homeVersion && (
+              <nav class="version-switcher" aria-label="Homepage version">
+                <a
+                  href="/"
+                  class:list={["version-switcher__link", homeVersion === "v1" && "is-active"]}
+                  aria-current={homeVersion === "v1" ? "page" : undefined}
+                >
+                  V1
+                </a>
+                <a
+                  href="/v2"
+                  class:list={["version-switcher__link", homeVersion === "v2" && "is-active"]}
+                  aria-current={homeVersion === "v2" ? "page" : undefined}
+                >
+                  V2
+                </a>
+              </nav>
+            )
+          }
           <div class="nav-right">
             <div class="nav-download">
               <button
@@ -603,6 +625,41 @@ const socialImageUrl = new URL(socialImage, siteUrl);
     gap: 20px;
   }
 
+  .version-switcher {
+    position: absolute;
+    left: 50%;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: rgba(10, 10, 12, 0.68);
+    transform: translateX(-50%);
+    backdrop-filter: blur(18px);
+  }
+
+  .version-switcher__link {
+    min-width: 34px;
+    padding: 4px 9px;
+    border-radius: 999px;
+    color: var(--fg-dim);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    line-height: 1.2;
+    text-align: center;
+    transition: color 0.18s ease, background 0.18s ease;
+  }
+
+  .version-switcher__link:hover {
+    color: var(--fg);
+  }
+
+  .version-switcher__link.is-active {
+    color: #0a0a0b;
+    background: var(--fg);
+  }
+
   .nav-download {
     display: inline-flex;
     align-items: center;
@@ -802,6 +859,12 @@ const socialImageUrl = new URL(socialImage, siteUrl);
   }
 
   @media (max-width: 520px) {
+    .version-switcher {
+      position: static;
+      margin-left: auto;
+      transform: none;
+    }
+
     .nav-link {
       display: none;
     }

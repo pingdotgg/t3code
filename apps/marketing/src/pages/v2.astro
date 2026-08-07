@@ -1,0 +1,771 @@
+---
+import stableAppIcon from "../assets/t3-latest-384.webp?url";
+import Layout from "../layouts/Layout.astro";
+import {
+  GOOGLE_PLAY_STORE_URL,
+  IOS_APP_STORE_URL,
+  MARKETING_STATS,
+} from "../lib/site";
+
+const agents = [
+  { name: "Claude", icon: "/harnesses/claude-ai-icon.svg" },
+  { name: "Cursor", icon: "/harnesses/cursor_light.svg" },
+  { name: "Codex", icon: "/harnesses/openai_dark.svg" },
+  { name: "Grok", icon: "/harnesses/grok-dark.svg" },
+  { name: "OpenCode", icon: "/harnesses/opencode-dark.svg" },
+] as const;
+
+const surfaces = [
+  { id: "desk", label: "At your desk", image: "/demo-states/inbox-overview-crop.png" },
+  { id: "phone", label: "From your phone", image: "/mobile-states/ios-thread.png" },
+  { id: "review", label: "Inside the diff", image: "/demo-states/review-diff-crop.png" },
+] as const;
+---
+
+<Layout
+  title="T3 Code — Version 2"
+  description="One open control plane for the coding agents you already pay for."
+  pageClass="marketing-home marketing-home-v2"
+  favicon={stableAppIcon}
+  homeVersion="v2"
+>
+  <section class="v2-hero">
+    <div class="v2-shell v2-hero-grid">
+      <header class="v2-hero-copy">
+        <p class="v2-kicker">Open-source agent control</p>
+        <h1>Bring the agents.<br />Keep the control.</h1>
+        <p class="v2-lede">
+          Run Claude, Cursor, Codex, Grok, and OpenCode in one fast workspace—using the
+          subscriptions you already have.
+        </p>
+        <div class="v2-actions">
+          <a class="v2-button v2-button--primary" href="/download">Download T3 Code</a>
+          <a class="v2-button" href="https://github.com/pingdotgg/t3code">View source</a>
+        </div>
+      </header>
+
+      <div class="v2-demo-wrap" aria-label="Interactive T3 Code product demo">
+        <div class="v2-demo-glow" aria-hidden="true"></div>
+        <div class="v2-demo-frame">
+          <div class="v2-demo-bar">
+            <span><i></i> Local workspace</span>
+            <code>npx t3</code>
+          </div>
+          <iframe
+            src="/sidebar-demo/demo.html"
+            title="Interactive T3 Code demo"
+            loading="eager"
+            allow="clipboard-write"></iframe>
+        </div>
+      </div>
+
+      <aside class="v2-hero-points" aria-label="T3 Code principles">
+        <p><span>01</span> Your provider accounts</p>
+        <p><span>02</span> Your machine and repos</p>
+        <p><span>03</span> One interface everywhere</p>
+      </aside>
+    </div>
+
+    <div class="v2-shell v2-proof">
+      <p>Tolerated by <strong>{MARKETING_STATS.users} devs</strong></p>
+      <div class="v2-agent-list" aria-label="Supported coding agents">
+        {agents.map((agent) => (
+          <span><img src={agent.icon} alt="" width="18" height="18" />{agent.name}</span>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="v2-system" aria-labelledby="v2-system-title">
+    <div class="v2-shell">
+      <div class="v2-section-heading">
+        <p class="v2-kicker">One system, not five windows</p>
+        <h2 id="v2-system-title">The workspace follows the work.</h2>
+      </div>
+
+      <div class="v2-system-grid">
+        <article class="v2-system-copy">
+          <div class="v2-surface-tabs" role="tablist" aria-label="Product surfaces">
+            {surfaces.map((surface, index) => (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={index === 0 ? "true" : "false"}
+                aria-controls={`v2-panel-${surface.id}`}
+                id={`v2-tab-${surface.id}`}
+                data-v2-surface={surface.id}
+              >
+                {surface.label}
+              </button>
+            ))}
+          </div>
+          <div class="v2-system-message">
+            <p>Start locally. Check the same thread remotely. Review the exact diff without rebuilding context.</p>
+            <code><span>$</span> npx t3</code>
+          </div>
+        </article>
+
+        <div class="v2-surface-panels">
+          {surfaces.map((surface, index) => (
+            <div
+              class:list={["v2-surface-panel", index === 0 && "is-active"]}
+              id={`v2-panel-${surface.id}`}
+              role="tabpanel"
+              aria-labelledby={`v2-tab-${surface.id}`}
+              data-v2-panel={surface.id}
+              hidden={index !== 0}
+            >
+              <img src={surface.image} alt={`T3 Code ${surface.label.toLowerCase()} view`} loading="lazy" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="v2-connect" aria-labelledby="v2-connect-title">
+    <div class="v2-shell v2-connect-grid">
+      <header>
+        <p class="v2-kicker">Remote ready by design</p>
+        <h2 id="v2-connect-title"><span>T3</span> Connect</h2>
+        <p>Pair once. Control the same live threads from the web, iPhone, iPad, or Android.</p>
+        <code>npx t3 pair</code>
+        <div class="v2-store-links">
+          <a href={IOS_APP_STORE_URL} target="_blank" rel="noreferrer">
+            <img src="/store-logos/appstore.svg" alt="" width="20" height="20" />App Store
+          </a>
+          <a href={GOOGLE_PLAY_STORE_URL} target="_blank" rel="noreferrer">
+            <img src="/store-logos/googleplay.svg" alt="" width="20" height="20" />Google Play
+          </a>
+        </div>
+      </header>
+      <div class="v2-connect-visual" aria-hidden="true">
+        <div class="v2-connect-desktop">
+          <img src="/demo-states/review-diff-crop.png" alt="" loading="lazy" />
+        </div>
+        <div class="v2-connect-phone">
+          <img src="/mobile-states/ios-review.png" alt="" loading="lazy" />
+        </div>
+        <span class="v2-connect-line"></span>
+        <span class="v2-connect-badge">connected</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="v2-final">
+    <div class="v2-shell v2-final-inner">
+      <h2>Five agents.<br />One place to run them.</h2>
+      <div>
+        <p>Open at the core. Local by default. Remote when you need it.</p>
+        <a class="v2-button v2-button--primary" href="/download">Get T3 Code</a>
+      </div>
+    </div>
+  </section>
+
+  <script>
+    const surfaceTabs = document.querySelectorAll<HTMLButtonElement>("[data-v2-surface]");
+    const surfacePanels = document.querySelectorAll<HTMLElement>("[data-v2-panel]");
+
+    for (const tab of surfaceTabs) {
+      tab.addEventListener("click", () => {
+        const next = tab.dataset.v2Surface;
+        for (const item of surfaceTabs) {
+          item.setAttribute("aria-selected", String(item === tab));
+        }
+        for (const panel of surfacePanels) {
+          const active = panel.dataset.v2Panel === next;
+          panel.hidden = !active;
+          panel.classList.toggle("is-active", active);
+        }
+      });
+    }
+  </script>
+</Layout>
+
+<style>
+  :global(.marketing-home-v2) {
+    background: #030303;
+  }
+
+  .v2-shell {
+    width: min(100% - 48px, 1440px);
+    margin-inline: auto;
+  }
+
+  .v2-kicker {
+    color: #8b8b92;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+
+  .v2-hero {
+    min-height: 920px;
+    padding: 142px 0 0;
+    border-bottom: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  .v2-hero-grid {
+    display: grid;
+    grid-template-columns: minmax(250px, 0.78fr) minmax(560px, 1.72fr) minmax(210px, 0.62fr);
+    align-items: center;
+    gap: 42px;
+    min-height: 610px;
+  }
+
+  .v2-hero-copy h1,
+  .v2-section-heading h2,
+  .v2-connect h2,
+  .v2-final h2 {
+    font-weight: 500;
+    letter-spacing: -0.055em;
+    line-height: 0.98;
+  }
+
+  .v2-hero-copy h1 {
+    max-width: 460px;
+    margin-top: 22px;
+    font-size: clamp(48px, 5.4vw, 84px);
+  }
+
+  .v2-lede {
+    max-width: 390px;
+    margin-top: 30px;
+    color: #8f8f98;
+    font-size: 16px;
+    line-height: 1.6;
+  }
+
+  .v2-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 34px;
+  }
+
+  .v2-button {
+    display: inline-flex;
+    min-height: 42px;
+    align-items: center;
+    justify-content: center;
+    padding: 0 17px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    color: #b7b7bf;
+    font-size: 13px;
+    transition: border-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+  }
+
+  .v2-button:hover {
+    border-color: rgba(255, 255, 255, 0.28);
+    color: #fff;
+    transform: translateY(-1px);
+  }
+
+  .v2-button--primary {
+    border-color: #fff;
+    color: #050505;
+    background: #fff;
+    font-weight: 600;
+  }
+
+  .v2-demo-wrap {
+    position: relative;
+    min-width: 0;
+    transform: translateX(-1.5%);
+  }
+
+  .v2-demo-glow {
+    position: absolute;
+    inset: 15% 8%;
+    background: rgba(123, 105, 255, 0.22);
+    filter: blur(90px);
+  }
+
+  .v2-demo-frame {
+    position: relative;
+    aspect-ratio: 1.42;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 18px;
+    background: #09090b;
+    box-shadow: 0 40px 100px rgba(0, 0, 0, 0.72);
+    overflow: hidden;
+    transform: perspective(1600px) rotateY(-2.5deg) scale(1.06);
+  }
+
+  .v2-demo-bar {
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--border);
+    color: #777780;
+    font-size: 10px;
+  }
+
+  .v2-demo-bar span {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .v2-demo-bar i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #7fe596;
+    box-shadow: 0 0 16px rgba(127, 229, 150, 0.8);
+  }
+
+  .v2-demo-bar code {
+    font-family: var(--font-mono);
+  }
+
+  .v2-demo-frame iframe {
+    width: 100%;
+    height: calc(100% - 38px);
+    border: 0;
+    background: #09090b;
+  }
+
+  .v2-hero-points {
+    display: grid;
+    gap: 24px;
+  }
+
+  .v2-hero-points p {
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    color: #b0b0b7;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .v2-hero-points span {
+    display: block;
+    margin-bottom: 7px;
+    color: #56565f;
+    font-family: var(--font-mono);
+    font-size: 9px;
+  }
+
+  .v2-proof {
+    min-height: 168px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 32px;
+    border-top: 1px solid var(--border);
+  }
+
+  .v2-proof > p {
+    color: #686870;
+    font-size: 13px;
+  }
+
+  .v2-proof strong {
+    color: #a9a9b0;
+    font-weight: 500;
+  }
+
+  .v2-agent-list {
+    display: flex;
+    align-items: center;
+    gap: clamp(18px, 3vw, 46px);
+  }
+
+  .v2-agent-list span {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: #74747d;
+    font-size: 12px;
+  }
+
+  .v2-agent-list img {
+    width: 17px;
+    height: 17px;
+    object-fit: contain;
+    opacity: 0.72;
+    filter: grayscale(1);
+  }
+
+  .v2-system,
+  .v2-connect,
+  .v2-final {
+    padding: 150px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .v2-section-heading {
+    display: grid;
+    grid-template-columns: 0.68fr 1.32fr;
+    align-items: end;
+    gap: 48px;
+    margin-bottom: 70px;
+  }
+
+  .v2-section-heading h2 {
+    max-width: 820px;
+    font-size: clamp(46px, 6vw, 88px);
+  }
+
+  .v2-system-grid {
+    display: grid;
+    grid-template-columns: 0.66fr 1.34fr;
+    min-height: 620px;
+    border: 1px solid var(--border);
+  }
+
+  .v2-system-copy {
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+  }
+
+  .v2-surface-tabs {
+    display: grid;
+  }
+
+  .v2-surface-tabs button {
+    min-height: 72px;
+    padding: 0 28px;
+    border-bottom: 1px solid var(--border);
+    color: #66666f;
+    text-align: left;
+    transition: background 0.18s ease, color 0.18s ease;
+  }
+
+  .v2-surface-tabs button:hover,
+  .v2-surface-tabs button[aria-selected="true"] {
+    color: #fff;
+    background: #0c0c0e;
+  }
+
+  .v2-system-message {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 30px;
+    padding: 34px 28px;
+  }
+
+  .v2-system-message p {
+    max-width: 390px;
+    color: #8c8c95;
+    font-size: 16px;
+    line-height: 1.6;
+  }
+
+  .v2-system-message code,
+  .v2-connect header > code {
+    width: fit-content;
+    padding: 10px 13px;
+    border: 1px solid var(--border-strong);
+    border-radius: 7px;
+    color: #d8d8dc;
+    background: #0a0a0c;
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  .v2-system-message code span {
+    color: #66666e;
+  }
+
+  .v2-surface-panels {
+    position: relative;
+    min-width: 0;
+    background: #08080a;
+    overflow: hidden;
+  }
+
+  .v2-surface-panel {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 42px;
+  }
+
+  .v2-surface-panel[hidden] {
+    display: none;
+  }
+
+  .v2-surface-panel img {
+    max-width: 100%;
+    max-height: 530px;
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    box-shadow: 0 35px 90px rgba(0, 0, 0, 0.6);
+  }
+
+  .v2-surface-panel[data-v2-panel="phone"] img {
+    max-width: 285px;
+    max-height: 530px;
+  }
+
+  .v2-connect-grid {
+    display: grid;
+    grid-template-columns: 0.72fr 1.28fr;
+    align-items: center;
+    gap: 80px;
+    min-height: 650px;
+  }
+
+  .v2-connect h2 {
+    margin-top: 20px;
+    font-size: clamp(62px, 8vw, 124px);
+  }
+
+  .v2-connect h2 span {
+    font-weight: 700;
+  }
+
+  .v2-connect header > p:not(.v2-kicker) {
+    max-width: 480px;
+    margin: 28px 0;
+    color: #898991;
+    font-size: 17px;
+    line-height: 1.6;
+  }
+
+  .v2-store-links {
+    display: flex;
+    gap: 22px;
+    margin-top: 30px;
+  }
+
+  .v2-store-links a {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #777780;
+    font-size: 13px;
+    transition: color 0.18s ease;
+  }
+
+  .v2-store-links a:hover {
+    color: #fff;
+  }
+
+  .v2-connect-visual {
+    position: relative;
+    min-height: 590px;
+  }
+
+  .v2-connect-desktop {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 88%;
+    border: 1px solid var(--border-strong);
+    border-radius: 18px;
+    overflow: hidden;
+  }
+
+  .v2-connect-phone {
+    position: absolute;
+    right: 4%;
+    bottom: 0;
+    width: 25%;
+    padding: 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 28px;
+    background: #08080a;
+    transform: rotate(3deg);
+  }
+
+  .v2-connect-desktop img,
+  .v2-connect-phone img {
+    width: 100%;
+  }
+
+  .v2-connect-phone img {
+    border-radius: 20px;
+  }
+
+  .v2-connect-line {
+    position: absolute;
+    right: 25%;
+    bottom: 21%;
+    width: 20%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #7f6cff);
+    transform: rotate(-13deg);
+    transform-origin: right;
+  }
+
+  .v2-connect-badge {
+    position: absolute;
+    right: 27%;
+    bottom: 25%;
+    padding: 7px 10px;
+    border: 1px solid rgba(126, 111, 255, 0.35);
+    border-radius: 999px;
+    color: #a89cff;
+    background: #0b0a10;
+    font-family: var(--font-mono);
+    font-size: 9px;
+  }
+
+  .v2-final-inner {
+    display: grid;
+    grid-template-columns: 1fr 0.7fr;
+    align-items: end;
+    gap: 60px;
+  }
+
+  .v2-final h2 {
+    font-size: clamp(56px, 8vw, 120px);
+  }
+
+  .v2-final-inner > div {
+    display: grid;
+    justify-items: start;
+    gap: 28px;
+  }
+
+  .v2-final p {
+    max-width: 390px;
+    color: #7e7e86;
+  }
+
+  @media (max-width: 1100px) {
+    .v2-hero-grid {
+      grid-template-columns: minmax(240px, 0.8fr) minmax(480px, 1.4fr);
+    }
+
+    .v2-hero-points {
+      display: none;
+    }
+
+    .v2-agent-list span {
+      font-size: 0;
+    }
+
+    .v2-system-grid,
+    .v2-connect-grid {
+      grid-template-columns: 0.8fr 1.2fr;
+    }
+  }
+
+  @media (max-width: 820px) {
+    .v2-shell {
+      width: min(100% - 40px, 680px);
+    }
+
+    .v2-hero {
+      min-height: 0;
+      padding-top: 128px;
+    }
+
+    .v2-hero-grid,
+    .v2-section-heading,
+    .v2-system-grid,
+    .v2-connect-grid,
+    .v2-final-inner {
+      grid-template-columns: 1fr;
+    }
+
+    .v2-hero-grid {
+      gap: 70px;
+    }
+
+    .v2-demo-wrap {
+      transform: none;
+    }
+
+    .v2-demo-frame {
+      transform: none;
+    }
+
+    .v2-proof {
+      margin-top: 90px;
+    }
+
+    .v2-system,
+    .v2-connect,
+    .v2-final {
+      padding: 100px 0;
+    }
+
+    .v2-section-heading {
+      align-items: start;
+      gap: 20px;
+    }
+
+    .v2-system-grid {
+      min-height: 0;
+    }
+
+    .v2-system-copy {
+      border-right: 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .v2-system-message {
+      min-height: 280px;
+    }
+
+    .v2-surface-panels {
+      min-height: 500px;
+    }
+
+    .v2-connect-grid {
+      gap: 70px;
+    }
+
+    .v2-final-inner > div {
+      margin-top: 20px;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .v2-shell {
+      width: min(100% - 32px, 480px);
+    }
+
+    .v2-hero-copy h1 {
+      font-size: 52px;
+    }
+
+    .v2-proof {
+      align-items: flex-start;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .v2-agent-list {
+      width: 100%;
+      justify-content: space-between;
+    }
+
+    .v2-surface-tabs button {
+      min-height: 60px;
+      padding-inline: 20px;
+      font-size: 13px;
+    }
+
+    .v2-surface-panel {
+      padding: 18px;
+    }
+
+    .v2-surface-panels {
+      min-height: 390px;
+    }
+
+    .v2-connect-visual {
+      min-height: 430px;
+    }
+
+    .v2-connect h2 {
+      font-size: 68px;
+    }
+  }
+</style>
