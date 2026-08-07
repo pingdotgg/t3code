@@ -21,6 +21,7 @@ import {
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
   parseServiceState,
+  serviceStateHasPendingUpdate,
   type ServiceState,
 } from "./serviceProtocol.ts";
 
@@ -63,7 +64,9 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
     `ExecStart=${quoteSystemdValue(plan.nodePath)} ${quoteSystemdValue(plan.launcherPath)}`,
-    "KillMode=control-group",
+    // Let the launcher mark an explicit stop before it signals the server.
+    // systemd still SIGKILLs the whole cgroup if graceful shutdown times out.
+    "KillMode=mixed",
     "Restart=always",
     "RestartSec=5",
     `StandardOutput=append:${escapeSystemdSpecifiers(plan.logPath)}`,
@@ -110,10 +113,20 @@ export class BootServiceInstallError extends Schema.TaggedErrorClass<BootService
   }
 }
 
+export class BootServiceUpdatePendingError extends Schema.TaggedErrorClass<BootServiceUpdatePendingError>()(
+  "BootServiceUpdatePendingError",
+  {},
+) {
+  override get message(): string {
+    return "A remote server update is still pending. Wait for it to finish, then retry.";
+  }
+}
+
 export type BootServiceError =
   | BootServiceUnsupportedError
   | BootServiceCommandError
-  | BootServiceInstallError;
+  | BootServiceInstallError
+  | BootServiceUpdatePendingError;
 
 export interface BootServiceStatus {
   readonly supported: boolean;
@@ -288,6 +301,15 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     }
 
     yield* Effect.gen(function* () {
+      if (installed) {
+        const previousStateText = yield* fs.readFileString(statePath).pipe(Effect.option);
+        if (
+          Option.isSome(previousStateText) &&
+          serviceStateHasPendingUpdate(previousStateText.value)
+        ) {
+          return yield* new BootServiceUpdatePendingError();
+        }
+      }
       yield* fs
         .makeDirectory(unitDir, { recursive: true })
         .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
