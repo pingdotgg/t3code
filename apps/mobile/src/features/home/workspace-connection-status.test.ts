@@ -4,6 +4,7 @@ import type { WorkspaceState } from "../../state/workspaceModel";
 import {
   shouldShowWorkspaceConnectionStatus,
   workspaceConnectionStatusLabel,
+  workspaceConnectionStatusPresentation,
 } from "./workspace-connection-status";
 
 function workspaceState(overrides: Partial<WorkspaceState> = {}): WorkspaceState {
@@ -83,5 +84,37 @@ describe("workspace connection status", () => {
 
     expect(shouldShowWorkspaceConnectionStatus(state)).toBe(true);
     expect(workspaceConnectionStatusLabel(state)).toBe("Loading threads...");
+  });
+
+  it("presents nothing while connected", () => {
+    expect(workspaceConnectionStatusPresentation(workspaceState())).toBeNull();
+  });
+
+  it("presents progress while reconnecting but not while offline", () => {
+    const reconnecting = workspaceState({
+      hasConnectingEnvironment: true,
+      hasReadyEnvironment: false,
+      connectingEnvironments: [
+        {
+          environmentId: "environment-1" as never,
+          environmentLabel: "Julius’s Mac mini",
+          displayUrl: "",
+          isRelayManaged: false,
+          connectionState: "reconnecting",
+          connectionError: null,
+          connectionErrorTraceId: null,
+        },
+      ],
+    });
+    expect(workspaceConnectionStatusPresentation(reconnecting)).toEqual({
+      label: "Reconnecting to Julius’s Mac mini",
+      showsProgress: true,
+    });
+
+    const offline = workspaceState({ networkStatus: "offline", hasReadyEnvironment: false });
+    expect(workspaceConnectionStatusPresentation(offline)).toEqual({
+      label: "You are offline",
+      showsProgress: false,
+    });
   });
 });
