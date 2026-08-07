@@ -82,6 +82,107 @@ layer("ThreadColdStorage", (it) => {
     }),
   );
 
+  it.effect("archives post-quiescence state while a running thread awaits user input", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const storage = yield* ThreadColdStorage;
+      const threadId = ThreadId.make("thread-running-pending-user-input");
+
+      yield* insertArchivedThread(threadId, "Running thread awaiting user input");
+      yield* sql`
+        UPDATE projection_threads
+        SET pending_user_input_count = 1
+        WHERE thread_id = ${threadId}
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_sessions (
+          thread_id, status, provider_name, provider_session_id,
+          provider_thread_id, active_turn_id, last_error, updated_at,
+          runtime_mode, provider_instance_id
+        ) VALUES (
+          ${threadId}, 'running', 'codex', 'session-pending-user-input',
+          'provider-thread-pending-user-input', 'turn-pending-user-input', NULL,
+          '2026-07-02T00:00:00.000Z', 'full-access', 'codex'
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary,
+          payload_json, created_at, sequence
+        ) VALUES (
+          'activity-user-input-requested', ${threadId}, 'turn-pending-user-input',
+          'info', 'user-input.requested', 'Waiting for user input',
+          '{"requestId":"request-pending-user-input"}',
+          '2026-07-02T00:00:00.000Z', 1
+        )
+      `;
+
+      yield* storage.archiveThread(
+        threadId,
+        Effect.gen(function* () {
+          yield* sql`
+            UPDATE projection_thread_sessions
+            SET status = 'stopped', updated_at = '2026-07-02T00:01:00.000Z'
+            WHERE thread_id = ${threadId}
+          `;
+          yield* sql`
+            UPDATE projection_threads
+            SET pending_user_input_count = 0
+            WHERE thread_id = ${threadId}
+          `;
+          yield* sql`
+            INSERT INTO projection_thread_activities (
+              activity_id, thread_id, turn_id, tone, kind, summary,
+              payload_json, created_at, sequence
+            ) VALUES (
+              'activity-user-input-resolved', ${threadId}, 'turn-pending-user-input',
+              'info', 'user-input.resolved', 'User input request interrupted',
+              '{"requestId":"request-pending-user-input"}',
+              '2026-07-02T00:01:00.000Z', 2
+            )
+          `;
+        }),
+      );
+
+      const coldActivities = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count
+        FROM projection_thread_activities
+        WHERE thread_id = ${threadId}
+      `;
+      const coldSessions = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count
+        FROM projection_thread_sessions
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepStrictEqual(coldActivities, [{ count: 0 }]);
+      assert.deepStrictEqual(coldSessions, [{ count: 0 }]);
+
+      assert.isTrue(yield* storage.restoreTree(threadId));
+      const restoredActivities = yield* sql<{ readonly kind: string }>`
+        SELECT kind
+        FROM projection_thread_activities
+        WHERE thread_id = ${threadId}
+        ORDER BY sequence ASC
+      `;
+      const restoredSessions = yield* sql<{ readonly status: string }>`
+        SELECT status
+        FROM projection_thread_sessions
+        WHERE thread_id = ${threadId}
+      `;
+      const restoredShells = yield* sql<{ readonly pendingUserInputCount: number }>`
+        SELECT pending_user_input_count AS "pendingUserInputCount"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepStrictEqual(restoredActivities, [
+        { kind: "user-input.requested" },
+        { kind: "user-input.resolved" },
+      ]);
+      assert.deepStrictEqual(restoredSessions, [{ status: "stopped" }]);
+      assert.deepStrictEqual(restoredShells, [{ pendingUserInputCount: 0 }]);
+    }),
+  );
+
   it.effect("discovers archived shells before a lifecycle manifest exists", () =>
     Effect.gen(function* () {
       const storage = yield* ThreadColdStorage;
