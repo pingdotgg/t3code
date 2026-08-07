@@ -11,6 +11,7 @@
 # Keep entries sorted alphabetically.
 github:adityavardhansharma
 github:binbandit
+github:chrisdeeming
 github:chuks-qua
 github:cursoragent
 github:gbarros-dev
