@@ -6,6 +6,7 @@ import {
   IOS_APP_STORE_URL,
   MARKETING_STATS,
 } from "../lib/site";
+import { tweets } from "../lib/tweets";
 
 const agents = [
   { name: "Claude", icon: "/harnesses/claude-ai-icon.svg" },
@@ -16,10 +17,15 @@ const agents = [
 ] as const;
 
 const surfaces = [
-  { id: "desk", label: "At your desk", image: null },
-  { id: "phone", label: "From your phone", image: "/mobile-states/ios-thread.png" },
-  { id: "tablet", label: "On your tablet too", image: "/mobile-states/ipad-threads.png" },
+  { id: "desk", label: "at your desk", image: null },
+  { id: "phone", label: "from your phone", image: "/mobile-states/ios-thread.png" },
+  { id: "tablet", label: "on your tablet too", image: "/mobile-states/ipad-threads.png" },
 ] as const;
+
+const endorsementRows = [
+  tweets.filter((_, index) => index % 2 === 0),
+  tweets.filter((_, index) => index % 2 === 1),
+];
 ---
 
 <Layout
@@ -73,13 +79,10 @@ const surfaces = [
       </div>
     </div>
 
-    <div class="v2-shell v2-proof">
-      <p>Tolerated by <strong>{MARKETING_STATS.users} devs</strong></p>
-      <div class="v2-agent-list" aria-label="Supported coding agents">
-        {agents.map((agent) => (
-          <span><img src={agent.icon} alt="" width="18" height="18" />{agent.name}</span>
-        ))}
-      </div>
+    <div class="v2-shell v2-proof" aria-label="Supported coding agents">
+      {agents.map((agent) => (
+        <span><img src={agent.icon} alt="" width="18" height="18" />{agent.name}</span>
+      ))}
     </div>
   </section>
 
@@ -165,6 +168,49 @@ const surfaces = [
         <span class="v2-connect-line"></span>
         <span class="v2-connect-badge">connected</span>
       </div>
+    </div>
+  </section>
+
+  <section class="v2-endorsements" aria-labelledby="v2-endorsements-title">
+    <div class="v2-shell v2-endorsements-heading">
+      <h2 id="v2-endorsements-title">
+        Tolerated by over <strong>{MARKETING_STATS.users}</strong> devs
+      </h2>
+    </div>
+    <div class="v2-endorsement-carousel" aria-label="Developer endorsements">
+      {endorsementRows.map((row, rowIndex) => (
+        <div class:list={["v2-endorsement-row", rowIndex === 1 && "is-reverse"]}>
+          <div class="v2-endorsement-track">
+            {[0, 1].map((groupIndex) => (
+              <div class="v2-endorsement-group" aria-hidden={groupIndex === 1 ? "true" : undefined}>
+                {row.map((tweet) => (
+                  <a
+                    class="v2-endorsement-card"
+                    href={tweet.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`Read ${tweet.handle}'s post on X`}
+                    tabindex={groupIndex === 1 ? "-1" : undefined}
+                  >
+                    <div>
+                      <img
+                        src={`/pfps/${tweet.handle}.webp`}
+                        alt=""
+                        width="28"
+                        height="28"
+                        loading="lazy"
+                        decoding="async"
+                      />
+                      <span>@{tweet.handle}</span>
+                    </div>
+                    <p>{tweet.excerpt ?? tweet.content}</p>
+                  </a>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   </section>
 
@@ -483,28 +529,12 @@ const surfaces = [
     min-height: 168px;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 32px;
+    justify-content: flex-end;
+    gap: clamp(18px, 3vw, 46px);
     border-top: 1px solid var(--border);
   }
 
-  .v2-proof > p {
-    color: #686870;
-    font-size: 13px;
-  }
-
-  .v2-proof strong {
-    color: #a9a9b0;
-    font-weight: 500;
-  }
-
-  .v2-agent-list {
-    display: flex;
-    align-items: center;
-    gap: clamp(18px, 3vw, 46px);
-  }
-
-  .v2-agent-list span {
+  .v2-proof span {
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -512,7 +542,7 @@ const surfaces = [
     font-size: 12px;
   }
 
-  .v2-agent-list img {
+  .v2-proof img {
     width: 17px;
     height: 17px;
     object-fit: contain;
@@ -542,7 +572,7 @@ const surfaces = [
   .v2-system-grid {
     display: grid;
     grid-template-columns: 0.66fr 1.34fr;
-    min-height: 620px;
+    min-height: 640px;
     border: 1px solid var(--border);
   }
 
@@ -615,7 +645,7 @@ const surfaces = [
     inset: 0;
     display: grid;
     place-items: center;
-    padding: 42px;
+    padding: 14px;
   }
 
   .v2-surface-panel[hidden] {
@@ -753,12 +783,147 @@ const surfaces = [
     font-size: 9px;
   }
 
+  .v2-endorsements {
+    padding: 150px 0;
+    overflow: hidden;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .v2-endorsements-heading {
+    margin-bottom: 56px;
+  }
+
+  .v2-endorsements-heading h2 {
+    max-width: 720px;
+    font-size: clamp(38px, 4vw, 58px);
+    font-weight: 500;
+    letter-spacing: -0.045em;
+    line-height: 1.05;
+  }
+
+  .v2-endorsements-heading strong {
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .v2-endorsement-carousel {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .v2-endorsement-carousel::before,
+  .v2-endorsement-carousel::after {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    z-index: 2;
+    width: max(48px, calc((100vw - 1440px) / 2 + 56px));
+    pointer-events: none;
+  }
+
+  .v2-endorsement-carousel::before {
+    left: 0;
+    background: linear-gradient(90deg, #030303, transparent);
+  }
+
+  .v2-endorsement-carousel::after {
+    right: 0;
+    background: linear-gradient(270deg, #030303, transparent);
+  }
+
+  .v2-endorsement-row {
+    overflow: hidden;
+  }
+
+  .v2-endorsement-track {
+    display: flex;
+    width: max-content;
+    animation: v2EndorsementMarquee 76s linear infinite;
+    will-change: transform;
+  }
+
+  .v2-endorsement-row.is-reverse .v2-endorsement-track {
+    animation-direction: reverse;
+    animation-duration: 84s;
+  }
+
+  .v2-endorsement-carousel:hover .v2-endorsement-track,
+  .v2-endorsement-carousel:focus-within .v2-endorsement-track {
+    animation-play-state: paused;
+  }
+
+  .v2-endorsement-group {
+    display: flex;
+    gap: 12px;
+    padding-right: 12px;
+  }
+
+  .v2-endorsement-card {
+    display: flex;
+    width: clamp(264px, 22vw, 308px);
+    height: 132px;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.012);
+    transition: border-color 0.18s ease, background 0.18s ease;
+  }
+
+  .v2-endorsement-card:hover {
+    border-color: var(--border-strong);
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .v2-endorsement-card > div {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .v2-endorsement-card img {
+    width: 28px;
+    height: 28px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    object-fit: cover;
+  }
+
+  .v2-endorsement-card span {
+    overflow: hidden;
+    color: #85858d;
+    font-size: 13px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .v2-endorsement-card p {
+    display: -webkit-box;
+    overflow: hidden;
+    color: #d7d7dc;
+    font-size: 14px;
+    line-height: 1.4;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+  }
+
+  @keyframes v2EndorsementMarquee {
+    to {
+      transform: translateX(-50%);
+    }
+  }
+
   @media (max-width: 1100px) {
     .v2-hero-grid {
       grid-template-columns: minmax(240px, 0.8fr) minmax(480px, 1.4fr);
     }
 
-    .v2-agent-list span {
+    .v2-proof span {
       font-size: 0;
     }
 
@@ -798,7 +963,8 @@ const surfaces = [
     }
 
     .v2-system,
-    .v2-connect {
+    .v2-connect,
+    .v2-endorsements {
       padding: 100px 0;
     }
 
@@ -817,11 +983,11 @@ const surfaces = [
     }
 
     .v2-system-message {
-      min-height: 280px;
+      min-height: 210px;
     }
 
     .v2-surface-panels {
-      min-height: 500px;
+      min-height: 420px;
     }
 
     .v2-connect-grid {
@@ -848,12 +1014,6 @@ const surfaces = [
     }
 
     .v2-proof {
-      align-items: flex-start;
-      flex-direction: column;
-      justify-content: center;
-    }
-
-    .v2-agent-list {
       width: 100%;
       justify-content: space-between;
     }
@@ -865,11 +1025,11 @@ const surfaces = [
     }
 
     .v2-surface-panel {
-      padding: 18px;
+      padding: 8px;
     }
 
     .v2-surface-panels {
-      min-height: 390px;
+      min-height: 340px;
     }
 
     .v2-connect-visual {
@@ -878,6 +1038,26 @@ const surfaces = [
 
     .v2-connect h2 {
       font-size: 68px;
+    }
+
+    .v2-endorsements-heading {
+      margin-bottom: 40px;
+    }
+
+    .v2-endorsement-carousel::before,
+    .v2-endorsement-carousel::after {
+      width: 28px;
+    }
+
+    .v2-endorsement-card {
+      width: 268px;
+      padding: 14px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .v2-endorsement-track {
+      animation-play-state: paused;
     }
   }
 </style>
