@@ -48,7 +48,7 @@ import {
   resolveArchivedProjectEnvironmentLabel,
   runArchivedProjectThreadActions,
   tryAcquireArchivedThreadActionLock,
-} from "./SettingsPanels.logic";
+} from "./ArchiveSettings.logic";
 import {
   SettingsPageContainer,
   SettingsRow,
