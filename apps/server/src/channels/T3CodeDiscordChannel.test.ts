@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import { describe } from "vite-plus/test";
 
 import {
+  assistantResponseText,
   channelBranchName,
   createDiscordTextClient,
   discordModelOptions,
@@ -144,10 +145,37 @@ describe("Discord channel model selection", () => {
         model: "gpt-5.6-sol",
       },
       state: "running",
+      assistantResponse: null,
     } as const;
 
-    expect(taskStatusText(task)).toContain("T3 Code is working");
-    expect(taskStatusText({ ...task, state: "done" }, 2)).toContain("Changed: 2 files");
+    expect(taskStatusText(task)).toBe("🔄 Fix login");
+    expect(
+      taskStatusText({
+        ...task,
+        state: "done",
+        assistantResponse: "Fixed the login flow and added coverage.",
+      }),
+    ).toBe("✅ Fix login\n\nFixed the login flow and added coverage.");
+    expect(taskStatusText(task)).not.toContain("Model:");
+    expect(taskStatusText(task)).not.toContain("Target:");
+  });
+
+  it("uses the final assistant message as the completed Discord response", () => {
+    expect(
+      assistantResponseText({
+        assistantMessageId: "assistant-final",
+        turnId: "turn-1",
+        messages: [
+          { id: "assistant-progress", role: "assistant", text: "Working", turnId: "turn-1" },
+          {
+            id: "assistant-final",
+            role: "assistant",
+            text: "  The requested change is complete.  ",
+            turnId: "turn-1",
+          },
+        ],
+      }),
+    ).toBe("The requested change is complete.");
   });
 
   it("sends and edits native Discord content without Channels UI components", async () => {

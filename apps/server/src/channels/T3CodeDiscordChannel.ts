@@ -36,6 +36,7 @@ export interface ChannelTaskStatus {
   readonly threadEnvMode: "local" | "worktree";
   readonly modelSelection: ModelSelection;
   readonly state: "queued" | "running" | "done" | "failed";
+  readonly assistantResponse: string | null;
 }
 
 export interface StartedChannelTask extends ChannelTaskStatus {
@@ -110,10 +111,7 @@ interface DiscordTextClient {
 
 interface ActiveDiscordChannel {
   readonly fingerprint: string;
-  readonly refreshTask: (input: {
-    readonly threadId: ThreadId;
-    readonly changedFileCount?: number;
-  }) => Promise<void>;
+  readonly refreshTask: (threadId: ThreadId) => Promise<void>;
   readonly stop: () => Promise<void>;
 }
 
@@ -178,28 +176,39 @@ function readConversationState(value: unknown): LinkedConversationState {
   return { ...(t3ThreadId ? { t3ThreadId } : {}), ...(modelSelection ? { modelSelection } : {}) };
 }
 
-export function taskStatusText(task: ChannelTaskStatus, changedFileCount?: number): string {
-  const heading = (() => {
-    switch (task.state) {
-      case "queued":
-        return "⏳ T3 Code queued";
-      case "running":
-        return "🔄 T3 Code is working";
-      case "done":
-        return "✅ T3 Code finished";
-      case "failed":
-        return "❌ T3 Code failed";
-    }
-  })();
-  const target =
-    task.threadEnvMode === "worktree"
-      ? `Branch: ${task.branch ?? "worktree"}`
-      : "Target: project checkout";
-  const diff =
-    task.state === "done" && changedFileCount !== undefined
-      ? `\nChanged: ${changedFileCount} ${changedFileCount === 1 ? "file" : "files"}`
-      : "";
-  return `${heading}\n${task.title}\nModel: ${modelLabel(task.modelSelection)}\n${target}${diff}`;
+export function taskStatusText(task: ChannelTaskStatus): string {
+  switch (task.state) {
+    case "queued":
+      return `⏳ ${task.title}`;
+    case "running":
+      return `🔄 ${task.title}`;
+    case "done":
+      return `✅ ${task.title}\n\n${task.assistantResponse ?? "Done."}`;
+    case "failed":
+      return `❌ ${task.title}\n\nTask failed.`;
+  }
+}
+
+export function assistantResponseText(input: {
+  readonly assistantMessageId: string | null | undefined;
+  readonly turnId: string | null | undefined;
+  readonly messages: ReadonlyArray<{
+    readonly id: string;
+    readonly role: string;
+    readonly text: string;
+    readonly turnId: string | null;
+  }>;
+}): string | null {
+  const exactMessage = input.assistantMessageId
+    ? input.messages.find((message) => message.id === input.assistantMessageId)
+    : undefined;
+  const fallbackMessage = input.turnId
+    ? input.messages.findLast(
+        (message) => message.role === "assistant" && message.turnId === input.turnId,
+      )
+    : undefined;
+  const text = (exactMessage ?? fallbackMessage)?.text.trim();
+  return text && text.length > 0 ? text : null;
 }
 
 export function createDiscordTextClient(
@@ -259,13 +268,7 @@ function createT3CodeChannel(input: {
   readonly models: ReadonlyArray<DiscordModelOption>;
 }) {
   const textClient = createDiscordTextClient(input.config.botToken);
-  const linkedTasks = new Map<
-    string,
-    {
-      readonly messageRef: DiscordTextMessageRef;
-      changedFileCount?: number;
-    }
-  >();
+  const linkedTasks = new Map<string, { readonly messageRef: DiscordTextMessageRef }>();
   const channel = createChannel({
     name: "t3-code",
     identifyUser: "platform",
@@ -289,7 +292,7 @@ function createT3CodeChannel(input: {
     }
     const linked = linkedTasks.get(threadId);
     if (linked) {
-      await textClient.update(linked.messageRef, taskStatusText(status, linked.changedFileCount));
+      await textClient.update(linked.messageRef, taskStatusText(status));
       return;
     }
     await postText(thread, taskStatusText(status));
@@ -409,18 +412,12 @@ function createT3CodeChannel(input: {
 
   return {
     channel,
-    refreshTask: async (completion: {
-      readonly threadId: ThreadId;
-      readonly changedFileCount?: number;
-    }) => {
-      const linked = linkedTasks.get(completion.threadId);
+    refreshTask: async (threadId: ThreadId) => {
+      const linked = linkedTasks.get(threadId);
       if (!linked) return;
-      if (completion.changedFileCount !== undefined) {
-        linked.changedFileCount = completion.changedFileCount;
-      }
-      const task = await input.operations.getTaskStatus(completion.threadId);
+      const task = await input.operations.getTaskStatus(threadId);
       if (!task) return;
-      await textClient.update(linked.messageRef, taskStatusText(task, linked.changedFileCount));
+      await textClient.update(linked.messageRef, taskStatusText(task));
     },
   };
 }
@@ -531,13 +528,14 @@ const makeOperations = Effect.gen(function* () {
       threadEnvMode: config.threadEnvMode,
       modelSelection,
       state: "queued" as const,
+      assistantResponse: null,
     };
   });
 
   const getTaskStatusEffect = Effect.fn("T3CodeDiscordChannel.getTaskStatus")(function* (
     threadId: ThreadId,
   ) {
-    const threadOption = yield* projectionSnapshotQuery.getThreadShellById(threadId);
+    const threadOption = yield* projectionSnapshotQuery.getThreadDetailById(threadId);
     if (Option.isNone(threadOption)) return null;
     const thread = threadOption.value;
     const state = (() => {
@@ -551,6 +549,11 @@ const makeOperations = Effect.gen(function* () {
       return "queued" as const;
     })();
     const threadEnvMode = thread.worktreePath === null ? ("local" as const) : ("worktree" as const);
+    const assistantResponse = assistantResponseText({
+      assistantMessageId: thread.latestTurn?.assistantMessageId,
+      turnId: thread.latestTurn?.turnId,
+      messages: thread.messages,
+    });
     return {
       threadId,
       title: thread.title,
@@ -558,6 +561,7 @@ const makeOperations = Effect.gen(function* () {
       threadEnvMode,
       modelSelection: thread.modelSelection,
       state,
+      assistantResponse,
     };
   });
 
@@ -660,14 +664,9 @@ export const layer = Layer.effectDiscard(
         return Ref.get(activeRef).pipe(
           Effect.flatMap((active) =>
             active
-              ? Effect.tryPromise(() =>
-                  active.refreshTask({
-                    threadId: event.payload.threadId,
-                    ...(event.type === "thread.turn-diff-completed"
-                      ? { changedFileCount: event.payload.files.length }
-                      : {}),
-                  }),
-                ).pipe(Effect.ignoreCause({ log: true }))
+              ? Effect.tryPromise(() => active.refreshTask(event.payload.threadId)).pipe(
+                  Effect.ignoreCause({ log: true }),
+                )
               : Effect.void,
           ),
         );
