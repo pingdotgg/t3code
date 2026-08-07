@@ -1,4 +1,4 @@
-import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
+import { Outlet, createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo } from "react";
 
@@ -28,6 +28,7 @@ function ChatRouteGlobalShortcuts() {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
     useHandleNewThread();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const router = useRouter();
   const sidebarV2Enabled = useSidebarV2Enabled();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const projects = useProjects();
@@ -74,6 +75,19 @@ function ChatRouteGlobalShortcuts() {
       if (event.key === "Escape" && selectedThreadKeysSize > 0) {
         event.preventDefault();
         clearSelection();
+        return;
+      }
+
+      if (command === "board.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        // A toggle, not a one-way trip: from the board it returns you to the
+        // thread you came from rather than stranding you on a second press.
+        if (router.state.location.pathname === "/board") {
+          router.history.back();
+        } else {
+          void router.navigate({ to: "/board" });
+        }
         return;
       }
 
@@ -165,6 +179,7 @@ function ChatRouteGlobalShortcuts() {
     defaultProjectRef,
     previewOpen,
     projectGroupCount,
+    router,
     routeThreadRef,
     selectedThreadKeysSize,
     sidebarV2Enabled,

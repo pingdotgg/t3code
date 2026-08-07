@@ -6,6 +6,7 @@ import {
   ContainerIcon,
   FolderPlusIcon,
   Globe2Icon,
+  LayoutGridIcon,
   LoaderIcon,
   SearchIcon,
   SquarePenIcon,
@@ -2751,6 +2752,8 @@ interface SidebarProjectsContentProps {
   routeThreadKey: string | null;
   newThreadShortcutLabel: string | null;
   commandPaletteShortcutLabel: string | null;
+  boardShortcutLabel: string | null;
+  openBoard: () => void;
   threadJumpLabelByKey: ReadonlyMap<string, string>;
   attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
   expandThreadListForProject: (projectKey: string) => void;
@@ -2791,6 +2794,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     routeThreadKey,
     newThreadShortcutLabel,
     commandPaletteShortcutLabel,
+    boardShortcutLabel,
+    openBoard,
     threadJumpLabelByKey,
     attachThreadListAutoAnimateRef,
     expandThreadListForProject,
@@ -2844,6 +2849,17 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                   </Kbd>
                 ) : null}
               </CommandDialogTrigger>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton type="button" className="focus-visible:ring-0" onClick={openBoard}>
+                <LayoutGridIcon />
+                <span className="flex-1 truncate">Board</span>
+                {boardShortcutLabel ? (
+                  <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">
+                    {boardShortcutLabel}
+                  </Kbd>
+                ) : null}
+              </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
         </SidebarGroup>
@@ -3497,6 +3513,17 @@ export default function Sidebar() {
     "commandPalette.toggle",
     newThreadShortcutLabelOptions,
   );
+  const boardShortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    "board.toggle",
+    newThreadShortcutLabelOptions,
+  );
+  const openBoard = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    void navigate({ to: "/board" });
+  }, [isMobile, navigate, setOpenMobile]);
   const handleDesktopUpdateButtonClick = useCallback(() => {
     const bridge = window.desktopBridge;
     if (!bridge || !desktopUpdateState) return;
@@ -3618,6 +3645,8 @@ export default function Sidebar() {
             routeThreadKey={routeThreadKey}
             newThreadShortcutLabel={newThreadShortcutLabel}
             commandPaletteShortcutLabel={commandPaletteShortcutLabel}
+            boardShortcutLabel={boardShortcutLabel}
+            openBoard={openBoard}
             threadJumpLabelByKey={visibleThreadJumpLabelByKey}
             attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
             expandThreadListForProject={expandThreadListForProject}
