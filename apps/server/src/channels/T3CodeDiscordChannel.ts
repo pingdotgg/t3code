@@ -584,9 +584,9 @@ function createT3CodeChannel(input: {
       );
     },
     setDisplayName: async () => {
-      const updates = [discordClient.ensureBotUsername("copilot")];
+      const updates = [discordClient.ensureBotUsername("copilotkit")];
       if (input.config.guildId.length > 0) {
-        updates.push(discordClient.setGuildNickname(input.config.guildId, "copilot"));
+        updates.push(discordClient.setGuildNickname(input.config.guildId, "copilotkit"));
       }
       const results = await Promise.allSettled(updates);
       if (results.some((result) => result.status === "fulfilled")) return;

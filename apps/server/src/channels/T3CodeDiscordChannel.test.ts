@@ -233,8 +233,8 @@ describe("Discord channel model selection", () => {
     }) as typeof fetch;
     const client = createDiscordClient("secret", fetchImpl);
 
-    await client.ensureBotUsername("copilot");
-    await client.setGuildNickname("guild-1", "copilot");
+    await client.ensureBotUsername("copilotkit");
+    await client.setGuildNickname("guild-1", "copilotkit");
     await client.reply(
       { id: "status-1", channelId: "channel-1" },
       taskResponseUi("The task is complete."),
@@ -243,8 +243,8 @@ describe("Discord channel model selection", () => {
     expect(requests.map(({ init }) => init?.method)).toEqual(["GET", "PATCH", "PATCH", "POST"]);
     expect(requests[1]?.url).toContain("/users/@me");
     expect(requests[2]?.url).toContain("/guilds/guild-1/members/@me");
-    expect(JSON.parse(String(requests[1]?.init?.body))).toEqual({ username: "copilot" });
-    expect(JSON.parse(String(requests[2]?.init?.body))).toEqual({ nick: "copilot" });
+    expect(JSON.parse(String(requests[1]?.init?.body))).toEqual({ username: "copilotkit" });
+    expect(JSON.parse(String(requests[2]?.init?.body))).toEqual({ nick: "copilotkit" });
     const replyBody = JSON.parse(String(requests[3]?.init?.body));
     expect(replyBody.message_reference).toEqual({
       message_id: "status-1",
