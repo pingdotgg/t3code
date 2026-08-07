@@ -1861,6 +1861,37 @@ export default function SidebarV2() {
       threads,
     ]);
 
+  const orderedPinnedThreads = useMemo(
+    () =>
+      sortPinnedThreads(
+        threads
+          .filter((thread) => thread.archivedAt === null && thread.pinnedAt !== null)
+          .map((thread) => {
+            const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+            const pendingPinnedOrder = pendingPinnedOrderByKey.get(threadKey);
+            return pendingPinnedOrder === undefined
+              ? thread
+              : { ...thread, pinnedOrder: pendingPinnedOrder };
+          }),
+      ),
+    [pendingPinnedOrderByKey, threads],
+  );
+  const pinnedOrderingFullyVisible = useMemo(
+    () =>
+      pinnedThreads.length === orderedPinnedThreads.length &&
+      pinnedThreads.every(
+        (thread, index) =>
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
+          scopedThreadKey(
+            scopeThreadRef(
+              orderedPinnedThreads[index]!.environmentId,
+              orderedPinnedThreads[index]!.id,
+            ),
+          ),
+      ),
+    [orderedPinnedThreads, pinnedThreads],
+  );
+
   const pinnedThreadDnDSensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 6 },
@@ -1871,14 +1902,15 @@ export default function SidebarV2() {
   );
   const movePinnedThread = useCallback(
     (thread: EnvironmentThreadShell, overThread: EnvironmentThreadShell) => {
+      if (!pinnedOrderingFullyVisible) return;
       const updates = pinnedThreadOrderUpdatesForMove(
-        pinnedThreads,
+        orderedPinnedThreads,
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
         scopedThreadKey(scopeThreadRef(overThread.environmentId, overThread.id)),
       );
       if (updates === null) return;
       const requests = updates.flatMap((update) => {
-        const target = pinnedThreads.find(
+        const target = orderedPinnedThreads.find(
           (candidate) =>
             scopedThreadKey(scopeThreadRef(candidate.environmentId, candidate.id)) ===
             update.threadId,
@@ -1966,7 +1998,7 @@ export default function SidebarV2() {
         }
       })();
     },
-    [pinnedThreads, reorderPinnedThread, serverConfigs],
+    [orderedPinnedThreads, pinnedOrderingFullyVisible, reorderPinnedThread, serverConfigs],
   );
   const handlePinnedThreadDragEnd = useCallback(
     (event: DragEndEvent) => {
@@ -2802,12 +2834,15 @@ export default function SidebarV2() {
                     {
                       id: "move-pin-up",
                       label: "Move pinned thread up",
-                      disabled: pinnedIndex <= 0,
+                      disabled: !pinnedOrderingFullyVisible || pinnedIndex <= 0,
                     },
                     {
                       id: "move-pin-down",
                       label: "Move pinned thread down",
-                      disabled: pinnedIndex < 0 || pinnedIndex >= pinnedThreads.length - 1,
+                      disabled:
+                        !pinnedOrderingFullyVisible ||
+                        pinnedIndex < 0 ||
+                        pinnedIndex >= pinnedThreads.length - 1,
                     },
                   ]
                 : []),
@@ -3391,6 +3426,7 @@ export default function SidebarV2() {
                         isPinned={section === "pinned"}
                         pinReorderingSupported={
                           section === "pinned" &&
+                          pinnedOrderingFullyVisible &&
                           serverConfigs.get(thread.environmentId)?.environment.capabilities
                             .threadPinReordering === true
                         }

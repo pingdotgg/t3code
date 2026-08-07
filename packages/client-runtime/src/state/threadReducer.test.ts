@@ -232,25 +232,29 @@ describe("applyThreadDetailEvent", () => {
   });
 
   describe("thread.pinned / thread.unpinned", () => {
-    it("sets pinnedAt", () => {
+    it("sets pinnedAt without clearing an existing pinned order", () => {
       const pinnedAt = "2026-04-01T05:00:00.000Z";
-      const result = applyThreadDetailEvent(baseThread, {
-        ...baseEventFields,
-        sequence: 5,
-        occurredAt: pinnedAt,
-        aggregateKind: "thread",
-        aggregateId: ThreadId.make("thread-1"),
-        type: "thread.pinned",
-        payload: {
-          threadId: ThreadId.make("thread-1"),
-          pinnedAt,
-          updatedAt: pinnedAt,
+      const result = applyThreadDetailEvent(
+        { ...baseThread, pinnedOrder: "3/7" as never },
+        {
+          ...baseEventFields,
+          sequence: 5,
+          occurredAt: pinnedAt,
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.pinned",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            pinnedAt,
+            updatedAt: pinnedAt,
+          },
         },
-      });
+      );
 
       expect(result.kind).toBe("updated");
       if (result.kind === "updated") {
         expect(result.thread.pinnedAt).toBe(pinnedAt);
+        expect(result.thread.pinnedOrder).toBe("3/7");
       }
     });
 

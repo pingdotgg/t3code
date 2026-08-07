@@ -173,7 +173,6 @@ export function applyThreadDetailEvent(
         thread: {
           ...thread,
           pinnedAt: event.payload.pinnedAt,
-          pinnedOrder: null,
           updatedAt: event.payload.updatedAt,
         },
       };
