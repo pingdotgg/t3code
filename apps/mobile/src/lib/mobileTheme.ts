@@ -27,7 +27,12 @@ export const MOBILE_THEME_VARIABLES: Readonly<Record<ThemeColorRole, ReadonlyArr
     "--color-card-translucent",
     "--color-glass-surface",
     "--color-drawer",
+    // Seeded here for the audit table; themeColorsToMobileCSSVariables
+    // replaces it with the contrasting backdrop source below.
     "--color-backdrop",
+    // The drawer has its own canonical sidebar role; the backdrop is derived
+    // separately below so light themes do not turn modal dimming into a white
+    // wash.
   ],
   text: ["--color-foreground", "--color-md-body", "--color-md-strong", "--color-icon"],
   textMuted: ["--color-foreground-secondary", "--color-md-code-text"],
@@ -80,14 +85,17 @@ export const MOBILE_THEME_VARIABLES: Readonly<Record<ThemeColorRole, ReadonlyArr
   messageActionHover: ["--color-user-bubble-foreground-muted"],
   codeBackground: ["--color-md-code-bg"],
   codeForeground: [],
-  sidebar: [],
-  sidebarForeground: [],
-  sidebarMutedForeground: [],
-  sidebarControlSurface: ["--color-sidebar-search"],
-  sidebarRowHover: [],
-  sidebarRowActive: [],
-  sidebarRowSelected: [],
-  sidebarBorder: [],
+  // These dedicated variables keep canonical sidebar roles isolated from
+  // screen-wide foreground/action tokens when a theme intentionally gives the
+  // sidebar a different tone.
+  sidebar: ["--color-sidebar-background"],
+  sidebarForeground: ["--color-sidebar-foreground"],
+  sidebarMutedForeground: ["--color-sidebar-muted-foreground"],
+  sidebarControlSurface: ["--color-sidebar-control", "--color-sidebar-search"],
+  sidebarRowHover: ["--color-sidebar-row-hover"],
+  sidebarRowActive: ["--color-sidebar-row-active"],
+  sidebarRowSelected: ["--color-sidebar-row-selected"],
+  sidebarBorder: ["--color-sidebar-border"],
   terminalBackground: [],
   terminalForeground: [],
   terminalCursor: [],
@@ -131,7 +139,6 @@ const MOBILE_THEME_VARIABLE_ALPHA: Readonly<Record<string, readonly [number, num
   "--color-md-user-fence-bg": [0.16, 0.28],
   "--color-md-hr": [0.08, 0.08],
   "--color-user-bubble-foreground-muted": [0.78, 0.78],
-  "--color-backdrop": [0.22, 0.48],
   "--color-drawer": [0.99, 0.99],
   "--color-drawer-shadow": [0.12, 0.32],
   "--color-dot-separator": [0.2, 0.2],
@@ -180,6 +187,13 @@ export function themeColorsToMobileCSSVariables(colors: ThemeColors): Record<str
   }
 
   const dark = isDarkThemeCanvas(colors.canvas);
+  // A light surfaceOverlay is intentionally not suitable for a modal
+  // backdrop. Use the dark canvas in dark mode and the contrasting text role
+  // in light mode, with a slightly stronger dark-mode veil.
+  variables["--color-backdrop"] = themeColorWithAlpha(
+    dark ? colors.canvas : colors.text,
+    dark ? 0.48 : 0.22,
+  );
   for (const [variable, [lightAlpha, darkAlpha]] of Object.entries(MOBILE_THEME_VARIABLE_ALPHA)) {
     const source = variable === "--color-primary-shadow" ? colors.text : variables[variable];
     if (source !== undefined) {
@@ -188,6 +202,162 @@ export function themeColorsToMobileCSSVariables(colors: ThemeColors): Record<str
   }
 
   return variables;
+}
+
+/**
+ * Literal values from global.css, kept as the active reset target after a
+ * user clears a theme. Fresh installs never inject these values, preserving
+ * the stylesheet as the source of truth at rest.
+ */
+const MOBILE_DEFAULT_CSS_VARIABLES: Readonly<
+  Record<"light" | "dark", Readonly<Record<string, string>>>
+> = {
+  light: {
+    "--color-screen": "#f2f2f7",
+    "--color-sheet": "rgba(242, 242, 247, 0.98)",
+    "--color-card": "#ffffff",
+    "--color-card-alt": "#f5f5f5",
+    "--color-card-translucent": "rgba(255, 255, 255, 0.8)",
+    "--color-foreground": "#262626",
+    "--color-foreground-secondary": "#525252",
+    "--color-foreground-muted": "#737373",
+    "--color-foreground-tertiary": "#8e8e93",
+    "--color-border": "rgba(0, 0, 0, 0.08)",
+    "--color-border-subtle": "rgba(0, 0, 0, 0.06)",
+    "--color-separator": "rgba(0, 0, 0, 0.04)",
+    "--color-subtle": "rgba(0, 0, 0, 0.04)",
+    "--color-subtle-strong": "rgba(0, 0, 0, 0.08)",
+    "--color-inline-skill-background": "rgba(217, 70, 239, 0.12)",
+    "--color-inline-skill-border": "rgba(217, 70, 239, 0.25)",
+    "--color-inline-skill-foreground": "#a21caf",
+    "--color-primary": "#262626",
+    "--color-primary-foreground": "#ffffff",
+    "--color-primary-shadow": "rgba(0, 0, 0, 0.18)",
+    "--color-secondary": "#ffffff",
+    "--color-secondary-foreground": "#262626",
+    "--color-secondary-border": "rgba(0, 0, 0, 0.08)",
+    "--color-switch-active": "#34c759",
+    "--color-danger": "#fef2f2",
+    "--color-danger-border": "rgba(239, 68, 68, 0.12)",
+    "--color-danger-foreground": "#dc2626",
+    "--color-input": "#ffffff",
+    "--color-input-border": "rgba(0, 0, 0, 0.1)",
+    "--color-sidebar-search": "rgba(118, 118, 128, 0.12)",
+    "--color-sidebar-background": "rgba(255, 255, 255, 0.99)",
+    "--color-sidebar-foreground": "#262626",
+    "--color-sidebar-muted-foreground": "#737373",
+    "--color-sidebar-control": "rgba(118, 118, 128, 0.12)",
+    "--color-sidebar-row-hover": "rgba(0, 0, 0, 0.04)",
+    "--color-sidebar-row-active": "rgba(0, 0, 0, 0.08)",
+    "--color-sidebar-row-selected": "#007aff",
+    "--color-sidebar-border": "rgba(0, 0, 0, 0.08)",
+    "--color-placeholder": "#a3a3a3",
+    "--color-icon": "#262626",
+    "--color-icon-muted": "#525252",
+    "--color-icon-subtle": "#a3a3a3",
+    "--color-header": "rgba(255, 255, 255, 0.97)",
+    "--color-header-border": "rgba(0, 0, 0, 0.06)",
+    "--color-glass-surface": "rgba(255, 255, 255, 0.72)",
+    "--color-glass-tint": "rgba(255, 255, 255, 0.18)",
+    "--color-status-bar": "#f2f2f7",
+    "--color-md-body": "#111111",
+    "--color-md-strong": "#000000",
+    "--color-md-link": "#2563eb",
+    "--color-md-blockquote-border": "rgba(0, 0, 0, 0.08)",
+    "--color-md-blockquote-bg": "rgba(0, 0, 0, 0.02)",
+    "--color-md-code-bg": "rgba(0, 0, 0, 0.04)",
+    "--color-md-code-text": "#262626",
+    "--color-md-user-code-bg": "rgba(255, 255, 255, 0.22)",
+    "--color-md-user-code-text": "#ffffff",
+    "--color-md-user-fence-bg": "rgba(0, 0, 0, 0.16)",
+    "--color-md-user-fence-text": "#ffffff",
+    "--color-md-hr": "rgba(0, 0, 0, 0.08)",
+    "--color-user-bubble": "#007aff",
+    "--color-user-bubble-foreground": "#ffffff",
+    "--color-user-bubble-foreground-muted": "rgba(255, 255, 255, 0.78)",
+    "--color-backdrop": "rgba(0, 0, 0, 0.22)",
+    "--color-drawer": "rgba(255, 255, 255, 0.99)",
+    "--color-drawer-shadow": "rgba(0, 0, 0, 0.12)",
+    "--color-dot-separator": "rgba(0, 0, 0, 0.2)",
+    "--color-wordmark": "#262626",
+    "--color-chevron": "rgba(0, 0, 0, 0.2)",
+  },
+  dark: {
+    "--color-screen": "#0a0a0a",
+    "--color-sheet": "rgba(14, 14, 14, 0.98)",
+    "--color-card": "#171717",
+    "--color-card-alt": "#1c1c1c",
+    "--color-card-translucent": "rgba(17, 17, 17, 0.8)",
+    "--color-foreground": "#f5f5f5",
+    "--color-foreground-secondary": "#a3a3a3",
+    "--color-foreground-muted": "#8e8e93",
+    "--color-foreground-tertiary": "#636366",
+    "--color-border": "rgba(255, 255, 255, 0.06)",
+    "--color-border-subtle": "rgba(255, 255, 255, 0.04)",
+    "--color-separator": "rgba(255, 255, 255, 0.03)",
+    "--color-subtle": "rgba(255, 255, 255, 0.04)",
+    "--color-subtle-strong": "rgba(255, 255, 255, 0.08)",
+    "--color-inline-skill-background": "rgba(217, 70, 239, 0.12)",
+    "--color-inline-skill-border": "rgba(217, 70, 239, 0.25)",
+    "--color-inline-skill-foreground": "#f0abfc",
+    "--color-primary": "#f5f5f5",
+    "--color-primary-foreground": "#0a0a0a",
+    "--color-primary-shadow": "rgba(0, 0, 0, 0.22)",
+    "--color-secondary": "rgba(255, 255, 255, 0.04)",
+    "--color-secondary-foreground": "#f5f5f5",
+    "--color-secondary-border": "rgba(255, 255, 255, 0.06)",
+    "--color-switch-active": "#30d158",
+    "--color-danger": "rgba(239, 68, 68, 0.14)",
+    "--color-danger-border": "rgba(248, 113, 113, 0.18)",
+    "--color-danger-foreground": "#fca5a5",
+    "--color-input": "#141414",
+    "--color-input-border": "rgba(255, 255, 255, 0.08)",
+    "--color-sidebar-search": "rgba(118, 118, 128, 0.24)",
+    "--color-sidebar-background": "rgba(14, 14, 14, 0.99)",
+    "--color-sidebar-foreground": "#f5f5f5",
+    "--color-sidebar-muted-foreground": "#8e8e93",
+    "--color-sidebar-control": "rgba(118, 118, 128, 0.24)",
+    "--color-sidebar-row-hover": "rgba(255, 255, 255, 0.04)",
+    "--color-sidebar-row-active": "rgba(255, 255, 255, 0.08)",
+    "--color-sidebar-row-selected": "#0a84ff",
+    "--color-sidebar-border": "rgba(255, 255, 255, 0.06)",
+    "--color-placeholder": "#8e8e93",
+    "--color-icon": "#f5f5f5",
+    "--color-icon-muted": "#a3a3a3",
+    "--color-icon-subtle": "#8e8e93",
+    "--color-header": "rgba(10, 10, 10, 0.97)",
+    "--color-header-border": "rgba(255, 255, 255, 0.06)",
+    "--color-glass-surface": "rgba(23, 23, 23, 0.78)",
+    "--color-glass-tint": "rgba(23, 23, 23, 0.24)",
+    "--color-status-bar": "#0a0a0a",
+    "--color-md-body": "#e5e5e5",
+    "--color-md-strong": "#f5f5f5",
+    "--color-md-link": "#60a5fa",
+    "--color-md-blockquote-border": "rgba(255, 255, 255, 0.1)",
+    "--color-md-blockquote-bg": "rgba(255, 255, 255, 0.03)",
+    "--color-md-code-bg": "rgba(255, 255, 255, 0.06)",
+    "--color-md-code-text": "#e5e5e5",
+    "--color-md-user-code-bg": "rgba(255, 255, 255, 0.18)",
+    "--color-md-user-code-text": "#ffffff",
+    "--color-md-user-fence-bg": "rgba(0, 0, 0, 0.28)",
+    "--color-md-user-fence-text": "#ffffff",
+    "--color-md-hr": "rgba(255, 255, 255, 0.08)",
+    "--color-user-bubble": "#0a84ff",
+    "--color-user-bubble-foreground": "#ffffff",
+    "--color-user-bubble-foreground-muted": "rgba(255, 255, 255, 0.78)",
+    "--color-backdrop": "rgba(0, 0, 0, 0.48)",
+    "--color-drawer": "rgba(14, 14, 14, 0.99)",
+    "--color-drawer-shadow": "rgba(0, 0, 0, 0.32)",
+    "--color-dot-separator": "rgba(255, 255, 255, 0.2)",
+    "--color-wordmark": "#f5f5f5",
+    "--color-chevron": "rgba(255, 255, 255, 0.2)",
+  },
+};
+
+export function getDefaultMobileCSSVariables(
+  mode: "light" | "dark",
+): Readonly<Record<string, string>> {
+  return MOBILE_DEFAULT_CSS_VARIABLES[mode];
 }
 
 /**

@@ -15,15 +15,20 @@ export function SidebarFilterButton(props: {
   /** Rendered inside a shared capsule group — no own background/border. */
   readonly grouped?: boolean;
 }) {
-  const iconColor = useThemeColor("--color-foreground");
-  const pressedBackgroundColor = useThemeColor("--color-subtle");
+  const foregroundFallback = useThemeColor("--color-foreground");
+  const pressedFallback = useThemeColor("--color-subtle");
+  const borderFallback = useThemeColor("--color-border");
   const colorScheme = useAppearanceColorScheme() === "dark" ? "dark" : "light";
   const { themeColors } = useAppearancePreferences();
+  const iconColor = themeColors?.sidebarForeground ?? foregroundFallback;
+  const pressedBackgroundColor = themeColors?.sidebarRowHover ?? pressedFallback;
   const idleBackgroundColor =
-    themeColors?.surfaceOverlay ??
+    themeColors?.sidebarControlSurface ??
     (colorScheme === "dark" ? "rgba(118,118,128,0.24)" : "rgba(255,255,255,0.72)");
   const borderColor =
-    themeColors?.border ?? (colorScheme === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)");
+    themeColors?.sidebarBorder ??
+    borderFallback ??
+    (colorScheme === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)");
 
   return (
     <Pressable

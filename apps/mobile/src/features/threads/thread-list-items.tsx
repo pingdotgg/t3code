@@ -92,9 +92,13 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
   readonly onNewThread?: (project: EnvironmentProject) => void;
 }) {
   const iconMutedColor = useThemeColor("--color-icon-muted");
+  const { themeColors } = useAppearancePreferences();
   const { groupKey, onGroupAction, onNewThread } = props;
   const newThreadTarget = props.newThreadTarget ?? null;
   const compact = props.variant === "compact";
+  const sidebar = !compact;
+  const sidebarForeground = sidebar ? themeColors?.sidebarForeground : undefined;
+  const sidebarMutedForeground = sidebar ? themeColors?.sidebarMutedForeground : undefined;
   const handleToggle = useCallback(
     () => onGroupAction(groupKey, "toggle-collapsed"),
     [groupKey, onGroupAction],
@@ -116,6 +120,7 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
     <View
       className={compact ? "flex-row items-center bg-screen" : "flex-row items-center"}
       style={{
+        backgroundColor: sidebar ? themeColors?.sidebar : undefined,
         minHeight: compact ? 44 : 36,
         paddingLeft: compact ? 20 : 12,
         // Compact right padding centers the 20pt plus glyph on the thread
@@ -150,6 +155,7 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
               : "flex-shrink text-sm font-t3-bold tracking-[0.2px] text-foreground-muted"
           }
           numberOfLines={1}
+          style={sidebarForeground ? { color: sidebarForeground } : undefined}
         >
           {props.title}
         </Text>
@@ -159,6 +165,7 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
               ? "flex-1 text-sm font-t3-medium text-foreground-tertiary"
               : "flex-1 text-xs font-t3-medium text-foreground-tertiary"
           }
+          style={sidebarMutedForeground ? { color: sidebarMutedForeground } : undefined}
         >
           {props.threadCount}
         </Text>
@@ -174,7 +181,7 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
           <SymbolView
             name="plus"
             size={compact ? 20 : 16}
-            tintColor={iconMutedColor}
+            tintColor={sidebarMutedForeground ?? iconMutedColor}
             type="monochrome"
             weight="medium"
           />
@@ -194,8 +201,11 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
   readonly onGroupAction: (key: string, action: HomeGroupDisplayAction) => void;
 }) {
   const iconSubtleColor = useThemeColor("--color-icon-subtle");
+  const { themeColors } = useAppearancePreferences();
   const showsMore = props.hiddenCount > 0;
   const compact = props.variant === "compact";
+  const sidebar = !compact;
+  const sidebarMutedForeground = sidebar ? themeColors?.sidebarMutedForeground : undefined;
   const { groupKey, onGroupAction } = props;
   const handleShowMore = useCallback(
     () => onGroupAction(groupKey, "show-more"),
@@ -214,6 +224,7 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
       hitSlop={6}
       onPress={onPress}
       style={({ pressed }) => ({
+        backgroundColor: sidebar ? themeColors?.sidebarControlSurface : undefined,
         opacity: pressed ? 0.6 : 1,
         paddingHorizontal: compact ? 14 : 12,
         paddingVertical: compact ? 7 : 6,
@@ -224,7 +235,7 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
         <SymbolView
           name={icon}
           size={10}
-          tintColor={iconSubtleColor}
+          tintColor={sidebarMutedForeground ?? iconSubtleColor}
           type="monochrome"
           weight="semibold"
         />
@@ -234,6 +245,7 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
               ? "text-sm font-t3-medium text-foreground-muted"
               : "text-xs font-t3-medium text-foreground-muted"
           }
+          style={sidebarMutedForeground ? { color: sidebarMutedForeground } : undefined}
         >
           {label}
         </Text>
@@ -247,6 +259,7 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
         compact ? "flex-row items-center gap-2.5 bg-screen" : "flex-row items-center gap-2"
       }
       style={{
+        backgroundColor: sidebar ? themeColors?.sidebar : undefined,
         paddingLeft: compact ? THREAD_LIST_COMPACT_INSET : 12,
         paddingRight: compact ? 18 : 12,
         paddingVertical: compact ? 12 : 8,
@@ -278,10 +291,15 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
 }) {
   const compact = props.variant === "compact";
+  const sidebar = !compact;
+  const { themeColors } = useAppearancePreferences();
   const separatorColor = useThemeColor("--color-separator");
   const iconSubtleColor = useThemeColor("--color-icon-subtle");
   const mutedColor = useThemeColor("--color-foreground-muted");
   const pressedBackgroundColor = useThemeColor("--color-subtle");
+  const sidebarBorderColor = themeColors?.sidebarBorder ?? separatorColor;
+  const sidebarMutedForeground = themeColors?.sidebarMutedForeground ?? mutedColor;
+  const sidebarForeground = themeColors?.sidebarForeground;
 
   const { pendingTask, onSelectPendingTask, onDeletePendingTask } = props;
   const timestamp = relativeTime(pendingTask.message.createdAt);
@@ -308,7 +326,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
         <SymbolView
           name="tray.and.arrow.up"
           size={10}
-          tintColor={compact ? iconSubtleColor : mutedColor}
+          tintColor={compact ? iconSubtleColor : sidebarMutedForeground}
           type="monochrome"
         />
         <Text
@@ -318,6 +336,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
               : "shrink text-xs text-foreground-muted"
           }
           numberOfLines={1}
+          style={sidebar ? { color: sidebarMutedForeground } : undefined}
         >
           {subtitleParts.join(" · ")}
         </Text>
@@ -344,7 +363,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
           style={{
             gap: 3,
             borderBottomWidth: props.isLast ? 0 : 1,
-            borderBottomColor: separatorColor,
+            borderBottomColor: sidebar ? sidebarBorderColor : separatorColor,
             paddingBottom: 10,
           }}
         >
@@ -374,7 +393,13 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
       accessibilityRole="button"
       onPress={() => onSelectPendingTask(pendingTask)}
       style={({ pressed }) => ({
-        backgroundColor: pressed ? pressedBackgroundColor : "transparent",
+        backgroundColor: sidebar
+          ? pressed
+            ? (themeColors?.sidebarRowHover ?? pressedBackgroundColor)
+            : (themeColors?.sidebar ?? "transparent")
+          : pressed
+            ? pressedBackgroundColor
+            : "transparent",
         borderRadius: SIDEBAR_ROW_RADIUS,
         cursor: "pointer",
         minHeight: 64,
@@ -385,12 +410,20 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
     >
       <View className="gap-[3px]">
         <View className="flex-row items-center justify-between gap-2">
-          <Text className="flex-1 text-base font-t3-medium text-foreground" numberOfLines={1}>
+          <Text
+            className="flex-1 text-base font-t3-medium text-foreground"
+            numberOfLines={1}
+            style={sidebarForeground ? { color: sidebarForeground } : undefined}
+          >
             {pendingTask.title}
           </Text>
           <View className="flex-row items-center gap-2">
             {statusPill}
-            <Text className="text-xs tabular-nums text-foreground-muted" numberOfLines={1}>
+            <Text
+              className="text-xs tabular-nums text-foreground-muted"
+              numberOfLines={1}
+              style={sidebarMutedForeground ? { color: sidebarMutedForeground } : undefined}
+            >
               {timestamp}
             </Text>
           </View>
@@ -453,8 +486,11 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const screenColor = useThemeColor("--color-screen");
   const drawerColor = useThemeColor("--color-drawer");
   const pressedBackgroundColor = useThemeColor("--color-subtle");
-  const selectedBackgroundColor = useThemeColor("--color-user-bubble");
-  const selectedForegroundColor = useThemeColor("--color-user-bubble-foreground");
+  const selectedBackgroundFallback = useThemeColor("--color-user-bubble");
+  const selectedForegroundFallback = useThemeColor("--color-user-bubble-foreground");
+  const selectedBackgroundColor = themeColors?.messageAction ?? selectedBackgroundFallback;
+  const selectedForegroundColor =
+    themeColors?.messageActionForeground ?? selectedForegroundFallback;
 
   const { thread, onSelectThread, onArchiveThread, onDeleteThread } = props;
   const status = resolveThreadStatus(thread);
@@ -467,14 +503,18 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     Boolean(part),
   );
 
-  const backgroundColor = compact ? screenColor : drawerColor;
+  const backgroundColor = compact ? screenColor : (themeColors?.sidebar ?? drawerColor);
   const effectivePressedBackground = selected
     ? (themeColors?.messageAction ??
       (themeColors ? selectedBackgroundColor : "rgba(255,255,255,0.16)"))
-    : pressedBackgroundColor;
+    : (themeColors?.sidebarRowHover ?? pressedBackgroundColor);
   const effectiveStatus =
     selected && status
-      ? { ...status, pillClassName: "bg-white/20", textClassName: "text-white" }
+      ? {
+          ...status,
+          pillClassName: "bg-user-bubble-foreground/20",
+          textClassName: "text-user-bubble-foreground",
+        }
       : status;
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
@@ -513,8 +553,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               className={cn(
                 "shrink",
                 compact ? "text-sm text-foreground-muted" : "text-xs",
-                !compact &&
-                  (selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted"),
+                !compact && (selected ? "text-user-bubble-foreground" : "text-foreground-muted"),
               )}
               numberOfLines={1}
             >
@@ -534,7 +573,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
             />
             <Text
               className={`${compact ? "text-sm" : "text-xs"} font-t3-medium ${
-                selected ? "text-white" : pr.textClassName
+                selected ? "text-user-bubble-foreground" : pr.textClassName
               }`}
             >
               {pr.label}
@@ -640,7 +679,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               <Text
                 className={cn(
                   "text-xs tabular-nums",
-                  selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
+                  selected ? "text-user-bubble-foreground" : "text-foreground-muted",
                 )}
                 numberOfLines={1}
               >

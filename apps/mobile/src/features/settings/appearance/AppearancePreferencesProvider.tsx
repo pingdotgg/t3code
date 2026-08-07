@@ -1,4 +1,13 @@
-import { createContext, use, useCallback, useEffect, useMemo, type ReactNode } from "react";
+import {
+  createContext,
+  use,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { useColorScheme } from "react-native";
 
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
@@ -20,7 +29,10 @@ import {
   resolveTextScaleVariables,
   type ResolvedAppearance,
 } from "../../../lib/appearancePreferences";
-import { themeColorsToMobileCSSVariables } from "../../../lib/mobileTheme";
+import {
+  getDefaultMobileCSSVariables,
+  themeColorsToMobileCSSVariables,
+} from "../../../lib/mobileTheme";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
 import type { Preferences } from "../../../persistence/mobile-preferences";
 import { cacheTerminalFontSize } from "../../terminal/terminalUiState";
@@ -38,6 +50,8 @@ interface AppearancePreferencesContextValue {
   readonly themeDefinition: ThemeDefinition | null;
   /** Null for the stock palette; unknown ids use the canonical fallback. */
   readonly themeColors: ThemeColors | null;
+  /** True once the persisted palette has been synchronized into Uniwind. */
+  readonly isPaletteReady: boolean;
   readonly isReady: boolean;
   readonly setBaseFontSize: (value: number) => void;
   /** Pass null to clear the override and follow the base font size. */
@@ -45,7 +59,7 @@ interface AppearancePreferencesContextValue {
   /** Pass null to clear the override and follow the base font size. */
   readonly setCodeFontSize: (value: number | null) => void;
   readonly setCodeWordBreak: (value: boolean) => void;
-  readonly setThemeId: (value: string) => void;
+  readonly setThemeId: (value: string | null) => void;
   readonly setAppearanceMode: (value: MobileAppearanceMode) => void;
 }
 
@@ -72,6 +86,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const nativeColorScheme = useColorScheme();
+  const [appliedThemeId, setAppliedThemeId] = useState<string | null | undefined>(undefined);
   const storedPreferences = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value
     : null;
@@ -99,6 +114,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       getThemeColorsForMode(themeDefinition, colorScheme) ?? getDefaultThemeColors(colorScheme)
     );
   }, [colorScheme, themeDefinition, themeId]);
+  const isPaletteReady = isReady && appliedThemeId === themeId;
 
   useEffect(() => {
     // Uniwind owns the native Appearance override. Keeping this in the same
@@ -106,10 +122,19 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     Uniwind.setTheme(isReady ? appearanceMode : "system");
   }, [appearanceMode, isReady]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (!isReady) {
+      return;
+    }
+
     if (themeId === null) {
-      // No injection is intentional: global.css remains the fresh-install
-      // fallback until the user picks a built-in theme.
+      // Uniwind.updateCSSVariables is additive, so explicitly restore every
+      // literal stylesheet value after a user clears a previously selected
+      // theme. Fresh installs never enter this branch before readiness.
+      for (const mode of ["light", "dark"] as const) {
+        Uniwind.updateCSSVariables(mode, getDefaultMobileCSSVariables(mode));
+      }
+      setAppliedThemeId(null);
       return;
     }
 
@@ -119,7 +144,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
         getDefaultThemeColors(mode);
       Uniwind.updateCSSVariables(mode, themeColorsToMobileCSSVariables(colors));
     }
-  }, [themeDefinition, themeId]);
+    setAppliedThemeId(themeId);
+  }, [isReady, themeDefinition, themeId]);
 
   useEffect(() => {
     applyTextScaleVariables(preferences.baseFontSize);
@@ -162,7 +188,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   );
 
   const setThemeId = useCallback(
-    (value: string) => {
+    (value: string | null) => {
       updatePreferences({ themeId: value });
     },
     [updatePreferences],
@@ -181,6 +207,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       appearanceMode,
       colorScheme,
       isReady,
+      isPaletteReady,
       setAppearanceMode,
       setBaseFontSize,
       setTerminalFontSize,
@@ -195,6 +222,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       appearanceMode,
       colorScheme,
       isReady,
+      isPaletteReady,
       preferences,
       setAppearanceMode,
       setBaseFontSize,

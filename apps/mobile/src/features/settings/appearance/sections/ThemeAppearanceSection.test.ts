@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { createManagedThemeColors, type ThemeDefinition } from "@t3tools/themes";
-import { buildThemePickerItems } from "../themePickerItems";
+import { buildThemePickerItems, DEFAULT_THEME_PICKER_ID } from "../themePickerItems";
 
 const fakeTheme: ThemeDefinition = {
   id: "fake-sixth-theme",
@@ -15,6 +15,7 @@ describe("buildThemePickerItems", () => {
     const definitions = [fakeTheme, { ...fakeTheme, id: "another-theme", label: "Another" }];
 
     expect(buildThemePickerItems(definitions).map((item) => item.id)).toEqual([
+      DEFAULT_THEME_PICKER_ID,
       "fake-sixth-theme",
       "another-theme",
     ]);

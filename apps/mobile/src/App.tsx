@@ -2,11 +2,11 @@ import { BlurTargetView } from "expo-blur";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
-import { StatusBar } from "react-native";
+import { StatusBar, StyleSheet, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { createStaticNavigation, DarkTheme, DefaultTheme } from "@react-navigation/native";
+import { createStaticNavigation } from "@react-navigation/native";
 
 import { RegistryContext } from "@effect/atom-react";
 import { ConfirmDialogHost } from "./components/ConfirmDialogHost";
@@ -22,6 +22,7 @@ import { RootStack } from "./Stack";
 import { appAtomRegistry } from "./state/atom-registry";
 import { OverlayPortalHost } from "./components/OverlayPortal";
 import { appBlurTargetRef } from "./lib/appBlurTarget";
+import { createMobileNavigationTheme } from "./lib/mobileNavigationTheme";
 import { useThemeColor } from "./lib/useThemeColor";
 
 import "../global.css";
@@ -49,11 +50,11 @@ const appLinking = {
 const Navigation = createStaticNavigation(RootStack);
 
 function SplashScreenCoordinator() {
-  const { isReady } = useAppearancePreferences();
+  const { isPaletteReady } = useAppearancePreferences();
 
   useEffect(() => {
-    if (isReady) void SplashScreen.hide();
-  }, [isReady]);
+    if (isPaletteReady) void SplashScreen.hide();
+  }, [isPaletteReady]);
 
   return null;
 }
@@ -72,8 +73,12 @@ export default function App() {
 
 function AppContent() {
   const colorScheme = useAppearanceColorScheme();
-  const rootBackground = useThemeColor("--color-screen");
-  const statusBarBg = useThemeColor("--color-status-bar");
+  const { isPaletteReady, themeColors } = useAppearancePreferences();
+  const fallbackRootBackground = useThemeColor("--color-screen");
+  const fallbackStatusBarBg = useThemeColor("--color-status-bar");
+  const rootBackground = themeColors?.canvas ?? fallbackRootBackground;
+  const statusBarBg = themeColors?.canvas ?? fallbackStatusBarBg;
+  const navigationTheme = createMobileNavigationTheme(colorScheme, themeColors);
 
   return (
     <>
@@ -94,10 +99,7 @@ function AppContent() {
             {/* Blur target for Android dropdown backdrops — see appBlurTarget.ts. */}
             <BlurTargetView ref={appBlurTargetRef} style={{ flex: 1 }}>
               <IncomingShareProvider>
-                <Navigation
-                  linking={appLinking}
-                  theme={colorScheme === "dark" ? DarkTheme : DefaultTheme}
-                />
+                <Navigation linking={appLinking} theme={navigationTheme} />
               </IncomingShareProvider>
               <ConfirmDialogHost />
             </BlurTargetView>
@@ -106,6 +108,12 @@ function AppContent() {
             <OverlayPortalHost />
           </SafeAreaProvider>
         </KeyboardProvider>
+        {!isPaletteReady ? (
+          <View
+            pointerEvents="none"
+            style={[StyleSheet.absoluteFill, { backgroundColor: rootBackground }]}
+          />
+        ) : null}
       </GestureHandlerRootView>
     </>
   );

@@ -14,6 +14,7 @@ import { AppText as Text, AppTextInput as TextInput } from "../../components/App
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useAppearanceColorScheme } from "../../lib/useAppearanceColorScheme";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
 import { FileTreeBrowser } from "./FileTreeBrowser";
@@ -29,6 +30,7 @@ export function ThreadFileNavigatorPane(props: {
 }) {
   const [searchQuery, setSearchQuery] = useState("");
   const colorScheme = useAppearanceColorScheme();
+  const { themeColors } = useAppearancePreferences();
   const highlightTheme = colorScheme === "dark" ? "dark" : "light";
   const iconColor = String(useThemeColor("--color-icon-muted"));
   const foregroundColor = String(useThemeColor("--color-foreground"));
@@ -48,9 +50,10 @@ export function ThreadFileNavigatorPane(props: {
         environmentId: props.environmentId,
         relativePath,
         theme: highlightTheme,
+        themeColors,
       });
     },
-    [highlightTheme, props.cwd, props.environmentId],
+    [highlightTheme, props.cwd, props.environmentId, themeColors],
   );
   const nativeHeaderRightBarButtonItems = useMemo(
     () =>

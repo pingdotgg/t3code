@@ -262,6 +262,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     useAdaptiveWorkspaceLayout();
   const [searchQuery, setSearchQuery] = useState("");
   const colorScheme = useAppearanceColorScheme();
+  const { themeColors } = useAppearancePreferences();
   const isAndroid = Platform.OS === "android";
   const highlightTheme = colorScheme === "dark" ? "dark" : "light";
   const iconColor = String(useThemeColor("--color-icon-muted"));
@@ -338,9 +339,10 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
         environmentId,
         relativePath,
         theme: highlightTheme,
+        themeColors,
       });
     },
-    [cwd, environmentId, highlightTheme],
+    [cwd, environmentId, highlightTheme, themeColors],
   );
   useEffect(() => {
     if (fileInspector.supported && cwd !== null && !revealedInspectorRef.current) {

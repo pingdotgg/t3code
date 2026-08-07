@@ -55,7 +55,7 @@ export function ThreadSearchMatchExcerpt(props: {
     <Text
       className={cn(
         props.compact ? "text-sm" : "text-xs",
-        props.selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
+        props.selected ? "text-user-bubble-foreground" : "text-foreground-muted",
       )}
       numberOfLines={1}
     >

@@ -6,7 +6,7 @@ import { cn } from "../../../../lib/cn";
 import type { MobileAppearanceMode } from "../AppearancePreferencesProvider";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 import { SettingsSection } from "../../components/SettingsSection";
-import { buildThemePickerItems } from "../themePickerItems";
+import { buildThemePickerItems, DEFAULT_THEME_PICKER_ID } from "../themePickerItems";
 
 const APPEARANCE_OPTIONS: ReadonlyArray<{
   readonly label: string;
@@ -94,7 +94,8 @@ export function ThemeAppearanceSection() {
         contentContainerClassName="gap-3 p-4"
       >
         {items.map((item) => {
-          const selected = themeId === item.id;
+          const selected =
+            item.id === DEFAULT_THEME_PICKER_ID ? themeId === null : themeId === item.id;
           return (
             <Pressable
               key={item.id}
@@ -107,7 +108,7 @@ export function ThemeAppearanceSection() {
                 !isReady && "opacity-[0.45]",
               )}
               disabled={!isReady}
-              onPress={() => setThemeId(item.id)}
+              onPress={() => setThemeId(item.id === DEFAULT_THEME_PICKER_ID ? null : item.id)}
             >
               <ThemeSwatch theme={item.definition} />
               <Text

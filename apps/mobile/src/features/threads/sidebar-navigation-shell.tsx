@@ -1,18 +1,16 @@
-import {
-  DarkTheme,
-  DefaultTheme,
-  NavigationContainer,
-  NavigationIndependentTree,
-} from "@react-navigation/native";
+import { NavigationContainer, NavigationIndependentTree } from "@react-navigation/native";
 import {
   createNativeStackNavigator,
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
 import type { ReactNode } from "react";
 import { Platform } from "react-native";
+import { useMemo } from "react";
 
 import { getCompactBrandHeaderOptions } from "../../components/CompactBrandTitle";
+import { createMobileNavigationTheme } from "../../lib/mobileNavigationTheme";
 import { useAppearanceColorScheme } from "../../lib/useAppearanceColorScheme";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 
@@ -36,8 +34,7 @@ const SIDEBAR_SCREEN_OPTIONS: SidebarScreenOptions = {
   headerLargeTitle: false,
   headerShadowVisible: false,
   headerShown: true,
-  headerStyle: NATIVE_LIQUID_GLASS_SUPPORTED ? { backgroundColor: "transparent" } : undefined,
-  ...getCompactBrandHeaderOptions({ fontSize: 18, fontWeight: "800" }),
+  ...getCompactBrandHeaderOptions({ fontSize: 18, fontWeight: "800" }, { sidebar: true }),
   headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,
   scrollEdgeEffects: NATIVE_LIQUID_GLASS_SUPPORTED ? SCROLL_EDGE_EFFECTS : undefined,
   unstable_navigationItemStyle: NATIVE_LIQUID_GLASS_SUPPORTED ? "editor" : undefined,
@@ -58,12 +55,36 @@ const SidebarStack = createNativeStackNavigator();
  */
 export function SidebarNavigationShell(props: { readonly children: ReactNode }) {
   const colorScheme = useAppearanceColorScheme();
+  const { themeColors } = useAppearancePreferences();
+  const navigationTheme = useMemo(() => {
+    const baseTheme = createMobileNavigationTheme(colorScheme, themeColors);
+    if (themeColors === null) return baseTheme;
+
+    return {
+      ...baseTheme,
+      colors: {
+        ...baseTheme.colors,
+        // This navigator owns the iPad sidebar column, so its native stack
+        // must inherit the sidebar roles instead of the screen-wide card.
+        background: themeColors.sidebar,
+        card: themeColors.sidebar,
+        text: themeColors.sidebarForeground,
+        border: themeColors.sidebarBorder,
+      },
+    };
+  }, [colorScheme, themeColors]);
 
   return (
     <NavigationIndependentTree>
-      <NavigationContainer theme={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
+      <NavigationContainer theme={navigationTheme}>
         <SidebarStack.Navigator
-          screenOptions={SIDEBAR_SCREEN_OPTIONS}
+          screenOptions={({ theme }) => ({
+            ...SIDEBAR_SCREEN_OPTIONS,
+            contentStyle: { backgroundColor: theme.colors.card },
+            ...(NATIVE_LIQUID_GLASS_SUPPORTED
+              ? { headerStyle: { backgroundColor: "transparent" } }
+              : { headerStyle: { backgroundColor: theme.colors.card } }),
+          })}
           initialRouteName="SidebarThreads"
         >
           <SidebarStack.Screen name="SidebarThreads">{() => props.children}</SidebarStack.Screen>

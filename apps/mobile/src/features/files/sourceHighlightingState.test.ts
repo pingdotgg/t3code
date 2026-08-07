@@ -1,6 +1,7 @@
 import { AtomRegistry } from "effect/unstable/reactivity";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { createManagedThemeColors } from "@t3tools/themes";
 
 import {
   createSourceHighlightAtomFamily,
@@ -57,6 +58,39 @@ describe("sourceHighlightingState", () => {
       path: "src/example.ts",
       contents: "const value = 2;",
       theme: "light",
+    });
+    const firstUnmount = registry.mount(firstAtom);
+    const secondUnmount = registry.mount(secondAtom);
+
+    await vi.waitFor(() => {
+      expect(AsyncResult.isSuccess(registry.get(firstAtom))).toBe(true);
+      expect(AsyncResult.isSuccess(registry.get(secondAtom))).toBe(true);
+    });
+    expect(secondAtom).not.toBe(firstAtom);
+    expect(highlight).toHaveBeenCalledTimes(2);
+
+    firstUnmount();
+    secondUnmount();
+    registry.dispose();
+  });
+
+  it("does not reuse highlighting when the active palette changes", async () => {
+    const highlight = vi.fn(async () => highlightedTokens);
+    const sourceHighlightAtom = createSourceHighlightAtomFamily({ highlight });
+    const registry = AtomRegistry.make();
+    const lightColors = createManagedThemeColors("light", "#f2f7fb", "#2878b8");
+    const darkColors = createManagedThemeColors("dark", "#1b2938", "#70b9ee");
+    const firstAtom = sourceHighlightAtom({
+      path: "src/example.ts",
+      contents: "const value = 1;",
+      theme: "light",
+      themeColors: lightColors,
+    });
+    const secondAtom = sourceHighlightAtom({
+      path: "src/example.ts",
+      contents: "const value = 1;",
+      theme: "light",
+      themeColors: darkColors,
     });
     const firstUnmount = registry.mount(firstAtom);
     const secondUnmount = registry.mount(secondAtom);
