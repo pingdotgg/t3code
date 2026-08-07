@@ -2785,4 +2785,60 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
       ]);
     }),
   );
+
+  it.effect("projects persist updated color from project.meta.update", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const sql = yield* SqlClient.SqlClient;
+      const createdAt = "2026-01-01T00:00:00.000Z";
+
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-color-project-create"),
+        projectId: ProjectId.make("project-color"),
+        title: "Color Project",
+        workspaceRoot: "/tmp/project-color",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      });
+
+      const createdRows = yield* sql<{ readonly color: string | null }>`
+        SELECT color
+        FROM projection_projects
+        WHERE project_id = 'project-color'
+      `;
+      assert.deepEqual(createdRows, [{ color: null }]);
+
+      yield* engine.dispatch({
+        type: "project.meta.update",
+        commandId: CommandId.make("cmd-color-project-update"),
+        projectId: ProjectId.make("project-color"),
+        color: "teal",
+      });
+
+      const coloredRows = yield* sql<{ readonly color: string | null }>`
+        SELECT color
+        FROM projection_projects
+        WHERE project_id = 'project-color'
+      `;
+      assert.deepEqual(coloredRows, [{ color: "teal" }]);
+
+      yield* engine.dispatch({
+        type: "project.meta.update",
+        commandId: CommandId.make("cmd-color-project-clear"),
+        projectId: ProjectId.make("project-color"),
+        color: null,
+      });
+
+      const clearedRows = yield* sql<{ readonly color: string | null }>`
+        SELECT color
+        FROM projection_projects
+        WHERE project_id = 'project-color'
+      `;
+      assert.deepEqual(clearedRows, [{ color: null }]);
+    }),
+  );
 });

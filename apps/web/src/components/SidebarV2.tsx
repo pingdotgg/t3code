@@ -74,6 +74,11 @@ import { isMacPlatform } from "~/lib/utils";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { readLocalApi } from "../localApi";
 import {
+  PROJECT_COLOR_OPTIONS,
+  resolveProjectColorCss,
+  resolveProjectGroupColorCss,
+} from "../projectColors";
+import {
   deriveProjectGroupingOverrideKey,
   getProjectOrderKey,
   selectProjectGroupingSettings,
@@ -235,6 +240,7 @@ function SidebarV2ThreadTooltip({
   thread,
   projectTitle,
   projectCwd,
+  projectColor,
   environmentLabel,
   driverKind,
   modelInstanceId,
@@ -246,6 +252,7 @@ function SidebarV2ThreadTooltip({
   thread: SidebarThreadSummary;
   projectTitle: string | null;
   projectCwd: string | null;
+  projectColor: string | null;
   environmentLabel: string | null;
   driverKind: ProviderInstanceEntry["driverKind"] | null;
   modelInstanceId: string;
@@ -276,6 +283,7 @@ function SidebarV2ThreadTooltip({
                 environmentId={thread.environmentId}
                 cwd={projectCwd ?? ""}
                 className="size-3 shrink-0 stroke-muted-foreground"
+                accentColor={projectColor}
               />
               <div className="min-w-0 truncate text-foreground/75">{projectTitle}</div>
             </div>
@@ -416,6 +424,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   environmentLabel: string | null;
   projectCwd: string | null;
   projectTitle: string | null;
+  projectColor: string | null;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   timestampFormat: TimestampFormat;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
@@ -603,6 +612,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
       thread={thread}
       projectTitle={props.projectTitle}
       projectCwd={props.projectCwd}
+      projectColor={props.projectColor}
       environmentLabel={props.environmentLabel}
       driverKind={driverKind}
       modelInstanceId={modelInstanceId}
@@ -862,6 +872,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 cwd={props.projectCwd ?? ""}
                 className="size-4"
                 fallbackIcon={MessageSquareIcon}
+                accentColor={props.projectColor}
               />
             </span>
             {title}
@@ -986,6 +997,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 environmentId={thread.environmentId}
                 cwd={props.projectCwd ?? ""}
                 className="size-4 shrink-0"
+                accentColor={props.projectColor}
               />
               {props.projectTitle ? (
                 <span
@@ -1175,6 +1187,7 @@ const SidebarV2SearchResultRow = memo(function SidebarV2SearchResultRow(props: {
   thread: SidebarThreadSummary;
   projectCwd: string | null;
   projectTitle: string | null;
+  projectColor: string | null;
   environmentLabel: string | null;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   isHighlighted: boolean;
@@ -1248,6 +1261,7 @@ const SidebarV2SearchResultRow = memo(function SidebarV2SearchResultRow(props: {
             cwd={props.projectCwd ?? ""}
             className="size-4 shrink-0"
             fallbackIcon={MessageSquareIcon}
+            accentColor={props.projectColor}
           />
           <span className="min-w-0 flex-1 truncate">{thread.title}</span>
           <span className="shrink-0 text-xs text-muted-foreground/55 tabular-nums">
@@ -1258,6 +1272,7 @@ const SidebarV2SearchResultRow = memo(function SidebarV2SearchResultRow(props: {
           thread={thread}
           projectTitle={props.projectTitle}
           projectCwd={props.projectCwd}
+          projectColor={props.projectColor}
           environmentLabel={props.environmentLabel}
           driverKind={driverKind}
           modelInstanceId={modelInstanceId}
@@ -1423,6 +1438,17 @@ export default function SidebarV2() {
     () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
     [sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
+  // The project-settings dialog target is frozen at open time; live members
+  // keep the color selection in sync after an update round-trips.
+  const liveMemberProjectsByPhysicalKey = useMemo(() => {
+    const map = new Map<string, SidebarProjectGroupMember>();
+    for (const group of projectGroups) {
+      for (const member of group.memberProjects) {
+        map.set(member.physicalProjectKey, member);
+      }
+    }
+    return map;
+  }, [projectGroups]);
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const providerEntryByInstanceId = useMemo(
     () =>
@@ -1451,6 +1477,20 @@ export default function SidebarV2() {
             (project) => [`${project.environmentId}:${project.id}`, group.displayName] as const,
           ),
         ),
+      ),
+    [projectGroups],
+  );
+  const projectColorByKey = useMemo(
+    () =>
+      new Map(
+        projectGroups.flatMap((group) => {
+          const groupColor = resolveProjectGroupColorCss(group.memberProjects);
+          return groupColor
+            ? group.memberProjects.map(
+                (project) => [`${project.environmentId}:${project.id}`, groupColor] as const,
+              )
+            : [];
+        }),
       ),
     [projectGroups],
   );
@@ -1638,6 +1678,27 @@ export default function SidebarV2() {
           stackedThreadToast({
             type: "error",
             title: "Failed to rename project",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [updateProject],
+  );
+
+  const updateProjectMemberColor = useCallback(
+    async (member: SidebarProjectGroupMember, color: string | null) => {
+      if ((member.color ?? null) === color) return;
+      const result = await updateProject({
+        environmentId: member.environmentId,
+        input: { projectId: member.id, color },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to update project color",
             description: error instanceof Error ? error.message : "An error occurred.",
           }),
         );
@@ -2935,6 +2996,7 @@ export default function SidebarV2() {
                         environmentId={scopedProjectGroup.environmentId}
                         cwd={scopedProjectGroup.workspaceRoot}
                         className="size-4 shrink-0"
+                        accentColor={resolveProjectGroupColorCss(scopedProjectGroup.memberProjects)}
                       />
                     ) : (
                       <FolderIcon className="size-4 shrink-0" />
@@ -2961,6 +3023,7 @@ export default function SidebarV2() {
                       </MenuRadioItem>
                       {projectGroups.map((project) => {
                         const scopeKey = project.projectKey;
+                        const projectColor = resolveProjectGroupColorCss(project.memberProjects);
                         return (
                           <MenuRadioItem
                             key={scopeKey}
@@ -2972,6 +3035,7 @@ export default function SidebarV2() {
                               environmentId={project.environmentId}
                               cwd={project.workspaceRoot}
                               className="size-4 shrink-0"
+                              accentColor={projectColor}
                             />
                             <span className="min-w-0 truncate text-sm">{project.displayName}</span>
                             <button
@@ -3047,6 +3111,10 @@ export default function SidebarV2() {
                           projectDisplayNameByKey.get(
                             `${thread.environmentId}:${thread.projectId}`,
                           ) ?? null
+                        }
+                        projectColor={
+                          projectColorByKey.get(`${thread.environmentId}:${thread.projectId}`) ??
+                          null
                         }
                         environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
                         providerEntryByInstanceId={providerEntryByInstanceId}
@@ -3144,6 +3212,10 @@ export default function SidebarV2() {
                           projectDisplayNameByKey.get(
                             `${thread.environmentId}:${thread.projectId}`,
                           ) ?? null
+                        }
+                        projectColor={
+                          projectColorByKey.get(`${thread.environmentId}:${thread.projectId}`) ??
+                          null
                         }
                         providerEntryByInstanceId={providerEntryByInstanceId}
                         timestampFormat={timestampFormat}
@@ -3416,6 +3488,58 @@ export default function SidebarV2() {
                         </SelectPopup>
                       </Select>
                     </label>
+                  </div>
+                  <div className="grid min-w-0 gap-1.5">
+                    <span className="font-medium text-foreground">Project color</span>
+                    {(() => {
+                      const liveMember =
+                        liveMemberProjectsByPhysicalKey.get(member.physicalProjectKey) ?? member;
+                      const selectedColor = resolveProjectColorCss(liveMember.color)
+                        ? (liveMember.color ?? null)
+                        : null;
+                      return (
+                        <div
+                          role="radiogroup"
+                          aria-label={`Project color in ${member.environmentLabel ?? "current environment"}`}
+                          className="flex flex-wrap items-center gap-2"
+                        >
+                          <button
+                            type="button"
+                            role="radio"
+                            aria-checked={selectedColor === null}
+                            aria-label="No color"
+                            title="No color"
+                            className={cn(
+                              "relative size-6 cursor-pointer rounded-full border border-border/80 bg-transparent transition-shadow before:absolute before:left-1/2 before:top-1/2 before:h-px before:w-3.5 before:-translate-x-1/2 before:-translate-y-1/2 before:rotate-45 before:bg-muted-foreground/60 hover:ring-2 hover:ring-ring/40",
+                              selectedColor === null &&
+                                "ring-2 ring-ring ring-offset-2 ring-offset-background",
+                            )}
+                            onClick={() => {
+                              void updateProjectMemberColor(liveMember, null);
+                            }}
+                          />
+                          {PROJECT_COLOR_OPTIONS.map((option) => (
+                            <button
+                              key={option.value}
+                              type="button"
+                              role="radio"
+                              aria-checked={selectedColor === option.value}
+                              aria-label={option.label}
+                              title={option.label}
+                              className={cn(
+                                "size-6 cursor-pointer rounded-full transition-shadow hover:ring-2 hover:ring-ring/40",
+                                selectedColor === option.value &&
+                                  "ring-2 ring-ring ring-offset-2 ring-offset-background",
+                              )}
+                              style={{ backgroundColor: option.cssColor }}
+                              onClick={() => {
+                                void updateProjectMemberColor(liveMember, option.value);
+                              }}
+                            />
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                   {projectActionsTarget.memberProjects.length > 1 ? (
                     <div className="flex justify-end">
