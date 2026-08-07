@@ -22,7 +22,6 @@ import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
@@ -313,11 +312,14 @@ const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEdit
 // to every later connect for the whole TTL, breaking `server.getConfig`
 // permanently. Storing only on success means an interrupted scan leaves the
 // cache untouched and the next connect simply rescans.
-const EDITOR_DISCOVERY_CACHE_TTL = Duration.seconds(60);
+// Expiry uses the monotonic clock (Clock.currentTimeNanos), matching the
+// command-resolution cache in @t3tools/shared/shell, so a backward wall-clock
+// adjustment cannot keep an expired entry alive.
+const EDITOR_DISCOVERY_CACHE_TTL_NANOS = 60_000_000_000n;
 
 interface EditorDiscoveryCacheEntry {
   readonly editors: ReadonlyArray<EditorId>;
-  readonly expiresAtMillis: number;
+  readonly expiresAtNanos: bigint;
 }
 
 /**
@@ -469,9 +471,9 @@ export const make = Effect.gen(function* () {
     Option.none(),
   );
   const cachedAvailableEditors = Effect.gen(function* () {
-    const nowMillis = yield* Clock.currentTimeMillis;
+    const nowNanos = yield* Clock.currentTimeNanos;
     const entry = yield* Ref.get(editorDiscoveryCache);
-    if (Option.isSome(entry) && entry.value.expiresAtMillis > nowMillis) {
+    if (Option.isSome(entry) && entry.value.expiresAtNanos > nowNanos) {
       return entry.value.editors;
     }
     const editors = yield* provideCommandResolutionServices(resolveAvailableEditors());
@@ -479,7 +481,7 @@ export const make = Effect.gen(function* () {
       editorDiscoveryCache,
       Option.some({
         editors,
-        expiresAtMillis: nowMillis + Duration.toMillis(EDITOR_DISCOVERY_CACHE_TTL),
+        expiresAtNanos: nowNanos + EDITOR_DISCOVERY_CACHE_TTL_NANOS,
       }),
     );
     return editors;
