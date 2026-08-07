@@ -43,6 +43,7 @@ import {
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { SentryAgentMonitoring } from "../../observability/SentryAgentMonitoring.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
@@ -875,6 +876,7 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const serverSettingsService = yield* ServerSettingsService;
+  const sentryAgentMonitoring = yield* SentryAgentMonitoring;
   const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
     crypto.randomUUIDv4.pipe(
       Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
@@ -1418,11 +1420,16 @@ const make = Effect.gen(function* () {
     } as const;
   });
 
+  const getProviderSessionForThread = Effect.fn("getProviderSessionForThread")(function* (
+    threadId: ThreadId,
+  ) {
+    const sessions = yield* providerService.listSessions();
+    return sessions.find((entry) => entry.threadId === threadId);
+  });
+
   const getExpectedProviderTurnIdForThread = Effect.fn("getExpectedProviderTurnIdForThread")(
     function* (threadId: ThreadId) {
-      const sessions = yield* providerService.listSessions();
-      const session = sessions.find((entry) => entry.threadId === threadId);
-      return session?.activeTurnId;
+      return (yield* getProviderSessionForThread(threadId))?.activeTurnId;
     },
   );
 
@@ -1882,6 +1889,72 @@ const make = Effect.gen(function* () {
             },
             createdAt: now,
           });
+        }
+      }
+
+      const monitoringTurnId = eventTurnId ?? activeTurnId ?? undefined;
+      if (monitoringTurnId !== undefined) {
+        if (event.type === "turn.started" && shouldApplyThreadLifecycle) {
+          const providerSession = yield* getProviderSessionForThread(thread.id);
+          yield* sentryAgentMonitoring.record({
+            type: "turn.started",
+            provider: event.provider,
+            threadId: thread.id,
+            turnId: monitoringTurnId,
+            createdAt: now,
+            ...((event.payload.model ?? providerSession?.model)
+              ? { model: event.payload.model ?? providerSession?.model }
+              : {}),
+          });
+        } else if (event.type === "thread.token-usage.updated") {
+          yield* sentryAgentMonitoring.record({
+            type: "turn.usage",
+            threadId: thread.id,
+            turnId: monitoringTurnId,
+            usage: event.payload.usage,
+          });
+        } else if (
+          event.type === "item.started" &&
+          isToolLifecycleItemType(event.payload.itemType)
+        ) {
+          yield* sentryAgentMonitoring.record({
+            type: "turn.tool-used",
+            threadId: thread.id,
+            turnId: monitoringTurnId,
+            toolUseId: event.itemId ?? event.eventId,
+          });
+        } else if (event.type === "turn.completed" && shouldApplyThreadLifecycle) {
+          const providerSession = yield* getProviderSessionForThread(thread.id);
+          yield* sentryAgentMonitoring.record({
+            type: "turn.completed",
+            provider: event.provider,
+            threadId: thread.id,
+            turnId: monitoringTurnId,
+            createdAt: now,
+            state: normalizeRuntimeTurnState(event.payload.state),
+            ...(providerSession?.model ? { model: providerSession.model } : {}),
+            ...(event.payload.totalCostUsd !== undefined
+              ? { totalCostUsd: event.payload.totalCostUsd }
+              : {}),
+          });
+        } else if (event.type === "runtime.error") {
+          const shouldApplyRuntimeError =
+            !STRICT_PROVIDER_LIFECYCLE_GUARD ||
+            activeTurnId === null ||
+            eventTurnId === undefined ||
+            sameId(activeTurnId, eventTurnId);
+          if (shouldApplyRuntimeError) {
+            const providerSession = yield* getProviderSessionForThread(thread.id);
+            yield* sentryAgentMonitoring.record({
+              type: "turn.error",
+              provider: event.provider,
+              threadId: thread.id,
+              turnId: monitoringTurnId,
+              createdAt: now,
+              errorClass: event.payload.class ?? "unknown",
+              ...(providerSession?.model ? { model: providerSession.model } : {}),
+            });
+          }
         }
       }
 

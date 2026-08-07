@@ -549,6 +549,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.deepEqual(next.observability, {
         otlpTracesUrl: "http://localhost:4318/v1/traces",
         otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+        sentryAgentMonitoring: {
+          enabled: false,
+          dsn: "",
+          dsnRedacted: false,
+        },
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
@@ -689,6 +694,49 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         roundTripped.providerInstances[instanceId]?.environment?.[0]?.value,
         "sk-or-secret",
       );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("stores the Sentry DSN outside settings.json and never returns it to clients", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const dsn = "https://public-secret-key@o123.ingest.sentry.io/456";
+
+      const next = yield* serverSettings.updateSettings({
+        observability: {
+          sentryAgentMonitoring: {
+            enabled: true,
+            dsn,
+            dsnRedacted: false,
+          },
+        },
+      });
+
+      assert.equal(next.observability.sentryAgentMonitoring.dsn, dsn);
+      assert.isTrue(next.observability.sentryAgentMonitoring.dsnRedacted);
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(raw, dsn);
+      assert.notInclude(raw, "public-secret-key");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      assert.deepEqual(JSON.parse(raw).observability.sentryAgentMonitoring, {
+        enabled: true,
+        dsnRedacted: true,
+      });
+
+      const clientSettings = ServerSettingsModule.redactServerSettingsForClient(next);
+      assert.equal(clientSettings.observability.sentryAgentMonitoring.dsn, "");
+      assert.isTrue(clientSettings.observability.sentryAgentMonitoring.dsnRedacted);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      assert.notInclude(JSON.stringify(clientSettings), "public-secret-key");
+
+      const roundTripped = yield* serverSettings.updateSettings({
+        observability: { sentryAgentMonitoring: { enabled: false } },
+      });
+      assert.equal(roundTripped.observability.sentryAgentMonitoring.dsn, dsn);
+      assert.isFalse(roundTripped.observability.sentryAgentMonitoring.enabled);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 });

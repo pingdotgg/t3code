@@ -47,6 +47,7 @@ import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQu
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
+import * as SentryAgentMonitoring from "../../observability/SentryAgentMonitoring.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -236,6 +237,13 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provide(RepositoryIdentityResolver.layer),
       Layer.provide(SqlitePersistenceMemory),
     );
+    const monitoringEvents: SentryAgentMonitoring.SentryAgentMonitoringEvent[] = [];
+    const sentryAgentMonitoringLayer = Layer.succeed(SentryAgentMonitoring.SentryAgentMonitoring, {
+      record: (event) =>
+        Effect.sync(() => {
+          monitoringEvents.push(event);
+        }),
+    });
     const layer = ProviderRuntimeIngestionLive.pipe(
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
@@ -246,6 +254,7 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
+      Layer.provide(sentryAgentMonitoringLayer),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -321,9 +330,110 @@ describe("ProviderRuntimeIngestion", () => {
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       emit: provider.emit,
       setProviderSession: provider.setSession,
+      monitoringEvents,
       drain,
     };
   }
+
+  it("feeds only normalized turn metadata into agent monitoring", async () => {
+    const harness = await createHarness();
+    const monitoredTurnId = asTurnId("turn-monitored");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-monitored-started"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId: monitoredTurnId,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      payload: { model: "gpt-5.6" },
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" && thread.session.activeTurnId === monitoredTurnId,
+    );
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-monitored-usage"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId: monitoredTurnId,
+      createdAt: "2026-01-01T00:00:01.000Z",
+      payload: {
+        usage: {
+          usedTokens: 17,
+          inputTokens: 10,
+          cachedInputTokens: 4,
+          outputTokens: 7,
+          reasoningOutputTokens: 2,
+        },
+      },
+    });
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-monitored-tool"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId: monitoredTurnId,
+      itemId: asItemId("tool-monitored"),
+      createdAt: "2026-01-01T00:00:01.500Z",
+      payload: { itemType: "command_execution" },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-monitored-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId: monitoredTurnId,
+      createdAt: "2026-01-01T00:00:02.000Z",
+      payload: { state: "completed", totalCostUsd: 0.02 },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "ready" && thread.session.activeTurnId === null,
+    );
+    await harness.drain();
+
+    expect(harness.monitoringEvents).toEqual([
+      {
+        type: "turn.started",
+        provider: "codex",
+        threadId: "thread-1",
+        turnId: "turn-monitored",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        model: "gpt-5.6",
+      },
+      {
+        type: "turn.usage",
+        threadId: "thread-1",
+        turnId: "turn-monitored",
+        usage: {
+          usedTokens: 17,
+          inputTokens: 10,
+          cachedInputTokens: 4,
+          outputTokens: 7,
+          reasoningOutputTokens: 2,
+        },
+      },
+      {
+        type: "turn.tool-used",
+        threadId: "thread-1",
+        turnId: "turn-monitored",
+        toolUseId: "tool-monitored",
+      },
+      {
+        type: "turn.completed",
+        provider: "codex",
+        threadId: "thread-1",
+        turnId: "turn-monitored",
+        createdAt: "2026-01-01T00:00:02.000Z",
+        state: "completed",
+        totalCostUsd: 0.02,
+      },
+    ]);
+  });
 
   it("maps turn started/completed events into thread session updates", async () => {
     const harness = await createHarness();
@@ -2623,6 +2733,7 @@ describe("ProviderRuntimeIngestion", () => {
       turnId: asTurnId("turn-3"),
       payload: {
         message: "runtime exploded",
+        class: "transport_error",
       },
     });
 
@@ -2635,6 +2746,17 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime exploded");
+    await harness.drain();
+    expect(harness.monitoringEvents).toEqual([
+      {
+        type: "turn.error",
+        provider: "codex",
+        threadId: "thread-1",
+        turnId: "turn-3",
+        createdAt: now,
+        errorClass: "transport_error",
+      },
+    ]);
   });
 
   it("records runtime.error activities from the typed payload message", async () => {

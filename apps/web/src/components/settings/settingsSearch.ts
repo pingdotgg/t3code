@@ -177,6 +177,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/connections",
   },
   {
+    id: "sentry-agent-monitoring",
+    title: "Sentry agent monitoring",
+    to: "/settings/beta",
+  },
+  {
     id: "sidebar-v2",
     title: "Sidebar v2",
     to: "/settings/beta",

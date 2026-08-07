@@ -187,6 +187,16 @@ describe("ServerSettings worktree defaults", () => {
   });
 });
 
+describe("ServerSettings Sentry agent monitoring", () => {
+  it("defaults the beta off without a configured credential", () => {
+    expect(decodeServerSettings({}).observability.sentryAgentMonitoring).toEqual({
+      enabled: false,
+      dsn: "",
+      dsnRedacted: false,
+    });
+  });
+});
+
 describe("ServerSettings.sourceControlWritingStyle", () => {
   it("defaults all style settings for legacy configs", () => {
     const settings = decodeServerSettings({});

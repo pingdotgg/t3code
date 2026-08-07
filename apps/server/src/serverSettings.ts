@@ -60,6 +60,7 @@ const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+const SENTRY_AGENT_MONITORING_DSN_SECRET = "sentry-agent-monitoring-dsn";
 
 const normalizeServerSettings = (
   settings: ServerSettings,
@@ -109,7 +110,19 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
         : instance,
     ]),
   );
-  return { ...settings, providerInstances };
+  const sentryAgentMonitoring = settings.observability.sentryAgentMonitoring;
+  return {
+    ...settings,
+    providerInstances,
+    observability: {
+      ...settings.observability,
+      sentryAgentMonitoring: {
+        ...sentryAgentMonitoring,
+        dsn: "",
+        dsnRedacted: sentryAgentMonitoring.dsn.length > 0 || sentryAgentMonitoring.dsnRedacted,
+      },
+    },
+  };
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -358,12 +371,48 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const materializeSentryAgentMonitoringSecret = (
+    settings: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> => {
+    const monitoring = settings.observability.sentryAgentMonitoring;
+    if (!monitoring.dsnRedacted) {
+      return Effect.succeed(settings);
+    }
+
+    return secretStore.get(SENTRY_AGENT_MONITORING_DSN_SECRET).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ServerSettingsError({
+            settingsPath,
+            operation: "read-secret",
+            cause,
+          }),
+      ),
+      Effect.map((secret) => ({
+        ...settings,
+        observability: {
+          ...settings.observability,
+          sentryAgentMonitoring: {
+            ...monitoring,
+            dsn: Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
+            dsnRedacted: Option.isSome(secret),
+          },
+        },
+      })),
+    );
+  };
+
+  const materializeSecrets = (settings: ServerSettings) =>
+    materializeProviderEnvironmentSecrets(settings).pipe(
+      Effect.flatMap(materializeSentryAgentMonitoringSecret),
+    );
+
   const materializeChanges = (changes: Stream.Stream<ServerSettings>) =>
     changes.pipe(
       Stream.mapEffect((settings) =>
-        materializeProviderEnvironmentSecrets(settings).pipe(
+        materializeSecrets(settings).pipe(
           Effect.catch((error: ServerSettingsError) =>
-            Effect.logWarning("failed to materialize provider environment secrets", {
+            Effect.logWarning("failed to materialize server settings secrets", {
               operation: error.operation,
               providerInstanceId: error.providerInstanceId,
               environmentVariable: error.environmentVariable,
@@ -476,6 +525,53 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const persistSentryAgentMonitoringSecret = (
+    next: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      const monitoring = next.observability.sentryAgentMonitoring;
+      let dsnRedacted = monitoring.dsnRedacted;
+
+      if (monitoring.dsn.length > 0) {
+        yield* secretStore
+          .set(SENTRY_AGENT_MONITORING_DSN_SECRET, textEncoder.encode(monitoring.dsn))
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  operation: "write-secret",
+                  cause,
+                }),
+            ),
+          );
+        dsnRedacted = true;
+      } else if (!monitoring.dsnRedacted) {
+        yield* secretStore.remove(SENTRY_AGENT_MONITORING_DSN_SECRET).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServerSettingsError({
+                settingsPath,
+                operation: "remove-secret",
+                cause,
+              }),
+          ),
+        );
+      }
+
+      return {
+        ...next,
+        observability: {
+          ...next.observability,
+          sentryAgentMonitoring: {
+            ...monitoring,
+            dsn: "",
+            dsnRedacted,
+          },
+        },
+      };
+    });
+
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
       const sparseSettingsJson = yield* encodeServerSettingsJson(
@@ -572,22 +668,24 @@ const make = Effect.gen(function* () {
     start,
     ready: Deferred.await(startedDeferred),
     getSettings: getSettingsFromCache.pipe(
-      Effect.flatMap(materializeProviderEnvironmentSecrets),
+      Effect.flatMap(materializeSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
     updateSettings: (patch) =>
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* getSettingsFromCache;
-          const nextPersisted = yield* persistProviderEnvironmentSecrets(
-            current,
-            applyServerSettingsPatch(current, patch),
+          const nextPersisted = yield* persistSentryAgentMonitoringSecret(
+            yield* persistProviderEnvironmentSecrets(
+              current,
+              applyServerSettingsPatch(current, patch),
+            ),
           );
           const next = yield* normalizeServerSettings(nextPersisted);
           yield* writeSettingsAtomically(next);
           yield* Cache.set(settingsCache, cacheKey, next);
           yield* emitChange(next);
-          const materialized = yield* materializeProviderEnvironmentSecrets(next);
+          const materialized = yield* materializeSecrets(next);
           return resolveTextGenerationProvider(materialized);
         }),
       ),
