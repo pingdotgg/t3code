@@ -24,12 +24,12 @@ allowBuilds:
 
 catalog:
   "@clerk/backend": 3.14.0
-  "@clerk/clerk-js": 6.25.12
+  "@clerk/clerk-js": 6.25.13
   "@clerk/electron": 0.0.24
   "@clerk/electron-passkeys": 0.0.3
-  "@clerk/expo": 4.1.2
-  "@clerk/react": 6.12.9
-  "@clerk/shared": 4.25.9
+  "@clerk/expo": 4.2.0
+  "@clerk/react": 6.12.10
+  "@clerk/shared": 4.25.10
   "@effect/atom-react": 4.0.0-beta.103
   "@effect/openapi-generator": 4.0.0-beta.103
   "@effect/platform-bun": 4.0.0-beta.103
@@ -53,11 +53,11 @@ catalog:
 
 minimumReleaseAgeExclude:
   - "@clerk/backend@3.14.0"
-  - "@clerk/clerk-js@6.25.12"
+  - "@clerk/clerk-js@6.25.13"
   - "@clerk/electron@0.0.24"
-  - "@clerk/expo@4.1.2"
-  - "@clerk/react@6.12.9"
-  - "@clerk/shared@4.25.9"
+  - "@clerk/expo@4.2.0"
+  - "@clerk/react@6.12.10"
+  - "@clerk/shared@4.25.10"
   - "@distilled.cloud/aws@0.30.2"
   - "@distilled.cloud/axiom@0.30.2"
   - "@distilled.cloud/cloudflare@0.30.2"
