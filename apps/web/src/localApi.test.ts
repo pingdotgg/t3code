@@ -100,13 +100,11 @@ describe("LocalApi", () => {
 
   it("delegates host capabilities and persistence to the desktop bridge", async () => {
     const showContextMenu = vi.fn().mockResolvedValue("delete");
-    const confirm = vi.fn().mockResolvedValue(true);
     const pickFolder = vi.fn().mockResolvedValue("/tmp/project");
     const getClientSettings = vi.fn().mockResolvedValue(DEFAULT_CLIENT_SETTINGS);
     const setClientSettings = vi.fn().mockResolvedValue(undefined);
     testWindow().desktopBridge = {
       showContextMenu,
-      confirm,
       pickFolder,
       getClientSettings,
       setClientSettings,
@@ -118,13 +116,12 @@ describe("LocalApi", () => {
 
     await expect(api.contextMenu.show(items)).resolves.toBe("delete");
     requestConfirmDialogMock.mockReturnValue(undefined);
-    await expect(api.dialogs.confirm("Install update?")).resolves.toBe(true);
+    await expect(api.dialogs.confirm("Install update?")).resolves.toBe(false);
     await expect(api.dialogs.pickFolder({ initialPath: "/tmp" })).resolves.toBe("/tmp/project");
     await expect(api.persistence.getClientSettings()).resolves.toEqual(DEFAULT_CLIENT_SETTINGS);
     await api.persistence.setClientSettings(DEFAULT_CLIENT_SETTINGS);
 
     expect(showContextMenu).toHaveBeenCalledWith(items, undefined);
-    expect(confirm).toHaveBeenCalledWith("Install update?");
     expect(pickFolder).toHaveBeenCalledWith({ initialPath: "/tmp" });
     expect(getClientSettings).toHaveBeenCalledTimes(1);
     expect(setClientSettings).toHaveBeenCalledWith(DEFAULT_CLIENT_SETTINGS);

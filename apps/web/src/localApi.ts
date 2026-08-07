@@ -16,9 +16,7 @@ function createBrowserLocalApi(): LocalApi {
       },
       confirm: async (message) => {
         const themedConfirmation = requestConfirmDialog(message);
-        if (themedConfirmation !== undefined) return themedConfirmation;
-        if (window.desktopBridge) return window.desktopBridge.confirm(message);
-        return false;
+        return themedConfirmation ?? false;
       },
     },
     shell: {
