@@ -61,7 +61,8 @@ export function mergeFontFamilyCatalog(
 
 /**
  * Ensure a committed custom family stays visible in the picker catalog even
- * when Local Font Access did not enumerate it.
+ * when Local Font Access did not enumerate it. A case-insensitive match keeps
+ * the catalog spelling (e.g. stored `arial` against enumerated `Arial`).
  */
 export function ensureSelectedFontFamilyInCatalog(
   catalog: readonly string[],
@@ -73,6 +74,19 @@ export function ensureSelectedFontFamilyInCatalog(
     return [...catalog];
   }
   return mergeFontFamilyCatalog(catalog, [trimmed]);
+}
+
+/**
+ * Map a committed family onto the catalog spelling when they differ only by
+ * case, so the combobox value and checkmark line up with the listed row.
+ */
+export function resolveFontFamilyPickerSelection(
+  catalog: readonly string[],
+  selectedFamily: string,
+): string {
+  const trimmed = selectedFamily.trim();
+  if (trimmed.length === 0) return "";
+  return catalog.find((family) => family.toLowerCase() === trimmed.toLowerCase()) ?? trimmed;
 }
 
 /**

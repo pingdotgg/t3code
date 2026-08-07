@@ -1400,18 +1400,13 @@ function FontFamilySettingsRow({
       />
     ) : null;
   const fontEnumeration = useFontEnumeration();
-  // Everyone starts on the plain input; focusing it is the user gesture that
-  // runs font discovery. Where the engine can enumerate, the control then
-  // upgrades to the picker - popped open when the swap happens under focus,
-  // so the interaction continues without a second click. When discovery is
-  // denied or unsupported, sans rows still open the picker over the curated
-  // (bundled) catalog — the picker's search field also accepts typed custom
-  // family names. Monospace rows keep the free-text input until a bundled
-  // mono ships.
+  // Sans rows always use the picker so the curated (bundled) catalog is
+  // visible without a Local Font Access gesture — including while discovery
+  // is still "unknown". Opening the picker is the gesture that loads the
+  // installed list when the permission is "prompt". Monospace rows keep the
+  // free-text input until discovery is granted (no bundled mono yet).
   const inputFocusedRef = useRef(false);
-  const showFontPicker =
-    fontEnumeration.status === "granted" ||
-    (fontEnumeration.status === "unavailable" && !requireMonospace);
+  const showFontPicker = !requireMonospace || fontEnumeration.status === "granted";
   const familyControl = showFontPicker ? (
     <FontFamilyPicker
       ariaLabel={`${title} family`}

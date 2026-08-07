@@ -2,13 +2,14 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { CheckIcon, ChevronDownIcon, SearchIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
-  curatedFontFamilies,
   buildFontFamilyPickerItems,
+  curatedFontFamilies,
   ensureSelectedFontFamilyInCatalog,
   isFontFamilyAvailable,
   isMonospaceFamily,
   mergeFontFamilyCatalog,
   queryInstalledFontFamilies,
+  resolveFontFamilyPickerSelection,
 } from "../../appearanceFonts";
 import {
   Combobox,
@@ -70,41 +71,47 @@ export function discoverInstalledFonts(): void {
   });
 }
 
-let grantedProbeStarted = false;
+let permissionProbeStarted = false;
 
 /**
- * Discover eagerly when the permission is already granted, so the picker
- * renders without waiting for a focus. Electron's default permission handler
- * approves silently (it has no prompt UI), and a browser that granted once
- * reports "granted" on later visits — in both, no user gesture is needed.
- * "prompt" and "denied" states change nothing: the focus-driven flow stays,
- * because raising the browser prompt still requires a gesture.
+ * Resolve Local Font Access without a gesture when the answer is already
+ * known: "granted" loads the catalog, "denied" marks enumeration unavailable
+ * so sans rows can stay on the curated picker. "prompt" is left alone — the
+ * browser still needs a gesture to raise the permission dialog.
  */
-function probeAlreadyGrantedPermission(): void {
-  if (grantedProbeStarted || enumerationState.status !== "unknown") return;
-  grantedProbeStarted = true;
+function probeKnownFontPermission(): void {
+  if (permissionProbeStarted || enumerationState.status !== "unknown") return;
+  permissionProbeStarted = true;
   const permissions = typeof navigator !== "undefined" ? navigator.permissions : undefined;
   if (typeof permissions?.query !== "function") return;
   permissions.query({ name: "local-fonts" as PermissionName }).then(
     (status) => {
-      if (status.state === "granted") discoverInstalledFonts();
+      if (status.state === "granted") {
+        discoverInstalledFonts();
+        return;
+      }
+      if (status.state === "denied") {
+        enumerationState = { status: "unavailable" };
+        for (const listener of enumerationListeners) listener();
+      }
     },
     () => {
       // The engine does not recognize the permission name; keep the
-      // focus-driven flow.
+      // focus/open-driven discovery flow.
     },
   );
 }
 
 /**
  * Whether the engine can list installed fonts (Local Font Access API —
- * Chromium and Electron). "unknown" until discovery resolves the permission;
- * rows render a plain family-name input until the state is known granted,
- * then upgrade to the picker. Where the permission is already granted,
- * discovery starts at mount and the picker appears without a focus.
+ * Chromium and Electron). "unknown" until discovery resolves the permission.
+ * Sans rows show the curated picker immediately (including while unknown);
+ * monospace rows keep a plain input until discovery is granted. Where the
+ * permission is already granted or denied, the probe at mount resolves
+ * without a focus.
  */
 export function useFontEnumeration(): FontEnumerationState {
-  useEffect(probeAlreadyGrantedPermission, []);
+  useEffect(probeKnownFontPermission, []);
   return useSyncExternalStore(subscribeToEnumeration, readEnumerationState);
 }
 
@@ -152,7 +159,12 @@ export function FontFamilyPicker({
 
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
-    if (nextOpen) setQuery("");
+    if (nextOpen) {
+      setQuery("");
+      // Opening the picker is a user gesture — safe to raise the local-fonts
+      // prompt when permission is still "prompt"/unknown.
+      discoverInstalledFonts();
+    }
   };
 
   const families = useMemo(() => {
@@ -188,7 +200,13 @@ export function FontFamilyPicker({
     [query, families, requireMonospace],
   );
 
-  const selectedValue = selectedFamily.length === 0 ? DEFAULT_FONT_VALUE : selectedFamily;
+  // Prefer the catalog spelling when the stored preference only differs by
+  // case (`arial` vs enumerated `Arial`) so the controlled value and checkmark
+  // match a listed row.
+  const selectedValue =
+    selectedFamily.length === 0
+      ? DEFAULT_FONT_VALUE
+      : resolveFontFamilyPickerSelection(families, selectedFamily);
 
   const handlePick = (value: string) => {
     setOpen(false);

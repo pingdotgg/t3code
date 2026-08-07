@@ -16,6 +16,7 @@ import {
   isBundledSansFontFamily,
   mergeFontFamilyCatalog,
   resolveDefaultFamilyLabel,
+  resolveFontFamilyPickerSelection,
   resolveTerminalFontPreference,
 } from "./appearanceFonts";
 
@@ -71,6 +72,13 @@ describe("bundled font catalog", () => {
       ),
     ).toEqual(["Atkinson Hyperlegible Next"]);
     expect(ensureSelectedFontFamilyInCatalog(["Inter"], "")).toEqual(["Inter"]);
+  });
+
+  it("resolves a case-only mismatch to the catalog spelling for picker selection", () => {
+    expect(resolveFontFamilyPickerSelection(["Arial", "Inter"], "arial")).toBe("Arial");
+    expect(resolveFontFamilyPickerSelection(["Arial", "Inter"], "Inter")).toBe("Inter");
+    expect(resolveFontFamilyPickerSelection(["Arial"], "Helvetica")).toBe("Helvetica");
+    expect(resolveFontFamilyPickerSelection(["Arial"], "")).toBe("");
   });
 });
 
