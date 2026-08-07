@@ -1,8 +1,10 @@
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -26,7 +28,11 @@ import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/co
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import {
+  codexAppServerArgs,
+  readCodexConfigToml,
+  resolveCodexLaunchArgs,
+} from "./codexLaunchArgs.ts";
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
@@ -322,7 +328,7 @@ export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
 const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {
   readonly binaryPath: string;
   readonly homePath?: string;
-  readonly launchArgs?: string;
+  readonly launchArgs?: ReadonlyArray<string>;
   readonly cwd: string;
   readonly customModels?: ReadonlyArray<string>;
   readonly environment?: NodeJS.ProcessEnv;
@@ -505,7 +511,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   probe: (input: {
     readonly binaryPath: string;
     readonly homePath?: string;
-    readonly launchArgs?: string;
+    readonly launchArgs?: ReadonlyArray<string>;
     readonly cwd: string;
     readonly customModels: ReadonlyArray<string>;
     readonly environment?: NodeJS.ProcessEnv;
@@ -518,7 +524,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
 ): Effect.fn.Return<
   ServerProviderDraft,
   ServerSettingsError,
-  ChildProcessSpawner.ChildProcessSpawner
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
@@ -541,13 +547,22 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     });
   }
 
+  const codexEnvironment = {
+    ...resolvedEnvironment,
+    ...(codexSettings.homePath ? { CODEX_HOME: expandHomePath(codexSettings.homePath) } : {}),
+  };
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const configToml = yield* readCodexConfigToml(codexEnvironment, fileSystem, path);
   const probeResult = yield* probe({
     binaryPath: codexSettings.binaryPath,
     homePath: codexSettings.homePath,
-    launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
+    launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, codexEnvironment, {
+      configToml,
+    }),
     cwd: process.cwd(),
     customModels: codexSettings.customModels,
-    environment: resolvedEnvironment,
+    environment: codexEnvironment,
   }).pipe(
     Effect.scoped,
     Effect.timeoutOption(Duration.millis(AUTH_PROBE_TIMEOUT_MS)),

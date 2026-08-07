@@ -296,6 +296,11 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServePort: 443,
           otlpTracesUrl: "http://localhost:4318/v1/traces",
           otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+          cuaDriverMcp: {
+            command: "/opt/custom/cua-driver",
+            args: ["mcp", "--socket", "/tmp/t3-cua.sock"],
+            environment: [{ name: "CUA_DRIVER_EMBEDDED", value: "1" }],
+          },
         }),
       );
       const derivedPaths = yield* deriveServerPaths(baseDir, undefined);
@@ -350,6 +355,11 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         desktopTelemetryFd: 4,
         desktopTelemetryControlFd: 5,
         resourceMonitorPath: undefined,
+        cuaDriverMcp: {
+          command: "/opt/custom/cua-driver",
+          args: ["mcp", "--socket", "/tmp/t3-cua.sock"],
+          environment: [{ name: "CUA_DRIVER_EMBEDDED", value: "1" }],
+        },
         autoBootstrapProjectFromCwd: false,
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,

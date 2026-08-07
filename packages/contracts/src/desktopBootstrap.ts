@@ -2,6 +2,19 @@ import * as Schema from "effect/Schema";
 
 import { PortSchema, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
+export const CuaDriverMcpConfiguration = Schema.Struct({
+  command: TrimmedNonEmptyString,
+  args: Schema.Array(Schema.String),
+  environment: Schema.Array(
+    Schema.Struct({
+      name: TrimmedNonEmptyString,
+      value: Schema.String,
+    }),
+  ),
+});
+
+export type CuaDriverMcpConfiguration = typeof CuaDriverMcpConfiguration.Type;
+
 export const DesktopBackendBootstrap = Schema.Struct({
   mode: Schema.Literal("desktop"),
   noBrowser: Schema.Boolean,
@@ -19,6 +32,9 @@ export const DesktopBackendBootstrap = Schema.Struct({
   desktopTelemetryFd: Schema.optionalKey(PositiveInt),
   desktopTelemetryControlFd: Schema.optionalKey(PositiveInt),
   resourceMonitorPath: Schema.optionalKey(TrimmedNonEmptyString),
+  // Present only for the local backend hosted by Electron. The descriptor is
+  // returned by Electron's permission-owning embedded Cua Driver host.
+  cuaDriverMcp: Schema.optionalKey(CuaDriverMcpConfiguration),
 });
 
 export type DesktopBackendBootstrap = typeof DesktopBackendBootstrap.Type;

@@ -24,6 +24,7 @@ import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "./config.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
+import { installDesktopCuaDriver, startEmbeddedCuaDriver } from "./cua/CuaDriverEmbedded.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as EffectWorker from "./orchestration-v2/EffectWorker.ts";
@@ -409,6 +410,26 @@ export const make = (options?: StartupOptions) =>
     );
 
     const startup = Effect.gen(function* () {
+      const logCuaUnavailable = (context: Readonly<Record<string, unknown>>) =>
+        Effect.logWarning(
+          "embedded cua-driver failed to start; computer use is unavailable",
+          context,
+        );
+      yield* runStartupPhase(
+        "cua-driver.start",
+        (serverConfig.cuaDriverMcp === undefined
+          ? startEmbeddedCuaDriver()
+          : installDesktopCuaDriver(serverConfig.cuaDriverMcp)
+        ).pipe(
+          Effect.catchTags({
+            CuaDriverModuleLoadError: (error) =>
+              logCuaUnavailable({ modulePath: error.modulePath, cause: error.cause }),
+            CuaDriverStartError: (error) =>
+              logCuaUnavailable({ binaryPath: error.binaryPath, cause: error.cause }),
+          }),
+        ),
+      );
+
       yield* Effect.logDebug("startup phase: starting keybindings runtime");
       yield* runStartupPhase(
         "keybindings.start",

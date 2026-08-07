@@ -17,6 +17,24 @@ import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
+import * as DesktopCuaDriver from "../cua/DesktopCuaDriver.ts";
+
+const testCuaDriverMcp = {
+  command: "/opt/custom/cua-driver",
+  args: ["mcp", "--socket", "/tmp/t3-cua.sock"],
+  environment: [{ name: "CUA_DRIVER_EMBEDDED", value: "1" }],
+} as const;
+
+const cuaDriverLayer = (enabled: boolean) =>
+  Layer.succeed(
+    DesktopCuaDriver.DesktopCuaDriver,
+    DesktopCuaDriver.DesktopCuaDriver.of({
+      start: Effect.die("unexpected start"),
+      stop: Effect.void,
+      mcpConfiguration: Effect.succeed(enabled ? Option.some(testCuaDriverMcp) : Option.none()),
+      awaitUnavailable: Effect.never,
+    }),
+  );
 
 const PersistedServerObservabilitySettingsDocument = Schema.Struct({
   observability: Schema.Struct({
@@ -102,6 +120,7 @@ const withHarness = <A, E, R>(
     | FileSystem.FileSystem
     | DesktopBackendConfiguration.DesktopBackendConfiguration
   >,
+  options?: { readonly cuaEnabled?: boolean },
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -115,6 +134,7 @@ const withHarness = <A, E, R>(
           Layer.provideMerge(serverExposureLayer),
           Layer.provideMerge(DesktopAppSettings.layerTest()),
           Layer.provideMerge(DesktopWslEnvironment.layerTest()),
+          Layer.provideMerge(cuaDriverLayer(options?.cuaEnabled ?? false)),
           Layer.provideMerge(makeEnvironmentLayer(baseDir)),
         ),
       ),
@@ -139,6 +159,9 @@ describe("DesktopBackendConfiguration", () => {
         assert.isUndefined(first.env.T3CODE_PORT);
         assert.isUndefined(first.env.T3CODE_MODE);
         assert.isUndefined(first.env.T3CODE_DESKTOP_LAN_HOST);
+        assert.isUndefined(first.env.T3CODE_CUA_DRIVER_PATH);
+        assert.isUndefined(first.env.T3CODE_CUA_DRIVER_HOST_BUNDLE_ID);
+        assert.isUndefined(first.env.T3CODE_CUA_DRIVER_MODULE_URL);
 
         assert.equal(first.bootstrap.mode, "desktop");
         assert.equal(first.bootstrap.noBrowser, true);
@@ -163,6 +186,21 @@ describe("DesktopBackendConfiguration", () => {
 
         assert.equal(wsl.bootstrap.desktopBootstrapToken, primary.bootstrap.desktopBootstrapToken);
       }),
+    ),
+  );
+
+  it.effect("passes the Electron-hosted descriptor only to the local primary backend", () =>
+    withHarness(
+      Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+
+        const primary = yield* configuration.resolvePrimary;
+        const wsl = yield* configuration.resolveWsl({ port: 5000, distro: null });
+
+        assert.deepEqual(primary.bootstrap.cuaDriverMcp, testCuaDriverMcp);
+        assert.isUndefined(wsl.bootstrap.cuaDriverMcp);
+      }),
+      { cuaEnabled: true },
     ),
   );
 

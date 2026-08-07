@@ -16,6 +16,16 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 
+describe("ClientSettings Cua integration", () => {
+  it("defaults computer use off", () => {
+    expect(decodeClientSettings({}).enableCua).toBe(false);
+  });
+
+  it("accepts computer use updates", () => {
+    expect(decodeClientSettingsPatch({ enableCua: true }).enableCua).toBe(true);
+  });
+});
+
 describe("ClientSettings composer context strip", () => {
   it("defaults to draft-only and accepts a persistent strip preference", () => {
     expect(decodeClientSettings({}).persistComposerContextStrip).toBe(false);

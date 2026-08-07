@@ -18,7 +18,11 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
-import { codexExecLaunchArgs, resolveCodexLaunchArgs } from "../provider/Layers/codexLaunchArgs.ts";
+import {
+  codexExecLaunchArgs,
+  readCodexConfigToml,
+  resolveCodexLaunchArgs,
+} from "../provider/Layers/codexLaunchArgs.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
@@ -192,7 +196,14 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     );
 
     const runCodexCommand = Effect.fn("runCodexJson.runCodexCommand")(function* () {
-      const launchArgs = resolveCodexLaunchArgs(codexConfig.launchArgs, resolvedEnvironment);
+      const codexEnvironment = {
+        ...resolvedEnvironment,
+        ...(codexConfig.homePath ? { CODEX_HOME: expandHomePath(codexConfig.homePath) } : {}),
+      };
+      const configToml = yield* readCodexConfigToml(codexEnvironment, fileSystem, path);
+      const launchArgs = resolveCodexLaunchArgs(codexConfig.launchArgs, codexEnvironment, {
+        configToml,
+      });
       const reasoningEffort =
         getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
         DEFAULT_TEXT_GENERATION_REASONING_EFFORT;
@@ -218,13 +229,10 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           ...imagePaths.flatMap((imagePath) => ["--image", imagePath]),
           "-",
         ],
-        { env: resolvedEnvironment },
+        { env: codexEnvironment },
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        env: {
-          ...resolvedEnvironment,
-          ...(codexConfig.homePath ? { CODEX_HOME: expandHomePath(codexConfig.homePath) } : {}),
-        },
+        env: codexEnvironment,
         cwd,
         shell: spawnCommand.shell,
         stdin: {
