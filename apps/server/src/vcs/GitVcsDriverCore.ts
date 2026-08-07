@@ -397,21 +397,34 @@ function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string):
 }
 
 /**
- * Tail of git's stderr for `GitCommandError.stderrTail`.
+ * Record what a failing git command actually printed, at debug level.
  *
- * Truncated from the end, because git puts the reason on its last lines and a
- * long transfer log in front of it. Credential-bearing URLs are redacted:
- * git echoes back the remote it was handed, which may embed a token.
+ * `GitCommandError` keeps only bounded attributes — lengths, not text — and
+ * deliberately so: git echoes back its arguments and any hook output, so the
+ * text can carry credentials, and #3253 removed it from the error for exactly
+ * that reason. But dropping it everywhere leaves a failing git command
+ * undiagnosable from outside the process: neither the error, the RPC response,
+ * nor the server log says why git exited non-zero.
+ *
+ * Logging it at debug keeps the diagnostic reachable when someone goes looking,
+ * without putting unbounded, possibly secret-bearing output into a value that
+ * crosses RPC, UI, and persistence boundaries.
  */
-const GIT_STDERR_TAIL_LIMIT = 2000;
-
-function gitStderrTail(stderr: string): string | undefined {
-  const redacted = stderr.replace(/\/\/([^/@:\s]+):([^@\s]+)@/g, "//$1:***@").trim();
-  if (redacted.length === 0) return undefined;
-  return redacted.length > GIT_STDERR_TAIL_LIMIT
-    ? `…${redacted.slice(-GIT_STDERR_TAIL_LIMIT)}`
-    : redacted;
-}
+const logFailedGitCommandOutput = (
+  command: {
+    readonly operation: string;
+    readonly cwd: string;
+    readonly args: ReadonlyArray<string>;
+  },
+  exitCode: number | null,
+  stdout: string,
+  stderr: string,
+): Effect.Effect<void> =>
+  Effect.logDebug(
+    `GitVcsDriver.commandFailed: ${command.operation} in ${command.cwd} ` +
+      `exited ${exitCode ?? "null"} (${command.args.length} arguments)`,
+    { stdout, stderr },
+  );
 
 function isMissingGitCwdError(error: GitCommandError): boolean {
   if (!(error.cause instanceof PlatformError.PlatformError)) {
@@ -811,13 +824,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         yield* trace2Monitor.flush;
 
         if (!input.allowNonZeroExit && exitCode !== 0) {
+          yield* logFailedGitCommandOutput(commandInput, exitCode, stdout.text, stderr.text);
           return yield* new GitCommandError({
             ...gitCommandContext(commandInput),
             detail: "Git command exited with a non-zero status.",
             exitCode,
             stdoutLength: stdout.text.length,
             stderrLength: stderr.text.length,
-            stderrTail: gitStderrTail(stderr.text),
           });
         }
 
@@ -892,15 +905,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         if (options.allowNonZeroExit || result.exitCode === 0) {
           return Effect.succeed(result);
         }
-        return Effect.fail(
-          new GitCommandError({
-            ...gitCommandContext({ operation, cwd, args }),
-            detail: options.fallbackErrorDetail ?? "Git command exited with a non-zero status.",
-            ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
-            stdoutLength: result.stdout.length,
-            stderrLength: result.stderr.length,
-            stderrTail: gitStderrTail(result.stderr),
-          }),
+        return logFailedGitCommandOutput(
+          { operation, cwd, args },
+          result.exitCode,
+          result.stdout,
+          result.stderr,
+        ).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new GitCommandError({
+                ...gitCommandContext({ operation, cwd, args }),
+                detail: options.fallbackErrorDetail ?? "Git command exited with a non-zero status.",
+                ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+                stdoutLength: result.stdout.length,
+                stderrLength: result.stderr.length,
+              }),
+            ),
+          ),
         );
       }),
     );
