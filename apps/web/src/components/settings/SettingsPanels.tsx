@@ -1,30 +1,16 @@
-import {
-  ArchiveIcon,
-  ArchiveX,
-  InfoIcon,
-  LoaderIcon,
-  PlusIcon,
-  RefreshCwIcon,
-  SettingsIcon,
-} from "lucide-react";
+import { ArchiveIcon, ArchiveX, LoaderIcon, SettingsIcon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
-  defaultInstanceIdForDriver,
   type BackgroundActivityProfile,
-  type BackgroundActivitySettings,
   type DesktopUpdateChannel,
-  PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
-  type ProviderInstanceConfig,
-  type ProviderInstanceId,
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -45,16 +31,10 @@ import {
   MIN_PROMPT_FONT_SIZE,
   MIN_TERMINAL_FONT_SIZE,
 } from "@t3tools/contracts/settings";
-import {
-  getBackgroundActivityBaseProfile,
-  getBackgroundActivityPresetSettings,
-  resolveServerBackgroundActivitySettings,
-} from "@t3tools/shared/backgroundActivitySettings";
+import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { createModelSelection } from "@t3tools/shared/model";
-import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
 import {
@@ -72,7 +52,13 @@ import {
 } from "../SidebarStageBackdrop";
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
-import { useTheme } from "../../hooks/useTheme";
+import { useCustomThemes } from "../../hooks/useCustomThemes";
+import {
+  readAppearanceModePreference,
+  readThemeHalves,
+  readThemePreference,
+  useTheme,
+} from "../../hooks/useTheme";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
@@ -88,15 +74,10 @@ import {
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { isMacPlatform } from "../../lib/utils";
-import {
-  primaryServerObservabilityAtom,
-  primaryServerProvidersAtom,
-  serverEnvironment,
-} from "../../state/server";
-import { usePrimaryEnvironment } from "../../state/environments";
+import { primaryServerObservabilityAtom, primaryServerProvidersAtom } from "../../state/server";
 import { useProjects } from "../../state/entities";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
-import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
+import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -131,20 +112,14 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
+import { ThemeLibrary } from "./ThemeSettings";
 import {
-  canOneClickUpdateProviderCandidate,
-  collectProviderUpdateCandidates,
-  hasOneClickUpdateProviderCandidate,
-  isProviderUpdateActive,
-  type ProviderUpdateCandidate,
-} from "../ProviderUpdateLaunchNotification.logic";
-import { ProviderInstanceCard } from "./ProviderInstanceCard";
-import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
-import {
+  backgroundActivityOverrideSettings,
   backgroundActivitySharedPolicySettings,
-  buildProviderInstanceUpdatePatch,
+  durationToSeconds,
   formatDiagnosticsDescription,
+  normalizeIntervalSeconds,
+  PROVIDER_HEALTH_INTERVAL_STEP_SECONDS,
   hasChangedBackgroundActivitySettings,
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
@@ -153,31 +128,15 @@ import {
   resolveBackgroundActivityProfileOption,
 } from "./SettingsPanels.logic";
 import {
+  PolicyTooltip,
   SettingResetButton,
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
-  useRelativeTimeTick,
   useSettingsSearchTargetId,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
-import { useAtomCommand } from "../../state/use-atom-command";
-
-const THEME_OPTIONS = [
-  {
-    value: "system",
-    label: "System",
-  },
-  {
-    value: "light",
-    label: "Light",
-  },
-  {
-    value: "dark",
-    label: "Dark",
-  },
-] as const;
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -198,11 +157,6 @@ const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<BackgroundActivityProfile, stri
 };
 
 type BackgroundActivityProfileOption = BackgroundActivityProfile | "advanced";
-type BackgroundActivityOverridePatch = Partial<{
-  [K in keyof BackgroundActivitySettings["overrides"]]:
-    | BackgroundActivitySettings["overrides"][K]
-    | undefined;
-}>;
 
 const BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS: Record<BackgroundActivityProfileOption, string> = {
   ...BACKGROUND_ACTIVITY_PROFILE_LABELS,
@@ -219,7 +173,6 @@ const BACKGROUND_ACTIVITY_PROFILE_DESCRIPTIONS: Record<BackgroundActivityProfile
 const ADVANCED_BACKGROUND_ACTIVITY_DESCRIPTION =
   "Uses custom background intervals with the selected shared power policy.";
 
-const PROVIDER_HEALTH_INTERVAL_STEP_SECONDS = 30;
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 const BACKGROUND_ACTIVITY_BOOLEAN_OVERRIDES: ReadonlyArray<{
   readonly key:
@@ -235,17 +188,6 @@ const BACKGROUND_ACTIVITY_BOOLEAN_OVERRIDES: ReadonlyArray<{
   { key: "pauseWhenOnBattery", label: "Pause on battery" },
 ];
 
-function durationToSeconds(duration: Duration.Duration): number {
-  return Math.round(Duration.toMillis(duration) / 1_000);
-}
-
-function normalizeIntervalSeconds(value: number | null, minimum = 0): number {
-  if (value === null || !Number.isFinite(value)) {
-    return minimum;
-  }
-  return Math.max(minimum, Math.round(value));
-}
-
 function resetBackgroundActivitySettings() {
   return {
     backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
@@ -260,105 +202,6 @@ function backgroundActivityProfileSettings(profile: BackgroundActivityProfile) {
       overrides: {},
     },
   };
-}
-
-function backgroundActivityOverrideSettings(
-  current: BackgroundActivitySettings,
-  resolved: ReturnType<typeof resolveServerBackgroundActivitySettings>,
-  overrides: BackgroundActivityOverridePatch,
-) {
-  const nextOverrides: BackgroundActivityOverridePatch = {
-    automaticGitFetchInterval: resolved.automaticGitFetchInterval,
-    providerHealthRefreshInterval: resolved.providerHealthRefreshInterval,
-    hostPowerMonitorActiveInterval: resolved.hostPowerMonitorActiveInterval,
-    hostPowerMonitorIdleInterval: resolved.hostPowerMonitorIdleInterval,
-    idleClientTtl: resolved.idleClientTtl,
-    pauseWhenHostLocked: resolved.pauseWhenHostLocked,
-    pauseWhenHostLowPower: resolved.pauseWhenHostLowPower,
-    pauseWhenClientLowPower: resolved.pauseWhenClientLowPower,
-    pauseWhenOnBattery: resolved.pauseWhenOnBattery,
-    ...overrides,
-  };
-  for (const [key, value] of Object.entries(nextOverrides)) {
-    if (value === undefined) {
-      delete nextOverrides[key as keyof typeof nextOverrides];
-    }
-  }
-  return {
-    backgroundActivity: {
-      schemaVersion: 1 as const,
-      profile: "custom" as const,
-      baseProfile: getBackgroundActivityBaseProfile(current),
-      overrides: nextOverrides as BackgroundActivitySettings["overrides"],
-    },
-  };
-}
-
-function PolicyTooltip({ children }: { readonly children: string }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
-            aria-label="Background policy details"
-          >
-            <InfoIcon className="size-3.5" />
-          </button>
-        }
-      />
-      <TooltipPopup side="top" className="max-w-72">
-        {children}
-      </TooltipPopup>
-    </Tooltip>
-  );
-}
-
-function withoutProviderInstanceKey<V>(
-  record: Readonly<Record<ProviderInstanceId, V>> | undefined,
-  key: ProviderInstanceId,
-): Record<ProviderInstanceId, V> {
-  const next = { ...record } as Record<ProviderInstanceId, V>;
-  delete next[key];
-  return next;
-}
-
-function withoutProviderInstanceFavorites(
-  favorites: ReadonlyArray<{ readonly provider: ProviderInstanceId; readonly model: string }>,
-  instanceId: ProviderInstanceId,
-) {
-  return favorites.filter((favorite) => favorite.provider !== instanceId);
-}
-
-const PROVIDER_SETTINGS = DRIVER_OPTIONS.map((definition) => ({
-  provider: definition.value,
-}));
-
-function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }) {
-  useRelativeTimeTick();
-  const lastCheckedRelative = getRelativeTimeState(lastCheckedAt);
-
-  if (lastCheckedRelative.status === "missing") {
-    return null;
-  }
-
-  if (lastCheckedRelative.status === "invalid") {
-    return <span className="text-[11px] text-muted-foreground/50">Checked unavailable</span>;
-  }
-
-  return (
-    <span className="text-[11px] text-muted-foreground/60">
-      {lastCheckedRelative.suffix ? (
-        <>
-          Checked <span className="font-mono tabular-nums">{lastCheckedRelative.value}</span>{" "}
-          {lastCheckedRelative.suffix}
-        </>
-      ) : (
-        <>Checked {lastCheckedRelative.value}</>
-      )}
-    </span>
-  );
 }
 
 function AboutVersionTitle() {
@@ -581,7 +424,15 @@ function AboutVersionSection() {
 }
 
 export function useSettingsRestore(onRestored?: () => void) {
-  const { theme, setTheme } = useTheme();
+  const {
+    theme,
+    setTheme,
+    followSystem,
+    setFollowSystem,
+    setThemeHalf,
+    clearThemeHalves,
+    themeHalves,
+  } = useTheme();
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
 
@@ -594,6 +445,8 @@ export function useSettingsRestore(onRestored?: () => void) {
   const changedSettingLabels = useMemo(
     () => [
       ...(theme !== "system" ? ["Theme"] : []),
+      ...(!followSystem ? ["Follow system"] : []),
+      ...(themeHalves !== null ? ["Theme mix"] : []),
       ...(settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? ["Glass opacity"] : []),
       ...(settings.environmentIdentificationMode !==
       DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode
@@ -622,9 +475,6 @@ export function useSettingsRestore(onRestored?: () => void) {
         : []),
       ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
         ? ["Diff whitespace changes"]
-        : []),
-      ...(settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar
-        ? ["Auto-open task panel"]
         : []),
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
@@ -655,7 +505,6 @@ export function useSettingsRestore(onRestored?: () => void) {
     [
       isTextGenerationModelDirty,
       isBackgroundActivityDirty,
-      settings.autoOpenPlanSidebar,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
@@ -678,6 +527,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
       settings.wordWrap,
+      followSystem,
       theme,
     ],
   );
@@ -692,7 +542,57 @@ export function useSettingsRestore(onRestored?: () => void) {
     );
     if (!confirmed) return;
 
-    setTheme("system");
+    // Only touch the theme keys that are actually dirty, so a theme-storage
+    // failure cannot block restoring unrelated settings. Preferences are
+    // re-read after the confirmation dialog: they may have changed (another
+    // tab, an OS flip) while it was open, and rollback must restore the live
+    // values rather than the ones captured at render time.
+    let previousTheme = theme;
+    try {
+      previousTheme = readThemePreference();
+    } catch {
+      // Storage is unreadable; the render-time value is the best rollback.
+    }
+    // The mix may have changed while the confirmation dialog was open; both
+    // the dirty check and the rollback must see the live value.
+    const liveHalves = readThemeHalves();
+    const needsThemeReset = previousTheme !== "system";
+    const needsMixReset = liveHalves !== null;
+    // Same for the appearance mode: trusting the render-time value would skip
+    // the reset and report success while a non-system mode stayed in storage.
+    const needsFollowSystemReset = readAppearanceModePreference(previousTheme) !== "system";
+    const notifyThemeRestoreFailure = () => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Couldn’t restore theme settings",
+          description: "Try again.",
+        }),
+      );
+    };
+    // Rollback restores the base preference first (which clears any mix) and
+    // then re-applies the captured mix on top, so no failure path can leave
+    // the pair of keys half-restored.
+    const previousHalves = liveHalves;
+    const rollbackThemeState = () => {
+      if (needsThemeReset) setTheme(previousTheme);
+      if (previousHalves?.light) setThemeHalf("light", previousHalves.light);
+      if (previousHalves?.dark) setThemeHalf("dark", previousHalves.dark);
+    };
+    if (needsThemeReset && !setTheme("system")) {
+      notifyThemeRestoreFailure();
+      return;
+    }
+    if (needsMixReset && !clearThemeHalves()) {
+      rollbackThemeState();
+      notifyThemeRestoreFailure();
+      return;
+    }
+    if (needsFollowSystemReset && !setFollowSystem(true)) {
+      rollbackThemeState();
+      notifyThemeRestoreFailure();
+      return;
+    }
     updateSettings({
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
@@ -701,7 +601,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
-      autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
       enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
@@ -720,7 +619,17 @@ export function useSettingsRestore(onRestored?: () => void) {
       fontFamilyTerminal: DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal,
     });
     onRestored?.();
-  }, [changedSettingLabels, onRestored, setTheme, updateSettings]);
+  }, [
+    changedSettingLabels,
+    clearThemeHalves,
+    onRestored,
+    setFollowSystem,
+    setTheme,
+    setThemeHalf,
+    theme,
+    themeHalves,
+    updateSettings,
+  ]);
 
   return {
     changedSettingLabels,
@@ -995,7 +904,18 @@ function BackgroundActivityAdvancedDialog({
 }
 
 export function AppearanceSettingsPanel() {
-  const { theme, setTheme } = useTheme();
+  const {
+    appearanceMode,
+    refreshTheme,
+    resolvedTheme,
+    setAppearanceMode,
+    setTheme,
+    setThemeHalf,
+    theme,
+    themeHalves,
+  } = useTheme();
+  const customThemes = useCustomThemes();
+  const [isImportThemeOpen, setIsImportThemeOpen] = useState(false);
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const environmentStageLabel = useEnvironmentStageLabel();
@@ -1011,38 +931,21 @@ export function AppearanceSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection id="appearance" title="Appearance">
-        <SettingsRow
-          {...searchableSetting("theme")}
-          description="Choose how T3 Code looks across the app."
-          resetAction={
-            theme !== "system" ? (
-              <SettingResetButton label="theme" onClick={() => setTheme("system")} />
-            ) : null
-          }
-          control={
-            <Select
-              value={theme}
-              onValueChange={(value) => {
-                if (value === "system" || value === "light" || value === "dark") {
-                  setTheme(value);
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Theme preference">
-                <SelectValue>
-                  {THEME_OPTIONS.find((option) => option.value === theme)?.label ?? "System"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {THEME_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
+        <div id={searchableSetting("theme").id}>
+          <ThemeLibrary
+            appearanceMode={appearanceMode}
+            customThemes={customThemes}
+            initialAppearance={resolvedTheme}
+            refreshTheme={refreshTheme}
+            isImportOpen={isImportThemeOpen}
+            setAppearanceMode={setAppearanceMode}
+            setTheme={setTheme}
+            setThemeHalf={setThemeHalf}
+            theme={theme}
+            themeHalves={themeHalves}
+            onImportOpenChange={setIsImportThemeOpen}
+          />
+        </div>
 
         <SettingsRow
           {...searchableSetting("setting-glass-opacity")}
@@ -1898,32 +1801,6 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          {...searchableSetting("auto-open-task-panel")}
-          description="Open the right-side plan and task panel automatically when steps appear."
-          resetAction={
-            settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar ? (
-              <SettingResetButton
-                label="auto-open task panel"
-                onClick={() =>
-                  updateSettings({
-                    autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.autoOpenPlanSidebar}
-              onCheckedChange={(checked) =>
-                updateSettings({ autoOpenPlanSidebar: Boolean(checked) })
-              }
-              aria-label="Open the task panel automatically"
-            />
-          }
-        />
-
-        <SettingsRow
           {...searchableSetting("new-threads")}
           description="Pick the default workspace mode for newly created draft threads."
           resetAction={
@@ -2173,522 +2050,6 @@ export function GeneralSettingsPanel() {
           }
         />
       </SettingsSection>
-    </SettingsPageContainer>
-  );
-}
-
-export function ProviderSettingsPanel() {
-  const settings = usePrimarySettings();
-  const updateSettings = useUpdatePrimarySettings();
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
-  const primaryEnvironment = usePrimaryEnvironment();
-  const refreshServerProviders = useAtomCommand(serverEnvironment.refreshProviders, {
-    reportFailure: false,
-  });
-  const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
-    reportFailure: false,
-  });
-  const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
-  const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
-  const [updatingProviderDrivers, setUpdatingProviderDrivers] = useState<
-    ReadonlySet<ProviderDriverKind>
-  >(() => new Set());
-  const [openInstanceDetails, setOpenInstanceDetails] = useState<Record<string, boolean>>({});
-  const refreshingRef = useRef(false);
-
-  const providerUpdateCandidates = useMemo(
-    () => collectProviderUpdateCandidates(serverProviders),
-    [serverProviders],
-  );
-  const providerUpdateCandidateByInstanceId = useMemo(
-    () => new Map(providerUpdateCandidates.map((candidate) => [candidate.instanceId, candidate])),
-    [providerUpdateCandidates],
-  );
-  const visibleProviderSettings = PROVIDER_SETTINGS.filter(
-    (providerSettings) =>
-      providerSettings.provider !== "cursor" ||
-      serverProviders.some(
-        (provider) =>
-          provider.instanceId === defaultInstanceIdForDriver(ProviderDriverKind.make("cursor")),
-      ),
-  );
-  const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
-  const textGenInstanceId = textGenerationModelSelection.instanceId;
-  const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
-  const providerHealthPreset = getBackgroundActivityPresetSettings(
-    resolvedBackgroundActivity.profile,
-  ).providerHealthRefreshInterval;
-  const providerHealthRefreshIntervalSeconds = durationToSeconds(
-    resolvedBackgroundActivity.providerHealthRefreshInterval,
-  );
-  const defaultProviderHealthRefreshIntervalSeconds = durationToSeconds(providerHealthPreset);
-  const lastCheckedAt =
-    serverProviders.length > 0
-      ? serverProviders.reduce(
-          (latest, provider) => (provider.checkedAt > latest ? provider.checkedAt : latest),
-          serverProviders[0]!.checkedAt,
-        )
-      : null;
-
-  const refreshProviders = useCallback(() => {
-    if (refreshingRef.current) return;
-    refreshingRef.current = true;
-    setIsRefreshingProviders(true);
-    if (!primaryEnvironment) {
-      refreshingRef.current = false;
-      setIsRefreshingProviders(false);
-      return;
-    }
-    void (async () => {
-      const result = await refreshServerProviders({
-        environmentId: primaryEnvironment.environmentId,
-        input: {},
-      });
-      refreshingRef.current = false;
-      setIsRefreshingProviders(false);
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        console.warn("Failed to refresh providers", {
-          operation: "refresh-providers",
-          environmentId: primaryEnvironment.environmentId,
-          ...safeErrorLogAttributes(squashAtomCommandFailure(result)),
-        });
-      }
-    })();
-  }, [primaryEnvironment, refreshServerProviders]);
-
-  const runProviderUpdate = useCallback(
-    async (candidate: ProviderUpdateCandidate) => {
-      if (!primaryEnvironment) return;
-      let started = false;
-      setUpdatingProviderDrivers((previous) => {
-        if (previous.has(candidate.driver)) {
-          return previous;
-        }
-        started = true;
-        const next = new Set(previous);
-        next.add(candidate.driver);
-        return next;
-      });
-      if (!started) {
-        return;
-      }
-
-      const result = await updateProvider({
-        environmentId: primaryEnvironment.environmentId,
-        input: {
-          provider: candidate.driver,
-          instanceId: candidate.instanceId,
-        },
-      });
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: `Could not update ${PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver}`,
-            description:
-              error instanceof Error
-                ? error.message
-                : "The provider update command could not be started.",
-          }),
-        );
-      }
-      setUpdatingProviderDrivers((previous) => {
-        if (!previous.has(candidate.driver)) {
-          return previous;
-        }
-        const next = new Set(previous);
-        next.delete(candidate.driver);
-        return next;
-      });
-    },
-    [primaryEnvironment, updateProvider],
-  );
-
-  interface InstanceRow {
-    readonly instanceId: ProviderInstanceId;
-    readonly instance: ProviderInstanceConfig;
-    readonly driver: ProviderDriverKind;
-    readonly isDefault: boolean;
-    readonly isDirty?: boolean;
-  }
-
-  const instancesByDriver = new Map<
-    ProviderDriverKind,
-    Array<[ProviderInstanceId, ProviderInstanceConfig]>
-  >();
-  for (const [rawId, instance] of Object.entries(settings.providerInstances ?? {})) {
-    const driver = instance.driver;
-    const list = instancesByDriver.get(driver) ?? [];
-    list.push([rawId as ProviderInstanceId, instance]);
-    instancesByDriver.set(driver, list);
-  }
-
-  const defaultSlotIdsBySource = new Set<string>(
-    visibleProviderSettings.map((providerSettings) =>
-      String(defaultInstanceIdForDriver(providerSettings.provider)),
-    ),
-  );
-
-  const rows: InstanceRow[] = [];
-  const visibleDriverKinds = new Set<ProviderDriverKind>(
-    visibleProviderSettings.map((providerSettings) => providerSettings.provider),
-  );
-
-  for (const providerSettings of visibleProviderSettings) {
-    type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
-    const legacyProviders = settings.providers as Record<string, LegacyProviderSettings>;
-    const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
-      string,
-      LegacyProviderSettings
-    >;
-    const driver = providerSettings.provider;
-    const defaultInstanceId = defaultInstanceIdForDriver(driver);
-    const explicitInstance = settings.providerInstances?.[defaultInstanceId];
-    const legacyConfig = legacyProviders[providerSettings.provider]!;
-    const defaultLegacyConfig = defaultLegacyProviders[providerSettings.provider]!;
-    const effectiveInstance: ProviderInstanceConfig =
-      explicitInstance ??
-      ({
-        driver,
-        enabled: legacyConfig.enabled,
-        config: legacyConfig,
-      } satisfies ProviderInstanceConfig);
-    const isDirty =
-      explicitInstance !== undefined || !Equal.equals(legacyConfig, defaultLegacyConfig);
-    rows.push({
-      instanceId: defaultInstanceId,
-      instance: effectiveInstance,
-      driver,
-      isDefault: true,
-      isDirty,
-    });
-    for (const [id, instance] of instancesByDriver.get(providerSettings.provider) ?? []) {
-      if (id === defaultInstanceId) continue;
-      rows.push({ instanceId: id, instance, driver: instance.driver, isDefault: false });
-    }
-  }
-  for (const [driver, list] of instancesByDriver) {
-    if (visibleDriverKinds.has(driver)) continue;
-    for (const [id, instance] of list) {
-      rows.push({
-        instanceId: id,
-        instance,
-        driver: instance.driver,
-        isDefault: defaultSlotIdsBySource.has(String(id)),
-      });
-    }
-  }
-
-  const updateProviderInstance = (
-    row: InstanceRow,
-    next: ProviderInstanceConfig,
-    options?: {
-      readonly textGenerationModelSelection?: Parameters<
-        typeof buildProviderInstanceUpdatePatch
-      >[0]["textGenerationModelSelection"];
-    },
-  ) => {
-    updateSettings(
-      buildProviderInstanceUpdatePatch({
-        settings,
-        instanceId: row.instanceId,
-        instance: next,
-        driver: row.driver,
-        isDefault: row.isDefault,
-        textGenerationModelSelection: options?.textGenerationModelSelection,
-      }),
-    );
-  };
-
-  const deleteProviderInstance = (id: ProviderInstanceId) => {
-    updateSettings({
-      providerInstances: withoutProviderInstanceKey(settings.providerInstances, id),
-      providerModelPreferences: withoutProviderInstanceKey(settings.providerModelPreferences, id),
-      favorites: withoutProviderInstanceFavorites(settings.favorites ?? [], id),
-    });
-  };
-
-  const updateProviderModelPreferences = (
-    instanceId: ProviderInstanceId,
-    next: {
-      readonly hiddenModels: ReadonlyArray<string>;
-      readonly modelOrder: ReadonlyArray<string>;
-    },
-  ) => {
-    const hiddenModels = [...new Set(next.hiddenModels.filter((slug) => slug.trim().length > 0))];
-    const modelOrder = [...new Set(next.modelOrder.filter((slug) => slug.trim().length > 0))];
-    const rest = withoutProviderInstanceKey(settings.providerModelPreferences, instanceId);
-    updateSettings({
-      providerModelPreferences:
-        hiddenModels.length === 0 && modelOrder.length === 0
-          ? rest
-          : {
-              ...rest,
-              [instanceId]: {
-                hiddenModels,
-                modelOrder,
-              },
-            },
-    });
-  };
-
-  const updateProviderFavoriteModels = (
-    instanceId: ProviderInstanceId,
-    nextFavoriteModels: ReadonlyArray<string>,
-  ) => {
-    const favoriteModels = [
-      ...new Set(
-        Arr.filterMap(nextFavoriteModels, (slug) => {
-          const trimmedSlug = slug.trim();
-          return trimmedSlug.length > 0 ? Result.succeed(trimmedSlug) : Result.failVoid;
-        }),
-      ),
-    ];
-    updateSettings({
-      favorites: [
-        ...withoutProviderInstanceFavorites(settings.favorites ?? [], instanceId),
-        ...favoriteModels.map((model) => ({ provider: instanceId, model })),
-      ],
-    });
-  };
-
-  const resetDefaultInstance = (driverKind: ProviderDriverKind) => {
-    type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
-    const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
-      string,
-      LegacyProviderSettings | undefined
-    >;
-    const defaultInstanceId = defaultInstanceIdForDriver(driverKind);
-    const defaultLegacyProvider = defaultLegacyProviders[driverKind];
-    if (defaultLegacyProvider === undefined) return;
-    updateSettings({
-      providers: {
-        ...settings.providers,
-        [driverKind]: defaultLegacyProvider,
-      } as typeof settings.providers,
-      providerInstances: withoutProviderInstanceKey(settings.providerInstances, defaultInstanceId),
-      providerModelPreferences: withoutProviderInstanceKey(
-        settings.providerModelPreferences,
-        defaultInstanceId,
-      ),
-      favorites: withoutProviderInstanceFavorites(settings.favorites ?? [], defaultInstanceId),
-    });
-  };
-
-  return (
-    <SettingsPageContainer>
-      <SettingsSection
-        {...searchableSetting("providers")}
-        headerAction={
-          <div className="flex items-center gap-1.5">
-            <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
-                    onClick={() => setIsAddInstanceDialogOpen(true)}
-                    aria-label="Add provider instance"
-                  >
-                    <PlusIcon className="size-3" />
-                  </Button>
-                }
-              />
-              <TooltipPopup side="top">Add provider instance</TooltipPopup>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
-                    disabled={isRefreshingProviders}
-                    onClick={() => void refreshProviders()}
-                    aria-label="Refresh provider status"
-                  >
-                    {isRefreshingProviders ? (
-                      <LoaderIcon className="size-3 animate-spin" />
-                    ) : (
-                      <RefreshCwIcon className="size-3" />
-                    )}
-                  </Button>
-                }
-              />
-              <TooltipPopup side="top">Refresh provider status</TooltipPopup>
-            </Tooltip>
-          </div>
-        }
-      >
-        <SettingsRow
-          title={
-            <span className="inline-flex items-center gap-1.5">
-              Health check interval
-              <PolicyTooltip>
-                This interval is configured here, then the shared Background activity policy decides
-                whether provider probes may run when the timer fires. Custom intervals appear as
-                Advanced in General settings.
-              </PolicyTooltip>
-            </span>
-          }
-          description="Refresh provider availability, versions, auth state, and model metadata in the background. Set this to 0 seconds to rely on manual refreshes."
-          resetAction={
-            providerHealthRefreshIntervalSeconds !== defaultProviderHealthRefreshIntervalSeconds ? (
-              <SettingResetButton
-                label="provider health check interval"
-                onClick={() =>
-                  updateSettings(
-                    backgroundActivityOverrideSettings(
-                      settings.backgroundActivity,
-                      resolvedBackgroundActivity,
-                      {
-                        providerHealthRefreshInterval: undefined,
-                      },
-                    ),
-                  )
-                }
-              />
-            ) : null
-          }
-          control={
-            <div className="flex shrink-0 items-center gap-2">
-              <NumberField
-                value={providerHealthRefreshIntervalSeconds}
-                min={0}
-                step={PROVIDER_HEALTH_INTERVAL_STEP_SECONDS}
-                size="sm"
-                className="w-32"
-                onValueChange={(value) =>
-                  updateSettings(
-                    backgroundActivityOverrideSettings(
-                      settings.backgroundActivity,
-                      resolvedBackgroundActivity,
-                      {
-                        providerHealthRefreshInterval: Duration.seconds(
-                          normalizeIntervalSeconds(value),
-                        ),
-                      },
-                    ),
-                  )
-                }
-              >
-                <NumberFieldGroup>
-                  <NumberFieldDecrement aria-label="Decrease provider health check interval" />
-                  <NumberFieldInput aria-label="Provider health check interval in seconds" />
-                  <NumberFieldIncrement aria-label="Increase provider health check interval" />
-                </NumberFieldGroup>
-              </NumberField>
-              <span className="text-xs text-muted-foreground">seconds</span>
-            </div>
-          }
-        />
-
-        {rows.map((row) => {
-          const driverOption = getDriverOption(row.driver);
-          const liveProvider = serverProviders.find(
-            (candidate) => candidate.instanceId === row.instanceId,
-          );
-          const updateCandidate = liveProvider
-            ? providerUpdateCandidateByInstanceId.get(liveProvider.instanceId)
-            : undefined;
-          const isDriverUpdateRunning =
-            updateCandidate !== undefined &&
-            (updatingProviderDrivers.has(updateCandidate.driver) ||
-              serverProviders.some(
-                (provider) =>
-                  provider.driver === updateCandidate.driver && isProviderUpdateActive(provider),
-              ));
-          const showInlineUpdateButton =
-            updateCandidate !== undefined &&
-            hasOneClickUpdateProviderCandidate(updateCandidate, serverProviders);
-          const canRunInlineUpdate =
-            updateCandidate !== undefined &&
-            canOneClickUpdateProviderCandidate(updateCandidate, serverProviders) &&
-            !updatingProviderDrivers.has(updateCandidate.driver);
-          const modelPreferences = settings.providerModelPreferences?.[row.instanceId] ?? {
-            hiddenModels: [],
-            modelOrder: [],
-          };
-          const favoriteModels = Arr.filterMap(settings.favorites ?? [], (favorite) =>
-            favorite.provider === row.instanceId ? Result.succeed(favorite.model) : Result.failVoid,
-          );
-          const resetLabel = driverOption?.label ?? String(row.driver);
-          const headerAction =
-            row.isDefault && row.isDirty ? (
-              <SettingResetButton
-                label={`${resetLabel} provider settings`}
-                onClick={() => resetDefaultInstance(row.driver)}
-              />
-            ) : null;
-          return (
-            <ProviderInstanceCard
-              key={row.instanceId}
-              instanceId={row.instanceId}
-              instance={row.instance}
-              driverOption={driverOption}
-              liveProvider={liveProvider}
-              isExpanded={openInstanceDetails[row.instanceId] ?? false}
-              onExpandedChange={(open) =>
-                setOpenInstanceDetails((existing) => ({
-                  ...existing,
-                  [row.instanceId]: open,
-                }))
-              }
-              onUpdate={(next) => {
-                const wasEnabled = row.instance.enabled ?? true;
-                const isDisabling = next.enabled === false && wasEnabled;
-                const shouldClearTextGen = isDisabling && textGenInstanceId === row.instanceId;
-                if (shouldClearTextGen) {
-                  updateProviderInstance(row, next, {
-                    textGenerationModelSelection:
-                      DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
-                  });
-                } else {
-                  updateProviderInstance(row, next);
-                }
-              }}
-              onDelete={row.isDefault ? undefined : () => deleteProviderInstance(row.instanceId)}
-              headerAction={headerAction}
-              hiddenModels={modelPreferences.hiddenModels}
-              favoriteModels={favoriteModels}
-              modelOrder={modelPreferences.modelOrder}
-              onHiddenModelsChange={(hiddenModels) =>
-                updateProviderModelPreferences(row.instanceId, {
-                  ...modelPreferences,
-                  hiddenModels,
-                })
-              }
-              onFavoriteModelsChange={(favoriteModels) =>
-                updateProviderFavoriteModels(row.instanceId, favoriteModels)
-              }
-              onModelOrderChange={(modelOrder) =>
-                updateProviderModelPreferences(row.instanceId, {
-                  ...modelPreferences,
-                  modelOrder,
-                })
-              }
-              onRunUpdate={
-                showInlineUpdateButton && updateCandidate
-                  ? () => {
-                      if (!canRunInlineUpdate) {
-                        return;
-                      }
-                      void runProviderUpdate(updateCandidate);
-                    }
-                  : undefined
-              }
-              isUpdating={showInlineUpdateButton ? isDriverUpdateRunning : undefined}
-            />
-          );
-        })}
-      </SettingsSection>
-
-      {isAddInstanceDialogOpen ? (
-        <AddProviderInstanceDialog open onOpenChange={setIsAddInstanceDialogOpen} />
-      ) : null}
     </SettingsPageContainer>
   );
 }

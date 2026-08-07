@@ -6,8 +6,6 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
     />
-    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#0a0a0a" />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -15,23 +13,373 @@
       (() => {
         const LIGHT_BACKGROUND = "#ffffff";
         const DARK_BACKGROUND = "#0a0a0a";
-        const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+        const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
+        const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
+        const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
+        const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
+        const SPLASH_COLORS = {
+          light: {
+            background: "#ffffff",
+            foreground: "#262626",
+            accent: "#4f46e5",
+          },
+          dark: {
+            background: "#0a0a0a",
+            foreground: "#f5f5f5",
+            accent: "#818cf8",
+          },
+        };
+        // These are the runtime defaults used to complete a custom palette
+        // when a stored theme omits a role. Keep them separate from the
+        // unselected splash so a partial custom theme does not flash generic
+        // app colors before React mounts.
+        const DEFAULT_THEME_PALETTES = {
+          light: {
+            background: "#fdf7fd",
+            foreground: "#501854",
+            accent: "#e33f86",
+            chrome: "#fdf7fd",
+          },
+          dark: {
+            background: "#1f1a24",
+            foreground: "#f9f8fb",
+            accent: "#a3004c",
+            chrome: "#1f1a24",
+          },
+        };
+        // Keep this small boot-time copy in sync with the built-in palettes so
+        // the selected theme is visible before the app has mounted.
+        const BUILT_IN_THEME_PALETTES = {
+          "t3-chat": {
+            light: {
+              background: "#fdf7fd",
+              foreground: "#501854",
+              accent: "#e33f86",
+              chrome: "#fdf7fd",
+            },
+            dark: {
+              background: "#1f1a24",
+              foreground: "#f9f8fb",
+              accent: "#a3004c",
+              chrome: "#1f1a24",
+            },
+          },
+          grove: {
+            light: {
+              background: "#f3f7f4",
+              foreground: "#241523",
+              accent: "#1b7d50",
+              chrome: "#f3f7f4",
+            },
+            dark: {
+              background: "#1b2821",
+              foreground: "#fffaff",
+              accent: "#69d69a",
+              chrome: "#1b2821",
+            },
+          },
+          ocean: {
+            light: {
+              background: "#f5f7f8",
+              foreground: "#241523",
+              accent: "#2672af",
+              chrome: "#f5f7f8",
+            },
+            dark: {
+              background: "#17212b",
+              foreground: "#fffaff",
+              accent: "#70b9ee",
+              chrome: "#17212b",
+            },
+          },
+          ember: {
+            light: {
+              background: "#f9f7f5",
+              foreground: "#241523",
+              accent: "#ae552a",
+              chrome: "#f9f7f5",
+            },
+            dark: {
+              background: "#291e1a",
+              foreground: "#fffaff",
+              accent: "#f09a64",
+              chrome: "#291e1a",
+            },
+          },
+          iris: {
+            light: {
+              background: "#f8f7f9",
+              foreground: "#241523",
+              accent: "#7253b9",
+              chrome: "#f8f7f9",
+            },
+            dark: {
+              background: "#1d1929",
+              foreground: "#fffaff",
+              accent: "#9d7df2",
+              chrome: "#1d1929",
+            },
+          },
+        };
+        // Keep the built-in mode list in sync with the runtime so the selected
+        // T3 Chat palette is visible before React has mounted.
+        const BUILT_IN_THEME_MODES = Object.fromEntries(
+          Object.entries(BUILT_IN_THEME_PALETTES).map(([id, palettes]) => [
+            id,
+            Object.keys(palettes),
+          ]),
+        );
+        const RESERVED_THEME_IDS = [
+          "system",
+          "light",
+          "dark",
+          "t3-chat",
+          "grove",
+          "ocean",
+          "ember",
+          "iris",
+          "t3-chat-dark",
+          "t3-grove",
+          "t3-ocean",
+          "t3-ember",
+          "t3-iris",
+        ];
+        // Update every theme-color meta so any element another layer added
+        // carries the resolved color too.
+        const setThemeColor = (color) => {
+          for (const meta of document.querySelectorAll('meta[name="theme-color"]')) {
+            meta.setAttribute("content", color);
+          }
+        };
+
+        const isHexColor = (value) =>
+          typeof value === "string" &&
+          /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value);
+        const isRecord = (value) =>
+          typeof value === "object" && value !== null && !Array.isArray(value);
+        const isThemeId = (value) =>
+          typeof value === "string" && /^[a-z0-9](?:[a-z0-9-]{0,47})$/.test(value);
+        const isThemeLabel = (value) =>
+          typeof value === "string" && value.trim().length > 0 && value.trim().length <= 48;
+        const isThemePreferenceMode = (value) =>
+          value === "light" || value === "dark" || value === "system";
+        const isThemeAppearance = (value) => value === "light" || value === "dark";
+        const isStoredCustomTheme = (value) => {
+          if (
+            !isRecord(value) ||
+            !isThemeId(value.id) ||
+            RESERVED_THEME_IDS.includes(value.id) ||
+            !isThemeLabel(value.label) ||
+            !isThemeAppearance(value.appearance) ||
+            !isRecord(value.colors)
+          ) {
+            return false;
+          }
+          if (value.variants === undefined) return true;
+          if (!isRecord(value.variants)) return false;
+          return Object.entries(value.variants).every(
+            ([appearance, colors]) =>
+              isThemeAppearance(appearance) &&
+              (appearance === value.appearance || isRecord(colors)),
+          );
+        };
+        const findCustomTheme = (themeId) => {
+          if (RESERVED_THEME_IDS.includes(themeId)) return null;
+          try {
+            const parsed = JSON.parse(
+              window.localStorage.getItem(CUSTOM_THEMES_STORAGE_KEY) ?? "null",
+            );
+            if (!Array.isArray(parsed)) return null;
+            return (
+              parsed.find((value) => isStoredCustomTheme(value) && value.id === themeId) ?? null
+            );
+          } catch {
+            return null;
+          }
+        };
+
         try {
           const storedTheme = window.localStorage.getItem("t3code:theme");
-          const theme =
-            storedTheme === "light" || storedTheme === "dark" || storedTheme === "system"
-              ? storedTheme
-              : "system";
           const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-          const isDark = theme === "dark" || (theme === "system" && prefersDark);
+          // Older builds stored the dark T3 Chat palette as its own theme id
+          // and every maintainer theme under a t3- prefix; keep those
+          // preferences readable. Mirrors the runtime's legacy alias table.
+          const LEGACY_THEME_IDS = {
+            "t3-chat-dark": "t3-chat",
+            "t3-grove": "grove",
+            "t3-ocean": "ocean",
+            "t3-ember": "ember",
+            "t3-iris": "iris",
+          };
+          const isLegacyT3ChatDark = storedTheme === "t3-chat-dark";
+          const themeId =
+            storedTheme === null ? "" : (LEGACY_THEME_IDS[storedTheme] ?? storedTheme);
+          const legacyMode = isLegacyT3ChatDark ? "dark" : null;
+          const builtInModes = BUILT_IN_THEME_MODES[themeId] ?? null;
+          const customTheme = builtInModes ? null : findCustomTheme(themeId);
+          const themeModes =
+            builtInModes ??
+            (customTheme
+              ? ["light", "dark"].filter(
+                  (mode) => mode === customTheme.appearance || customTheme.variants?.[mode],
+                )
+              : null);
+          // Mirrors the runtime's isKnownThemePreference.
+          const isKnownTheme =
+            storedTheme === "light" ||
+            storedTheme === "dark" ||
+            storedTheme === "system" ||
+            themeModes !== null;
+          const theme = isKnownTheme && storedTheme ? storedTheme : "system";
+          const isThemed = isKnownTheme && themeModes !== null;
+          const baseAppearance = customTheme ? customTheme.appearance : "light";
+          const systemMode = prefersDark ? "dark" : "light";
+          const storedAppearanceMode = window.localStorage.getItem(
+            THEME_APPEARANCE_MODE_STORAGE_KEY,
+          );
+          const storedFollowSystem = window.localStorage.getItem(THEME_FOLLOW_SYSTEM_STORAGE_KEY);
+          // Mirrors the runtime's getThemePreferenceMode fallback: a bare
+          // "light"/"dark" preference names its own mode.
+          const preferenceMode =
+            theme === "light" || theme === "dark" ? theme : (legacyMode ?? baseAppearance);
+          const appearanceMode = isThemePreferenceMode(storedAppearanceMode)
+            ? storedAppearanceMode
+            : storedFollowSystem === "true"
+              ? "system"
+              : storedFollowSystem === "false"
+                ? preferenceMode
+                : theme === "system"
+                  ? "system"
+                  : preferenceMode;
+          // A valid mix half for the wanted appearance takes over: it decides
+          // light vs dark even when the base theme cannot render that mode.
+          // Mirrors the runtime's halves-aware resolveThemeAppearance.
+          const wantedMode = appearanceMode === "system" ? systemMode : appearanceMode;
+          let halfThemeId = null;
+          let halfCustomTheme = null;
+          try {
+            const halvesRaw = JSON.parse(
+              window.localStorage.getItem(THEME_HALVES_STORAGE_KEY) ?? "null",
+            );
+            const candidate = isRecord(halvesRaw) ? halvesRaw[wantedMode] : null;
+            if (typeof candidate === "string") {
+              const halfId = LEGACY_THEME_IDS[candidate] ?? candidate;
+              const halfBuiltIn = BUILT_IN_THEME_MODES[halfId] ?? null;
+              const halfCustom = halfBuiltIn ? null : findCustomTheme(halfId);
+              const halfModes =
+                halfBuiltIn ??
+                (halfCustom
+                  ? ["light", "dark"].filter(
+                      (mode) => mode === halfCustom.appearance || halfCustom.variants?.[mode],
+                    )
+                  : null);
+              if (halfModes && halfModes.includes(wantedMode)) {
+                halfThemeId = halfId;
+                halfCustomTheme = halfCustom;
+              }
+            }
+          } catch {
+            // A malformed mix degrades to the base preference.
+          }
+          const themeMode = !isThemed
+            ? null
+            : appearanceMode === "system"
+              ? themeModes.includes(systemMode)
+                ? systemMode
+                : baseAppearance
+              : themeModes.includes(appearanceMode)
+                ? appearanceMode
+                : baseAppearance;
+          const isDark =
+            halfThemeId !== null
+              ? wantedMode === "dark"
+              : isThemed
+                ? themeMode === "dark"
+                : appearanceMode === "system"
+                  ? prefersDark
+                  : appearanceMode === "dark";
+          const effectiveIsThemed = halfThemeId !== null || isThemed;
+          const effectiveThemeId = halfThemeId ?? themeId;
+          const effectiveCustomTheme = halfThemeId !== null ? halfCustomTheme : customTheme;
+          const effectiveThemeMode = halfThemeId !== null ? wantedMode : themeMode;
+          const customColors =
+            effectiveIsThemed && effectiveCustomTheme
+              ? effectiveThemeMode === effectiveCustomTheme.appearance
+                ? effectiveCustomTheme.colors
+                : (effectiveCustomTheme.variants?.[effectiveThemeMode] ??
+                  effectiveCustomTheme.colors)
+              : null;
+          const customDefaults =
+            effectiveCustomTheme && effectiveThemeMode
+              ? DEFAULT_THEME_PALETTES[effectiveThemeMode]
+              : null;
+          // The runtime tolerates individual malformed colors, so fall back
+          // per role rather than dropping the theme.
+          const builtInSplash =
+            effectiveIsThemed && !effectiveCustomTheme && effectiveThemeMode
+              ? (BUILT_IN_THEME_PALETTES[effectiveThemeId]?.[effectiveThemeMode] ?? null)
+              : null;
+          const fallbackSplash = isDark ? SPLASH_COLORS.dark : SPLASH_COLORS.light;
+          const customSplash = customColors
+            ? {
+                background: isHexColor(customColors.canvas)
+                  ? customColors.canvas
+                  : (customDefaults?.background ?? fallbackSplash.background),
+                foreground: isHexColor(customColors.text)
+                  ? customColors.text
+                  : (customDefaults?.foreground ?? fallbackSplash.foreground),
+                accent: isHexColor(customColors.accent)
+                  ? customColors.accent
+                  : (customDefaults?.accent ?? fallbackSplash.accent),
+              }
+            : null;
+          if (effectiveIsThemed) {
+            document.documentElement.dataset.themeId = effectiveCustomTheme
+              ? effectiveCustomTheme.id
+              : effectiveThemeId;
+          } else {
+            delete document.documentElement.dataset.themeId;
+          }
+          // A resolved half is a selection even when the base theme is gone
+          // (deleting the base leaves the mix pointing at a real theme).
+          const hasSelection = halfThemeId !== null || (isKnownTheme && storedTheme !== null);
+          if (hasSelection) {
+            document.documentElement.dataset.themeSelected = "true";
+          } else {
+            delete document.documentElement.dataset.themeSelected;
+          }
           document.documentElement.classList.toggle("dark", isDark);
-          const chromeColor = isDark ? DARK_BACKGROUND : LIGHT_BACKGROUND;
+          const chromeColor = customColors
+            ? isHexColor(customColors.chrome)
+              ? customColors.chrome
+              : (customDefaults?.chrome ?? fallbackSplash.background)
+            : builtInSplash
+              ? builtInSplash.chrome
+              : isDark
+                ? DARK_BACKGROUND
+                : LIGHT_BACKGROUND;
           document.documentElement.style.backgroundColor = chromeColor;
-          themeColorMeta?.setAttribute("content", chromeColor);
+          if (hasSelection) {
+            const splashColors = customSplash ?? builtInSplash ?? fallbackSplash;
+            for (const [name, value] of Object.entries(splashColors)) {
+              document.documentElement.style.setProperty(`--boot-${name}`, value);
+            }
+          }
+          setThemeColor(chromeColor);
         } catch {
-          document.documentElement.classList.add("dark");
-          document.documentElement.style.backgroundColor = DARK_BACKGROUND;
-          themeColorMeta?.setAttribute("content", DARK_BACKGROUND);
+          // Mirror the runtime's storage-failure fallback: follow the OS.
+          let prefersDark = true;
+          try {
+            prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          } catch {
+            // Keep the dark default when even matchMedia is unavailable.
+          }
+          delete document.documentElement.dataset.themeId;
+          delete document.documentElement.dataset.themeSelected;
+          document.documentElement.classList.toggle("dark", prefersDark);
+          const fallbackColor = prefersDark ? DARK_BACKGROUND : LIGHT_BACKGROUND;
+          document.documentElement.style.backgroundColor = fallbackColor;
+          setThemeColor(fallbackColor);
         }
       })();
     </script>
@@ -56,14 +404,24 @@
       }
 
       #boot-shell {
+        position: relative;
+        overflow: hidden;
         display: flex;
         min-height: 100%;
         align-items: center;
         justify-content: center;
         background: inherit;
+        color: inherit;
+      }
+
+      html[data-theme-selected="true"] #boot-shell {
+        background: var(--boot-background);
+        color: var(--boot-foreground);
       }
 
       #boot-shell-card {
+        position: relative;
+        z-index: 1;
         display: flex;
         align-items: center;
         justify-content: center;
