@@ -121,7 +121,10 @@ export function useThreadActionMenu(input: {
           isSettled:
             supports.settlement &&
             effectiveSettled(thread, {
-              now: now.toISOString(),
+              // Minute-quantized like useNowMinute, so this classification
+              // can never disagree with the sidebar partition or ChatView's
+              // parked-thread banner within the same minute.
+              now: `${now.toISOString().slice(0, 16)}:00.000Z`,
               autoSettleAfterDays,
               changeRequestState,
             }),
