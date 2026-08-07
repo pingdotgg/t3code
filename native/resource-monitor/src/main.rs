@@ -337,12 +337,17 @@ impl Collector {
         self.system.refresh_processes_specifics(
             ProcessesToUpdate::All,
             true,
-            process_refresh_kind(),
+            process_tracking_refresh_kind(),
         );
         self.cpu_baseline_refreshed_at = Some(Instant::now());
     }
 
-    fn sample(&mut self, config: &CollectorConfig, request_id: Option<String>) -> SnapshotEvent {
+    fn sample(
+        &mut self,
+        config: &CollectorConfig,
+        request_id: Option<String>,
+        refresh_commands: bool,
+    ) -> SnapshotEvent {
         if let Some(delay) =
             remaining_cpu_measurement_delay(self.cpu_baseline_refreshed_at.take(), Instant::now())
         {
@@ -352,7 +357,7 @@ impl Collector {
         self.system.refresh_processes_specifics(
             ProcessesToUpdate::All,
             true,
-            process_refresh_kind(),
+            process_tracking_refresh_kind(),
         );
         self.cpu_baseline_refreshed_at = Some(Instant::now());
 
@@ -388,6 +393,16 @@ impl Collector {
         roots.insert(config.root_pid);
         let tracked = select_tracked_pids(&rows, &roots);
         let tracked_process_count = tracked.len();
+        let tracked_pids = tracked
+            .iter()
+            .copied()
+            .map(Pid::from_u32)
+            .collect::<Vec<_>>();
+        self.system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&tracked_pids),
+            true,
+            process_details_refresh_kind(refresh_commands),
+        );
         let mut processes = tracked
             .into_iter()
             .filter_map(|pid| {
@@ -450,12 +465,21 @@ impl Collector {
     }
 }
 
-fn process_refresh_kind() -> ProcessRefreshKind {
+fn process_tracking_refresh_kind() -> ProcessRefreshKind {
+    ProcessRefreshKind::nothing().with_cpu().without_tasks()
+}
+
+fn process_details_refresh_kind(refresh_commands: bool) -> ProcessRefreshKind {
+    let command_update = if refresh_commands {
+        UpdateKind::Always
+    } else {
+        UpdateKind::OnlyIfNotSet
+    };
+
     ProcessRefreshKind::nothing()
         .with_memory()
-        .with_cpu()
         .with_disk_usage()
-        .with_cmd(UpdateKind::Always)
+        .with_cmd(command_update)
         .without_tasks()
 }
 
@@ -696,7 +720,7 @@ fn main() -> io::Result<()> {
         if next_sample_at.is_some_and(|deadline| deadline <= Instant::now()) {
             if let Some(current) = config.as_ref() {
                 if let Some(interval) = current.sample_interval {
-                    let event = collector.sample(current, None);
+                    let event = collector.sample(current, None, streaming_enabled);
                     history.record(&event);
                     if streaming_enabled {
                         write_event(&mut writer, &event)?;
@@ -789,7 +813,7 @@ fn main() -> io::Result<()> {
                     }
                     Command::SampleNow { request_id, .. } => {
                         if let Some(current) = config.as_ref() {
-                            let event = collector.sample(current, Some(request_id));
+                            let event = collector.sample(current, Some(request_id), true);
                             history.record(&event);
                             write_event(&mut writer, &event)?;
                             next_sample_at = sample_now_deadline(
@@ -1133,14 +1157,23 @@ mod tests {
     }
 
     #[test]
-    fn refreshes_commands_without_enumerating_linux_tasks() {
-        let refresh_kind = process_refresh_kind();
+    fn limits_expensive_refreshes_to_tracked_processes() {
+        let tracking_kind = process_tracking_refresh_kind();
+        assert!(!tracking_kind.tasks());
+        assert!(tracking_kind.cpu());
+        assert!(!tracking_kind.memory());
+        assert!(!tracking_kind.disk_usage());
+        assert_eq!(tracking_kind.cmd(), UpdateKind::Never);
 
-        assert_eq!(refresh_kind.cmd(), UpdateKind::Always);
-        assert!(!refresh_kind.tasks());
-        assert!(refresh_kind.cpu());
-        assert!(refresh_kind.memory());
-        assert!(refresh_kind.disk_usage());
+        let background_details = process_details_refresh_kind(false);
+        assert!(!background_details.tasks());
+        assert!(!background_details.cpu());
+        assert!(background_details.memory());
+        assert!(background_details.disk_usage());
+        assert_eq!(background_details.cmd(), UpdateKind::OnlyIfNotSet);
+
+        let live_details = process_details_refresh_kind(true);
+        assert_eq!(live_details.cmd(), UpdateKind::Always);
     }
 
     #[test]
