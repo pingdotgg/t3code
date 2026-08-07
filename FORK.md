@@ -35,7 +35,13 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 
 - Fork backends advertise `threadDeltaSubscription` and expose `orchestration.subscribeThread.withDelta` alongside the upstream thread subscription.
 - Fork clients use the fork subscription only when advertised. Upstream backends therefore continue receiving the upstream subscription.
-- The fork subscription replays gaps of at most 1,000 orchestration events and sends a fresh thread snapshot for larger or invalid gaps. If the thread no longer exists, it sends `not-found` so clients clear stale cached state.
+- The fork subscription replays gaps of at most 1,000 orchestration events and sends a fresh thread snapshot for larger or invalid gaps. Fallback snapshots preserve upstream window pagination when requested. If the thread no longer exists, it sends `not-found` so clients clear stale cached state.
+
+### Thread History Protocol
+
+- Upstream `threadSnapshotPagination` is the default bounded-history protocol and keeps its standard thread snapshot endpoint and cursor semantics.
+- Fork backends separately advertise `threadMessagePagination` for the beta advanced-history client. Its initial bounded snapshot uses `/api/orchestration/threads/:threadId/with-message-history`; bidirectional message pages and the history outline remain fork-only endpoints.
+- The two capabilities are independent. Upstream-compatible clients never receive fork message-history fields or fork-specific pagination semantics.
 
 ### Release And CI
 
@@ -84,7 +90,7 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 
 ### Goals UI
 
-- The fork adds thread goal support, goal activity rendering, and goal sidebar/panel UI.
+- The fork adds thread goal support, goal activity rendering, and a dedicated right-side goal panel. Upstream turn plans remain inline in the timeline and do not share the goal panel.
 
 ### Provider Launch Environment
 
@@ -101,7 +107,7 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 ### UX Changes
 
 - Progressive thread history is a client-local beta setting and defaults to off. Disabled clients
-  use the full-history subscription and do not request bounded message pages.
+  use upstream snapshot pagination; enabled clients use the separately advertised fork advanced-history protocol.
 - Thread detail snapshots keep a bounded live tail. Historical browsing uses bounded,
   bidirectional keyset windows cut only at user-turn boundaries, while the web minimap indexes every
   user message across the full thread and loads the selected segment on demand. One LegendList owns

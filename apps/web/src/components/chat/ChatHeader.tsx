@@ -114,7 +114,7 @@ export const ChatHeader = memo(function ChatHeader({
               </TooltipTrigger>
               <TooltipPopup side="top">New thread in {activeProjectName}</TooltipPopup>
             </Tooltip>
-            <span aria-hidden className="text-muted-foreground/40">
+            <span aria-hidden className="text-icon-muted">
               /
             </span>
           </span>

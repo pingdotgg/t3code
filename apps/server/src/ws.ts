@@ -269,7 +269,7 @@ function projectSetupScriptCompatibilityDetail(
   }
 }
 
-function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
+export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
   OrchestrationEvent,
   {
     type:
@@ -903,7 +903,16 @@ const makeWsRpcLayer = (
 
             if (bootstrap?.prepareWorktree) {
               let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
-              if (bootstrap.prepareWorktree.startFromOrigin) {
+              // "Start from origin" is a stored default; repos without an
+              // origin remote fall back to the local base branch instead of
+              // failing the whole bootstrap on `git fetch origin`.
+              const startFromOrigin =
+                bootstrap.prepareWorktree.startFromOrigin === true &&
+                (yield* gitWorkflow.remoteExists({
+                  cwd: bootstrap.prepareWorktree.projectCwd,
+                  remoteName: "origin",
+                }));
+              if (startFromOrigin) {
                 yield* gitWorkflow.fetchRemote({
                   cwd: bootstrap.prepareWorktree.projectCwd,
                   remoteName: "origin",
@@ -973,20 +982,27 @@ const makeWsRpcLayer = (
       };
 
       const loadThreadSnapshot = Effect.fn("Ws.loadThreadSnapshot")(function* (
-        threadId: ThreadId,
-        turnLimit?: number,
+        request: OrchestrationSubscribeThreadInput,
       ) {
-        const snapshot = yield* projectionSnapshotQuery
-          .getThreadDetailSnapshot(threadId, turnLimit)
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new OrchestrationGetSnapshotError({
-                  message: `Failed to load thread ${threadId}`,
-                  cause,
-                }),
-            ),
-          );
+        const snapshot = yield* (
+          request.messageTurnLimit === undefined
+            ? projectionSnapshotQuery.getThreadDetailSnapshot(
+                request.threadId,
+                request.turnLimit === undefined ? undefined : { turnLimit: request.turnLimit },
+              )
+            : projectionSnapshotQuery.getThreadMessageSnapshot(
+                request.threadId,
+                request.messageTurnLimit,
+              )
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationGetSnapshotError({
+                message: `Failed to load thread ${request.threadId}`,
+                cause,
+              }),
+          ),
+        );
 
         return Option.map(snapshot, projectThreadDetailSnapshot);
       });
@@ -1030,10 +1046,7 @@ const makeWsRpcLayer = (
           const headSequence = yield* orchestrationEngine.latestSequence;
           const replayGap = headSequence - afterSequence;
           if (replayGap < 0 || replayGap > THREAD_RESUME_MAX_GAP) {
-            const snapshot = yield* loadThreadSnapshot(
-              input.request.threadId,
-              input.request.turnLimit,
-            );
+            const snapshot = yield* loadThreadSnapshot(input.request);
             if (Option.isNone(snapshot)) {
               if (input.missingThread === "not-found") {
                 return Stream.concat(
@@ -1069,8 +1082,11 @@ const makeWsRpcLayer = (
           return Stream.concat(catchUpStream, synchronizedThenLive);
         }
 
-        const snapshot = yield* loadThreadSnapshot(input.request.threadId, input.request.turnLimit);
+        const snapshot = yield* loadThreadSnapshot(input.request);
         if (Option.isNone(snapshot)) {
+          if (input.missingThread === "not-found") {
+            return Stream.concat(Stream.make({ kind: "not-found" as const }), synchronizedThenLive);
+          }
           return yield* new OrchestrationGetSnapshotError({
             message: `Thread ${input.request.threadId} was not found`,
             cause: input.request.threadId,
@@ -1116,6 +1132,7 @@ const makeWsRpcLayer = (
           shellResumeCompletionMarker: true,
           threadResumeCompletionMarker: true,
           threadMessagePagination: true,
+          threadSnapshotPagination: true,
         };
       });
 

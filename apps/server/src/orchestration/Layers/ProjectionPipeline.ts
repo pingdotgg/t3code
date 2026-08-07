@@ -3,6 +3,7 @@ import {
   type ChatAttachment,
   type OrchestrationEvent,
   type OrchestrationSessionStatus,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -551,6 +552,49 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       }
     });
 
+    const refreshThreadShellSummary = Effect.fn("refreshThreadShellSummary")(function* (
+      threadId: ThreadId,
+    ) {
+      const existingRow = yield* projectionThreadRepository.getById({ threadId });
+      if (Option.isNone(existingRow)) {
+        return;
+      }
+
+      const [messages, proposedPlans, activities, pendingApprovals] = yield* Effect.all([
+        projectionThreadMessageRepository.listByThreadId({ threadId }),
+        projectionThreadProposedPlanRepository.listByThreadId({ threadId }),
+        projectionThreadActivityRepository.listByThreadId({ threadId }),
+        projectionPendingApprovalRepository.listByThreadId({ threadId }),
+      ]);
+
+      let latestUserMessageAt: string | null = null;
+      for (const message of messages) {
+        if (
+          message.role === "user" &&
+          (latestUserMessageAt === null || message.createdAt > latestUserMessageAt)
+        ) {
+          latestUserMessageAt = message.createdAt;
+        }
+      }
+
+      const pendingApprovalCount = pendingApprovals.filter(
+        (approval) => approval.status === "pending",
+      ).length;
+      const pendingUserInputCount = derivePendingUserInputCountFromActivities(activities);
+      const hasActionableProposedPlan = deriveHasActionableProposedPlan({
+        latestTurnId: existingRow.value.latestTurnId,
+        proposedPlans,
+      });
+
+      yield* projectionThreadRepository.upsert({
+        ...existingRow.value,
+        latestUserMessageAt,
+        pendingApprovalCount,
+        pendingUserInputCount,
+        hasActionableProposedPlan: hasActionableProposedPlan ? 1 : 0,
+      });
+    });
+
     const applyThreadsProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyThreadsProjection",
     )(function* (event, attachmentSideEffects) {
@@ -896,7 +940,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           const proposedPlans = yield* projectionThreadProposedPlanRepository.listByThreadId({
             threadId: event.payload.threadId,
           });
-          const latestTurnId = event.payload.session.activeTurnId;
+          const latestTurnId = event.payload.session.activeTurnId ?? existingRow.value.latestTurnId;
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             latestTurnId,
@@ -908,6 +952,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               ? 1
               : 0,
           });
+          yield* refreshThreadShellSummary(event.payload.threadId);
           return;
         }
 

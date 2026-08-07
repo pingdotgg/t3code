@@ -28,7 +28,6 @@ import {
   AuthSessionId,
   IsoDateTime,
   MessageId,
-  PositiveInt,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
@@ -467,38 +466,59 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
   threadId: ThreadId,
 });
 
-const EnvironmentOrchestrationThreadSnapshotQuery = Schema.Struct({
+// Query-string windows for paginated thread reads. GET payloads encode to
+// strings, while callers and handlers keep numeric turn limits.
+const EnvironmentOrchestrationThreadSnapshotQuery = {
   turnLimit: Schema.optional(
-    PositiveInt.check(Schema.isLessThanOrEqualTo(ORCHESTRATION_THREAD_TURN_PAGE_MAX_LIMIT)),
+    Schema.FiniteFromString.check(
+      Schema.isInt(),
+      Schema.isGreaterThanOrEqualTo(1),
+      Schema.isLessThanOrEqualTo(ORCHESTRATION_THREAD_TURN_PAGE_MAX_LIMIT),
+    ),
   ),
-});
+  beforeCursor: Schema.optional(TrimmedNonEmptyString),
+};
 
-const EnvironmentOrchestrationThreadMessagesQuery = Schema.Struct({
+const EnvironmentOrchestrationThreadMessageSnapshotQuery = {
+  turnLimit: Schema.FiniteFromString.check(
+    Schema.isInt(),
+    Schema.isGreaterThanOrEqualTo(1),
+    Schema.isLessThanOrEqualTo(ORCHESTRATION_THREAD_TURN_PAGE_MAX_LIMIT),
+  ),
+};
+
+const EnvironmentOrchestrationThreadMessagesQuery = {
   beforeCreatedAt: IsoDateTime,
   beforeMessageId: MessageId,
-  turnLimit: PositiveInt.check(
+  turnLimit: Schema.FiniteFromString.check(
+    Schema.isInt(),
+    Schema.isGreaterThanOrEqualTo(1),
     Schema.isLessThanOrEqualTo(ORCHESTRATION_THREAD_TURN_PAGE_MAX_LIMIT),
   ),
-});
+};
 
-const EnvironmentOrchestrationThreadMessagesAfterQuery = Schema.Struct({
+const EnvironmentOrchestrationThreadMessagesAfterQuery = {
   afterCreatedAt: IsoDateTime,
   afterMessageId: MessageId,
-  turnLimit: PositiveInt.check(
+  turnLimit: Schema.FiniteFromString.check(
+    Schema.isInt(),
+    Schema.isGreaterThanOrEqualTo(1),
     Schema.isLessThanOrEqualTo(ORCHESTRATION_THREAD_TURN_PAGE_MAX_LIMIT),
   ),
-});
+};
 
 const EnvironmentOrchestrationThreadMessageAroundParams = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
 });
 
-const EnvironmentOrchestrationThreadMessageAroundQuery = Schema.Struct({
-  turnLimit: PositiveInt.check(
+const EnvironmentOrchestrationThreadMessageAroundQuery = {
+  turnLimit: Schema.FiniteFromString.check(
+    Schema.isInt(),
+    Schema.isGreaterThanOrEqualTo(1),
     Schema.isLessThanOrEqualTo(ORCHESTRATION_THREAD_TURN_PAGE_MAX_LIMIT),
   ),
-});
+};
 
 export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
   .add(
@@ -519,16 +539,29 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
     HttpApiEndpoint.get("threadSnapshot", "/api/orchestration/threads/:threadId", {
       headers: OptionalBearerHeaders,
       params: EnvironmentOrchestrationThreadSnapshotParams,
-      query: EnvironmentOrchestrationThreadSnapshotQuery,
+      payload: EnvironmentOrchestrationThreadSnapshotQuery,
       success: OrchestrationThreadDetailSnapshot,
       error: EnvironmentOrchestrationThreadSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.get(
+      "threadMessageSnapshot",
+      "/api/orchestration/threads/:threadId/with-message-history",
+      {
+        headers: OptionalBearerHeaders,
+        params: EnvironmentOrchestrationThreadSnapshotParams,
+        payload: EnvironmentOrchestrationThreadMessageSnapshotQuery,
+        success: OrchestrationThreadDetailSnapshot,
+        error: EnvironmentOrchestrationThreadSnapshotErrors,
+      },
+    ).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.get("threadMessages", "/api/orchestration/threads/:threadId/messages", {
       headers: OptionalBearerHeaders,
       params: EnvironmentOrchestrationThreadSnapshotParams,
-      query: EnvironmentOrchestrationThreadMessagesQuery,
+      payload: EnvironmentOrchestrationThreadMessagesQuery,
       success: OrchestrationThreadHistoryPage,
       error: EnvironmentOrchestrationThreadSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
@@ -540,7 +573,7 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
       {
         headers: OptionalBearerHeaders,
         params: EnvironmentOrchestrationThreadSnapshotParams,
-        query: EnvironmentOrchestrationThreadMessagesAfterQuery,
+        payload: EnvironmentOrchestrationThreadMessagesAfterQuery,
         success: OrchestrationThreadHistoryPage,
         error: EnvironmentOrchestrationThreadSnapshotErrors,
       },
@@ -553,7 +586,7 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
       {
         headers: OptionalBearerHeaders,
         params: EnvironmentOrchestrationThreadMessageAroundParams,
-        query: EnvironmentOrchestrationThreadMessageAroundQuery,
+        payload: EnvironmentOrchestrationThreadMessageAroundQuery,
         success: OrchestrationThreadHistoryPage,
         error: EnvironmentOrchestrationThreadSnapshotErrors,
       },

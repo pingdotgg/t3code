@@ -193,7 +193,19 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     Option.some(PREPARED),
   );
   const snapshotLoader = ThreadSnapshotLoader.of({
-    load: (_prepared, threadId, turnLimit) =>
+    load: (_prepared, threadId, window) =>
+      Ref.update(loaderCalls, (count) => count + 1).pipe(
+        Effect.andThen(Ref.set(lastLoaderTurnLimit, window?.turnLimit)),
+        Effect.andThen(
+          threadId === THREAD_ID
+            ? (options?.httpSnapshotEffect ??
+                Effect.succeed(
+                  options?.httpSnapshot ?? Option.none<OrchestrationThreadDetailSnapshot>(),
+                ))
+            : Effect.succeed(Option.none<OrchestrationThreadDetailSnapshot>()),
+        ),
+      ),
+    loadMessageHistory: (_prepared, threadId, turnLimit) =>
       Ref.update(loaderCalls, (count) => count + 1).pipe(
         Effect.andThen(Ref.set(lastLoaderTurnLimit, turnLimit)),
         Effect.andThen(
@@ -243,7 +255,12 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     clearVcsRefs: () => Effect.void,
     clear: () => Effect.void,
   });
-  const threadState = yield* makeEnvironmentThreadState(THREAD_ID).pipe(
+  const threadState = yield* makeEnvironmentThreadState(
+    THREAD_ID,
+    options?.messagePagination === true
+      ? { messagePagination: { enabled: () => true } }
+      : undefined,
+  ).pipe(
     Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
     Effect.provideService(Persistence.EnvironmentCacheStore, cache),
     Effect.provideService(ThreadSnapshotLoader, snapshotLoader),

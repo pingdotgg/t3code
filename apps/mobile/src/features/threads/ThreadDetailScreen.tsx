@@ -65,6 +65,8 @@ export interface ThreadDetailScreenProps {
   readonly hasNextMessages?: boolean;
   readonly isLoadingPreviousMessages?: boolean;
   readonly isLoadingNextMessages?: boolean;
+  /** Non-null when older turns exist beyond the loaded window. */
+  readonly loadEarlier?: { readonly loading: boolean; readonly onLoadEarlier: () => void } | null;
   readonly activeThreadBusy: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectWorkspaceRoot: string | null;
@@ -383,6 +385,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             onLoadPreviousMessages={props.onLoadPreviousMessages}
             onLoadNextMessages={props.onLoadNextMessages}
             skills={selectedProviderSkills}
+            loadEarlier={props.loadEarlier ?? null}
           />
         </View>
       ) : (
