@@ -245,7 +245,7 @@ const runtimeModeConfig: Record<
   },
   auto: {
     label: "Auto",
-    description: "An AI reviewer approves routine actions; risky ones still ask.",
+    description: "Supported providers approve routine actions; others still ask.",
     icon: SparklesIcon,
   },
   "full-access": {

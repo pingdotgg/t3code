@@ -24,6 +24,7 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
+  getWorkflowScript: "orchestration.getWorkflowScript",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   searchThreads: "orchestration.searchThreads",
@@ -438,6 +439,12 @@ export const OrchestrationThreadShell = Schema.Struct({
   hasPendingApprovals: Schema.Boolean,
   hasPendingUserInput: Schema.Boolean,
   hasActionableProposedPlan: Schema.Boolean,
+  /**
+   * Native background work alive after the turn settles: "working" while
+   * subagents/workflows run, "monitoring" when watch loops are the only
+   * live work. Optional so old servers/clients interop; absent = none.
+   */
+  backgroundLiveness: Schema.optional(Schema.NullOr(Schema.Literals(["working", "monitoring"]))),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 
@@ -1464,10 +1471,62 @@ export const OrchestrationSearchThreadsResult = Schema.Struct({
 });
 export type OrchestrationSearchThreadsResult = typeof OrchestrationSearchThreadsResult.Type;
 
+export const OrchestrationGetWorkflowScriptInput = Schema.Struct({
+  threadId: ThreadId,
+  /** Absolute path from the workflow's runHandles.scriptPath. The server
+   * re-derives containment; the client value is a hint, never trusted. */
+  scriptPath: TrimmedNonEmptyString,
+});
+export type OrchestrationGetWorkflowScriptInput = typeof OrchestrationGetWorkflowScriptInput.Type;
+
+export const OrchestrationGetWorkflowScriptResult = Schema.Struct({
+  scriptPath: TrimmedNonEmptyString,
+  contents: Schema.String,
+  truncated: Schema.Boolean,
+});
+export type OrchestrationGetWorkflowScriptResult = typeof OrchestrationGetWorkflowScriptResult.Type;
+
+const WORKFLOW_SCRIPT_ERROR_MESSAGES = {
+  "invalid-path": "Workflow scripts must be absolute .js paths.",
+  "root-unavailable": "Script root unavailable.",
+  "not-found": "Script not found.",
+  "outside-root": "Script path is outside the workflow scripts root.",
+  "not-js": "Resolved script is not a .js file.",
+  "not-regular-file": "Script is not a regular file.",
+  "changed-during-read": "Script changed between resolution and open.",
+  "read-failed": "Script read failed.",
+} as const;
+
+export class OrchestrationGetWorkflowScriptError extends Schema.TaggedErrorClass<OrchestrationGetWorkflowScriptError>()(
+  "OrchestrationGetWorkflowScriptError",
+  {
+    reason: Schema.Literals([
+      "invalid-path",
+      "root-unavailable",
+      "not-found",
+      "outside-root",
+      "not-js",
+      "not-regular-file",
+      "changed-during-read",
+      "read-failed",
+    ]),
+    scriptPath: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return WORKFLOW_SCRIPT_ERROR_MESSAGES[this.reason];
+  }
+}
+
 export const OrchestrationRpcSchemas = {
   dispatchCommand: {
     input: ClientOrchestrationCommand,
     output: DispatchResult,
+  },
+  getWorkflowScript: {
+    input: OrchestrationGetWorkflowScriptInput,
+    output: OrchestrationGetWorkflowScriptResult,
   },
   getTurnDiff: {
     input: OrchestrationGetTurnDiffInput,
