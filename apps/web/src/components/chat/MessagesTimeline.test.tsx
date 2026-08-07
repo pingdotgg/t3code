@@ -77,6 +77,11 @@ vi.mock("@legendapp/list/react", async () => {
             ? props.maintainVisibleContentPosition.size
             : undefined
         }
+        data-maintain-visible-content-position-restore={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? Boolean(props.maintainVisibleContentPosition.shouldRestorePosition)
+            : undefined
+        }
       >
         {props.ListHeaderComponent}
         {props.data.map((item) => (
@@ -185,6 +190,7 @@ function buildProps() {
     onAnchorReady: () => {},
     onAnchorSizeChanged: () => {},
     contentInsetEndAdjustment: 0,
+    liveFollowEnabled: true,
     onIsAtEndChange: () => {},
     onManualNavigation: () => {},
   };
@@ -427,7 +433,8 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
     expect(markup).toContain('data-maintain-visible-content-position="object"');
     expect(markup).toContain('data-maintain-visible-content-position-data="true"');
-    expect(markup).toContain('data-maintain-visible-content-position-size="false"');
+    expect(markup).toContain('data-maintain-visible-content-position-size="true"');
+    expect(markup).toContain('data-maintain-visible-content-position-restore="true"');
     expect(onAnchorReady).toHaveBeenCalledOnce();
     expect(onAnchorReady).toHaveBeenCalledWith(secondEntry.message.id, 1);
     expect(onAnchorSizeChanged).toHaveBeenCalledWith(secondEntry.message.id, 240);
@@ -442,10 +449,13 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Show full message");
-    // LegendList's internal maintainScrollAtEnd stays off: it races post-mount
-    // measurement and snaps the view to stale content ends. End-following is
-    // owned by ChatView's live-follow, which respects user scroll gestures.
-    expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
+    // LegendList owns ordinary end-follow (#5449): with live follow on and no
+    // anchored end space, its maintainScrollAtEnd is enabled.
+    expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
+    expect(markup).toContain('data-maintain-scroll-at-end-animated="false"');
+    expect(markup).toContain('data-maintain-scroll-at-end-data-change="true"');
+    expect(markup).toContain('data-maintain-scroll-at-end-item-layout="true"');
+    expect(markup).toContain('data-maintain-scroll-at-end-layout="true"');
     expect(markup).toContain('data-user-message-collapsed="true"');
     expect(markup).toContain('data-user-message-fade="true"');
     expect(markup).toContain('data-user-message-footer="true"');
