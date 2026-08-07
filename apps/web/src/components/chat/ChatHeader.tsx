@@ -131,9 +131,13 @@ export const ChatHeader = memo(function ChatHeader({
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
-  // Inline rename, keyed by thread: navigating away silently drops an
-  // in-progress rename instead of committing stale text to the new thread.
+  // Inline rename, keyed by thread: navigating away drops an in-progress
+  // rename instead of committing stale text. Cleared on thread change (not
+  // just hidden) so returning to the thread doesn't revive the old draft.
   const [renaming, setRenaming] = useState<{ threadId: ThreadId; title: string } | null>(null);
+  if (renaming !== null && renaming.threadId !== activeThreadId) {
+    setRenaming(null);
+  }
   const renamingTitle = renaming?.threadId === activeThreadId ? renaming.title : null;
   const renameCommittedRef = useRef(false);
   const startRename = useCallback(() => {
