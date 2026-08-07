@@ -1,0 +1,28 @@
+---
+description: prom.codes agent memory protocol
+alwaysApply: true
+---
+
+<!-- prometheus-memory:start -->
+## prom.codes Agent Memory
+
+This workspace uses the prom.codes memory MCP server (`memory_*` tools).
+Follow this protocol:
+
+1. **Session start:** call `memory_read` once before non-trivial work to
+   recall durable project knowledge from earlier sessions.
+2. **During work:** when the user states a durable preference, decision,
+   correction, or project fact ("merk dir …", "ab jetzt immer …"), store it
+   via `memory_write` (type `semantic` for facts, `procedural` for
+   how-tos). Prefer `memory_write` over runtime-native memory features for
+   project knowledge, so it stays portable across tools.
+3. **Looking things up:** use `memory_search` for keyword recall when
+   `memory_read` output is not enough.
+4. **Session end:** call `memory_capture` with a short plan/outcome summary
+   and any new facts/procedures worth keeping.
+5. **Never store secrets** (API keys, tokens, passwords) in memories —
+   the server rejects them, but do not try.
+
+Project-scoped facts mirror to `.prometheus/memories/*.md` (git-versioned,
+human-editable); treat those files as the source of truth.
+<!-- prometheus-memory:end -->
