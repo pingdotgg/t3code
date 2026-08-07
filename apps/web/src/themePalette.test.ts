@@ -25,6 +25,7 @@ import {
   GROVE_THEME,
   IRIS_THEME,
   OCEAN_THEME,
+  POIMANDRES_THEME,
   updateCustomTheme,
   CUSTOM_THEMES_STORAGE_KEY,
   createManagedThemeColors,
@@ -354,6 +355,21 @@ describe("theme files", () => {
         ).toBeGreaterThanOrEqual(theme === T3_CHAT_THEME ? 3 : 4.5);
       }
     }
+  });
+
+  it("includes the dark-only Poimandres maintainer theme", () => {
+    expect(getThemeDefinition(POIMANDRES_THEME.id)).toBe(POIMANDRES_THEME);
+    expect(getThemeModes(POIMANDRES_THEME)).toEqual(["dark"]);
+    expect(getThemeColorsForMode(POIMANDRES_THEME, "light")).toBeNull();
+
+    const colors = getThemeColorsForMode(POIMANDRES_THEME, "dark")!;
+    expect(colors.canvas).toBe("#1b1e28");
+    expect(colors.accent).toBe("#5de4c7");
+    expect(contrastRatio(colors.text, colors.canvas)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(colors.accentForeground, colors.accent)).toBeGreaterThanOrEqual(4.5);
+    expect(
+      contrastRatio(colors.messageActionForeground, colors.messageAction),
+    ).toBeGreaterThanOrEqual(4.5);
   });
 
   it("rejects a variant that repeats the base appearance", () => {

@@ -13,6 +13,7 @@ import {
   GROVE_THEME,
   IRIS_THEME,
   OCEAN_THEME,
+  POIMANDRES_THEME,
   THEME_APPEARANCE_MODE_STORAGE_KEY,
   THEME_FOLLOW_SYSTEM_STORAGE_KEY,
 } from "./themePalette";
@@ -184,6 +185,11 @@ describe("index.html boot script", () => {
       prefersDark: true,
     },
     {
+      name: "Poimandres stays dark on a light OS",
+      storage: { [THEME_STORAGE_KEY]: "poimandres", [THEME_FOLLOW_SYSTEM_STORAGE_KEY]: "true" },
+      prefersDark: false,
+    },
+    {
       name: "a legacy t3-grove preference resolves through the alias",
       storage: { [THEME_STORAGE_KEY]: "t3-grove", [THEME_FOLLOW_SYSTEM_STORAGE_KEY]: "true" },
       prefersDark: true,
@@ -280,7 +286,7 @@ describe("index.html boot script", () => {
   // palette change breaks this test until the copy in index.html is updated.
   it("keeps every built-in boot splash in sync with the real palettes", () => {
     for (const theme of [T3_CHAT_THEME, GROVE_THEME, OCEAN_THEME, EMBER_THEME, IRIS_THEME]) {
-      // The boot script resolves every built-in from a light base appearance.
+      // The boot script resolves every dual-mode built-in from a light base appearance.
       expect(theme.appearance).toBe("light");
       for (const mode of ["light", "dark"] as const) {
         const colors = getThemeColorsForMode(theme, mode);
@@ -300,6 +306,25 @@ describe("index.html boot script", () => {
         expect(boot.backgroundColor).toBe(colors!.chrome);
         expect(boot.metaContent).toBe(colors!.chrome);
       }
+    }
+
+    expect(POIMANDRES_THEME.appearance).toBe("dark");
+    const poimandresColors = getThemeColorsForMode(POIMANDRES_THEME, "dark")!;
+    for (const appearanceMode of ["light", "dark", "system"] as const) {
+      const boot = runBootScript({
+        storage: {
+          [THEME_STORAGE_KEY]: POIMANDRES_THEME.id,
+          [THEME_APPEARANCE_MODE_STORAGE_KEY]: appearanceMode,
+        },
+        prefersDark: false,
+      });
+      expect(boot.themeId).toBe(POIMANDRES_THEME.id);
+      expect(boot.isDark).toBe(true);
+      expect(boot.bootVariables["--boot-background"]).toBe(poimandresColors.canvas);
+      expect(boot.bootVariables["--boot-foreground"]).toBe(poimandresColors.text);
+      expect(boot.bootVariables["--boot-accent"]).toBe(poimandresColors.accent);
+      expect(boot.backgroundColor).toBe(poimandresColors.chrome);
+      expect(boot.metaContent).toBe(poimandresColors.chrome);
     }
   });
 

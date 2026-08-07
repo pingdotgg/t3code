@@ -21,6 +21,7 @@ import {
   GROVE_THEME,
   IRIS_THEME,
   OCEAN_THEME,
+  POIMANDRES_THEME,
 } from "../../themePalette";
 import {
   AlertDialog,
@@ -52,6 +53,7 @@ const MAINTAINER_THEMES: ReadonlyArray<ThemeDefinition> = [
   OCEAN_THEME,
   EMBER_THEME,
   IRIS_THEME,
+  POIMANDRES_THEME,
 ];
 
 function downloadThemeFile(filename: string, contents: string): void {

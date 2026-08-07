@@ -120,6 +120,14 @@
               chrome: "#1d1929",
             },
           },
+          poimandres: {
+            dark: {
+              background: "#1b1e28",
+              foreground: "#a6accd",
+              accent: "#5de4c7",
+              chrome: "#1b1e28",
+            },
+          },
         };
         // Keep the built-in mode list in sync with the runtime so the selected
         // T3 Chat palette is visible before React has mounted.
@@ -138,6 +146,7 @@
           "ocean",
           "ember",
           "iris",
+          "poimandres",
           "t3-chat-dark",
           "t3-grove",
           "t3-ocean",
@@ -232,7 +241,13 @@
             themeModes !== null;
           const theme = isKnownTheme && storedTheme ? storedTheme : "system";
           const isThemed = isKnownTheme && themeModes !== null;
-          const baseAppearance = customTheme ? customTheme.appearance : "light";
+          // Dual-mode built-ins are light-based; a single-mode built-in uses
+          // that mode as its base (mirrors ThemeDefinition.appearance).
+          const baseAppearance = customTheme
+            ? customTheme.appearance
+            : builtInModes?.length === 1
+              ? builtInModes[0]
+              : "light";
           const systemMode = prefersDark ? "dark" : "light";
           const storedAppearanceMode = window.localStorage.getItem(
             THEME_APPEARANCE_MODE_STORAGE_KEY,

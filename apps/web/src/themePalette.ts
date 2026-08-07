@@ -10,6 +10,8 @@ export const EMBER_THEME_ID = "ember" as const;
 export const EMBER_THEME_LABEL = "Ember";
 export const IRIS_THEME_ID = "iris" as const;
 export const IRIS_THEME_LABEL = "Iris";
+export const POIMANDRES_THEME_ID = "poimandres" as const;
+export const POIMANDRES_THEME_LABEL = "Poimandres";
 export const THEME_FILE_VERSION = 1 as const;
 export const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
 export const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
@@ -122,6 +124,7 @@ const RESERVED_THEME_IDS = new Set([
   OCEAN_THEME_ID,
   EMBER_THEME_ID,
   IRIS_THEME_ID,
+  POIMANDRES_THEME_ID,
   LEGACY_T3_CHAT_DARK_THEME_ID,
   "t3-grove",
   "t3-ocean",
@@ -1384,12 +1387,79 @@ export const IRIS_THEME: ThemeDefinition = {
   },
 };
 
+/** Dark-only port of pmndrs/poimandres (https://github.com/gsimone/poimandres-t3code). */
+export const POIMANDRES_THEME: ThemeDefinition = {
+  id: POIMANDRES_THEME_ID,
+  label: POIMANDRES_THEME_LABEL,
+  appearance: "dark",
+  colors: {
+    canvas: "#1b1e28",
+    chrome: "#1b1e28",
+    toolbar: "#1b1e28",
+    toolbarForeground: "#a6accd",
+    toolbarBorder: "#161820",
+    toolbarControl: "#262934",
+    toolbarControlForeground: "#e4f0fb",
+    toolbarControlHover: "#303340",
+    surface: "#21242f",
+    surfaceRaised: "#262934",
+    surfaceOverlay: "#2b2e3a",
+    text: "#a6accd",
+    textMuted: "#767c9d",
+    border: "#262934",
+    input: "#292c35",
+    focus: "#5de4c7",
+    accent: "#5de4c7",
+    accentForeground: "#1b1e28",
+    secondary: "#303340",
+    secondaryForeground: "#e4f0fb",
+    muted: "#21242f",
+    mutedForeground: "#767c9d",
+    placeholder: "#767c9d",
+    secondaryLabel: "#767c9d",
+    iconMuted: "#767c9d",
+    error: "#d0679d",
+    errorForeground: "#f087bd",
+    errorSurface: "#36293a",
+    warning: "#fffac2",
+    warningForeground: "#fffac2",
+    warningSurface: "#33301f",
+    update: "#89ddff",
+    updateForeground: "#89ddff",
+    updateSurface: "#253647",
+    accentSurface: "#303340",
+    accentSurfaceForeground: "#e4f0fb",
+    messageSurface: "#21242f",
+    messageForeground: "#a6accd",
+    messageAction: "#5de4c7",
+    messageActionForeground: "#1b1e28",
+    messageActionHover: "#5ecbb4",
+    codeBackground: "#12151b",
+    codeForeground: "#a6accd",
+    sidebar: "#1b1e28",
+    sidebarForeground: "#a6accd",
+    sidebarMutedForeground: "#767c9d",
+    sidebarControlSurface: "#21242f",
+    sidebarRowHover: "#20232e",
+    sidebarRowActive: "#232631",
+    sidebarRowSelected: "#2b2e3a",
+    sidebarBorder: "#161820",
+    terminalBackground: "#1b1e28",
+    terminalForeground: "#a6accd",
+    terminalCursor: "#5de4c7",
+    terminalSelection: "#30354b",
+    terminalScrollbar: "#262934",
+    terminalScrollbarHover: "#303340",
+  },
+};
+
 const BUILT_IN_THEME_DEFINITIONS: ReadonlyArray<ThemeDefinition> = [
   T3_CHAT_THEME,
   GROVE_THEME,
   OCEAN_THEME,
   EMBER_THEME,
   IRIS_THEME,
+  POIMANDRES_THEME,
 ];
 
 export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | null {
