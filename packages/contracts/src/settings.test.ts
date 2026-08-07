@@ -49,6 +49,24 @@ describe("ClientSettings glass opacity", () => {
   });
 });
 
+describe("ClientSettings integrated browser url patterns", () => {
+  it("defaults to an empty list for legacy configs", () => {
+    expect(decodeClientSettings({}).integratedBrowserUrlPatterns).toEqual([]);
+  });
+
+  it("accepts and trims pattern updates", () => {
+    expect(
+      decodeClientSettingsPatch({
+        integratedBrowserUrlPatterns: ["github.com", "  *.vercel.app  "],
+      }).integratedBrowserUrlPatterns,
+    ).toEqual(["github.com", "*.vercel.app"]);
+  });
+
+  it("rejects blank patterns", () => {
+    expect(() => decodeClientSettings({ integratedBrowserUrlPatterns: ["   "] })).toThrow();
+  });
+});
+
 describe("ClientSettings environment identification", () => {
   it("defaults to artwork and accepts each presentation mode", () => {
     expect(decodeClientSettings({}).environmentIdentificationMode).toBe("artwork");

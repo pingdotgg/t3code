@@ -84,6 +84,7 @@ import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
+import { urlMatchesIntegratedBrowserPatterns } from "../browser/integratedBrowserLinkPatterns";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import {
   isBrowserPreviewFile,
@@ -1459,6 +1460,17 @@ function ChatMarkdown({
           const isSameDocumentLink = href?.startsWith("#") ?? false;
           const onClick = props.onClick;
           const canOpenInPreview = Boolean(threadRef) && isPreviewSupportedInRuntime();
+          const openInPreviewReportingFailure = async (target: string): Promise<boolean> => {
+            const result = await openExternalLinkInPreview(target);
+            if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) {
+              return true;
+            }
+            reportMarkdownActionFailure(
+              { operation: "open-link-in-preview", target },
+              result.cause,
+            );
+            return false;
+          };
           const link = (
             <a
               {...props}
@@ -1469,7 +1481,43 @@ function ChatMarkdown({
                 onClick?.(event);
                 if (isSameDocumentLink && href) {
                   handleMarkdownFragmentClick(event, href);
+                  return;
                 }
+                // Modifier- and middle-clicks keep opening externally.
+                if (
+                  event.defaultPrevented ||
+                  event.button !== 0 ||
+                  event.metaKey ||
+                  event.ctrlKey ||
+                  event.shiftKey ||
+                  event.altKey ||
+                  !canOpenInPreview ||
+                  !href ||
+                  !faviconHost
+                ) {
+                  return;
+                }
+                const patterns = getClientSettings().integratedBrowserUrlPatterns;
+                if (!urlMatchesIntegratedBrowserPatterns(href, patterns)) {
+                  return;
+                }
+                event.preventDefault();
+                void openInPreviewReportingFailure(href).then((opened) => {
+                  // Default navigation was prevented, so a failed preview
+                  // open must fall back to the system browser.
+                  if (opened) return;
+                  const api = readLocalApi();
+                  if (api) {
+                    void api.shell.openExternal(href).catch((cause: unknown) => {
+                      reportMarkdownActionFailure(
+                        { operation: "open-link-external", target: href },
+                        cause,
+                      );
+                    });
+                  } else {
+                    window.open(href, "_blank", "noopener,noreferrer");
+                  }
+                });
               }}
               onContextMenu={(event) => {
                 if (!canOpenInPreview || !href || !faviconHost) return;
@@ -1482,13 +1530,7 @@ function ChatMarkdown({
                   position: { x: event.clientX, y: event.clientY },
                   showContextMenu: (items, position) => api.contextMenu.show(items, position),
                   openInPreview: async (target) => {
-                    const result = await openExternalLinkInPreview(target);
-                    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-                      reportMarkdownActionFailure(
-                        { operation: "open-link-in-preview", target },
-                        result.cause,
-                      );
-                    }
+                    await openInPreviewReportingFailure(target);
                   },
                   openExternal: (target) => api.shell.openExternal(target),
                   copyLink: (target) => writeTextToClipboard(target, "link"),

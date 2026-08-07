@@ -1,3 +1,5 @@
+import { isElectron } from "../../env";
+
 export type SettingsPath =
   | "/settings/general"
   | "/settings/appearance"
@@ -13,6 +15,8 @@ export interface SettingsSearchItem {
   readonly title: string;
   readonly to: SettingsPath;
   readonly targetId?: string;
+  /** Rendered only in the desktop app; hidden from search elsewhere. */
+  readonly electronOnly?: boolean;
 }
 
 /**
@@ -132,6 +136,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "integrated-browser-links",
+    title: "Integrated browser links",
+    to: "/settings/general",
+    electronOnly: true,
+  },
+  {
     id: "archive-confirmation",
     title: "Archive confirmation",
     to: "/settings/general",
@@ -217,9 +227,14 @@ function normalizeSearchText(value: string): string {
     .trim();
 }
 
+const AVAILABLE_SETTINGS_SEARCH_ITEMS: ReadonlyArray<SettingsSearchItem> =
+  SETTINGS_SEARCH_ITEMS.filter(
+    (item: SettingsSearchItem) => isElectron || item.electronOnly !== true,
+  );
+
 export function searchSettings(
   query: string,
-  items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS,
+  items: ReadonlyArray<SettingsSearchItem> = AVAILABLE_SETTINGS_SEARCH_ITEMS,
 ): ReadonlyArray<SettingsSearchItem> {
   const normalizedQuery = normalizeSearchText(query);
   if (normalizedQuery.length === 0) return [];
