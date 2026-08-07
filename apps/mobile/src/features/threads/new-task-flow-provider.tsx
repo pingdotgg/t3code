@@ -59,19 +59,16 @@ import {
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
 import {
+  resolveStartWorkspace as computeStartWorkspace,
+  type ResolvedWorkspace,
+  type WorkspaceMode,
+} from "./new-task-workspace-resolution";
+import {
   buildHomeProjectScopes,
   sortHomeProjectScopes,
   type HomeProjectScope,
 } from "../home/homeThreadList";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
-
-type WorkspaceMode = "local" | "worktree";
-
-type ResolvedWorkspace = {
-  readonly mode: WorkspaceMode;
-  readonly branch: string | null;
-  readonly worktreePath: string | null;
-};
 
 const EMPTY_BRANCH_REFS: ReadonlyArray<VcsRef> = [];
 
@@ -614,33 +611,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   );
 
   const resolveStartWorkspace = useCallback(
-    (input: ResolvedWorkspace): ResolvedWorkspace => {
-      // Only a worktree thread with no chosen branch needs resolving: the repo
-      // default may still be loading, or the auto-select below found no
-      // default / current ref to pre-pick. Everything else starts as-is.
-      if (input.mode !== "worktree" || input.branch !== null) {
-        return input;
-      }
-      const preferredBranch =
-        allBranchRefs.find((branch) => branch.isDefault) ??
-        availableBranches.find((branch) => branch.current) ??
-        availableBranches[0] ??
-        null;
-      // No branch is known at all (branches not loaded, or not a branchy repo):
-      // a current-checkout thread needs none, so fall back to it rather than
-      // stranding the user with an unstartable worktree.
-      if (!preferredBranch) {
-        return { mode: "local", branch: null, worktreePath: input.worktreePath };
-      }
-      return {
-        mode: "worktree",
-        branch: preferredBranch.name,
-        worktreePath: selectedProject
-          ? normalizeSelectedWorktreePath(selectedProject, preferredBranch)
-          : input.worktreePath,
-      };
-    },
-    [allBranchRefs, availableBranches, selectedProject],
+    (input: ResolvedWorkspace): ResolvedWorkspace =>
+      computeStartWorkspace(input, { all: allBranchRefs, available: availableBranches }),
+    [allBranchRefs, availableBranches],
   );
 
   const refreshBranches = branchState.refresh;
