@@ -3154,8 +3154,11 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadRef]);
   const addPlanSurface = useCallback(() => {
     if (!activeThreadRef) return;
+    if (activeThreadKey) {
+      clearPlanSidebarDismissal(activeThreadKey);
+    }
     useRightPanelStore.getState().open(activeThreadRef, "plan");
-  }, [activeThreadRef]);
+  }, [activeThreadKey, activeThreadRef]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
