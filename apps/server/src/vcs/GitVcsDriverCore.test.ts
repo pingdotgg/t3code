@@ -735,7 +735,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("does not wrap a remove-worktree command failure in a synthetic error", () =>
+    it.effect("treats removing a path git no longer registers as a worktree as a no-op", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const pathService = yield* Path.Path;
@@ -743,19 +743,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         const driver = yield* GitVcsDriver.GitVcsDriver;
         yield* driver.initRepo({ cwd });
 
-        const error = yield* driver
-          .removeWorktree({ cwd, path: missingWorktree })
-          .pipe(Effect.flip);
-
-        assert.deepInclude(error, {
-          _tag: "GitCommandError",
-          operation: "GitVcsDriver.removeWorktree",
-          command: "git",
-          argumentCount: 3,
-          cwd,
-        });
-        assert.notProperty(error, "cause");
-        assert.notInclude(error.detail, "Git command failed in");
+        yield* driver.removeWorktree({ cwd, path: missingWorktree });
       }),
     );
   });
@@ -1361,6 +1349,43 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         yield* driver.removeWorktree({ cwd, path: worktreePath });
         const fileSystem = yield* FileSystem.FileSystem;
         assert.equal(yield* fileSystem.exists(worktreePath), false);
+
+        // Removing the same worktree again is a no-op, so a stale thread record
+        // pointing at it cannot fail a delete.
+        yield* driver.removeWorktree({ cwd, path: worktreePath });
+      }),
+    );
+
+    it.effect("does not wrap a remove-worktree command failure in a synthetic error", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const worktreePath = pathService.join(
+          yield* makeTmpDir("git-worktrees-"),
+          "dirty-worktree",
+        );
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/dirty-worktree",
+        });
+        yield* writeTextFile(worktreePath, "untracked.txt", "dirty");
+
+        const error = yield* driver.removeWorktree({ cwd, path: worktreePath }).pipe(Effect.flip);
+
+        assert.deepInclude(error, {
+          _tag: "GitCommandError",
+          operation: "GitVcsDriver.removeWorktree",
+          command: "git",
+          argumentCount: 3,
+          cwd,
+        });
+        assert.notProperty(error, "cause");
+        assert.notInclude(error.detail, "Git command failed in");
       }),
     );
   });

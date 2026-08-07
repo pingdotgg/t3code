@@ -426,6 +426,10 @@ function isUnbornHeadStderr(stderr: string): boolean {
   );
 }
 
+function isUnregisteredWorktreeGitStderr(stderr: string): boolean {
+  return stderr.toLowerCase().includes("is not a working tree");
+}
+
 interface Trace2Monitor {
   readonly env: NodeJS.ProcessEnv;
   readonly flush: Effect.Effect<void, never>;
@@ -2875,9 +2879,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       args.push("--force");
     }
     args.push(input.path);
-    yield* executeGit("GitVcsDriver.removeWorktree", input.cwd, args, {
-      timeoutMs: 15_000,
-      fallbackErrorDetail: "git worktree remove failed",
+    const result = yield* executeGitWithStableDiagnostics(
+      "GitVcsDriver.removeWorktree",
+      input.cwd,
+      args,
+      { timeoutMs: 15_000, allowNonZeroExit: true },
+    );
+    // A path git no longer registers as a worktree is already in the requested
+    // state — deleting a thread whose worktree_path has drifted must not fail.
+    if (result.exitCode === 0 || isUnregisteredWorktreeGitStderr(result.stderr)) {
+      return;
+    }
+    return yield* new GitCommandError({
+      ...gitCommandContext({ operation: "GitVcsDriver.removeWorktree", cwd: input.cwd, args }),
+      detail: "git worktree remove failed",
+      ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+      stdoutLength: result.stdout.length,
+      stderrLength: result.stderr.length,
     });
   });
 
