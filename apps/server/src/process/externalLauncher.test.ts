@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -154,6 +155,66 @@ it.effect("discovers editors through the service API", () =>
     assert.equal(editors.includes("file-manager"), true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("memoizes editor discovery and refreshes after the cache window", () => {
+  let statCalls = 0;
+  const fileInfo = { type: "File" } as FileSystem.File.Info;
+  const launcherLayer = ExternalLauncher.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        FileSystem.layerNoop({
+          stat: () =>
+            Effect.sync(() => {
+              statCalls += 1;
+              return fileInfo;
+            }),
+        }),
+        Path.layer,
+        Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.sync(() => makeMockDetachedHandle())),
+        ),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const launcher = yield* ExternalLauncher.ExternalLauncher;
+
+    const first = yield* launcher.resolveAvailableEditors();
+    assert.equal(first.includes("vscode"), true);
+    const statCallsAfterFirstScan = statCalls;
+    assert.isAbove(statCallsAfterFirstScan, 0);
+
+    // Past the shared command-resolution cache TTL (30s) but within the
+    // discovery cache window: the memoized set is reused without any scan.
+    yield* TestClock.adjust("31 seconds");
+    const second = yield* launcher.resolveAvailableEditors();
+    assert.deepEqual([...second], [...first]);
+    assert.equal(statCalls, statCallsAfterFirstScan);
+
+    // Past the discovery cache window the next call rescans.
+    yield* TestClock.adjust("30 seconds");
+    yield* launcher.resolveAvailableEditors();
+    assert.isAbove(statCalls, statCallsAfterFirstScan);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        launcherLayer,
+        Layer.succeed(HostProcessPlatform, "win32"),
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: {
+              PATH: "C:\\t3-editor-discovery-cache-test",
+              PATHEXT: ".COM;.EXE;.BAT;.CMD",
+            },
+          }),
+        ),
+        TestClock.layer(),
+      ),
+    ),
+  );
+});
 
 it.effect("rejects unknown editors through the service API", () =>
   Effect.gen(function* () {
