@@ -28,6 +28,7 @@ function shellState(input: {
   readonly updatedAt?: string;
   readonly error?: string;
   readonly snapshotSequence?: number;
+  readonly cacheHydrated?: boolean;
 }): EnvironmentShellState {
   return {
     snapshot:
@@ -41,6 +42,7 @@ function shellState(input: {
           }),
     status: input.status,
     error: input.error === undefined ? Option.none() : Option.some(input.error),
+    cacheHydrated: input.cacheHydrated ?? true,
   };
 }
 
@@ -97,6 +99,7 @@ describe("environment shell projections", () => {
       hasSynchronizingShell: true,
       hasCachedShell: true,
       hasLiveShell: false,
+      areShellCachesHydrated: true,
       firstError: "Retrying.",
       latestSnapshotUpdatedAt: "2026-06-02T00:00:00.000Z",
     });
@@ -111,6 +114,22 @@ describe("environment shell projections", () => {
     );
 
     expect(harness.registry.get(harness.summaryAtom)).toBe(summary);
+  });
+
+  it("reports cache hydration only after every catalog environment has loaded", () => {
+    const harness = makeHarness();
+
+    harness.registry.set(
+      harness.shellStateAtom(OTHER_ENVIRONMENT_ID),
+      shellState({ status: "empty", cacheHydrated: false }),
+    );
+    expect(harness.registry.get(harness.summaryAtom).areShellCachesHydrated).toBe(false);
+
+    harness.registry.set(
+      harness.shellStateAtom(OTHER_ENVIRONMENT_ID),
+      shellState({ status: "empty", cacheHydrated: true }),
+    );
+    expect(harness.registry.get(harness.summaryAtom).areShellCachesHydrated).toBe(true);
   });
 
   it("preserves server-config map identity until a config reference changes", () => {

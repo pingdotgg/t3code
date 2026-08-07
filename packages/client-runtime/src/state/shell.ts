@@ -32,12 +32,15 @@ export interface EnvironmentShellState {
   readonly snapshot: Option.Option<OrchestrationShellSnapshot>;
   readonly status: EnvironmentShellStatus;
   readonly error: Option.Option<string>;
+  /** True once the persisted shell cache has been read for this environment. */
+  readonly cacheHydrated: boolean;
 }
 
 const EMPTY_SHELL_STATE: EnvironmentShellState = {
   snapshot: Option.none(),
   status: "empty",
   error: Option.none(),
+  cacheHydrated: false,
 };
 
 function shellStatusForSnapshot(
@@ -69,6 +72,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     snapshot: cachedSnapshot,
     status: shellStatusForSnapshot(cachedSnapshot),
     error: Option.none(),
+    cacheHydrated: true,
   });
   const awaitingCompletion = yield* Ref.make(false);
   const persistence = yield* Queue.sliding<OrchestrationShellSnapshot>(1);
@@ -165,6 +169,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       snapshot: Option.some(nextSnapshot),
       status: waiting ? "synchronizing" : "live",
       error: Option.none(),
+      cacheHydrated: true,
     });
     yield* Queue.offer(persistence, nextSnapshot);
   });
@@ -187,6 +192,21 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
         yield* setSynchronizing;
 
+        const current = yield* SubscriptionRef.get(state);
+        // Modern servers make a cached cursor authoritative: they replay a
+        // small gap, replace an invalid/old cursor with a fresh snapshot, and
+        // emit a completion marker after buffered live events. Reusing that
+        // cursor avoids a redundant full HTTP shell download on every app
+        // foreground while preserving deletion/catch-up correctness.
+        if (supportsCompletionMarker && Option.isSome(current.snapshot)) {
+          return {
+            afterSequence: current.snapshot.value.snapshotSequence,
+            requestCompletionMarker: true as const,
+          };
+        }
+
+        // Cold caches and older servers still use the authoritative HTTP
+        // snapshot path before subscribing.
         const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
           Effect.flatMap(
             Option.match({
@@ -248,6 +268,8 @@ export interface EnvironmentShellSummary {
   readonly hasSynchronizingShell: boolean;
   readonly hasCachedShell: boolean;
   readonly hasLiveShell: boolean;
+  /** True once every catalog environment has completed its local cache read. */
+  readonly areShellCachesHydrated: boolean;
   readonly firstError: string | null;
   readonly latestSnapshotUpdatedAt: string | null;
 }
@@ -257,6 +279,7 @@ const EMPTY_ENVIRONMENT_SHELL_SUMMARY: EnvironmentShellSummary = Object.freeze({
   hasSynchronizingShell: false,
   hasCachedShell: false,
   hasLiveShell: false,
+  areShellCachesHydrated: false,
   firstError: null,
   latestSnapshotUpdatedAt: null,
 });
@@ -272,6 +295,7 @@ function shellSummariesEqual(
     left.hasSynchronizingShell === right.hasSynchronizingShell &&
     left.hasCachedShell === right.hasCachedShell &&
     left.hasLiveShell === right.hasLiveShell &&
+    left.areShellCachesHydrated === right.areShellCachesHydrated &&
     left.firstError === right.firstError &&
     left.latestSnapshotUpdatedAt === right.latestSnapshotUpdatedAt
   );
@@ -295,18 +319,21 @@ export function createEnvironmentShellSummaryAtom(input: {
 }) {
   let previousSummary = EMPTY_ENVIRONMENT_SHELL_SUMMARY;
   return Atom.make((get) => {
+    const catalog = get(input.catalogValueAtom);
     let hasSnapshot = false;
     let hasSynchronizingShell = false;
     let hasCachedShell = false;
     let hasLiveShell = false;
+    let areShellCachesHydrated = catalog.isReady;
     let firstError: string | null = null;
     let latestSnapshotUpdatedAt: string | null = null;
 
-    for (const environmentId of get(input.catalogValueAtom).entries.keys()) {
+    for (const environmentId of catalog.entries.keys()) {
       const state = get(input.shellStateValueAtom(environmentId));
       hasSynchronizingShell ||= state.status === "synchronizing";
       hasCachedShell ||= state.status === "cached";
       hasLiveShell ||= state.status === "live";
+      areShellCachesHydrated &&= state.cacheHydrated;
       if (firstError === null) {
         firstError = Option.getOrNull(state.error);
       }
@@ -325,6 +352,7 @@ export function createEnvironmentShellSummaryAtom(input: {
       hasSynchronizingShell,
       hasCachedShell,
       hasLiveShell,
+      areShellCachesHydrated,
       firstError,
       latestSnapshotUpdatedAt,
     };

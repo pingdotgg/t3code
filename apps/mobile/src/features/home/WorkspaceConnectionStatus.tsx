@@ -1,10 +1,17 @@
 import { SymbolView } from "../../components/AppSymbol";
-import { ActivityIndicator, Pressable } from "react-native";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Pressable, View } from "react-native";
+import Animated, { FadeInUp, FadeOutDown } from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/AppText";
 import { useThemeColor } from "../../lib/useThemeColor";
 import type { WorkspaceState } from "../../state/workspaceModel";
-import { workspaceConnectionStatusLabel } from "./workspace-connection-status";
+import {
+  workspaceConnectionStatusLabel,
+  workspaceConnectionStatusPresentation,
+} from "./workspace-connection-status";
+
+const TRANSIENT_STATUS_DELAY_MS = 350;
 
 export function WorkspaceConnectionStatus(props: {
   readonly state: WorkspaceState;
@@ -22,6 +29,7 @@ export function WorkspaceConnectionStatus(props: {
     <Pressable
       accessibilityHint="Opens environment settings"
       accessibilityLabel={workspaceConnectionStatusLabel(props.state)}
+      accessibilityLiveRegion="polite"
       accessibilityRole="button"
       onPress={props.onPress}
       className={
@@ -52,5 +60,57 @@ export function WorkspaceConnectionStatus(props: {
         <SymbolView name="chevron.right" size={11} tintColor={iconColor} type="monochrome" />
       ) : null}
     </Pressable>
+  );
+}
+
+/**
+ * Connection chrome that never participates in list or empty-state layout.
+ * Transient recovery is delayed to suppress healthy sub-350ms reconnect
+ * flashes; persistent and actionable states appear immediately.
+ */
+export function WorkspaceConnectionStatusOverlay(props: {
+  readonly state: WorkspaceState;
+  readonly onPress: () => void;
+  readonly bottomOffset: number;
+}) {
+  const presentation = workspaceConnectionStatusPresentation(props.state);
+  const [presented, setPresented] = useState(presentation === "immediate");
+  const [displayedState, setDisplayedState] = useState(props.state);
+
+  useEffect(() => {
+    if (presentation !== "hidden") {
+      setDisplayedState(props.state);
+    }
+  }, [presentation, props.state]);
+
+  useEffect(() => {
+    if (presentation === "hidden") {
+      setPresented(false);
+      return;
+    }
+    if (presentation === "immediate" || presented) {
+      setPresented(true);
+      return;
+    }
+    const timeout = setTimeout(() => setPresented(true), TRANSIENT_STATUS_DELAY_MS);
+    return () => clearTimeout(timeout);
+  }, [presentation, presented]);
+
+  if (!presented) return null;
+
+  return (
+    <View
+      className="absolute inset-x-4 z-20 items-center"
+      pointerEvents="box-none"
+      style={{ bottom: props.bottomOffset }}
+    >
+      <Animated.View
+        className="w-full max-w-[430px]"
+        entering={FadeInUp.duration(180)}
+        exiting={FadeOutDown.duration(140)}
+      >
+        <WorkspaceConnectionStatus state={displayedState} onPress={props.onPress} />
+      </Animated.View>
+    </View>
   );
 }

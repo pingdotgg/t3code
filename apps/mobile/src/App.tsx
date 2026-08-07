@@ -1,7 +1,9 @@
 import { BlurTargetView } from "expo-blur";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
-import { useEffect } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { useEffect, useState } from "react";
 import { StatusBar, useColorScheme } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
@@ -22,6 +24,8 @@ import { appAtomRegistry } from "./state/atom-registry";
 import { OverlayPortalHost } from "./components/OverlayPortal";
 import { appBlurTargetRef } from "./lib/appBlurTarget";
 import { useThemeColor } from "./lib/useThemeColor";
+import { environmentCatalog } from "./connection/catalog";
+import { environmentShellSummaryAtom } from "./state/shell";
 
 import "../global.css";
 
@@ -29,7 +33,7 @@ if (process.env.EXPO_PUBLIC_SHOWCASE === "1") {
   prepareNativeShowcaseCapture();
 }
 
-void SplashScreen.preventAutoHideAsync().catch(() => {
+const splashScreenPrevention = SplashScreen.preventAutoHideAsync().catch(() => {
   // The native module can be unavailable in non-native test environments.
 });
 
@@ -46,13 +50,31 @@ const appLinking = {
 };
 
 const Navigation = createStaticNavigation(RootStack);
+const BOOTSTRAP_HYDRATION_BUDGET_MS = 750;
 
 function SplashScreenCoordinator() {
   const { isReady } = useAppearancePreferences();
+  const catalogResult = useAtomValue(environmentCatalog.catalogAtom);
+  const shellSummary = useAtomValue(environmentShellSummaryAtom);
+  const [hydrationBudgetElapsed, setHydrationBudgetElapsed] = useState(false);
+  const connectionBootstrapReady =
+    AsyncResult.isFailure(catalogResult) || shellSummary.areShellCachesHydrated;
+  const bootstrapReady = isReady && (connectionBootstrapReady || hydrationBudgetElapsed);
 
   useEffect(() => {
-    if (isReady) void SplashScreen.hide();
-  }, [isReady]);
+    if (connectionBootstrapReady) return;
+    const timeout = setTimeout(
+      () => setHydrationBudgetElapsed(true),
+      BOOTSTRAP_HYDRATION_BUDGET_MS,
+    );
+    return () => clearTimeout(timeout);
+  }, [connectionBootstrapReady]);
+
+  useEffect(() => {
+    if (bootstrapReady) {
+      void splashScreenPrevention.then(() => SplashScreen.hide());
+    }
+  }, [bootstrapReady]);
 
   return null;
 }

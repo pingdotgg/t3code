@@ -4,6 +4,7 @@ import type { WorkspaceState } from "../../state/workspaceModel";
 import {
   shouldShowWorkspaceConnectionStatus,
   workspaceConnectionStatusLabel,
+  workspaceConnectionStatusPresentation,
 } from "./workspace-connection-status";
 
 function workspaceState(overrides: Partial<WorkspaceState> = {}): WorkspaceState {
@@ -27,6 +28,7 @@ function workspaceState(overrides: Partial<WorkspaceState> = {}): WorkspaceState
 describe("workspace connection status", () => {
   it("stays hidden while a ready environment is connected", () => {
     expect(shouldShowWorkspaceConnectionStatus(workspaceState())).toBe(false);
+    expect(workspaceConnectionStatusPresentation(workspaceState())).toBe("hidden");
   });
 
   it("surfaces offline snapshots", () => {
@@ -34,6 +36,7 @@ describe("workspace connection status", () => {
 
     expect(shouldShowWorkspaceConnectionStatus(state)).toBe(true);
     expect(workspaceConnectionStatusLabel(state)).toBe("You are offline");
+    expect(workspaceConnectionStatusPresentation(state)).toBe("immediate");
   });
 
   it("names the environment while reconnecting", () => {
@@ -55,6 +58,27 @@ describe("workspace connection status", () => {
 
     expect(shouldShowWorkspaceConnectionStatus(state)).toBe(true);
     expect(workspaceConnectionStatusLabel(state)).toBe("Reconnecting to Julius’s Mac mini");
+    expect(workspaceConnectionStatusPresentation(state)).toBe("deferred");
+  });
+
+  it("distinguishes an initial connection from a reconnect", () => {
+    const state = workspaceState({
+      hasConnectingEnvironment: true,
+      hasReadyEnvironment: false,
+      connectingEnvironments: [
+        {
+          environmentId: "environment-1" as never,
+          environmentLabel: "Julius’s Mac mini",
+          displayUrl: "",
+          isRelayManaged: false,
+          connectionState: "connecting",
+          connectionError: null,
+          connectionErrorTraceId: null,
+        },
+      ],
+    });
+
+    expect(workspaceConnectionStatusLabel(state)).toBe("Connecting to Julius’s Mac mini");
   });
 
   it("surfaces connection errors before the generic disconnected fallback", () => {
@@ -66,6 +90,7 @@ describe("workspace connection status", () => {
 
     expect(shouldShowWorkspaceConnectionStatus(state)).toBe(true);
     expect(workspaceConnectionStatusLabel(state)).toBe("Could not reach Julius’s Mac mini");
+    expect(workspaceConnectionStatusPresentation(state)).toBe("immediate");
   });
 
   it("shows shell catch-up while cached threads remain visible", () => {

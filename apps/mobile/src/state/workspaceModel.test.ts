@@ -51,6 +51,7 @@ const EMPTY_SHELL_SUMMARY: EnvironmentShellSummary = {
   hasSynchronizingShell: false,
   hasCachedShell: false,
   hasLiveShell: false,
+  areShellCachesHydrated: true,
   firstError: null,
   latestSnapshotUpdatedAt: null,
 };

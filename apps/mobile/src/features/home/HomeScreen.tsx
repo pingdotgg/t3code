@@ -71,8 +71,7 @@ import {
   type HomeProjectSortOrder,
 } from "./homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
-import { WorkspaceConnectionStatus } from "./WorkspaceConnectionStatus";
-import { shouldShowWorkspaceConnectionStatus } from "./workspace-connection-status";
+import { WorkspaceConnectionStatusOverlay } from "./WorkspaceConnectionStatus";
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
 
@@ -976,20 +975,28 @@ export function HomeScreen(props: HomeScreenProps) {
       ? null
       : (props.savedConnectionsById[props.selectedEnvironmentId]?.environmentLabel ??
         "this environment");
-  const shouldShowConnectionStatus = shouldShowWorkspaceConnectionStatus(props.catalogState);
   const emptyState = deriveEmptyState({
     catalogState: props.catalogState,
     projectCount: props.projects.length,
   });
-  const connectionStatus =
-    shouldShowConnectionStatus && Platform.OS !== "ios" ? (
-      <View
-        className="absolute left-0 right-0 items-center"
-        style={{ bottom: Math.max(insets.bottom, 18) + 76 }}
-      >
-        <WorkspaceConnectionStatus state={props.catalogState} onPress={props.onOpenEnvironments} />
-      </View>
-    ) : null;
+  const emptyAction = !props.catalogState.hasConnections
+    ? { label: "Add environment", onPress: props.onAddConnection }
+    : !props.catalogState.hasReadyEnvironment &&
+        !props.catalogState.hasConnectingEnvironment &&
+        !props.catalogState.isLoadingConnections
+      ? { label: "Environment settings", onPress: props.onOpenEnvironments }
+      : null;
+  const connectionStatus = (
+    <WorkspaceConnectionStatusOverlay
+      state={props.catalogState}
+      onPress={props.onOpenEnvironments}
+      bottomOffset={
+        Platform.OS === "android"
+          ? Math.max(insets.bottom, 18) + 76
+          : Math.max(insets.bottom, 18) + 72
+      }
+    />
+  );
 
   if (!hasAnyThreads) {
     return (
@@ -1004,22 +1011,13 @@ export function HomeScreen(props: HomeScreenProps) {
           <EmptyState
             title={emptyState.title}
             detail={emptyState.detail}
-            actionLabel={!props.catalogState.hasReadyEnvironment ? "Add environment" : undefined}
-            onAction={!props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined}
+            actionLabel={emptyAction?.label}
+            onAction={emptyAction?.onPress}
             variant="plain"
           />
-          {emptyState.loading && !shouldShowConnectionStatus ? (
+          {emptyState.loading ? (
             <View className="mt-4 items-center">
               <ActivityIndicator color={accentColor} />
-            </View>
-          ) : null}
-          {shouldShowConnectionStatus && Platform.OS === "ios" ? (
-            <View className="mt-4">
-              <WorkspaceConnectionStatus
-                state={props.catalogState}
-                onPress={props.onOpenEnvironments}
-                variant="sidebar"
-              />
             </View>
           ) : null}
         </View>
@@ -1028,21 +1026,7 @@ export function HomeScreen(props: HomeScreenProps) {
     );
   }
 
-  const listHeader = (
-    <>
-      {Platform.OS === "ios" ? null : <HomeTopContentSpacer />}
-
-      {shouldShowConnectionStatus && Platform.OS === "ios" ? (
-        <View className="pb-4">
-          <WorkspaceConnectionStatus
-            state={props.catalogState}
-            onPress={props.onOpenEnvironments}
-            variant="sidebar"
-          />
-        </View>
-      ) : null}
-    </>
-  );
+  const listHeader = <>{Platform.OS === "ios" ? null : <HomeTopContentSpacer />}</>;
 
   // Project scoping lives in the header filter menu (no inline chip row on
   // mobile — the menu is the one filter surface).
