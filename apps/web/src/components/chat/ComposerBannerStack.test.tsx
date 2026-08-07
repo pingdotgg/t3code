@@ -3,9 +3,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./ComposerBannerStack";
 
-const banner = (id: string): ComposerBannerStackItem => ({
+const banner = (
+  id: string,
+  variant: ComposerBannerStackItem["variant"] = "warning",
+): ComposerBannerStackItem => ({
   id,
-  variant: "warning",
+  variant,
   icon: <span aria-hidden="true">!</span>,
   title: `${id} warning`,
 });
@@ -27,6 +30,19 @@ describe("ComposerBannerStack", () => {
     expect(markup.indexOf("front warning")).toBeLessThan(markup.indexOf("stacked warning"));
     expect(markup).toContain("invisible pointer-events-none");
     expect(markup).toContain("group-focus-within/banner-stack:visible");
+  });
+
+  it("colors the collapsed stack cap by the hidden banner's variant, not a fixed warning", () => {
+    const neutralBehind = renderToStaticMarkup(
+      <ComposerBannerStack items={[banner("front", "default"), banner("stacked", "default")]} />,
+    );
+    expect(neutralBehind).toContain("border-border");
+    expect(neutralBehind).not.toContain("border-warning/24");
+
+    const warningBehind = renderToStaticMarkup(
+      <ComposerBannerStack items={[banner("front", "default"), banner("stacked", "warning")]} />,
+    );
+    expect(warningBehind).toContain("border-warning/24");
   });
 
   it("does not render an expandable region for a single banner", () => {

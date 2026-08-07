@@ -1934,6 +1934,8 @@ function ChatViewContent(props: ChatViewProps) {
         items.push({
           id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
           variant: "default",
+          // Live connection status: calm styling, but it must front the stack.
+          urgent: true,
           icon: (
             <span
               className="size-1.5 animate-status-pulse rounded-full bg-foreground"
@@ -1988,6 +1990,9 @@ function ChatViewContent(props: ChatViewProps) {
       items.push({
         id: `server-version:${serverUpdateEnvironmentId}`,
         variant: updateFailed ? "error" : "default",
+        // A running update is live progress the user is waiting on; only the
+        // idle "update available" offer is calm enough to stack behind.
+        urgent: updateInProgress,
         // In-flight and failed states carry their own status dot inside
         // ServerUpdateProgress; only the idle offer needs an icon.
         icon:
@@ -4372,8 +4377,12 @@ function ChatViewContent(props: ChatViewProps) {
     };
   }, [acknowledgeActiveThreadWoke, activeThread?.id, activeThreadWokeVisible]);
   // The stack renders items[0] front-most and tucks the rest behind hover, so
-  // ordering is priority: system banners, then the branch-mismatch notice,
-  // and the informational parked-thread banner last — it must never cover another.
+  // ordering is priority: urgent system banners (error/warning variants plus
+  // calm-styled live states flagged `urgent`, like update progress), then
+  // background liveness — its Stop button is the only stop affordance for
+  // settled turns, so a passive "update available" notice must not cover it —
+  // then calm system banners, the woke and branch-mismatch notices, and the
+  // informational parked-thread banner last — it must never cover another.
   const parkedThreadBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (!activeThreadSnoozed && !activeThreadSettled) {
       return null;
@@ -4423,21 +4432,27 @@ function ChatViewContent(props: ChatViewProps) {
     void handleSwitchCheckoutToThread();
   }, [gitStatusQuery.data?.hasWorkingTreeChanges, handleSwitchCheckoutToThread]);
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
+    const isUrgentSystemItem = (item: ComposerBannerStackItem) =>
+      item.urgent === true || item.variant === "error" || item.variant === "warning";
+    const urgentSystemItems = systemComposerBannerItems.filter(isUrgentSystemItem);
+    const calmSystemItems = systemComposerBannerItems.filter((item) => !isUrgentSystemItem(item));
     const backgroundLivenessItems =
       backgroundLivenessBannerItem === null ? [] : [backgroundLivenessBannerItem];
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
-        ...systemComposerBannerItems,
+        ...urgentSystemItems,
         ...backgroundLivenessItems,
+        ...calmSystemItems,
         ...wokeThreadItems,
         ...parkedThreadItems,
       ];
     }
     return [
-      ...systemComposerBannerItems,
+      ...urgentSystemItems,
       ...backgroundLivenessItems,
+      ...calmSystemItems,
       ...wokeThreadItems,
       {
         id: `branch-mismatch:${activeBranchMismatchKey}`,
