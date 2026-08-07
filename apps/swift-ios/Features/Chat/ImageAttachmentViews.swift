@@ -370,6 +370,28 @@ private struct FeaturePhotoLibraryPicker: UIViewControllerRepresentable {
     }
 }
 
+enum FeatureImagePasteLoader {
+    static func data(from provider: NSItemProvider) async throws -> Data {
+        guard let typeIdentifier = provider.registeredTypeIdentifiers.first(where: {
+            UTType($0)?.conforms(to: .image) == true
+        }) else {
+            throw FeatureImageAttachmentError.invalidImage
+        }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            provider.loadDataRepresentation(forTypeIdentifier: typeIdentifier) { data, error in
+                if let data {
+                    continuation.resume(returning: data)
+                } else if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(throwing: FeatureImageAttachmentError.invalidImage)
+                }
+            }
+        }
+    }
+}
+
 struct FeatureAttachmentStrip: View {
     @Binding var attachments: [FeatureDraftAttachment]
 
