@@ -10,6 +10,7 @@ import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
@@ -36,7 +37,8 @@ export class DesktopApplicationMenu extends Context.Service<
 type DesktopApplicationMenuRuntimeServices =
   | DesktopUpdates.DesktopUpdates
   | DesktopWindow.DesktopWindow
-  | ElectronDialog.ElectronDialog;
+  | ElectronDialog.ElectronDialog
+  | ElectronWindow.ElectronWindow;
 
 const { logInfo: logUpdaterInfo } = makeComponentLogger("desktop-updater");
 
@@ -47,6 +49,18 @@ const dispatchMenuAction = Effect.fn("desktop.menu.dispatchMenuAction")(function
 ): Effect.fn.Return<void, DesktopWindow.DesktopWindowError, DesktopWindow.DesktopWindow> {
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   yield* desktopWindow.dispatchMenuAction(action);
+});
+
+const setApplicationZoom = Effect.fn("desktop.menu.setApplicationZoom")(function* (
+  transform: (current: number) => number,
+) {
+  const electronWindow = yield* ElectronWindow.ElectronWindow;
+  const focusedWindow = yield* electronWindow.focusedMainOrFirst;
+  if (Option.isNone(focusedWindow)) return;
+  yield* Effect.sync(() => {
+    const webContents = focusedWindow.value.webContents;
+    webContents.setZoomLevel(transform(webContents.getZoomLevel()));
+  });
 });
 
 const checkForUpdatesFromMenu = Effect.gen(function* () {
@@ -127,6 +141,24 @@ export const make = Effect.gen(function* () {
     const settingsClick = () => {
       runMenuEffect("open-settings", dispatchMenuAction("open-settings"));
     };
+    const resetZoomClick = () => {
+      runMenuEffect(
+        "reset-zoom",
+        setApplicationZoom(() => 0),
+      );
+    };
+    const zoomInClick = () => {
+      runMenuEffect(
+        "zoom-in",
+        setApplicationZoom((current) => current + 1),
+      );
+    };
+    const zoomOutClick = () => {
+      runMenuEffect(
+        "zoom-out",
+        setApplicationZoom((current) => current - 1),
+      );
+    };
     const template: Electron.MenuItemConstructorOptions[] = [];
 
     if (environment.platform === "darwin") {
@@ -181,10 +213,15 @@ export const make = Effect.gen(function* () {
           { role: "forceReload" },
           { role: "toggleDevTools" },
           { type: "separator" },
-          { role: "resetZoom" },
-          { role: "zoomIn", accelerator: "CmdOrCtrl+=" },
-          { role: "zoomIn", accelerator: "CmdOrCtrl+Plus", visible: false },
-          { role: "zoomOut" },
+          { label: "Actual Size", accelerator: "CmdOrCtrl+0", click: resetZoomClick },
+          { label: "Zoom In", accelerator: "CmdOrCtrl+=", click: zoomInClick },
+          {
+            label: "Zoom In",
+            accelerator: "CmdOrCtrl+Plus",
+            visible: false,
+            click: zoomInClick,
+          },
+          { label: "Zoom Out", accelerator: "CmdOrCtrl+-", click: zoomOutClick },
           { type: "separator" },
           { role: "togglefullscreen" },
         ],
