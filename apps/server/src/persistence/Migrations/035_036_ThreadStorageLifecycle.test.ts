@@ -143,11 +143,13 @@ branchHistoryLayer("038 branch-history compatibility", (it) => {
         ORDER BY task
       `;
 
-      const executed = yield* runMigrations({ toMigrationInclusive: 39 });
+      const executed = yield* runMigrations({ toMigrationInclusive: 41 });
       assert.deepStrictEqual(executed, [
         [37, "ProjectionThreadTitleRegeneration"],
         [38, "ThreadColdArchiveCompatibility"],
         [39, "ProjectionThreadsPinned"],
+        [40, "ProjectionTurnsKeysetIndex"],
+        [41, "ProjectionThreadsPinOrderKey"],
       ]);
 
       const afterManifests = yield* sql<{
@@ -180,6 +182,11 @@ branchHistoryLayer("038 branch-history compatibility", (it) => {
         PRAGMA table_info(projection_threads)
       `;
       assert.ok(columns.some((column) => column.name === "pinned_at"));
+      assert.ok(columns.some((column) => column.name === "pin_order_key"));
+      const turnIndexes = yield* sql<{ readonly name: string }>`
+        PRAGMA index_list(projection_turns)
+      `;
+      assert.ok(turnIndexes.some((index) => index.name === "idx_projection_turns_thread_keyset"));
     }),
   );
 });
@@ -210,12 +217,14 @@ upstreamHistoryLayer("035 upstream title-regeneration compatibility", (it) => {
         VALUES (35, 'ProjectionThreadTitleRegeneration')
       `;
 
-      const executed = yield* runMigrations({ toMigrationInclusive: 39 });
+      const executed = yield* runMigrations({ toMigrationInclusive: 41 });
       assert.deepStrictEqual(executed, [
         [36, "DeletedThreadCleanupQueue"],
         [37, "ProjectionThreadTitleRegeneration"],
         [38, "ThreadColdArchiveCompatibility"],
         [39, "ProjectionThreadsPinned"],
+        [40, "ProjectionTurnsKeysetIndex"],
+        [41, "ProjectionThreadsPinOrderKey"],
       ]);
 
       const manifests = yield* sql<{
@@ -236,6 +245,11 @@ upstreamHistoryLayer("035 upstream title-regeneration compatibility", (it) => {
       assert.ok(names.has("title_regeneration_request_id"));
       assert.ok(names.has("title_regeneration_started_at"));
       assert.ok(names.has("pinned_at"));
+      assert.ok(names.has("pin_order_key"));
+      const turnIndexes = yield* sql<{ readonly name: string }>`
+        PRAGMA index_list(projection_turns)
+      `;
+      assert.ok(turnIndexes.some((index) => index.name === "idx_projection_turns_thread_keyset"));
     }),
   );
 });
