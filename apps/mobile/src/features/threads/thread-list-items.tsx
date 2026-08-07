@@ -5,9 +5,10 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import type { MenuAction } from "@react-native-menu/menu";
+import type { ThemeColors } from "@t3tools/themes";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useMemo, type ComponentProps } from "react";
-import { Pressable, useColorScheme, useWindowDimensions, View } from "react-native";
+import { Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import Svg, { Circle, Path } from "react-native-svg";
 
@@ -18,6 +19,8 @@ import { cn } from "../../lib/cn";
 import { HOME_HORIZONTAL_INSET } from "../../lib/layoutMetrics";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { useAppearanceColorScheme } from "../../lib/useAppearanceColorScheme";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr, type ThreadPr } from "../../state/use-thread-pr";
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
@@ -39,16 +42,17 @@ const SIDEBAR_ROW_RADIUS = 12;
 
 function pullRequestTintColor(
   state: ThreadPr["state"],
-  colorScheme: ReturnType<typeof useColorScheme>,
+  colorScheme: ReturnType<typeof useAppearanceColorScheme>,
+  themeColors?: ThemeColors | null,
 ) {
   const dark = colorScheme === "dark";
   switch (state) {
     case "open":
-      return dark ? "#34d399" : "#059669";
+      return themeColors?.update ?? (dark ? "#34d399" : "#059669");
     case "merged":
-      return dark ? "#a78bfa" : "#7c3aed";
+      return themeColors?.accent ?? (dark ? "#a78bfa" : "#7c3aed");
     case "closed":
-      return dark ? "#a1a1aa" : "#71717a";
+      return themeColors?.mutedForeground ?? (dark ? "#a1a1aa" : "#71717a");
   }
 }
 
@@ -436,7 +440,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   >["simultaneousWithExternalGesture"];
 }) {
   const { width: windowWidth } = useWindowDimensions();
-  const colorScheme = useColorScheme();
+  const colorScheme = useAppearanceColorScheme();
+  const { themeColors } = useAppearancePreferences();
   const compact = props.variant === "compact";
   const selected = props.selected === true;
   // Recycling-safe: resets when the list container is reused for another
@@ -449,6 +454,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const drawerColor = useThemeColor("--color-drawer");
   const pressedBackgroundColor = useThemeColor("--color-subtle");
   const selectedBackgroundColor = useThemeColor("--color-user-bubble");
+  const selectedForegroundColor = useThemeColor("--color-user-bubble-foreground");
 
   const { thread, onSelectThread, onArchiveThread, onDeleteThread } = props;
   const status = resolveThreadStatus(thread);
@@ -462,7 +468,10 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   );
 
   const backgroundColor = compact ? screenColor : drawerColor;
-  const effectivePressedBackground = selected ? "rgba(255,255,255,0.16)" : pressedBackgroundColor;
+  const effectivePressedBackground = selected
+    ? (themeColors?.messageAction ??
+      (themeColors ? selectedBackgroundColor : "rgba(255,255,255,0.16)"))
+    : pressedBackgroundColor;
   const effectiveStatus =
     selected && status
       ? { ...status, pillClassName: "bg-white/20", textClassName: "text-white" }
@@ -517,7 +526,11 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
           <View className="flex-row items-center gap-0.5">
             <PullRequestIcon
               size={compact ? 13 : 11}
-              color={selected ? "#ffffff" : pullRequestTintColor(pr.state, colorScheme)}
+              color={
+                selected
+                  ? String(selectedForegroundColor)
+                  : pullRequestTintColor(pr.state, colorScheme, themeColors)
+              }
             />
             <Text
               className={`${compact ? "text-sm" : "text-xs"} font-t3-medium ${

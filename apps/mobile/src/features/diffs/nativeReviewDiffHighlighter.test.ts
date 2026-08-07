@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
+import { createManagedThemeColors } from "@t3tools/themes";
 
 import type { NativeReviewDiffRow } from "./nativeReviewDiffSurface";
 import type { NativeReviewDiffFile } from "./nativeReviewDiffTypes";
-import { highlightNativeReviewDiffVisibleRows } from "./nativeReviewDiffHighlighter";
+import {
+  applyNativeReviewDiffTheme,
+  highlightNativeReviewDiffVisibleRows,
+} from "./nativeReviewDiffHighlighter";
 
 const TYPESCRIPT_FILE: NativeReviewDiffFile = {
   id: "file-1",
@@ -185,5 +189,26 @@ describe("highlightNativeReviewDiffVisibleRows", () => {
     expect(highlighted.tokensByRowId[additionRow.id]).toEqual(
       standalone.tokensByRowId[additionRow.id],
     );
+  });
+});
+
+describe("applyNativeReviewDiffTheme", () => {
+  it("maps the Pierre syntax swatches to active theme roles", () => {
+    const colors = createManagedThemeColors("dark", "#18212b", "#5ba8ff");
+    const tokens = applyNativeReviewDiffTheme(
+      [
+        [
+          { content: "const", color: "#FF678D", fontStyle: null },
+          { content: " answer", color: "#FFA359", fontStyle: null },
+        ],
+      ],
+      "dark",
+      colors,
+    );
+
+    expect(tokens[0]).toEqual([
+      { content: "const", color: colors.accent, fontStyle: null },
+      { content: " answer", color: colors.secondaryForeground, fontStyle: null },
+    ]);
   });
 });

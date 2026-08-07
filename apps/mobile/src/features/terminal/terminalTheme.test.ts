@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildGhosttyThemeConfig, getPierreTerminalTheme } from "./terminalTheme";
+import {
+  buildGhosttyThemeConfig,
+  getPierreTerminalTheme,
+  getTerminalThemeForColors,
+} from "./terminalTheme";
+import { createManagedThemeColors } from "@t3tools/themes";
 
 describe("getPierreTerminalTheme", () => {
   it("returns the Pierre light terminal palette", () => {
@@ -32,5 +37,17 @@ describe("buildGhosttyThemeConfig", () => {
     expect(config).toContain("palette = 0=#141415");
     expect(config).toContain("palette = 15=#c6c6c8");
     expect(config.endsWith("\n")).toBe(true);
+  });
+
+  it("uses canonical terminal roles without changing ANSI-16", () => {
+    const colors = createManagedThemeColors("dark", "#18212b", "#5ba8ff");
+    const theme = getTerminalThemeForColors("dark", colors);
+    const config = buildGhosttyThemeConfig(theme);
+
+    expect(config).toContain(`background = ${colors.terminalBackground}`);
+    expect(config).toContain(`foreground = ${colors.terminalForeground}`);
+    expect(config).toContain(`cursor-color = ${colors.terminalCursor}`);
+    expect(config).toContain(`selection-background = ${colors.terminalSelection}`);
+    expect(theme.palette).toEqual(getPierreTerminalTheme("dark").palette);
   });
 });

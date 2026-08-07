@@ -2,7 +2,7 @@ import { BlurTargetView } from "expo-blur";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
-import { StatusBar, useColorScheme } from "react-native";
+import { StatusBar } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -15,6 +15,7 @@ import { prepareNativeShowcaseCapture } from "./features/showcase/nativeShowcase
 import { IncomingShareProvider } from "./features/sharing/IncomingShareProvider";
 import {
   AppearancePreferencesProvider,
+  useAppearanceColorScheme,
   useAppearancePreferences,
 } from "./features/settings/appearance/AppearancePreferencesProvider";
 import { RootStack } from "./Stack";
@@ -58,45 +59,54 @@ function SplashScreenCoordinator() {
 }
 
 export default function App() {
-  const colorScheme = useColorScheme();
-  const statusBarBg = useThemeColor("--color-status-bar");
-
   return (
     <RegistryContext.Provider value={appAtomRegistry}>
       <CloudAuthProvider>
         <AppearancePreferencesProvider>
-          <SplashScreenCoordinator />
-          <GestureHandlerRootView className="flex-1">
-            <KeyboardProvider statusBarTranslucent>
-              <SafeAreaProvider>
-                <StatusBar
-                  barStyle={colorScheme === "dark" ? "light-content" : "dark-content"}
-                  backgroundColor={statusBarBg}
-                  translucent
-                />
-                {/* The navigation theme drives the NATIVE header appearance: native-stack
-                    forwards `dark` as the nav bar's overrideUserInterfaceStyle. Without
-                    this, React Navigation defaults to its light theme and every native
-                    header (glass buttons, title, materials) is forced light even when
-                    the system is in dark mode. */}
-                {/* Blur target for Android dropdown backdrops — see appBlurTarget.ts. */}
-                <BlurTargetView ref={appBlurTargetRef} style={{ flex: 1 }}>
-                  <IncomingShareProvider>
-                    <Navigation
-                      linking={appLinking}
-                      theme={colorScheme === "dark" ? DarkTheme : DefaultTheme}
-                    />
-                  </IncomingShareProvider>
-                  <ConfirmDialogHost />
-                </BlurTargetView>
-                {/* Anchored-menu overlays render here — in-window, so the
-                    keyboard stays up while a dropdown is open. */}
-                <OverlayPortalHost />
-              </SafeAreaProvider>
-            </KeyboardProvider>
-          </GestureHandlerRootView>
+          <AppContent />
         </AppearancePreferencesProvider>
       </CloudAuthProvider>
     </RegistryContext.Provider>
+  );
+}
+
+function AppContent() {
+  const colorScheme = useAppearanceColorScheme();
+  const rootBackground = useThemeColor("--color-screen");
+  const statusBarBg = useThemeColor("--color-status-bar");
+
+  return (
+    <>
+      <SplashScreenCoordinator />
+      <GestureHandlerRootView className="flex-1" style={{ backgroundColor: rootBackground }}>
+        <KeyboardProvider statusBarTranslucent>
+          <SafeAreaProvider>
+            <StatusBar
+              barStyle={colorScheme === "dark" ? "light-content" : "dark-content"}
+              backgroundColor={statusBarBg}
+              translucent
+            />
+            {/* The navigation theme drives the NATIVE header appearance: native-stack
+                forwards `dark` as the nav bar's overrideUserInterfaceStyle. Without
+                this, React Navigation defaults to its light theme and every native
+                header (glass buttons, title, materials) is forced light even when
+                the system is in dark mode. */}
+            {/* Blur target for Android dropdown backdrops — see appBlurTarget.ts. */}
+            <BlurTargetView ref={appBlurTargetRef} style={{ flex: 1 }}>
+              <IncomingShareProvider>
+                <Navigation
+                  linking={appLinking}
+                  theme={colorScheme === "dark" ? DarkTheme : DefaultTheme}
+                />
+              </IncomingShareProvider>
+              <ConfirmDialogHost />
+            </BlurTargetView>
+            {/* Anchored-menu overlays render here — in-window, so the
+                keyboard stays up while a dropdown is open. */}
+            <OverlayPortalHost />
+          </SafeAreaProvider>
+        </KeyboardProvider>
+      </GestureHandlerRootView>
+    </>
   );
 }

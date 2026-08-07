@@ -6,14 +6,7 @@ import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
-import {
-  Alert,
-  Platform,
-  Pressable,
-  useColorScheme,
-  useWindowDimensions,
-  View,
-} from "react-native";
+import { Alert, Platform, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import { SymbolView } from "../../components/AppSymbol";
@@ -24,6 +17,8 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { useAppearanceColorScheme } from "../../lib/useAppearanceColorScheme";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr } from "../../state/use-thread-pr";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
@@ -119,7 +114,10 @@ export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedS
   readonly onToggle: () => void;
   readonly pane?: "screen" | "sidebar";
 }) {
-  const colorScheme = useColorScheme();
+  const colorScheme = useAppearanceColorScheme();
+  const { themeColors } = useAppearancePreferences();
+  const snoozeColor =
+    themeColors?.focus ?? (colorScheme === "dark" ? SNOOZE_ACCENT_DARK : SNOOZE_ACCENT_LIGHT);
   return (
     <Pressable
       accessibilityHint={
@@ -135,14 +133,20 @@ export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedS
       onPress={props.onToggle}
       style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
     >
-      <Text className="text-xs font-t3-medium text-blue-600 dark:text-blue-400">
+      <Text className="text-xs font-t3-medium" style={{ color: snoozeColor }}>
         {props.expanded ? "Snoozed" : `Snoozed (${props.count})`}
       </Text>
-      <View className="h-px flex-1 bg-blue-500/20 dark:bg-blue-400/15" />
+      <View
+        className="h-px flex-1"
+        style={{
+          backgroundColor: snoozeColor,
+          opacity: colorScheme === "dark" ? 0.15 : 0.2,
+        }}
+      />
       <SymbolView
         name={props.expanded ? "chevron.up" : "chevron.down"}
         size={10}
-        tintColor={colorScheme === "dark" ? SNOOZE_ACCENT_DARK : SNOOZE_ACCENT_LIGHT}
+        tintColor={snoozeColor}
         type="monochrome"
       />
     </Pressable>

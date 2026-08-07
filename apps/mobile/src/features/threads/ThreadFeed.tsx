@@ -2,6 +2,7 @@ import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
 import type { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
+import type { ThemeColors } from "@t3tools/themes";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
 import { SymbolView } from "../../components/AppSymbol";
@@ -38,7 +39,6 @@ import {
   StyleSheet,
   Text as NativeText,
   type ColorValue,
-  useColorScheme,
   useWindowDimensions,
   View,
 } from "react-native";
@@ -85,7 +85,10 @@ import {
   scaledTypographyLineHeight,
 } from "../../lib/appearancePreferences";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
-import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import {
+  useAppearanceColorScheme,
+  useAppearancePreferences,
+} from "../settings/appearance/AppearancePreferencesProvider";
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import { resolveMarkdownLinkPresentation } from "@t3tools/mobile-markdown-text/links";
@@ -324,6 +327,7 @@ function MarkdownCodeBlock(props: {
   readonly lineHeight: number;
   readonly textColor: string;
   readonly theme: ReviewDiffTheme;
+  readonly themeColors: ThemeColors | null;
 }) {
   const content = props.content.replace(/\n$/, "");
   const languageLabel = props.language?.trim() || "text";
@@ -332,6 +336,7 @@ function MarkdownCodeBlock(props: {
     enabled: props.highlightCode && Boolean(props.language?.trim()),
     language: props.language,
     theme: props.theme,
+    themeColors: props.themeColors,
   });
   let tokenOffset = 0;
 
@@ -429,31 +434,36 @@ function MarkdownCodeBlock(props: {
 }
 
 function useReviewCommentColors(): ReviewCommentColors {
-  const colorScheme = useColorScheme();
+  const colorScheme = useAppearanceColorScheme();
+  const { themeColors } = useAppearancePreferences();
   const isDark = colorScheme === "dark";
-  const background = isDark ? "#151515" : "#ffffff";
-  const border = isDark ? "#2a2a2a" : "#d7d7d7";
-  const mutedBackground = isDark ? "#242424" : "#f2f2f2";
-  const text = isDark ? "#f3f3f3" : "#111111";
-  const mutedText = isDark ? "#8f8f8f" : "#666666";
-  const codeBackground = isDark ? "#0f0f0f" : "#ffffff";
 
   return useMemo(
-    () => ({
-      background,
-      border,
-      mutedBackground,
-      text,
-      mutedText,
-      codeBackground,
-    }),
-    [background, border, codeBackground, mutedBackground, mutedText, text],
+    () =>
+      themeColors
+        ? {
+            background: themeColors.messageSurface,
+            border: themeColors.border,
+            mutedBackground: themeColors.surfaceRaised,
+            text: themeColors.messageForeground,
+            mutedText: themeColors.textMuted,
+            codeBackground: themeColors.codeBackground,
+          }
+        : {
+            background: isDark ? "#151515" : "#ffffff",
+            border: isDark ? "#2a2a2a" : "#d7d7d7",
+            mutedBackground: isDark ? "#242424" : "#f2f2f2",
+            text: isDark ? "#f3f3f3" : "#111111",
+            mutedText: isDark ? "#8f8f8f" : "#666666",
+            codeBackground: isDark ? "#0f0f0f" : "#ffffff",
+          },
+    [isDark, themeColors],
   );
 }
 
 function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSets {
-  const colorScheme = useColorScheme();
-  const { appearance } = useAppearancePreferences();
+  const colorScheme = useAppearanceColorScheme();
+  const { appearance, themeColors } = useAppearancePreferences();
   const markdownFontSizes = useMemo(
     () => resolveMarkdownFontSizes(appearance.baseFontSize),
     [appearance.baseFontSize],
@@ -463,7 +473,29 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
     [appearance.baseFontSize],
   );
   const themeMode = colorScheme === "dark" ? "dark" : "light";
-  const colors = MARKDOWN_COLORS[themeMode];
+  const colors = useMemo(
+    () =>
+      themeColors
+        ? {
+            body: themeColors.text,
+            strong: themeColors.text,
+            link: themeColors.accent,
+            blockquoteBorder: themeColors.border,
+            blockquoteBackground: themeColors.accentSurface,
+            codeBackground: themeColors.codeBackground,
+            codeText: themeColors.codeForeground,
+            inlineCodeText: themeColors.textMuted,
+            horizontalRule: themeColors.border,
+            userBody: themeColors.messageActionForeground,
+            userCodeBackground: themeColors.messageSurface,
+            userCodeText: themeColors.messageForeground,
+            userInlineCodeText: themeColors.messageForeground,
+            userFenceBackground: themeColors.messageSurface,
+            userFenceText: themeColors.messageForeground,
+          }
+        : MARKDOWN_COLORS[themeMode],
+    [themeColors, themeMode],
+  );
   const iconSubtleColor = String(useThemeColor("--color-icon-subtle"));
   const inlineSkillForeground = String(useThemeColor("--color-inline-skill-foreground"));
   const userBubbleForegroundMuted = String(useThemeColor("--color-user-bubble-foreground-muted"));
@@ -691,6 +723,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
           lineHeight={markdownFontSizes.codeBlockLineHeight}
           textColor={blockTextColor}
           theme={themeMode}
+          themeColors={themeColors}
         />
       ),
     });
@@ -762,8 +795,8 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
           codeColor: markdownUserCodeText,
           codeBackgroundColor: markdownUserCodeBg,
           codeBlockBackgroundColor: markdownUserFenceBg,
-          fileTextColor: "#ffffff",
-          skillTextColor: "#f0abfc",
+          fileTextColor: themeColors?.messageActionForeground ?? "#ffffff",
+          skillTextColor: themeColors?.accentForeground ?? "#f0abfc",
           quoteMarkerColor: markdownUserBodyColor,
           dividerColor: markdownUserBodyColor,
           fontSize: nativeMarkdownTypography.fontSize,
@@ -818,6 +851,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
     onLinkPress,
     regularFontFamily,
     themeMode,
+    themeColors,
     userBubbleForegroundMuted,
   ]);
 }
@@ -1134,7 +1168,8 @@ const ReviewCommentCard = memo(function ReviewCommentCard(props: {
   readonly colors: ReviewCommentColors;
 }) {
   const { codeSurface, nativeReviewDiffStyle } = useAppearanceCodeSurface();
-  const colorScheme = useColorScheme();
+  const colorScheme = useAppearanceColorScheme();
+  const { themeColors } = useAppearancePreferences();
   const appearanceScheme = colorScheme === "light" ? "light" : "dark";
   const NativeReviewDiffView = resolveNativeReviewDiffView();
   const patch = useMemo(() => buildReviewCommentPatch(props.comment), [props.comment]);
@@ -1148,8 +1183,8 @@ const ReviewCommentCard = memo(function ReviewCommentCard(props: {
     [nativeReviewDiffData.rows],
   );
   const nativeReviewDiffTheme = useMemo(
-    () => createNativeReviewDiffTheme(appearanceScheme),
-    [appearanceScheme],
+    () => createNativeReviewDiffTheme(appearanceScheme, themeColors),
+    [appearanceScheme, themeColors],
   );
   const nativeRowsJson = useMemo(() => JSON.stringify(compactNativeRows), [compactNativeRows]);
   const nativeThemeJson = useMemo(

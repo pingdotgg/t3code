@@ -1,7 +1,9 @@
 import { SymbolView } from "../../components/AppSymbol";
-import { Pressable, StyleSheet, View, useColorScheme } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 
 import { useThemeColor } from "../../lib/useThemeColor";
+import { useAppearanceColorScheme } from "../../lib/useAppearanceColorScheme";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 export interface SidebarHeaderActionsProps {
   readonly onOpenSettings: () => void;
@@ -17,10 +19,13 @@ function FallbackHeaderButton(props: {
 }) {
   const iconColor = useThemeColor("--color-foreground");
   const pressedBackgroundColor = useThemeColor("--color-subtle");
-  const colorScheme = useColorScheme() === "dark" ? "dark" : "light";
+  const colorScheme = useAppearanceColorScheme() === "dark" ? "dark" : "light";
+  const { themeColors } = useAppearancePreferences();
   const idleBackgroundColor =
-    colorScheme === "dark" ? "rgba(118,118,128,0.24)" : "rgba(255,255,255,0.72)";
-  const borderColor = colorScheme === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)";
+    themeColors?.surfaceOverlay ??
+    (colorScheme === "dark" ? "rgba(118,118,128,0.24)" : "rgba(255,255,255,0.72)");
+  const borderColor =
+    themeColors?.border ?? (colorScheme === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)");
 
   return (
     <Pressable

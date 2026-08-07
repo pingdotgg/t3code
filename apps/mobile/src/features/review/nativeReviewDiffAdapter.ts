@@ -8,7 +8,11 @@ import { pipe } from "effect/Function";
 import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences";
 import { resolveMobileCodeSurface } from "../../lib/appearancePreferences";
 import { MOBILE_CODE_SURFACE } from "../../lib/typography";
-import { getPierreTerminalTheme, type TerminalAppearanceScheme } from "../terminal/terminalTheme";
+import type { ThemeColors } from "@t3tools/themes";
+import {
+  getTerminalThemeForColors,
+  type TerminalAppearanceScheme,
+} from "../terminal/terminalTheme";
 import { computeWordAltDiffRanges } from "./reviewWordDiffs";
 import {
   getReviewFilePreviewState,
@@ -112,9 +116,28 @@ function buildReviewCommentsCacheKey(comments: ReadonlyArray<ReviewInlineComment
 
 export function createNativeReviewDiffTheme(
   scheme: TerminalAppearanceScheme,
+  colors?: ThemeColors | null,
 ): NativeReviewDiffTheme {
-  const terminalTheme = getPierreTerminalTheme(scheme);
+  const terminalTheme = getTerminalThemeForColors(scheme, colors);
   const [, terminalRed, , , terminalBlue] = terminalTheme.palette;
+
+  if (colors) {
+    return {
+      background: colors.codeBackground,
+      text: colors.codeForeground,
+      mutedText: colors.textMuted,
+      headerBackground: colors.surface,
+      border: colors.border,
+      hunkBackground: colors.accentSurface,
+      hunkText: colors.accent,
+      addBackground: colors.updateSurface,
+      deleteBackground: colors.errorSurface,
+      addBar: colors.update,
+      deleteBar: colors.error,
+      addText: colors.updateForeground,
+      deleteText: colors.errorForeground,
+    };
+  }
 
   if (scheme === "dark") {
     return {
