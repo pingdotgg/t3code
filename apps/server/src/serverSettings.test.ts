@@ -722,6 +722,13 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.notInclude(raw, "discord-secret");
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       const persisted = JSON.parse(raw).channelIntegrations.discord;
+      assert.equal(persisted.enabled, true);
+      assert.equal(persisted.projectId, "project-1");
+      assert.equal(persisted.threadEnvMode, "local");
+      assert.equal(persisted.baseBranch, "main");
+      assert.equal(persisted.branchPrefix, "demo/discord");
+      assert.equal(persisted.applicationId, "app-1");
+      assert.equal(persisted.guildId, "guild-1");
       assert.equal(persisted.botToken, "");
       assert.equal(persisted.botTokenRedacted, true);
 

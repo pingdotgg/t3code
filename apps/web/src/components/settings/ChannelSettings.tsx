@@ -1,8 +1,8 @@
 import { BotIcon, GitBranchIcon, ShieldCheckIcon } from "lucide-react";
-import { ProjectId } from "@t3tools/contracts";
-import { useEffect, useMemo, useState } from "react";
+import { ProjectId, type ServerSettingsPatch } from "@t3tools/contracts";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import { usePersistPrimaryServerSettings, usePrimarySettings } from "../../hooks/useSettings";
 import { useProjects } from "../../state/entities";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { Badge } from "../ui/badge";
@@ -18,11 +18,13 @@ function SecretInput({
   stored,
   value,
   onChange,
+  onBlur,
 }: {
   readonly label: string;
   readonly stored: boolean;
   readonly value: string;
   readonly onChange: (value: string) => void;
+  readonly onBlur: () => void;
 }) {
   return (
     <Input
@@ -30,15 +32,23 @@ function SecretInput({
       autoComplete="off"
       value={value}
       onChange={(event) => onChange(event.currentTarget.value)}
+      onBlur={onBlur}
       placeholder={stored ? "Stored securely — type to replace" : label}
       aria-label={label}
     />
   );
 }
 
+type DiscordChannelPatch = NonNullable<
+  NonNullable<ServerSettingsPatch["channelIntegrations"]>["discord"]
+>;
+
+type SaveStatus = "idle" | "unsaved" | "saving" | "saved" | "error";
+type DirtyField = "applicationId" | "guildId" | "botToken" | "baseBranch" | "branchPrefix";
+
 export function ChannelSettings() {
   const settings = usePrimarySettings((value) => value.channelIntegrations.discord);
-  const updateSettings = useUpdatePrimarySettings();
+  const persistServerSettings = usePersistPrimaryServerSettings();
   const primaryEnvironment = usePrimaryEnvironment();
   const allProjects = useProjects();
   const projects = useMemo(
@@ -59,18 +69,24 @@ export function ChannelSettings() {
   const [guildId, setGuildId] = useState(settings.guildId);
   const [botToken, setBotToken] = useState("");
   const [botTokenChanged, setBotTokenChanged] = useState(false);
+  const [botTokenStored, setBotTokenStored] = useState(settings.botTokenRedacted);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const dirtyFieldsRef = useRef(new Set<DirtyField>());
 
   useEffect(() => {
     setEnabled(settings.enabled);
     setProjectId(settings.projectId);
     setThreadEnvMode(settings.threadEnvMode);
-    setBaseBranch(settings.baseBranch);
-    setBranchPrefix(settings.branchPrefix);
-    setApplicationId(settings.applicationId);
-    setGuildId(settings.guildId);
+    if (!dirtyFieldsRef.current.has("baseBranch")) setBaseBranch(settings.baseBranch);
+    if (!dirtyFieldsRef.current.has("branchPrefix")) setBranchPrefix(settings.branchPrefix);
+    if (!dirtyFieldsRef.current.has("applicationId")) setApplicationId(settings.applicationId);
+    if (!dirtyFieldsRef.current.has("guildId")) setGuildId(settings.guildId);
+    if (!dirtyFieldsRef.current.has("botToken")) {
+      setBotTokenStored(settings.botTokenRedacted);
+    }
   }, [settings]);
 
-  const hasBotToken = botTokenChanged ? botToken.length > 0 : settings.botTokenRedacted;
+  const hasBotToken = botTokenChanged ? botToken.length > 0 : botTokenStored;
   const setupComplete =
     projectId !== null &&
     (threadEnvMode === "local" ||
@@ -79,25 +95,51 @@ export function ChannelSettings() {
     hasBotToken;
   const selectedProject = projects.find((project) => project.id === projectId) ?? null;
 
-  const save = () => {
-    updateSettings({
-      channelIntegrations: {
-        discord: {
-          enabled,
-          projectId,
-          threadEnvMode,
-          baseBranch,
-          branchPrefix,
-          applicationId,
-          guildId,
-          botToken: botTokenChanged ? botToken : "",
-          botTokenRedacted: botTokenChanged ? false : settings.botTokenRedacted,
-        },
+  const persistDiscordPatch = useCallback(
+    async (discord: DiscordChannelPatch, persistedFields: ReadonlyArray<DirtyField> = []) => {
+      setSaveStatus("saving");
+      const saved = await persistServerSettings({ channelIntegrations: { discord } });
+      if (saved) {
+        for (const field of persistedFields) dirtyFieldsRef.current.delete(field);
+      }
+      setSaveStatus(saved ? "saved" : "error");
+      return saved;
+    },
+    [persistServerSettings],
+  );
+
+  const save = useCallback(async () => {
+    const saved = await persistDiscordPatch(
+      {
+        enabled,
+        projectId,
+        threadEnvMode,
+        baseBranch,
+        branchPrefix,
+        applicationId,
+        guildId,
+        botToken: botTokenChanged ? botToken : "",
+        botTokenRedacted: botTokenChanged ? false : botTokenStored,
       },
-    });
-    setBotToken("");
-    setBotTokenChanged(false);
-  };
+      ["applicationId", "guildId", "botToken", "baseBranch", "branchPrefix"],
+    );
+    if (saved && botTokenChanged) {
+      setBotTokenChanged(false);
+      setBotTokenStored(botToken.length > 0);
+    }
+  }, [
+    applicationId,
+    baseBranch,
+    botToken,
+    botTokenChanged,
+    botTokenStored,
+    branchPrefix,
+    enabled,
+    guildId,
+    persistDiscordPatch,
+    projectId,
+    threadEnvMode,
+  ]);
 
   return (
     <SettingsPageContainer>
@@ -117,7 +159,11 @@ export function ChannelSettings() {
           control={
             <Switch
               checked={enabled}
-              onCheckedChange={(checked) => setEnabled(Boolean(checked))}
+              onCheckedChange={(checked) => {
+                const next = Boolean(checked);
+                setEnabled(next);
+                void persistDiscordPatch({ enabled: next });
+              }}
               aria-label="Enable Discord channel"
             />
           }
@@ -128,7 +174,11 @@ export function ChannelSettings() {
           control={
             <Select
               value={projectId}
-              onValueChange={(value) => setProjectId(value ? ProjectId.make(value) : null)}
+              onValueChange={(value) => {
+                const next = value ? ProjectId.make(value) : null;
+                setProjectId(next);
+                void persistDiscordPatch({ projectId: next });
+              }}
             >
               <SelectTrigger className="w-full sm:w-72" aria-label="Discord channel project">
                 <SelectValue>
@@ -153,23 +203,45 @@ export function ChannelSettings() {
           <div className="grid gap-3 py-3 sm:grid-cols-2">
             <Input
               value={applicationId}
-              onChange={(event) => setApplicationId(event.currentTarget.value)}
+              onChange={(event) => {
+                setApplicationId(event.currentTarget.value);
+                dirtyFieldsRef.current.add("applicationId");
+                setSaveStatus("unsaved");
+              }}
+              onBlur={() => void persistDiscordPatch({ applicationId }, ["applicationId"])}
               placeholder="Application ID"
               aria-label="Discord application ID"
             />
             <Input
               value={guildId}
-              onChange={(event) => setGuildId(event.currentTarget.value)}
+              onChange={(event) => {
+                setGuildId(event.currentTarget.value);
+                dirtyFieldsRef.current.add("guildId");
+                setSaveStatus("unsaved");
+              }}
+              onBlur={() => void persistDiscordPatch({ guildId }, ["guildId"])}
               placeholder="Server ID (optional)"
               aria-label="Discord server ID"
             />
             <SecretInput
               label="Discord bot token"
-              stored={settings.botTokenRedacted}
+              stored={botTokenStored}
               value={botToken}
               onChange={(value) => {
                 setBotToken(value);
                 setBotTokenChanged(true);
+                dirtyFieldsRef.current.add("botToken");
+                setSaveStatus("unsaved");
+              }}
+              onBlur={() => {
+                if (!botTokenChanged) return;
+                void persistDiscordPatch({ botToken, botTokenRedacted: false }, ["botToken"]).then(
+                  (saved) => {
+                    if (!saved) return;
+                    setBotTokenChanged(false);
+                    setBotTokenStored(botToken.length > 0);
+                  },
+                );
               }}
             />
           </div>
@@ -183,7 +255,11 @@ export function ChannelSettings() {
           control={
             <Select
               value={threadEnvMode}
-              onValueChange={(value) => setThreadEnvMode(value === "local" ? "local" : "worktree")}
+              onValueChange={(value) => {
+                const next = value === "local" ? "local" : "worktree";
+                setThreadEnvMode(next);
+                void persistDiscordPatch({ threadEnvMode: next });
+              }}
             >
               <SelectTrigger className="w-full sm:w-72" aria-label="Discord task run location">
                 <SelectValue>
@@ -233,7 +309,12 @@ export function ChannelSettings() {
                 </label>
                 <Input
                   value={baseBranch}
-                  onChange={(event) => setBaseBranch(event.currentTarget.value)}
+                  onChange={(event) => {
+                    setBaseBranch(event.currentTarget.value);
+                    dirtyFieldsRef.current.add("baseBranch");
+                    setSaveStatus("unsaved");
+                  }}
+                  onBlur={() => void persistDiscordPatch({ baseBranch }, ["baseBranch"])}
                   placeholder="main"
                   aria-label="Channel base branch"
                 />
@@ -244,7 +325,12 @@ export function ChannelSettings() {
                 </label>
                 <Input
                   value={branchPrefix}
-                  onChange={(event) => setBranchPrefix(event.currentTarget.value)}
+                  onChange={(event) => {
+                    setBranchPrefix(event.currentTarget.value);
+                    dirtyFieldsRef.current.add("branchPrefix");
+                    setSaveStatus("unsaved");
+                  }}
+                  onBlur={() => void persistDiscordPatch({ branchPrefix }, ["branchPrefix"])}
                   placeholder="demo/discord"
                   aria-label="Channel branch prefix"
                 />
@@ -253,8 +339,17 @@ export function ChannelSettings() {
           </SettingsRow>
         ) : null}
         <div className="flex justify-end px-3 pt-3 sm:px-4">
-          <Button onClick={save} disabled={enabled && !setupComplete}>
-            Save channel configuration
+          <Button
+            onClick={() => void save()}
+            disabled={(enabled && !setupComplete) || saveStatus === "saving"}
+          >
+            {saveStatus === "saving"
+              ? "Saving…"
+              : saveStatus === "saved"
+                ? "Saved locally"
+                : saveStatus === "error"
+                  ? "Save failed — retry"
+                  : "Save channel configuration"}
           </Button>
         </div>
       </SettingsSection>
