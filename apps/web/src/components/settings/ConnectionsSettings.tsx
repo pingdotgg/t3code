@@ -985,8 +985,6 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
     setIsCreatingPairingLink(true);
     try {
       await createServerPairingCredential({ label: pairingLabel, scopes: pairingScopes });
-      setPairingLabel("");
-      setPairingScopes([...AuthStandardClientScopes]);
       setDialogOpen(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to create pairing URL.";
@@ -1022,12 +1020,11 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
       </Button>
       <Dialog
         open={dialogOpen}
-        onOpenChange={(open) => {
-          setDialogOpen(open);
-          if (!open) {
-            setPairingLabel("");
-            setPairingScopes([...AuthStandardClientScopes]);
-          }
+        onOpenChange={setDialogOpen}
+        onOpenChangeComplete={(open) => {
+          if (open) return;
+          setPairingLabel("");
+          setPairingScopes([...AuthStandardClientScopes]);
         }}
       >
         <DialogTrigger
@@ -1822,12 +1819,12 @@ export function ConnectionsSettings() {
   // machine. Confirming applies the change; cancelling drops it
   // without touching the persisted setting. Null when nothing is
   // pending.
-  type PendingWslChange =
-    // wasWslOnly is true when the user picked Off while wsl-only mode
-    // was active. In that case "disable" also clears wsl-only and
-    // relaunches onto the Windows backend, because leaving wsl-only on
-    // with wslBackendEnabled off is a meaningless state (wsl-only is
-    // only honoured when the WSL backend is enabled).
+  // wasWslOnly is true when the user picked Off while wsl-only mode
+  // was active. In that case "disable" also clears wsl-only and
+  // relaunches onto the Windows backend, because leaving wsl-only on
+  // with wslBackendEnabled off is a meaningless state (wsl-only is
+  // only honoured when the WSL backend is enabled).
+  type PendingWslChange = { readonly open: boolean } & (
     | { readonly kind: "disable"; readonly wasWslOnly: boolean }
     | { readonly kind: "distro"; readonly nextDistro: string | null }
     // Asked at enable time so the user picks the mode upfront instead
@@ -1835,11 +1832,15 @@ export function ConnectionsSettings() {
     // wsl-only switch separately. Resolved through enable-mode action
     // buttons on the dialog rather than a single Confirm.
     | { readonly kind: "enable"; readonly nextDistro: string | null }
-    | { readonly kind: "wsl-only"; readonly nextValue: boolean };
+    | { readonly kind: "wsl-only"; readonly nextValue: boolean }
+  );
   const [pendingWslChange, setPendingWslChange] = useState<PendingWslChange | null>(null);
-  const isWslConfirmDialogOpen = pendingWslChange !== null;
-  const [pendingTailscaleServeEndpoint, setPendingTailscaleServeEndpoint] =
-    useState<AdvertisedEndpoint | null>(null);
+  const isWslConfirmDialogOpen = pendingWslChange?.open ?? false;
+  const [pendingTailscaleServeSetup, setPendingTailscaleServeSetup] = useState<{
+    readonly open: boolean;
+    readonly endpoint: AdvertisedEndpoint;
+  } | null>(null);
+  const pendingTailscaleServeEndpoint = pendingTailscaleServeSetup?.endpoint ?? null;
   const [disableTailscaleServeDialogOpen, setDisableTailscaleServeDialogOpen] = useState(false);
   const [tailscaleServePortInput, setTailscaleServePortInput] = useState(
     String(DEFAULT_TAILSCALE_SERVE_PORT),
@@ -1997,7 +1998,7 @@ export function ConnectionsSettings() {
         port: parsedTailscaleServePort,
       });
       refreshDesktopNetworkAccessState();
-      setPendingTailscaleServeEndpoint(null);
+      setPendingTailscaleServeSetup((current) => (current ? { ...current, open: false } : current));
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to configure Tailscale HTTPS.";
@@ -2019,7 +2020,7 @@ export function ConnectionsSettings() {
       setTailscaleServePortInput(
         String(desktopServerExposureState?.tailscaleServePort ?? DEFAULT_TAILSCALE_SERVE_PORT),
       );
-      setPendingTailscaleServeEndpoint(endpoint);
+      setPendingTailscaleServeSetup({ open: true, endpoint });
     },
     [desktopServerExposureState?.tailscaleServePort],
   );
@@ -2649,7 +2650,7 @@ export function ConnectionsSettings() {
         // on (turning the only running backend off needs to switch
         // back to Windows and restart — always consequential).
         if (hasWslRegistrationToLose || wasWslOnly) {
-          setPendingWslChange({ kind: "disable", wasWslOnly });
+          setPendingWslChange({ open: true, kind: "disable", wasWslOnly });
           return;
         }
         void applyWslSettingChange(() => desktopBridge.setWslBackendEnabled(false));
@@ -2662,7 +2663,7 @@ export function ConnectionsSettings() {
         // backends or only WSL. We always ask here so the user picks
         // the mode upfront instead of having to discover the wsl-only
         // switch afterwards.
-        setPendingWslChange({ kind: "enable", nextDistro });
+        setPendingWslChange({ open: true, kind: "enable", nextDistro });
         return;
       }
       // Already enabled — treat as a distro switch. Skip the change if
@@ -2674,7 +2675,7 @@ export function ConnectionsSettings() {
       // the app (the IPC handler does this) rather than swapping a secondary,
       // and the user should see that coming.
       if (hasWslRegistrationToLose || desktopWslState.wslOnly) {
-        setPendingWslChange({ kind: "distro", nextDistro });
+        setPendingWslChange({ open: true, kind: "distro", nextDistro });
         return;
       }
       void applyWslSettingChange(() => desktopBridge.setWslDistro(nextDistro));
@@ -2687,7 +2688,7 @@ export function ConnectionsSettings() {
     (mode: "both" | "wsl-only") => {
       if (!desktopBridge || !pendingWslChange || pendingWslChange.kind !== "enable") return;
       const nextDistro = pendingWslChange.nextDistro;
-      setPendingWslChange(null);
+      setPendingWslChange({ ...pendingWslChange, open: false });
       const persistedDistro = desktopWslState?.distro ?? null;
       void applyWslSettingChange(() =>
         applyWslEnableSelection({
@@ -2710,7 +2711,7 @@ export function ConnectionsSettings() {
       // anything itself; the renderer warns the user to expect a
       // restart and (in a follow-up) can trigger it automatically.
       // Always prompt — even enabling is consequential here.
-      setPendingWslChange({ kind: "wsl-only", nextValue: enabled });
+      setPendingWslChange({ open: true, kind: "wsl-only", nextValue: enabled });
     },
     [desktopBridge, desktopWslState],
   );
@@ -2721,7 +2722,7 @@ export function ConnectionsSettings() {
     // The enable kind resolves through handleConfirmEnableWsl, not
     // this single Confirm path.
     if (change.kind === "enable") return;
-    setPendingWslChange(null);
+    setPendingWslChange({ ...pendingWslChange, open: false });
     if (change.kind === "disable") {
       void applyWslSettingChange(async () => {
         const next = await desktopBridge.setWslBackendEnabled(false);
@@ -3134,6 +3135,11 @@ export function ConnectionsSettings() {
             open={isWslConfirmDialogOpen}
             onOpenChange={(open) => {
               if (isUpdatingWslBackend) return;
+              if (!open) {
+                setPendingWslChange((current) => (current ? { ...current, open: false } : current));
+              }
+            }}
+            onOpenChangeComplete={(open) => {
               if (!open) setPendingWslChange(null);
             }}
           >
@@ -3277,10 +3283,17 @@ export function ConnectionsSettings() {
             </AlertDialogPopup>
           </AlertDialog>
           <Dialog
-            open={pendingTailscaleServeEndpoint !== null}
+            open={pendingTailscaleServeSetup?.open ?? false}
             onOpenChange={(open) => {
               if (isUpdatingTailscaleServe) return;
-              if (!open) setPendingTailscaleServeEndpoint(null);
+              if (!open) {
+                setPendingTailscaleServeSetup((current) =>
+                  current ? { ...current, open: false } : current,
+                );
+              }
+            }}
+            onOpenChangeComplete={(open) => {
+              if (!open) setPendingTailscaleServeSetup(null);
             }}
           >
             <DialogPopup className="max-w-md">

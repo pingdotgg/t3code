@@ -1290,7 +1290,12 @@ function ChatViewContent(props: ChatViewProps) {
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
-  const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
+  const [expandedImageDialog, setExpandedImageDialog] = useState<{
+    readonly open: boolean;
+    readonly preview: ExpandedImagePreview;
+    readonly generation: number;
+  } | null>(null);
+  const expandedImage = expandedImageDialog?.preview ?? null;
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
@@ -1752,6 +1757,7 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
       setPullRequestDialogState({
+        open: true,
         initialReference: reference ?? null,
         key: Date.now(),
       });
@@ -1760,7 +1766,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
 
   const closePullRequestDialog = useCallback(() => {
-    setPullRequestDialogState(null);
+    setPullRequestDialogState((current) => (current ? { ...current, open: false } : current));
   }, []);
 
   const openOrReuseProjectDraftThread = useCallback(
@@ -3927,11 +3933,11 @@ function ChatViewContent(props: ChatViewProps) {
       return [];
     });
     resetLocalDispatch();
-    setExpandedImage(null);
+    setExpandedImageDialog(null);
   }, [draftId, resetLocalDispatch, threadId]);
 
   const closeExpandedImage = useCallback(() => {
-    setExpandedImage(null);
+    setExpandedImageDialog((current) => (current ? { ...current, open: false } : current));
   }, []);
 
   const activeWorktreePath = activeThread?.worktreePath ?? null;
@@ -5763,7 +5769,11 @@ function ChatViewContent(props: ChatViewProps) {
   };
 
   const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
-    setExpandedImage(preview);
+    setExpandedImageDialog((current) => ({
+      open: true,
+      preview,
+      generation: (current?.generation ?? 0) + 1,
+    }));
   }, []);
   const onOpenTurnDiff = useCallback(
     (turnId: TurnId, filePath?: string) => {
@@ -6258,7 +6268,7 @@ function ChatViewContent(props: ChatViewProps) {
             {pullRequestDialogState ? (
               <PullRequestThreadDialog
                 key={pullRequestDialogState.key}
-                open
+                open={pullRequestDialogState.open}
                 environmentId={activeThread.environmentId}
                 threadId={activeThread.id}
                 cwd={activeProject?.workspaceRoot ?? null}
@@ -6267,6 +6277,9 @@ function ChatViewContent(props: ChatViewProps) {
                   if (!open) {
                     closePullRequestDialog();
                   }
+                }}
+                onOpenChangeComplete={(open) => {
+                  if (!open) setPullRequestDialogState(null);
                 }}
                 onPrepared={handlePreparedPullRequestThread}
               />
@@ -6323,8 +6336,11 @@ function ChatViewContent(props: ChatViewProps) {
           {rightPanelContent}
         </RightPanelTabs>
       ) : null}
-      {shouldUsePlanSidebarSheet && rightPanelOpen && activeThreadRef ? (
-        <RightPanelSheet open onClose={planSidebarOpen ? closePlanSidebar : closePreviewPanel}>
+      {shouldUsePlanSidebarSheet && activeThreadRef ? (
+        <RightPanelSheet
+          open={rightPanelOpen}
+          onClose={planSidebarOpen ? closePlanSidebar : closePreviewPanel}
+        >
           <RightPanelTabs
             mode="sheet"
             layoutControls={panelToggleControls}
@@ -6353,13 +6369,19 @@ function ChatViewContent(props: ChatViewProps) {
         </RightPanelSheet>
       ) : null}
 
-      {expandedImage && (
+      {expandedImageDialog ? (
         <ExpandedImageDialog
-          key={`${expandedImage.images[expandedImage.index]?.src ?? "image"}:${expandedImage.index}`}
+          key={expandedImageDialog.generation}
+          open={expandedImageDialog.open}
           preview={expandedImage}
-          onClose={closeExpandedImage}
+          onOpenChange={(open) => {
+            if (!open) closeExpandedImage();
+          }}
+          onOpenChangeComplete={(open) => {
+            if (!open) setExpandedImageDialog(null);
+          }}
         />
-      )}
+      ) : null}
     </div>
   );
 }
