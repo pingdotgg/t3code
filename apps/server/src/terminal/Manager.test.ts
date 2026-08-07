@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  DEFAULT_SERVER_SETTINGS,
   DEFAULT_TERMINAL_ID,
   type TerminalAttachStreamEvent,
   type TerminalEvent,
@@ -20,14 +21,19 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vite-plus/test";
 
+import * as ServerConfig from "../config.ts";
+import * as PortScanner from "../preview/PortScanner.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
@@ -280,6 +286,48 @@ it.layer(
   Layer.merge(NodeServices.layer, ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
   { excludeTestServices: true },
 )("TerminalManager", (it) => {
+  it.effect("subscribes to settings changes before reading the initial shell setting", () =>
+    Effect.gen(function* () {
+      const callOrder: string[] = [];
+      const settingsChanges = yield* PubSub.unbounded<typeof DEFAULT_SERVER_SETTINGS>();
+      const serverSettings = ServerSettings.ServerSettingsService.of({
+        start: Effect.void,
+        ready: Effect.void,
+        getSettings: Effect.sync(() => {
+          callOrder.push("getSettings");
+          return DEFAULT_SERVER_SETTINGS;
+        }),
+        updateSettings: () => Effect.die(new Error("unused in this test")),
+        streamChanges: Stream.empty,
+        subscribeChanges: PubSub.subscribe(settingsChanges).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              callOrder.push("subscribeChanges");
+            }),
+          ),
+          Effect.map((subscription) => Stream.fromSubscription(subscription)),
+        ),
+      });
+      const ptyAdapter = new FakePtyAdapter();
+      const portDiscovery = PortScanner.PortDiscovery.of({
+        scan: () => Effect.succeed([]),
+        subscribe: () => Effect.void,
+        retain: Effect.void,
+        registerTerminalProcesses: () => Effect.void,
+        unregisterTerminal: () => Effect.void,
+      });
+
+      yield* TerminalManager.make().pipe(
+        Effect.provideService(PtyAdapter.PtyAdapter, ptyAdapter),
+        Effect.provideService(PortScanner.PortDiscovery, portDiscovery),
+        Effect.provideService(ServerSettings.ServerSettingsService, serverSettings),
+        Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-terminal-settings-" })),
+      );
+
+      expect(callOrder).toEqual(["subscribeChanges", "getSettings"]);
+    }),
+  );
+
   it.effect("spawns lazily and reuses running terminal per thread", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -1480,6 +1528,40 @@ it.layer(
       expect(ptyAdapter.spawnInputs[0]).toEqual(
         expect.objectContaining({
           shell: shellPath,
+        }),
+      );
+    }),
+  );
+
+  it.effect("resolves a configured Windows shell against the terminal runtime PATH", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseBinDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-terminal-base-shell-",
+      });
+      const runtimeBinDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-terminal-runtime-shell-",
+      });
+      yield* fileSystem.writeFileString(path.join(baseBinDir, "jz.EXE"), "MZ");
+      const runtimeShellPath = path.join(runtimeBinDir, "jz.EXE");
+      yield* fileSystem.writeFileString(runtimeShellPath, "MZ");
+
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "jz",
+        env: {
+          PATH: baseBinDir,
+          PATHEXT: ".COM;.EXE;.BAT;.CMD",
+          SystemRoot: "C:\\Windows",
+        },
+      }).pipe(Effect.provide(withHostPlatform("win32")));
+
+      yield* manager.open(openInput({ env: { PATH: runtimeBinDir } }));
+
+      expect(ptyAdapter.spawnInputs[0]).toEqual(
+        expect.objectContaining({
+          shell: runtimeShellPath,
+          env: expect.objectContaining({ PATH: runtimeBinDir }),
         }),
       );
     }),
