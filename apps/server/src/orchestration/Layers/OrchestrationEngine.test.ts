@@ -968,6 +968,8 @@ describe("OrchestrationEngine", () => {
     const testLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(OrchestrationProjectionPipelineLive),
+      Layer.provide(ThreadBackgroundLiveness.layer),
+      Layer.provide(ThreadPlanProgress.layer),
       Layer.provide(Layer.succeed(OrchestrationEventStore, flakyStore)),
       Layer.provide(Layer.succeed(ThreadColdStorage, coldStorage)),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),

@@ -13,7 +13,7 @@ import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ThreadColdStorage, ThreadColdStorageError } from "../Services/ThreadColdStorage.ts";
 import { ThreadColdStorageLive } from "./ThreadColdStorage.ts";
 
-const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
+const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 const insertArchivedThread = Effect.fn("insertArchivedThreadTestFixture")(function* (
   threadId: ThreadId,

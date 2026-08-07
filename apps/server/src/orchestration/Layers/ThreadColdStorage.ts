@@ -27,8 +27,9 @@ const ARCHIVE_VERSION = 1;
 const ROW_CHUNK_SIZE = 250;
 const RESTORE_CHUNK_PAGE_SIZE = 32;
 const BINARY_VALUE_KEY = "__t3_archive_binary_base64";
-const encodeUnknownJsonString = Schema.encodeUnknownEffect(Schema.UnknownFromJsonString);
-const decodeUnknownJsonString = Schema.decodeUnknownEffect(Schema.UnknownFromJsonString);
+const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
+const encodeUnknownJsonString = Schema.encodeUnknownEffect(UnknownFromJsonString);
+const decodeUnknownJsonString = Schema.decodeUnknownEffect(UnknownFromJsonString);
 
 type SqlRow = Record<string, unknown>;
 type ThreadLockEntry = {
