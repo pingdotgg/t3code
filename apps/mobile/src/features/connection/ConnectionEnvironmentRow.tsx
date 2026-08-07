@@ -5,7 +5,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useState } from "react";
-import { Alert, Pressable, Switch, View } from "react-native";
+import { Alert, Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import { useThemeColor } from "../../lib/useThemeColor";
 
@@ -14,6 +14,7 @@ import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
+import { EnvironmentActivationSwitch } from "./EnvironmentActivationSwitch";
 
 function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string | null {
   if (!environment.enabled) return "Disabled";
@@ -26,7 +27,10 @@ function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string
 
 function EnableEnvironmentButton(props: {
   readonly environment: ConnectedEnvironmentSummary;
-  readonly onSetEnabled: (environmentId: EnvironmentId, enabled: boolean) => void;
+  readonly onSetEnabled: (
+    environmentId: EnvironmentId,
+    enabled: boolean,
+  ) => Promise<AtomCommandResult<unknown, unknown>>;
 }) {
   if (props.environment.enabled) return null;
 
@@ -38,7 +42,7 @@ function EnableEnvironmentButton(props: {
       className="rounded-xl bg-primary px-3 py-2 active:opacity-70"
       onPress={(event) => {
         event.stopPropagation();
-        props.onSetEnabled(props.environment.environmentId, true);
+        void props.onSetEnabled(props.environment.environmentId, true);
       }}
     >
       <Text className="text-xs font-t3-bold text-primary-foreground">Enable</Text>
@@ -51,7 +55,10 @@ export interface ConnectionEnvironmentRowProps {
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly onReconnect: (environmentId: EnvironmentId) => void;
-  readonly onSetEnabled: (environmentId: EnvironmentId, enabled: boolean) => void;
+  readonly onSetEnabled: (
+    environmentId: EnvironmentId,
+    enabled: boolean,
+  ) => Promise<AtomCommandResult<unknown, unknown>>;
   readonly onRemove: (environmentId: EnvironmentId) => void;
   readonly onUpdate: (
     environmentId: EnvironmentId,
@@ -67,9 +74,7 @@ export function ConnectionEnvironmentRow(props: ConnectionEnvironmentRowProps) {
   const primaryFg = useThemeColor("--color-primary-foreground");
   const dangerFg = useThemeColor("--color-danger-foreground");
   const statusLabel = connectionStatusLabel(props.environment);
-  const statusTraceId = props.environment.enabled
-    ? props.environment.connectionErrorTraceId
-    : null;
+  const statusTraceId = props.environment.enabled ? props.environment.connectionErrorTraceId : null;
   const hasConnectionFailure =
     props.environment.enabled && props.environment.connectionError !== null;
   const isRetrying =
@@ -173,9 +178,9 @@ export function ConnectionEnvironmentRow(props: ConnectionEnvironmentRowProps) {
                 Connect to this environment from this device.
               </Text>
             </View>
-            <Switch
+            <EnvironmentActivationSwitch
               accessibilityLabel={`${props.environment.environmentLabel} enabled`}
-              value={props.environment.enabled}
+              enabled={props.environment.enabled}
               onValueChange={(enabled) =>
                 props.onSetEnabled(props.environment.environmentId, enabled)
               }
