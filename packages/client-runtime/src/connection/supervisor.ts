@@ -755,18 +755,18 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }
   });
 
-  yield* connectivity.changes.pipe(
-    Stream.runForEach((network) =>
-      Ref.modify(intent, (current) =>
-        current.network === network ? [false, current] : ([true, { ...current, network }] as const),
-      ).pipe(
-        Effect.flatMap((changed) =>
-          changed ? signal({ _tag: "NetworkChanged", network }) : Effect.void,
-        ),
-      ),
-    ),
-    Effect.forkScoped,
-  );
+  const applyNetworkStatus = Effect.fnUntraced(function* (network: NetworkStatus) {
+    const changed = yield* Ref.modify(intent, (current) =>
+      current.network === network ? [false, current] : ([true, { ...current, network }] as const),
+    );
+    if (changed) {
+      yield* signal({ _tag: "NetworkChanged", network });
+    }
+  });
+
+  yield* Connectivity.followNetworkStatus({
+    apply: applyNetworkStatus,
+  });
   yield* wakeups.changes.pipe(
     Stream.runForEach((reason) => signal({ _tag: "Wakeup", reason })),
     Effect.forkScoped,
