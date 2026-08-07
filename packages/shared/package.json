@@ -91,6 +91,18 @@
       "types": "./src/projectScripts.ts",
       "import": "./src/projectScripts.ts"
     },
+    "./projectFolders": {
+      "types": "./src/projectFolders.ts",
+      "import": "./src/projectFolders.ts"
+    },
+    "./workspaceFolders": {
+      "types": "./src/workspaceFolders.ts",
+      "import": "./src/workspaceFolders.ts"
+    },
+    "./workspaceSearchMerge": {
+      "types": "./src/workspaceSearchMerge.ts",
+      "import": "./src/workspaceSearchMerge.ts"
+    },
     "./t3ProjectFile": {
       "types": "./src/t3ProjectFile.ts",
       "import": "./src/t3ProjectFile.ts"

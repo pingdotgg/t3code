@@ -61,6 +61,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           projectId: asProjectId("project-scripts"),
           title: "Scripts",
           workspaceRoot: "/tmp/scripts",
+          additionalFolders: [],
           defaultModelSelection: null,
           scripts: [],
           createdAt: now,
@@ -113,6 +114,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           projectId: asProjectId("project-existing"),
           title: "Project",
           workspaceRoot: "/tmp/project",
+          additionalFolders: [],
           defaultModelSelection: null,
           scripts: [],
           createdAt: now,
@@ -135,7 +137,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
       );
 
       expect(failure.message).toContain(
-        "Active project 'project-existing' already exists for workspace root '/tmp/project'.",
+        "Active project 'project-existing' already owns folder '/tmp/project'.",
       );
     }),
   );
@@ -159,6 +161,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           projectId: asProjectId("project-first"),
           title: "First",
           workspaceRoot: "/tmp/project-first",
+          additionalFolders: [],
           defaultModelSelection: null,
           scripts: [],
           createdAt: now,
@@ -180,6 +183,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           projectId: asProjectId("project-second"),
           title: "Second",
           workspaceRoot: "/tmp/project-second",
+          additionalFolders: [],
           defaultModelSelection: null,
           scripts: [],
           createdAt: now,
@@ -200,7 +204,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
       );
 
       expect(failure.message).toContain(
-        "Active project 'project-first' already exists for workspace root '/tmp/project-first'.",
+        "Active project 'project-first' already owns folder '/tmp/project-first'.",
       );
     }),
   );
@@ -224,6 +228,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           projectId: asProjectId("project-1"),
           title: "Project",
           workspaceRoot: "/tmp/project",
+          additionalFolders: [],
           defaultModelSelection: null,
           scripts: [],
           createdAt: now,
@@ -321,6 +326,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           projectId: asProjectId("project-1"),
           title: "Project",
           workspaceRoot: "/tmp/project",
+          additionalFolders: [],
           defaultModelSelection: null,
           scripts: [],
           createdAt: now,
@@ -399,6 +405,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           projectId: asProjectId("project-1"),
           title: "Project",
           workspaceRoot: "/tmp/project",
+          additionalFolders: [],
           defaultModelSelection: null,
           scripts: [],
           createdAt: now,

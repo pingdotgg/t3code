@@ -209,10 +209,33 @@ export const ProjectScript = Schema.Struct({
 });
 export type ProjectScript = typeof ProjectScript.Type;
 
+/**
+ * A non-primary source folder attached to a project.
+ *
+ * The primary folder is the project's `workspaceRoot`; promoting an entry here
+ * to primary swaps the two. `path` is always an absolute, server-normalized
+ * path (see WorkspacePaths) and doubles as the folder's identity — the project
+ * folder invariants guarantee it is unique across every active project, so no
+ * separate id is minted.
+ *
+ * Modelled as a struct rather than a bare string because event payloads are
+ * immutable and replayed forever: widening `Array(String)` to `Array(Struct)`
+ * later would need a permanent payload upcaster.
+ */
+export const ProjectSourceFolder = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  /** Optional display name; clients fall back to deriving one from the path. */
+  label: Schema.optional(TrimmedNonEmptyString),
+});
+export type ProjectSourceFolder = typeof ProjectSourceFolder.Type;
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  additionalFolders: Schema.Array(ProjectSourceFolder).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
@@ -398,6 +421,9 @@ export const OrchestrationProjectShell = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  additionalFolders: Schema.Array(ProjectSourceFolder).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
@@ -528,6 +554,7 @@ export const ProjectCreateCommand = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  additionalFolders: Schema.optional(Schema.Array(ProjectSourceFolder)),
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   createdAt: IsoDateTime,
@@ -539,6 +566,12 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   projectId: ProjectId,
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Whole-set replacement of the project's non-primary folders, matching how
+   * `scripts` behaves. Add / remove / promote are all expressed through this
+   * command so that promotion stays an atomic swap with `workspaceRoot`.
+   */
+  additionalFolders: Schema.optional(Schema.Array(ProjectSourceFolder)),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
@@ -940,6 +973,11 @@ export const ProjectCreatedPayload = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  // Decoding default, not a bare optional: historical `project.created` events
+  // predate source folders and must keep replaying as an empty list.
+  additionalFolders: Schema.Array(ProjectSourceFolder).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
@@ -951,6 +989,8 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   projectId: ProjectId,
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  // Sparse patch: `undefined` means "not touched", so this stays a bare optional.
+  additionalFolders: Schema.optional(Schema.Array(ProjectSourceFolder)),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),

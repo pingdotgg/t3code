@@ -6,7 +6,14 @@ import {
   type OrchestrationReadModel,
   ProjectId,
   type ClientOrchestrationCommand,
+  type ProjectSourceFolder,
 } from "@t3tools/contracts";
+import {
+  planProjectFolderMutation,
+  projectSourceFolderPaths,
+  type ProjectFolderIntent,
+} from "@t3tools/shared/projectFolders";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Console from "effect/Console";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -42,6 +49,7 @@ type ProjectMutationTarget = {
   readonly id: ProjectId;
   readonly title: string;
   readonly workspaceRoot: string;
+  readonly additionalFolders: ReadonlyArray<ProjectSourceFolder>;
 };
 
 type ProjectCommandExecutionMode = "live" | "offline";
@@ -155,6 +163,38 @@ export class ProjectAlreadyExistsError extends Schema.TaggedErrorClass<ProjectAl
   }
 }
 
+export class ProjectPrimaryFolderNotListedError extends Schema.TaggedErrorClass<ProjectPrimaryFolderNotListedError>()(
+  "ProjectPrimaryFolderNotListedError",
+  {
+    operation: Schema.Literal("addProject"),
+    primary: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `--primary '${this.primary}' must be one of the given paths.`;
+  }
+}
+
+export class ProjectFolderMutationNoOpError extends Schema.TaggedErrorClass<ProjectFolderMutationNoOpError>()(
+  "ProjectFolderMutationNoOpError",
+  {
+    operation: Schema.Literal("mutateProjectFolder"),
+    kind: Schema.Literals(["add", "remove", "promote"]),
+    folder: Schema.String,
+  },
+) {
+  override get message(): string {
+    switch (this.kind) {
+      case "add":
+        return `Project already owns folder '${this.folder}'.`;
+      case "remove":
+        return `Folder '${this.folder}' is not one of this project's additional folders. The primary folder cannot be removed — promote another folder first.`;
+      case "promote":
+        return `Folder '${this.folder}' is already the primary folder, or is not one of this project's folders.`;
+    }
+  }
+}
+
 export const ProjectCommandError = Schema.Union([
   ProjectCommandIdGenerationError,
   ProjectLiveServerDeclaredResponseError,
@@ -164,6 +204,8 @@ export const ProjectCommandError = Schema.Union([
   ProjectIdentifierEmptyError,
   ProjectNotFoundError,
   ProjectAlreadyExistsError,
+  ProjectPrimaryFolderNotListedError,
+  ProjectFolderMutationNoOpError,
 ]);
 export type ProjectCommandError = typeof ProjectCommandError.Type;
 
@@ -274,6 +316,7 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
       id: exactIdMatch.id,
       title: exactIdMatch.title,
       workspaceRoot: exactIdMatch.workspaceRoot,
+      additionalFolders: exactIdMatch.additionalFolders,
     } satisfies ProjectMutationTarget;
   }
 
@@ -283,10 +326,14 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
   const normalizedWorkspaceRoot =
     normalizedWorkspaceRootResult._tag === "Success" ? normalizedWorkspaceRootResult.success : null;
 
+  // A project is addressable by any of its folders, not just the primary.
   const exactWorkspaceMatch =
     normalizedWorkspaceRoot === null
       ? undefined
-      : activeProjects.find((project) => project.workspaceRoot === normalizedWorkspaceRoot);
+      : (activeProjects.find((project) => project.workspaceRoot === normalizedWorkspaceRoot) ??
+        activeProjects.find((project) =>
+          project.additionalFolders.some((folder) => folder.path === normalizedWorkspaceRoot),
+        ));
 
   const resolved = exactWorkspaceMatch;
   if (!resolved) {
@@ -305,6 +352,7 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
     id: resolved.id,
     title: resolved.title,
     workspaceRoot: resolved.workspaceRoot,
+    additionalFolders: resolved.additionalFolders,
   } satisfies ProjectMutationTarget;
 });
 
@@ -443,8 +491,15 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
 
 const projectAddCommand = Command.make("add", {
   ...projectLocationFlags,
-  workspaceRoot: Argument.string("path").pipe(
-    Argument.withDescription("Workspace root to add as a project."),
+  workspaceRoots: Argument.string("path").pipe(
+    Argument.withDescription(
+      "Source folder(s) for the project. The first is primary unless --primary is given.",
+    ),
+    Argument.variadic({ min: 1 }),
+  ),
+  primary: Flag.string("primary").pipe(
+    Flag.withDescription("Which of the given paths is the project's primary folder."),
+    Flag.optional,
   ),
   title: Flag.string("title").pipe(Flag.withDescription("Optional project title."), Flag.optional),
 }).pipe(
@@ -461,16 +516,58 @@ const projectAddCommand = Command.make("add", {
           command: ProjectCliDispatchCommand,
         ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
       }) {
-        const workspaceRoot = yield* normalizeWorkspaceRootForProjectCommand(flags.workspaceRoot);
-        const existingProject = snapshot.projects.find(
-          (project) => project.deletedAt === null && project.workspaceRoot === workspaceRoot,
+        const normalizedPaths = yield* Effect.forEach(
+          flags.workspaceRoots,
+          (candidate) => normalizeWorkspaceRootForProjectCommand(candidate),
+          { concurrency: 1 },
         );
-        if (existingProject) {
-          return yield* new ProjectAlreadyExistsError({
-            operation: "addProject",
-            projectId: existingProject.id,
-            workspaceRoot,
-          });
+
+        const requestedPrimary = Option.getOrUndefined(flags.primary);
+        let workspaceRoot = normalizedPaths[0]!;
+        if (requestedPrimary !== undefined) {
+          const normalizedPrimary =
+            yield* normalizeWorkspaceRootForProjectCommand(requestedPrimary);
+          const match = normalizedPaths.find(
+            (candidate) =>
+              normalizeProjectPathForComparison(candidate) ===
+              normalizeProjectPathForComparison(normalizedPrimary),
+          );
+          if (match === undefined) {
+            return yield* new ProjectPrimaryFolderNotListedError({
+              operation: "addProject",
+              primary: normalizedPrimary,
+            });
+          }
+          workspaceRoot = match;
+        }
+
+        const additionalFolders = normalizedPaths
+          .filter(
+            (candidate) =>
+              normalizeProjectPathForComparison(candidate) !==
+              normalizeProjectPathForComparison(workspaceRoot),
+          )
+          .map((path) => ({ path }) satisfies ProjectSourceFolder);
+
+        // Every folder must be unclaimed, not just the primary — the server
+        // enforces the same rule, so fail here with a clearer message.
+        for (const candidate of [workspaceRoot, ...additionalFolders.map((f) => f.path)]) {
+          const owner = snapshot.projects.find(
+            (project) =>
+              project.deletedAt === null &&
+              projectSourceFolderPaths(project).some(
+                (owned) =>
+                  normalizeProjectPathForComparison(owned) ===
+                  normalizeProjectPathForComparison(candidate),
+              ),
+          );
+          if (owner) {
+            return yield* new ProjectAlreadyExistsError({
+              operation: "addProject",
+              projectId: owner.id,
+              workspaceRoot: candidate,
+            });
+          }
         }
 
         const title = yield* resolveProjectTitle(workspaceRoot, Option.getOrUndefined(flags.title));
@@ -481,10 +578,13 @@ const projectAddCommand = Command.make("add", {
           projectId,
           title,
           workspaceRoot,
+          ...(additionalFolders.length > 0 ? { additionalFolders } : {}),
           defaultModelSelection: ServerRuntimeStartup.getAutoBootstrapDefaultModelSelection(),
           createdAt: DateTime.formatIso(yield* DateTime.now),
         });
-        return `Added project ${projectId} (${title}) at ${workspaceRoot}.`;
+        return additionalFolders.length > 0
+          ? `Added project ${projectId} (${title}) at ${workspaceRoot} with ${additionalFolders.length} additional folder(s).`
+          : `Added project ${projectId} (${title}) at ${workspaceRoot}.`;
       }),
     ),
   ),
@@ -570,7 +670,107 @@ const projectRenameCommand = Command.make("rename", {
   ),
 );
 
+/**
+ * Build one of the `project folder` subcommands.
+ *
+ * All three share a shape: resolve the project, run the intent through
+ * {@link planProjectFolderMutation}, and dispatch the single
+ * `project.meta.update` it produces. Promotion in particular has to stay one
+ * command so the primary swap is atomic.
+ */
+const makeProjectFolderCommand = (input: {
+  readonly name: string;
+  readonly kind: ProjectFolderIntent["kind"];
+  readonly description: string;
+  readonly summary: (project: ProjectMutationTarget, folder: string) => string;
+}) =>
+  Command.make(input.name, {
+    ...projectLocationFlags,
+    project: Argument.string("project").pipe(
+      Argument.withDescription("Project id or any of its folders."),
+    ),
+    folder: Argument.string("path").pipe(Argument.withDescription("Folder path.")),
+  }).pipe(
+    Command.withDescription(input.description),
+    Command.withHandler((flags) =>
+      runProjectMutation(
+        flags,
+        Effect.fn(`projectFolder${input.name}Mutation`)(function* ({
+          snapshot,
+          dispatch,
+        }: {
+          readonly snapshot: OrchestrationReadModel;
+          readonly dispatch: (
+            command: ProjectCliDispatchCommand,
+          ) => Effect.Effect<
+            void,
+            Error,
+            FileSystem.FileSystem | HttpClient.HttpClient | Path.Path
+          >;
+        }) {
+          const project = yield* findActiveProjectTarget({
+            snapshot,
+            identifier: flags.project,
+          });
+          const folder = yield* normalizeWorkspaceRootForProjectCommand(flags.folder);
+          const mutation = planProjectFolderMutation(project, {
+            kind: input.kind,
+            path: folder,
+          } as ProjectFolderIntent);
+          if (mutation === null) {
+            return yield* new ProjectFolderMutationNoOpError({
+              operation: "mutateProjectFolder",
+              kind: input.kind,
+              folder,
+            });
+          }
+
+          yield* dispatch({
+            type: "project.meta.update",
+            commandId: CommandId.make(yield* projectCommandUuid),
+            projectId: project.id,
+            ...(mutation.workspaceRoot !== undefined
+              ? { workspaceRoot: mutation.workspaceRoot }
+              : {}),
+            additionalFolders: mutation.additionalFolders,
+          });
+          return input.summary(project, folder);
+        }),
+      ),
+    ),
+  );
+
+const projectFolderCommand = Command.make("folder").pipe(
+  Command.withDescription("Manage a project's source folders."),
+  Command.withSubcommands([
+    makeProjectFolderCommand({
+      name: "add",
+      kind: "add",
+      description: "Add a source folder to a project.",
+      summary: (project, folder) => `Added folder ${folder} to project ${project.id}.`,
+    }),
+    makeProjectFolderCommand({
+      name: "remove",
+      kind: "remove",
+      description: "Remove a source folder from a project.",
+      summary: (project, folder) => `Removed folder ${folder} from project ${project.id}.`,
+    }),
+    makeProjectFolderCommand({
+      name: "set-primary",
+      kind: "promote",
+      description: "Make one of a project's folders its primary folder.",
+      summary: (project, folder) =>
+        `Project ${project.id} now uses ${folder} as its primary folder.`,
+    }),
+  ]),
+);
+
 export const projectCommand = Command.make("project").pipe(
   Command.withDescription("Manage projects."),
-  Command.withSubcommands([projectAddCommand, projectRemoveCommand, projectRenameCommand]),
+  Command.withSubcommands([
+    projectAddCommand,
+    projectRemoveCommand,
+    projectRenameCommand,
+    projectFolderCommand,
+  ]),
 );

@@ -6,6 +6,7 @@ import type {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
+import { projectSourceFolderPaths } from "@t3tools/shared/projectFolders";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Effect from "effect/Effect";
 
@@ -72,28 +73,73 @@ export function requireProjectAbsent(input: {
   );
 }
 
+/**
+ * Every folder a project owns must be unique across all active projects — not
+ * just the primary one.
+ *
+ * `getActiveProjectByWorkspaceRoot` resolves a path to exactly one project
+ * (auto-bootstrap, setup scripts, `t3 project add`). If two projects could both
+ * claim a folder that lookup becomes arbitrary, and two checkpoint/diff roots
+ * would end up writing to the same working tree.
+ *
+ * The intra-command duplicate check also covers the case the Normalizer cannot
+ * see: an additional folder equal to a primary that the command did not touch.
+ */
+export function requireActiveProjectFoldersAbsent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  /** Every folder the command wants this project to own, primary first. */
+  readonly folders: ReadonlyArray<string>;
+  readonly exceptProjectId?: ProjectId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  const requested = new Set<string>();
+  for (const folder of input.folders) {
+    const key = normalizeProjectPathForComparison(folder);
+    if (requested.has(key)) {
+      return Effect.fail(
+        invariantError(
+          input.command.type,
+          `Folder '${key}' is listed more than once for this project.`,
+        ),
+      );
+    }
+    requested.add(key);
+  }
+
+  for (const project of input.readModel.projects) {
+    if (project.deletedAt !== null || project.id === input.exceptProjectId) {
+      continue;
+    }
+    for (const owned of projectSourceFolderPaths(project)) {
+      const key = normalizeProjectPathForComparison(owned);
+      if (requested.has(key)) {
+        return Effect.fail(
+          invariantError(
+            input.command.type,
+            `Active project '${project.id}' already owns folder '${key}'.`,
+          ),
+        );
+      }
+    }
+  }
+  return Effect.void;
+}
+
+/**
+ * Single-folder convenience wrapper over {@link requireActiveProjectFoldersAbsent}.
+ */
 export function requireActiveProjectWorkspaceRootAbsent(input: {
   readonly readModel: OrchestrationReadModel;
   readonly command: OrchestrationCommand;
   readonly workspaceRoot: string;
   readonly exceptProjectId?: ProjectId;
 }): Effect.Effect<void, OrchestrationCommandInvariantError> {
-  const normalizedWorkspaceRoot = normalizeProjectPathForComparison(input.workspaceRoot);
-  const existingProject = input.readModel.projects.find(
-    (project) =>
-      project.deletedAt === null &&
-      normalizeProjectPathForComparison(project.workspaceRoot) === normalizedWorkspaceRoot &&
-      project.id !== input.exceptProjectId,
-  );
-  if (existingProject === undefined) {
-    return Effect.void;
-  }
-  return Effect.fail(
-    invariantError(
-      input.command.type,
-      `Active project '${existingProject.id}' already exists for workspace root '${normalizedWorkspaceRoot}'.`,
-    ),
-  );
+  return requireActiveProjectFoldersAbsent({
+    readModel: input.readModel,
+    command: input.command,
+    folders: [input.workspaceRoot],
+    ...(input.exceptProjectId !== undefined ? { exceptProjectId: input.exceptProjectId } : {}),
+  });
 }
 
 export function requireThread(input: {

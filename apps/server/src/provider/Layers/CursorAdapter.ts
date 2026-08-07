@@ -495,6 +495,8 @@ export function makeCursorAdapter(
             });
           }
 
+          // `input.additionalDirectories` is intentionally ignored: Cursor's
+          // agent runs against a single root.
           const cwd = path.resolve(input.cwd.trim());
           const cursorModelSelection =
             input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;

@@ -546,6 +546,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             });
           }
 
+          // `input.additionalDirectories` is intentionally ignored: Grok's
+          // agent runs against a single root.
           const cwd = path.resolve(input.cwd.trim());
           const grokModelSelection =
             input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;

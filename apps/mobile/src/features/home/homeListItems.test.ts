@@ -24,6 +24,7 @@ function makeProject(id: string, title: string): EnvironmentProject {
     id: ProjectId.make(id),
     title,
     workspaceRoot: `/workspaces/${id}`,
+    additionalFolders: [],
     repositoryIdentity: null,
     defaultModelSelection: null,
     scripts: [],

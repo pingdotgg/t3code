@@ -119,6 +119,7 @@ describe("OrchestrationEngine", () => {
           id: asProjectId("project-bootstrap"),
           title: "Bootstrap Project",
           workspaceRoot: "/tmp/project-bootstrap",
+          additionalFolders: [],
           defaultModelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",

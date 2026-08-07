@@ -469,3 +469,56 @@ describe("openCodexThread", () => {
     }),
   );
 });
+
+describe("buildTurnStartParams source folders", () => {
+  it.effect("names a project's additional folders as writable sandbox roots", () =>
+    Effect.gen(function* () {
+      // Codex sandboxes writes to the thread cwd, so without writableRoots the
+      // agent can read the extra folders but not edit them.
+      const params = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "auto",
+        prompt: "Ship it",
+        additionalDirectories: ["/repo/design-system", "/repo/docs"],
+      });
+
+      NodeAssert.deepStrictEqual(params.sandboxPolicy, {
+        type: "workspaceWrite",
+        writableRoots: ["/repo/design-system", "/repo/docs"],
+      });
+    }),
+  );
+
+  it.effect("omits writable roots when the project has a single folder", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "auto",
+        prompt: "Ship it",
+        additionalDirectories: [],
+      });
+
+      NodeAssert.deepStrictEqual(params.sandboxPolicy, { type: "workspaceWrite" });
+    }),
+  );
+
+  it.effect("leaves read-only and full-access sandboxes untouched", () =>
+    Effect.gen(function* () {
+      const readOnly = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "approval-required",
+        prompt: "Look",
+        additionalDirectories: ["/repo/docs"],
+      });
+      NodeAssert.deepStrictEqual(readOnly.sandboxPolicy, { type: "readOnly" });
+
+      const fullAccess = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Go",
+        additionalDirectories: ["/repo/docs"],
+      });
+      NodeAssert.deepStrictEqual(fullAccess.sandboxPolicy, { type: "dangerFullAccess" });
+    }),
+  );
+});

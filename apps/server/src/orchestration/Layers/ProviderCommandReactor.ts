@@ -24,8 +24,12 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { sameFolderSet } from "@t3tools/shared/projectFolders";
 
-import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
+import {
+  resolveThreadWorkspaceCwd,
+  resolveThreadWorkspaceFolders,
+} from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
@@ -547,7 +551,7 @@ const make = Effect.gen(function* () {
       }
     }
     const project = yield* resolveProject(thread.projectId);
-    const effectiveCwd = resolveThreadWorkspaceCwd({
+    const { cwd: effectiveCwd, additionalDirectories } = resolveThreadWorkspaceFolders({
       thread,
       projects: project ? [project] : [],
     });
@@ -561,6 +565,7 @@ const make = Effect.gen(function* () {
         ...(preferredProvider ? { provider: preferredProvider } : {}),
         providerInstanceId: desiredInstanceId,
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+        ...(additionalDirectories.length > 0 ? { additionalDirectories } : {}),
         modelSelection: desiredModelSelection,
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
         runtimeMode: desiredRuntimeMode,
@@ -600,6 +605,12 @@ const make = Effect.gen(function* () {
     if (existingSessionThreadId) {
       const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
       const cwdChanged = effectiveCwd !== activeSession?.cwd;
+      // Adding or removing a source folder has to restart the session too, or
+      // the running agent keeps the folder set it was spawned with.
+      const additionalDirectoriesChanged = !sameFolderSet(
+        additionalDirectories,
+        activeSession?.additionalDirectories ?? [],
+      );
       const sessionModelSwitch = (yield* providerService.getCapabilities(desiredInstanceId))
         .sessionModelSwitch;
       const modelChanged =
@@ -618,6 +629,7 @@ const make = Effect.gen(function* () {
       if (
         !runtimeModeChanged &&
         !cwdChanged &&
+        !additionalDirectoriesChanged &&
         !instanceChanged &&
         !shouldRestartForModelChange &&
         !shouldRestartForModelSelectionChange
@@ -641,6 +653,9 @@ const make = Effect.gen(function* () {
         previousCwd: activeSession?.cwd,
         desiredCwd: effectiveCwd,
         cwdChanged,
+        previousAdditionalDirectories: activeSession?.additionalDirectories,
+        desiredAdditionalDirectories: additionalDirectories,
+        additionalDirectoriesChanged,
         modelChanged,
         instanceChanged,
         shouldRestartForModelChange,

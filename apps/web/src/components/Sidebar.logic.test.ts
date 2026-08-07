@@ -1106,6 +1106,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     environmentId: localEnvironmentId,
     title: "Project",
     workspaceRoot: "/tmp/project",
+    additionalFolders: [],
     repositoryIdentity: null,
     defaultModelSelection: {
       instanceId: ProviderInstanceId.make("codex"),

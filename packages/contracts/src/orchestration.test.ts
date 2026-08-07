@@ -13,6 +13,7 @@ import {
   OrchestrationLatestTurn,
   ProjectCreatedPayload,
   ProjectMetaUpdatedPayload,
+  OrchestrationProjectShell,
   OrchestrationProposedPlan,
   OrchestrationSession,
   OrchestrationThread,
@@ -41,6 +42,7 @@ const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(Orchestration
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
 const decodeOrchestrationThreadShell = Schema.decodeUnknownEffect(OrchestrationThreadShell);
+const decodeOrchestrationProjectShell = Schema.decodeUnknownEffect(OrchestrationProjectShell);
 const encodeThreadCreatedPayload = Schema.encodeEffect(ThreadCreatedPayload);
 
 function getOptionValue(
@@ -911,5 +913,67 @@ it.effect("ModelSelection rejects malformed instance ids", () =>
       }),
     );
     assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("decodes historical project.created payloads without source folders", () =>
+  Effect.gen(function* () {
+    // Events are immutable and replayed forever: a `project.created` written
+    // before source folders existed must still decode, as an empty list.
+    const parsed = yield* decodeProjectCreatedPayload({
+      projectId: "project-1",
+      title: "Legacy project",
+      workspaceRoot: "/tmp/legacy",
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(parsed.additionalFolders, []);
+  }),
+);
+
+it.effect("decodes project.created payloads carrying source folders", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectCreatedPayload({
+      projectId: "project-1",
+      title: "Multi folder project",
+      workspaceRoot: "/repo/app",
+      additionalFolders: [{ path: "/repo/design-system" }, { path: "/repo/docs", label: "Docs" }],
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(parsed.additionalFolders, [
+      { path: "/repo/design-system" },
+      { path: "/repo/docs", label: "Docs" },
+    ]);
+  }),
+);
+
+it.effect("leaves source folders untouched when a meta update omits them", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectMetaUpdatedPayload({
+      projectId: "project-1",
+      title: "Renamed",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.additionalFolders, undefined);
+  }),
+);
+
+it.effect("decodes project shells without source folders as an empty list", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationProjectShell({
+      id: "project-1",
+      title: "Legacy project",
+      workspaceRoot: "/tmp/legacy",
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(parsed.additionalFolders, []);
   }),
 );

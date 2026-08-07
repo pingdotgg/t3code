@@ -261,6 +261,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: asProjectId("project-1"),
           title: "Project 1",
           workspaceRoot: "/tmp/project-1",
+          additionalFolders: [],
           repositoryIdentity: null,
           defaultModelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
@@ -377,6 +378,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: asProjectId("project-1"),
           title: "Project 1",
           workspaceRoot: "/tmp/project-1",
+          additionalFolders: [],
           repositoryIdentity: null,
           defaultModelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
@@ -1814,6 +1816,58 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         (yield* snapshotQuery.searchThreads({ query: "user needle" })).matches,
         [],
       );
+    }),
+  );
+
+  it.effect("resolves a project by one of its additional source folders", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          additional_folders_json,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-multi',
+          'Multi Folder',
+          '/repo/app',
+          '[{"path":"/repo/docs"},{"path":"/repo/design-system"}]',
+          NULL,
+          '[]',
+          '2026-03-01T00:00:00.000Z',
+          '2026-03-01T00:00:01.000Z',
+          NULL
+        )
+      `;
+
+      const viaPrimary = yield* snapshotQuery.getActiveProjectByWorkspaceRoot("/repo/app");
+      assert.equal(viaPrimary._tag, "Some");
+
+      // Auto-bootstrap and the project CLI resolve a path to a project this
+      // way; a secondary folder must map to its owner, not look unclaimed.
+      const viaSecondary = yield* snapshotQuery.getActiveProjectByWorkspaceRoot("/repo/docs");
+      assert.equal(viaSecondary._tag, "Some");
+      if (viaSecondary._tag === "Some") {
+        assert.equal(viaSecondary.value.id, asProjectId("project-multi"));
+        assert.equal(viaSecondary.value.workspaceRoot, "/repo/app");
+        assert.deepEqual(viaSecondary.value.additionalFolders, [
+          { path: "/repo/docs" },
+          { path: "/repo/design-system" },
+        ]);
+      }
+
+      const unrelated = yield* snapshotQuery.getActiveProjectByWorkspaceRoot("/repo/nope");
+      assert.equal(unrelated._tag, "None");
     }),
   );
 });

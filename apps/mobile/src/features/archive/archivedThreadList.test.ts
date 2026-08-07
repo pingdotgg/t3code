@@ -12,6 +12,7 @@ function makeProject(
 ): OrchestrationProjectShell {
   return {
     workspaceRoot: `/workspaces/${input.id}`,
+    additionalFolders: [],
     repositoryIdentity: null,
     defaultModelSelection: null,
     scripts: [],
