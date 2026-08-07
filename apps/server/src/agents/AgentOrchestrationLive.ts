@@ -798,7 +798,34 @@ export const make = Effect.gen(function* () {
             invalid(error.message, { operation: "run-request", cause: error, runId }),
           ),
         );
-      yield* runs
+      const failQueuedSpawn = Effect.fn("AgentOrchestration.failQueuedSpawn")(function* (
+        detail: string,
+        cause: unknown,
+      ) {
+        yield* runs
+          .dispatch({
+            type: "agent-run.fail",
+            runId,
+            failure: detail.slice(0, 4_000),
+            occurredAt: yield* nowIso,
+          })
+          .pipe(Effect.ignore);
+        yield* providers.stopSession({ threadId: childThreadId }).pipe(Effect.ignore);
+        yield* engine
+          .dispatch({
+            type: "thread.delete",
+            commandId: CommandId.make(`agent-spawn:${runId}:cleanup-thread`),
+            threadId: childThreadId,
+          })
+          .pipe(Effect.ignore);
+        return yield* invalid(detail, {
+          operation: "child-lifecycle-dispatch",
+          cause,
+          profileId: target.id,
+          runId,
+        });
+      });
+      const assigned = yield* runs
         .dispatch({
           type: "agent-run.assign-child-thread",
           runId,
@@ -809,7 +836,11 @@ export const make = Effect.gen(function* () {
           Effect.mapError((error) =>
             invalid(error.message, { operation: "run-assign-thread", cause: error, runId }),
           ),
+          Effect.result,
         );
+      if (Result.isFailure(assigned)) {
+        return yield* failQueuedSpawn(assigned.failure.detail, assigned.failure);
+      }
 
       const pinnedProfile: AgentProfileRef = {
         id: target.id,
@@ -1149,7 +1180,7 @@ export const make = Effect.gen(function* () {
           runId: run.id,
         });
       }
-      yield* runs
+      const started = yield* runs
         .dispatch({ type: "agent-run.start", runId: run.id, occurredAt: yield* nowIso })
         .pipe(
           Effect.mapError((error) =>
@@ -1159,7 +1190,24 @@ export const make = Effect.gen(function* () {
               runId: run.id,
             }),
           ),
+          Effect.result,
         );
+      if (Result.isFailure(started)) {
+        yield* providers.stopSession({ threadId: run.childThreadId }).pipe(Effect.ignore);
+        yield* runs
+          .dispatch({
+            type: "agent-run.fail",
+            runId: run.id,
+            failure: "T3 could not start the Agent follow-up turn.",
+            occurredAt: yield* nowIso,
+          })
+          .pipe(Effect.ignore);
+        return yield* invalid("T3 could not start the Agent follow-up turn.", {
+          operation: "follow-up-run-start",
+          cause: started.failure,
+          runId: run.id,
+        });
+      }
       const updated = yield* ensureOwnedRun(context, run.id);
       return { runId: updated.id, status: updated.status, revision: updated.revision };
     },
@@ -1182,7 +1230,18 @@ export const make = Effect.gen(function* () {
           ),
         );
       if (run.childThreadId !== null) {
-        yield* providers.stopSession({ threadId: run.childThreadId }).pipe(Effect.ignore);
+        yield* providers.stopSession({ threadId: run.childThreadId }).pipe(
+          Effect.mapError((cause) =>
+            invalid(
+              "The Agent run is cancelled, but its provider session could not stop. Retry cancel.",
+              {
+                operation: "run-cancel-provider-stop",
+                cause,
+                runId: run.id,
+              },
+            ),
+          ),
+        );
       }
       const updated = yield* ensureOwnedRun(context, run.id);
       return { runId: updated.id, status: updated.status, revision: updated.revision };
@@ -1316,6 +1375,43 @@ export const make = Effect.gen(function* () {
       const failure = invalid("Agent results cannot be integrated across project boundaries.");
       if (resumingIntegration) return yield* failIntegration(failure.detail, failure);
       return yield* failure;
+    }
+    if (run.workspaceMode === "shared") {
+      const childThreadResult = yield* projection.getThreadShellById(run.childThreadId).pipe(
+        Effect.mapError((cause) =>
+          invalid("Could not resolve the shared Agent workspace.", {
+            operation: "integration-source-resolve",
+            cause,
+            runId: run.id,
+          }),
+        ),
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.fail(invalid("The shared Agent thread was not found.")),
+            onSome: Effect.succeed,
+          }),
+        ),
+        Effect.result,
+      );
+      if (Result.isFailure(childThreadResult)) {
+        if (resumingIntegration) {
+          return yield* failIntegration(
+            childThreadResult.failure.detail,
+            childThreadResult.failure,
+          );
+        }
+        return yield* childThreadResult.failure;
+      }
+      const sourceWorktreePath =
+        childThreadResult.success.worktreePath ?? context.project.workspaceRoot;
+      const targetWorktreePath = targetThread.worktreePath ?? context.project.workspaceRoot;
+      if (sourceWorktreePath !== targetWorktreePath) {
+        const failure = invalid(
+          "A shared Agent result can only be integrated into the worktree where it already ran.",
+        );
+        if (resumingIntegration) return yield* failIntegration(failure.detail, failure);
+        return yield* failure;
+      }
     }
 
     if (!resumingIntegration) {

@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import type {
   AgentProfileDocument,
+  AgentProfileSummary,
   AgentProfileScope,
   ModelSelection,
   ProviderInteractionMode,
@@ -209,6 +210,24 @@ export function buildAgentProfileDocument(
     createdAt: baseline?.createdAt ?? now,
   };
   return decodeAgentProfileDocument(document);
+}
+
+export function resolveProfileBaselineForSave(
+  isNew: boolean,
+  selected: Pick<AgentProfileSummary, "id" | "scope" | "revision"> | null,
+  loaded: AgentProfileDocument | undefined,
+): AgentProfileDocument | null {
+  if (isNew) return null;
+  if (
+    loaded === undefined ||
+    selected === null ||
+    loaded.id !== selected.id ||
+    loaded.scope !== selected.scope ||
+    loaded.revision !== selected.revision
+  ) {
+    throw new Error("Load the current profile before saving it.");
+  }
+  return loaded;
 }
 
 export function sortAgentProfiles<

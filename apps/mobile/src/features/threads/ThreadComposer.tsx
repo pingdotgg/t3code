@@ -326,7 +326,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
   const currentInteractionMode = props.selectedThread.interactionMode ?? "default";
-  const agentCatalog = useAgentProfileCatalog(props.environmentId, props.selectedThread.projectId);
+  const agentCatalog = useAgentProfileCatalog(props.environmentId, props.selectedThread.projectId, {
+    includeArchived: true,
+  });
   const connectionStatus = composerConnectionStatus({
     connectionError: props.connectionError,
     connectionState: props.connectionState,
@@ -953,7 +955,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                             (profile) =>
                               profileKey(profile) ===
                               `${props.agentProfile?.scope}:${props.agentProfile?.id}`,
-                          )?.name ?? "Agent")
+                          )?.name ??
+                          (agentCatalog.isPending && agentCatalog.data === null
+                            ? "Loading agents…"
+                            : "Agent"))
                     }
                   />
                 </ControlPillMenu>

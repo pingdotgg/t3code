@@ -1,5 +1,6 @@
 import {
   RuntimeTaskUsage,
+  type ThreadId,
   type ProviderRuntimeEvent,
   type RuntimeTaskUsage as RuntimeTaskUsageType,
 } from "@t3tools/contracts";
@@ -9,6 +10,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Result from "effect/Result";
+import * as Duration from "effect/Duration";
+import * as Schedule from "effect/Schedule";
 
 import * as AgentHookRunner from "../AgentHookRunner.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -17,6 +20,11 @@ import * as AgentRunRepository from "./AgentRunRepository.ts";
 import { decide, type AgentRun } from "./AgentRun.ts";
 
 const decodeUsage = Schema.decodeUnknownOption(RuntimeTaskUsage);
+const TERMINAL_EVENT_RETRY_SCHEDULE = Schedule.exponential("100 millis").pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+  ),
+);
 
 export const hookWorkspaceForRun = (
   run: Pick<AgentRun, "workspaceMode" | "childThreadId">,
@@ -28,6 +36,16 @@ export const hookWorkspaceForRun = (
       ? null
       : childWorktreePath
     : (childWorktreePath ?? projectWorkspaceRoot);
+
+/** Keep repository failures in the error channel so the stream retry retains the event. */
+export const loadAgentRunForProviderEvent = Effect.fn(
+  "AgentRunReactor.loadAgentRunForProviderEvent",
+)(function* (
+  repository: Pick<AgentRunRepository.AgentRunRepository["Service"], "getByChildThread">,
+  threadId: ThreadId,
+) {
+  return yield* repository.getByChildThread(threadId).pipe(Effect.map(Option.getOrNull));
+});
 
 export class AgentTerminalHookPrerequisiteError extends Schema.TaggedErrorClass<AgentTerminalHookPrerequisiteError>()(
   "AgentTerminalHookPrerequisiteError",
@@ -186,10 +204,7 @@ const make = Effect.gen(function* () {
   });
 
   const handle = Effect.fn("AgentRunReactor.handle")(function* (event: ProviderRuntimeEvent) {
-    const run = yield* repository.getByChildThread(event.threadId).pipe(
-      Effect.map(Option.getOrNull),
-      Effect.orElseSucceed(() => null),
-    );
+    const run = yield* loadAgentRunForProviderEvent(repository, event.threadId);
     if (run === null) return;
 
     switch (event.type) {
@@ -267,6 +282,7 @@ const make = Effect.gen(function* () {
   yield* provider.streamEvents.pipe(
     Stream.runForEach((event) =>
       handle(event).pipe(
+        Effect.retry(TERMINAL_EVENT_RETRY_SCHEDULE),
         Effect.catchCause((cause) =>
           Effect.logWarning("Agent run reactor could not process provider event", {
             threadId: event.threadId,

@@ -432,6 +432,7 @@ export const evolve = (state: AgentRunState, event: AgentRunEvent): AgentRunStat
         revision: event.revision,
         updatedAt: event.occurredAt,
         finishedAt: null,
+        usage: undefined,
         failure: undefined,
         waitingForChildren: false,
         integrationTargetThreadId: null,

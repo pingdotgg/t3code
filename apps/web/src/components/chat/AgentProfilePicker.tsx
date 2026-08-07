@@ -20,7 +20,11 @@ import {
   ComboboxList,
 } from "../ui/combobox";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { filterAgentProfiles, selectChatAgentProfiles } from "./AgentProfilePicker.logic";
+import {
+  agentProfilePickerLabel,
+  filterAgentProfiles,
+  selectChatAgentProfiles,
+} from "./AgentProfilePicker.logic";
 import { ComposerControl, ComposerControlChevron } from "./ComposerControl";
 
 const NONE = "none";
@@ -51,20 +55,21 @@ export const AgentProfilePicker = memo(function AgentProfilePicker(props: {
   const catalog = useEnvironmentQuery(
     agentEnvironment.catalog({
       environmentId: props.environmentId,
-      input: props.projectId === null ? {} : { projectId: props.projectId },
+      input:
+        props.projectId === null
+          ? { includeArchived: true }
+          : { includeArchived: true, projectId: props.projectId },
     }),
   );
   const profiles = useMemo(() => {
-    const activeProfiles = (catalog.data?.profiles ?? []).filter(
-      (profile) => profile.archivedAt === null,
-    );
+    const catalogProfiles = catalog.data?.profiles ?? [];
     const selectedProfile =
       selectedValue === null
         ? null
-        : (activeProfiles.find(
+        : (catalogProfiles.find(
             (profile) => profile.id === selectedValue.id && profile.scope === selectedValue.scope,
           ) ?? null);
-    return Array.from(selectChatAgentProfiles(activeProfiles, selectedProfile)).sort(
+    return Array.from(selectChatAgentProfiles(catalogProfiles, selectedProfile)).sort(
       (left, right) =>
         Number(right.scope === "project") - Number(left.scope === "project") ||
         left.name.localeCompare(right.name),
@@ -81,7 +86,12 @@ export const AgentProfilePicker = memo(function AgentProfilePicker(props: {
         ) ?? null);
 
   const selectedKey = selectedValue === null ? NONE : `${selectedValue.scope}:${selectedValue.id}`;
-  const label = selected?.name ?? (selectedValue === null ? "Choose agent" : "Unavailable agent");
+  const label = agentProfilePickerLabel(
+    selected,
+    selectedValue,
+    catalog.isPending,
+    catalog.data !== null,
+  );
   const noneMatches =
     query.trim().length === 0 || /standard|no agent|model|default|build/i.test(query.trim());
   const allKeys = [NONE, ...profiles.map(profileKey)];

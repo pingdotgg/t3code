@@ -26,6 +26,7 @@ import { T3ProjectFileFromJson } from "@t3tools/shared/t3ProjectFile";
 import { writeFileStringAtomically } from "../atomicWrite.ts";
 import * as ServerConfig from "../config.ts";
 import * as AgentCatalog from "./AgentCatalog.ts";
+import * as AgentProjectFileCoordinator from "./AgentProjectFileCoordinator.ts";
 
 const MARKDOWN_EXTENSION = ".md";
 const encodeProjectFile = Schema.encodeUnknownEffect(fromJsonStringPretty(T3ProjectFile));
@@ -113,6 +114,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const mutex = yield* Semaphore.make(1);
+  const projectFileCoordinator = yield* AgentProjectFileCoordinator.AgentProjectFileCoordinator;
 
   const storeError = (
     operation: AgentRuleStoreError["operation"],
@@ -129,6 +131,32 @@ export const make = Effect.gen(function* () {
     });
   const ruleRoot = (scope: AgentProfileLocator["scope"], workspaceRoot: string | undefined) =>
     scope === "environment" ? config.stateDir : workspaceRoot;
+
+  const existingFile = Effect.fn("AgentRuleStore.existingFile")(function* (filePath: string) {
+    return yield* fileSystem.readFileString(filePath).pipe(
+      Effect.map(Option.some),
+      Effect.catchTags({
+        PlatformError: (error) =>
+          error.reason._tag === "NotFound"
+            ? Effect.succeed(Option.none<string>())
+            : Effect.fail(error),
+      }),
+    );
+  });
+
+  const restorePreviousFile = (input: {
+    readonly filePath: string;
+    readonly previous: Option.Option<string>;
+  }) =>
+    Option.isSome(input.previous)
+      ? writeFileStringAtomically({
+          filePath: input.filePath,
+          contents: input.previous.value,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        )
+      : fileSystem.remove(input.filePath, { force: true });
 
   const resolveWritePath = Effect.fn("AgentRuleStore.resolveWritePath")(function* (input: {
     readonly ref: AgentProfileLocator;
@@ -199,6 +227,11 @@ export const make = Effect.gen(function* () {
     readonly contents: string;
     readonly operation: AgentRuleStoreError["operation"];
   }) {
+    const previous = yield* existingFile(input.filePath).pipe(
+      Effect.mapError((cause) =>
+        storeError(input.operation, input.ref, "Could not snapshot the existing file.", cause),
+      ),
+    );
     yield* writeFileStringAtomically({ filePath: input.filePath, contents: input.contents }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
@@ -211,36 +244,37 @@ export const make = Effect.gen(function* () {
         ),
       ),
     );
+    const containmentFailure = (cause: unknown | undefined) =>
+      Effect.gen(function* () {
+        const rollback = yield* restorePreviousFile({
+          filePath: input.filePath,
+          previous,
+        }).pipe(Effect.result);
+        if (Result.isFailure(rollback)) {
+          return yield* storeError(
+            input.operation,
+            input.ref,
+            "Written file no longer resolves inside its allowed root and its previous contents could not be restored.",
+            new AggregateError(
+              [...(cause === undefined ? [] : [cause]), rollback.failure],
+              "Agent rule containment rollback failed.",
+            ),
+          );
+        }
+        return yield* storeError(
+          input.operation,
+          input.ref,
+          "Written file no longer resolves inside its allowed root.",
+          cause,
+        );
+      });
     const canonicalFile = yield* fileSystem.realPath(input.filePath).pipe(Effect.result);
     if (Result.isFailure(canonicalFile)) {
-      yield* fileSystem.remove(input.filePath, { force: true }).pipe(Effect.ignore);
-      return yield* storeError(
-        input.operation,
-        input.ref,
-        "Written file no longer resolves inside its allowed root.",
-        canonicalFile.failure,
-      );
+      return yield* containmentFailure(canonicalFile.failure);
     }
     if (!isContained(path, input.root, canonicalFile.success)) {
-      yield* fileSystem.remove(input.filePath, { force: true }).pipe(Effect.ignore);
-      return yield* storeError(
-        input.operation,
-        input.ref,
-        "Written file no longer resolves inside its allowed root.",
-      );
+      return yield* containmentFailure(undefined);
     }
-  });
-
-  const existingFile = Effect.fn("AgentRuleStore.existingFile")(function* (filePath: string) {
-    return yield* fileSystem.readFileString(filePath).pipe(
-      Effect.map(Option.some),
-      Effect.catchTags({
-        PlatformError: (error) =>
-          error.reason._tag === "NotFound"
-            ? Effect.succeed(Option.none<string>())
-            : Effect.fail(error),
-      }),
-    );
   });
 
   const projectFile = Effect.fn("AgentRuleStore.projectFile")(function* (
@@ -304,17 +338,6 @@ export const make = Effect.gen(function* () {
       readonly workspaceRoot: string;
       readonly documentPath: string;
     }) {
-      const current = yield* projectFile(input.ref, input.workspaceRoot);
-      const rules = [
-        ...(current.rules ?? []).filter((entry) => entry.id !== input.ref.id),
-        { id: AgentProfileId.make(input.ref.id), path: input.documentPath },
-      ];
-      const contents = yield* encodeProjectFile({ ...current, rules }).pipe(
-        Effect.map((encoded) => `${encoded}\n`),
-        Effect.mapError((cause) =>
-          storeError("write-project-file", input.ref, "Could not encode t3.json.", cause),
-        ),
-      );
       const root = yield* fileSystem
         .realPath(input.workspaceRoot)
         .pipe(
@@ -322,13 +345,29 @@ export const make = Effect.gen(function* () {
             storeError("write-project-file", input.ref, "Could not resolve project root.", cause),
           ),
         );
-      yield* writeContained({
-        ref: input.ref,
+      return yield* projectFileCoordinator.withWorkspaceLock(
         root,
-        filePath: path.join(root, T3_PROJECT_FILE_NAME),
-        contents,
-        operation: "write-project-file",
-      });
+        Effect.gen(function* () {
+          const current = yield* projectFile(input.ref, root);
+          const rules = [
+            ...(current.rules ?? []).filter((entry) => entry.id !== input.ref.id),
+            { id: AgentProfileId.make(input.ref.id), path: input.documentPath },
+          ];
+          const contents = yield* encodeProjectFile({ ...current, rules }).pipe(
+            Effect.map((encoded) => `${encoded}\n`),
+            Effect.mapError((cause) =>
+              storeError("write-project-file", input.ref, "Could not encode t3.json.", cause),
+            ),
+          );
+          return yield* writeContained({
+            ref: input.ref,
+            root,
+            filePath: path.join(root, T3_PROJECT_FILE_NAME),
+            contents,
+            operation: "write-project-file",
+          });
+        }),
+      );
     },
   );
 
@@ -396,17 +435,21 @@ export const make = Effect.gen(function* () {
         documentPath,
       }).pipe(Effect.result);
       if (Result.isFailure(projectWrite)) {
-        yield* (
-          Option.isSome(previous)
-            ? writeContained({
-                ref,
-                root: target.root,
-                filePath: target.filePath,
-                contents: previous.value,
-                operation: "write-document",
-              })
-            : fileSystem.remove(target.filePath, { force: true })
-        ).pipe(Effect.ignore);
+        const rollback = yield* restorePreviousFile({
+          filePath: target.filePath,
+          previous,
+        }).pipe(Effect.result);
+        if (Result.isFailure(rollback)) {
+          return yield* storeError(
+            "write-document",
+            ref,
+            "Could not roll back rule Markdown after t3.json failed to save.",
+            new AggregateError(
+              [projectWrite.failure, rollback.failure],
+              "Agent rule project-reference rollback failed.",
+            ),
+          );
+        }
         return yield* projectWrite.failure;
       }
     }

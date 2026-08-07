@@ -10,14 +10,18 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 
 import { AgentHookBlockedError } from "../AgentHookRunner.ts";
+import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import type { AgentRun, AgentRunCommand, AgentRunEvent } from "./AgentRun.ts";
 import type { AgentRunRepository } from "./AgentRunRepository.ts";
 import {
   AgentTerminalHookPrerequisiteError,
   completeSuccessfulRun,
   hookWorkspaceForRun,
+  loadAgentRunForProviderEvent,
 } from "./AgentRunReactor.ts";
 
 const occurredAt = "2026-08-07T12:01:00.000Z";
@@ -85,6 +89,34 @@ it("fails closed when an isolated run has no child worktree", () => {
 it("allows a shared run to use its project workspace when no child worktree exists", () => {
   assert.equal(hookWorkspaceForRun(run, null, "/project"), "/project");
 });
+
+it.effect("retains a provider event across a transient run lookup failure", () =>
+  Effect.gen(function* () {
+    let attempts = 0;
+    const repository = {
+      getByChildThread: () =>
+        Effect.suspend(() => {
+          attempts += 1;
+          return attempts === 1
+            ? Effect.fail(
+                new PersistenceSqlError({
+                  operation: "AgentRunRepository.getByChildThread",
+                  detail: "temporary database failure",
+                }),
+              )
+            : Effect.succeed(Option.some(run));
+        }),
+    };
+
+    const loaded = yield* loadAgentRunForProviderEvent(
+      repository,
+      ThreadId.make("completion-child"),
+    ).pipe(Effect.retry(Schedule.recurs(1)));
+
+    assert.equal(loaded?.id, run.id);
+    assert.equal(attempts, 2);
+  }),
+);
 
 it.effect("validates completion budgets before running afterResult hooks", () =>
   Effect.gen(function* () {

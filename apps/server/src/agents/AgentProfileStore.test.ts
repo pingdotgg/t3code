@@ -7,14 +7,18 @@ import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import { AgentProfileDocument } from "@t3tools/contracts";
+import { AgentProfileDocument, AgentRuleDocument } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as AgentCatalog from "./AgentCatalog.ts";
+import * as AgentProjectFileCoordinator from "./AgentProjectFileCoordinator.ts";
 import * as AgentProfileStore from "./AgentProfileStore.ts";
+import * as AgentProfileServices from "./AgentProfileServices.ts";
+import * as AgentRuleStore from "./AgentRuleStore.ts";
 
 const decodeProfile = Schema.decodeUnknownEffect(AgentProfileDocument);
+const decodeRule = Schema.decodeUnknownEffect(AgentRuleDocument);
 const INITIAL_REVISION = "0".repeat(64);
 const CREATED_AT = "2026-01-01T00:00:00.000Z";
 
@@ -46,6 +50,23 @@ const profile = (input: {
     createdAt: CREATED_AT,
   });
 
+const rule = (id: string) =>
+  decodeRule({
+    id,
+    scope: "project",
+    revision: INITIAL_REVISION,
+    name: id,
+    globs: ["**/*.ts"],
+    alwaysApply: false,
+    priority: 0,
+    sourcePath: `.t3code/rules/${id}.md`,
+    updatedAt: CREATED_AT,
+    archivedAt: null,
+    body: "Use strict types.",
+    profiles: [],
+    createdAt: CREATED_AT,
+  });
+
 const withStore = <A, E, R>(
   workspaceRoot: string,
   baseDir: string,
@@ -55,7 +76,25 @@ const withStore = <A, E, R>(
     Effect.provide(
       AgentProfileStore.layer.pipe(
         Layer.provide(AgentCatalog.layer),
+        Layer.provide(AgentProjectFileCoordinator.layer),
         Layer.provide(T3ProjectFileLoader.layer),
+        Layer.provide(ServerConfig.layerTest(workspaceRoot, baseDir)),
+      ),
+    ),
+  );
+
+const withStores = <A, E, R>(
+  workspaceRoot: string,
+  baseDir: string,
+  effect: Effect.Effect<
+    A,
+    E,
+    AgentProfileStore.AgentProfileStore | AgentRuleStore.AgentRuleStore | R
+  >,
+) =>
+  effect.pipe(
+    Effect.provide(
+      AgentProfileServices.layer.pipe(
         Layer.provide(ServerConfig.layerTest(workspaceRoot, baseDir)),
       ),
     ),
@@ -178,6 +217,43 @@ it.layer(NodeServices.layer)("AgentProfileStore", (it) => {
     }),
   );
 
+  it.effect("serializes concurrent profile and rule t3.json reference writes per workspace", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-agent-store-" });
+      const workspace = path.join(tempDir, "workspace");
+      yield* fileSystem.makeDirectory(workspace, { recursive: true });
+      const projectProfile = yield* profile({
+        id: "concurrent-reviewer",
+        scope: "project",
+        instructions: "Review concurrent writes.",
+        sourcePath: ".t3code/agents/concurrent-reviewer.md",
+      });
+      const projectRule = yield* rule("concurrent-typescript");
+
+      yield* withStores(
+        workspace,
+        tempDir,
+        Effect.gen(function* () {
+          const profileStore = yield* AgentProfileStore.AgentProfileStore;
+          const ruleStore = yield* AgentRuleStore.AgentRuleStore;
+          yield* Effect.all(
+            [
+              profileStore.save({ profile: projectProfile, workspaceRoot: workspace }),
+              ruleStore.save({ rule: projectRule, workspaceRoot: workspace }),
+            ],
+            { concurrency: "unbounded" },
+          );
+        }),
+      );
+
+      const projectFile = yield* fileSystem.readFileString(path.join(workspace, "t3.json"));
+      assert.match(projectFile, /concurrent-reviewer/);
+      assert.match(projectFile, /concurrent-typescript/);
+    }),
+  );
+
   it.effect("rolls back a new project profile when its t3.json reference cannot be written", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -205,5 +281,53 @@ it.layer(NodeServices.layer)("AgentProfileStore", (it) => {
         yield* fileSystem.exists(path.join(workspace, ".t3code", "agents", "rollback-reviewer.md")),
       );
     }),
+  );
+
+  it.effect(
+    "restores an existing project profile when its t3.json reference cannot be written",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-agent-store-" });
+        const workspace = path.join(tempDir, "workspace");
+        yield* fileSystem.makeDirectory(workspace, { recursive: true });
+        const initial = yield* profile({
+          id: "restore-reviewer",
+          scope: "project",
+          instructions: "Keep the original document.",
+          sourcePath: ".t3code/agents/restore-reviewer.md",
+        });
+        const saved = yield* withStore(
+          workspace,
+          tempDir,
+          Effect.service(AgentProfileStore.AgentProfileStore).pipe(
+            Effect.flatMap((store) => store.save({ profile: initial, workspaceRoot: workspace })),
+          ),
+        );
+        yield* fileSystem.writeFileString(path.join(workspace, "t3.json"), "not JSON");
+
+        const result = yield* withStore(
+          workspace,
+          tempDir,
+          Effect.service(AgentProfileStore.AgentProfileStore).pipe(
+            Effect.flatMap((store) =>
+              store.save({
+                profile: { ...saved, instructions: "This write must be rolled back." },
+                workspaceRoot: workspace,
+              }),
+            ),
+            Effect.result,
+          ),
+        );
+
+        assert.isTrue(Result.isFailure(result));
+        assert.match(
+          yield* fileSystem.readFileString(
+            path.join(workspace, ".t3code", "agents", "restore-reviewer.md"),
+          ),
+          /Keep the original document\./,
+        );
+      }),
   );
 });

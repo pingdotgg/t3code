@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildAgentProfileDocument,
   draftFromProfile,
+  resolveProfileBaselineForSave,
   sortAgentProfiles,
 } from "./AgentsSettings.logic";
 
@@ -65,5 +66,17 @@ describe("agent profile settings model", () => {
         null,
       ),
     ).toThrow("Hooks must contain valid JSON.");
+  });
+
+  it("requires the loaded revision before saving an existing profile", () => {
+    const profile = buildAgentProfileDocument(
+      { ...draftFromProfile(), id: "reviewer", name: "Reviewer" },
+      null,
+    );
+    expect(() => resolveProfileBaselineForSave(false, profile, undefined)).toThrow(
+      "Load the current profile",
+    );
+    expect(resolveProfileBaselineForSave(false, profile, profile)).toBe(profile);
+    expect(resolveProfileBaselineForSave(true, null, undefined)).toBeNull();
   });
 });

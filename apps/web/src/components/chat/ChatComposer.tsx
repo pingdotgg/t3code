@@ -65,6 +65,7 @@ import {
 } from "../../promptStashStore";
 import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
+import { composerAgentSelectionKey } from "./ChatComposer.logic";
 import { compressImageForStash, compressImageToByteLimit } from "../../lib/imageCompression";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
@@ -677,6 +678,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onExpandImage,
   } = props;
   const isSendDisabled = sendDisabledReason !== null;
+  const agentSelectionContextKey = composerAgentSelectionKey({
+    activeThreadId,
+    draftId,
+    composerDraftTarget,
+  });
   const [selectedAgentProfile, setSelectedAgentProfile] = useState<AgentProfileRef | null>(
     () => activeThread?.agentProfile ?? null,
   );
@@ -685,6 +691,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setSelectedAgentProfile(activeThread?.agentProfile ?? null);
   }, [
     activeThreadId,
+    agentSelectionContextKey,
+    draftId,
     activeThread?.agentProfile?.id,
     activeThread?.agentProfile?.revision,
     activeThread?.agentProfile?.scope,

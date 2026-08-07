@@ -1,5 +1,10 @@
 import * as Schema from "effect/Schema";
-import type { AgentProfileLocator, AgentProfileScope, AgentRuleDocument } from "@t3tools/contracts";
+import type {
+  AgentProfileLocator,
+  AgentProfileScope,
+  AgentRuleDocument,
+  AgentRuleSummary,
+} from "@t3tools/contracts";
 import {
   AgentProfileLocator as AgentProfileLocatorSchema,
   AgentRuleDocument as AgentRuleDocumentSchema,
@@ -70,6 +75,24 @@ export function buildAgentRuleDocument(
     body: draft.body,
     createdAt: baseline?.createdAt ?? now,
   });
+}
+
+export function resolveRuleBaselineForSave(
+  isNew: boolean,
+  selected: Pick<AgentRuleSummary, "id" | "scope" | "revision"> | null,
+  loaded: AgentRuleDocument | undefined,
+): AgentRuleDocument | null {
+  if (isNew) return null;
+  if (
+    loaded === undefined ||
+    selected === null ||
+    loaded.id !== selected.id ||
+    loaded.scope !== selected.scope ||
+    loaded.revision !== selected.revision
+  ) {
+    throw new Error("Load the current rule before saving it.");
+  }
+  return loaded;
 }
 
 export function sortAgentRules<

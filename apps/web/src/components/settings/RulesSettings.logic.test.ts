@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { buildAgentRuleDocument, draftFromRule, sortAgentRules } from "./RulesSettings.logic";
+import {
+  buildAgentRuleDocument,
+  draftFromRule,
+  resolveRuleBaselineForSave,
+  sortAgentRules,
+} from "./RulesSettings.logic";
 
 describe("agent rule settings model", () => {
   it("creates a complete file-aware rule", () => {
@@ -62,5 +67,14 @@ describe("agent rule settings model", () => {
         { id: "b", name: "B", scope: "environment" as const, archivedAt: null },
       ]).map((rule) => rule.id),
     ).toEqual(["b", "z", "a"]);
+  });
+
+  it("requires the loaded revision before saving an existing rule", () => {
+    const rule = buildAgentRuleDocument({ ...draftFromRule(), id: "tests", name: "Tests" }, null);
+    expect(() => resolveRuleBaselineForSave(false, rule, undefined)).toThrow(
+      "Load the current rule",
+    );
+    expect(resolveRuleBaselineForSave(false, rule, rule)).toBe(rule);
+    expect(resolveRuleBaselineForSave(true, null, undefined)).toBeNull();
   });
 });

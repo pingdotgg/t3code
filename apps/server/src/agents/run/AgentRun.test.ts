@@ -410,6 +410,7 @@ describe("AgentRun", () => {
         {
           type: "agent-run.succeed",
           runId: id("root"),
+          usage: { totalTokens: 2 },
           occurredAt: later,
         },
       );
@@ -421,6 +422,8 @@ describe("AgentRun", () => {
       });
       expect(revised.runs.get(id("root"))?.status).toBe("queued");
       expect(revised.runs.get(id("root"))?.revision).toBe(4);
+      expect(revised.runs.get(id("root"))?.usage).toBeUndefined();
+      expect(revised.runs.get(id("root"))?.consumedTokens).toBe(2);
     }),
   );
 

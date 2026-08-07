@@ -1,6 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { buildAgentRuleDocument, draftFromRule, sortAgentRules } from "./agentRule.logic";
+import {
+  buildAgentRuleDocument,
+  draftFromRule,
+  resolveRuleBaselineForSave,
+  sortAgentRules,
+} from "./agentRule.logic";
 
 describe("mobile agent rule editor", () => {
   it("builds glob, targeting, priority, and body fields", () => {
@@ -58,6 +63,15 @@ describe("mobile agent rule editor", () => {
         null,
       ),
     ).toThrow();
+  });
+
+  it("requires the loaded revision before saving an existing rule", () => {
+    const rule = buildAgentRuleDocument({ ...draftFromRule(), id: "tests", name: "Tests" }, null);
+    expect(() => resolveRuleBaselineForSave(false, rule, undefined)).toThrow(
+      "Load the current rule",
+    );
+    expect(resolveRuleBaselineForSave(false, rule, rule)).toBe(rule);
+    expect(resolveRuleBaselineForSave(true, null, undefined)).toBeNull();
   });
   it("keeps commas inside brace alternation and formats globs one per line", () => {
     const rule = buildAgentRuleDocument(

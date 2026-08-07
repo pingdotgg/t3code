@@ -1,4 +1,15 @@
-import type { AgentProfileSummary } from "@t3tools/contracts";
+import type { AgentProfileRef, AgentProfileSummary } from "@t3tools/contracts";
+
+export function agentProfilePickerLabel(
+  selected: AgentProfileSummary | null,
+  selectedValue: AgentProfileRef | null,
+  isPending: boolean,
+  hasCatalog: boolean,
+): string {
+  if (selected?.name) return selected.name;
+  if (selectedValue === null) return "Choose agent";
+  return isPending && !hasCatalog ? "Loading agents…" : "Unavailable agent";
+}
 
 export function selectChatAgentProfiles(
   profiles: ReadonlyArray<AgentProfileSummary>,
@@ -6,7 +17,7 @@ export function selectChatAgentProfiles(
 ): ReadonlyArray<AgentProfileSummary> {
   return profiles.filter(
     (profile) =>
-      profile.chatSelectable ||
+      (profile.archivedAt === null && profile.chatSelectable) ||
       (selected !== null && profile.id === selected.id && profile.scope === selected.scope),
   );
 }

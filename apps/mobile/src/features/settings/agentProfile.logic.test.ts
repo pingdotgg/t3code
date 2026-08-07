@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   buildAgentProfileDocument,
   draftFromProfile,
+  resolveProfileBaselineForSave,
   selectChatAgentProfiles,
   sortAgentProfiles,
 } from "./agentProfile.logic";
@@ -45,14 +46,37 @@ describe("mobile agent profile editor", () => {
     ).toThrow("Maximum runs is required.");
   });
 
+  it("requires the loaded revision before saving an existing profile", () => {
+    const profile = buildAgentProfileDocument(
+      { ...draftFromProfile(), id: "reviewer", name: "Reviewer" },
+      null,
+    );
+    expect(() => resolveProfileBaselineForSave(false, profile, undefined)).toThrow(
+      "Load the current profile",
+    );
+    expect(resolveProfileBaselineForSave(false, profile, profile)).toBe(profile);
+    expect(resolveProfileBaselineForSave(true, null, undefined)).toBeNull();
+  });
+
   it("hides delegation-only profiles except for a thread that already selected one", () => {
     const profiles = [
-      { id: "parent", scope: "environment", chatSelectable: true },
-      { id: "reviewer", scope: "environment", chatSelectable: false },
+      { id: "parent", scope: "environment", chatSelectable: true, archivedAt: null },
+      { id: "reviewer", scope: "environment", chatSelectable: false, archivedAt: null },
     ];
     expect(selectChatAgentProfiles(profiles, null)).toEqual([profiles[0]]);
     expect(selectChatAgentProfiles(profiles, { id: "reviewer", scope: "environment" })).toEqual(
       profiles,
     );
+  });
+
+  it("retains an archived pinned profile by locator", () => {
+    const archived = {
+      id: "reviewer",
+      scope: "environment",
+      chatSelectable: true,
+      archivedAt: "2026-08-08T00:00:00.000Z",
+    };
+    expect(selectChatAgentProfiles([archived], archived)).toEqual([archived]);
+    expect(selectChatAgentProfiles([archived], null)).toEqual([]);
   });
 });

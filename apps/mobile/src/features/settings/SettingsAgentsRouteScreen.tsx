@@ -31,11 +31,13 @@ import { ComposerToolbarTrigger } from "../../components/ComposerToolbarTrigger"
 import {
   buildAgentProfileDocument,
   draftFromProfile,
+  resolveProfileBaselineForSave,
   type AgentProfileDraft,
 } from "./agentProfile.logic";
 import {
   buildAgentRuleDocument,
   draftFromRule,
+  resolveRuleBaselineForSave,
   sortAgentRules,
   type AgentRuleDraft,
 } from "./agentRule.logic";
@@ -217,17 +219,17 @@ export function SettingsAgentsRouteScreen() {
     ruleCommandInFlight.current = true;
     setRuleCommandPending(true);
     try {
-      const document = buildAgentRuleDocument(
-        ruleDraft,
-        isNewRule ? null : (ruleQuery.data?.rule ?? null),
+      const baseline = resolveRuleBaselineForSave(
+        isNewRule,
+        selectedRuleSummary,
+        ruleQuery.data?.rule,
       );
+      const document = buildAgentRuleDocument(ruleDraft, baseline);
       const result = await saveRule({
         environmentId: resolvedEnvironmentId,
         input: {
           rule: document,
-          ...(isNewRule || ruleQuery.data?.rule === undefined
-            ? {}
-            : { expectedRevision: ruleQuery.data.rule.revision }),
+          ...(baseline === null ? {} : { expectedRevision: baseline.revision }),
           ...(document.scope === "project" && selectedProject
             ? { projectId: selectedProject.id }
             : {}),
@@ -253,6 +255,7 @@ export function SettingsAgentsRouteScreen() {
     ruleQuery.data?.rule,
     saveRule,
     selectedProject,
+    selectedRuleSummary,
   ]);
   const archiveRestoreRule = useCallback(async () => {
     if (resolvedEnvironmentId === null) {
@@ -310,17 +313,17 @@ export function SettingsAgentsRouteScreen() {
     profileCommandInFlight.current = true;
     setProfileCommandPending(true);
     try {
-      const document = buildAgentProfileDocument(
-        draft,
-        isNew ? null : (profileQuery.data?.profile ?? null),
+      const baseline = resolveProfileBaselineForSave(
+        isNew,
+        selectedSummary,
+        profileQuery.data?.profile,
       );
+      const document = buildAgentProfileDocument(draft, baseline);
       const result = await saveProfile({
         environmentId: resolvedEnvironmentId,
         input: {
           profile: document,
-          ...(isNew || profileQuery.data?.profile === undefined
-            ? {}
-            : { expectedRevision: profileQuery.data.profile.revision }),
+          ...(baseline === null ? {} : { expectedRevision: baseline.revision }),
           ...(document.scope === "project" && selectedProject
             ? { projectId: selectedProject.id }
             : {}),
@@ -345,6 +348,7 @@ export function SettingsAgentsRouteScreen() {
     resolvedEnvironmentId,
     saveProfile,
     selectedProject,
+    selectedSummary,
   ]);
   const archiveRestore = useCallback(async () => {
     if (resolvedEnvironmentId === null) {

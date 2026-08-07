@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import {
   AgentProfileDocument as AgentProfileDocumentSchema,
   type AgentProfileDocument,
+  type AgentProfileSummary,
 } from "@t3tools/contracts";
 
 import { parseRequiredNumber } from "./agentSettings.logic";
@@ -104,6 +105,24 @@ export function buildAgentProfileDocument(
   });
 }
 
+export function resolveProfileBaselineForSave(
+  isNew: boolean,
+  selected: Pick<AgentProfileSummary, "id" | "scope" | "revision"> | null,
+  loaded: AgentProfileDocument | undefined,
+): AgentProfileDocument | null {
+  if (isNew) return null;
+  if (
+    loaded === undefined ||
+    selected === null ||
+    loaded.id !== selected.id ||
+    loaded.scope !== selected.scope ||
+    loaded.revision !== selected.revision
+  ) {
+    throw new Error("Load the current profile before saving it.");
+  }
+  return loaded;
+}
+
 export function sortAgentProfiles<
   T extends { id: string; name: string; scope: string; archivedAt: string | null },
 >(profiles: ReadonlyArray<T>): ReadonlyArray<T> {
@@ -114,11 +133,11 @@ export function sortAgentProfiles<
 }
 
 export function selectChatAgentProfiles<
-  T extends { id: string; scope: string; chatSelectable: boolean },
+  T extends { id: string; scope: string; chatSelectable: boolean; archivedAt: string | null },
 >(profiles: ReadonlyArray<T>, selected: { id: string; scope: string } | null): ReadonlyArray<T> {
   return profiles.filter(
     (profile) =>
-      profile.chatSelectable ||
+      (profile.archivedAt === null && profile.chatSelectable) ||
       (selected !== null && profile.id === selected.id && profile.scope === selected.scope),
   );
 }

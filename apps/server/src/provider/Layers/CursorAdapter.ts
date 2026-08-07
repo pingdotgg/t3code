@@ -1170,7 +1170,7 @@ export function makeCursorAdapter(
           mcpServerInjection: true,
           instructionDelivery: "prompt",
           nativeToolPolicy: "sandbox-only",
-          tokenUsage: true,
+          tokenUsage: false,
           monetaryCost: false,
         },
       },

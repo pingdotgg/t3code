@@ -4,6 +4,7 @@ import {
   AgentRuleDocument as AgentRuleDocumentSchema,
   AgentProfileLocator as AgentProfileLocatorSchema,
   type AgentRuleDocument,
+  type AgentRuleSummary,
 } from "@t3tools/contracts";
 import { formatAgentRuleGlobs, parseAgentRuleGlobs } from "@t3tools/shared/agentRuleGlobs";
 
@@ -92,6 +93,24 @@ export function buildAgentRuleDocument(
     profiles: decodeAgentProfileLocators(parseProfiles(draft.profiles)),
     createdAt: baseline?.createdAt ?? now,
   });
+}
+
+export function resolveRuleBaselineForSave(
+  isNew: boolean,
+  selected: Pick<AgentRuleSummary, "id" | "scope" | "revision"> | null,
+  loaded: AgentRuleDocument | undefined,
+): AgentRuleDocument | null {
+  if (isNew) return null;
+  if (
+    loaded === undefined ||
+    selected === null ||
+    loaded.id !== selected.id ||
+    loaded.scope !== selected.scope ||
+    loaded.revision !== selected.revision
+  ) {
+    throw new Error("Load the current rule before saving it.");
+  }
+  return loaded;
 }
 
 export function sortAgentRules<

@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 import {
+  AgentProfileId,
   AgentProfileDocument,
   AgentRuleDocument,
   type AgentProfileDocument as AgentProfileDocumentType,
@@ -101,6 +102,50 @@ it("does not match archived rules", () => {
   assert.deepEqual(
     result.rules.map((rule) => rule.id),
     ["active"],
+  );
+});
+
+it("matches explicit rule references by scope and source path", () => {
+  const referencedPath = ".t3code/rules/reviewer.md";
+  const projectProfile = {
+    ...profile,
+    scope: "project" as const,
+    rules: [{ id: profile.id, path: referencedPath }],
+  };
+  const environmentRule = makeRule("reviewer", "environment guidance", {
+    sourcePath: null,
+  });
+  const projectRule = makeRule("reviewer", "project guidance", {
+    scope: "project",
+    sourcePath: referencedPath,
+  });
+
+  const result = matchAgentRules({
+    rules: [environmentRule, projectRule],
+    profile: projectProfile,
+  });
+
+  assert.deepEqual(
+    result.rules.map((rule) => `${rule.scope}/${rule.id}`),
+    ["project/reviewer"],
+  );
+});
+
+it("matches an environment profile's explicit environment rule reference", () => {
+  const environmentRule = makeRule("reviewer", "environment guidance", {
+    sourcePath: null,
+  });
+  const result = matchAgentRules({
+    rules: [environmentRule],
+    profile: {
+      ...profile,
+      rules: [{ id: AgentProfileId.make(environmentRule.id), path: "rules/reviewer.md" }],
+    },
+  });
+
+  assert.deepEqual(
+    result.rules.map((rule) => `${rule.scope}/${rule.id}`),
+    ["environment/reviewer"],
   );
 });
 

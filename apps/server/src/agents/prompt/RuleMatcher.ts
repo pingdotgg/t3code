@@ -310,6 +310,7 @@ const isExplicitlyReferenced = (
 ): boolean =>
   profile !== undefined &&
   "rules" in profile &&
+  rule.scope === profile.scope &&
   profile.rules.some(
     (reference) =>
       reference.id === rule.id && (rule.sourcePath === null || reference.path === rule.sourcePath),

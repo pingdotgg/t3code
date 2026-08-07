@@ -14,6 +14,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import * as ProviderService from "../../provider/Services/ProviderService.ts";
@@ -21,6 +22,11 @@ import * as AgentRunRepository from "./AgentRunRepository.ts";
 import type { AgentRun } from "./AgentRun.ts";
 
 const ACTIVE_STATUSES = new Set<AgentRun["status"]>(["queued", "running", "waiting-for-input"]);
+const DEADLINE_RETRY_SCHEDULE = Schedule.exponential("100 millis").pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+  ),
+);
 
 export const isDeadlineTracked = (run: AgentRun): boolean => ACTIVE_STATUSES.has(run.status);
 
@@ -65,13 +71,7 @@ export const expireRun = Effect.fn("AgentRunDeadlineReactor.expireRun")(function
 
   // An empty event list means another reactor won the terminal race. Do not
   // interrupt a provider session that may now belong to a follow-up turn.
-  if (Result.isFailure(cancellation)) {
-    yield* Effect.logWarning("Agent run deadline cancellation could not be persisted", {
-      runId: run.id,
-      cause: cancellation.failure,
-    });
-    return false;
-  }
+  if (Result.isFailure(cancellation)) return yield* cancellation.failure;
   if (cancellation.success.length === 0) return false;
 
   if (
@@ -113,7 +113,9 @@ const make = Effect.gen(function* () {
     const fiber = yield* Deferred.await(registered).pipe(
       Effect.andThen(Effect.sleep(Duration.millis(delayMillis))),
       Effect.andThen(Effect.sync(() => fibers.delete(run.id))),
-      Effect.andThen(expireRun(run.id, repository, provider).pipe(Effect.uninterruptible)),
+      Effect.andThen(
+        expireRun(run.id, repository, provider).pipe(Effect.retry(DEADLINE_RETRY_SCHEDULE)),
+      ),
       Effect.asVoid,
       Effect.catchCause((cause) =>
         Effect.logWarning("Agent run deadline reactor could not enforce a deadline", {

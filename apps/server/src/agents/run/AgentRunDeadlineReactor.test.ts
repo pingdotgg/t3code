@@ -227,3 +227,31 @@ it.effect("interrupts the provider after its own terminal notification", () =>
     }),
   ),
 );
+
+it.effect("surfaces a transient deadline persistence failure so the scheduler can retry it", () =>
+  Effect.gen(function* () {
+    const repository = {
+      ...repositoryFor(
+        () => run,
+        () => [],
+      ),
+      dispatch: () =>
+        Effect.fail(
+          new AgentRunRepositoryService.AgentRunRepositoryDecodeError({
+            operation: "test",
+            detail: "temporary persistence failure",
+            cause: {},
+          }),
+        ),
+    } as unknown as AgentRunRepository["Service"];
+    yield* TestClock.setTime(deadlineAtMillis(run));
+    const result = yield* Effect.result(
+      expireRun(
+        runId,
+        repository,
+        providerFor(() => undefined),
+      ),
+    );
+    assert.equal(result._tag, "Failure");
+  }).pipe(Effect.provide(TestClock.layer())),
+);

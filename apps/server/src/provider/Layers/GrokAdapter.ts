@@ -1452,7 +1452,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           mcpServerInjection: true,
           instructionDelivery: "prompt",
           nativeToolPolicy: "sandbox-only",
-          tokenUsage: true,
+          tokenUsage: false,
           monetaryCost: false,
         },
       },

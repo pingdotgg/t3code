@@ -560,6 +560,7 @@ export function NewTaskDraftScreen(props: {
   const agentCatalog = useAgentProfileCatalog(
     flow.selectedProject?.environmentId ?? null,
     flow.selectedProject?.id ?? null,
+    { includeArchived: true },
   );
   const agentMenuActions = useMemo(
     () => [
@@ -1067,7 +1068,10 @@ export function NewTaskDraftScreen(props: {
               : (agentCatalog.data?.profiles.find(
                   (profile) =>
                     profileKey(profile) === `${flow.agentProfile?.scope}:${flow.agentProfile?.id}`,
-                )?.name ?? "Agent")
+                )?.name ??
+                (agentCatalog.isPending && agentCatalog.data === null
+                  ? "Loading agents…"
+                  : "Agent"))
           }
         />
       </ControlPillMenu>

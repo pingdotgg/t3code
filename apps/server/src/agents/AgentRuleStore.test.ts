@@ -11,6 +11,7 @@ import { AgentProfileId, AgentRuleDocument } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as AgentCatalog from "./AgentCatalog.ts";
+import * as AgentProjectFileCoordinator from "./AgentProjectFileCoordinator.ts";
 import * as AgentRuleStore from "./AgentRuleStore.ts";
 
 const decodeRule = Schema.decodeUnknownEffect(AgentRuleDocument);
@@ -39,6 +40,7 @@ const withStore = <A, E, R>(
     Effect.provide(
       AgentRuleStore.layer.pipe(
         Layer.provide(AgentCatalog.layer),
+        Layer.provide(AgentProjectFileCoordinator.layer),
         Layer.provide(T3ProjectFileLoader.layer),
         Layer.provide(ServerConfig.layerTest(workspaceRoot, baseDir)),
       ),
@@ -167,6 +169,47 @@ it.layer(NodeServices.layer)("AgentRuleStore", (it) => {
         yield* fileSystem.exists(
           path.join(workspace, ".t3code", "rules", "rollback-typescript.md"),
         ),
+      );
+    }),
+  );
+
+  it.effect("restores an existing project rule when its t3.json reference cannot be written", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-rule-store-" });
+      const workspace = path.join(tempDir, "workspace");
+      yield* fileSystem.makeDirectory(workspace, { recursive: true });
+      const initial = yield* rule("project", "restore-typescript");
+      const saved = yield* withStore(
+        workspace,
+        tempDir,
+        Effect.service(AgentRuleStore.AgentRuleStore).pipe(
+          Effect.flatMap((store) => store.save({ rule: initial, workspaceRoot: workspace })),
+        ),
+      );
+      yield* fileSystem.writeFileString(path.join(workspace, "t3.json"), "not JSON");
+
+      const result = yield* withStore(
+        workspace,
+        tempDir,
+        Effect.service(AgentRuleStore.AgentRuleStore).pipe(
+          Effect.flatMap((store) =>
+            store.save({
+              rule: { ...saved, body: "This write must be rolled back." },
+              workspaceRoot: workspace,
+            }),
+          ),
+          Effect.result,
+        ),
+      );
+
+      assert.isTrue(Result.isFailure(result));
+      assert.match(
+        yield* fileSystem.readFileString(
+          path.join(workspace, ".t3code", "rules", "restore-typescript.md"),
+        ),
+        /Use strict types\./,
       );
     }),
   );

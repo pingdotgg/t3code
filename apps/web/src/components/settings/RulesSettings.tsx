@@ -29,6 +29,7 @@ import { SettingsRow, SettingsSection } from "./settingsLayout";
 import {
   buildAgentRuleDocument,
   draftFromRule,
+  resolveRuleBaselineForSave,
   sortAgentRules,
   type AgentRuleDraft,
 } from "./RulesSettings.logic";
@@ -117,14 +118,13 @@ export function RulesSettingsPanel() {
     try {
       if (draft.scope === "project" && !project)
         throw new Error("Choose a project before saving a project-scoped rule.");
-      const rule = buildAgentRuleDocument(draft, isNew ? null : (ruleQuery.data?.rule ?? null));
+      const baseline = resolveRuleBaselineForSave(isNew, selectedSummary, ruleQuery.data?.rule);
+      const rule = buildAgentRuleDocument(draft, baseline);
       const result = await saveRule({
         environmentId: resolvedEnvironmentId,
         input: {
           rule,
-          ...(isNew || ruleQuery.data?.rule === undefined
-            ? {}
-            : { expectedRevision: ruleQuery.data.rule.revision }),
+          ...(baseline === null ? {} : { expectedRevision: baseline.revision }),
           ...(rule.scope === "project" && project ? { projectId: project.id } : {}),
         },
       });

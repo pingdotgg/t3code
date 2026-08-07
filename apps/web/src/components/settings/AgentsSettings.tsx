@@ -30,6 +30,7 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 import {
   buildAgentProfileDocument,
   draftFromProfile,
+  resolveProfileBaselineForSave,
   sortAgentProfiles,
   type AgentProfileDraft,
 } from "./AgentsSettings.logic";
@@ -231,17 +232,17 @@ export function AgentsSettingsPanel() {
       if (draft.scope === "project" && selectedProject === undefined) {
         throw new Error("Choose a project before saving a project-scoped profile.");
       }
-      const document = buildAgentProfileDocument(
-        draft,
-        isNew ? null : (profileQuery.data?.profile ?? null),
+      const baseline = resolveProfileBaselineForSave(
+        isNew,
+        selectedSummary,
+        profileQuery.data?.profile,
       );
+      const document = buildAgentProfileDocument(draft, baseline);
       const result = await saveProfile({
         environmentId: resolvedEnvironmentId,
         input: {
           profile: document,
-          ...(isNew || profileQuery.data?.profile === undefined
-            ? {}
-            : { expectedRevision: profileQuery.data.profile.revision }),
+          ...(baseline === null ? {} : { expectedRevision: baseline.revision }),
           ...(document.scope === "project" && selectedProject
             ? { projectId: selectedProject.id }
             : {}),
