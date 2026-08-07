@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   areFontAdvancesMonospace,
   BUNDLED_SANS_FONT_FAMILIES,
+  buildFontFamilyPickerItems,
   clampCodeFontSize,
   clampInterfaceFontSize,
   clampPromptFontSize,
@@ -11,6 +12,7 @@ import {
   DEFAULT_SANS_FONT_STACK,
   appearanceFontStack,
   cssFontFamilies,
+  ensureSelectedFontFamilyInCatalog,
   isBundledSansFontFamily,
   mergeFontFamilyCatalog,
   resolveDefaultFamilyLabel,
@@ -55,6 +57,80 @@ describe("bundled font catalog", () => {
         ["Atkinson Hyperlegible Next"],
       ),
     ).toEqual(["Atkinson Hyperlegible Next", "Inter"]);
+  });
+
+  it("keeps a committed custom family in the catalog when enumeration misses it", () => {
+    expect(ensureSelectedFontFamilyInCatalog(["Atkinson Hyperlegible Next"], "Helvetica")).toEqual([
+      "Atkinson Hyperlegible Next",
+      "Helvetica",
+    ]);
+    expect(
+      ensureSelectedFontFamilyInCatalog(
+        ["Atkinson Hyperlegible Next"],
+        "atkinson hyperlegible next",
+      ),
+    ).toEqual(["Atkinson Hyperlegible Next"]);
+    expect(ensureSelectedFontFamilyInCatalog(["Inter"], "")).toEqual(["Inter"]);
+  });
+});
+
+describe("buildFontFamilyPickerItems", () => {
+  const defaultValue = "__default__";
+  const catalog = ["Atkinson Hyperlegible Next", "Inter"];
+
+  it("leads with Default when the query is empty", () => {
+    expect(
+      buildFontFamilyPickerItems({
+        catalog,
+        query: "",
+        defaultValue,
+        acceptCustom: () => false,
+      }),
+    ).toEqual([defaultValue, ...catalog]);
+  });
+
+  it("offers a typed custom family when it is accepted and not already listed", () => {
+    expect(
+      buildFontFamilyPickerItems({
+        catalog: ["Atkinson Hyperlegible Next"],
+        query: "Helvetica Neue",
+        defaultValue,
+        acceptCustom: (candidate) => candidate === "Helvetica Neue",
+      }),
+    ).toEqual(["Helvetica Neue"]);
+  });
+
+  it("does not duplicate a typed name that already matches the catalog", () => {
+    expect(
+      buildFontFamilyPickerItems({
+        catalog,
+        query: "inter",
+        defaultValue,
+        acceptCustom: () => true,
+      }),
+    ).toEqual(["Inter"]);
+  });
+
+  it("filters the catalog and still prepends an accepted custom name", () => {
+    expect(
+      buildFontFamilyPickerItems({
+        catalog,
+        query: "At",
+        defaultValue,
+        acceptCustom: (candidate) => candidate === "At",
+      }),
+    ).toEqual(["At", "Atkinson Hyperlegible Next"]);
+  });
+
+  it("omits a typed name that is not accepted", () => {
+    expect(
+      buildFontFamilyPickerItems({
+        catalog: ["Atkinson Hyperlegible Next"],
+        query: "NotARealFont",
+        defaultValue,
+        acceptCustom: () => false,
+      }),
+    ).toEqual([]);
   });
 });
 

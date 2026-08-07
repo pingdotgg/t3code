@@ -1405,8 +1405,9 @@ function FontFamilySettingsRow({
   // upgrades to the picker - popped open when the swap happens under focus,
   // so the interaction continues without a second click. When discovery is
   // denied or unsupported, sans rows still open the picker over the curated
-  // (bundled) catalog; monospace rows keep the free-text input until a
-  // bundled mono ships.
+  // (bundled) catalog — the picker's search field also accepts typed custom
+  // family names. Monospace rows keep the free-text input until a bundled
+  // mono ships.
   const inputFocusedRef = useRef(false);
   const showFontPicker =
     fontEnumeration.status === "granted" ||

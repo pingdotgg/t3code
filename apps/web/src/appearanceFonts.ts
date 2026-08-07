@@ -60,6 +60,54 @@ export function mergeFontFamilyCatalog(
 }
 
 /**
+ * Ensure a committed custom family stays visible in the picker catalog even
+ * when Local Font Access did not enumerate it.
+ */
+export function ensureSelectedFontFamilyInCatalog(
+  catalog: readonly string[],
+  selectedFamily: string,
+): string[] {
+  const trimmed = selectedFamily.trim();
+  if (trimmed.length === 0) return [...catalog];
+  if (catalog.some((family) => family.toLowerCase() === trimmed.toLowerCase())) {
+    return [...catalog];
+  }
+  return mergeFontFamilyCatalog(catalog, [trimmed]);
+}
+
+/**
+ * Build the searchable picker rows: Default (when the query is empty),
+ * catalog matches, and — when the typed name is not already listed but is
+ * accepted — a leading custom entry so free-text families work without
+ * Local Font Access.
+ */
+export function buildFontFamilyPickerItems(input: {
+  readonly catalog: readonly string[];
+  readonly query: string;
+  readonly acceptCustom: (candidate: string) => boolean;
+  readonly defaultValue: string;
+}): string[] {
+  const trimmedQuery = input.query.trim();
+  const lowerQuery = trimmedQuery.toLowerCase();
+  const catalogLower = new Set(input.catalog.map((family) => family.toLowerCase()));
+  const result: string[] = [];
+  if (trimmedQuery.length === 0) result.push(input.defaultValue);
+  result.push(
+    ...input.catalog.filter(
+      (family) => lowerQuery.length === 0 || family.toLowerCase().includes(lowerQuery),
+    ),
+  );
+  if (
+    trimmedQuery.length > 0 &&
+    !catalogLower.has(lowerQuery) &&
+    input.acceptCustom(trimmedQuery)
+  ) {
+    result.unshift(trimmedQuery);
+  }
+  return result;
+}
+
+/**
  * Simple typography treats the terminal as another monospace surface. In
  * Advanced mode an empty terminal preference means the terminal default,
  * keeping later code-font changes isolated to code surfaces.
@@ -378,7 +426,8 @@ export interface InstalledFontFamiliesResult {
   /**
    * "unsupported" - the engine has no Local Font Access API (Safari,
    * Firefox); "denied" - the API exists but the user declined the permission
-   * prompt. Both leave the picker on the curated (bundled) catalog alone.
+   * prompt. Both leave the picker on the curated (bundled) catalog, with
+   * free-text entry still available for installed family names.
    */
   readonly status: "granted" | "denied" | "unsupported";
 }

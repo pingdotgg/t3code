@@ -3,6 +3,9 @@ import { CheckIcon, ChevronDownIcon, SearchIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   curatedFontFamilies,
+  buildFontFamilyPickerItems,
+  ensureSelectedFontFamilyInCatalog,
+  isFontFamilyAvailable,
   isMonospaceFamily,
   mergeFontFamilyCatalog,
   queryInstalledFontFamilies,
@@ -18,6 +21,10 @@ import {
 } from "../ui/combobox";
 
 const DEFAULT_FONT_VALUE = "__default__";
+
+function acceptsCustomFamily(candidate: string, requireMonospace: boolean): boolean {
+  return isFontFamilyAvailable(candidate) && (!requireMonospace || isMonospaceFamily(candidate));
+}
 
 function supportsFontEnumeration(): boolean {
   return (
@@ -105,6 +112,11 @@ export function useFontEnumeration(): FontEnumerationState {
  * A searchable picker over every installed family, the way native editors
  * list system fonts. The trigger always names the font in use: the committed
  * family, or what the default stack resolves to on this machine.
+ *
+ * When Local Font Access is unavailable (Safari, Firefox, or a denied
+ * permission), the list is the curated (bundled) catalog — but the search
+ * field still accepts any installed family name that probes as available, so
+ * custom sans faces are not lost.
  */
 export function FontFamilyPicker({
   ariaLabel,
@@ -145,24 +157,36 @@ export function FontFamilyPicker({
 
   const families = useMemo(() => {
     const curated = curatedFontFamilies(requireMonospace);
-    if (enumeration.status !== "granted") return [...curated];
-    const installed = requireMonospace
-      ? enumeration.families.filter(isMonospaceFamily)
-      : enumeration.families;
-    return mergeFontFamilyCatalog(installed, curated);
-  }, [enumeration, requireMonospace]);
+    const catalog =
+      enumeration.status === "granted"
+        ? mergeFontFamilyCatalog(
+            requireMonospace
+              ? enumeration.families.filter(isMonospaceFamily)
+              : enumeration.families,
+            curated,
+          )
+        : [...curated];
+    // A previously committed custom name (typed before discovery, or entered
+    // via free-text when enumeration is unavailable) must stay in the list
+    // so the checkmark and selection stay coherent.
+    return ensureSelectedFontFamilyInCatalog(catalog, selectedFamily);
+  }, [enumeration, requireMonospace, selectedFamily]);
 
-  const items = useMemo(() => {
-    const trimmedQuery = query.trim().toLowerCase();
-    const result: string[] = [];
-    if (trimmedQuery.length === 0) result.push(DEFAULT_FONT_VALUE);
-    result.push(
-      ...families.filter(
-        (family) => trimmedQuery.length === 0 || family.toLowerCase().includes(trimmedQuery),
-      ),
-    );
-    return result;
-  }, [query, families]);
+  const familySet = useMemo(
+    () => new Set(families.map((family) => family.toLowerCase())),
+    [families],
+  );
+
+  const items = useMemo(
+    () =>
+      buildFontFamilyPickerItems({
+        catalog: families,
+        query,
+        defaultValue: DEFAULT_FONT_VALUE,
+        acceptCustom: (candidate) => acceptsCustomFamily(candidate, requireMonospace),
+      }),
+    [query, families, requireMonospace],
+  );
 
   const selectedValue = selectedFamily.length === 0 ? DEFAULT_FONT_VALUE : selectedFamily;
 
@@ -174,6 +198,7 @@ export function FontFamilyPicker({
   const renderItem = (item: string, index: number) => {
     const isDefault = item === DEFAULT_FONT_VALUE;
     const family = isDefault ? defaultFamily : item;
+    const isCustom = !isDefault && !familySet.has(item.toLowerCase());
     return (
       <ComboboxItem hideIndicator index={index} key={item} value={item}>
         <div className="flex w-full min-w-0 items-center justify-between gap-2">
@@ -183,6 +208,8 @@ export function FontFamilyPicker({
           <span className="flex shrink-0 items-center gap-1.5">
             {isDefault ? (
               <span className="text-[10px] text-muted-foreground/60">default</span>
+            ) : isCustom ? (
+              <span className="text-[10px] text-muted-foreground/60">custom</span>
             ) : null}
             {item === selectedValue ? (
               <CheckIcon className="size-3.5 text-muted-foreground" />
@@ -192,6 +219,11 @@ export function FontFamilyPicker({
       </ComboboxItem>
     );
   };
+
+  const emptyHint =
+    enumeration.status === "granted"
+      ? "No fonts found."
+      : "No fonts found. Type an installed family name to use it.";
 
   return (
     <Combobox
@@ -231,7 +263,9 @@ export function FontFamilyPicker({
             <ComboboxInput
               className="[&_input]:h-6.5 [&_input]:ps-5 [&_input]:font-sans [&_input]:leading-6.5"
               inputClassName="rounded-none bg-transparent text-sm"
-              placeholder="Search fonts…"
+              placeholder={
+                enumeration.status === "granted" ? "Search fonts…" : "Search or type a family…"
+              }
               showTrigger={false}
               size="sm"
               unstyled
@@ -241,7 +275,7 @@ export function FontFamilyPicker({
           </div>
         </div>
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <ComboboxEmpty>No fonts found.</ComboboxEmpty>
+          <ComboboxEmpty>{emptyHint}</ComboboxEmpty>
           <div className="relative min-h-0 max-h-72 w-full flex-1 overflow-hidden">
             <ComboboxListVirtualized className="size-full min-w-0 p-0">
               <LegendList<string>
