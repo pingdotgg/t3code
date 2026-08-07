@@ -16,6 +16,7 @@ const PINNED_AT = "1969-12-30T00:00:00.000Z";
 
 function makeReadModel(input: {
   readonly pinnedAt?: string | null;
+  readonly pinOrderKey?: string | null;
   readonly archivedAt?: string | null;
   readonly settledOverride?: "settled" | "active" | null;
   readonly settledAt?: string | null;
@@ -44,6 +45,7 @@ function makeReadModel(input: {
         snoozedUntil: input.snoozedUntil ?? null,
         snoozedAt: input.snoozedAt ?? (input.snoozedUntil != null ? PINNED_AT : null),
         pinnedAt: input.pinnedAt ?? null,
+        pinOrderKey: input.pinOrderKey ?? null,
         deletedAt: null,
         messages: [],
         proposedPlans: [],
@@ -219,6 +221,102 @@ it.layer(NodeServices.layer)("pinned thread decider", (it) => {
           threadId: ThreadId.make("thread-1"),
         },
         readModel: makeReadModel({ archivedAt: NOW }),
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+    }),
+  );
+
+  it.effect("a fresh pin carries the client's order key", () =>
+    Effect.gen(function* () {
+      const event = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.pin",
+          commandId: CommandId.make("cmd-pin-keyed"),
+          threadId: ThreadId.make("thread-1"),
+          orderKey: "g",
+        },
+        readModel: makeReadModel({}),
+      });
+      const events = Array.isArray(event) ? event : [event];
+      expect(events[0]?.type).toBe("thread.pinned");
+      if (events[0]?.type === "thread.pinned") {
+        expect(events[0].payload.pinOrderKey).toBe("g");
+      }
+    }),
+  );
+
+  it.effect(
+    "re-pinning ignores the incoming order key so raced pins cannot move a placed thread",
+    () =>
+      Effect.gen(function* () {
+        const event = yield* decideOrchestrationCommand({
+          command: {
+            type: "thread.pin",
+            commandId: CommandId.make("cmd-pin-keyed-again"),
+            threadId: ThreadId.make("thread-1"),
+            orderKey: "t",
+          },
+          readModel: makeReadModel({ pinnedAt: PINNED_AT, pinOrderKey: "g" }),
+        });
+        const events = Array.isArray(event) ? event : [event];
+        expect(events[0]?.type).toBe("thread.pinned");
+        if (events[0]?.type === "thread.pinned") {
+          expect(events[0].payload.pinOrderKey).toBeUndefined();
+        }
+      }),
+  );
+
+  it.effect("reorders a pinned thread, stamping the new key", () =>
+    Effect.gen(function* () {
+      const event = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.pin.reorder",
+          commandId: CommandId.make("cmd-reorder"),
+          threadId: ThreadId.make("thread-1"),
+          orderKey: "m",
+        },
+        readModel: makeReadModel({ pinnedAt: PINNED_AT, pinOrderKey: "g" }),
+      });
+      const events = Array.isArray(event) ? event : [event];
+      expect(events[0]?.type).toBe("thread.pin-reordered");
+      if (events[0]?.type === "thread.pin-reordered") {
+        expect(events[0].payload.orderKey).toBe("m");
+        // A real move stamps the command time (the test clock), not the
+        // thread's previous updatedAt.
+        expect(events[0].payload.updatedAt).not.toBe(NOW);
+      }
+    }),
+  );
+
+  it.effect("reordering onto the same key preserves updatedAt", () =>
+    Effect.gen(function* () {
+      const event = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.pin.reorder",
+          commandId: CommandId.make("cmd-reorder-noop"),
+          threadId: ThreadId.make("thread-1"),
+          orderKey: "g",
+        },
+        readModel: makeReadModel({ pinnedAt: PINNED_AT, pinOrderKey: "g" }),
+      });
+      const events = Array.isArray(event) ? event : [event];
+      expect(events[0]?.type).toBe("thread.pin-reordered");
+      if (events[0]?.type === "thread.pin-reordered") {
+        expect(events[0].payload.updatedAt).toBe(NOW);
+      }
+    }),
+  );
+
+  it.effect("rejects reordering an unpinned thread", () =>
+    Effect.gen(function* () {
+      const error = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.pin.reorder",
+          commandId: CommandId.make("cmd-reorder-unpinned"),
+          threadId: ThreadId.make("thread-1"),
+          orderKey: "m",
+        },
+        readModel: makeReadModel({}),
       }).pipe(Effect.flip);
       expect(error._tag).toBe("OrchestrationCommandInvariantError");
     }),
