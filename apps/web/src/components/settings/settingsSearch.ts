@@ -111,11 +111,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
-    id: "assistant-output",
-    title: "Assistant output",
-    to: "/settings/general",
-  },
-  {
     id: "provider-update-checks",
     title: "Provider update checks",
     to: "/settings/general",
@@ -157,6 +152,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "legacy-plan-mode",
+    title: "Plan mode (legacy)",
+    to: "/settings/general",
+  },
+  {
+    id: "legacy-token-streaming",
+    title: "Stream token by token (legacy)",
+    to: "/settings/general",
+  },
+  {
     id: "keybindings",
     title: "Keybindings",
     to: "/settings/keybindings",
@@ -186,11 +191,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Auto-settle inactive threads",
     to: "/settings/beta",
     targetId: "sidebar-v2",
-  },
-  {
-    id: "restore-plan-mode",
-    title: "Restore plan mode (legacy)",
-    to: "/settings/beta",
   },
   {
     id: "archive",
