@@ -37,6 +37,7 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import { ServerConfig } from "../config.ts";
+import { parseGitWorktreeBranchPaths, parseGitWorktreeListPorcelain } from "./GitWorktree.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
@@ -238,34 +239,7 @@ function paginateBranches(input: {
 }
 
 function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
-  const worktreePaths = new Map<string, string>();
-  let currentPath: string | null = null;
-  let currentBranch: string | null = null;
-  let currentPrunable = false;
-
-  const flush = () => {
-    if (currentPath !== null && currentBranch !== null && !currentPrunable) {
-      worktreePaths.set(currentBranch, currentPath);
-    }
-    currentPath = null;
-    currentBranch = null;
-    currentPrunable = false;
-  };
-
-  for (const field of stdout.split("\0")) {
-    if (field === "") {
-      flush();
-    } else if (field.startsWith("worktree ")) {
-      currentPath = field.slice("worktree ".length);
-    } else if (field.startsWith("branch refs/heads/")) {
-      currentBranch = field.slice("branch refs/heads/".length);
-    } else if (field === "prunable" || field.startsWith("prunable ")) {
-      currentPrunable = true;
-    }
-  }
-  flush();
-
-  return worktreePaths;
+  return parseGitWorktreeBranchPaths(stdout);
 }
 
 function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
@@ -899,6 +873,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         LC_ALL: "C",
       },
     });
+
+  const listWorkspaces: GitVcsDriver.GitVcsDriver["Service"]["listWorkspaces"] = Effect.fn(
+    "GitVcsDriver.listWorkspaces",
+  )(function* (cwd) {
+    const result = yield* executeGit(
+      "GitVcsDriver.listWorkspaces",
+      cwd,
+      ["worktree", "list", "--porcelain", "-z"],
+      {
+        timeoutMs: 30_000,
+        maxOutputBytes: 16 * 1024 * 1024,
+      },
+    );
+    return parseGitWorktreeListPorcelain(result.stdout);
+  });
 
   const runGit = (
     operation: string,
@@ -3068,6 +3057,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     statusDetails,
     statusDetailsLocal,
     statusDetailsRemote,
+    listWorkspaces,
     prepareCommitContext,
     commit: (cwd, subject, body, options) =>
       withListRefsInvalidation(cwd, commit(cwd, subject, body, options)),

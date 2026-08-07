@@ -54,6 +54,17 @@ import {
   VcsStatusStreamEvent,
 } from "./git.ts";
 import {
+  VcsListWorktreesInput,
+  VcsListWorktreesResult,
+  WorktreeInventoryChange,
+  WorktreeInventoryError,
+  VcsPruneWorktreesInput,
+  VcsPruneWorktreesResult,
+  VcsReviveWorktreeInput,
+  VcsReviveWorktreeResult,
+  WorktreeMutationError,
+} from "./worktrees.ts";
+import {
   ReviewDiffFileContentsInput,
   ReviewDiffFileContentsResult,
   ReviewDiffPreviewError,
@@ -210,6 +221,10 @@ export const WS_METHODS = {
   vcsPull: "vcs.pull",
   vcsRefreshStatus: "vcs.refreshStatus",
   vcsListRefs: "vcs.listRefs",
+  vcsListWorktrees: "vcs.listWorktrees",
+  subscribeWorktreeInventory: "vcs.subscribeWorktreeInventory",
+  vcsPruneWorktrees: "vcs.pruneWorktrees",
+  vcsReviveWorktree: "vcs.reviveWorktree",
   vcsCreateWorktree: "vcs.createWorktree",
   vcsRemoveWorktree: "vcs.removeWorktree",
   vcsCreateRef: "vcs.createRef",
@@ -572,6 +587,31 @@ export const WsVcsListRefsRpc = Rpc.make(WS_METHODS.vcsListRefs, {
   payload: VcsListRefsInput,
   success: VcsListRefsResult,
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsListWorktreesRpc = Rpc.make(WS_METHODS.vcsListWorktrees, {
+  payload: VcsListWorktreesInput,
+  success: VcsListWorktreesResult,
+  error: Schema.Union([WorktreeInventoryError, EnvironmentAuthorizationError]),
+});
+
+export const WsSubscribeWorktreeInventoryRpc = Rpc.make(WS_METHODS.subscribeWorktreeInventory, {
+  payload: Schema.Struct({}),
+  success: WorktreeInventoryChange,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+export const WsVcsPruneWorktreesRpc = Rpc.make(WS_METHODS.vcsPruneWorktrees, {
+  payload: VcsPruneWorktreesInput,
+  success: VcsPruneWorktreesResult,
+  error: Schema.Union([WorktreeMutationError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsReviveWorktreeRpc = Rpc.make(WS_METHODS.vcsReviveWorktree, {
+  payload: VcsReviveWorktreeInput,
+  success: VcsReviveWorktreeResult,
+  error: Schema.Union([WorktreeMutationError, EnvironmentAuthorizationError]),
 });
 
 export const WsVcsCreateWorktreeRpc = Rpc.make(WS_METHODS.vcsCreateWorktree, {
@@ -954,6 +994,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitResolvePullRequestRpc,
   WsGitPreparePullRequestThreadRpc,
   WsVcsListRefsRpc,
+  WsVcsListWorktreesRpc,
+  WsSubscribeWorktreeInventoryRpc,
+  WsVcsPruneWorktreesRpc,
+  WsVcsReviveWorktreeRpc,
   WsVcsCreateWorktreeRpc,
   WsVcsRemoveWorktreeRpc,
   WsVcsCreateRefRpc,

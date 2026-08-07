@@ -12,6 +12,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { EventSinkV2 } from "./EventSink.ts";
@@ -28,6 +29,7 @@ import {
   selectInheritedBackgroundTurnItems,
 } from "./RunExecutionService.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
+import { WorktreeRevivalService } from "../vcs/WorktreeRevivalService.ts";
 
 export class ProviderTurnStartError extends Schema.TaggedErrorClass<ProviderTurnStartError>()(
   "ProviderTurnStartError",
@@ -159,6 +161,24 @@ export const layer: Layer.Layer<
         thread: projection.thread,
         modelSelection: run.modelSelection,
       });
+      const worktreeRevival = yield* Effect.serviceOption(WorktreeRevivalService);
+      if (
+        Option.isSome(worktreeRevival) &&
+        projection.thread.worktreePath !== null &&
+        projection.thread.branch !== null
+      ) {
+        const revival = yield* worktreeRevival.value.reviveForThread({
+          projectId: projection.thread.projectId,
+          worktreePath: projection.thread.worktreePath,
+          branch: projection.thread.branch,
+        });
+        if (revival.revived) {
+          // A provider session can retain an adapter process (and its cwd)
+          // across turns. Closing before open makes a recreated worktree a
+          // real runtime restart instead of an attach to the stale process.
+          yield* providerSessions.close(providerSessionId);
+        }
+      }
       const existingSessionProjection = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
       );

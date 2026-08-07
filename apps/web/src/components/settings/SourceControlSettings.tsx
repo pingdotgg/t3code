@@ -1,7 +1,14 @@
-import { ChevronDownIcon, GitPullRequestIcon, InfoIcon, RefreshCwIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  GitBranchIcon,
+  GitPullRequestIcon,
+  InfoIcon,
+  RefreshCwIcon,
+  Trash2Icon,
+} from "lucide-react";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type {
   BackgroundActivitySettings,
   SourceControlProviderKind,
@@ -10,18 +17,33 @@ import type {
   SourceControlProviderDiscoveryItem,
   VcsDriverKind,
   VcsDiscoveryItem,
+  WorktreeInfo,
 } from "@t3tools/contracts";
 import {
   getBackgroundActivityBaseProfile,
   getBackgroundActivityPresetSettings,
   resolveServerBackgroundActivitySettings,
 } from "@t3tools/shared/backgroundActivitySettings";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+
+import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { sourceControlEnvironment } from "../../state/sourceControl";
+import { worktreeEnvironment } from "../../state/worktrees";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
@@ -42,6 +64,7 @@ import {
   NumberFieldInput,
 } from "../ui/number-field";
 import { Switch } from "../ui/switch";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   AzureDevOpsIcon,
@@ -54,7 +77,12 @@ import {
 } from "../Icons";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
-import { SettingResetButton, SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import {
+  SettingResetButton,
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+} from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
@@ -507,6 +535,376 @@ function EmptySourceControlDiscovery({
   );
 }
 
+type WorktreeSurfaceProps = {
+  readonly worktrees: ReadonlyArray<WorktreeInfo>;
+  readonly onPrune: (worktree: WorktreeInfo) => void;
+  readonly pendingPath: string | null;
+};
+
+function worktreeBlockerLabel(blocker: WorktreeInfo["pruneBlockers"][number]): string {
+  switch (blocker) {
+    case "active_thread":
+      return "Active thread";
+    case "dirty":
+      return "Uncommitted changes";
+    case "unpushed":
+      return "Unpushed commits";
+    case "status_unavailable":
+      return "Status unavailable";
+  }
+}
+
+function WorktreeStatus({ worktree }: { readonly worktree: WorktreeInfo }) {
+  return (
+    <span
+      className={cn(
+        "text-xs",
+        worktree.safeToPrune ? "text-muted-foreground" : "text-warning-foreground",
+      )}
+    >
+      {worktree.safeToPrune
+        ? worktree.orphaned
+          ? "Orphaned"
+          : "Safe to prune"
+        : worktree.pruneBlockers[0] === undefined
+          ? "Needs attention"
+          : worktreeBlockerLabel(worktree.pruneBlockers[0])}
+    </span>
+  );
+}
+
+function WorktreeAction({
+  worktree,
+  onPrune,
+  pendingPath,
+}: {
+  readonly worktree: WorktreeInfo;
+  readonly onPrune: (worktree: WorktreeInfo) => void;
+  readonly pendingPath: string | null;
+}) {
+  if (!worktree.safeToPrune) return null;
+  const isPending = pendingPath === worktree.path;
+  return (
+    <Button
+      size="xs"
+      variant="ghost"
+      className="text-muted-foreground hover:text-destructive"
+      onClick={() => onPrune(worktree)}
+      disabled={pendingPath !== null}
+      aria-label={`Prune ${worktree.branch ?? worktree.path}`}
+    >
+      <Trash2Icon className={cn("size-3.5", isPending && "animate-pulse")} />
+      {isPending ? "Pruning" : "Prune"}
+    </Button>
+  );
+}
+
+function WorktreeIdentity({ worktree }: { readonly worktree: WorktreeInfo }) {
+  return (
+    <div className="min-w-0 space-y-1">
+      <div className="flex min-w-0 items-center gap-2">
+        <GitBranchIcon className="size-4 shrink-0 text-muted-foreground/70" />
+        <span className="truncate text-sm font-medium text-foreground">
+          {worktree.branch ?? "Detached HEAD"}
+        </span>
+        <WorktreeStatus worktree={worktree} />
+      </div>
+      <div
+        className="truncate font-mono text-[11px] text-muted-foreground/75"
+        title={worktree.path}
+      >
+        {worktree.path}
+      </div>
+      <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <span>
+          {worktree.projects.length === 1
+            ? worktree.projectTitle
+            : `${worktree.projects.length} linked projects`}
+        </span>
+        <span>
+          {worktree.threads.length === 0
+            ? "No linked threads"
+            : `${worktree.threads.length} linked thread${worktree.threads.length === 1 ? "" : "s"}`}
+        </span>
+        {worktree.lastActivityAt ? (
+          <span>Active {formatRelativeTimeLabel(worktree.lastActivityAt)}</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function WorktreeEmptyState({ title = "No managed worktrees" }: { readonly title?: string }) {
+  return (
+    <Empty className="min-h-48 rounded-xl border border-dashed border-border/70 bg-muted/10">
+      <EmptyMedia variant="icon">
+        <GitBranchIcon />
+      </EmptyMedia>
+      <EmptyHeader>
+        <EmptyTitle>{title}</EmptyTitle>
+        <EmptyDescription>
+          Worktrees created for threads will appear here. Safe cleanup keeps branches and checkpoint
+          history intact.
+        </EmptyDescription>
+      </EmptyHeader>
+    </Empty>
+  );
+}
+
+function WorktreeCard({
+  worktree,
+  onPrune,
+  pendingPath,
+}: {
+  readonly worktree: WorktreeInfo;
+  readonly onPrune: (worktree: WorktreeInfo) => void;
+  readonly pendingPath: string | null;
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-border/70 bg-card/35 p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
+      <WorktreeIdentity worktree={worktree} />
+      <WorktreeAction worktree={worktree} onPrune={onPrune} pendingPath={pendingPath} />
+    </div>
+  );
+}
+
+function WorktreeList({ worktrees, onPrune, pendingPath }: WorktreeSurfaceProps) {
+  if (worktrees.length === 0) {
+    return <WorktreeEmptyState title="No worktree activity yet" />;
+  }
+  return (
+    <div className="space-y-4">
+      {worktrees.map((worktree) => (
+        <WorktreeCard
+          key={worktree.path}
+          worktree={worktree}
+          onPrune={onPrune}
+          pendingPath={pendingPath}
+        />
+      ))}
+    </div>
+  );
+}
+
+function WorktreePruneConfirmation({
+  open,
+  worktree,
+  onOpenChange,
+  onOpenChangeComplete,
+  onConfirm,
+}: {
+  readonly open: boolean;
+  readonly worktree: WorktreeInfo | null;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly onOpenChangeComplete: (open: boolean) => void;
+  readonly onConfirm: () => void;
+}) {
+  const branch = worktree?.branch ?? "Detached HEAD";
+
+  return (
+    <AlertDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      onOpenChangeComplete={onOpenChangeComplete}
+    >
+      <AlertDialogPopup>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Remove {branch}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This removes the worktree checkout. The local branch and checkpoint refs will be kept.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          <Button variant="destructive" onClick={onConfirm}>
+            Remove worktree
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogPopup>
+    </AlertDialog>
+  );
+}
+
+function WorktreeManagementSection() {
+  const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const inventory = useEnvironmentQuery(
+    environmentId === null ? null : worktreeEnvironment.list({ environmentId, input: {} }),
+  );
+  const inventoryChanges = useEnvironmentQuery(
+    environmentId === null ? null : worktreeEnvironment.changes({ environmentId, input: {} }),
+  );
+  const pruneWorktrees = useAtomCommand(worktreeEnvironment.prune, {
+    label: "prune worktrees",
+    reportFailure: false,
+  });
+  const [pendingPath, setPendingPath] = useState<string | null>(null);
+  const [pruneCandidate, setPruneCandidate] = useState<WorktreeInfo | null>(null);
+  const [pruneDialogOpen, setPruneDialogOpen] = useState(false);
+  const worktrees = inventory.data?.worktrees ?? [];
+  const safeCount = worktrees.filter((worktree) => worktree.safeToPrune).length;
+  const blockedCount = worktrees.length - safeCount;
+  const defaults = DEFAULT_UNIFIED_SETTINGS.worktrees;
+  const observedInventoryRevision = useRef<number | null>(null);
+
+  useEffect(() => {
+    const revision = inventoryChanges.data?.revision;
+    if (revision === undefined || observedInventoryRevision.current === revision) return;
+    observedInventoryRevision.current = revision;
+    inventory.refresh();
+  }, [inventory.refresh, inventoryChanges.data?.revision]);
+
+  const handlePrune = (worktree: WorktreeInfo) => {
+    if (!worktree.safeToPrune || environmentId === null || pendingPath !== null) return;
+    setPruneCandidate(worktree);
+    setPruneDialogOpen(true);
+  };
+
+  const handleConfirmPrune = () => {
+    if (pruneCandidate === null || environmentId === null || pendingPath !== null) return;
+    const worktree = pruneCandidate;
+    setPendingPath(worktree.path);
+    setPruneDialogOpen(false);
+    void pruneWorktrees({ environmentId, input: { paths: [worktree.path] } }).finally(() => {
+      setPendingPath(null);
+    });
+  };
+
+  const pruneAfterDays = settings.worktrees.autoPruneAfterDays;
+  const pruneValue = pruneAfterDays === null ? "never" : String(pruneAfterDays);
+
+  return (
+    <>
+      <SettingsSection
+        id={searchableSetting("worktrees").id}
+        title="Worktrees"
+        icon={<GitBranchIcon className="size-4 text-muted-foreground" />}
+        headerAction={
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                  onClick={() => inventory.refresh()}
+                  disabled={inventory.isPending}
+                  aria-label="Refresh worktree inventory"
+                >
+                  <RefreshCwIcon className={cn("size-3", inventory.isPending && "animate-spin")} />
+                </Button>
+              }
+            />
+            <TooltipPopup side="top">Refresh worktree inventory</TooltipPopup>
+          </Tooltip>
+        }
+      >
+        <SettingsRow
+          title="Automatic cleanup"
+          description="Remove safe, inactive worktrees after this many days. Active threads, local changes, and unpushed commits are always protected."
+          resetAction={
+            pruneAfterDays !== defaults.autoPruneAfterDays ? (
+              <SettingResetButton
+                label="automatic worktree cleanup"
+                onClick={() =>
+                  updateSettings({ worktrees: { autoPruneAfterDays: defaults.autoPruneAfterDays } })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={pruneValue}
+              onValueChange={(value) =>
+                updateSettings({
+                  worktrees: {
+                    autoPruneAfterDays: value === "never" ? null : Number(value),
+                  },
+                })
+              }
+            >
+              <SelectTrigger className="w-full sm:w-36" aria-label="Automatic worktree cleanup">
+                <SelectValue>
+                  {pruneAfterDays === null ? "Never" : `${pruneAfterDays} days`}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="never">
+                  Never
+                </SelectItem>
+                {[1, 7, 14, 30, 60, 90, 365].map((days) => (
+                  <SelectItem key={days} hideIndicator value={String(days)}>
+                    {days} {days === 1 ? "day" : "days"}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          title="Delete orphaned worktrees immediately"
+          description="Allow the background cleanup to remove safe worktrees with no remaining thread references, regardless of age."
+          resetAction={
+            settings.worktrees.deleteOrphanedImmediately !== defaults.deleteOrphanedImmediately ? (
+              <SettingResetButton
+                label="orphaned worktree cleanup"
+                onClick={() =>
+                  updateSettings({
+                    worktrees: { deleteOrphanedImmediately: defaults.deleteOrphanedImmediately },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.worktrees.deleteOrphanedImmediately}
+              onCheckedChange={(checked) =>
+                updateSettings({ worktrees: { deleteOrphanedImmediately: Boolean(checked) } })
+              }
+              aria-label="Delete orphaned worktrees immediately"
+            />
+          }
+        />
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 pb-3 text-xs text-muted-foreground sm:px-4">
+          <span>
+            {worktrees.length} managed worktree{worktrees.length === 1 ? "" : "s"}
+          </span>
+          <span aria-hidden="true">·</span>
+          <span>{safeCount} ready for cleanup</span>
+          {blockedCount > 0 ? (
+            <>
+              <span aria-hidden="true">·</span>
+              <span>{blockedCount} protected</span>
+            </>
+          ) : null}
+          {inventory.error ? <span className="text-destructive">{inventory.error}</span> : null}
+        </div>
+        {inventory.isPending && inventory.data === null ? (
+          <div className="space-y-2 px-3 pb-3 sm:px-4">
+            <Skeleton className="h-16 rounded-xl" />
+            <Skeleton className="h-16 rounded-xl" />
+          </div>
+        ) : (
+          <div className="px-3 pb-3 sm:px-4">
+            <WorktreeList worktrees={worktrees} onPrune={handlePrune} pendingPath={pendingPath} />
+          </div>
+        )}
+      </SettingsSection>
+      <WorktreePruneConfirmation
+        open={pruneDialogOpen}
+        worktree={pruneCandidate}
+        onOpenChange={setPruneDialogOpen}
+        onOpenChangeComplete={(open) => {
+          if (!open) setPruneCandidate(null);
+        }}
+        onConfirm={handleConfirmPrune}
+      />
+    </>
+  );
+}
+
 export function SourceControlSettingsPanel() {
   const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
   const discovery = useEnvironmentQuery(
@@ -587,6 +985,7 @@ export function SourceControlSettingsPanel() {
         />
       )}
 
+      <WorktreeManagementSection />
       {environmentId !== null ? <SourceControlWritingSettingsSection /> : null}
     </SettingsPageContainer>
   );

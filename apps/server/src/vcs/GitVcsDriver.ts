@@ -25,6 +25,7 @@ import {
   type VcsInitInput,
   type VcsListRefsInput,
   type VcsListRefsResult,
+  type VcsWorkspace,
   type VcsPullResult,
   type VcsRemoveWorktreeInput,
   type VcsStatusInput,
@@ -32,6 +33,7 @@ import {
 } from "@t3tools/contracts";
 import { makeGitVcsDriverCore } from "./GitVcsDriverCore.ts";
 import * as VcsDriver from "./VcsDriver.ts";
+import { parseGitWorktreeListPorcelain } from "./GitWorktree.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
 export interface ExecuteGitInput {
@@ -207,6 +209,9 @@ export class GitVcsDriver extends Context.Service<
       cwd: string,
       options?: GitRemoteStatusOptions,
     ) => Effect.Effect<GitRemoteStatusDetails, GitCommandError>;
+    readonly listWorkspaces: (
+      cwd: string,
+    ) => Effect.Effect<ReadonlyArray<VcsWorkspace>, GitCommandError>;
     readonly prepareCommitContext: (
       cwd: string,
       filePaths?: readonly string[],
@@ -510,6 +515,31 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             ),
       ),
     );
+
+  const listWorkspaces: VcsDriver.VcsDriver["Service"]["listWorkspaces"] = Effect.fn(
+    "GitVcsDriver.listWorkspaces",
+  )(function* (cwd) {
+    const result = yield* gitCommand(
+      vcsProcess,
+      "GitVcsDriver.listWorkspaces",
+      cwd,
+      ["worktree", "list", "--porcelain", "-z"],
+      {
+        timeoutMs: 30_000,
+        maxOutputBytes: 16 * 1024 * 1024,
+      },
+    );
+    if (result.exitCode !== 0) {
+      return yield* new VcsProcessExitError({
+        operation: "GitVcsDriver.listWorkspaces",
+        command: "git worktree list",
+        cwd,
+        exitCode: result.exitCode,
+        detail: result.stderr.trim() || "git worktree list failed",
+      });
+    }
+    return parseGitWorktreeListPorcelain(result.stdout) satisfies ReadonlyArray<VcsWorkspace>;
+  });
 
   const listRemotes: VcsDriver.VcsDriver["Service"]["listRemotes"] = Effect.fn("listRemotes")(
     function* (cwd) {
@@ -871,6 +901,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     detectRepository,
     isInsideWorkTree,
     listWorkspaceFiles,
+    listWorkspaces,
     listRemotes,
     filterIgnoredPaths,
     initRepository,
