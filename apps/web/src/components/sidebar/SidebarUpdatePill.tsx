@@ -19,6 +19,15 @@ import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Separator } from "../ui/separator";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
+function keyReleaseNoteItems(items: ReadonlyArray<string>) {
+  const occurrences = new Map<string, number>();
+  return items.map((item) => {
+    const occurrence = occurrences.get(item) ?? 0;
+    occurrences.set(item, occurrence + 1);
+    return { item, key: JSON.stringify([item, occurrence]) };
+  });
+}
+
 function SidebarUpdateReleaseNotesTooltip({
   state,
   tooltip,
@@ -35,7 +44,7 @@ function SidebarUpdateReleaseNotesTooltip({
       <div className="px-1">
         <div className="text-sm leading-5 font-medium">{tooltip}</div>
       </div>
-      <div className="pointer-events-auto max-h-[min(28rem,calc(100vh-6rem))] overflow-y-auto px-1 pt-4 pb-1">
+      <div className="max-h-[min(28rem,calc(100vh-6rem))] overflow-y-auto px-1 pt-4 pb-1">
         {state.releaseNotes.map((releaseNote, index) => (
           <div key={releaseNote.version}>
             {index > 0 && <Separator className="my-3 bg-border/60" />}
@@ -44,8 +53,8 @@ function SidebarUpdateReleaseNotesTooltip({
                 {index === 0 ? "What's changed" : `Changes in ${releaseNote.version}`}
               </h3>
               <ul className="mt-2 space-y-1.5 pl-4 text-xs leading-5 text-popover-foreground/90">
-                {releaseNote.items.map((item, itemIndex) => (
-                  <li className="list-disc break-words" key={`${releaseNote.version}-${itemIndex}`}>
+                {keyReleaseNoteItems(releaseNote.items).map(({ item, key }) => (
+                  <li className="list-disc break-words" key={key}>
                     {item}
                   </li>
                 ))}
@@ -194,7 +203,9 @@ export function SidebarUpdatePill() {
               align="start"
               className={
                 state?.channel === "nightly" && state.releaseNotes.length > 0
-                  ? "max-w-none text-balance"
+                  ? // pointer-events-auto overrides the positioner's pointer-events-none so the
+                    // release notes stay open (and scrollable) when the cursor moves into them.
+                    "pointer-events-auto max-w-none text-balance"
                   : undefined
               }
               side="top"

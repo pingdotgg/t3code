@@ -1,14 +1,20 @@
 import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
 
-export const SERVICE_LAUNCHER_PROTOCOL = 1 as const;
+/** Protocol 2 snapshots SQLite before trials so migrations can be rolled back safely. */
+export const SERVICE_LAUNCHER_PROTOCOL = 2 as const;
 export const SERVICE_LAUNCHER_CONTEXT_ENV = "T3_SERVICE_LAUNCHER_CONTEXT";
 export const SERVICE_LAUNCHER_FILE = "service-launcher.mjs";
 export const SERVICE_STATE_FILE = "service-state.json";
+/** Written by the launcher just before an explicit stop kills its child, so
+    the child can tell "the service is going away" from "the launcher is about
+    to start my replacement" while a pending update is recorded. */
+export const SERVICE_STOP_MARKER_FILE = ".service-stopping";
 
 export interface PendingServiceUpdate {
   readonly id: string;
   readonly fromVersion: string;
   readonly targetVersion: string;
+  readonly dbPath: string;
   readonly status: "pending";
 }
 
@@ -31,6 +37,7 @@ export type ServiceLauncherChildMessage =
   | {
       readonly type: "request-update";
       readonly targetVersion: string;
+      readonly dbPath: string;
     }
   | {
       readonly type: "prepared";
@@ -78,7 +85,9 @@ export function decodeServiceUpdate(value: unknown): ServiceUpdateRecord | undef
     return undefined;
   }
   if (status === "pending") {
-    return { id, fromVersion, targetVersion, status };
+    return typeof value.dbPath === "string" && value.dbPath.trim() !== ""
+      ? { id, fromVersion, targetVersion, dbPath: value.dbPath, status }
+      : undefined;
   }
   if (
     (status === "committed" || status === "rolled-back" || status === "failed") &&
@@ -165,6 +174,16 @@ export function parseServiceState(value: string): ServiceState | undefined {
   }
 }
 
+/** Detects an in-flight update across launcher protocol versions before replacing its state. */
+export function serviceStateHasPendingUpdate(value: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return isRecord(parsed) && isRecord(parsed.update) && parsed.update.status === "pending";
+  } catch {
+    return false;
+  }
+}
+
 export function decodeServiceLauncherContext(value: string): ServiceLauncherContext | undefined {
   let parsed: unknown;
   try {
@@ -202,8 +221,12 @@ export function decodeServiceLauncherChildMessage(
   value: unknown,
 ): ServiceLauncherChildMessage | undefined {
   if (!isRecord(value)) return undefined;
-  if (value.type === "request-update" && typeof value.targetVersion === "string") {
-    return { type: value.type, targetVersion: value.targetVersion };
+  if (
+    value.type === "request-update" &&
+    typeof value.targetVersion === "string" &&
+    typeof value.dbPath === "string"
+  ) {
+    return { type: value.type, targetVersion: value.targetVersion, dbPath: value.dbPath };
   }
   return value.type === "prepared" && typeof value.updateId === "string"
     ? { type: value.type, updateId: value.updateId }

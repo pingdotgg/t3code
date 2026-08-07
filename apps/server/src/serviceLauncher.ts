@@ -5,6 +5,7 @@
 // `t3 service update`. Keep runtime imports limited to Node built-ins.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -24,6 +25,7 @@ import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
+  SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
@@ -47,6 +49,121 @@ const runtimePaths = (baseDir: string, version: string) => {
     sentinelPath: NodePath.join(versionDir, ".install-complete"),
   };
 };
+
+/** SQLite persists across the main file plus its WAL and shared-memory sidecars. */
+const DB_FILE_SUFFIXES = ["", "-wal", "-shm"] as const;
+const RESTORE_MARKER = ".restore-pending";
+
+const databaseBackupDir = (baseDir: string, updateId: string) =>
+  NodePath.join(baseDir, "runtime", "db-backup", updateId);
+
+const databaseBackupFile = (backupDir: string, suffix: (typeof DB_FILE_SUFFIXES)[number]) =>
+  NodePath.join(backupDir, suffix === "" ? "database" : `database${suffix}`);
+
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await NodeFSP.access(target);
+    return true;
+  } catch (cause) {
+    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return false;
+    throw cause;
+  }
+}
+
+async function syncFile(filePath: string): Promise<void> {
+  const handle = await NodeFSP.open(filePath, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function syncDirectory(directory: string): Promise<void> {
+  const handle = await NodeFSP.open(directory, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Snapshots the database once per update before the first trial. A completed
+ * backup is never overwritten because a restarted launcher may be looking at
+ * database writes from an earlier attempt by the same trial.
+ */
+async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate): Promise<void> {
+  const backupDir = databaseBackupDir(baseDir, pending.id);
+  if (await pathExists(backupDir)) return;
+
+  const stagingDir = `${backupDir}.staging`;
+  await NodeFSP.rm(stagingDir, { recursive: true, force: true });
+  await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
+  try {
+    for (const suffix of DB_FILE_SUFFIXES) {
+      const source = `${pending.dbPath}${suffix}`;
+      if (suffix !== "" && !(await pathExists(source))) continue;
+      const destination = databaseBackupFile(stagingDir, suffix);
+      await NodeFSP.copyFile(source, destination);
+      await syncFile(destination);
+    }
+    await NodeFSP.rename(stagingDir, backupDir);
+    await syncDirectory(NodePath.dirname(backupDir));
+  } catch (cause) {
+    await NodeFSP.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
+    throw cause;
+  }
+}
+
+const restoreMarkerPath = (baseDir: string, updateId: string) =>
+  NodePath.join(databaseBackupDir(baseDir, updateId), RESTORE_MARKER);
+
+const databaseRestorePending = (baseDir: string, pending: PendingServiceUpdate) =>
+  pathExists(restoreMarkerPath(baseDir, pending.id));
+
+/** Mark rollback before changing live files so launcher recovery cannot boot a partial restore. */
+async function markDatabaseRestorePending(backupDir: string): Promise<void> {
+  const markerPath = NodePath.join(backupDir, RESTORE_MARKER);
+  if (!(await pathExists(markerPath))) {
+    const handle = await NodeFSP.open(markerPath, "wx", 0o600);
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await syncDirectory(backupDir);
+  }
+}
+
+/** Restore is retryable after any process crash while the backup directory remains. */
+async function restoreDatabaseBackup(
+  baseDir: string,
+  pending: PendingServiceUpdate,
+): Promise<void> {
+  const backupDir = databaseBackupDir(baseDir, pending.id);
+  if (!(await pathExists(backupDir))) return;
+
+  await markDatabaseRestorePending(backupDir);
+  for (const suffix of DB_FILE_SUFFIXES) {
+    const target = `${pending.dbPath}${suffix}`;
+    const source = databaseBackupFile(backupDir, suffix);
+    if (await pathExists(source)) {
+      await NodeFSP.copyFile(source, target);
+      await syncFile(target);
+    } else {
+      await NodeFSP.rm(target, { force: true });
+    }
+  }
+  await syncDirectory(NodePath.dirname(pending.dbPath));
+}
+
+async function discardDatabaseBackup(baseDir: string, updateId: string): Promise<void> {
+  const backupDir = databaseBackupDir(baseDir, updateId);
+  if (!(await pathExists(backupDir))) return;
+  await NodeFSP.rm(backupDir, { recursive: true, force: true });
+  await syncDirectory(NodePath.dirname(backupDir));
+}
 
 export async function readServiceState(filePath: string): Promise<ServiceState> {
   const contents = await NodeFSP.readFile(filePath, "utf8");
@@ -142,6 +259,9 @@ async function terminateChild(
   }
 }
 
+const stopMarkerPath = (baseDir: string) =>
+  NodePath.join(baseDir, "runtime", SERVICE_STOP_MARKER_FILE);
+
 export class Launcher {
   readonly #baseDir: string;
   readonly #statePath: string;
@@ -149,6 +269,7 @@ export class Launcher {
   #child: ManagedChild | null = null;
   #timer: NodeJS.Timeout | undefined;
   #transitions: Promise<void> = Promise.resolve();
+  #stopRequested = false;
   #stopping = false;
   #done = false;
   readonly #completion = Promise.withResolvers<void>();
@@ -193,13 +314,26 @@ export class Launcher {
   }
 
   async stop(signal: NodeJS.Signals): Promise<void> {
-    if (this.#stopping) {
+    // This must happen synchronously at signal receipt. A queued update
+    // transition may already be terminating the active child, and that child
+    // needs to see the marker in its shutdown finalizer. KillMode=mixed also
+    // ensures systemd signals the launcher before the rest of the cgroup.
+    try {
+      NodeFS.writeFileSync(stopMarkerPath(this.#baseDir), "", { mode: 0o600 });
+    } catch {
+      // Err toward keeping the tunnel; the next link or unlink reconciles it.
+    }
+    if (this.#stopRequested || this.#stopping) {
       await this.#completion.promise.catch(() => undefined);
       return;
     }
-    this.#stopping = true;
+    this.#stopRequested = true;
     this.#clearTimer();
     this.#enqueue(async () => {
+      // Let an update transition already in progress start its replacement
+      // before this queued stop tears it down. That replacement owns the
+      // pre-activation tunnel cleanup path and observes the marker above.
+      this.#stopping = true;
       const child = this.#child?.process;
       this.#child = null;
       if (child !== undefined) await terminateChild(child, signal);
@@ -215,9 +349,20 @@ export class Launcher {
   }
 
   async #recover(): Promise<void> {
+    // A fresh launcher means servers are running again: any stop marker from
+    // a previous explicit stop is stale and must not make a future update
+    // handoff release its tunnel.
+    await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
     const update = this.#state.update;
     if (update?.status !== "pending") {
+      if (update !== undefined) {
+        await discardDatabaseBackup(this.#baseDir, update.id).catch(() => undefined);
+      }
       await this.#startChild(this.#state.activeVersion, "active", update);
+      return;
+    }
+    if (await databaseRestorePending(this.#baseDir, update)) {
+      await this.#returnToPrevious(update, "failed", "rollback-interrupted");
       return;
     }
     if (!(await runtimeExists(this.#baseDir, update.targetVersion))) {
@@ -228,6 +373,13 @@ export class Launcher {
   }
 
   async #startTrial(pending: PendingServiceUpdate): Promise<void> {
+    // The previous child is dead here, so all three SQLite files are quiescent.
+    try {
+      await backupDatabaseOnce(this.#baseDir, pending);
+    } catch {
+      await this.#returnToPrevious(pending, "failed", "db-backup-failed");
+      return;
+    }
     try {
       await this.#startChild(pending.targetVersion, "trial", pending);
     } catch {
@@ -322,6 +474,10 @@ export class Launcher {
       await reject("Remote updates must select a newer server version.");
       return;
     }
+    if (!NodePath.isAbsolute(message.dbPath)) {
+      await reject("The requested database path is not absolute.");
+      return;
+    }
     if (!(await runtimeExists(this.#baseDir, message.targetVersion))) {
       await reject("The requested target runtime is missing or incomplete.");
       return;
@@ -331,6 +487,7 @@ export class Launcher {
       id: NodeCrypto.randomUUID(),
       fromVersion: child.version,
       targetVersion: message.targetVersion,
+      dbPath: message.dbPath,
       status: "pending",
     };
     const next: ServiceState = { ...this.#state, update: pending };
@@ -375,6 +532,7 @@ export class Launcher {
     await writeServiceState(this.#statePath, next);
     this.#state = next;
     child.role = "active";
+    await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
     await sendMessage(child.process, { type: "committed", updateId: committed.id });
   }
 
@@ -423,6 +581,11 @@ export class Launcher {
     reason: string,
     child?: ManagedChild,
   ): Promise<void> {
+    if (child !== undefined) {
+      this.#child = null;
+      await terminateChild(child.process);
+    }
+    await restoreDatabaseBackup(this.#baseDir, pending);
     const outcome = terminalUpdate({ pending, status, reason });
     const next: ServiceState = {
       ...this.#state,
@@ -431,10 +594,7 @@ export class Launcher {
     };
     await writeServiceState(this.#statePath, next);
     this.#state = next;
-    if (child !== undefined) {
-      this.#child = null;
-      await terminateChild(child.process);
-    }
+    await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
     await this.#startChild(next.activeVersion, "active", outcome);
   }
 }

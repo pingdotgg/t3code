@@ -61,6 +61,31 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "appearance",
   },
   {
+    id: "interface-font",
+    title: "Interface font",
+    to: "/settings/appearance",
+  },
+  {
+    id: "prompt-font",
+    title: "Prompt font",
+    to: "/settings/appearance",
+  },
+  {
+    id: "code-font",
+    title: "Code font",
+    to: "/settings/appearance",
+  },
+  {
+    id: "terminal-font",
+    title: "Terminal font",
+    to: "/settings/appearance",
+  },
+  {
+    id: "font-smoothing",
+    title: "Font smoothing",
+    to: "/settings/appearance",
+  },
+  {
     id: "word-wrap",
     title: "Word wrap",
     to: "/settings/appearance",
@@ -88,11 +113,6 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "provider-update-checks",
     title: "Provider update checks",
-    to: "/settings/general",
-  },
-  {
-    id: "auto-open-task-panel",
-    title: "Auto-open task panel",
     to: "/settings/general",
   },
   {
