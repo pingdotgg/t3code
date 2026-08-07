@@ -12,7 +12,6 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -1536,20 +1535,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     ],
   );
 
-  // The empty↔filled key below remounts the list, which resets its imperative
-  // content-inset override — and useKeyboardChatComposerInset (mounted above
-  // the remount boundary) deduplicates by height, so it never re-reports the
-  // composer inset to the fresh instance. Without this, the remounted list's
-  // initial scroll-to-end computes with a zero end inset and rests one
-  // composer-height short of the end. Layout effect: it must land before the
-  // list's first positioning tick or the one-shot initial scroll misses it.
   const listMountKey = `${props.threadId}:${props.feed.length === 0 ? "empty" : "filled"}`;
-  useLayoutEffect(() => {
-    const bottom = props.contentInsetEndAdjustment.value;
-    if (bottom > 0) {
-      props.listRef.current?.reportContentInset({ bottom });
-    }
-  }, [listMountKey, props.contentInsetEndAdjustment, props.listRef]);
 
   const anchoredEndSpace = useMemo(
     () =>
@@ -1846,7 +1832,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             // under-reports the composer inset by this amount (see
             // ThreadDetailScreen); this tells LegendList's scroll math about the
             // extra so programmatic end scrolls land at the true resting offset.
-            contentInsetEndStaticAdjustment={usesNativeAutomaticInsets ? insets.bottom : 0}
+            // Without automatic insets (Android, pre-glass iOS) the composer
+            // overlay only exists as the keyboard integration's animated bottom
+            // padding, which the scroll math cannot see either — declare the
+            // estimated overlay height here so the initial scroll-at-end lands
+            // above the composer on the very first (uncached) thread open,
+            // instead of racing an imperative reportContentInset after mount.
+            contentInsetEndStaticAdjustment={
+              usesNativeAutomaticInsets ? insets.bottom : bottomContentInset
+            }
             // The keyboard integration's offset math (end pinning, max scroll)
             // must add the same UIKit-added extra, or its keyboard-open end
             // targets land one safe-area short of the true resting offset.
