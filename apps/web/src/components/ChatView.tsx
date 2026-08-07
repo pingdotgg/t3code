@@ -1164,7 +1164,7 @@ type TimelineScrollPosition =
 type TimelineEntryScrollMode =
   | { readonly kind: "follow-end" }
   | { readonly kind: "restore-position"; readonly offset: number }
-  | { readonly kind: "anchor-working-turn"; readonly turnId: TurnId };
+  | { readonly kind: "anchor-response"; readonly turnId: TurnId };
 
 const timelineScrollPositionByThreadKey = new Map<string, TimelineScrollPosition>();
 const TIMELINE_SCROLL_NAVIGATION_KEYS = new Set([
@@ -1178,6 +1178,7 @@ const TIMELINE_SCROLL_NAVIGATION_KEYS = new Set([
 ]);
 
 function resolveTimelineEntryScrollMode(input: {
+  readonly latestTurnId: TurnId | null;
   readonly runningTurnId: TurnId | null;
   readonly savedPosition: TimelineScrollPosition | undefined;
 }): TimelineEntryScrollMode {
@@ -1188,10 +1189,13 @@ function resolveTimelineEntryScrollMode(input: {
     ) {
       return { kind: "restore-position", offset: input.savedPosition.offset };
     }
-    return { kind: "anchor-working-turn", turnId: input.runningTurnId };
+    return { kind: "anchor-response", turnId: input.runningTurnId };
   }
-  return input.savedPosition
-    ? { kind: "restore-position", offset: input.savedPosition.offset }
+  if (input.savedPosition) {
+    return { kind: "restore-position", offset: input.savedPosition.offset };
+  }
+  return input.latestTurnId
+    ? { kind: "anchor-response", turnId: input.latestTurnId }
     : { kind: "follow-end" };
 }
 
@@ -1583,17 +1587,18 @@ function ChatViewContent(props: ChatViewProps) {
   const timelineEntryScrollMode = useMemo(
     () =>
       resolveTimelineEntryScrollMode({
+        latestTurnId: activeThread?.latestTurn?.turnId ?? null,
         runningTurnId: runningTurnOnEntry,
         savedPosition: restoredTimelineScrollPosition,
       }),
-    [restoredTimelineScrollPosition, runningTurnOnEntry],
+    [activeThread?.latestTurn?.turnId, restoredTimelineScrollPosition, runningTurnOnEntry],
   );
   const [manuallyNavigatedTimelineEntry, setManuallyNavigatedTimelineEntry] = useState<{
     readonly threadKey: string;
     readonly turnId: TurnId | null;
   } | null>(null);
-  const workingTurnAnchorActive =
-    timelineEntryScrollMode.kind === "anchor-working-turn" &&
+  const entryResponseAnchorActive =
+    timelineEntryScrollMode.kind === "anchor-response" &&
     !(
       manuallyNavigatedTimelineEntry?.threadKey === routeThreadKey &&
       manuallyNavigatedTimelineEntry.turnId === timelineEntryScrollMode.turnId
@@ -2486,8 +2491,8 @@ function ChatViewContent(props: ChatViewProps) {
       deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
     [activeThread?.proposedPlans, timelineMessages, workLogEntries],
   );
-  const workingResponseAnchorMessageId = useMemo(() => {
-    if (!workingTurnAnchorActive) {
+  const entryResponseAnchorMessageId = useMemo(() => {
+    if (!entryResponseAnchorActive) {
       return null;
     }
     for (let index = timelineEntries.length - 1; index >= 0; index -= 1) {
@@ -2497,7 +2502,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
     }
     return null;
-  }, [timelineEntries, workingTurnAnchorActive]);
+  }, [entryResponseAnchorActive, timelineEntries]);
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
     activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
@@ -3667,11 +3672,20 @@ function ChatViewContent(props: ChatViewProps) {
       pendingTimelineManualScrollRef.current = {
         initialOffset: currentOffset,
         threadKey: routeThreadKey,
-        turnId: activeRunningTurnId,
+        turnId:
+          activeRunningTurnId ??
+          (timelineEntryScrollMode.kind === "anchor-response"
+            ? timelineEntryScrollMode.turnId
+            : null),
       };
     }
     cancelTimelineLiveFollowForUserNavigation();
-  }, [activeRunningTurnId, cancelTimelineLiveFollowForUserNavigation, routeThreadKey]);
+  }, [
+    activeRunningTurnId,
+    cancelTimelineLiveFollowForUserNavigation,
+    routeThreadKey,
+    timelineEntryScrollMode,
+  ]);
   const getActiveTimelineTurnMetrics = useCallback(
     (list?: LegendListRef | null) => {
       const resolvedList = list ?? legendListRef.current;
@@ -3743,8 +3757,6 @@ function ChatViewContent(props: ChatViewProps) {
       const handlePointerDown = (event: PointerEvent) => {
         if (event.target === scrollNode) {
           beginTimelineManualNavigation();
-        } else {
-          cancelTimelineLiveFollowForUserNavigation();
         }
       };
       const clearPendingManualScroll = () => {
@@ -3781,7 +3793,7 @@ function ChatViewContent(props: ChatViewProps) {
       cancelAnimationFrame(frame);
       removeListeners?.();
     };
-  }, [activeThread?.id, beginTimelineManualNavigation, cancelTimelineLiveFollowForUserNavigation]);
+  }, [activeThread?.id, beginTimelineManualNavigation]);
 
   const onTimelineAnchorReady = useCallback((messageId: MessageId, anchorIndex: number) => {
     if (pendingTimelineAnchorRef.current === messageId) {
@@ -4011,8 +4023,7 @@ function ChatViewContent(props: ChatViewProps) {
   useEffect(() => {
     setPullRequestDialogState(null);
     isAtEndRef.current = true;
-    preserveInitialResponsePositionRef.current =
-      timelineEntryScrollMode.kind === "anchor-working-turn";
+    preserveInitialResponsePositionRef.current = timelineEntryScrollMode.kind === "anchor-response";
     timelineScrollModeRef.current =
       timelineEntryScrollMode.kind === "follow-end" ? "following-end" : "free-scrolling";
     liveFollowUserScrollGenerationRef.current =
@@ -6184,7 +6195,7 @@ function ChatViewContent(props: ChatViewProps) {
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeWorkspaceRoot}
                 skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
-                anchorMessageId={timelineAnchorMessageId ?? workingResponseAnchorMessageId}
+                anchorMessageId={timelineAnchorMessageId ?? entryResponseAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
                 onAnchorSizeChanged={onTimelineAnchorSizeChanged}
                 contentInsetEndAdjustment={composerOverlayHeight}
