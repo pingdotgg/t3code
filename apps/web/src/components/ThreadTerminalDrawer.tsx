@@ -241,6 +241,21 @@ export function terminalContextMenuItems(options: {
   ];
 }
 
+/**
+ * An empty selection change may only cancel a selection-action flow that is
+ * still current: a pending popup timer, or an open popup whose request id has
+ * not been superseded. A popup already superseded by a right-click keeps its
+ * menu promise unsettled for a moment; treating it as active would cancel the
+ * newer context-menu flow instead.
+ */
+export function shouldClearTerminalSelectionAction(options: {
+  timerPending: boolean;
+  openMenuRequestId: number | null;
+  currentRequestId: number;
+}): boolean {
+  return options.timerPending || options.openMenuRequestId === options.currentRequestId;
+}
+
 export function shouldHandleTerminalExit(
   current: TerminalSessionState["status"],
   synchronized: TerminalSessionState["status"],
@@ -312,7 +327,10 @@ export function TerminalViewport({
   const selectionPointerRef = useRef<{ x: number; y: number } | null>(null);
   const selectionGestureActiveRef = useRef(false);
   const selectionActionRequestIdRef = useRef(0);
-  const selectionActionMenuOpenRef = useRef(false);
+  // Holds the request id of the selection popup currently on screen, so a
+  // popup that was superseded (but whose menu promise has not settled yet)
+  // cannot be mistaken for the active flow.
+  const selectionActionMenuOpenRef = useRef<number | null>(null);
   const selectionActionTimerRef = useRef<number | null>(null);
   const keybindingsRef = useRef(keybindings);
   const runtimeEnvKey = useMemo(() => runtimeEnvSignature(runtimeEnv), [runtimeEnv]);
@@ -582,7 +600,7 @@ export function TerminalViewport({
           clearSelectionAction();
           return;
         }
-        if (selectionActionMenuOpenRef.current) {
+        if (selectionActionMenuOpenRef.current !== null) {
           return;
         }
         const nextAction = readSelectionAction();
@@ -591,7 +609,7 @@ export function TerminalViewport({
           return;
         }
         const requestId = ++selectionActionRequestIdRef.current;
-        selectionActionMenuOpenRef.current = true;
+        selectionActionMenuOpenRef.current = requestId;
         const clicked = await localApi.contextMenu
           .show(
             [
@@ -601,7 +619,9 @@ export function TerminalViewport({
             nextAction.position,
           )
           .finally(() => {
-            selectionActionMenuOpenRef.current = false;
+            if (selectionActionMenuOpenRef.current === requestId) {
+              selectionActionMenuOpenRef.current = null;
+            }
           });
         if (requestId !== selectionActionRequestIdRef.current || clicked === null) {
           return;
@@ -739,7 +759,13 @@ export function TerminalViewport({
         // Ghostty also reports selection changes when buffer synchronization
         // clears an already-empty selection. Do not invalidate an unrelated
         // context-menu paste unless a selection action is actually pending.
-        if (selectionActionTimerRef.current !== null || selectionActionMenuOpenRef.current) {
+        if (
+          shouldClearTerminalSelectionAction({
+            timerPending: selectionActionTimerRef.current !== null,
+            openMenuRequestId: selectionActionMenuOpenRef.current,
+            currentRequestId: selectionActionRequestIdRef.current,
+          })
+        ) {
           clearSelectionAction();
         }
       }

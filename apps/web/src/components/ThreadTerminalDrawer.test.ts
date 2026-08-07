@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   resolveTerminalSelectionActionPosition,
+  shouldClearTerminalSelectionAction,
   shouldHandleTerminalExit,
   shouldHandleTerminalSelectionMouseUp,
   terminalContextMenuItems,
@@ -105,5 +106,42 @@ describe("resolveTerminalSelectionActionPosition", () => {
       { id: "copy", label: "Copy", disabled: false },
       { id: "paste", label: "Paste" },
     ]);
+  });
+
+  it("cancels the selection action while its popup timer or menu is current", () => {
+    expect(
+      shouldClearTerminalSelectionAction({
+        timerPending: true,
+        openMenuRequestId: null,
+        currentRequestId: 3,
+      }),
+    ).toBe(true);
+    expect(
+      shouldClearTerminalSelectionAction({
+        timerPending: false,
+        openMenuRequestId: 3,
+        currentRequestId: 3,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a context-menu paste alive when no selection popup is current", () => {
+    // Nothing pending at all: routine buffer sync must not cancel anything.
+    expect(
+      shouldClearTerminalSelectionAction({
+        timerPending: false,
+        openMenuRequestId: null,
+        currentRequestId: 4,
+      }),
+    ).toBe(false);
+    // A popup superseded by a right-click (its menu promise not yet settled)
+    // must not cancel the newer context-menu flow.
+    expect(
+      shouldClearTerminalSelectionAction({
+        timerPending: false,
+        openMenuRequestId: 3,
+        currentRequestId: 4,
+      }),
+    ).toBe(false);
   });
 });
