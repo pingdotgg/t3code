@@ -121,6 +121,39 @@ it("matches the supported glob syntax without a regexp backtracking engine", () 
   assert.deepEqual(result.diagnostics, []);
 });
 
+it("keeps character classes inside a single path segment", () => {
+  const rule = makeRule("class-boundary", "class guidance", {
+    globs: ["src[/-]secret.ts"],
+  });
+
+  const result = matchAgentRules({
+    rules: [rule],
+    contextFiles: ["src/secret.ts"],
+  });
+
+  assert.deepEqual(result.rules, []);
+  assert.deepEqual(result.diagnostics, []);
+});
+
+it("matches zero or more complete directories for a deep-star directory", () => {
+  const rule = makeRule("directory-boundary", "directory guidance", {
+    globs: ["**/foo.ts"],
+  });
+
+  const prefix = matchAgentRules({ rules: [rule], contextFiles: ["prefixfoo.ts"] });
+  const directories = matchAgentRules({
+    rules: [rule],
+    contextFiles: ["foo.ts", "nested/deeper/foo.ts"],
+  });
+
+  assert.deepEqual(prefix.rules, []);
+  assert.deepEqual(
+    directories.rules.map((candidate) => candidate.id),
+    ["directory-boundary"],
+  );
+  assert.deepEqual(directories.diagnostics, []);
+});
+
 it("bounds non-matching overlapping wildcards by visiting each pattern/path state once", () => {
   const rule = makeRule("repeated-wildcards", "bounded guidance", {
     globs: [`${"**a".repeat(48)}z`],

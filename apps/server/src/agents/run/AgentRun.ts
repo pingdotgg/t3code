@@ -616,7 +616,7 @@ export const decide = Effect.fn("AgentRun.decide")(function* (
           "The estimated-cost budget is exhausted.",
           "budget-exhausted",
         );
-      if (rootRuns.length >= parent.budget.maxRuns)
+      if (rootRuns.length >= command.budget.maxRuns)
         return yield* invariant(
           command,
           "The lineage run budget is exhausted.",
@@ -625,7 +625,7 @@ export const decide = Effect.fn("AgentRun.decide")(function* (
       const parentBecomesWaiting = !command.detached && activeForConcurrency(parent);
       const activeCount =
         rootRuns.filter(activeForConcurrency).length - (parentBecomesWaiting ? 1 : 0);
-      if (activeCount + 1 > parent.budget.maxConcurrency)
+      if (activeCount + 1 > command.budget.maxConcurrency)
         return yield* invariant(
           command,
           "The lineage concurrency budget is exhausted.",

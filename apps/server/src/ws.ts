@@ -74,6 +74,7 @@ import {
   mapAgentProfileStoreError,
   mapAgentRuleStoreError,
 } from "./agents/AgentStoreErrorMapping.ts";
+import { resolveAgentWorkspaceRootForScope } from "./agents/AgentWorkspaceRoot.ts";
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -471,6 +472,10 @@ const makeWsRpcLayer = (
                     }),
               ),
             );
+      const agentWorkspaceRootForScope = (
+        scope: "environment" | "project",
+        projectId: ProjectId | undefined,
+      ) => resolveAgentWorkspaceRootForScope(scope, projectId, agentWorkspaceRoot);
 
       const mapAgentCatalogError =
         (ref: {
@@ -1105,7 +1110,7 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.agentsGetProfile,
             Effect.gen(function* () {
-              const workspaceRoot = yield* agentWorkspaceRoot(input.projectId);
+              const workspaceRoot = yield* agentWorkspaceRootForScope(input.scope, input.projectId);
               const profile = yield* agentCatalog
                 .getProfile({
                   ref: { id: input.id, scope: input.scope },
@@ -1128,7 +1133,10 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.agentsSaveProfile,
             Effect.gen(function* () {
-              const workspaceRoot = yield* agentWorkspaceRoot(input.projectId);
+              const workspaceRoot = yield* agentWorkspaceRootForScope(
+                input.profile.scope,
+                input.projectId,
+              );
               const profile = yield* agentProfileStore
                 .save({
                   profile: input.profile,
@@ -1146,7 +1154,7 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.agentsArchiveProfile,
             Effect.gen(function* () {
-              const workspaceRoot = yield* agentWorkspaceRoot(input.projectId);
+              const workspaceRoot = yield* agentWorkspaceRootForScope(input.scope, input.projectId);
               const profile = yield* agentProfileStore
                 .archive({
                   ref: { id: input.id, scope: input.scope },
@@ -1162,7 +1170,7 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.agentsRestoreProfile,
             Effect.gen(function* () {
-              const workspaceRoot = yield* agentWorkspaceRoot(input.projectId);
+              const workspaceRoot = yield* agentWorkspaceRootForScope(input.scope, input.projectId);
               const profile = yield* agentProfileStore
                 .restore({
                   ref: { id: input.id, scope: input.scope },
@@ -1178,7 +1186,7 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.agentsGetRule,
             Effect.gen(function* () {
-              const workspaceRoot = yield* agentWorkspaceRoot(input.projectId);
+              const workspaceRoot = yield* agentWorkspaceRootForScope(input.scope, input.projectId);
               const rule = yield* agentCatalog
                 .getRule({
                   ref: { id: input.id, scope: input.scope },
@@ -1201,7 +1209,10 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.agentsSaveRule,
             Effect.gen(function* () {
-              const workspaceRoot = yield* agentWorkspaceRoot(input.projectId);
+              const workspaceRoot = yield* agentWorkspaceRootForScope(
+                input.rule.scope,
+                input.projectId,
+              );
               const rule = yield* agentRuleStore
                 .save({
                   rule: input.rule,
@@ -1219,7 +1230,7 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.agentsArchiveRule,
             Effect.gen(function* () {
-              const workspaceRoot = yield* agentWorkspaceRoot(input.projectId);
+              const workspaceRoot = yield* agentWorkspaceRootForScope(input.scope, input.projectId);
               const rule = yield* agentRuleStore
                 .archive({
                   ref: { id: input.id, scope: input.scope },
@@ -1235,7 +1246,7 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.agentsRestoreRule,
             Effect.gen(function* () {
-              const workspaceRoot = yield* agentWorkspaceRoot(input.projectId);
+              const workspaceRoot = yield* agentWorkspaceRootForScope(input.scope, input.projectId);
               const rule = yield* agentRuleStore
                 .restore({
                   ref: { id: input.id, scope: input.scope },

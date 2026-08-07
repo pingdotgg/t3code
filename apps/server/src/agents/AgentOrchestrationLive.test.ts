@@ -15,6 +15,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { NodeServices } from "@effect/platform-node";
@@ -29,6 +30,7 @@ import {
   dispatchAgentChildLifecycle,
   liveAgentProfileLocator,
   minimumBudgets,
+  requestAgentFollowUp,
   resolvePinnedAgentRuntimeSettings,
   runtimeSettingsForAgentProfile,
 } from "./AgentOrchestrationLive.ts";
@@ -83,6 +85,37 @@ it.effect("loads the pinned profile before deriving follow-up turn policy", () =
       runtimeMode: "approval-required",
       interactionMode: "plan",
     });
+  }),
+);
+
+it.effect("does not queue a follow-up when a turn id cannot be allocated", () =>
+  Effect.gen(function* () {
+    const dispatched: Array<string> = [];
+    const result = yield* Effect.result(
+      requestAgentFollowUp({
+        crypto: {
+          randomUUIDv4: Effect.fail(
+            PlatformError.systemError({
+              _tag: "Unknown",
+              module: "test",
+              method: "randomUUIDv4",
+            }),
+          ),
+        },
+        repository: {
+          dispatch: (command) =>
+            Effect.sync(() => {
+              dispatched.push(command.type);
+              return [];
+            }),
+        },
+        runId: AgentRunId.make("follow-up-run"),
+        message: "Address the review.",
+        occurredAt: "2026-08-07T12:00:00.000Z",
+      }),
+    );
+    NodeAssert.equal(result._tag, "Failure");
+    NodeAssert.deepEqual(dispatched, []);
   }),
 );
 

@@ -229,14 +229,14 @@ const characterClassMatches = (
  * by the contract, including for adversarial repeated wildcards.
  */
 const matchesGlob = (tokens: readonly GlobToken[], path: string): boolean => {
-  const pending: Array<readonly [number, number]> = [[0, 0]];
+  const pending: Array<readonly [number, number, boolean]> = [[0, 0, true]];
   const visited = new Set<string>();
 
   while (pending.length > 0) {
     const state = pending.pop();
     if (!state) break;
-    const [tokenIndex, pathIndex] = state;
-    const key = `${tokenIndex}:${pathIndex}`;
+    const [tokenIndex, pathIndex, atDirectoryBoundary] = state;
+    const key = `${tokenIndex}:${pathIndex}:${atDirectoryBoundary ? "boundary" : "within"}`;
     if (visited.has(key)) continue;
     visited.add(key);
 
@@ -250,36 +250,43 @@ const matchesGlob = (tokens: readonly GlobToken[], path: string): boolean => {
 
     switch (token.type) {
       case "star":
-        pending.push([tokenIndex + 1, pathIndex]);
-        if (character !== undefined && character !== "/") pending.push([tokenIndex, pathIndex + 1]);
+        pending.push([tokenIndex + 1, pathIndex, true]);
+        if (character !== undefined && character !== "/") {
+          pending.push([tokenIndex, pathIndex + 1, true]);
+        }
         break;
       case "deep-star":
-        pending.push([tokenIndex + 1, pathIndex]);
-        if (character !== undefined) pending.push([tokenIndex, pathIndex + 1]);
+        pending.push([tokenIndex + 1, pathIndex, true]);
+        if (character !== undefined) pending.push([tokenIndex, pathIndex + 1, true]);
         break;
       case "deep-star-directory":
-        pending.push([tokenIndex + 1, pathIndex]);
+        if (atDirectoryBoundary) pending.push([tokenIndex + 1, pathIndex, true]);
         if (character !== undefined) {
-          pending.push([tokenIndex, pathIndex + 1]);
-          if (character === "/") pending.push([tokenIndex + 1, pathIndex + 1]);
+          pending.push([tokenIndex, pathIndex + 1, character === "/"]);
         }
         break;
       case "literal":
-        if (character === token.value) pending.push([tokenIndex + 1, pathIndex + 1]);
+        if (character === token.value) pending.push([tokenIndex + 1, pathIndex + 1, true]);
         break;
       case "single":
-        if (character !== undefined && character !== "/")
-          pending.push([tokenIndex + 1, pathIndex + 1]);
+        if (character !== undefined && character !== "/") {
+          pending.push([tokenIndex + 1, pathIndex + 1, true]);
+        }
         break;
       case "class":
-        if (character !== undefined && characterClassMatches(token, character)) {
-          pending.push([tokenIndex + 1, pathIndex + 1]);
+        if (
+          character !== undefined &&
+          character !== "/" &&
+          characterClassMatches(token, character)
+        ) {
+          pending.push([tokenIndex + 1, pathIndex + 1, true]);
         }
         break;
       case "alternatives":
         for (const value of token.values) {
-          if (path.startsWith(value, pathIndex))
-            pending.push([tokenIndex + 1, pathIndex + value.length]);
+          if (path.startsWith(value, pathIndex)) {
+            pending.push([tokenIndex + 1, pathIndex + value.length, true]);
+          }
         }
         break;
     }

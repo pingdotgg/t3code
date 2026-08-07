@@ -129,6 +129,61 @@ export const resolvePinnedAgentRuntimeSettings = Effect.fn(
   return runtimeSettingsForAgentProfile(profile);
 });
 
+/**
+ * Allocates both turn identifiers before recording the follow-up transition.
+ * That keeps a UUID failure from leaving a successful run queued without a
+ * corresponding provider turn.
+ */
+export const requestAgentFollowUp = Effect.fn("AgentOrchestration.requestAgentFollowUp")(
+  function* (input: {
+    readonly crypto: Pick<Crypto.Crypto, "randomUUIDv4">;
+    readonly repository: Pick<AgentRunRepository.AgentRunRepository["Service"], "dispatch">;
+    readonly runId: AgentRunId;
+    readonly message: string;
+    readonly occurredAt: string;
+  }) {
+    const commandId = CommandId.make(
+      `agent-send:${yield* input.crypto.randomUUIDv4.pipe(
+        Effect.mapError((cause) =>
+          invalid("Could not allocate an Agent command id.", {
+            operation: "follow-up-command-id-allocate",
+            cause,
+            runId: input.runId,
+          }),
+        ),
+      )}`,
+    );
+    const messageId = MessageId.make(
+      `agent:${yield* input.crypto.randomUUIDv4.pipe(
+        Effect.mapError((cause) =>
+          invalid("Could not allocate an Agent message id.", {
+            operation: "follow-up-message-id-allocate",
+            cause,
+            runId: input.runId,
+          }),
+        ),
+      )}`,
+    );
+    yield* input.repository
+      .dispatch({
+        type: "agent-run.follow-up",
+        runId: input.runId,
+        message: input.message,
+        occurredAt: input.occurredAt,
+      })
+      .pipe(
+        Effect.mapError((error) =>
+          invalid(error.message, {
+            operation: "run-follow-up",
+            cause: error,
+            runId: input.runId,
+          }),
+        ),
+      );
+    return { commandId, messageId };
+  },
+);
+
 type ThreadCreateCommand = Extract<OrchestrationCommand, { readonly type: "thread.create" }>;
 type ThreadTurnStartCommand = Extract<OrchestrationCommand, { readonly type: "thread.turn.start" }>;
 
@@ -1056,49 +1111,20 @@ export const make = Effect.gen(function* () {
         run,
       });
       const occurredAt = yield* nowIso;
-      yield* runs
-        .dispatch({
-          type: "agent-run.follow-up",
-          runId: run.id,
-          message: input.message,
-          occurredAt,
-        })
-        .pipe(
-          Effect.mapError((error) =>
-            invalid(error.message, {
-              operation: "run-follow-up",
-              cause: error,
-              runId: run.id,
-            }),
-          ),
-        );
+      const { commandId, messageId } = yield* requestAgentFollowUp({
+        crypto,
+        repository: runs,
+        runId: run.id,
+        message: input.message,
+        occurredAt,
+      });
       const dispatch = yield* engine
         .dispatch({
           type: "thread.turn.start",
-          commandId: CommandId.make(
-            `agent-send:${yield* crypto.randomUUIDv4.pipe(
-              Effect.mapError((cause) =>
-                invalid("Could not allocate an Agent command id.", {
-                  operation: "follow-up-command-id-allocate",
-                  cause,
-                  runId: run.id,
-                }),
-              ),
-            )}`,
-          ),
+          commandId,
           threadId: run.childThreadId,
           message: {
-            messageId: MessageId.make(
-              `agent:${yield* crypto.randomUUIDv4.pipe(
-                Effect.mapError((cause) =>
-                  invalid("Could not allocate an Agent message id.", {
-                    operation: "follow-up-message-id-allocate",
-                    cause,
-                    runId: run.id,
-                  }),
-                ),
-              )}`,
-            ),
+            messageId,
             role: "user",
             text: input.message,
             attachments: [],

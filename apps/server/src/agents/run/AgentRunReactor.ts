@@ -18,6 +18,17 @@ import { decide, type AgentRun } from "./AgentRun.ts";
 
 const decodeUsage = Schema.decodeUnknownOption(RuntimeTaskUsage);
 
+export const hookWorkspaceForRun = (
+  run: Pick<AgentRun, "workspaceMode" | "childThreadId">,
+  childWorktreePath: string | null,
+  projectWorkspaceRoot: string | null,
+) =>
+  run.workspaceMode === "isolated-worktree"
+    ? run.childThreadId === null
+      ? null
+      : childWorktreePath
+    : (childWorktreePath ?? projectWorkspaceRoot);
+
 export class AgentTerminalHookPrerequisiteError extends Schema.TaggedErrorClass<AgentTerminalHookPrerequisiteError>()(
   "AgentTerminalHookPrerequisiteError",
   {
@@ -114,16 +125,22 @@ const make = Effect.gen(function* () {
       Effect.Success<ReturnType<typeof repository.get>> extends Option.Option<infer A> ? A : never
     >,
   ) {
-    if (run.childThreadId !== null) {
-      const child = yield* projection
-        .getThreadShellById(run.childThreadId)
-        .pipe(Effect.map(Option.getOrNull));
-      if (child?.worktreePath) return child.worktreePath;
+    const childWorktreePath =
+      run.childThreadId === null
+        ? null
+        : yield* projection.getThreadShellById(run.childThreadId).pipe(
+            Effect.map(Option.getOrNull),
+            Effect.map((child) => child?.worktreePath ?? null),
+          );
+    if (run.workspaceMode === "isolated-worktree") {
+      return hookWorkspaceForRun(run, childWorktreePath, null);
     }
-    return yield* projection.getProjectShellById(run.projectId).pipe(
+    if (childWorktreePath !== null) return childWorktreePath;
+    const projectWorkspaceRoot = yield* projection.getProjectShellById(run.projectId).pipe(
       Effect.map(Option.getOrNull),
       Effect.map((project) => project?.workspaceRoot ?? null),
     );
+    return hookWorkspaceForRun(run, childWorktreePath, projectWorkspaceRoot);
   });
 
   const runTerminalHook = Effect.fn("AgentRunReactor.runTerminalHook")(function* (

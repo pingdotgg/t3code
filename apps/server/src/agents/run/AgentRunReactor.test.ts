@@ -14,7 +14,11 @@ import * as Effect from "effect/Effect";
 import { AgentHookBlockedError } from "../AgentHookRunner.ts";
 import type { AgentRun, AgentRunCommand, AgentRunEvent } from "./AgentRun.ts";
 import type { AgentRunRepository } from "./AgentRunRepository.ts";
-import { AgentTerminalHookPrerequisiteError, completeSuccessfulRun } from "./AgentRunReactor.ts";
+import {
+  AgentTerminalHookPrerequisiteError,
+  completeSuccessfulRun,
+  hookWorkspaceForRun,
+} from "./AgentRunReactor.ts";
 
 const occurredAt = "2026-08-07T12:01:00.000Z";
 const runId = AgentRunId.make("completion-run");
@@ -68,6 +72,19 @@ const repositoryFor = (dispatched: Array<AgentRunCommand>) =>
         return [] as ReadonlyArray<AgentRunEvent>;
       }),
   }) as unknown as AgentRunRepository["Service"];
+
+it("fails closed when an isolated run has no child worktree", () => {
+  const isolated = { ...run, workspaceMode: "isolated-worktree" as const };
+  assert.equal(hookWorkspaceForRun(isolated, null, "/project"), null);
+  assert.equal(
+    hookWorkspaceForRun({ ...isolated, childThreadId: null }, "/child", "/project"),
+    null,
+  );
+});
+
+it("allows a shared run to use its project workspace when no child worktree exists", () => {
+  assert.equal(hookWorkspaceForRun(run, null, "/project"), "/project");
+});
 
 it.effect("validates completion budgets before running afterResult hooks", () =>
   Effect.gen(function* () {

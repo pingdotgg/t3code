@@ -364,6 +364,45 @@ describe("AgentRun", () => {
     }),
   );
 
+  it.effect("enforces a child's reduced lineage run and concurrency caps", () =>
+    Effect.gen(function* () {
+      const rootBudget = { ...budget, maxRuns: 4, maxConcurrency: 2 };
+      const childRunBudget = { ...rootBudget, maxRuns: 2 };
+      const withChild = yield* transition(
+        yield* start(
+          yield* transition(emptyAgentRunState(), { ...request("root"), budget: rootBudget }),
+          "root",
+        ),
+        { ...request("child", "root"), budget: childRunBudget },
+      );
+      yield* expectInvariantFailure(
+        decide(withChild, { ...request("grandchild", "child"), budget: childRunBudget }),
+        /run budget/,
+        "budget-exhausted",
+      );
+
+      const childConcurrencyBudget = { ...rootBudget, maxConcurrency: 1 };
+      const runningChild = yield* start(
+        yield* transition(
+          yield* start(
+            yield* transition(emptyAgentRunState(), { ...request("root"), budget: rootBudget }),
+            "root",
+          ),
+          { ...request("child", "root"), budget: childConcurrencyBudget },
+        ),
+        "child",
+      );
+      yield* expectInvariantFailure(
+        decide(runningChild, {
+          ...request("grandchild", "child", true),
+          budget: childConcurrencyBudget,
+        }),
+        /concurrency budget/,
+        "budget-exhausted",
+      );
+    }),
+  );
+
   it.effect("reopens only successful results for follow-up revisions", () =>
     Effect.gen(function* () {
       const completed = yield* transition(
