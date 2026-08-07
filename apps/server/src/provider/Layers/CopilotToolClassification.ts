@@ -57,6 +57,21 @@ function toolCommandLooksLikeFileChange(arguments_: unknown): boolean {
   return candidates.some((candidate) => commandLooksLikeCopilotPatchEdit(trimmedString(candidate)));
 }
 
+function toolNameImpliesCommandExecution(toolName: string): boolean {
+  const normalized = toolName.toLowerCase().replaceAll(/[\s_-]/g, "");
+  return (
+    normalized === "bash" ||
+    normalized === "shell" ||
+    normalized === "terminal" ||
+    normalized === "command" ||
+    normalized === "exec" ||
+    normalized === "runinterminal" ||
+    normalized === "runcommand" ||
+    normalized === "executecommand" ||
+    normalized === "execcommand"
+  );
+}
+
 export function isReadOnlyCopilotToolName(toolName: string): boolean {
   const normalized = toolName.toLowerCase();
   return (
@@ -112,6 +127,9 @@ export function classifyCopilotToolItemType(input: {
     normalized.includes("task")
   ) {
     return "collab_agent_tool_call";
+  }
+  if (toolNameImpliesCommandExecution(input.toolName)) {
+    return "command_execution";
   }
   if (
     toolNameImpliesFileChange(input.toolName, input.arguments) ||

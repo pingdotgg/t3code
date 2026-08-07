@@ -31,7 +31,16 @@ describe("CopilotToolClassification", () => {
           command: "apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: README.md\nPATCH",
         },
       }),
-      "file_change",
+      "command_execution",
+    );
+    NodeAssert.equal(
+      classifyCopilotToolItemType({
+        toolName: "bash",
+        arguments: {
+          command: "apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: README.md\nPATCH",
+        },
+      }),
+      "command_execution",
     );
     NodeAssert.equal(
       classifyCopilotToolItemType({
