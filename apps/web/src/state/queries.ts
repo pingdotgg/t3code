@@ -11,6 +11,7 @@ import {
 import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
+  FilesystemBrowseEntry,
   OrchestrationThread,
   ProjectContentMatch,
   ProjectEntryKind,
@@ -24,6 +25,7 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { filesystemEnvironment } from "./filesystem";
 import { orchestrationEnvironment } from "./orchestration";
 import { isPaginatedBranchesNextPagePending } from "./paginatedBranches";
 import { projectContentSearch, projectEnvironment } from "./projects";
@@ -33,6 +35,7 @@ import { vcsEnvironment } from "./vcs";
 
 const PROJECT_PATH_SEARCH_DEBOUNCE_MS = 120;
 const COMPOSER_PATH_SEARCH_LIMIT = 80;
+const COMPOSER_FILESYSTEM_BROWSE_LIMIT = 80;
 const PROJECT_CONTENT_SEARCH_DEBOUNCE_MS = 120;
 const PROJECT_CONTENT_SEARCH_LIMIT = 500;
 const THREAD_SEARCH_DEBOUNCE_MS = 200;
@@ -295,6 +298,59 @@ export function useProjectPathSearch(
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {
   return useProjectPathSearch(target, COMPOSER_PATH_SEARCH_LIMIT);
+}
+
+interface ComposerFilesystemBrowseTarget {
+  readonly environmentId: EnvironmentId | null;
+  readonly cwd: string | null;
+  readonly query: string | null;
+}
+
+const EMPTY_FILESYSTEM_ENTRIES: ReadonlyArray<FilesystemBrowseEntry> = [];
+
+function areComposerFilesystemBrowseTargetsEqual(
+  left: ComposerFilesystemBrowseTarget,
+  right: ComposerFilesystemBrowseTarget,
+): boolean {
+  return (
+    left.environmentId === right.environmentId &&
+    left.cwd === right.cwd &&
+    left.query === right.query
+  );
+}
+
+export function useComposerFilesystemBrowse(target: ComposerFilesystemBrowseTarget) {
+  const normalizedTarget = useMemo(
+    () => ({
+      environmentId: target.environmentId,
+      cwd: target.cwd,
+      query: target.query?.trim() || null,
+    }),
+    [target.cwd, target.environmentId, target.query],
+  );
+  const debouncedTarget = useDebouncedValue(normalizedTarget, PROJECT_PATH_SEARCH_DEBOUNCE_MS);
+  const isSettled = areComposerFilesystemBrowseTargetsEqual(normalizedTarget, debouncedTarget);
+  const result = useEnvironmentQuery(
+    debouncedTarget.environmentId !== null && debouncedTarget.query !== null
+      ? filesystemEnvironment.browse({
+          environmentId: debouncedTarget.environmentId,
+          input: {
+            partialPath: debouncedTarget.query,
+            ...(debouncedTarget.cwd === null ? {} : { cwd: debouncedTarget.cwd }),
+            kinds: ["file", "directory"],
+            limit: COMPOSER_FILESYSTEM_BROWSE_LIMIT,
+          },
+        })
+      : null,
+  );
+
+  return {
+    entries: isSettled
+      ? (result.data?.entries ?? EMPTY_FILESYSTEM_ENTRIES)
+      : EMPTY_FILESYSTEM_ENTRIES,
+    error: result.error,
+    isPending: !isSettled || result.isPending,
+  };
 }
 
 interface ProjectContentSearchTarget {

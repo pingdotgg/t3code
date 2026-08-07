@@ -1,11 +1,99 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  preserveWindowsMarkdownFileHref,
+  resolveCanonicalMarkdownFileLinkMeta,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
 } from "./markdown-links";
+
+describe("resolveCanonicalMarkdownFileLinkMeta", () => {
+  it("recognizes absolute extensionless paths outside conventional roots", () => {
+    expect(resolveCanonicalMarkdownFileLinkMeta("data", "/custom/mount/data")).toMatchObject({
+      filePath: "/custom/mount/data",
+      openTargetPath: "/custom/mount/data",
+      basename: "data",
+    });
+  });
+
+  it("resolves relative canonical paths against the cwd", () => {
+    expect(resolveCanonicalMarkdownFileLinkMeta("shared", "../shared", "/repo/app")).toMatchObject({
+      targetPath: "/repo/shared",
+      openTargetPath: "/repo/shared",
+      workspaceRelativePath: null,
+    });
+  });
+
+  it("keeps unresolved home paths displayable but inert", () => {
+    expect(resolveCanonicalMarkdownFileLinkMeta("project", "~/project")).toMatchObject({
+      targetPath: "~/project",
+      openTargetPath: null,
+      basename: "project",
+    });
+  });
+
+  it("rejects label mismatches and external links", () => {
+    expect(resolveCanonicalMarkdownFileLinkMeta("other", "/custom/mount/data")).toBeNull();
+    expect(resolveCanonicalMarkdownFileLinkMeta("docs", "https://example.com/docs")).toBeNull();
+  });
+
+  it("does not interpret numeric filename suffixes as source positions", () => {
+    const meta = resolveCanonicalMarkdownFileLinkMeta("report:12", "/tmp/report:12");
+    expect(meta).toMatchObject({
+      filePath: "/tmp/report:12",
+      openTargetPath: "/tmp/report:12",
+      basename: "report:12",
+    });
+    expect(meta?.line).toBeUndefined();
+  });
+
+  it("keeps a scoped package reference displayable but inert instead of resolving under cwd", () => {
+    expect(
+      resolveCanonicalMarkdownFileLinkMeta("package.json", "@scope/package.json", "/repo"),
+    ).toMatchObject({
+      targetPath: "@scope/package.json",
+      openTargetPath: null,
+      basename: "package.json",
+    });
+  });
+
+  it("still resolves an ordinary relative path against the cwd", () => {
+    expect(resolveCanonicalMarkdownFileLinkMeta("index.ts", "src/index.ts", "/repo")).toMatchObject(
+      {
+        targetPath: "/repo/src/index.ts",
+        openTargetPath: "/repo/src/index.ts",
+      },
+    );
+  });
+
+  it("normalizes absolute paths before workspace containment", () => {
+    expect(
+      resolveCanonicalMarkdownFileLinkMeta("page.html", "/repo/../outside/page.html", "/repo"),
+    ).toMatchObject({ workspaceRelativePath: null });
+  });
+
+  it("uses platform-appropriate casing for workspace containment", () => {
+    expect(resolveCanonicalMarkdownFileLinkMeta("Page.ts", "/Repo/Page.ts", "/repo")).toMatchObject(
+      { workspaceRelativePath: null },
+    );
+    expect(
+      resolveCanonicalMarkdownFileLinkMeta("Page.ts", "C:/Repo/Page.ts", "c:/repo"),
+    ).toMatchObject({ workspaceRelativePath: "Page.ts" });
+  });
+});
+
+describe("preserveWindowsMarkdownFileHref", () => {
+  it("preserves only Windows drive path destinations", () => {
+    expect(preserveWindowsMarkdownFileHref("C:%5CUsers%5Cme%5Cfile.ts")).toBe(
+      "C:%5CUsers%5Cme%5Cfile.ts",
+    );
+    expect(preserveWindowsMarkdownFileHref("C:/Users/me/file.ts")).toBe("C:/Users/me/file.ts");
+    expect(preserveWindowsMarkdownFileHref("custom:thing")).toBeNull();
+    expect(preserveWindowsMarkdownFileHref("https://example.com")).toBeNull();
+  });
+});
 
 describe("rewriteMarkdownFileUriHref", () => {
   it("rewrites file uri hrefs into direct path hrefs", () => {

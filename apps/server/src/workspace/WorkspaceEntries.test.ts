@@ -651,10 +651,60 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(result).toEqual({
           parentPath: cwd,
           entries: [
-            { name: "alpha", fullPath: path.join(cwd, "alpha") },
-            { name: "alpine", fullPath: path.join(cwd, "alpine") },
+            { name: "alpha", fullPath: path.join(cwd, "alpha"), kind: "directory" },
+            { name: "alpine", fullPath: path.join(cwd, "alpine"), kind: "directory" },
           ],
         });
+      }),
+    );
+
+    it.effect("returns requested kinds in directory-first order and applies the limit", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-kinds-" });
+        yield* writeTextFile(cwd, "alpha/index.ts", "export {};\n");
+        yield* writeTextFile(cwd, "zeta/index.ts", "export {};\n");
+        yield* writeTextFile(cwd, "alphabet.txt", "a");
+        yield* writeTextFile(cwd, "beta.txt", "b");
+
+        const result = yield* workspaceEntries.browse({
+          partialPath: yield* appendSeparator(cwd),
+          kinds: ["file", "directory"],
+          limit: 3,
+        });
+        const filteredResult = yield* workspaceEntries.browse({
+          partialPath: path.join(cwd, "b"),
+          kinds: ["file", "directory"],
+          limit: 1,
+        });
+
+        expect(result).toEqual({
+          parentPath: cwd,
+          entries: [
+            { name: "alpha", fullPath: path.join(cwd, "alpha"), kind: "directory" },
+            { name: "zeta", fullPath: path.join(cwd, "zeta"), kind: "directory" },
+            { name: "alphabet.txt", fullPath: path.join(cwd, "alphabet.txt"), kind: "file" },
+          ],
+        });
+        expect(filteredResult.entries).toEqual([
+          { name: "beta.txt", fullPath: path.join(cwd, "beta.txt"), kind: "file" },
+        ]);
+      }),
+    );
+
+    it.effect("returns no entries when no kinds are requested", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-empty-kinds-" });
+        yield* writeTextFile(cwd, "src/index.ts", "export {};\n");
+
+        const result = yield* workspaceEntries.browse({
+          partialPath: yield* appendSeparator(cwd),
+          kinds: [],
+        });
+
+        expect(result).toEqual({ parentPath: cwd, entries: [] });
       }),
     );
 
@@ -677,7 +727,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(directoryResult.entries.map((entry) => entry.name)).toEqual([".config", "config"]);
         expect(hiddenPrefixResult).toEqual({
           parentPath: cwd,
-          entries: [{ name: ".config", fullPath: path.join(cwd, ".config") }],
+          entries: [{ name: ".config", fullPath: path.join(cwd, ".config"), kind: "directory" }],
         });
       }),
     );
@@ -696,7 +746,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
 
         expect(result).toEqual({
           parentPath: cwd,
-          entries: [{ name: "packages", fullPath: path.join(cwd, "packages") }],
+          entries: [{ name: "packages", fullPath: path.join(cwd, "packages"), kind: "directory" }],
         });
       }),
     );

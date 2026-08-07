@@ -27,6 +27,36 @@ const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
 const SCOPED_PACKAGE_REFERENCE_REGEX =
   /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(?:\/[^\s@"]+)*$/;
 
+/**
+ * Matches an authored `@scope/name[/...]` reference (npm-style scoped
+ * package), as distinct from a relative filesystem path. Callers resolving
+ * paths against a cwd use this to avoid treating a package reference as a
+ * directory under the project root.
+ */
+export function isScopedPackageReferencePath(path: string): boolean {
+  return path.startsWith("@") && SCOPED_PACKAGE_REFERENCE_REGEX.test(path.slice(1));
+}
+
+export function decodeCanonicalComposerFileLinkPath(
+  label: string,
+  encodedPath: string,
+): string | null {
+  let path = encodedPath;
+  try {
+    path = decodeURIComponent(encodedPath);
+  } catch {
+    // Preserve malformed source so manually authored paths remain usable.
+  }
+  const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  const basename = separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
+  const hasExternalScheme = URI_SCHEME_REGEX.test(path) && !WINDOWS_DRIVE_PATH_REGEX.test(path);
+  return path && !hasExternalScheme && label === basename ? path : null;
+}
+
+export function isCanonicalComposerFileLink(label: string, encodedPath: string): boolean {
+  return decodeCanonicalComposerFileLinkPath(label, encodedPath) !== null;
+}
+
 function collectMentionTokens(text: string): ComposerInlineToken[] {
   const matches: ComposerInlineToken[] = [];
 
@@ -35,16 +65,8 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
     const prefix = match[1] ?? "";
     const label = (match[2] ?? "").replace(/\\(.)/g, "$1");
     const encodedPath = match[3] ?? "";
-    let path = encodedPath;
-    try {
-      path = decodeURIComponent(encodedPath);
-    } catch {
-      // Preserve malformed source rather than dropping a user-authored token.
-    }
-    const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-    const basename = separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
-    const hasExternalScheme = URI_SCHEME_REGEX.test(path) && !WINDOWS_DRIVE_PATH_REGEX.test(path);
-    if (!path || hasExternalScheme || label !== basename) {
+    const path = decodeCanonicalComposerFileLinkPath(label, encodedPath);
+    if (path === null) {
       continue;
     }
     const start = (match.index ?? 0) + prefix.length;
