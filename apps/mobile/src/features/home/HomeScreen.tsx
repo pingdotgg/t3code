@@ -55,6 +55,7 @@ import {
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   type ThreadListV2ListItem,
 } from "../threads/threadListV2";
+import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
 import {
   buildHomeListLayout,
@@ -555,10 +556,13 @@ export function HomeScreen(props: HomeScreenProps) {
     () => setSettledVisibleCount((count) => count + THREAD_LIST_V2_SETTLED_PAGE_COUNT),
     [],
   );
-  const [snoozedShelfExpanded, setSnoozedShelfExpanded] = useState(false);
-  const toggleSnoozedShelf = useCallback(() => setSnoozedShelfExpanded((value) => !value), []);
-  const [settledShelfExpanded, setSettledShelfExpanded] = useState(true);
-  const toggleSettledShelf = useCallback(() => setSettledShelfExpanded((value) => !value), []);
+  const {
+    loaded: shelfPreferencesLoaded,
+    settledShelfExpanded,
+    snoozedShelfExpanded,
+    toggleSettledShelf,
+    toggleSnoozedShelf,
+  } = useThreadListV2ShelfPreferences();
   // now is quantized to the minute and ticks so the inactivity auto-settle
   // boundary is actually crossed while the app stays open (mirrors web);
   // without a clock dependency the partition memoizes a frozen "now".
@@ -757,6 +761,7 @@ export function HomeScreen(props: HomeScreenProps) {
         return (
           <ThreadListV2SnoozedShelfHeader
             count={item.count}
+            disabled={!shelfPreferencesLoaded}
             expanded={item.expanded}
             onToggle={toggleSnoozedShelf}
           />
@@ -766,6 +771,7 @@ export function HomeScreen(props: HomeScreenProps) {
         return (
           <ThreadListV2SettledShelfHeader
             count={item.count}
+            disabled={!shelfPreferencesLoaded}
             expanded={item.expanded}
             onToggle={toggleSettledShelf}
           />
@@ -859,6 +865,7 @@ export function HomeScreen(props: HomeScreenProps) {
       props.onSelectThread,
       props.savedConnectionsById,
       serverConfigs,
+      shelfPreferencesLoaded,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
       threadListV2Items,

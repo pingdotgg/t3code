@@ -33,6 +33,10 @@ export interface Preferences {
    * see `resolveThreadListV2Enabled`.
    */
   readonly threadListV2Enabled?: boolean;
+  /** Undefined preserves the default expanded Settled shelf. */
+  readonly threadListV2SettledShelfExpanded?: boolean;
+  /** Undefined preserves the default collapsed Snoozed shelf. */
+  readonly threadListV2SnoozedShelfExpanded?: boolean;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedErrorClass<MobilePreferencesLoadError>()(
@@ -85,6 +89,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     threadListV2Enabled?: boolean;
+    threadListV2SettledShelfExpanded?: boolean;
+    threadListV2SnoozedShelfExpanded?: boolean;
   } = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
@@ -123,6 +129,12 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.threadListV2Enabled === "boolean") {
     preferences.threadListV2Enabled = parsed.threadListV2Enabled;
+  }
+  if (typeof parsed.threadListV2SettledShelfExpanded === "boolean") {
+    preferences.threadListV2SettledShelfExpanded = parsed.threadListV2SettledShelfExpanded;
+  }
+  if (typeof parsed.threadListV2SnoozedShelfExpanded === "boolean") {
+    preferences.threadListV2SnoozedShelfExpanded = parsed.threadListV2SnoozedShelfExpanded;
   }
   return preferences;
 }

@@ -31,6 +31,7 @@ import { useThemeColor } from "../../lib/useThemeColor";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
 import { useThreadListV2Enabled } from "./use-thread-list-v2-enabled";
+import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-preferences";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
@@ -445,10 +446,13 @@ function ThreadNavigationSidebarPane(
     () => setSettledVisibleCount((count) => count + THREAD_LIST_V2_SETTLED_PAGE_COUNT),
     [],
   );
-  const [snoozedShelfExpanded, setSnoozedShelfExpanded] = useState(false);
-  const toggleSnoozedShelf = useCallback(() => setSnoozedShelfExpanded((value) => !value), []);
-  const [settledShelfExpanded, setSettledShelfExpanded] = useState(true);
-  const toggleSettledShelf = useCallback(() => setSettledShelfExpanded((value) => !value), []);
+  const {
+    loaded: shelfPreferencesLoaded,
+    settledShelfExpanded,
+    snoozedShelfExpanded,
+    toggleSettledShelf,
+    toggleSnoozedShelf,
+  } = useThreadListV2ShelfPreferences();
   // now ticks per minute so the inactivity auto-settle boundary is actually
   // crossed while the pane stays open; without a clock dependency the
   // partition memoizes a frozen "now".
@@ -980,6 +984,7 @@ function ThreadNavigationSidebarPane(
           return (
             <ThreadListV2SnoozedShelfHeader
               count={item.count}
+              disabled={!shelfPreferencesLoaded}
               expanded={item.expanded}
               onToggle={toggleSnoozedShelf}
               pane="sidebar"
@@ -989,6 +994,7 @@ function ThreadNavigationSidebarPane(
           return (
             <ThreadListV2SettledShelfHeader
               count={item.count}
+              disabled={!shelfPreferencesLoaded}
               expanded={item.expanded}
               onToggle={toggleSettledShelf}
               pane="sidebar"
@@ -1109,6 +1115,7 @@ function ThreadNavigationSidebarPane(
       props.width,
       savedConnectionsById,
       serverConfigs,
+      shelfPreferencesLoaded,
       threadSearchMatchByKey,
       settleThread,
       settlementEnvironmentIds,
