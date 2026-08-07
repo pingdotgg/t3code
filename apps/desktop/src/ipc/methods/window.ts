@@ -254,10 +254,11 @@ export const setTheme = DesktopIpc.makeIpcMethod({
     const theme = typeof input === "string" ? input : input.theme;
     const electronTheme = yield* ElectronTheme.ElectronTheme;
     yield* electronTheme.setSource(theme);
-    if (typeof input !== "string" && input.palette !== undefined) {
-      const desktopWindow = yield* DesktopWindow.DesktopWindow;
-      yield* desktopWindow.syncAppearance(input.palette);
-    }
+    const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    yield* desktopWindow.syncAppearance(
+      typeof input === "string" ? undefined : input.palette,
+      theme,
+    );
 
     const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
     if (typeof input !== "string" && input.palette !== undefined) {

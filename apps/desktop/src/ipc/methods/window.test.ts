@@ -171,7 +171,7 @@ describe("setTheme", () => {
       assert.deepEqual(sources, ["dark", "light"]);
       assert.deepEqual(palettes, [palette]);
       assert.deepEqual(themeSources, ["dark", "light"]);
-      assert.equal(syncCount, 1);
+      assert.equal(syncCount, 2);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

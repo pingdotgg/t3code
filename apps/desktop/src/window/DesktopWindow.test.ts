@@ -625,6 +625,55 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect("uses the live palette when native theme updates race persistence", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(
+        Option.some(fakeWindow.window),
+      );
+      const persistedLightPalette = {
+        appearance: "light" as const,
+        background: "#fdf7fd",
+        foreground: "#501854",
+        accent: "#e33f86",
+        titlebarSymbol: "#501854",
+      };
+      const liveDarkPalette = {
+        appearance: "dark" as const,
+        background: "#1f1a24",
+        foreground: "#f9f8fb",
+        accent: "#a3004c",
+        titlebarSymbol: "#f9f8fb",
+      };
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        desktopSettings: {
+          ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+          themeSource: "light",
+          themePalettes: { light: persistedLightPalette },
+        },
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+
+        // The explicit sync is the live application that happens before the
+        // palette/source writes complete. The following no-argument sync is
+        // the nativeTheme.updated callback racing that persistence.
+        yield* desktopWindow.syncAppearance(liveDarkPalette, "dark");
+        fakeWindow.setBackgroundColor.mockClear();
+        yield* desktopWindow.syncAppearance();
+
+        assert.deepEqual(fakeWindow.setBackgroundColor.mock.calls.at(-1), [
+          liveDarkPalette.background,
+        ]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect("restores the persisted maximized state", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();

@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
-import type { DesktopThemePalette } from "@t3tools/contracts";
+import type { DesktopTheme, DesktopThemePalette } from "@t3tools/contracts";
 import * as Electron from "electron";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
@@ -85,7 +85,10 @@ export class DesktopWindow extends Context.Service<
     readonly handleBackendNotReady: Effect.Effect<void>;
     readonly flushMainWindowBounds: Effect.Effect<void>;
     readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
-    readonly syncAppearance: (palette?: DesktopThemePalette) => Effect.Effect<void>;
+    readonly syncAppearance: (
+      palette?: DesktopThemePalette,
+      themeSource?: DesktopTheme,
+    ) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/window/DesktopWindow") {}
 
@@ -125,14 +128,15 @@ function getFallbackThemePalette(shouldUseDarkColors: boolean): DesktopThemePale
 function getThemePalette(
   settings: DesktopAppSettings.DesktopSettings,
   shouldUseDarkColors: boolean,
+  themeSource?: DesktopTheme,
 ): DesktopThemePalette {
-  const useDarkColors =
-    settings.themeSource === "dark" || (settings.themeSource !== "light" && shouldUseDarkColors);
+  const source = themeSource ?? settings.themeSource ?? "system";
+  const useDarkColors = source === "dark" || (source !== "light" && shouldUseDarkColors);
   const appearance = useDarkColors ? "dark" : "light";
   const persistedPalette = settings.themePalettes?.[appearance];
   return persistedPalette?.appearance === appearance
     ? persistedPalette
-    : getFallbackThemePalette(shouldUseDarkColors);
+    : getFallbackThemePalette(useDarkColors);
 }
 
 function getInitialWindowBackgroundColor(
@@ -281,6 +285,11 @@ function syncWindowAppearance(
 
 type RevealSubscription = (listener: () => void) => void;
 
+type LiveThemeState = {
+  readonly source: DesktopTheme;
+  readonly palettes: DesktopAppSettings.DesktopThemePalettes;
+};
+
 function bindFirstRevealTrigger(
   subscribers: readonly RevealSubscription[],
   reveal: () => void,
@@ -311,6 +320,11 @@ export const make = Effect.gen(function* () {
   // createMainIfBackendReady, which gates the post-readiness window
   // open in development and the macOS "activate without windows" path.
   const backendReadyRef = yield* Ref.make(false);
+  // Theme settings are persisted asynchronously after the renderer applies a
+  // theme. Keep the last live source and palettes here so nativeTheme.updated
+  // cannot repaint from an older settings document while that write is in
+  // flight. Persisted settings seed this state only on cold start.
+  const liveThemeRef = yield* Ref.make<LiveThemeState | undefined>(undefined);
   // The transient "Connecting to WSL" splash window, tracked separately so it
   // is never mistaken for the real main window.
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
@@ -345,6 +359,37 @@ export const make = Effect.gen(function* () {
   const currentMainWindow = electronWindow.currentMainOrFirst.pipe(Effect.flatMap(withoutSplash));
   const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(Effect.flatMap(withoutSplash));
 
+  const resolveThemePalette = Effect.fn("desktop.window.resolveThemePalette")(function* (input?: {
+    readonly palette: DesktopThemePalette | undefined;
+    readonly themeSource: DesktopTheme | undefined;
+  }): Effect.fn.Return<DesktopThemePalette> {
+    const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+    const persistedSettings = yield* desktopSettings.get;
+    const liveTheme = yield* Ref.get(liveThemeRef);
+    const source =
+      input?.themeSource ?? liveTheme?.source ?? persistedSettings.themeSource ?? "system";
+    const appearance =
+      source === "dark" || (source !== "light" && shouldUseDarkColors) ? "dark" : "light";
+    const persistedOrLivePalettes = liveTheme?.palettes ?? persistedSettings.themePalettes ?? {};
+    const palette =
+      input?.palette ??
+      persistedOrLivePalettes[appearance] ??
+      getThemePalette(
+        liveTheme === undefined ? persistedSettings : { ...persistedSettings, themePalettes: {} },
+        shouldUseDarkColors,
+        source,
+      );
+
+    yield* Ref.set(liveThemeRef, {
+      source,
+      palettes: {
+        ...persistedOrLivePalettes,
+        [palette.appearance]: palette,
+      },
+    });
+    return palette;
+  });
+
   const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
     Electron.BrowserWindow,
     DesktopWindowError
@@ -354,8 +399,8 @@ export const make = Effect.gen(function* () {
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths, environment.platform);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+    const themePalette = yield* resolveThemePalette();
     const persistedSettings = yield* desktopSettings.get;
-    const themePalette = getThemePalette(persistedSettings, shouldUseDarkColors);
     yield* previewManager.setThemePalette(themePalette).pipe(
       Effect.catch((error) =>
         logWindowWarning("failed to initialize preview theme palette", {
@@ -799,8 +844,7 @@ export const make = Effect.gen(function* () {
     if (Option.isSome(existingWindow)) return;
 
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
-    const persistedSettings = yield* desktopSettings.get;
-    const themePalette = getThemePalette(persistedSettings, shouldUseDarkColors);
+    const themePalette = yield* resolveThemePalette();
     yield* previewManager.setThemePalette(themePalette).pipe(
       Effect.catch((error) =>
         logWindowWarning("failed to initialize preview theme palette", {
@@ -905,39 +949,36 @@ export const make = Effect.gen(function* () {
 
       send();
     }),
-    syncAppearance: (palette) =>
-      Effect.gen(function* () {
-        const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
-        const persistedSettings = yield* desktopSettings.get;
-        const themePalette = palette ?? getThemePalette(persistedSettings, shouldUseDarkColors);
-        yield* previewManager.setThemePalette(themePalette).pipe(
+    syncAppearance: Effect.fn("desktop.window.syncAppearance")(function* (palette, themeSource) {
+      const themePalette = yield* resolveThemePalette({ palette, themeSource });
+      yield* previewManager.setThemePalette(themePalette).pipe(
+        Effect.catch((error) =>
+          logWindowWarning("failed to update preview theme palette", {
+            message: error.message,
+          }),
+        ),
+      );
+      yield* electronWindow.syncAllAppearance((window) =>
+        syncWindowAppearance(window, themePalette, environment.platform),
+      );
+      const splash = yield* Ref.get(splashWindowRef);
+      if (Option.isSome(splash) && !splash.value.isDestroyed()) {
+        yield* Effect.tryPromise({
+          try: () => splash.value.loadURL(buildConnectingSplashDataUrl(themePalette)),
+          catch: (cause) =>
+            new PreviewManager.PreviewOperationError({
+              operation: "connectingSplash.load",
+              cause,
+            }),
+        }).pipe(
           Effect.catch((error) =>
-            logWindowWarning("failed to update preview theme palette", {
-              message: error.message,
+            logWindowWarning("failed to refresh connecting splash theme", {
+              message: String(error),
             }),
           ),
         );
-        yield* electronWindow.syncAllAppearance((window) =>
-          syncWindowAppearance(window, themePalette, environment.platform),
-        );
-        const splash = yield* Ref.get(splashWindowRef);
-        if (Option.isSome(splash) && !splash.value.isDestroyed()) {
-          yield* Effect.tryPromise({
-            try: () => splash.value.loadURL(buildConnectingSplashDataUrl(themePalette)),
-            catch: (cause) =>
-              new PreviewManager.PreviewOperationError({
-                operation: "connectingSplash.load",
-                cause,
-              }),
-          }).pipe(
-            Effect.catch((error) =>
-              logWindowWarning("failed to refresh connecting splash theme", {
-                message: String(error),
-              }),
-            ),
-          );
-        }
-      }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
+      }
+    }),
   });
 });
 
