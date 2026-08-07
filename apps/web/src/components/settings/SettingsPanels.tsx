@@ -1402,9 +1402,9 @@ function FontFamilySettingsRow({
   const fontEnumeration = useFontEnumeration();
   // Sans rows always use the picker so the curated (bundled) catalog is
   // visible without a Local Font Access gesture — including while discovery
-  // is still "unknown". Opening the picker is the gesture that loads the
-  // installed list when the permission is "prompt". Monospace rows keep the
-  // free-text input until discovery is granted (no bundled mono yet).
+  // is still "unknown". Opening the picker is the gesture that loads (or
+  // reloads after a flipped site setting) the installed list. Monospace rows
+  // keep the free-text input until discovery is granted (no bundled mono yet).
   const inputFocusedRef = useRef(false);
   const showFontPicker = !requireMonospace || fontEnumeration.status === "granted";
   const familyControl = showFontPicker ? (

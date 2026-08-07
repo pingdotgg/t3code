@@ -60,7 +60,11 @@ let enumerationLoad: Promise<void> | null = null;
 
 /** Query installed fonts; call from a user gesture (the permission prompt needs one). */
 export function discoverInstalledFonts(): void {
-  if (enumerationState.status !== "unknown" || enumerationLoad !== null) return;
+  // Retry from "unavailable" as well as "unknown": a prior denial is not
+  // cached in queryInstalledFontFamilies, so reopening after the user flips
+  // the site setting can pick up the newly granted catalog. "granted" is a
+  // terminal success; do not re-query.
+  if (enumerationState.status === "granted" || enumerationLoad !== null) return;
   enumerationLoad = queryInstalledFontFamilies().then((result) => {
     enumerationState =
       result.status === "granted"
@@ -75,9 +79,10 @@ let permissionProbeStarted = false;
 
 /**
  * Resolve Local Font Access without a gesture when the answer is already
- * known: "granted" loads the catalog, "denied" marks enumeration unavailable
- * so sans rows can stay on the curated picker. "prompt" is left alone — the
- * browser still needs a gesture to raise the permission dialog.
+ * granted. "prompt" and "denied" stay on the focus/open-driven path: sans
+ * rows already show the curated picker while unknown, and opening the picker
+ * is the gesture that discovers — or rediscovers after the user flips a
+ * denied site setting without reloading.
  */
 function probeKnownFontPermission(): void {
   if (permissionProbeStarted || enumerationState.status !== "unknown") return;
@@ -86,14 +91,7 @@ function probeKnownFontPermission(): void {
   if (typeof permissions?.query !== "function") return;
   permissions.query({ name: "local-fonts" as PermissionName }).then(
     (status) => {
-      if (status.state === "granted") {
-        discoverInstalledFonts();
-        return;
-      }
-      if (status.state === "denied") {
-        enumerationState = { status: "unavailable" };
-        for (const listener of enumerationListeners) listener();
-      }
+      if (status.state === "granted") discoverInstalledFonts();
     },
     () => {
       // The engine does not recognize the permission name; keep the
@@ -107,8 +105,7 @@ function probeKnownFontPermission(): void {
  * Chromium and Electron). "unknown" until discovery resolves the permission.
  * Sans rows show the curated picker immediately (including while unknown);
  * monospace rows keep a plain input until discovery is granted. Where the
- * permission is already granted or denied, the probe at mount resolves
- * without a focus.
+ * permission is already granted, the probe at mount resolves without a focus.
  */
 export function useFontEnumeration(): FontEnumerationState {
   useEffect(probeKnownFontPermission, []);
