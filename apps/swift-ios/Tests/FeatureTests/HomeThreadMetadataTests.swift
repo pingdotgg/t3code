@@ -32,21 +32,52 @@ struct HomeThreadMetadataTests {
     }
 
     @Test
-    func workingDurationMatchesTheCompactWebFormatAndClampsFutureDates() {
-        let thread = FeatureThread(
-            id: "working",
-            projectID: "project",
-            title: "Build",
-            state: .working,
-            workingStartedAt: now.addingTimeInterval(-5_465)
+    func futureWorkingStartClampsToZeroSeconds() {
+        #expect(workingDuration(startedAtOffset: 5) == "0s")
+    }
+
+    @Test
+    func workingDurationUsesSecondsBelowOneMinute() {
+        #expect(workingDuration(startedAtOffset: -42) == "42s")
+    }
+
+    @Test
+    func queuedThreadsUseWorkingDuration() {
+        #expect(workingDuration(state: .queued, startedAtOffset: -42) == "42s")
+    }
+
+    @Test
+    func workingDurationSwitchesToMinutesAtOneMinute() {
+        #expect(workingDuration(startedAtOffset: -60) == "1m")
+    }
+
+    @Test
+    func workingDurationSwitchesToHoursAtOneHour() {
+        #expect(workingDuration(startedAtOffset: -3_600) == "1h 0m")
+    }
+
+    @Test
+    func workingDurationUsesHoursAndRemainingMinutes() {
+        #expect(workingDuration(startedAtOffset: -5_465) == "1h 31m")
+    }
+
+    @Test
+    func accessibilityDurationSpellsOutSingularUnits() {
+        #expect(accessibilityDuration(startedAtOffset: -1) == "1 second")
+        #expect(accessibilityDuration(startedAtOffset: -60) == "1 minute")
+        #expect(accessibilityDuration(startedAtOffset: -3_600) == "1 hour")
+    }
+
+    @Test
+    func accessibilityDurationSpellsOutHoursAndMinutes() {
+        #expect(
+            accessibilityDuration(startedAtOffset: -5_465)
+                == "1 hour, 31 minutes"
         )
-        let future = FeatureThread(
-            id: "queued",
-            projectID: "project",
-            title: "Queue",
-            state: .queued,
-            workingStartedAt: now.addingTimeInterval(5)
-        )
+    }
+
+    @Test
+    func nonWorkingThreadsDoNotExposeWorkingDuration() {
         let idle = FeatureThread(
             id: "idle",
             projectID: "project",
@@ -62,10 +93,29 @@ struct HomeThreadMetadataTests {
             workingStartedAt: now.addingTimeInterval(-10)
         )
 
-        #expect(thread.homeWorkingDuration(at: now) == "1h 31m")
-        #expect(future.homeWorkingDuration(at: now) == "0s")
         #expect(idle.homeWorkingDuration(at: now) == nil)
         #expect(monitoring.homeWorkingDuration(at: now) == nil)
+    }
+
+    private func workingDuration(
+        state: FeatureThreadState = .working,
+        startedAtOffset: TimeInterval
+    ) -> String? {
+        FeatureThread(
+            id: "working",
+            projectID: "project",
+            title: "Build",
+            state: state,
+            workingStartedAt: now.addingTimeInterval(startedAtOffset)
+        )
+        .homeWorkingDuration(at: now)
+    }
+
+    private func accessibilityDuration(startedAtOffset: TimeInterval) -> String {
+        HomeWorkingDuration.accessibility(
+            since: now.addingTimeInterval(startedAtOffset),
+            now: now
+        )
     }
 
     @Test
