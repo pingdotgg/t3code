@@ -44,7 +44,7 @@ function SidebarUpdateReleaseNotesTooltip({
       <div className="px-1">
         <div className="text-sm leading-5 font-medium">{tooltip}</div>
       </div>
-      <div className="pointer-events-auto max-h-[min(28rem,calc(100vh-6rem))] overflow-y-auto px-1 pt-4 pb-1">
+      <div className="max-h-[min(28rem,calc(100vh-6rem))] overflow-y-auto px-1 pt-4 pb-1">
         {state.releaseNotes.map((releaseNote, index) => (
           <div key={releaseNote.version}>
             {index > 0 && <Separator className="my-3 bg-border/60" />}
@@ -203,7 +203,9 @@ export function SidebarUpdatePill() {
               align="start"
               className={
                 state?.channel === "nightly" && state.releaseNotes.length > 0
-                  ? "max-w-none text-balance"
+                  ? // pointer-events-auto overrides the positioner's pointer-events-none so the
+                    // release notes stay open (and scrollable) when the cursor moves into them.
+                    "pointer-events-auto max-w-none text-balance"
                   : undefined
               }
               side="top"

@@ -8,18 +8,23 @@ import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("037_ProjectionThreadSubtitles", (it) => {
-  it.effect("adds the persisted subtitle column", () =>
+layer("038_ProjectionThreadSubtitles", (it) => {
+  it.effect("adds subtitles after the upstream keyset index migration", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 36 });
       yield* runMigrations({ toMigrationInclusive: 37 });
+      yield* runMigrations({ toMigrationInclusive: 38 });
 
       const columns = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(projection_threads)
       `;
       assert.ok(columns.some((column) => column.name === "subtitle"));
+
+      const indexes = yield* sql<{ readonly name: string }>`
+        PRAGMA index_list(projection_turns)
+      `;
+      assert.ok(indexes.some((index) => index.name === "idx_projection_turns_thread_keyset"));
     }),
   );
 });
