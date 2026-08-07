@@ -20,6 +20,7 @@ interface HistoryPositioningTarget {
 }
 
 interface UseProgressiveTimelineHistoryInput {
+  readonly contentInsetEndAdjustment: number;
   readonly historyTargetMessageId: MessageId | null;
   readonly isLoadingNextMessages: boolean;
   readonly isLoadingPreviousMessages: boolean;
@@ -39,6 +40,7 @@ interface UseProgressiveTimelineHistoryInput {
 }
 
 export function useProgressiveTimelineHistory({
+  contentInsetEndAdjustment,
   historyTargetMessageId,
   isLoadingNextMessages,
   isLoadingPreviousMessages,
@@ -196,14 +198,17 @@ export function useProgressiveTimelineHistory({
   }, [historyTargetMessageId, onHistoryTargetReady, onManualNavigation, scheduleMinimapUpdate]);
 
   const handleScroll = useCallback(() => {
-    const localIsAtEnd = resolveTimelineIsAtEnd(listRef.current?.getState());
+    const localIsAtEnd = resolveTimelineIsAtEnd(
+      listRef.current?.getState(),
+      contentInsetEndAdjustment,
+    );
     if (localIsAtEnd !== undefined) {
       onIsAtEndChange(
         messageHistory === undefined ? localIsAtEnd : localIsAtEnd && !messageHistory.hasMoreAfter,
       );
     }
     scheduleMinimapUpdate();
-  }, [listRef, messageHistory, onIsAtEndChange, scheduleMinimapUpdate]);
+  }, [contentInsetEndAdjustment, listRef, messageHistory, onIsAtEndChange, scheduleMinimapUpdate]);
 
   const selectHistoryTarget = useCallback(
     (item: TimelineHistoryNavigationTarget) => {

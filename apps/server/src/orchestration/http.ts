@@ -69,7 +69,35 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
           const snapshot = yield* projectionSnapshotQuery
-            .getThreadDetailSnapshot(args.params.threadId, args.query.turnLimit)
+            .getThreadDetailSnapshot(
+              args.params.threadId,
+              args.payload.turnLimit === undefined
+                ? undefined
+                : {
+                    turnLimit: args.payload.turnLimit,
+                    ...(args.payload.beforeCursor !== undefined
+                      ? { beforeCursor: args.payload.beforeCursor }
+                      : {}),
+                  },
+            )
+            .pipe(
+              Effect.catch((cause) =>
+                failEnvironmentInternal("orchestration_thread_snapshot_failed", cause),
+              ),
+            );
+          if (Option.isNone(snapshot)) {
+            return yield* failEnvironmentNotFound("thread_not_found");
+          }
+          return projectThreadDetailSnapshot(snapshot.value);
+        }),
+      )
+      .handle(
+        "threadMessageSnapshot",
+        Effect.fn("environment.orchestration.threadMessageSnapshot")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const snapshot = yield* projectionSnapshotQuery
+            .getThreadMessageSnapshot(args.params.threadId, args.payload.turnLimit)
             .pipe(
               Effect.catch((cause) =>
                 failEnvironmentInternal("orchestration_thread_snapshot_failed", cause),
@@ -90,10 +118,10 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
             .getThreadMessagePage({
               threadId: args.params.threadId,
               before: {
-                createdAt: args.query.beforeCreatedAt,
-                messageId: args.query.beforeMessageId,
+                createdAt: args.payload.beforeCreatedAt,
+                messageId: args.payload.beforeMessageId,
               },
-              turnLimit: args.query.turnLimit,
+              turnLimit: args.payload.turnLimit,
             })
             .pipe(
               Effect.catch((cause) =>
@@ -115,10 +143,10 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
             .getThreadMessagePageAfter({
               threadId: args.params.threadId,
               after: {
-                createdAt: args.query.afterCreatedAt,
-                messageId: args.query.afterMessageId,
+                createdAt: args.payload.afterCreatedAt,
+                messageId: args.payload.afterMessageId,
               },
-              turnLimit: args.query.turnLimit,
+              turnLimit: args.payload.turnLimit,
             })
             .pipe(
               Effect.catch((cause) =>
@@ -140,7 +168,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
             .getThreadMessagePageAround({
               threadId: args.params.threadId,
               messageId: args.params.messageId,
-              turnLimit: args.query.turnLimit,
+              turnLimit: args.payload.turnLimit,
             })
             .pipe(
               Effect.catch((cause) =>

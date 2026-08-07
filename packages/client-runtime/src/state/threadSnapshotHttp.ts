@@ -35,13 +35,23 @@ export const THREAD_TURN_PAGE_SIZE = 10;
  * WebSocket subscription's first frame. The response is gzip-compressible by
  * the transport and keeps the (potentially multi-KB) snapshot off the socket.
  */
+/**
+ * Optional turn window for a snapshot fetch. Only send a window to servers
+ * that advertise `threadSnapshotPagination`; older servers reject unknown
+ * query parameters.
+ */
+export interface ThreadSnapshotWindow {
+  readonly turnLimit: number;
+  readonly beforeCursor?: string;
+}
+
 export const fetchEnvironmentThreadSnapshot = Effect.fn(
   "clientRuntime.state.fetchEnvironmentThreadSnapshot",
 )(function* (input: {
   readonly prepared: PreparedConnection;
   readonly threadId: ThreadId;
   readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
-  readonly turnLimit?: number;
+  readonly window?: ThreadSnapshotWindow;
   readonly timeoutMs?: number;
 }) {
   const requestUrl = new URL(
@@ -50,8 +60,11 @@ export const fetchEnvironmentThreadSnapshot = Effect.fn(
       `/api/orchestration/threads/${input.threadId}`,
     ),
   );
-  if (input.turnLimit !== undefined) {
-    requestUrl.searchParams.set("turnLimit", String(input.turnLimit));
+  if (input.window !== undefined) {
+    requestUrl.searchParams.set("turnLimit", String(input.window.turnLimit));
+  }
+  if (input.window?.beforeCursor !== undefined) {
+    requestUrl.searchParams.set("beforeCursor", input.window.beforeCursor);
   }
   const client = yield* makeEnvironmentHttpApiClient(input.prepared.httpBaseUrl);
   const headers = yield* buildEnvironmentAuthHeaders(
@@ -67,7 +80,49 @@ export const fetchEnvironmentThreadSnapshot = Effect.fn(
       input.prepared.httpAuthorization,
       client.orchestration.threadSnapshot({
         params: { threadId: input.threadId },
-        query: input.turnLimit === undefined ? {} : { turnLimit: input.turnLimit },
+        payload: {
+          ...(input.window !== undefined ? { turnLimit: input.window.turnLimit } : {}),
+          ...(input.window?.beforeCursor !== undefined
+            ? { beforeCursor: input.window.beforeCursor }
+            : {}),
+        },
+        headers,
+      }),
+    ),
+  );
+});
+
+export const fetchEnvironmentThreadMessageSnapshot = Effect.fn(
+  "clientRuntime.state.fetchEnvironmentThreadMessageSnapshot",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly threadId: ThreadId;
+  readonly turnLimit: number;
+  readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
+  readonly timeoutMs?: number;
+}) {
+  const requestUrl = new URL(
+    environmentEndpointUrl(
+      input.prepared.httpBaseUrl,
+      `/api/orchestration/threads/${input.threadId}/with-message-history`,
+    ),
+  );
+  requestUrl.searchParams.set("turnLimit", String(input.turnLimit));
+  const client = yield* makeEnvironmentHttpApiClient(input.prepared.httpBaseUrl);
+  const headers = yield* buildEnvironmentAuthHeaders(
+    input.prepared.httpAuthorization,
+    "GET",
+    requestUrl.toString(),
+    input.signer,
+  );
+  return yield* executeEnvironmentHttpRequest(
+    requestUrl.toString(),
+    input.timeoutMs ?? DEFAULT_THREAD_SNAPSHOT_TIMEOUT_MS,
+    withEnvironmentCredentials(
+      input.prepared.httpAuthorization,
+      client.orchestration.threadMessageSnapshot({
+        params: { threadId: input.threadId },
+        payload: { turnLimit: input.turnLimit },
         headers,
       }),
     ),
@@ -107,7 +162,7 @@ export const fetchEnvironmentThreadMessagesBefore = Effect.fn(
       input.prepared.httpAuthorization,
       client.orchestration.threadMessages({
         params: { threadId: input.threadId },
-        query: {
+        payload: {
           beforeCreatedAt: input.before.createdAt,
           beforeMessageId: input.before.messageId,
           turnLimit: input.turnLimit,
@@ -151,7 +206,7 @@ export const fetchEnvironmentThreadMessagesAfter = Effect.fn(
       input.prepared.httpAuthorization,
       client.orchestration.threadMessagesAfter({
         params: { threadId: input.threadId },
-        query: {
+        payload: {
           afterCreatedAt: input.after.createdAt,
           afterMessageId: input.after.messageId,
           turnLimit: input.turnLimit,
@@ -192,7 +247,7 @@ export const fetchEnvironmentThreadMessagesAround = Effect.fn(
       input.prepared.httpAuthorization,
       client.orchestration.threadMessagesAround({
         params: { threadId: input.threadId, messageId: input.messageId },
-        query: { turnLimit: THREAD_TURN_PAGE_SIZE },
+        payload: { turnLimit: THREAD_TURN_PAGE_SIZE },
         headers,
       }),
     ),
@@ -245,7 +300,12 @@ export class ThreadSnapshotLoader extends Context.Service<
     readonly load: (
       prepared: PreparedConnection,
       threadId: ThreadId,
-      turnLimit?: number,
+      window?: ThreadSnapshotWindow,
+    ) => Effect.Effect<Option.Option<OrchestrationThreadDetailSnapshot>>;
+    readonly loadMessageHistory: (
+      prepared: PreparedConnection,
+      threadId: ThreadId,
+      turnLimit: number,
     ) => Effect.Effect<Option.Option<OrchestrationThreadDetailSnapshot>>;
     readonly loadPreviousMessages: (
       prepared: PreparedConnection,
@@ -284,12 +344,12 @@ export const threadSnapshotLoaderLayer: Layer.Layer<
     // connections work without one).
     const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
     return ThreadSnapshotLoader.of({
-      load: (prepared: PreparedConnection, threadId: ThreadId, turnLimit?: number) =>
+      load: (prepared: PreparedConnection, threadId: ThreadId, window?: ThreadSnapshotWindow) =>
         fetchEnvironmentThreadSnapshot({
           prepared,
           threadId,
           signer,
-          ...(turnLimit === undefined ? {} : { turnLimit }),
+          ...(window !== undefined ? { window } : {}),
         }).pipe(
           Effect.map(Option.some<OrchestrationThreadDetailSnapshot>),
           Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -309,6 +369,33 @@ export const threadSnapshotLoaderLayer: Layer.Layer<
           Effect.catchCause((cause) =>
             Effect.logWarning(
               "Could not load the thread snapshot over HTTP; using the socket snapshot instead.",
+            ).pipe(
+              Effect.annotateLogs({ threadId, cause: Cause.pretty(cause) }),
+              Effect.as(Option.none<OrchestrationThreadDetailSnapshot>()),
+            ),
+          ),
+        ),
+      loadMessageHistory: (prepared: PreparedConnection, threadId: ThreadId, turnLimit: number) =>
+        fetchEnvironmentThreadMessageSnapshot({
+          prepared,
+          threadId,
+          turnLimit,
+          signer,
+        }).pipe(
+          Effect.map(Option.some<OrchestrationThreadDetailSnapshot>),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.catchTags({
+            EnvironmentResourceNotFoundError: () =>
+              Effect.logDebug(
+                "Thread message snapshot not found over HTTP; deferring to the socket subscription.",
+              ).pipe(
+                Effect.annotateLogs({ threadId }),
+                Effect.as(Option.none<OrchestrationThreadDetailSnapshot>()),
+              ),
+          }),
+          Effect.catchCause((cause) =>
+            Effect.logWarning(
+              "Could not load the thread message snapshot over HTTP; using the socket snapshot instead.",
             ).pipe(
               Effect.annotateLogs({ threadId, cause: Cause.pretty(cause) }),
               Effect.as(Option.none<OrchestrationThreadDetailSnapshot>()),
