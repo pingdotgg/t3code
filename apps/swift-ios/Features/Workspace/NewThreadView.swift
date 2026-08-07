@@ -22,7 +22,7 @@ public struct NewThreadView: View {
     @State private var startFromOrigin = true
     @State private var branchesLoading = false
     @State private var branchLoadFailed = false
-    @State private var showingBranchPicker = false
+    @State private var activePicker: NewTaskPicker?
     @State private var isSubmitting = false
     @State private var submissionFailed = false
     @State private var restoredDraftProjectID: String?
@@ -126,19 +126,32 @@ public struct NewThreadView: View {
             guard !submittedSuccessfully else { return }
             persistCurrentDraftImmediately()
         }
-        .sheet(isPresented: $showingBranchPicker) {
-            NewTaskBranchPicker(
-                branches: branches,
-                selection: selectedBranch,
-                isLoading: branchesLoading,
-                loadFailed: branchLoadFailed,
-                onSelect: { branch in
-                    workspaceSelectionIsExplicit = true
-                    selectedBranch = branch
-                    showingBranchPicker = false
-                },
-                onRefresh: { Task { await loadBranches(refresh: true) } }
-            )
+        .sheet(item: $activePicker) { picker in
+            switch picker {
+            case .project:
+                NewTaskProjectPicker(
+                    groups: creationProjectGroups,
+                    selectionID: selectedProjectGroup?.id,
+                    onSelect: { group in
+                        if selectProjectGroup(group) {
+                            activePicker = nil
+                        }
+                    }
+                )
+            case .branch:
+                NewTaskBranchPicker(
+                    branches: branches,
+                    selection: selectedBranch,
+                    isLoading: branchesLoading,
+                    loadFailed: branchLoadFailed,
+                    onSelect: { branch in
+                        workspaceSelectionIsExplicit = true
+                        selectedBranch = branch
+                        activePicker = nil
+                    },
+                    onRefresh: { Task { await loadBranches(refresh: true) } }
+                )
+            }
         }
         .alert("Couldn’t start task", isPresented: $submissionFailed) {
             Button("OK") {}
@@ -167,18 +180,8 @@ public struct NewThreadView: View {
             Text("What should we build")
             HStack(spacing: 0) {
                 Text("in")
-                Menu {
-                    ForEach(creationProjectGroups) { group in
-                        Button {
-                            selectProjectGroup(group)
-                        } label: {
-                            if group.id == selectedProjectGroup?.id {
-                                Label(group.name, systemImage: "checkmark")
-                            } else {
-                                Text(group.name)
-                            }
-                        }
-                    }
+                Button {
+                    activePicker = .project
                 } label: {
                     Text(selectedProjectGroup?.name ?? selectedProject?.name ?? "a project")
                         .foregroundStyle(T3Colors.textPrimary)
@@ -195,6 +198,10 @@ public struct NewThreadView: View {
                 .buttonStyle(.plain)
                 .disabled(isSubmitting)
                 .padding(.leading, 5)
+                .accessibilityLabel("Choose project")
+                .accessibilityValue(
+                    selectedProjectGroup?.name ?? selectedProject?.name ?? "a project"
+                )
                 Text("?")
             }
         }
@@ -311,7 +318,7 @@ public struct NewThreadView: View {
 
             if workspaceMode == .worktree {
                 Button {
-                    showingBranchPicker = true
+                    activePicker = .branch
                 } label: {
                     workspaceControlLabel(
                         selectedBranch?.name
@@ -550,19 +557,25 @@ public struct NewThreadView: View {
         }
     }
 
-    private func selectProject(_ id: String) {
-        guard id != projectID else { return }
+    @discardableResult
+    private func selectProject(_ id: String) -> Bool {
+        guard id != projectID else { return true }
+        guard creationProjects.contains(where: { $0.id == id }) else { return false }
         persistCurrentDraftImmediately()
         projectID = id
         prepareProjectIfNeeded(id)
+        return true
     }
 
-    private func selectProjectGroup(_ group: DailyUXProjectGroup) {
-        guard group.id != selectedProjectGroup?.id else { return }
-        let target = group.preferredProject(environmentID: selectedProject?.environmentID)
-            ?? group.projects.first
-        guard let target else { return }
-        selectProject(target.id)
+    @discardableResult
+    private func selectProjectGroup(_ group: DailyUXProjectGroup) -> Bool {
+        guard let target = DailyUXProjectGrouping.selectionTarget(
+            groupID: group.id,
+            preferredEnvironmentID: selectedProject?.environmentID,
+            in: creationProjectGroups
+        ) else { return false }
+        guard group.id != selectedProjectGroup?.id else { return true }
+        return selectProject(target.id)
     }
 
     private func selectEnvironment(_ id: String) {
@@ -882,6 +895,71 @@ private struct DottedUnderline: Shape {
         path.move(to: CGPoint(x: rect.minX, y: rect.midY))
         path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
         return path
+    }
+}
+
+private enum NewTaskPicker: String, Identifiable {
+    case project
+    case branch
+
+    var id: String { rawValue }
+}
+
+private struct NewTaskProjectPicker: View {
+    @SwiftUI.Environment(\.dismiss) private var dismiss
+    let groups: [DailyUXProjectGroup]
+    let selectionID: String?
+    let onSelect: (DailyUXProjectGroup) -> Void
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if groups.isEmpty {
+                    ContentUnavailableView(
+                        "No projects available",
+                        systemImage: "folder",
+                        description: Text("Reconnect an environment or add a project to continue.")
+                    )
+                } else {
+                    List(groups) { group in
+                        Button {
+                            onSelect(group)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Text(group.name)
+                                    .foregroundStyle(T3Colors.textPrimary)
+
+                                Spacer(minLength: 10)
+
+                                if group.id == selectionID {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(T3Colors.accent)
+                                }
+                            }
+                            .frame(minHeight: 34)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(
+                            group.id == selectionID ? .isSelected : []
+                        )
+                        .listRowBackground(T3Colors.background)
+                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                }
+            }
+            .background(T3Colors.background)
+            .navigationTitle("Project")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationBackground(T3Colors.background)
     }
 }
 

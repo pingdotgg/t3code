@@ -271,6 +271,15 @@ enum DailyUXProjectGrouping {
         groups.first { $0.memberProjectIDs.contains(projectID) }
     }
 
+    static func selectionTarget(
+        groupID: String,
+        preferredEnvironmentID: String?,
+        in groups: [DailyUXProjectGroup]
+    ) -> FeatureProject? {
+        groups.first { $0.id == groupID }?
+            .preferredProject(environmentID: preferredEnvironmentID)
+    }
+
     private static func physicalKey(_ project: FeatureProject) -> String {
         "\(project.environmentID):\(normalizedPath(project.path))"
     }

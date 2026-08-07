@@ -267,6 +267,56 @@ struct DailyUXNewTaskTests {
     }
 
     @Test
+    func projectSelectionResolvesAgainstCurrentGroups() throws {
+        let identity = FeatureRepositoryIdentity(
+            canonicalKey: "github.com/t3/example",
+            displayName: "Example"
+        )
+        let staleStudio = FeatureProject(
+            id: "stale-studio",
+            environmentID: "studio",
+            name: "example",
+            path: "/code/example",
+            repositoryIdentity: identity
+        )
+        let currentStudio = FeatureProject(
+            id: "current-studio",
+            environmentID: "studio",
+            name: "example",
+            path: "/code/example",
+            repositoryIdentity: identity
+        )
+        let laptop = FeatureProject(
+            id: "current-laptop",
+            environmentID: "laptop",
+            name: "example",
+            path: "/Users/test/example",
+            repositoryIdentity: identity
+        )
+        let staleGroup = try #require(
+            DailyUXProjectGrouping.groups(projects: [staleStudio]).first
+        )
+        let currentGroups = DailyUXProjectGrouping.groups(
+            projects: [currentStudio, laptop]
+        )
+
+        #expect(
+            DailyUXProjectGrouping.selectionTarget(
+                groupID: staleGroup.id,
+                preferredEnvironmentID: laptop.environmentID,
+                in: currentGroups
+            )?.id == laptop.id
+        )
+        #expect(
+            DailyUXProjectGrouping.selectionTarget(
+                groupID: "removed-project",
+                preferredEnvironmentID: nil,
+                in: currentGroups
+            ) == nil
+        )
+    }
+
+    @Test
     func projectsWithoutRepositoryIdentityNeverGroupAcrossComputers() {
         let studio = FeatureProject(
             id: "studio",
