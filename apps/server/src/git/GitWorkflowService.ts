@@ -11,7 +11,10 @@ import {
   type VcsCreateRefResult,
   type VcsCreateWorktreeInput,
   type VcsCreateWorktreeResult,
+  type VcsListCommitsInput,
+  type VcsListCommitsResult,
   type VcsListRefsInput,
+  type VcsStagePathsInput,
   type VcsListRefsResult,
   type GitManagerServiceError,
   type GitPreparePullRequestThreadInput,
@@ -62,6 +65,11 @@ export class GitWorkflowService extends Context.Service<
     readonly listRefs: (
       input: VcsListRefsInput,
     ) => Effect.Effect<VcsListRefsResult, GitCommandError>;
+    readonly stagePaths: (input: VcsStagePathsInput) => Effect.Effect<void, GitCommandError>;
+    readonly unstagePaths: (input: VcsStagePathsInput) => Effect.Effect<void, GitCommandError>;
+    readonly listCommits: (
+      input: VcsListCommitsInput,
+    ) => Effect.Effect<VcsListCommitsResult, GitCommandError>;
     readonly createWorktree: (
       input: VcsCreateWorktreeInput,
     ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
@@ -121,6 +129,14 @@ function nonRepositoryStatus(): VcsStatusResult {
     behindCount: 0,
     aheadOfDefaultCount: 0,
     pr: null,
+  };
+}
+
+function nonRepositoryListCommits(): VcsListCommitsResult {
+  return {
+    commits: [],
+    isRepo: false,
+    nextCursor: null,
   };
 }
 
@@ -297,6 +313,23 @@ export const make = Effect.gen(function* () {
       detectGitRepositoryForCommand("GitWorkflowService.listRefs", input.cwd).pipe(
         Effect.flatMap((isGitRepository) =>
           isGitRepository ? git.listRefs(input) : Effect.succeed(nonRepositoryListRefs()),
+        ),
+      ),
+    // Staging is a hard command: a non-git workspace should fail loudly rather
+    // than silently report success for an operation that never happened.
+    stagePaths: (input) =>
+      ensureGitCommand("GitWorkflowService.stagePaths", input.cwd).pipe(
+        Effect.andThen(git.stagePaths(input.cwd, input.paths)),
+      ),
+    unstagePaths: (input) =>
+      ensureGitCommand("GitWorkflowService.unstagePaths", input.cwd).pipe(
+        Effect.andThen(git.unstagePaths(input.cwd, input.paths)),
+      ),
+    // Reading history is soft, like listRefs: a non-git folder just has none.
+    listCommits: (input) =>
+      detectGitRepositoryForCommand("GitWorkflowService.listCommits", input.cwd).pipe(
+        Effect.flatMap((isGitRepository) =>
+          isGitRepository ? git.listCommits(input) : Effect.succeed(nonRepositoryListCommits()),
         ),
       ),
     createWorktree: (input) =>

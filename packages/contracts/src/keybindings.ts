@@ -56,6 +56,7 @@ const STATIC_KEYBINDING_COMMANDS = [
   "terminal.close",
   "rightPanel.toggle",
   "diff.toggle",
+  "git.toggle",
   "preview.toggle",
   "preview.refresh",
   "preview.focusUrl",

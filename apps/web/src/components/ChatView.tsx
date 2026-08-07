@@ -144,7 +144,11 @@ import {
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
 import { RightPanelTabs } from "./RightPanelTabs";
+import { projectSourceFolders } from "@t3tools/shared/projectFolders";
+
+import { useGitPanelStore, selectGitPanelFolder } from "~/gitPanelStore";
 import { AgentsPanel } from "./AgentsPanel";
+import { GitPanel, type GitPanelFolder } from "./git/GitPanel";
 import {
   deriveAgentPanelModel,
   foldSubagentActivities,
@@ -2519,6 +2523,49 @@ function ChatViewContent(props: ChatViewProps) {
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
   const activeTerminalLaunchContext =
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
+  // The Git panel works one source folder at a time. A thread on a worktree
+  // shows that worktree instead of the project root, because that is the
+  // checkout its changes actually live in.
+  const gitPanelFolders = useMemo<ReadonlyArray<GitPanelFolder>>(() => {
+    if (!activeProject) return [];
+    const projectFolders = projectSourceFolders(activeProject).map((folder) => ({
+      path: folder.path,
+      label: folder.label ?? folder.path.slice(folder.path.lastIndexOf("/") + 1),
+      isPrimary: folder.isPrimary,
+    }));
+    if (
+      activeThreadWorktreePath &&
+      !projectFolders.some((folder) => folder.path === activeThreadWorktreePath)
+    ) {
+      return [
+        {
+          path: activeThreadWorktreePath,
+          label: activeThreadWorktreePath.slice(activeThreadWorktreePath.lastIndexOf("/") + 1),
+          isPrimary: false,
+        },
+        ...projectFolders,
+      ];
+    }
+    return projectFolders;
+  }, [activeProject, activeThreadWorktreePath]);
+  const gitPanelFolderPaths = useMemo(
+    () => gitPanelFolders.map((folder) => folder.path),
+    [gitPanelFolders],
+  );
+  const selectedGitPanelFolder = useGitPanelStore((state) => state.selectedFolderByThreadKey);
+  const gitPanelCwd = selectGitPanelFolder(
+    selectedGitPanelFolder,
+    activeThreadRef,
+    gitPanelFolderPaths,
+    activeWorkspaceRoot ?? null,
+  );
+  const selectGitPanelFolderPath = useCallback(
+    (folderPath: string) => {
+      if (!activeThreadRef) return;
+      useGitPanelStore.getState().selectFolder(activeThreadRef, folderPath);
+    },
+    [activeThreadRef],
+  );
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const showComposerContextStrip = shouldShowComposerContextStrip({
@@ -3131,6 +3178,14 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().open(activeThreadRef, "agents");
   }, [activeThreadRef]);
+  const addGitSurface = useCallback(() => {
+    if (!activeThreadRef || !activeProject) return;
+    useRightPanelStore.getState().open(activeThreadRef, "git");
+  }, [activeProject, activeThreadRef]);
+  const toggleGitSurface = useCallback(() => {
+    if (!activeThreadRef || !activeProject) return;
+    useRightPanelStore.getState().toggle(activeThreadRef, "git");
+  }, [activeProject, activeThreadRef]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -4602,6 +4657,13 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
+      if (command === "git.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleGitSurface();
+        return;
+      }
+
       if (command === "modelPicker.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -5890,6 +5952,15 @@ function ChatViewContent(props: ChatViewProps) {
           initialGitScope={initialDiffPanelGitScope}
         />
       </Suspense>
+    ) : activeRightPanelSurface?.kind === "git" ? (
+      <GitPanel
+        environmentId={activeProject?.environmentId ?? null}
+        cwd={gitPanelCwd}
+        folders={gitPanelFolders}
+        threadRef={activeThreadRef}
+        onSelectFolder={selectGitPanelFolderPath}
+        onOpenFile={openFileSurface}
+      />
     ) : activeRightPanelSurface?.kind === "agents" ? (
       <AgentsPanel
         model={agentPanelModel}
@@ -6330,9 +6401,11 @@ function ChatViewContent(props: ChatViewProps) {
           onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
           onAddAgents={addAgentsSurface}
+          onAddGit={addGitSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
+          gitAvailable={activeProject !== null}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -6358,9 +6431,11 @@ function ChatViewContent(props: ChatViewProps) {
             onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}
             onAddAgents={addAgentsSurface}
+            onAddGit={addGitSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
+            gitAvailable={activeProject !== null}
           >
             {rightPanelContent}
           </RightPanelTabs>

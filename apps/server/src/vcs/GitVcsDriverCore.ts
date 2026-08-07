@@ -24,7 +24,13 @@ import {
   type ReviewDiffFileContentsInput,
   type ReviewDiffPreviewInput,
   type ReviewDiffPreviewSource,
+  type VcsCommit,
+  type VcsFileChangeKind,
+  type VcsListCommitsInput,
+  type VcsListCommitsResult,
   type VcsRef,
+  type VcsWorkingTreeFile,
+  VCS_LIST_COMMITS_DEFAULT_LIMIT,
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
@@ -86,6 +92,11 @@ const NON_REPOSITORY_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitStatusDetail
   aheadCount: 0,
   behindCount: 0,
   aheadOfDefaultCount: 0,
+});
+const NON_REPOSITORY_LIST_COMMITS = Object.freeze<VcsListCommitsResult>({
+  commits: [],
+  isRepo: false,
+  nextCursor: null,
 });
 const NON_REPOSITORY_REMOTE_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitRemoteStatusDetails>({
   isRepo: false,
@@ -181,26 +192,142 @@ function parseNumstatEntries(
   return entries;
 }
 
-function parsePorcelainPath(line: string): string | null {
-  if (line.startsWith("? ") || line.startsWith("! ")) {
-    const simple = line.slice(2).trim();
-    return simple.length > 0 ? simple : null;
-  }
+/**
+ * Turn `%D` into plain ref names.
+ *
+ * Git writes `HEAD -> main, origin/main, tag: v1`. The arrow marks the checked
+ * out branch, which the caller already knows from `isHead`, so it is collapsed
+ * to the branch name; tags keep their prefix so they read as tags in the UI.
+ */
+function parseCommitRefNames(decoration: string): ReadonlyArray<string> {
+  return decoration
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0 && entry !== "HEAD")
+    .map((entry) => (entry.startsWith("HEAD -> ") ? entry.slice("HEAD -> ".length) : entry))
+    .filter((entry) => entry.length > 0);
+}
 
-  if (!(line.startsWith("1 ") || line.startsWith("2 ") || line.startsWith("u "))) {
+/**
+ * Parse the NUL-delimited, RS-terminated records emitted by `listCommits`.
+ *
+ * Malformed records are skipped rather than failing the page — a single
+ * unparseable commit should not blank the history panel.
+ */
+export function parseCommitLog(stdout: string): ReadonlyArray<VcsCommit> {
+  const commits: VcsCommit[] = [];
+  for (const record of stdout.split("\x1e")) {
+    const trimmed = record.replace(/^\r?\n/, "");
+    if (trimmed.trim().length === 0) continue;
+    const [sha, shortSha, authorName, committedAt, decoration, subject] = trimmed.split("\x00");
+    if (!sha || !shortSha) continue;
+    const refNames = parseCommitRefNames(decoration ?? "");
+    commits.push({
+      sha,
+      shortSha,
+      subject: subject ?? "",
+      authorName: authorName ?? "",
+      committedAt: committedAt ?? "",
+      refNames,
+      isHead: (decoration ?? "").split(",").some((entry) => entry.trim().startsWith("HEAD")),
+    });
+  }
+  return commits;
+}
+
+export interface PorcelainEntry {
+  readonly path: string;
+  /** Null when nothing about the file is staged. */
+  readonly indexStatus: VcsFileChangeKind | null;
+  /** Null when the working copy matches the index. */
+  readonly worktreeStatus: VcsFileChangeKind | null;
+  /** Set only for renames and copies. */
+  readonly originalPath?: string;
+}
+
+/** Maps one column of a porcelain v2 `XY` code. `.` means "unchanged here". */
+function porcelainChangeKind(code: string | undefined): VcsFileChangeKind | null {
+  switch (code) {
+    case "A":
+      return "added";
+    case "M":
+    case "T":
+      return "modified";
+    case "D":
+      return "deleted";
+    case "R":
+      return "renamed";
+    case "C":
+      return "copied";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Parse one `git status --porcelain=2` record.
+ *
+ * Keeps both halves of the `XY` code so callers can tell staged from unstaged
+ * changes; a file with both set is partially staged. Returns null for records
+ * that name no file, and for ignored (`!`) entries, which are not changes.
+ */
+export function parsePorcelainEntry(line: string): PorcelainEntry | null {
+  if (line.startsWith("? ")) {
+    const simple = line.slice(2).trim();
+    // Untracked files exist only in the worktree until they are staged, at
+    // which point git reports them as an ordinary `1 A.` record instead.
+    return simple.length > 0
+      ? { path: simple, indexStatus: null, worktreeStatus: "untracked" }
+      : null;
+  }
+  if (line.startsWith("! ")) {
     return null;
   }
 
-  const tabIndex = line.indexOf("\t");
-  if (tabIndex >= 0) {
-    const fromTab = line.slice(tabIndex + 1);
-    const [filePath] = fromTab.split("\t");
-    return filePath?.trim().length ? filePath.trim() : null;
+  const isOrdinary = line.startsWith("1 ");
+  const isRenameOrCopy = line.startsWith("2 ");
+  const isUnmerged = line.startsWith("u ");
+  if (!(isOrdinary || isRenameOrCopy || isUnmerged)) {
+    return null;
   }
 
-  const parts = line.trim().split(/\s+/g);
-  const filePath = parts.at(-1) ?? "";
-  return filePath.length > 0 ? filePath : null;
+  const xy = line.slice(2, 4);
+  const indexStatus = isUnmerged ? "conflicted" : porcelainChangeKind(xy[0]);
+  const worktreeStatus = isUnmerged ? "conflicted" : porcelainChangeKind(xy[1]);
+
+  // Field counts before the path, per gitstatus(5): ordinary records carry 8,
+  // rename/copy add the similarity score, and unmerged carry three stage
+  // hashes. Skipping exactly that many keeps paths containing spaces intact.
+  const fieldsBeforePath = isOrdinary ? 8 : isRenameOrCopy ? 9 : 10;
+  const remainder = skipSpaceSeparatedFields(line, fieldsBeforePath);
+  if (remainder === null) return null;
+
+  // Only rename and copy records carry `<path>\t<originalPath>`.
+  const tabIndex = remainder.indexOf("\t");
+  const filePath = (tabIndex >= 0 ? remainder.slice(0, tabIndex) : remainder).trim();
+  if (filePath.length === 0) return null;
+  const originalPath = tabIndex >= 0 ? remainder.slice(tabIndex + 1).trim() : "";
+
+  return {
+    path: filePath,
+    indexStatus,
+    worktreeStatus,
+    ...(originalPath.length > 0 ? { originalPath } : {}),
+  };
+}
+
+/**
+ * Drop `count` space-separated fields from the front of a porcelain record and
+ * return what is left, or null when the record is too short to be valid.
+ */
+function skipSpaceSeparatedFields(line: string, count: number): string | null {
+  let offset = 0;
+  for (let field = 0; field < count; field += 1) {
+    const next = line.indexOf(" ", offset);
+    if (next === -1) return null;
+    offset = next + 1;
+  }
+  return offset < line.length ? line.slice(offset) : null;
 }
 
 function filterBranchesForListQuery(
@@ -424,6 +551,14 @@ function isUnbornHeadStderr(stderr: string): boolean {
     stderr.toLowerCase().includes("unknown revision") &&
     stderr.toLowerCase().includes("path not in the working tree")
   );
+}
+
+/**
+ * `git log` reports an unborn HEAD in its own words rather than the "unknown
+ * revision" phrasing `git diff` and `git reset` use.
+ */
+function isNoCommitsYetStderr(stderr: string): boolean {
+  return stderr.toLowerCase().includes("does not have any commits yet");
 }
 
 interface Trace2Monitor {
@@ -1659,7 +1794,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     let behindCount = 0;
     let aheadOfDefaultCount = 0;
     let hasWorkingTreeChanges = false;
-    const changedFilesWithoutNumstat = new Set<string>();
+    // Porcelain is the only source of staged/unstaged state; numstat below just
+    // adds line counts, and misses untracked files entirely.
+    const porcelainEntries = new Map<string, PorcelainEntry>();
 
     for (const line of statusStdout.split(/\r?\n/g)) {
       if (line.startsWith("# branch.head ")) {
@@ -1680,9 +1817,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         continue;
       }
       if (line.trim().length > 0 && !line.startsWith("#")) {
-        hasWorkingTreeChanges = true;
-        const pathValue = parsePorcelainPath(line);
-        if (pathValue) changedFilesWithoutNumstat.add(pathValue);
+        const entry = parsePorcelainEntry(line);
+        // Ignored entries parse to null and are not working-tree changes.
+        if (entry) {
+          hasWorkingTreeChanges = true;
+          porcelainEntries.set(entry.path, entry);
+        }
       }
     }
 
@@ -1715,19 +1855,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     let insertions = 0;
     let deletions = 0;
-    const files = Array.from(fileStatMap.entries())
-      .map(([filePath, stat]) => {
+    // Union of both sources: numstat knows line counts, porcelain knows the
+    // staged/unstaged split and is the only one that sees untracked files.
+    const changedPaths = new Set([...fileStatMap.keys(), ...porcelainEntries.keys()]);
+    const files = Array.from(changedPaths)
+      .map((filePath) => {
+        const stat = fileStatMap.get(filePath) ?? { insertions: 0, deletions: 0 };
         insertions += stat.insertions;
         deletions += stat.deletions;
-        return { path: filePath, insertions: stat.insertions, deletions: stat.deletions };
+        const entry = porcelainEntries.get(filePath);
+        return {
+          path: filePath,
+          insertions: stat.insertions,
+          deletions: stat.deletions,
+          // A path known only to numstat has no porcelain record to split, so
+          // report it as an unstaged modification rather than inventing state.
+          indexStatus: entry?.indexStatus ?? null,
+          worktreeStatus: entry ? entry.worktreeStatus : "modified",
+          ...(entry?.originalPath ? { originalPath: entry.originalPath } : {}),
+        } satisfies VcsWorkingTreeFile;
       })
       .toSorted((a, b) => a.path.localeCompare(b.path));
-
-    for (const filePath of changedFilesWithoutNumstat) {
-      if (fileStatMap.has(filePath)) continue;
-      files.push({ path: filePath, insertions: 0, deletions: 0 });
-    }
-    files.sort((a, b) => a.path.localeCompare(b.path));
 
     return {
       isRepo: true,
@@ -1799,8 +1947,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
 
   const prepareCommitContext: GitVcsDriver.GitVcsDriver["Service"]["prepareCommitContext"] =
-    Effect.fn("prepareCommitContext")(function* (cwd, filePaths) {
-      if (filePaths && filePaths.length > 0) {
+    Effect.fn("prepareCommitContext")(function* (cwd, filePaths, scope) {
+      const resolvedScope = scope ?? (filePaths && filePaths.length > 0 ? "paths" : "all");
+
+      if (resolvedScope === "paths" && filePaths && filePaths.length > 0) {
         yield* runGit("GitVcsDriver.prepareCommitContext.reset", cwd, ["reset"]).pipe(
           Effect.catchTags({
             GitCommandError: () => Effect.void,
@@ -1813,9 +1963,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           "--",
           ...filePaths,
         ]);
-      } else {
+      } else if (resolvedScope === "all") {
         yield* runGit("GitVcsDriver.prepareCommitContext.addAll", cwd, ["add", "-A"]);
       }
+      // `index` stages nothing: the user's index is the commit, so touching it
+      // here would discard staging they did in the panel or in a terminal.
 
       const stagedSummary = yield* runGitStdout(
         "GitVcsDriver.prepareCommitContext.stagedSummary",
@@ -1841,6 +1993,116 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         stagedPatch,
       };
     });
+
+  const stagePaths: GitVcsDriver.GitVcsDriver["Service"]["stagePaths"] = Effect.fn("stagePaths")(
+    function* (cwd, paths) {
+      if (paths.length === 0) return;
+      // `-A` so a staged deletion is recorded as such rather than skipped.
+      yield* runGit("GitVcsDriver.stagePaths", cwd, [
+        "--literal-pathspecs",
+        "add",
+        "-A",
+        "--",
+        ...paths,
+      ]);
+    },
+  );
+
+  const unstagePaths: GitVcsDriver.GitVcsDriver["Service"]["unstagePaths"] = Effect.fn(
+    "unstagePaths",
+  )(function* (cwd, paths) {
+    if (paths.length === 0) return;
+    const result = yield* executeGitWithStableDiagnostics(
+      "GitVcsDriver.unstagePaths",
+      cwd,
+      ["--literal-pathspecs", "reset", "-q", "HEAD", "--", ...paths],
+      { allowNonZeroExit: true },
+    );
+    if (result.exitCode === 0) return;
+
+    // Before the first commit there is no HEAD to reset against, so removing
+    // the entries from the index is the equivalent operation.
+    if (isUnbornHeadStderr(result.stderr)) {
+      yield* runGit("GitVcsDriver.unstagePaths.unborn", cwd, [
+        "--literal-pathspecs",
+        "rm",
+        "-q",
+        "--cached",
+        "-r",
+        "--",
+        ...paths,
+      ]);
+      return;
+    }
+
+    return yield* new GitCommandError({
+      ...gitCommandContext({
+        operation: "GitVcsDriver.unstagePaths",
+        cwd,
+        args: ["reset", "-q", "HEAD", "--"],
+      }),
+      detail: "Failed to unstage paths.",
+      exitCode: result.exitCode,
+      stdoutLength: result.stdout.length,
+      stderrLength: result.stderr.length,
+    });
+  });
+
+  const listCommits: GitVcsDriver.GitVcsDriver["Service"]["listCommits"] = Effect.fn("listCommits")(
+    function* (input: VcsListCommitsInput) {
+      const cwd = input.cwd;
+      const limit = input.limit ?? VCS_LIST_COMMITS_DEFAULT_LIMIT;
+      const cursor = input.cursor ?? 0;
+
+      // NUL between fields so subjects and ref names can contain anything, and
+      // a record separator git will never emit inside a field.
+      const format = ["%H", "%h", "%an", "%cI", "%D", "%s"].join("%x00");
+      const result = yield* executeGitWithStableDiagnostics(
+        "GitVcsDriver.listCommits",
+        cwd,
+        [
+          "log",
+          "--no-color",
+          "--decorate=short",
+          `--format=${format}%x1e`,
+          // One extra row tells us whether another page exists without a
+          // second round trip.
+          `--max-count=${limit + 1}`,
+          `--skip=${cursor}`,
+        ],
+        { allowNonZeroExit: true },
+      ).pipe(
+        Effect.catchTags({
+          GitCommandError: (error) =>
+            isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
+        }),
+      );
+
+      if (result === null) return NON_REPOSITORY_LIST_COMMITS;
+      if (result.exitCode !== 0) {
+        // An unborn HEAD has no commits to list; that is empty, not an error.
+        if (isNonRepositoryGitStderr(result.stderr)) return NON_REPOSITORY_LIST_COMMITS;
+        if (isNoCommitsYetStderr(result.stderr) || isUnbornHeadStderr(result.stderr)) {
+          return { commits: [], isRepo: true, nextCursor: null };
+        }
+        return yield* new GitCommandError({
+          ...gitCommandContext({ operation: "GitVcsDriver.listCommits", cwd, args: ["log"] }),
+          detail: "Failed to list commits.",
+          exitCode: result.exitCode,
+          stdoutLength: result.stdout.length,
+          stderrLength: result.stderr.length,
+        });
+      }
+
+      const parsed = parseCommitLog(result.stdout);
+      const hasMore = parsed.length > limit;
+      return {
+        commits: parsed.slice(0, limit),
+        isRepo: true,
+        nextCursor: hasMore ? cursor + limit : null,
+      };
+    },
+  );
 
   const commit: GitVcsDriver.GitVcsDriver["Service"]["commit"] = Effect.fn("commit")(function* (
     cwd,
@@ -3058,6 +3320,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     statusDetailsLocal,
     statusDetailsRemote,
     prepareCommitContext,
+    stagePaths,
+    unstagePaths,
+    listCommits,
     commit: (cwd, subject, body, options) =>
       withListRefsInvalidation(cwd, commit(cwd, subject, body, options)),
     pushCurrentBranch: (cwd, fallbackBranch, options) =>

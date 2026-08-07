@@ -41,6 +41,21 @@ T3 Code works with the platforms your team already uses:
 - Open the review directly in your browser with one click
 - Check out a teammate's branch to review code locally
 
+### Stage and Commit from the Git Panel
+
+Open the **Git** tab in the right panel (`Cmd/Ctrl + Shift + G`) for a working view of the repository you are in:
+
+- **Staged** and **Changes** list your working tree separately. Hover a file to stage or unstage it, or use **Stage all** / **Unstage all** on a section heading. A file you edited after staging appears in both sections, because both halves are real.
+- **Commit Staged** commits exactly what is staged and nothing else. Leave the message blank to have one generated. The button stays disabled until something is staged, or while a merge conflict is unresolved.
+- **Push** sends your commits upstream. If the repository has no remote yet, the button becomes **Publish** and opens the same publishing flow described above.
+- **Recent commits** lists history with the branches and tags that point at each commit, and loads more as you scroll.
+
+The panel uses the repository's real index, so staging you do here shows up in your terminal and staging you do in a terminal shows up here.
+
+If your project has more than one source folder, the folder picker at the top of the panel switches between them, and a thread working in a worktree opens on that worktree.
+
+> The **Commit** button in the chat toolbar behaves differently on purpose: it commits everything your agent changed, ignoring what you have staged.
+
 ### Know Your Setup at a Glance
 
 The **Source Control settings** page shows you exactly what's connected:

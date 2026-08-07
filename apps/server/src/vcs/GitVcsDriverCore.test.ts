@@ -16,7 +16,12 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { GitCommandError, type ReviewDiffFileContentsInput } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
-import { makeGitVcsDriverCore, splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
+import {
+  makeGitVcsDriverCore,
+  parseCommitLog,
+  parsePorcelainEntry,
+  splitNullSeparatedGitStdoutPaths,
+} from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
@@ -1648,4 +1653,330 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
   });
+});
+
+describe("parsePorcelainEntry", () => {
+  it.effect("splits the XY code into staged and unstaged halves", () =>
+    Effect.sync(() => {
+      assert.deepStrictEqual(
+        parsePorcelainEntry("1 M. N... 100644 100644 100644 aaa bbb src/a.ts"),
+        {
+          path: "src/a.ts",
+          indexStatus: "modified",
+          worktreeStatus: null,
+        },
+      );
+      assert.deepStrictEqual(
+        parsePorcelainEntry("1 .M N... 100644 100644 100644 aaa bbb src/b.ts"),
+        {
+          path: "src/b.ts",
+          indexStatus: null,
+          worktreeStatus: "modified",
+        },
+      );
+      // Partially staged: edited, staged, then edited again.
+      assert.deepStrictEqual(
+        parsePorcelainEntry("1 MM N... 100644 100644 100644 aaa bbb src/c.ts"),
+        {
+          path: "src/c.ts",
+          indexStatus: "modified",
+          worktreeStatus: "modified",
+        },
+      );
+      assert.deepStrictEqual(
+        parsePorcelainEntry("1 A. N... 000000 100644 100644 aaa bbb src/new.ts"),
+        {
+          path: "src/new.ts",
+          indexStatus: "added",
+          worktreeStatus: null,
+        },
+      );
+      assert.deepStrictEqual(
+        parsePorcelainEntry("1 D. N... 100644 000000 000000 aaa bbb gone.ts"),
+        {
+          path: "gone.ts",
+          indexStatus: "deleted",
+          worktreeStatus: null,
+        },
+      );
+    }),
+  );
+
+  it.effect("keeps the original path for renames and copies", () =>
+    Effect.sync(() => {
+      assert.deepStrictEqual(
+        parsePorcelainEntry("2 R. N... 100644 100644 100644 aaa bbb R100 new/name.ts\told/name.ts"),
+        {
+          path: "new/name.ts",
+          indexStatus: "renamed",
+          worktreeStatus: null,
+          originalPath: "old/name.ts",
+        },
+      );
+    }),
+  );
+
+  it.effect("marks unmerged entries conflicted and untracked entries worktree-only", () =>
+    Effect.sync(() => {
+      assert.deepStrictEqual(
+        parsePorcelainEntry("u UU N... 100644 100644 100644 100644 aaa bbb ccc conflict.ts"),
+        { path: "conflict.ts", indexStatus: "conflicted", worktreeStatus: "conflicted" },
+      );
+      assert.deepStrictEqual(parsePorcelainEntry("? notes.txt"), {
+        path: "notes.txt",
+        indexStatus: null,
+        worktreeStatus: "untracked",
+      });
+    }),
+  );
+
+  it.effect("skips ignored entries and lines that name no file", () =>
+    Effect.sync(() => {
+      assert.strictEqual(parsePorcelainEntry("! build/output.js"), null);
+      assert.strictEqual(parsePorcelainEntry("# branch.head main"), null);
+      assert.strictEqual(parsePorcelainEntry(""), null);
+    }),
+  );
+});
+
+describe("parseCommitLog", () => {
+  it.effect("parses records and collapses the HEAD arrow out of ref names", () =>
+    Effect.sync(() => {
+      const stdout =
+        [
+          "aaa111",
+          "aaa",
+          "Ada",
+          "2026-08-01T10:00:00+00:00",
+          "HEAD -> main, origin/main",
+          "feat: one",
+        ].join("\x00") +
+        "\x1e\n" +
+        ["bbb222", "bbb", "Grace", "2026-07-31T09:00:00+00:00", "", "fix: two"].join("\x00") +
+        "\x1e\n";
+
+      assert.deepStrictEqual(parseCommitLog(stdout), [
+        {
+          sha: "aaa111",
+          shortSha: "aaa",
+          subject: "feat: one",
+          authorName: "Ada",
+          committedAt: "2026-08-01T10:00:00+00:00",
+          refNames: ["main", "origin/main"],
+          isHead: true,
+        },
+        {
+          sha: "bbb222",
+          shortSha: "bbb",
+          subject: "fix: two",
+          authorName: "Grace",
+          committedAt: "2026-07-31T09:00:00+00:00",
+          refNames: [],
+          isHead: false,
+        },
+      ]);
+    }),
+  );
+
+  it.effect("skips malformed records rather than dropping the page", () =>
+    Effect.sync(() => {
+      const stdout =
+        "not-a-record\x1e\n" +
+        ["ccc", "cc", "Ada", "2026-08-01T10:00:00+00:00", "", "ok"].join("\x00") +
+        "\x1e";
+      const parsed = parseCommitLog(stdout);
+      assert.strictEqual(parsed.length, 1);
+      assert.strictEqual(parsed[0]?.sha, "ccc");
+    }),
+  );
+});
+
+describe("staging", () => {
+  it.effect("reports staged, unstaged and partially staged files separately", () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+
+      yield* writeTextFile(cwd, "staged.md", "staged\n");
+      yield* writeTextFile(cwd, "unstaged.md", "unstaged\n");
+      yield* writeTextFile(cwd, "partial.md", "one\n");
+      yield* git(cwd, ["add", "partial.md"]);
+      yield* git(cwd, ["commit", "-m", "add partial"]);
+
+      yield* driver.stagePaths(cwd, ["staged.md"]);
+      yield* writeTextFile(cwd, "partial.md", "two\n");
+      yield* driver.stagePaths(cwd, ["partial.md"]);
+      yield* writeTextFile(cwd, "partial.md", "three\n");
+
+      const status = yield* driver.status({ cwd });
+      const byPath = new Map(status.workingTree.files.map((file) => [file.path, file]));
+
+      assert.deepInclude(byPath.get("staged.md"), {
+        indexStatus: "added",
+        worktreeStatus: null,
+      });
+      assert.deepInclude(byPath.get("unstaged.md"), {
+        indexStatus: null,
+        worktreeStatus: "untracked",
+      });
+      assert.deepInclude(byPath.get("partial.md"), {
+        indexStatus: "modified",
+        worktreeStatus: "modified",
+      });
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("reports a staged rename against the new path, keeping the old one", () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+
+      yield* writeTextFile(cwd, "before name.md", "stable contents\n");
+      yield* git(cwd, ["add", "."]);
+      yield* git(cwd, ["commit", "-m", "add file"]);
+      yield* git(cwd, ["mv", "before name.md", "after name.md"]);
+
+      const status = yield* driver.status({ cwd });
+      const renamed = status.workingTree.files.find((file) => file.path === "after name.md");
+
+      // A path with a space also proves the field-skipping parse, which a
+      // last-token heuristic would get wrong.
+      assert.deepInclude(renamed, {
+        path: "after name.md",
+        indexStatus: "renamed",
+        worktreeStatus: null,
+        originalPath: "before name.md",
+      });
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("unstagePaths returns a file to the working tree without changing it", () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+
+      yield* writeTextFile(cwd, "README.md", "# changed\n");
+      yield* driver.stagePaths(cwd, ["README.md"]);
+      assert.strictEqual(yield* git(cwd, ["diff", "--cached", "--name-only"]), "README.md");
+
+      yield* driver.unstagePaths(cwd, ["README.md"]);
+
+      assert.strictEqual(yield* git(cwd, ["diff", "--cached", "--name-only"]), "");
+      assert.strictEqual(yield* git(cwd, ["diff", "--name-only"]), "README.md");
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("unstagePaths works before the first commit, when there is no HEAD", () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir();
+      yield* driver.initRepo({ cwd });
+      yield* git(cwd, ["config", "user.email", "test@test.com"]);
+      yield* git(cwd, ["config", "user.name", "Test"]);
+      yield* writeTextFile(cwd, "first.md", "first\n");
+
+      yield* driver.stagePaths(cwd, ["first.md"]);
+      assert.strictEqual(yield* git(cwd, ["diff", "--cached", "--name-only"]), "first.md");
+
+      yield* driver.unstagePaths(cwd, ["first.md"]);
+
+      assert.strictEqual(yield* git(cwd, ["diff", "--cached", "--name-only"]), "");
+      const status = yield* driver.status({ cwd });
+      assert.deepInclude(
+        status.workingTree.files.find((file) => file.path === "first.md"),
+        { indexStatus: null, worktreeStatus: "untracked" },
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("the index commit scope commits only what is staged", () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+
+      yield* writeTextFile(cwd, "wanted.md", "wanted\n");
+      yield* writeTextFile(cwd, "unwanted.md", "unwanted\n");
+      yield* driver.stagePaths(cwd, ["wanted.md"]);
+
+      const context = yield* driver.prepareCommitContext(cwd, undefined, "index");
+      assert.ok(context);
+      assert.include(context.stagedSummary, "wanted.md");
+      assert.notInclude(context.stagedSummary, "unwanted.md");
+
+      yield* driver.commit(cwd, "commit staged only", "");
+
+      assert.strictEqual(
+        yield* git(cwd, ["show", "--name-only", "--pretty=format:", "HEAD"]),
+        "wanted.md",
+      );
+      // The unstaged file survived untouched.
+      assert.strictEqual(yield* git(cwd, ["status", "--porcelain"]), "?? unwanted.md");
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("the default commit scope still stages everything", () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+
+      yield* writeTextFile(cwd, "a.md", "a\n");
+      yield* writeTextFile(cwd, "b.md", "b\n");
+
+      const context = yield* driver.prepareCommitContext(cwd);
+      assert.ok(context);
+      assert.include(context.stagedSummary, "a.md");
+      assert.include(context.stagedSummary, "b.md");
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+});
+
+describe("listCommits", () => {
+  it.effect("pages through history and decorates the tip", () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+
+      for (const subject of ["second", "third"]) {
+        yield* writeTextFile(cwd, `${subject}.md`, `${subject}\n`);
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", subject]);
+      }
+
+      const firstPage = yield* driver.listCommits({ cwd, limit: 2 });
+      assert.strictEqual(firstPage.isRepo, true);
+      assert.deepStrictEqual(
+        firstPage.commits.map((commit) => commit.subject),
+        ["third", "second"],
+      );
+      assert.strictEqual(firstPage.nextCursor, 2);
+      assert.deepStrictEqual(firstPage.commits[0]?.refNames, [initialBranch]);
+      assert.strictEqual(firstPage.commits[0]?.isHead, true);
+      assert.strictEqual(firstPage.commits[1]?.isHead, false);
+
+      const secondPage = yield* driver.listCommits({ cwd, limit: 2, cursor: 2 });
+      assert.deepStrictEqual(
+        secondPage.commits.map((commit) => commit.subject),
+        ["initial commit"],
+      );
+      assert.strictEqual(secondPage.nextCursor, null);
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("returns an empty page for a repository with no commits", () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir();
+      yield* driver.initRepo({ cwd });
+
+      const page = yield* driver.listCommits({ cwd });
+
+      assert.deepStrictEqual(page, { commits: [], isRepo: true, nextCursor: null });
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
 });

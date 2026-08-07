@@ -167,6 +167,35 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("keeps git as a singleton surface", () => {
+    useRightPanelStore.getState().open(refA, "git");
+    useRightPanelStore.getState().open(refA, "git");
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "git",
+      surfaces: [{ id: "git", kind: "git" }],
+    });
+  });
+
+  it("keeps a persisted git surface across migration", () => {
+    // Adding a kind needs no drop rule, unlike the removed plan surface.
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1::thread-A": {
+            isOpen: true,
+            activeSurfaceId: "git",
+            surfaces: [{ id: "git", kind: "git" }],
+          },
+        },
+      }).byThreadKey["env-1::thread-A"],
+    ).toEqual({
+      isOpen: true,
+      activeSurfaceId: "git",
+      surfaces: [{ id: "git", kind: "git" }],
+    });
+  });
+
   it("keeps files as a singleton surface", () => {
     useRightPanelStore.getState().open(refA, "files");
     useRightPanelStore.getState().open(refA, "files");

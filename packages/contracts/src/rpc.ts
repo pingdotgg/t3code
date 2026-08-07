@@ -40,6 +40,9 @@ import {
   VcsRemoveWorktreeInput,
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
+  VcsListCommitsInput,
+  VcsListCommitsResult,
+  VcsStagePathsInput,
   VcsStatusInput,
   VcsStatusResult,
   VcsStatusStreamEvent,
@@ -192,6 +195,9 @@ export const WS_METHODS = {
   vcsCreateRef: "vcs.createRef",
   vcsSwitchRef: "vcs.switchRef",
   vcsInit: "vcs.init",
+  vcsStagePaths: "vcs.stagePaths",
+  vcsUnstagePaths: "vcs.unstagePaths",
+  vcsListCommits: "vcs.listCommits",
 
   // Git workflow methods
   gitRunStackedAction: "git.runStackedAction",
@@ -554,6 +560,22 @@ export const WsVcsSwitchRefRpc = Rpc.make(WS_METHODS.vcsSwitchRef, {
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
 });
 
+export const WsVcsStagePathsRpc = Rpc.make(WS_METHODS.vcsStagePaths, {
+  payload: VcsStagePathsInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsUnstagePathsRpc = Rpc.make(WS_METHODS.vcsUnstagePaths, {
+  payload: VcsStagePathsInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsListCommitsRpc = Rpc.make(WS_METHODS.vcsListCommits, {
+  payload: VcsListCommitsInput,
+  success: VcsListCommitsResult,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
 export const WsVcsInitRpc = Rpc.make(WS_METHODS.vcsInit, {
   payload: VcsInitInput,
   error: Schema.Union([VcsError, EnvironmentAuthorizationError]),
@@ -848,6 +870,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsCreateRefRpc,
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,
+  WsVcsStagePathsRpc,
+  WsVcsUnstagePathsRpc,
+  WsVcsListCommitsRpc,
   WsReviewGetDiffPreviewRpc,
   WsReviewGetDiffFileContentsRpc,
   WsTerminalOpenRpc,

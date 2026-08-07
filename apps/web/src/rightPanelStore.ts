@@ -16,6 +16,7 @@ import { resolveStorage } from "./lib/storage";
 
 export const RIGHT_PANEL_KINDS = [
   "diff",
+  "git",
   "files",
   "file",
   "preview",
@@ -44,6 +45,7 @@ export type RightPanelSurface =
       revealLine: number | null;
       revealRequestId: number;
     }
+  | { id: "git"; kind: "git" }
   | { id: "agents"; kind: "agents" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
@@ -98,6 +100,8 @@ const singletonSurface = (
       return { id: "diff", kind };
     case "files":
       return { id: "files", kind };
+    case "git":
+      return { id: "git", kind };
     case "agents":
       return { id: "agents", kind };
   }

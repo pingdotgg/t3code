@@ -3,6 +3,7 @@ import {
   type EnvironmentId as EnvironmentIdType,
   GitActionProgressPhase,
   type GitActionProgressEvent,
+  type GitCommitScope,
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
   GitStackedAction,
@@ -37,6 +38,8 @@ export const VcsActionOperation = Schema.Literals([
   "init",
   "publish_repository",
   "prepare_pull_request_thread",
+  "stage_paths",
+  "unstage_paths",
 ]);
 export type VcsActionOperation = typeof VcsActionOperation.Type;
 
@@ -76,6 +79,8 @@ export interface RunVcsStackedActionInput {
   readonly commitMessage?: string;
   readonly featureBranch?: boolean;
   readonly filePaths?: ReadonlyArray<string>;
+  /** Omit to keep the legacy stage-then-commit behavior; see `GitCommitScope`. */
+  readonly commitScope?: GitCommitScope;
   readonly onProgress?: (event: GitActionProgressEvent) => void;
 }
 
@@ -463,6 +468,7 @@ export function createVcsActionManager<R, E>(
           ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
           ...(input.featureBranch ? { featureBranch: true } : {}),
           ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
+          ...(input.commitScope ? { commitScope: input.commitScope } : {}),
         };
         return consumeVcsActionProgress(
           runStreamInEnvironment(
