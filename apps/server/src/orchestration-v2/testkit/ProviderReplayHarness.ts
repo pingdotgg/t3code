@@ -16,6 +16,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { layer as mcpSessionRegistryTestLayer } from "../../mcp/McpSessionRegistry.testkit.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
+import { layerNoop as worktreeRevivalTestLayer } from "../../vcs/WorktreeRevivalService.testkit.ts";
 import { layer as checkpointCaptureServiceLayer } from "../CheckpointCaptureService.ts";
 import { layer as checkpointServiceLayer } from "../CheckpointService.ts";
 import { layer as checkpointRollbackServiceLayer } from "../CheckpointRollbackService.ts";
@@ -322,6 +323,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         providerSessionManagerProvided,
         runExecutionServiceProvided,
         runtimeLayer,
+        worktreeRevivalTestLayer,
       ),
     ),
   );
