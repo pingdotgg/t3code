@@ -65,6 +65,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -348,7 +349,29 @@ function resultErrorsText(result: SDKResultMessage): string {
     : "";
 }
 
+/**
+ * First user-facing error from a non-success result. "[ede_diagnostic] ..."
+ * entries are CLI-internal telemetry (the CLI hides them from its own UI too),
+ * so they must never become the error banner.
+ */
+function resultUserFacingError(result: SDKResultMessage): string | undefined {
+  if (result.subtype === "success" || !Array.isArray(result.errors)) {
+    return undefined;
+  }
+  return result.errors.find((error) => !error.startsWith("[ede_diagnostic]"));
+}
+
 function isInterruptedResult(result: SDKResultMessage): boolean {
+  // The CLI stamps user aborts explicitly: interrupting mid-tool-call yields
+  // "aborted_tools" (with an internal "[ede_diagnostic] ..." error and
+  // is_error: true), interrupting mid-stream yields "aborted_streaming".
+  if (
+    result.terminal_reason === "aborted_tools" ||
+    result.terminal_reason === "aborted_streaming"
+  ) {
+    return true;
+  }
+
   const errors = resultErrorsText(result);
   if (errors.includes("interrupt")) {
     return true;
@@ -2919,7 +2942,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     const status = turnStatusFromResult(message);
-    const errorMessage = message.subtype === "success" ? undefined : message.errors[0];
+    const errorMessage = resultUserFacingError(message);
 
     if (status === "failed") {
       yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");
@@ -3034,9 +3057,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     // error rows in client work logs. `background_tasks_changed` is a roster
     // snapshot ({tasks: [...]}) — the task_* lifecycle events carry the
     // authoritative per-agent data and the typed background_tasks control
-    // request is the reconciliation source.
-    if ((message.subtype as string) === "background_tasks_changed") {
-      return;
+    // request is the reconciliation source. `vcs_state_changed`
+    // ({kind: commit|push|rebase}) and `code_change_published`
+    // ({provider, url, repo}) are informational CLI notices; the work log
+    // already shows the underlying git/gh tool calls.
+    switch (message.subtype as string) {
+      case "background_tasks_changed":
+      case "vcs_state_changed":
+      case "code_change_published":
+        return;
     }
 
     switch (message.subtype) {
@@ -4391,11 +4420,40 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         yield* Effect.forEach(
           liveIds,
           (taskId) =>
-            Effect.tryPromise({
-              // Invoke through the query object: SDK methods rely on `this`.
-              try: () => context.query.stopTask!(taskId),
-              catch: () => undefined,
-            }).pipe(Effect.timeoutOption("3 seconds"), Effect.ignore),
+            Effect.gen(function* () {
+              const stopAcknowledged = yield* Effect.tryPromise({
+                // Invoke through the query object: SDK methods rely on `this`.
+                try: () => context.query.stopTask!(taskId),
+                catch: () => undefined,
+              }).pipe(
+                Effect.timeoutOption("3 seconds"),
+                Effect.orElseSucceed(() => Option.none()),
+              );
+              if (Option.isNone(stopAcknowledged) || !context.liveTaskIds.delete(taskId)) {
+                return;
+              }
+
+              // stopTask only acknowledges the control request. Its separate
+              // task_notification can lose the race with interrupt(), so make
+              // the acknowledged stop authoritative for the durable UI state.
+              const stamp = yield* makeEventStamp();
+              yield* offerRuntimeEvent({
+                type: "task.completed",
+                eventId: stamp.eventId,
+                provider: PROVIDER,
+                createdAt: stamp.createdAt,
+                threadId: context.session.threadId,
+                ...(context.turnState
+                  ? { turnId: asCanonicalTurnId(context.turnState.turnId) }
+                  : {}),
+                payload: {
+                  taskId: RuntimeTaskId.make(taskId),
+                  status: "stopped",
+                  ...taskLinkageFor(context.taskAgents, taskId),
+                },
+                providerRefs: nativeProviderRefs(context),
+              });
+            }).pipe(Effect.ignore),
           { concurrency: 8, discard: true },
         ).pipe(Effect.timeoutOption("10 seconds"), Effect.ignore);
       }

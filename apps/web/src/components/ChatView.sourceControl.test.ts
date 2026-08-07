@@ -74,7 +74,7 @@ describe("resolveSourceControlDraftMetadataTarget", () => {
 
 describe("source control right panel surface visibility", () => {
   const sourceControlSurface = { id: "source-control", kind: "source-control" } as const;
-  const planSurface = { id: "plan", kind: "plan" } as const;
+  const agentsSurface = { id: "agents", kind: "agents" } as const;
   const assertActiveSourceControlSurface = (
     phase: string,
     expectedSurfaces: readonly RightPanelSurface[],
@@ -111,11 +111,11 @@ describe("source control right panel surface visibility", () => {
     expect(
       filterVisibleSourceControlSurfaces({
         sourceControlAvailable: false,
-        surfaces: [sourceControlSurface, planSurface],
+        surfaces: [sourceControlSurface, agentsSurface],
       }),
-    ).toEqual([planSurface]);
+    ).toEqual([agentsSurface]);
 
-    const surfaces = [sourceControlSurface, planSurface];
+    const surfaces = [sourceControlSurface, agentsSurface];
     expect(
       filterVisibleSourceControlSurfaces({
         sourceControlAvailable: true,
@@ -129,21 +129,21 @@ describe("source control right panel surface visibility", () => {
       resolveVisibleSourceControlSurface({
         sourceControlAvailable: false,
         surface: sourceControlSurface,
-        visibleSurfaces: [planSurface],
+        visibleSurfaces: [agentsSurface],
       }),
-    ).toBe(planSurface);
+    ).toBe(agentsSurface);
     expect(
       resolveVisibleSourceControlSurface({
         sourceControlAvailable: false,
-        surface: planSurface,
-        visibleSurfaces: [planSurface],
+        surface: agentsSurface,
+        visibleSurfaces: [agentsSurface],
       }),
-    ).toBe(planSurface);
+    ).toBe(agentsSurface);
     expect(
       resolveVisibleSourceControlSurface({
         sourceControlAvailable: true,
         surface: sourceControlSurface,
-        visibleSurfaces: [sourceControlSurface, planSurface],
+        visibleSurfaces: [sourceControlSurface, agentsSurface],
       }),
     ).toBe(sourceControlSurface);
     expect(
