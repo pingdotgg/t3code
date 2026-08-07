@@ -64,6 +64,13 @@ export function hasConfiguredMcpServer(appServerArgs: ReadonlyArray<string> | un
   return appServerArgs?.some((argument) => argument.includes("mcp_servers.")) === true;
 }
 
+/** True only when the product-native `t3-code` MCP server is configured in app-server args. */
+export function hasConfiguredT3CodeMcpServer(
+  appServerArgs: ReadonlyArray<string> | undefined,
+): boolean {
+  return appServerArgs?.some((argument) => argument.includes("mcp_servers.t3-code.")) === true;
+}
+
 export const CodexResumeCursorSchema = Schema.Struct({
   threadId: Schema.String,
 });
@@ -339,6 +346,7 @@ function buildCodexCollaborationMode(input: {
   readonly interactionMode?: ProviderInteractionMode;
   readonly model?: string;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
+  readonly includeT3PreviewTools?: boolean;
 }): EffectCodexSchema.V2TurnStartParams__CollaborationMode | undefined {
   if (input.interactionMode === undefined) {
     return undefined;
@@ -350,10 +358,14 @@ function buildCodexCollaborationMode(input: {
     settings: {
       model,
       reasoning_effort: reasoningEffort,
-      developer_instructions: buildCodexDeveloperInstructions(input.interactionMode, {
-        model,
-        reasoningEffort,
-      }),
+      developer_instructions: buildCodexDeveloperInstructions(
+        input.interactionMode,
+        {
+          model,
+          reasoningEffort,
+        },
+        { includeT3PreviewTools: input.includeT3PreviewTools === true },
+      ),
     },
   };
 }
@@ -370,6 +382,7 @@ export function buildTurnStartParams(input: {
   readonly serviceTier?: CodexServiceTier;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly includeT3PreviewTools?: boolean;
 }): Effect.Effect<
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
@@ -390,6 +403,9 @@ export function buildTurnStartParams(input: {
     ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
+    ...(input.includeT3PreviewTools !== undefined
+      ? { includeT3PreviewTools: input.includeT3PreviewTools }
+      : {}),
   });
 
   return decodeCodexTurnStartParamsWithCollaborationMode({
@@ -1749,7 +1765,7 @@ export const makeCodexSessionRuntime = (
       sendTurn: (input) =>
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
-          if (hasConfiguredMcpServer(options.appServerArgs)) {
+          if (hasConfiguredMcpServer(appServerArgs)) {
             yield* client.request("config/mcpServer/reload", undefined).pipe(
               Effect.catch((cause) =>
                 Effect.logWarning("Failed to refresh Codex MCP tool catalog before turn.", {
@@ -1770,6 +1786,7 @@ export const makeCodexSessionRuntime = (
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
             ...(input.effort ? { effort: input.effort } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
+            includeT3PreviewTools: hasConfiguredT3CodeMcpServer(appServerArgs),
           });
           const rawResponse = yield* client.raw.request("turn/start", params);
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(

@@ -14,6 +14,7 @@ import type {
 import {
   ApprovalRequestId,
   ClaudeSettings,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderItemId,
   ProviderRuntimeEvent,
@@ -34,6 +35,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
@@ -297,6 +299,64 @@ describe("ClaudeAdapterLive", () => {
           issue: "Expected provider 'claudeAgent' but received 'codex'.",
         }),
       );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("omits t3-code MCP servers when no provider MCP session exists", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.mcpServers, undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("mounts t3-code MCP servers when a provider MCP session exists", () => {
+    const harness = makeHarness();
+    const threadId = ThreadId.make("thread-claude-mcp");
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make("environment-1"),
+      threadId,
+      providerSessionId: "provider-session-1",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      endpoint: "http://127.0.0.1:43123/mcp",
+      authorizationHeader: "Bearer preview-token",
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      try {
+        yield* adapter.startSession({
+          threadId,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+
+        const createInput = harness.getLastCreateQueryInput();
+        assert.deepEqual(createInput?.options.mcpServers, {
+          "t3-code": {
+            type: "http",
+            url: "http://127.0.0.1:43123/mcp",
+            headers: {
+              Authorization: "Bearer preview-token",
+            },
+          },
+        });
+      } finally {
+        McpProviderSession.clearMcpProviderSession(threadId);
+      }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

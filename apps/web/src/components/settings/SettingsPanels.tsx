@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   defaultInstanceIdForDriver,
+  type AgentVisualToolsMode,
   type BackgroundActivityProfile,
   type BackgroundActivitySettings,
   type DesktopUpdateChannel,
@@ -190,6 +191,11 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const AGENT_VISUAL_TOOLS_MODE_LABELS: Record<AgentVisualToolsMode, string> = {
+  "provider-native": "Provider native",
+  "t3-preview": "T3 Preview",
+};
 
 const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<BackgroundActivityProfile, string> = {
   balanced: "Balanced",
@@ -633,6 +639,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
         ? ["Provider update checks"]
         : []),
+      ...(settings.agentVisualToolsMode !== DEFAULT_UNIFIED_SETTINGS.agentVisualToolsMode
+        ? ["Agent visual tools"]
+        : []),
       ...(isBackgroundActivityDirty ? ["Background activity"] : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
@@ -674,6 +683,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.glassOpacity,
       settings.enableAssistantStreaming,
       settings.enableProviderUpdateChecks,
+      settings.agentVisualToolsMode,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
@@ -704,6 +714,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
       enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+      agentVisualToolsMode: DEFAULT_UNIFIED_SETTINGS.agentVisualToolsMode,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
@@ -1812,6 +1823,47 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Check provider versions"
             />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("agent-visual-tools")}
+          description="Choose whether newly started provider sessions use each provider's own visual tools, or receive T3 Preview MCP tools and routing. Changing this does not revoke tools in sessions that are already running. You can still open T3 Preview yourself either way."
+          resetAction={
+            settings.agentVisualToolsMode !== DEFAULT_UNIFIED_SETTINGS.agentVisualToolsMode ? (
+              <SettingResetButton
+                label="agent visual tools"
+                onClick={() =>
+                  updateSettings({
+                    agentVisualToolsMode: DEFAULT_UNIFIED_SETTINGS.agentVisualToolsMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.agentVisualToolsMode}
+              onValueChange={(value) => {
+                if (value === "provider-native" || value === "t3-preview") {
+                  updateSettings({ agentVisualToolsMode: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-44" aria-label="Agent visual tools">
+                <SelectValue>
+                  {AGENT_VISUAL_TOOLS_MODE_LABELS[settings.agentVisualToolsMode]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="provider-native">
+                  {AGENT_VISUAL_TOOLS_MODE_LABELS["provider-native"]}
+                </SelectItem>
+                <SelectItem hideIndicator value="t3-preview">
+                  {AGENT_VISUAL_TOOLS_MODE_LABELS["t3-preview"]}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
 

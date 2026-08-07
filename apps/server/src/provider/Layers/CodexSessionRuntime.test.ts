@@ -17,6 +17,7 @@ import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
   buildTurnStartParams,
   hasConfiguredMcpServer,
+  hasConfiguredT3CodeMcpServer,
   isRecoverableThreadResumeError,
   openCodexThread,
 } from "./CodexSessionRuntime.ts";
@@ -291,29 +292,145 @@ describe("buildCodexDeveloperInstructions", () => {
     NodeAssert.match(instructions, /as gpt 5\.3 codex with high effort reasoning effort/);
     NodeAssert.doesNotMatch(instructions, /<runtime_info>[^<]*\n/);
   });
+
+  it("omits T3 Preview routing unless the t3-code MCP server is mounted", () => {
+    for (const mode of ["default", "plan"] as const) {
+      const withoutPreview = buildCodexDeveloperInstructions(mode, {
+        model: "gpt-5.3-codex",
+        reasoningEffort: "medium",
+      });
+      const withPreview = buildCodexDeveloperInstructions(
+        mode,
+        {
+          model: "gpt-5.3-codex",
+          reasoningEffort: "medium",
+        },
+        { includeT3PreviewTools: true },
+      );
+
+      NodeAssert.doesNotMatch(withoutPreview, /preview_status/);
+      NodeAssert.doesNotMatch(withoutPreview, /t3-code/);
+      NodeAssert.doesNotMatch(withoutPreview, /## T3 Code collaborative browser/);
+      NodeAssert.match(withPreview, /t3-code/);
+      NodeAssert.match(withPreview, /preview_status/);
+      NodeAssert.match(withPreview, /preview_open/);
+      NodeAssert.match(withPreview, /Do not switch to global browser skills/);
+
+      // Preview instructions must land after the mode body and immediately before
+      // the final collaboration-mode closing tag — not at the first literal match
+      // (Default mode mentions that tag inside an earlier inline code span).
+      const previewHeading = "## T3 Code collaborative browser";
+      const closingTag = "</collaboration_mode>";
+      const previewIndex = withPreview.indexOf(previewHeading);
+      const lastClosingIndex = withPreview.lastIndexOf(closingTag);
+      NodeAssert.ok(previewIndex > 0);
+      NodeAssert.ok(lastClosingIndex > previewIndex);
+      const previewThroughClose = withPreview.slice(
+        previewIndex,
+        lastClosingIndex + closingTag.length,
+      );
+      NodeAssert.ok(previewThroughClose.startsWith(previewHeading));
+      NodeAssert.ok(previewThroughClose.endsWith(closingTag));
+      NodeAssert.equal(
+        previewThroughClose.indexOf(closingTag),
+        previewThroughClose.lastIndexOf(closingTag),
+      );
+      NodeAssert.doesNotMatch(
+        withPreview.slice(lastClosingIndex + closingTag.length),
+        /## T3 Code collaborative browser/,
+      );
+      if (mode === "default") {
+        const inlineReference = "`<collaboration_mode>...</collaboration_mode>`";
+        const inlineIndex = withPreview.indexOf(inlineReference);
+        NodeAssert.ok(inlineIndex !== -1);
+        NodeAssert.ok(inlineIndex < previewIndex);
+      }
+    }
+  });
 });
 
 describe("T3 browser developer instructions", () => {
-  it("prefers the product-native preview tools in both collaboration modes", () => {
+  it("keeps base collaboration mode instructions free of T3 Preview routing", () => {
     for (const instructions of [
       CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
       CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
     ]) {
-      NodeAssert.match(instructions, /t3-code/);
-      NodeAssert.match(instructions, /preview_status/);
-      NodeAssert.match(instructions, /preview_open/);
-      NodeAssert.match(instructions, /Do not switch to global browser skills/);
+      NodeAssert.doesNotMatch(instructions, /t3-code/);
+      NodeAssert.doesNotMatch(instructions, /preview_status/);
     }
   });
 });
 
 describe("hasConfiguredMcpServer", () => {
-  it("detects inline Codex MCP configuration arguments", () => {
+  it("detects any inline Codex MCP configuration arguments", () => {
     NodeAssert.equal(hasConfiguredMcpServer(undefined), false);
     NodeAssert.equal(hasConfiguredMcpServer(["--model", "gpt-5.4"]), false);
     NodeAssert.equal(
       hasConfiguredMcpServer(["-c", 'mcp_servers.t3-code.url="http://127.0.0.1/mcp"']),
       true,
+    );
+    NodeAssert.equal(
+      hasConfiguredMcpServer(["-c", 'mcp_servers.other.url="http://127.0.0.1/mcp"']),
+      true,
+    );
+  });
+});
+
+describe("hasConfiguredT3CodeMcpServer", () => {
+  it("detects only the product-native t3-code MCP server", () => {
+    NodeAssert.equal(hasConfiguredT3CodeMcpServer(undefined), false);
+    NodeAssert.equal(hasConfiguredT3CodeMcpServer(["--model", "gpt-5.4"]), false);
+    NodeAssert.equal(
+      hasConfiguredT3CodeMcpServer(["-c", 'mcp_servers.other.url="http://127.0.0.1/mcp"']),
+      false,
+    );
+    NodeAssert.equal(
+      hasConfiguredT3CodeMcpServer(["-c", 'mcp_servers.t3-code.url="http://127.0.0.1/mcp"']),
+      true,
+    );
+  });
+
+  it("honors t3-code MCP entries supplied through launch args after merge", () => {
+    const withT3CodeFromLaunchArgs = codexSessionAppServerArgs(
+      undefined,
+      '-c mcp_servers.t3-code.url="http://127.0.0.1/mcp"',
+    );
+    const withOtherMcpFromLaunchArgs = codexSessionAppServerArgs(
+      undefined,
+      '-c mcp_servers.other.url="http://127.0.0.1/mcp"',
+    );
+
+    NodeAssert.equal(hasConfiguredT3CodeMcpServer(withT3CodeFromLaunchArgs), true);
+    NodeAssert.equal(hasConfiguredT3CodeMcpServer(withOtherMcpFromLaunchArgs), false);
+
+    const previewFromLaunchArgs = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Browse",
+        model: "gpt-5.3-codex",
+        interactionMode: "default",
+        includeT3PreviewTools: hasConfiguredT3CodeMcpServer(withT3CodeFromLaunchArgs),
+      }),
+    );
+    const unrelatedFromLaunchArgs = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Browse",
+        model: "gpt-5.3-codex",
+        interactionMode: "default",
+        includeT3PreviewTools: hasConfiguredT3CodeMcpServer(withOtherMcpFromLaunchArgs),
+      }),
+    );
+
+    NodeAssert.match(
+      previewFromLaunchArgs.collaborationMode?.settings.developer_instructions ?? "",
+      /## T3 Code collaborative browser/,
+    );
+    NodeAssert.doesNotMatch(
+      unrelatedFromLaunchArgs.collaborationMode?.settings.developer_instructions ?? "",
+      /## T3 Code collaborative browser/,
     );
   });
 });

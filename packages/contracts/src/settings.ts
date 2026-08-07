@@ -534,9 +534,21 @@ export const BackgroundActivitySettings = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 
+/**
+ * Controls whether newly started provider sessions receive T3 Preview MCP tools
+ * and Codex collaborative-browser routing, or keep provider-native visual tools.
+ * Human-operated T3 Preview is unaffected; this only gates agent access.
+ */
+export const AgentVisualToolsMode = Schema.Literals(["provider-native", "t3-preview"]);
+export type AgentVisualToolsMode = typeof AgentVisualToolsMode.Type;
+export const DEFAULT_AGENT_VISUAL_TOOLS_MODE: AgentVisualToolsMode = "provider-native";
+
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  agentVisualToolsMode: AgentVisualToolsMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_AGENT_VISUAL_TOOLS_MODE)),
+  ),
   backgroundActivity: BackgroundActivitySettings,
   // Legacy flat fields retained for old settings files and old clients. New
   // consumers should resolve `backgroundActivity` instead.
@@ -700,6 +712,7 @@ export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
+  agentVisualToolsMode: Schema.optionalKey(AgentVisualToolsMode),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),

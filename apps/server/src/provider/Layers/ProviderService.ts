@@ -55,6 +55,7 @@ import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 const isModelSelection = Schema.is(ModelSelection);
 
 /**
@@ -212,20 +213,40 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-  const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
-    McpSessionRegistry.issueActiveMcpCredential({ threadId, providerInstanceId }).pipe(
-      Effect.tap((credential) =>
-        credential
-          ? Effect.sync(() => McpProviderSession.setMcpProviderSession(credential.config))
-          : Effect.void,
-      ),
-    );
   const clearMcpSession = (threadId: ThreadId) =>
     McpSessionRegistry.revokeActiveMcpThread(threadId).pipe(
       Effect.tap(() => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
     );
+  const prepareMcpSession = (
+    threadId: ThreadId,
+    providerInstanceId: ProviderInstanceId,
+  ): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      // Fail closed to provider-native if settings cannot be read, so agents never
+      // receive T3 Preview tools by accident. Keeps ServerSettingsError out of the
+      // ProviderService error channel.
+      const settingsResult = yield* Effect.result(serverSettings.getSettings);
+      const agentVisualToolsMode =
+        settingsResult._tag === "Success"
+          ? settingsResult.success.agentVisualToolsMode
+          : ("provider-native" as const);
+      if (agentVisualToolsMode !== "t3-preview") {
+        // Drop any leftover credential/session from a prior T3 Preview run on
+        // this thread so provider-native sessions cannot inherit stale tools.
+        yield* clearMcpSession(threadId);
+        return;
+      }
+      const credential = yield* McpSessionRegistry.issueActiveMcpCredential({
+        threadId,
+        providerInstanceId,
+      });
+      if (credential) {
+        McpProviderSession.setMcpProviderSession(credential.config);
+      }
+    });
 
   const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
     Effect.succeed(event).pipe(

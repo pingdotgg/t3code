@@ -67,6 +67,17 @@ describe("searchSettings", () => {
   it("serves anchor props to panels from the catalog", () => {
     expect(searchableSetting("word-wrap")).toEqual({ id: "word-wrap", title: "Word wrap" });
     expect(searchableSetting("archive")).toEqual({ id: "archive", title: "Archived threads" });
+    expect(searchableSetting("agent-visual-tools")).toEqual({
+      id: "agent-visual-tools",
+      title: "Agent visual tools",
+    });
+  });
+
+  it("routes agent visual tools to General settings", () => {
+    expect(searchSettings("agent visual")[0]).toMatchObject({
+      id: "agent-visual-tools",
+      to: "/settings/general",
+    });
   });
 
   it("routes appearance settings to their current section", () => {
