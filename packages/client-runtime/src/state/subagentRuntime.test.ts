@@ -186,6 +186,34 @@ describe("foldSubagentActivities", () => {
     expect(agents[0]!.usage).toEqual({ totalTokens: 900, inputTokens: 700 });
   });
 
+  it("usage snapshots enrich an existing agent without changing its status", () => {
+    const [agent] = fold([
+      activity("task.started", { taskId: "usage-waiting", taskType: "local_agent" }),
+      activity("task.progress", { taskId: "usage-waiting", status: "waiting" }),
+      activity("task.progress", {
+        taskId: "usage-waiting",
+        usageSnapshot: true,
+        typedUsage: { totalTokens: 1_200 },
+      }),
+    ]);
+
+    expect(agent?.status).toBe("waiting");
+    expect(agent?.usage?.totalTokens).toBe(1_200);
+  });
+
+  it("a retained usage snapshot can still reconstruct a running agent", () => {
+    const [agent] = fold([
+      activity("task.progress", {
+        taskId: "usage-only",
+        usageSnapshot: true,
+        typedUsage: { totalTokens: 800 },
+      }),
+    ]);
+
+    expect(agent?.status).toBe("running");
+    expect(agent?.usage?.totalTokens).toBe(800);
+  });
+
   it("partial terminal usage preserves known breakdown fields", () => {
     const agents = fold([
       activity("task.started", { taskId: "task-6", taskType: "local_agent" }),
@@ -360,6 +388,49 @@ describe("deriveAgentPanelModel", () => {
     expect(model.idleCount + model.runningCount + model.waitingCount + model.settledCount).toBe(
       roster.length,
     );
+  });
+
+  it("keeps direct spawns in first-seen order as their activity changes", () => {
+    const directRoster = fold([
+      activity("task.started", { taskId: "direct-a", title: "First" }, "2026-08-01T11:00:00.000Z"),
+      activity("task.started", { taskId: "direct-b", title: "Second" }, "2026-08-01T11:00:01.000Z"),
+      activity(
+        "task.progress",
+        { taskId: "direct-a", summary: "Newest activity" },
+        "2026-08-01T11:00:02.000Z",
+      ),
+    ]);
+
+    expect(
+      deriveAgentPanelModel({ agents: directRoster }).directAgents.map((agent) => agent.id),
+    ).toEqual(["direct-a", "direct-b"]);
+  });
+
+  it("keeps first-seen order after the roster retention ranking runs", () => {
+    const starts = Array.from({ length: 101 }, (_, index) =>
+      activity(
+        "task.started",
+        { taskId: `capped-${index}`, title: `Agent ${index}` },
+        `2026-08-01T12:${String(Math.floor(index / 60)).padStart(2, "0")}:${String(
+          index % 60,
+        ).padStart(2, "0")}.000Z`,
+      ),
+    );
+    const cappedRoster = fold([
+      ...starts,
+      activity(
+        "task.progress",
+        { taskId: "capped-0", summary: "Newest activity" },
+        "2026-08-01T12:02:00.000Z",
+      ),
+    ]);
+
+    const ids = deriveAgentPanelModel({ agents: cappedRoster }).directAgents.map(
+      (agent) => agent.id,
+    );
+    expect(ids).toHaveLength(100);
+    expect(ids.slice(0, 3)).toEqual(["capped-0", "capped-2", "capped-3"]);
+    expect(ids.at(-1)).toBe("capped-100");
   });
 
   it("a phase with only pending members never reads as running", () => {

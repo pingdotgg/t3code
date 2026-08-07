@@ -4,13 +4,11 @@
  * spawn batch).
  *
  * Visualization rules (from live-test feedback):
- * - Live work first: running workflows and direct spawns sort above settled.
- * - Rows are flat status lines — no expansion, no per-agent tool feeds. The
- *   row answers "who / what phase / how much"; anything deeper is a future
- *   drill-in, not an unfold.
- * - A settled workflow run collapses to a single summary line; click it to
- *   show its member list inline (the one allowed toggle — run granularity,
- *   not agent granularity).
+ * - Spawn order is stable. Activity and completion update rows in place.
+ * - Agent rows reserve three fixed lines for identity, activity, and metrics;
+ *   changing data must never change their height.
+ * - Workflow expansion is presentation state. A live run stays expanded when
+ *   it settles; older collapsed runs can still be opened at run granularity.
  * - Static status dots, DOM-write elapsed timers, plain token counters.
  */
 import { useAtomValue } from "@effect/atom-react";
@@ -143,54 +141,50 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
   const visuals = STATUS_VISUALS[agent.status];
   const activity = agentActivityText(agent);
   const modelLabel = formatSubagentModelLabel(agent.model, agent.effort);
+  const role =
+    agent.role?.trim().toLocaleLowerCase() === agent.title.trim().toLocaleLowerCase()
+      ? null
+      : agent.role;
+  const metadata = [
+    modelLabel,
+    agent.usage ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok` : "— tok",
+    agent.usage?.toolUses !== undefined ? `${agent.usage.toolUses} tools` : null,
+    agent.activationCount > 1 ? `run ${agent.activationCount}` : null,
+  ].filter((value): value is string => value !== null);
 
   return (
-    <div className="rounded-md px-1.5 py-1">
-      <div className="flex items-start gap-2">
-        <span className="flex h-5 items-center">
-          <StatusDot status={agent.status} />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <span className="truncate text-sm font-medium">{agent.title}</span>
-            {agent.role ? (
-              <span className="max-w-28 truncate rounded-sm border border-border/60 px-1 font-mono text-[.65rem] text-muted-foreground">
-                {agent.role}
-              </span>
-            ) : null}
-            <span className="ml-auto flex items-center gap-1 font-mono text-[.7rem] text-muted-foreground/80">
-              <AgentElapsed agent={agent} />
-              {agent.status === "completed" ? (
-                <Check aria-hidden className="size-3 text-success" />
-              ) : null}
-            </span>
+    <div className="grid h-[3.875rem] grid-cols-[0.375rem_minmax(0,1fr)_auto] grid-rows-[1.25rem_1.125rem_1rem] items-center gap-x-2 rounded-md px-1.5 py-1">
+      <span className="col-start-1 row-start-1 flex items-center">
+        <StatusDot status={agent.status} />
+      </span>
+      <span className="col-start-2 row-start-1 flex min-w-0 items-baseline gap-2">
+        <span className="min-w-0 truncate text-sm font-medium">{agent.title}</span>
+        {role ? (
+          <span className="max-w-28 shrink-0 truncate rounded-sm border border-border/60 px-1 font-mono text-[.65rem] text-muted-foreground">
+            {role}
           </span>
-          {activity ? (
-            <span
-              className={cn(
-                "mt-0.5 block truncate text-xs",
-                agent.status === "failed" ? "text-destructive-foreground" : "text-muted-foreground",
-              )}
-            >
-              {activity}
-            </span>
+        ) : null}
+      </span>
+      <span className="col-start-3 row-start-1 min-w-14 text-right font-mono text-[.7rem] text-muted-foreground/80">
+        <span className="inline-flex items-center gap-1">
+          <AgentElapsed agent={agent} />
+          {agent.status === "completed" ? (
+            <Check aria-hidden className="size-3 text-success" />
           ) : null}
-          <span className="mt-0.5 flex items-center gap-1 font-mono text-[.7rem] text-muted-foreground/70">
-            {modelLabel ? <span className="truncate">{modelLabel}</span> : null}
-            {agent.usage ? (
-              <span className="tabular-nums">
-                {modelLabel ? "· " : ""}
-                {formatSubagentTokenCount(agent.usage.totalTokens)} tok
-              </span>
-            ) : null}
-            {agent.usage?.toolUses !== undefined ? (
-              <span>· {agent.usage.toolUses} tools</span>
-            ) : null}
-            {agent.activationCount > 1 ? <span>· run {agent.activationCount}</span> : null}
-            <span className="sr-only">{visuals.label}</span>
-          </span>
         </span>
-      </div>
+      </span>
+      <span
+        className={cn(
+          "col-start-2 col-end-4 row-start-2 block truncate text-xs",
+          agent.status === "failed" ? "text-destructive-foreground" : "text-muted-foreground",
+        )}
+      >
+        {activity ?? visuals.label}
+      </span>
+      <span className="col-start-2 col-end-4 row-start-3 truncate font-mono text-[.7rem] tabular-nums text-muted-foreground/70">
+        {metadata.join(" · ")}
+      </span>
+      <span className="sr-only">{visuals.label}</span>
     </div>
   );
 }
@@ -314,18 +308,32 @@ function WorkflowScriptView({
 }
 
 /**
- * Collapsible phase section (Claude Code Background-tasks pattern): live
- * phases open by default, done phases collapsed to header + member dot row.
- * User toggles override the default and stick for the phase's lifetime.
+ * Collapsible phase section. A phase opens when it becomes active, then keeps
+ * that shape as it settles so completion never yanks rows out from under the
+ * user. Manual toggles stick until a later activation begins.
  */
-function PhaseSection({ phase }: { phase: AgentPanelWorkflowGroup["phases"][number] }) {
-  const [userOpen, setUserOpen] = useState<boolean | null>(null);
-  const open = userOpen ?? phase.state === "running";
+function PhaseSection({
+  phase,
+  defaultOpen = false,
+}: {
+  phase: AgentPanelWorkflowGroup["phases"][number];
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen || phase.state === "running");
+  const previousState = useRef(phase.state);
+
+  useEffect(() => {
+    if (previousState.current !== "running" && phase.state === "running") {
+      setOpen(true);
+    }
+    previousState.current = phase.state;
+  }, [phase.state]);
+
   return (
     <div>
       <button
         type="button"
-        onClick={() => setUserOpen(!open)}
+        onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
         className={cn(
           "mt-2 flex w-full items-center gap-1.5 rounded-sm px-1.5 text-left text-[.65rem] font-medium uppercase tracking-wider hover:bg-accent/40",
@@ -363,15 +371,17 @@ function PhaseSection({ phase }: { phase: AgentPanelWorkflowGroup["phases"][numb
   );
 }
 
-/** Live workflow: phase rail + full phase tree. */
-function LiveWorkflowSection({
+/** Expanded workflow: phase rail + full phase tree. */
+function ExpandedWorkflowSection({
   group,
   environmentId,
   threadId,
+  onCollapse,
 }: {
   group: AgentPanelWorkflowGroup;
   environmentId: EnvironmentId | null;
   threadId: ThreadId | null;
+  onCollapse: () => void;
 }) {
   const [scriptOpen, setScriptOpen] = useState(false);
   const members = workflowMembers(group);
@@ -387,8 +397,10 @@ function LiveWorkflowSection({
   return (
     <section className="rounded-lg border border-border/50 bg-card/30 p-1.5">
       <div className="flex items-center gap-2 px-1.5 pt-0.5 text-[.65rem] font-medium uppercase tracking-wider text-muted-foreground">
-        <span aria-hidden className="size-1.5 rounded-full bg-info" />
-        <span>{group.workflow.workflowName ?? group.workflow.title}</span>
+        <StatusDot status={group.workflow.status} />
+        <span className="min-w-0 truncate">
+          {group.workflow.workflowName ?? group.workflow.title}
+        </span>
         {canShowScript ? (
           <button
             type="button"
@@ -405,6 +417,14 @@ function LiveWorkflowSection({
         <span className="ml-auto font-mono normal-case text-muted-foreground/80">
           {settled}/{members.length} settled
         </span>
+        <button
+          type="button"
+          onClick={onCollapse}
+          aria-label="Collapse workflow"
+          className="text-muted-foreground hover:text-foreground"
+        >
+          <ChevronDown aria-hidden className="size-3" />
+        </button>
       </div>
       <PhaseRail group={group} />
       {scriptOpen && canShowScript ? (
@@ -416,7 +436,7 @@ function LiveWorkflowSection({
         />
       ) : null}
       {group.phases.map((phase) => (
-        <PhaseSection key={phase.index} phase={phase} />
+        <PhaseSection key={phase.index} phase={phase} defaultOpen={!workflowIsLive(group)} />
       ))}
       {group.unphasedMembers.map((member) => (
         <AgentRow key={member.id} agent={member} />
@@ -429,11 +449,16 @@ function LiveWorkflowSection({
 }
 
 /**
- * Settled workflow: one summary line. Click toggles the member list — the
- * only expansion in the panel, at run granularity.
+ * Collapsed workflow: one summary line. The parent owns expansion so a live
+ * workflow keeps its shape when it settles.
  */
-function SettledWorkflowSection({ group }: { group: AgentPanelWorkflowGroup }) {
-  const [open, setOpen] = useState(false);
+function CollapsedWorkflowSection({
+  group,
+  onExpand,
+}: {
+  group: AgentPanelWorkflowGroup;
+  onExpand: () => void;
+}) {
   const members = workflowMembers(group);
   const failed = members.filter((member) => member.status === "failed").length;
   // Coordinator usage may already aggregate members (panel-footer rule):
@@ -450,9 +475,9 @@ function SettledWorkflowSection({ group }: { group: AgentPanelWorkflowGroup }) {
     <section>
       <button
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={onExpand}
         className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-accent/40"
-        aria-expanded={open}
+        aria-expanded={false}
       >
         <StatusDot status={failed > 0 ? "failed" : group.workflow.status} />
         <span className="truncate text-sm">
@@ -463,21 +488,33 @@ function SettledWorkflowSection({ group }: { group: AgentPanelWorkflowGroup }) {
           <span>{members.length} agents</span>
           <span className="tabular-nums">· {formatSubagentTokenCount(totalTokens)} tok</span>
           {elapsed ? <span className="tabular-nums">· {elapsed}</span> : null}
-          {open ? (
-            <ChevronDown aria-hidden className="size-3" />
-          ) : (
-            <ChevronRight aria-hidden className="size-3" />
-          )}
+          <ChevronRight aria-hidden className="size-3" />
         </span>
       </button>
-      {open ? (
-        <div className="ms-3 border-s border-border/45 ps-2">
-          {members.map((member) => (
-            <AgentRow key={member.id} agent={member} />
-          ))}
-        </div>
-      ) : null}
     </section>
+  );
+}
+
+/** A workflow's open state is presentation state, not a status derivative. */
+function WorkflowSection({
+  group,
+  environmentId,
+  threadId,
+}: {
+  group: AgentPanelWorkflowGroup;
+  environmentId: EnvironmentId | null;
+  threadId: ThreadId | null;
+}) {
+  const [open, setOpen] = useState(() => workflowIsLive(group));
+  return open ? (
+    <ExpandedWorkflowSection
+      group={group}
+      environmentId={environmentId}
+      threadId={threadId}
+      onCollapse={() => setOpen(false)}
+    />
+  ) : (
+    <CollapsedWorkflowSection group={group} onExpand={() => setOpen(true)} />
   );
 }
 
@@ -503,48 +540,24 @@ export function AgentsPanel({
     );
   }
 
-  const liveWorkflows = model.workflows.filter(workflowIsLive);
-  const settledWorkflows = model.workflows.filter((group) => !workflowIsLive(group));
-  const liveDirect = model.directAgents.filter(
-    (agent) =>
-      agent.status === "running" || agent.status === "pending" || agent.status === "waiting",
-  );
-  const settledDirect = model.directAgents.filter(
-    (agent) =>
-      agent.status !== "running" && agent.status !== "pending" && agent.status !== "waiting",
-  );
-
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-2 p-2">
-          {liveWorkflows.map((group) => (
-            <LiveWorkflowSection
+          {model.workflows.map((group) => (
+            <WorkflowSection
               key={group.workflow.id}
               group={group}
               environmentId={environmentId}
               threadId={threadId}
             />
           ))}
-          {liveDirect.length > 0 ? (
+          {model.directAgents.length > 0 ? (
             <section>
               <div className="px-1.5 pt-1 text-[.65rem] font-medium uppercase tracking-wider text-muted-foreground">
                 Direct spawns
               </div>
-              {liveDirect.map((agent) => (
-                <AgentRow key={agent.id} agent={agent} />
-              ))}
-            </section>
-          ) : null}
-          {settledWorkflows.length > 0 || settledDirect.length > 0 ? (
-            <section>
-              <div className="px-1.5 pt-2 text-[.65rem] font-medium uppercase tracking-wider text-muted-foreground/70">
-                Earlier
-              </div>
-              {settledWorkflows.map((group) => (
-                <SettledWorkflowSection key={group.workflow.id} group={group} />
-              ))}
-              {settledDirect.map((agent) => (
+              {model.directAgents.map((agent) => (
                 <AgentRow key={agent.id} agent={agent} />
               ))}
             </section>

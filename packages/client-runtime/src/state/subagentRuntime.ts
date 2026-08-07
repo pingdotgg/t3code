@@ -80,6 +80,8 @@ export interface RuntimeSubagent {
   readonly phases: ReadonlyArray<SubagentWorkflowPhase>;
   readonly runHandles: SubagentRunHandles | null;
   readonly recentActivity: ReadonlyArray<SubagentActivityEntry>;
+  /** First retained observation, used as the roster's stable display order. */
+  readonly firstSeenAt: string;
   readonly startedAt: string | null;
   readonly completedAt: string | null;
   readonly updatedAt: string;
@@ -247,6 +249,7 @@ interface MutableAgent {
   phases: ReadonlyArray<SubagentWorkflowPhase>;
   runHandles: SubagentRunHandles | null;
   recentActivity: ReadonlyArray<SubagentActivityEntry>;
+  firstSeenAt: string;
   startedAt: string | null;
   completedAt: string | null;
   updatedAt: string;
@@ -300,6 +303,7 @@ function getOrCreate(
     phases: [],
     runHandles: null,
     recentActivity: [],
+    firstSeenAt: at,
     startedAt: null,
     completedAt: null,
     updatedAt: at,
@@ -500,14 +504,19 @@ export function foldSubagentActivities(
         // Membership is sticky per taskId: rows after the first (terminal
         // rows often carry only taskId+status, no marker fields) inherit the
         // first row's classification instead of being re-judged.
-        if (!agents.has(taskId) && isBackgroundTaskActivity(payload)) break;
+        const existed = agents.has(taskId);
+        if (!existed && isBackgroundTaskActivity(payload)) break;
         const agent = getOrCreate(agents, taskId, payload, at);
         fillMetadata(agent, payload);
         if (agent.activationCount === 0) agent.activationCount = 1;
         const explicitStatus = asRuntimeStatus(payload.status);
         if (explicitStatus) {
           applyStatus(agent, explicitStatus, at);
-        } else if (!isTerminalSubagentStatus(agent.status) && agent.status !== "idle") {
+        } else if (
+          (payload.usageSnapshot !== true || !existed) &&
+          !isTerminalSubagentStatus(agent.status) &&
+          agent.status !== "idle"
+        ) {
           applyStatus(agent, "running", at);
         }
         const summary = asString(payload.summary);
@@ -726,7 +735,10 @@ export function deriveAgentPanelModel({
     return EMPTY_PANEL_MODEL;
   }
 
-  const workflows = source.filter((agent) => agent.kind === "workflow");
+  const workflows = source
+    .filter((agent) => agent.kind === "workflow")
+    .slice()
+    .sort((a, b) => a.firstSeenAt.localeCompare(b.firstSeenAt) || a.id.localeCompare(b.id));
   const workflowIds = new Set(workflows.map((workflow) => workflow.id));
   const members = new Map<string, RuntimeSubagent[]>();
   const direct: RuntimeSubagent[] = [];
@@ -827,7 +839,11 @@ export function deriveAgentPanelModel({
 
   return {
     workflows: workflowGroups,
-    directAgents: direct.slice().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    // Updates and the >100-agent retention ranking must never reshuffle rows
+    // that remain visible.
+    directAgents: direct
+      .slice()
+      .sort((a, b) => a.firstSeenAt.localeCompare(b.firstSeenAt) || a.id.localeCompare(b.id)),
     runningCount,
     waitingCount,
     idleCount,
