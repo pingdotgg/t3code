@@ -225,6 +225,10 @@ export function sortPinnedThreadsByOrderKey<
     readonly id: string;
     readonly createdAt: string;
     readonly pinOrderKey?: string | null | undefined;
+    /** Thread ids are only unique within an environment, and the pinned
+        block merges environments — the tiebreak needs both parts or two
+        clients could render equal-key threads in stream-arrival order. */
+    readonly environmentId?: string | undefined;
   },
 >(threads: readonly T[]): T[] {
   const keyed: T[] = [];
@@ -232,17 +236,20 @@ export function sortPinnedThreadsByOrderKey<
   for (const thread of threads) {
     (thread.pinOrderKey != null ? keyed : keyless).push(thread);
   }
+  const identityTiebreak = (left: T, right: T) =>
+    left.id.localeCompare(right.id) ||
+    (left.environmentId ?? "").localeCompare(right.environmentId ?? "");
   keyed.sort((left, right) => {
     const leftKey = left.pinOrderKey!;
     const rightKey = right.pinOrderKey!;
-    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : left.id.localeCompare(right.id);
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : identityTiebreak(left, right);
   });
   keyless.sort((left, right) => {
     const leftMs = Date.parse(left.createdAt);
     const rightMs = Date.parse(right.createdAt);
     return (
       (Number.isNaN(rightMs) ? 0 : rightMs) - (Number.isNaN(leftMs) ? 0 : leftMs) ||
-      left.id.localeCompare(right.id)
+      identityTiebreak(left, right)
     );
   });
   return [...keyed, ...keyless];

@@ -548,6 +548,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     [
       handleArchive,
       handleDelete,
+      handleMovePinnedDown,
+      handleMovePinnedUp,
       handlePin,
       handleSettle,
       handleSnooze,

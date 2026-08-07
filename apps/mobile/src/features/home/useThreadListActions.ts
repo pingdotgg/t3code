@@ -414,8 +414,13 @@ export function useThreadListActions(): {
   const reorderPinnedMutation = useAtomCommand(threadEnvironment.reorderPin, {
     reportFailure: false,
   });
+  // One move at a time: a second tap before the first write's event lands
+  // would plan from the same stale snapshot and silently collapse two moves
+  // into one — same double-dispatch guard as snoozeThread.
+  const movePinnedInFlightRef = useRef(false);
   const movePinnedThread = useCallback(
     async (thread: EnvironmentThreadShell, direction: "up" | "down") => {
+      if (movePinnedInFlightRef.current) return false;
       if (!environmentSupportsPinReorder(thread.environmentId)) {
         Alert.alert(
           "Could not move thread",
@@ -449,28 +454,33 @@ export function useThreadListActions(): {
         pinned.map((shell) => [scopedThreadKey(shell.environmentId, shell.id), shell]),
       );
       selectionHaptic();
-      for (const assignment of assignments) {
-        const target = shellByKey.get(assignment.id);
-        if (target === undefined) continue;
-        const result = await reorderPinnedMutation({
-          environmentId: target.environmentId,
-          input: { threadId: target.id, orderKey: assignment.orderKey },
-        });
-        if (result._tag === "Failure") {
-          const error = Cause.squash(result.cause);
-          Alert.alert(
-            "Could not move thread",
-            error instanceof Error && error.message.trim().length > 0
-              ? error.message
-              : "The pinned thread could not be moved.",
-          );
-          // No rollback: keys already written are valid orderings on their
-          // own (each write is a complete, consistent placement), so a
-          // partial materialization leaves the list sensible, not corrupt.
-          return false;
+      movePinnedInFlightRef.current = true;
+      try {
+        for (const assignment of assignments) {
+          const target = shellByKey.get(assignment.id);
+          if (target === undefined) continue;
+          const result = await reorderPinnedMutation({
+            environmentId: target.environmentId,
+            input: { threadId: target.id, orderKey: assignment.orderKey },
+          });
+          if (result._tag === "Failure") {
+            const error = Cause.squash(result.cause);
+            Alert.alert(
+              "Could not move thread",
+              error instanceof Error && error.message.trim().length > 0
+                ? error.message
+                : "The pinned thread could not be moved.",
+            );
+            // No rollback: keys already written are valid orderings on their
+            // own (each write is a complete, consistent placement), so a
+            // partial materialization leaves the list sensible, not corrupt.
+            return false;
+          }
         }
+        return true;
+      } finally {
+        movePinnedInFlightRef.current = false;
       }
-      return true;
     },
     [reorderPinnedMutation],
   );

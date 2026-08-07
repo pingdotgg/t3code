@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { planPinnedMove, sortThreads, type ThreadSortInput } from "./threadSort.ts";
+import {
+  planPinnedMove,
+  sortPinnedThreadsByOrderKey,
+  sortThreads,
+  type ThreadSortInput,
+} from "./threadSort.ts";
 
 type TestThread = { readonly id: string } & ThreadSortInput;
 
@@ -113,5 +118,25 @@ describe("planPinnedMove", () => {
     expect(assignments).not.toBeNull();
     const keys = assignments!.map((entry) => entry.orderKey);
     expect([...keys].sort()).toEqual(keys);
+  });
+});
+
+describe("sortPinnedThreadsByOrderKey", () => {
+  it("breaks equal keys by id THEN environment so merged lists are stable everywhere", () => {
+    const sorted = sortPinnedThreadsByOrderKey([
+      {
+        id: "thread-1",
+        createdAt: "2026-03-09T10:00:00.000Z",
+        pinOrderKey: "m",
+        environmentId: "env-b",
+      },
+      {
+        id: "thread-1",
+        createdAt: "2026-03-09T11:00:00.000Z",
+        pinOrderKey: "m",
+        environmentId: "env-a",
+      },
+    ]);
+    expect(sorted.map((thread) => thread.environmentId)).toEqual(["env-a", "env-b"]);
   });
 });
