@@ -1191,11 +1191,14 @@ function resolveTimelineEntryScrollMode(input: {
     }
     return { kind: "anchor-response", turnId: input.runningTurnId };
   }
-  if (input.savedPosition) {
+  if (input.savedPosition?.kind === "manual") {
     return { kind: "restore-position", offset: input.savedPosition.offset };
   }
-  return input.latestTurnId
-    ? { kind: "anchor-response", turnId: input.latestTurnId }
+  if (input.latestTurnId) {
+    return { kind: "anchor-response", turnId: input.latestTurnId };
+  }
+  return input.savedPosition
+    ? { kind: "restore-position", offset: input.savedPosition.offset }
     : { kind: "follow-end" };
 }
 
