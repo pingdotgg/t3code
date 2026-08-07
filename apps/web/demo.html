@@ -11,6 +11,7 @@
       // The marketing demo always renders in dark mode to match the site hero.
       document.documentElement.classList.add("dark");
       document.documentElement.style.backgroundColor = "#161616";
+      document.documentElement.style.setProperty("--glass-opacity", "40%");
       try {
         window.localStorage.setItem("t3code:theme", "dark");
       } catch {}

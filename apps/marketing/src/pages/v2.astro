@@ -28,16 +28,15 @@ const endorsementRows = [
 ---
 
 <Layout
-  title="T3 Code — Version 2"
+  title="T3 Code"
   description="One open control plane for the coding agents you already pay for."
   pageClass="marketing-home marketing-home-v2"
   favicon={stableAppIcon}
-  homeVersion="v2"
 >
   <section class="v2-hero">
     <div class="v2-shell">
       <header class="v2-hero-card">
-        <div class="v2-hero-message">
+        <div class="v2-hero-primary">
           <h1 aria-label="Bring your Claude, Cursor, Codex, or Grok. Rest is on us.">
             <span class="v2-hero-provider-line">
               <span>Bring your</span>
@@ -55,32 +54,55 @@ const endorsementRows = [
             </span>
             <span>Rest is on us.</span>
           </h1>
-          <p class="v2-lede">
-            Run Claude, Cursor, Codex, Grok, and OpenCode in one fast workspace—using the
-            subscriptions you already have.
-          </p>
-        </div>
-        <div class="v2-actions">
-          <div class="v2-download-row">
-            <a class="btn btn-primary btn-lg" href="/download" data-v2-download>
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path fill="currentColor" d="M16.67 13.71c.02 2.25 1.97 3 1.99 3.01-.02.05-.31 1.07-1.03 2.12-.62.91-1.28 1.82-2.31 1.84-1 .02-1.32-.6-2.47-.6-1.16 0-1.51.58-2.46.62-1 .04-1.75-.99-2.38-1.9-1.29-1.86-2.27-5.25-.95-7.54a3.69 3.69 0 0 1 3.13-1.9c.98-.02 1.9.66 2.48.66.57 0 1.65-.82 2.79-.7.47.02 1.8.19 2.65 1.44-.07.04-1.59.93-1.57 2.95ZM14.72 8.1c.52-.63.87-1.51.77-2.39-.75.03-1.66.5-2.2 1.13-.48.55-.9 1.45-.79 2.31.84.07 1.7-.43 2.22-1.05Z" />
-              </svg>
-              <span data-v2-download-label>Download for macOS</span>
-            </a>
-            <div class="v2-channel-picker">
-              <button type="button" aria-haspopup="true" aria-expanded="false" data-v2-channel-trigger>
-                <span data-v2-channel-label>Latest</span>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-              </button>
-              <div class="v2-channel-menu" hidden data-v2-channel-menu>
-                <button type="button" data-stage="latest" data-active="true">Latest</button>
-                <button type="button" data-stage="nightly">Nightly</button>
-                <button type="button" data-stage="dev">Dev</button>
+          <div class="v2-actions">
+            <div class="v2-download-row">
+              <div class="v2-download-button-wrap">
+                <iframe
+                  class="v2-download-art"
+                  aria-hidden="true"
+                  tabindex="-1"
+                  title=""
+                  hidden
+                  data-v2-download-art
+                ></iframe>
+                <a class="btn btn-primary btn-lg" href="/download" data-v2-download>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path fill="currentColor" d="M16.67 13.71c.02 2.25 1.97 3 1.99 3.01-.02.05-.31 1.07-1.03 2.12-.62.91-1.28 1.82-2.31 1.84-1 .02-1.32-.6-2.47-.6-1.16 0-1.51.58-2.46.62-1 .04-1.75-.99-2.38-1.9-1.29-1.86-2.27-5.25-.95-7.54a3.69 3.69 0 0 1 3.13-1.9c.98-.02 1.9.66 2.48.66.57 0 1.65-.82 2.79-.7.47.02 1.8.19 2.65 1.44-.07.04-1.59.93-1.57 2.95ZM14.72 8.1c.52-.63.87-1.51.77-2.39-.75.03-1.66.5-2.2 1.13-.48.55-.9 1.45-.79 2.31.84.07 1.7-.43 2.22-1.05Z" />
+                  </svg>
+                  <span data-v2-download-label>Download for macOS</span>
+                </a>
+              </div>
+              <div class="v2-channel-picker">
+                <button type="button" aria-haspopup="true" aria-expanded="false" data-v2-channel-trigger>
+                  <span data-v2-channel-label>Latest</span>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+                </button>
+                <div class="v2-channel-menu" hidden data-v2-channel-menu>
+                  <button type="button" data-stage="latest" data-active="true">Latest</button>
+                  <button type="button" data-stage="nightly">Nightly</button>
+                  <button type="button" data-stage="dev">Dev</button>
+                </div>
               </div>
             </div>
+            <div class="v2-store-links">
+              <a href={IOS_APP_STORE_URL} target="_blank" rel="noreferrer">
+                <img src="/store-logos/appstore.svg" alt="" width="20" height="20" />App Store
+              </a>
+              <a href={GOOGLE_PLAY_STORE_URL} target="_blank" rel="noreferrer">
+                <img src="/store-logos/googleplay.svg" alt="" width="20" height="20" />Google Play
+              </a>
+            </div>
           </div>
-          <a class="btn btn-ghost" href="https://github.com/pingdotgg/t3code">View source</a>
+        </div>
+
+        <div class="v2-model-lab">
+          <div class="v2-model-panel">
+            <iframe
+              src="/sidebar-demo/model-picker.html"
+              title="Interactive T3 Code model picker"
+              loading="eager"
+            />
+          </div>
         </div>
       </header>
     </div>
@@ -132,7 +154,18 @@ const endorsementRows = [
                   allow="clipboard-write"
                 />
               ) : (
-                <img src={surface.image} alt={`T3 Code ${surface.label.toLowerCase()} view`} loading="lazy" />
+                <>
+                  <img src={surface.image} alt={`T3 Code ${surface.label.toLowerCase()} view`} loading="lazy" />
+                  <a
+                    class="v2-surface-store-link"
+                    href={IOS_APP_STORE_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {surface.id === "tablet" ? "Open iPad app" : "Open in App Store"}
+                    <span aria-hidden="true">↗</span>
+                  </a>
+                </>
               )}
             </div>
           ))}
@@ -152,14 +185,6 @@ const endorsementRows = [
         </h2>
         <p>Pair once. Control the same live threads from the web, iPhone, iPad, or Android.</p>
         <code>npx t3 pair</code>
-        <div class="v2-store-links">
-          <a href={IOS_APP_STORE_URL} target="_blank" rel="noreferrer">
-            <img src="/store-logos/appstore.svg" alt="" width="20" height="20" />App Store
-          </a>
-          <a href={GOOGLE_PLAY_STORE_URL} target="_blank" rel="noreferrer">
-            <img src="/store-logos/googleplay.svg" alt="" width="20" height="20" />Google Play
-          </a>
-        </div>
       </header>
       <div class="v2-connect-visual" aria-hidden="true">
         <div class="v2-connect-desktop">
@@ -226,6 +251,7 @@ const endorsementRows = [
       dev: "Dev",
     };
     const downloadButton = document.querySelector<HTMLAnchorElement>("[data-v2-download]");
+    const downloadArt = document.querySelector<HTMLIFrameElement>("[data-v2-download-art]");
     const downloadLabel = document.querySelector<HTMLElement>("[data-v2-download-label]");
     const channelTrigger = document.querySelector<HTMLButtonElement>("[data-v2-channel-trigger]");
     const channelLabel = document.querySelector<HTMLElement>("[data-v2-channel-label]");
@@ -247,6 +273,13 @@ const endorsementRows = [
       if (channelLabel) channelLabel.textContent = stageNames[stage];
       if (downloadLabel) downloadLabel.textContent = stage === "dev" ? "Copy repo link" : platformLabel;
       if (downloadButton) downloadButton.href = stage === "dev" ? "#" : "/download";
+      if (downloadArt) {
+        downloadArt.hidden = stage === "latest";
+        if (stage !== "latest") {
+          const nextSource = `/sidebar-demo/stage-art.html?variant=${stage}`;
+          if (!downloadArt.src.endsWith(nextSource)) downloadArt.src = nextSource;
+        }
+      }
       for (const option of channelOptions) {
         option.dataset.active = String(option.dataset.stage === stage);
       }
@@ -332,20 +365,16 @@ const endorsementRows = [
   }
 
   .v2-hero {
-    padding: 150px 0 96px;
-    border-bottom: 1px solid var(--border);
+    padding: 110px 0 54px;
     overflow: hidden;
   }
 
   .v2-hero-card {
     display: grid;
-    grid-template-rows: 1fr auto;
-    min-height: 610px;
-    border: 1px solid var(--border-strong);
-    background: #070708;
+    grid-template-columns: minmax(0, 1.08fr) minmax(380px, 0.92fr);
+    min-height: clamp(460px, 58svh, 560px);
   }
 
-  .v2-hero-card h1,
   .v2-section-heading h2,
   .v2-connect h2 {
     font-weight: 500;
@@ -353,15 +382,20 @@ const endorsementRows = [
     line-height: 0.98;
   }
 
-  .v2-hero-message {
-    display: grid;
-    grid-template-columns: minmax(0, 1.35fr) minmax(290px, 0.65fr);
+  .v2-hero-primary {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    justify-content: center;
+    padding: 64px 42px;
   }
 
   .v2-hero-card h1 {
-    align-self: end;
-    padding: 58px 42px;
-    font-size: clamp(58px, 6.4vw, 92px);
+    max-width: 760px;
+    font-size: clamp(48px, 4.9vw, 70px);
+    font-weight: 500;
+    letter-spacing: -0.047em;
+    line-height: 0.98;
   }
 
   .v2-hero-card h1 > span {
@@ -425,23 +459,12 @@ const endorsementRows = [
     }
   }
 
-  .v2-lede {
-    display: flex;
-    align-items: flex-end;
-    padding: 58px 36px;
-    border-left: 1px solid var(--border);
-    color: #8f8f98;
-    font-size: 16px;
-    line-height: 1.6;
-  }
-
   .v2-actions {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 10px;
-    padding: 22px 24px;
-    border-top: 1px solid var(--border);
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+    margin-top: 38px;
   }
 
   .v2-download-row {
@@ -450,10 +473,54 @@ const endorsementRows = [
     gap: 12px;
   }
 
+  .v2-download-button-wrap {
+    position: relative;
+    overflow: hidden;
+    border-radius: 10px;
+  }
+
+  .v2-download-button-wrap .btn-primary {
+    position: relative;
+    z-index: 1;
+  }
+
+  .v2-download-art {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    pointer-events: none;
+  }
+
+  .v2-download-art[hidden] {
+    display: none;
+  }
+
   .v2-download-row .btn-primary svg {
     width: 16px;
     height: 16px;
     flex: 0 0 auto;
+  }
+
+  :global(html[data-stage="nightly"]) .v2-download-row .btn-primary {
+    color: #fff;
+    background: rgba(42, 27, 89, 0.28);
+    box-shadow: inset 0 1px rgba(255, 255, 255, 0.22), 0 12px 34px rgba(81, 53, 168, 0.24);
+  }
+
+  :global(html[data-stage="nightly"]) .v2-download-row .btn-primary:hover {
+    background: rgba(70, 43, 139, 0.24);
+  }
+
+  :global(html[data-stage="dev"]) .v2-download-row .btn-primary {
+    color: #fff;
+    background: rgba(16, 68, 155, 0.25);
+    box-shadow: inset 0 1px rgba(255, 255, 255, 0.18), 0 12px 34px rgba(37, 86, 189, 0.24);
+  }
+
+  :global(html[data-stage="dev"]) .v2-download-row .btn-primary:hover {
+    background: rgba(26, 82, 181, 0.2);
   }
 
   .v2-channel-picker {
@@ -515,10 +582,46 @@ const endorsementRows = [
     background: rgba(255, 255, 255, 0.07);
   }
 
+  .v2-model-lab {
+    position: relative;
+    display: grid;
+    min-width: 0;
+    padding: 24px 0 24px 28px;
+    overflow: hidden;
+  }
+
+  .v2-model-lab::after {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    right: 0;
+    z-index: 2;
+    width: 72px;
+    background: linear-gradient(270deg, #030303 0%, rgba(3, 3, 3, 0.82) 32%, transparent 100%);
+    pointer-events: none;
+  }
+
+  .v2-model-panel {
+    display: grid;
+    min-height: 0;
+    place-items: center;
+  }
+
+  .v2-model-panel iframe {
+    width: 700px;
+    height: 100%;
+    max-height: 390px;
+    border: 0;
+    background: transparent;
+  }
+
   .v2-system,
   .v2-connect {
     padding: 150px 0;
-    border-bottom: 1px solid var(--border);
+  }
+
+  .v2-connect {
+    padding-bottom: 44px;
   }
 
   .v2-section-heading {
@@ -642,6 +745,56 @@ const endorsementRows = [
     max-height: 510px;
   }
 
+  .v2-surface-store-link {
+    position: absolute;
+    right: 30px;
+    bottom: 28px;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 10px 14px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 999px;
+    color: #fff;
+    background: rgba(7, 7, 9, 0.72);
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.4);
+    font-size: 13px;
+    font-weight: 600;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(8px);
+    backdrop-filter: blur(18px);
+    transition: opacity 0.18s ease, transform 0.18s ease, background 0.18s ease;
+  }
+
+  .v2-surface-panel:hover .v2-surface-store-link,
+  .v2-surface-store-link:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
+
+  .v2-surface-store-link:hover {
+    background: rgba(24, 24, 28, 0.88);
+  }
+
+  .v2-surface-panel[data-v2-panel="phone"] .v2-surface-store-link {
+    right: auto;
+    left: 50%;
+    bottom: 34px;
+    transform: translate(-50%, 8px);
+  }
+
+  .v2-surface-panel[data-v2-panel="phone"]:hover .v2-surface-store-link,
+  .v2-surface-panel[data-v2-panel="phone"] .v2-surface-store-link:focus-visible {
+    transform: translate(-50%, 0);
+  }
+
+  .v2-surface-panel[data-v2-panel="tablet"] .v2-surface-store-link {
+    right: 10%;
+    bottom: 42px;
+  }
+
   .v2-connect-grid {
     display: grid;
     grid-template-columns: 0.72fr 1.28fr;
@@ -675,7 +828,6 @@ const endorsementRows = [
   .v2-store-links {
     display: flex;
     gap: 22px;
-    margin-top: 30px;
   }
 
   .v2-store-links a {
@@ -752,9 +904,8 @@ const endorsementRows = [
   }
 
   .v2-endorsements {
-    padding: 150px 0;
+    padding: 52px 0 150px;
     overflow: hidden;
-    border-bottom: 1px solid var(--border);
   }
 
   .v2-endorsements-heading {
@@ -887,6 +1038,10 @@ const endorsementRows = [
   }
 
   @media (max-width: 1100px) {
+    .v2-hero-card {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
     .v2-system-grid,
     .v2-connect-grid {
       grid-template-columns: 0.8fr 1.2fr;
@@ -899,25 +1054,20 @@ const endorsementRows = [
     }
 
     .v2-hero {
-      padding: 128px 0 80px;
+      padding: 104px 0 68px;
     }
 
     .v2-hero-card {
+      grid-template-columns: 1fr;
       min-height: 0;
     }
 
-    .v2-hero-message {
-      grid-template-columns: 1fr;
-    }
-
-    .v2-hero-card h1 {
+    .v2-hero-primary {
       padding: 48px 28px;
     }
 
-    .v2-lede {
-      padding: 28px;
-      border-top: 1px solid var(--border);
-      border-left: 0;
+    .v2-model-lab {
+      min-height: 430px;
     }
 
     .v2-section-heading,
@@ -932,6 +1082,14 @@ const endorsementRows = [
       padding: 100px 0;
     }
 
+    .v2-connect {
+      padding-bottom: 32px;
+    }
+
+    .v2-endorsements {
+      padding-top: 44px;
+    }
+
     .v2-section-heading {
       align-items: start;
       gap: 20px;
@@ -943,7 +1101,6 @@ const endorsementRows = [
 
     .v2-system-copy {
       border-right: 0;
-      border-bottom: 1px solid var(--border);
     }
 
     .v2-system-message {
@@ -964,21 +1121,36 @@ const endorsementRows = [
       width: min(100% - 32px, 480px);
     }
 
+    .v2-hero-primary {
+      padding-inline: 20px;
+    }
+
     .v2-hero-card h1 {
       font-size: 40px;
     }
 
-    .v2-actions {
-      padding: 18px;
+    .v2-download-row {
+      display: grid;
+      width: 100%;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
     }
 
-    .v2-download-row {
+    .v2-download-button-wrap,
+    .v2-download-row .btn-primary {
       width: 100%;
+      min-width: 0;
     }
 
     .v2-download-row .btn-primary {
-      flex: 1;
-      min-width: 0;
+      padding-inline: 12px;
+      font-size: 13px;
+    }
+
+    .v2-channel-picker > button {
+      min-width: 82px;
+      padding-inline: 10px;
+      font-size: 12px;
     }
 
     .v2-surface-tabs button {

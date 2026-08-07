@@ -10,6 +10,7 @@ import {
   VcsStatusStreamEvent,
 } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { createModelCapabilities } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
@@ -24,6 +25,23 @@ const minutesAgo = (minutes: number) => new Date(now - minutes * 60_000).toISOSt
 
 /** Sentinel wake time for "permanently" snoozed demo threads. */
 const SNOOZE_FOREVER = "2099-01-01T09:00:00.000Z";
+
+const codexDemoCapabilities = createModelCapabilities({
+  optionDescriptors: [
+    {
+      id: "reasoningEffort",
+      label: "Reasoning",
+      type: "select",
+      currentValue: "medium",
+      options: [
+        { id: "low", label: "Low" },
+        { id: "medium", label: "Medium", isDefault: true },
+        { id: "high", label: "High" },
+        { id: "xhigh", label: "Extra high" },
+      ],
+    },
+  ],
+});
 
 // ---------------------------------------------------------------------------
 // Providers (shared across demo environments)
@@ -41,8 +59,18 @@ const demoProviders = [
     auth: { status: "authenticated", label: "ChatGPT" },
     checkedAt: minutesAgo(1),
     models: [
-      { slug: "gpt-5.3-codex", name: "GPT-5.3 Codex", isCustom: false, capabilities: null },
-      { slug: "gpt-5.3", name: "GPT-5.3", isCustom: false, capabilities: null },
+      {
+        slug: "gpt-5.6-sol",
+        name: "GPT-5.6-Sol",
+        isCustom: false,
+        capabilities: codexDemoCapabilities,
+      },
+      {
+        slug: "gpt-5.6-terra",
+        name: "GPT-5.6-Terra",
+        isCustom: false,
+        capabilities: codexDemoCapabilities,
+      },
     ],
   },
   {

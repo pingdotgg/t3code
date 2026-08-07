@@ -11,7 +11,6 @@ interface Props {
   favicon?: string;
   socialImage?: string;
   socialImageAlt?: string;
-  homeVersion?: "v1" | "v2";
 }
 
 const {
@@ -21,7 +20,6 @@ const {
   favicon = stableAppIcon,
   socialImage = "/og-image.png",
   socialImageAlt = "T3 Code model picker shown in cinematic perspective",
-  homeVersion,
 } = Astro.props;
 
 const siteUrl = Astro.site ?? Astro.url;
@@ -105,38 +103,8 @@ const socialImageUrl = new URL(socialImage, siteUrl);
             </svg>
             <span class="nav-brand-name">Code</span>
           </a>
-          {
-            homeVersion && (
-              <nav class="version-switcher" aria-label="Homepage version">
-                <a
-                  href="/"
-                  class:list={["version-switcher__link", homeVersion === "v1" && "is-active"]}
-                  aria-current={homeVersion === "v1" ? "page" : undefined}
-                >
-                  V1
-                </a>
-                <a
-                  href="/v2"
-                  class:list={["version-switcher__link", homeVersion === "v2" && "is-active"]}
-                  aria-current={homeVersion === "v2" ? "page" : undefined}
-                >
-                  V2
-                </a>
-              </nav>
-            )
-          }
           <div class="nav-right">
-            <div class="nav-download">
-              <button
-                class="site-stage-trigger"
-                type="button"
-                aria-label="Release channel: Latest. Switch to Nightly"
-                data-site-stage-trigger
-              >
-                <img src={stableAppIcon} alt="" width="16" height="16" data-site-stage-icon />
-              </button>
-              <a class="nav-link" href="/download">Download</a>
-            </div>
+            <a class="nav-link nav-download" href="/download">Download</a>
             <a
               class="nav-stars"
               href={GITHUB_REPOSITORY_URL}
@@ -144,10 +112,9 @@ const socialImageUrl = new URL(socialImage, siteUrl);
               rel="noopener noreferrer"
               aria-label="View T3 Code on GitHub"
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M12 .7a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2.23c-3.22.7-3.9-1.37-3.9-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.77 2.72 1.26 3.38.96.1-.75.4-1.26.74-1.55-2.57-.29-5.27-1.28-5.27-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.16 1.18a10.94 10.94 0 0 1 5.75 0c2.19-1.49 3.16-1.18 3.16-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.71 5.38-5.29 5.67.42.36.79 1.06.79 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z"/>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.3c-3.3.7-4-1.4-4-1.4-.5-1.4-1.3-1.8-1.3-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3Z" />
               </svg>
-              <span>GitHub</span>
             </a>
           </div>
         </div>
@@ -625,49 +592,15 @@ const socialImageUrl = new URL(socialImage, siteUrl);
     gap: 20px;
   }
 
-  .version-switcher {
-    position: absolute;
-    left: 50%;
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    padding: 3px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: rgba(10, 10, 12, 0.68);
-    transform: translateX(-50%);
-    backdrop-filter: blur(18px);
-  }
-
-  .version-switcher__link {
-    min-width: 34px;
-    padding: 4px 9px;
-    border-radius: 999px;
-    color: var(--fg-dim);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    line-height: 1.2;
-    text-align: center;
-    transition: color 0.18s ease, background 0.18s ease;
-  }
-
-  .version-switcher__link:hover {
-    color: var(--fg);
-  }
-
-  .version-switcher__link.is-active {
-    color: #0a0a0b;
-    background: var(--fg);
-  }
-
   .nav-download {
-    display: inline-flex;
-    align-items: center;
+    white-space: nowrap;
   }
 
   .nav-link {
-    color: var(--fg-muted);
-    font-size: 13px;
+    color: rgba(255, 255, 255, 0.34);
+    font-size: 18px;
+    font-weight: 500;
+    letter-spacing: -0.015em;
     transition: color 0.18s ease;
   }
 
@@ -675,57 +608,29 @@ const socialImageUrl = new URL(socialImage, siteUrl);
     color: var(--fg);
   }
 
-  .site-stage-trigger {
-    display: inline-flex;
-    width: 30px;
-    height: 36px;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    opacity: 0.84;
-    transition:
-      opacity 0.18s ease,
-      transform 0.18s ease;
-  }
-
-  .site-stage-trigger:hover {
-    opacity: 1;
-    transform: scale(1.04);
-  }
-
-  .site-stage-trigger img {
-    flex: 0 0 auto;
-    border-radius: 4px;
-  }
-
   .nav-stars {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
     height: 36px;
+    width: 36px;
+    justify-content: center;
     padding: 0;
     border: 0;
     background: transparent;
     color: var(--fg-muted);
-    font-size: 13px;
-    letter-spacing: -0.01em;
-    white-space: nowrap;
-    transition: color 0.18s ease;
+    transition: color 0.18s ease, transform 0.18s ease;
   }
 
   .nav-stars:hover {
-    color: var(--fg);
-  }
-
-  .nav-stars strong {
-    color: var(--fg);
-    font-weight: 600;
+    color: #fff;
+    transform: scale(1.06);
   }
 
   .nav-stars svg {
-    color: var(--fg);
-    fill: var(--fg);
+    width: 23px;
+    height: 23px;
     flex-shrink: 0;
+    fill: currentColor;
   }
 
   .main {
@@ -755,7 +660,7 @@ const socialImageUrl = new URL(socialImage, siteUrl);
     --footer-wordmark-size: clamp(194px, 17vw, 217px);
     position: absolute;
     top: 188px;
-    left: 32px;
+    left: 0;
     width: 62%;
     display: flex;
     align-items: center;
@@ -859,12 +764,6 @@ const socialImageUrl = new URL(socialImage, siteUrl);
   }
 
   @media (max-width: 520px) {
-    .version-switcher {
-      position: static;
-      margin-left: auto;
-      transform: none;
-    }
-
     .nav-link {
       display: none;
     }

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <script>
+      document.documentElement.classList.add("dark");
+      document.documentElement.style.backgroundColor = "transparent";
+      document.documentElement.style.setProperty("--glass-opacity", "40%");
+    </script>
+    <style>
+      html,
+      body,
+      #root {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        background: transparent !important;
+      }
+
+      body {
+        overflow: hidden;
+        background-image: none !important;
+      }
+    </style>
+    <title>T3 Code model picker</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/demo/modelPicker.tsx"></script>
+  </body>
+</html>

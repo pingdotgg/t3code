@@ -45,7 +45,7 @@ export default defineConfig(() => {
       emptyOutDir: true,
       sourcemap: false,
       rollupOptions: {
-        input: ["demo.html", "stage-art.html"],
+        input: ["demo.html", "model-picker.html", "stage-art.html"],
       },
     },
   };
