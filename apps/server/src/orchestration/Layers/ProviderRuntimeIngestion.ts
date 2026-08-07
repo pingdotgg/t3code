@@ -555,11 +555,6 @@ export function runtimeEventToActivities(
               ? { detail: truncateDetail(event.payload.description) }
               : {}),
             ...taskLinkageActivityFields(event.payload as Record<string, unknown>),
-            // fork: f3 agent-run visibility — top level, never nested under
-            // `data`: that is what keeps ActivityPayloadProjection untouched.
-            ...(event.payload.subagentType ? { subagentType: event.payload.subagentType } : {}),
-            ...(event.payload.prompt ? { prompt: truncateDetail(event.payload.prompt) } : {}),
-            ...(event.payload.ambient === true ? { ambient: true } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -736,16 +731,6 @@ export function runtimeEventToActivities(
               : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
             ...taskLinkageActivityFields(event.payload as Record<string, unknown>),
-            // fork: f3 agent-run visibility — top level, never nested under `data`.
-            // `error` is the only failure reason the SDK puts on the wire.
-            ...(event.payload.error ? { error: truncateDetail(event.payload.error) } : {}),
-            ...(event.payload.totalTokens !== undefined
-              ? { totalTokens: event.payload.totalTokens }
-              : {}),
-            ...(event.payload.toolUses !== undefined ? { toolUses: event.payload.toolUses } : {}),
-            ...(event.payload.durationMs !== undefined
-              ? { durationMs: event.payload.durationMs }
-              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,

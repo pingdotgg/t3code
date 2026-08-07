@@ -67,19 +67,6 @@ describe("RPC authorization scopes", () => {
     );
   });
 
-  // fork: f3 — stopping one agent task is a thread operation, not a
-  // credential mutation: it must not require `access:write`, and it must not
-  // be readable-client territory either.
-  it("requires orchestration:operate to stop an agent task", () => {
-    expect(requiredScopeForRpcMethod(WS_METHODS.providerStopTask)).toBe(
-      AuthOrchestrationOperateScope,
-    );
-    expect(requiredScopeForRpcMethod(WS_METHODS.providerStopTask)).not.toBe(
-      AuthOrchestrationReadScope,
-    );
-    expect(requiredScopeForRpcMethod(WS_METHODS.providerStopTask)).not.toBe(AuthAccessWriteScope);
-  });
-
   // fork: f4 — the source-control panel. The split is the whole reason a
   // read-only paired client is safe to hand the panel: it can look at the
   // working copy but cannot change it.

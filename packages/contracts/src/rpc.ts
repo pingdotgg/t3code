@@ -79,8 +79,6 @@ import {
   ClaudeCodexBridgeSignInEvent,
   ClaudeCodexBridgeStatus,
 } from "./claudeCodexRouting.ts"; // fork: f5 Claude Code → Codex routing
-// fork: f3 per-task stop
-import { ProviderStopTaskError, ProviderStopTaskInput } from "./providerTask.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   RelayClientInstallFailedError,
@@ -308,8 +306,6 @@ export const WS_METHODS = {
   // Provider account methods — fork: f1 provider account sign-in
   providerStartSignIn: "provider.startSignIn",
   providerSignOut: "provider.signOut",
-  providerStopTask: "provider.stopTask", // fork: f3 per-task stop
-
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -530,13 +526,6 @@ export const WsClaudeCodexBridgeGetModelsRpc = Rpc.make(WS_METHODS.claudeCodexBr
 export const WsProviderSignOutRpc = Rpc.make(WS_METHODS.providerSignOut, {
   payload: ProviderSignOutInput,
   error: Schema.Union([ProviderAuthError, EnvironmentAuthorizationError]),
-});
-
-// fork: f3 — per-task stop. Unary and void-success: the terminal
-// `task.completed` activity is the receipt, so the RPC returns nothing.
-export const WsProviderStopTaskRpc = Rpc.make(WS_METHODS.providerStopTask, {
-  payload: ProviderStopTaskInput,
-  error: Schema.Union([ProviderStopTaskError, EnvironmentAuthorizationError]),
 });
 
 export const WsCloudGetRelayClientStatusRpc = Rpc.make(WS_METHODS.cloudGetRelayClientStatus, {
@@ -1165,7 +1154,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsClaudeCodexBridgeGetModelsRpc,
   WsProviderStartSignInRpc, // fork: f1 provider account sign-in
   WsProviderSignOutRpc, // fork: f1 provider account sign-in
-  WsProviderStopTaskRpc, // fork: f3 per-task stop
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
   WsSourceControlLookupRepositoryRpc,

@@ -63,9 +63,6 @@ export const RPC_REQUIRED_SCOPES = {
   // log the host out.
   [WS_METHODS.providerStartSignIn]: AuthAccessWriteScope,
   [WS_METHODS.providerSignOut]: AuthAccessWriteScope,
-  // fork: f3 — stopping one agent task operates on a running turn, so it is a
-  // thread operation (`orchestration:operate`), not a credential mutation.
-  [WS_METHODS.providerStopTask]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,

@@ -16,7 +16,6 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionStartInput,
-  RuntimeTaskId, // fork: f3 per-task stop
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -93,8 +92,6 @@ function makeFakeCodexAdapter(
   provider: ProviderDriverKind = CODEX_DRIVER,
   // fork: f2 lets a test declare an adapter that cannot take instructions
   instructionInjection: ProviderInstructionInjectionMode = "session",
-  // fork: f3 lets a test declare an adapter with no per-task stop
-  supportsStopTask = true,
 ) {
   const sessions = new Map<ThreadId, ProviderSession>();
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
@@ -144,12 +141,6 @@ function makeFakeCodexAdapter(
 
   const interruptTurn = vi.fn(
     (_threadId: ThreadId, _turnId?: TurnId): Effect.Effect<void, ProviderAdapterError> =>
-      Effect.void,
-  );
-
-  // fork: f3 per-task stop
-  const stopTask = vi.fn(
-    (_threadId: ThreadId, _taskId: RuntimeTaskId): Effect.Effect<void, ProviderAdapterError> =>
       Effect.void,
   );
 
@@ -225,7 +216,6 @@ function makeFakeCodexAdapter(
     startSession,
     sendTurn,
     interruptTurn,
-    ...(supportsStopTask ? { stopTask } : {}), // fork: f3 per-task stop
     respondToRequest,
     respondToUserInput,
     stopSession,
@@ -261,7 +251,6 @@ function makeFakeCodexAdapter(
     startSession,
     sendTurn,
     interruptTurn,
-    stopTask, // fork: f3 per-task stop
     respondToRequest,
     respondToUserInput,
     stopSession,
@@ -290,8 +279,7 @@ const hasMetricSnapshot = (
 function makeProviderServiceLayer() {
   const codex = makeFakeCodexAdapter();
   const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
-  // fork: f3 — cursor stands in for an adapter with no per-task stop.
-  const cursor = makeFakeCodexAdapter(CURSOR_DRIVER, "session", false);
+  const cursor = makeFakeCodexAdapter(CURSOR_DRIVER);
   const registry = makeAdapterRegistryMock({
     [ProviderDriverKind.make("codex")]: codex.adapter,
     [ProviderDriverKind.make("claudeAgent")]: claude.adapter,
@@ -1069,83 +1057,6 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.equal(routing.codex.rollbackThread.mock.calls.length, 1);
       const rollbackCall = routing.codex.rollbackThread.mock.calls[0];
       assert.equal(rollbackCall?.[1], 1);
-    }),
-  );
-
-  // fork: f3 — per-task stop.
-  it.effect("routes stopTask to the adapter and stays idempotent", () =>
-    Effect.gen(function* () {
-      const provider = yield* ProviderService.ProviderService;
-      const taskId = RuntimeTaskId.make("task-1");
-
-      const session = yield* provider.startSession(asThreadId("thread-stop-task"), {
-        provider: ProviderDriverKind.make("codex"),
-        providerInstanceId: codexInstanceId,
-        threadId: asThreadId("thread-stop-task"),
-        cwd: "/tmp/project",
-        runtimeMode: "full-access",
-      });
-      routing.codex.stopTask.mockClear();
-
-      yield* provider.stopTask({ threadId: session.threadId, taskId });
-      // A second stop for the same task is not refused, not queued, and not
-      // deduplicated: repeated presses simply forward again.
-      yield* provider.stopTask({ threadId: session.threadId, taskId });
-
-      assert.deepEqual(routing.codex.stopTask.mock.calls, [
-        [session.threadId, taskId],
-        [session.threadId, taskId],
-      ]);
-    }),
-  );
-
-  it.effect("stops a task the adapter no longer knows about without failing", () =>
-    Effect.gen(function* () {
-      const provider = yield* ProviderService.ProviderService;
-
-      const session = yield* provider.startSession(asThreadId("thread-stop-settled"), {
-        provider: ProviderDriverKind.make("codex"),
-        providerInstanceId: codexInstanceId,
-        threadId: asThreadId("thread-stop-settled"),
-        cwd: "/tmp/project",
-        runtimeMode: "full-access",
-      });
-      routing.codex.stopTask.mockClear();
-
-      // An already-settled task is indistinguishable from a live one here, and
-      // must not become an error: the button races the task's own completion.
-      yield* provider.stopTask({
-        threadId: session.threadId,
-        taskId: RuntimeTaskId.make("task-already-finished"),
-      });
-
-      assert.equal(routing.codex.stopTask.mock.calls.length, 1);
-    }),
-  );
-
-  it.effect("refuses stopTask for an adapter that cannot stop tasks", () =>
-    Effect.gen(function* () {
-      const provider = yield* ProviderService.ProviderService;
-
-      const session = yield* provider.startSession(asThreadId("thread-stop-unsupported"), {
-        provider: CURSOR_DRIVER,
-        providerInstanceId: ProviderInstanceId.make("cursor"),
-        threadId: asThreadId("thread-stop-unsupported"),
-        cwd: "/tmp/project",
-        runtimeMode: "full-access",
-      });
-
-      const failure = yield* Effect.flip(
-        provider.stopTask({
-          threadId: session.threadId,
-          taskId: RuntimeTaskId.make("task-1"),
-        }),
-      );
-
-      assert.instanceOf(failure, ProviderUnsupportedError);
-      assert.equal(routing.cursor.stopTask.mock.calls.length, 0);
-      // The shared harness is layer-scoped; leave no cursor session behind.
-      yield* provider.stopSession({ threadId: session.threadId });
     }),
   );
 

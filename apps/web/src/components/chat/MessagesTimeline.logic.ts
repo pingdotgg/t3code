@@ -1,5 +1,4 @@
 import * as Equal from "effect/Equal";
-import type { AgentRun } from "../../agentRuns"; // fork: f3 agent-run visibility
 import {
   formatDuration,
   workEntryIndicatesToolNeutralStatus,
@@ -202,8 +201,6 @@ export type MessagesTimelineRow =
       createdAt: string;
       proposedPlan: ProposedPlan;
     }
-  // fork: f3 agent-run visibility
-  | { kind: "agent-run"; id: string; createdAt: string; run: AgentRun }
   | { kind: "working"; id: string; createdAt: string | null };
 
 export interface StableMessagesTimelineRowsState {
@@ -579,17 +576,6 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
-    // fork: f3 agent-run visibility
-    if (timelineEntry.kind === "agent-run") {
-      nextRows.push({
-        kind: "agent-run",
-        id: timelineEntry.id,
-        createdAt: timelineEntry.createdAt,
-        run: timelineEntry.run,
-      });
-      continue;
-    }
-
     const assistantTurnStillInProgress =
       timelineEntry.message.role === "assistant" &&
       unsettledTurnId !== null &&
@@ -672,10 +658,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
-
-    // fork: f3 agent-run visibility
-    case "agent-run":
-      return a.run === (b as typeof a).run;
 
     case "work":
       return Equal.equals(a.groupedEntries, (b as typeof a).groupedEntries);

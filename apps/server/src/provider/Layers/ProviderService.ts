@@ -19,7 +19,6 @@ import {
   ProviderSendTurnInput,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
-  ProviderStopTaskInput, // fork: f3 per-task stop
   type ProviderInstanceId,
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
@@ -46,11 +45,7 @@ import {
   providerTurnMetricAttributes,
   withMetrics,
 } from "../../observability/Metrics.ts";
-import {
-  type ProviderAdapterError,
-  ProviderUnsupportedError, // fork: f3 per-task stop
-  ProviderValidationError,
-} from "../Errors.ts";
+import { type ProviderAdapterError, ProviderValidationError } from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
@@ -779,37 +774,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
-  // fork: f3 — per-task stop. Sibling of `interruptTurn`: same routing, same
-  // recovery, one adapter call. No in-flight guard and no state of its own, so
-  // the operation is idempotent by construction; the durable receipt is the
-  // `task.completed status=stopped` activity the provider emits afterwards.
-  const stopTask: ProviderServiceMethod<"stopTask"> = Effect.fn("stopTask")(function* (rawInput) {
-    const input = yield* decodeInputOrValidationError({
-      operation: "ProviderService.stopTask",
-      schema: ProviderStopTaskInput,
-      payload: rawInput,
-    });
-    const routed = yield* resolveRoutableSession({
-      threadId: input.threadId,
-      operation: "ProviderService.stopTask",
-      allowRecovery: true,
-    });
-    yield* Effect.annotateCurrentSpan({
-      "provider.operation": "stop-task",
-      "provider.kind": routed.adapter.provider,
-      "provider.thread_id": input.threadId,
-      "provider.task_id": input.taskId,
-    });
-    const adapterStopTask = routed.adapter.stopTask;
-    if (adapterStopTask === undefined) {
-      return yield* new ProviderUnsupportedError({ provider: routed.adapter.provider });
-    }
-    yield* adapterStopTask(routed.threadId, input.taskId);
-    yield* analytics.record("provider.task.stopped", {
-      provider: routed.adapter.provider,
-    });
-  });
-
   const respondToRequest: ProviderServiceMethod<"respondToRequest"> = Effect.fn("respondToRequest")(
     function* (rawInput) {
       const input = yield* decodeInputOrValidationError({
@@ -1128,7 +1092,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     startSession,
     sendTurn,
     interruptTurn,
-    stopTask, // fork: f3 per-task stop
     respondToRequest,
     respondToUserInput,
     stopSession,

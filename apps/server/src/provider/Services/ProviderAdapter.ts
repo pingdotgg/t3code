@@ -13,7 +13,6 @@ import type {
   ProviderDriverKind,
   ProviderUserInputAnswers,
   ProviderRuntimeEvent,
-  RuntimeTaskId, // fork: f3 per-task stop
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
@@ -80,16 +79,6 @@ export interface ProviderAdapterShape<TError> {
    * Interrupt an active turn.
    */
   readonly interruptTurn: (threadId: ThreadId, turnId?: TurnId) => Effect.Effect<void, TError>;
-
-  /**
-   * Stop one in-flight subagent/workflow task without ending the turn.
-   *
-   * fork: f3 — **optional**: an adapter whose protocol has no per-task stop
-   * simply omits it, and `ProviderService.stopTask` turns that into a typed
-   * refusal rather than a silent no-op. Implementations must be idempotent and
-   * must not fail because the task already settled.
-   */
-  readonly stopTask?: (threadId: ThreadId, taskId: RuntimeTaskId) => Effect.Effect<void, TError>;
 
   /**
    * Respond to an interactive approval request.

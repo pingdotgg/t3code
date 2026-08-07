@@ -14,7 +14,6 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 
-import type { AgentRun } from "./agentRuns.ts"; // fork: f3 agent-run visibility
 import type {
   ChatMessage,
   ProposedPlan,
@@ -157,13 +156,6 @@ export type TimelineEntry =
       kind: "work";
       createdAt: string;
       entry: WorkLogEntry;
-    }
-  // fork: f3 agent-run visibility
-  | {
-      id: string;
-      kind: "agent-run";
-      createdAt: string;
-      run: AgentRun;
     };
 
 export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {

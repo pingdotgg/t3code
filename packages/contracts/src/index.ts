@@ -13,7 +13,6 @@ export * from "./providerInstance.ts";
 export * from "./providerRuntime.ts";
 export * from "./providerAuth.ts"; // fork: f1 provider account sign-in contract
 export * from "./claudeCodexRouting.ts"; // fork: f5 Claude Code → Codex routing
-export * from "./providerTask.ts"; // fork: f3 per-task stop contract
 export * from "./model.ts";
 export * from "./keybindings.ts";
 export * from "./server.ts";

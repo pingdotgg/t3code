@@ -83,8 +83,6 @@ import {
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import { ProviderAuthService } from "./provider/Services/ProviderAuthService.ts"; // fork: f1 provider account sign-in
-import * as ProviderService from "./provider/Services/ProviderService.ts"; // fork: f3 per-task stop
-import { makeProviderTaskRpcHandlers } from "./provider/Services/providerTaskRpcHandlers.ts"; // fork: f3 per-task stop
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import { getClaudeCodexBridge } from "./provider/claudeCodex/ClaudeCodexBridge.ts"; // fork: f5
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
@@ -379,7 +377,6 @@ const makeWsRpcLayer = (
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const providerAuth = yield* ProviderAuthService; // fork: f1 provider account sign-in
-      const providerService = yield* ProviderService.ProviderService; // fork: f3 per-task stop
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
@@ -1681,9 +1678,6 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.providerSignOut, providerAuth.signOut(input), {
             "rpc.aggregate": "provider",
           }),
-        // fork: f3 per-task stop — handler body lives in
-        // `provider/Services/providerTaskRpcHandlers.ts`.
-        ...makeProviderTaskRpcHandlers({ providerService, observeRpcEffect }),
         [WS_METHODS.cloudGetRelayClientStatus]: (_input) =>
           observeRpcEffect(WS_METHODS.cloudGetRelayClientStatus, relayClient.resolve, {
             "rpc.aggregate": "cloud",

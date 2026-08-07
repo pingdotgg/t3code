@@ -10,4 +10,4 @@ This repo is a fork of `pingdotgg/t3code` (`upstream` remote). We regularly sync
 - **Don't fork behavior silently.** If a fork feature needs upstream behavior changed (not just extended), isolate the change behind a fork-owned flag or wrapper so the upstream implementation stays intact underneath.
 - **Syncing:** `git fetch upstream && git merge upstream/main`. After a sync, verify fork hooks (grep for `fork:` markers) survived the merge.
 
-Fork-specific features so far: Codex/ChatGPT account support, system prompt injection, agents/workflows visibility UI, the reworked git panel. Port planning docs live in `.plans/2code-port/` (gitignored).
+Fork-specific features so far: Codex/ChatGPT account support, system prompt injection, and the reworked git panel. Port planning docs live in `.plans/2code-port/` (gitignored).

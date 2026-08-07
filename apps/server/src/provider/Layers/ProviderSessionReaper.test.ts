@@ -155,7 +155,6 @@ describe("ProviderSessionReaper", () => {
       startSession: () => unsupported(),
       sendTurn: () => unsupported(),
       interruptTurn: () => unsupported(),
-      stopTask: () => unsupported(), // fork: f3 per-task stop
       respondToRequest: () => unsupported(),
       respondToUserInput: () => unsupported(),
       stopSession,

@@ -92,9 +92,6 @@ import {
   hasActionableProposedPlan,
   isLatestTurnSettled,
 } from "../session-logic";
-import { deriveAgentRuns, withAgentRunEntries } from "../agentRuns"; // fork: f3 agent-run visibility
-import type { AgentRunJumpHandler } from "./chat/agentRunJump"; // fork: f3 agent-run visibility
-import { useStableAgentRuns } from "./chat/useStableAgentRuns"; // fork: f3 agent-run visibility
 import { type LegendListRef } from "@legendapp/list/react";
 import { getAnchoredTurnMetrics, type TimelineScrollMode } from "./chat/timelineScrollAnchoring";
 import {
@@ -1411,12 +1408,6 @@ function ChatViewContent(props: ChatViewProps) {
     LastInvokedScriptByProjectSchema,
   );
   const legendListRef = useRef<LegendListRef | null>(null);
-  // fork: f3 agent-run visibility — the timeline publishes its jump handler here
-  const agentRunJumpRef = useRef<AgentRunJumpHandler | null>(null);
-  const onJumpToAgentRun = useCallback(
-    (taskId: string) => agentRunJumpRef.current?.(taskId) ?? false,
-    [],
-  );
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
   const [composerOverlayHeight, setComposerOverlayHeight] = useState(0);
   const isAtEndRef = useRef(true);
@@ -2516,33 +2507,10 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return [...serverMessagesWithPreviewHandoff, ...pendingMessages];
   }, [attachmentPreviewHandoffByMessageId, displayServerMessages, optimisticUserMessages]);
-  // fork: f3 agent-run visibility — one fold feeds both the transcript and the tracker pill
-  const derivedAgentRuns = useMemo(
-    () =>
-      deriveAgentRuns(threadActivities, {
-        activeTurnId: latestTurnSettled ? null : (activeLatestTurn?.turnId ?? null),
-      }),
-    [activeLatestTurn?.turnId, latestTurnSettled, threadActivities],
-  );
-  const agentRunsState = useStableAgentRuns(derivedAgentRuns); // fork: f3 agent-run visibility
   const timelineEntries = useMemo(
     () =>
-      // fork: f3 agent-run visibility — groups task.* work rows into run cards
-      withAgentRunEntries(
-        deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
-        threadActivities,
-        { activeTurnId: latestTurnSettled ? null : (activeLatestTurn?.turnId ?? null) },
-        agentRunsState,
-      ),
-    [
-      activeThread?.proposedPlans,
-      activeLatestTurn?.turnId,
-      agentRunsState,
-      latestTurnSettled,
-      threadActivities,
-      timelineMessages,
-      workLogEntries,
-    ],
+      deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
+    [activeThread?.proposedPlans, timelineMessages, workLogEntries],
   );
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
@@ -6353,8 +6321,6 @@ function ChatViewContent(props: ChatViewProps) {
               availableEditors={availableEditors}
               rightPanelOpen={workspacePanelOpen}
               gitCwd={gitCwd}
-              agentRuns={agentRunsState.runs /* fork: f3 agent-run visibility */}
-              onJumpToAgentRun={onJumpToAgentRun /* fork: f3 agent-run visibility */}
               onNewThreadInProject={handleNewThreadInActiveProject}
               onRunProjectScript={runProjectScript}
               onAddProjectScript={saveProjectScript}
@@ -6413,7 +6379,6 @@ function ChatViewContent(props: ChatViewProps) {
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeWorkspaceRoot}
                 skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
-                agentRunJumpRef={agentRunJumpRef /* fork: f3 agent-run visibility */}
                 anchorMessageId={timelineAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
                 onAnchorSizeChanged={onTimelineAnchorSizeChanged}

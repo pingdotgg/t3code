@@ -114,7 +114,6 @@ import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import { ProviderAuthService } from "./provider/Services/ProviderAuthService.ts"; // fork: f1 provider account sign-in
-import * as ProviderServiceTag from "./provider/Services/ProviderService.ts"; // fork: f3 per-task stop
 import { WorkingCopyService } from "./vcs/workingCopy/WorkingCopyService.ts"; // fork: f4 source-control panel
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -639,9 +638,6 @@ const buildAppUnderTest = (options?: {
           // for the same reason: `Layer.pipe` maxes out at 20 arguments. Every
           // method is stubbed out; the served-routes tests never call them.
           Layer.mock(WorkingCopyService)({}),
-          // fork: f3 — `ws.ts` now acquires `ProviderService` for
-          // `provider.stopTask`; the served-routes tests never call it.
-          Layer.mock(ProviderServiceTag.ProviderService)({}),
           Layer.mock(ProviderRegistry.ProviderRegistry)({
             getProviders: Effect.succeed([]),
             refresh: () => Effect.succeed([]),

@@ -21,7 +21,6 @@ import type {
   ProviderSession,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
-  ProviderStopTaskInput, // fork: f3 per-task stop
   ThreadId,
   ProviderTurnStartResult,
 } from "@t3tools/contracts";
@@ -58,16 +57,6 @@ export interface ProviderServiceShape {
   readonly interruptTurn: (
     input: ProviderInterruptTurnInput,
   ) => Effect.Effect<void, ProviderServiceError>;
-
-  /**
-   * Stop one in-flight agent task on a thread, leaving the turn running.
-   *
-   * fork: f3 — sibling of `interruptTurn`: resolves the routed session and
-   * forwards to the adapter. Fails with `ProviderUnsupportedError` when the
-   * routed adapter has no `stopTask`. Idempotent: repeated calls are safe and
-   * a task that already settled is not an error.
-   */
-  readonly stopTask: (input: ProviderStopTaskInput) => Effect.Effect<void, ProviderServiceError>;
 
   /**
    * Respond to a provider approval request.

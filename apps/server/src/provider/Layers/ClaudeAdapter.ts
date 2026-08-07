@@ -98,13 +98,6 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
-// fork: f3 agent-run visibility
-import {
-  // Aliased: this file already has an unrelated `normalizeClaudeTaskStatus`
-  // for plan-step status.
-  normalizeClaudeTaskStatus as normalizeClaudeTaskFrameStatus,
-  taskUsageFields,
-} from "./claudeTaskFrames.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
@@ -239,9 +232,6 @@ interface ClaudeSessionContext {
   }>;
   readonly inFlightTools: Map<number, ToolInFlight>;
   readonly claudeTasks: Map<string, ClaudeTaskState>;
-  // fork: f3 agent-run visibility — last tool name already forwarded per task,
-  // so a repeating `tool_progress` tick does not persist a new activity row.
-  readonly taskToolLine: Map<string, string>;
   readonly taskAgents: Map<string, ClaudeTaskAgentState>;
   /**
    * Last emitted workflow-member fingerprint per member slot. A coordinator
@@ -3235,10 +3225,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ...(effort ? { effort } : {}),
             ...(message.tool_use_id ? { toolUseId: message.tool_use_id } : {}),
             ...(message.workflow_name ? { workflowName: message.workflow_name } : {}),
-            // fork: f3 agent-run visibility — additional SDK fields the run card needs
-            ...(message.subagent_type ? { subagentType: message.subagent_type } : {}),
-            ...(message.prompt ? { prompt: message.prompt } : {}),
-            ...(message.skip_transcript === true ? { ambient: true } : {}),
           },
         });
         return;
@@ -3274,9 +3260,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ...(workflowPhases && workflowPhases.length > 0 ? { phases: workflowPhases } : {}),
             ...linkage,
             ...(message.subagent_type ? { role: message.subagent_type } : {}),
-            // fork: f3 agent-run visibility — typed usage triple + run linkage
-            ...(message.subagent_type ? { subagentType: message.subagent_type } : {}),
-            ...taskUsageFields(message.usage),
           },
         });
         yield* emitWorkflowMemberProgress(context, base, message);
@@ -3290,7 +3273,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           patch.status !== undefined ? CLAUDE_TASK_PATCH_STATUS[patch.status] : undefined;
         if (status === "completed" || status === "failed" || status === "cancelled") {
           context.liveTaskIds.delete(message.task_id);
-          context.taskToolLine.delete(message.task_id);
         }
         const endedAt =
           typeof patch.end_time === "number" && Number.isFinite(patch.end_time)
@@ -3315,8 +3297,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
       case "task_notification": {
         context.liveTaskIds.delete(message.task_id);
-        // fork: f3 agent-run visibility — stop tracking the coalesced tool line.
-        context.taskToolLine.delete(message.task_id);
         yield* emitThreadTokenUsage(
           context,
           normalizeClaudeTaskProgressTokenUsage(message.usage, context),
@@ -3331,16 +3311,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           type: "task.completed",
           payload: {
             taskId: RuntimeTaskId.make(message.task_id),
-            // fork: f3 agent-run visibility — an undeclared status must fail,
-            // never render as a green check.
-            status: normalizeClaudeTaskFrameStatus(message.status),
+            status: message.status,
             ...(message.summary ? { summary: message.summary } : {}),
             ...(message.usage ? { usage: message.usage } : {}),
             ...(typedUsage ? { typedUsage } : {}),
             ...(message.output_file ? { outputFile: message.output_file } : {}),
             ...taskLinkageFor(context.taskAgents, message.task_id),
-            // fork: f3 agent-run visibility
-            ...taskUsageFields(message.usage),
           },
         });
         return;
@@ -3486,32 +3462,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             : {}),
         },
       });
-      // fork: f3 agent-run visibility — keeps the run card's live tool line
-      // current between the much slower task_progress ticks. Needs its own
-      // stamp: the event id is the persisted activity id.
-      //
-      // COALESCED on the tool name. `tool_progress` is a repeating tick for a
-      // *running* tool (it carries `elapsed_time_seconds`), while `task.progress`
-      // is event-sourced, written to SQLite and broadcast to every client — so
-      // forwarding every tick cost hundreds of persisted rows and websocket
-      // frames per turn for one line of card text. Emitting only when the tool
-      // actually changes gives the same live line at one row per tool.
-      if (message.task_id && context.taskToolLine.get(message.task_id) !== message.tool_name) {
-        context.taskToolLine.set(message.task_id, message.tool_name);
-        const taskStamp = yield* makeEventStamp();
-        yield* offerRuntimeEvent({
-          ...base,
-          eventId: taskStamp.eventId,
-          createdAt: taskStamp.createdAt,
-          type: "task.progress",
-          payload: {
-            taskId: RuntimeTaskId.make(message.task_id),
-            description: message.tool_name,
-            lastToolName: message.tool_name,
-            toolUseId: message.tool_use_id,
-          },
-        });
-      }
       return;
     }
 
@@ -3831,8 +3781,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
       const inFlightTools = new Map<number, ToolInFlight>();
       const claudeTasks = new Map<string, ClaudeTaskState>();
-      // fork: f3 agent-run visibility
-      const taskToolLine = new Map<string, string>();
       const taskAgents = new Map<string, ClaudeTaskAgentState>();
       const workflowMemberFingerprints = new Map<string, string>();
       const liveTaskIds = new Set<string>();
@@ -4316,7 +4264,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         turns: [],
         inFlightTools,
         claudeTasks,
-        taskToolLine, // fork: f3 agent-run visibility
         taskAgents,
         workflowMemberFingerprints,
         liveTaskIds,
@@ -4577,38 +4524,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     },
   );
 
-  // fork: f3 — per-task stop. The SDK guarantees a `task_notification` with
-  // status `stopped` follows, which is what settles the card; nothing is
-  // recorded here. Deliberately stateless: no "already stopped" bookkeeping,
-  // so repeated stops and stops that race a task's own completion are both
-  // plain forwards rather than errors.
-  const stopTask: NonNullable<ClaudeAdapterShape["stopTask"]> = Effect.fn("stopTask")(
-    function* (threadId, taskId) {
-      const context = yield* requireSession(threadId);
-      const queryStopTask = context.query.stopTask;
-      if (queryStopTask === undefined) {
-        return;
-      }
-      // fork: f3 — `providerTask.ts` promises stops are idempotent: "a second
-      // request for a task that has already settled succeeds and does nothing".
-      // The SDK rejects for an unknown/settled task id, and mapping that to a
-      // request error put "Could not stop the agent run" on screen for a run
-      // the user had just watched finish. Log it, do not fail it — the receipt
-      // for a real stop is the task settling in the transcript.
-      yield* Effect.tryPromise({
-        try: () => queryStopTask.call(context.query, taskId),
-        catch: (cause) => toRequestError(threadId, "task/stop", cause),
-      }).pipe(
-        Effect.catch((error) =>
-          Effect.logWarning(
-            `claude stopTask refused for ${taskId}; treating it as already settled`,
-            error,
-          ),
-        ),
-      );
-    },
-  );
-
   const readThread: ClaudeAdapterShape["readThread"] = Effect.fn("readThread")(
     function* (threadId) {
       const context = yield* requireSession(threadId);
@@ -4714,7 +4629,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     startSession,
     sendTurn,
     interruptTurn,
-    stopTask, // fork: f3 per-task stop
     readThread,
     rollbackThread,
     respondToRequest,
