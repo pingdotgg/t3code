@@ -6,15 +6,16 @@
  * rendered *"Select a thread to inspect turn diffs."* — the working copy
  * selection never displayed at all.
  *
- * Two things go wrong on a draft, both from one cause: a draft route is
+ * Two things used to go wrong on a draft, both from one cause: a draft route is
  * `/draft/$draftId` and carries no `environmentId`/`threadId` params.
  *
- *  1. `DiffPanel` resolves its thread ref from route params, so it resolves
- *     `null`, while `ChatView` writes the diff selection and opens the right
- *     panel under the draft's *reserved* thread ref. The selection was written
- *     under a key the panel never read.
+ *  1. The diff surface used to resolve its thread ref from route params, while
+ *     `ChatView` writes the selection under the draft's *reserved* thread ref.
+ *     `ChatView` now supplies that identity directly, which also supports grid
+ *     panes where no single thread exists in the route.
  *  2. `useThread(null)` is `null`, so the panel had no environment and no cwd,
- *     and fell through to its "no thread" empty state.
+ *     and fell through to its "no thread" empty state. This helper retains the
+ *     environment/cwd fallback until the reserved thread exists on the server.
  *
  * Neither the working-copy diff nor a commit's file diff depends on a turn —
  * both read `workingCopy.*` for one environment and one cwd — so recovering

@@ -31,7 +31,7 @@ describe("mobile client presentation", () => {
   it("describes the client platform and enabled notification events", () => {
     const client = device();
 
-    expect(mobileClientPlatformLabel(client)).toBe("iOS 18 · T3 Code 1.2.3");
+    expect(mobileClientPlatformLabel(client)).toBe("iOS 18 · 2code 1.2.3");
     expect(mobileClientNotificationDetail(client)).toBe(
       "Alerts enabled for approvals, completions.",
     );

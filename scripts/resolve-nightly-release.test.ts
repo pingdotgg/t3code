@@ -46,7 +46,7 @@ it("derives nightly metadata including the short commit sha in the release name"
       baseVersion: "9.9.10",
       version: "9.9.10-nightly.20260413.321",
       tag: "v9.9.10-nightly.20260413.321",
-      name: "T3 Code Nightly 9.9.10-nightly.20260413.321 (abcdef123456)",
+      name: "2code Nightly 9.9.10-nightly.20260413.321 (abcdef123456)",
       shortSha: "abcdef123456",
     },
   );

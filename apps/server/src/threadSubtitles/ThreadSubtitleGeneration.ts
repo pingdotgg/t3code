@@ -6,7 +6,7 @@ export interface ThreadSubtitlePromptInput {
   readonly phase: "working" | "completed";
 }
 
-const THREAD_SUBTITLE_PROMPT = `Generate the live subtitle for a T3 Code coding-agent thread.
+const THREAD_SUBTITLE_PROMPT = `Generate the live subtitle for a 2code coding-agent thread.
 Return JSON with exactly one key: subtitle.
 
 The title is the durable mission. The subtitle is the changing, glanceable answer to "what is happening right now?" It appears directly below the title in dense sidebars and session grids.

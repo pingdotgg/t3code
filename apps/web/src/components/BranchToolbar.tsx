@@ -42,6 +42,8 @@ import {
 import { Separator } from "./ui/separator";
 
 interface BranchToolbarProps {
+  /** fork: project session grid — the same controls can live in a pane header. */
+  placement?: "composer" | "grid-header";
   environmentId: EnvironmentId;
   threadId: ThreadId;
   showGitControls: boolean;
@@ -60,6 +62,7 @@ interface BranchToolbarProps {
 }
 
 interface MobileRunContextSelectorProps {
+  popupSide: "top" | "bottom";
   envLocked: boolean;
   envModeLocked: boolean;
   environmentId: EnvironmentId;
@@ -75,6 +78,7 @@ interface MobileRunContextSelectorProps {
 }
 
 const MobileRunContextSelector = memo(function MobileRunContextSelector({
+  popupSide,
   envLocked,
   envModeLocked,
   environmentId,
@@ -141,7 +145,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
         {triggerContent}
         <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
       </MenuTrigger>
-      <MenuPopup align="start" side="top" className="w-64">
+      <MenuPopup align="start" side={popupSide} className="w-64">
         {showEnvironmentPicker && availableEnvironments && onEnvironmentChange ? (
           <>
             <MenuGroup>
@@ -308,6 +312,7 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
 }
 
 export const BranchToolbar = memo(function BranchToolbar({
+  placement = "composer",
   environmentId,
   threadId,
   showGitControls,
@@ -396,17 +401,28 @@ export const BranchToolbar = memo(function BranchToolbar({
   const isMobile = useIsMobile();
   const [stripElement, setStripElement] = useState<HTMLDivElement | null>(null);
   const labelsOverflow = useLabelsOverflow(stripElement);
+  // In a grid header, a locked workspace is redundant status text. Keep the
+  // selector only while it can still change (notably for a new draft pane).
+  const showWorkspaceControl = placement === "composer" || !envModeLocked;
+  const showRunLocationControls =
+    showEnvironmentIndicator || (showGitControls && showWorkspaceControl);
 
   if (!hasActiveThread || !activeProject) return null;
 
   return (
     <div
       ref={setStripElement}
+      data-branch-toolbar-placement={placement}
       data-compact={labelsOverflow ? "" : undefined}
-      className="chat-composer-context-strip group/composer-context -mt-4 mx-auto flex w-[calc(100%-2.75rem)] max-w-[calc(48rem-2.75rem)] items-center gap-2 ps-1 pe-2 pt-5 pb-1"
+      className={
+        placement === "grid-header"
+          ? "group/composer-context flex min-w-0 w-fit max-w-full items-center justify-end gap-1"
+          : "chat-composer-context-strip group/composer-context -mt-4 mx-auto flex w-[calc(100%-2.75rem)] max-w-[calc(48rem-2.75rem)] items-center gap-2 ps-1 pe-2 pt-5 pb-1"
+      }
     >
-      {isMobile && showGitControls ? (
+      {isMobile && showGitControls && showWorkspaceControl ? (
         <MobileRunContextSelector
+          popupSide={placement === "grid-header" ? "bottom" : "top"}
           envLocked={envLocked}
           envModeLocked={envModeLocked}
           environmentId={environmentId}
@@ -420,7 +436,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           previousWorktreeLabel={previousWorktreeLabel}
           onUsePreviousWorktree={onUsePreviousWorktree}
         />
-      ) : (
+      ) : showRunLocationControls ? (
         <div className="flex min-w-0 flex-1 items-center gap-1">
           {showEnvironmentIndicator && availableEnvironments && (
             <>
@@ -430,12 +446,12 @@ export const BranchToolbar = memo(function BranchToolbar({
                 availableEnvironments={availableEnvironments}
                 {...(showEnvironmentPicker && onEnvironmentChange ? { onEnvironmentChange } : {})}
               />
-              {showGitControls ? (
+              {showGitControls && showWorkspaceControl ? (
                 <Separator orientation="vertical" className="mx-0.5 h-3.5!" />
               ) : null}
             </>
           )}
-          {showGitControls ? (
+          {showGitControls && showWorkspaceControl ? (
             <BranchToolbarEnvModeSelector
               envLocked={envModeLocked}
               effectiveEnvMode={effectiveEnvMode}
@@ -446,11 +462,16 @@ export const BranchToolbar = memo(function BranchToolbar({
             />
           ) : null}
         </div>
-      )}
+      ) : null}
 
       {showGitControls ? (
         <BranchToolbarBranchSelector
-          className="min-w-0 flex-1 justify-end md:ml-auto md:flex-none"
+          className={
+            placement === "grid-header"
+              ? "min-w-0 justify-end"
+              : "min-w-0 flex-1 justify-end md:ml-auto md:flex-none"
+          }
+          popupSide={placement === "grid-header" ? "bottom" : "top"}
           environmentId={environmentId}
           threadId={threadId}
           {...(draftId ? { draftId } : {})}

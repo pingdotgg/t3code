@@ -16,7 +16,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type DragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
@@ -58,6 +57,7 @@ import { SessionGridChangeRequestObserverGroup } from "./SessionGridChangeReques
 import type { SessionGridChangeRequestObservation } from "./SessionGridChangeRequestObserver";
 import { SessionGridChatPane } from "./SessionGridChatPane";
 import { SessionGridDraftPane } from "./SessionGridDraftPane";
+import { SessionGridResizableLayout } from "./SessionGridResizableLayout";
 import {
   buildSessionGridSections,
   resolveSessionGridArrowTargetIndex,
@@ -741,15 +741,6 @@ export function SessionGridView({ requestedProjectKey }: SessionGridViewProps) {
   const dimensions = resolveSessionGridDimensions(visibleGridItemCount);
   const showNewThreadSlot =
     visibleGridItemCount > 0 && visibleGridItemCount < dimensions.columns * dimensions.rows;
-  const gridStyle: CSSProperties = wideGrid
-    ? {
-        gridTemplateColumns: `repeat(${dimensions.columns}, minmax(0, 1fr))`,
-        gridTemplateRows: `repeat(${dimensions.rows}, minmax(0, 1fr))`,
-      }
-    : {
-        gridTemplateColumns: "minmax(0, 1fr)",
-        gridAutoRows: "minmax(30rem, calc(100svh - 8rem))",
-      };
   const visibleThreadCount = visibleGridItemCount;
 
   return (
@@ -784,13 +775,13 @@ export function SessionGridView({ requestedProjectKey }: SessionGridViewProps) {
               <h1 className="text-sm font-semibold text-foreground">Session grid</h1>
               {selectedProject ? (
                 <>
-                  <span className="text-muted-foreground/35">/</span>
+                  <span className="text-muted-foreground/55">/</span>
                   <span className="min-w-0 truncate text-xs text-muted-foreground">
                     {selectedProject.displayName}
                   </span>
                 </>
               ) : null}
-              <span className="hidden text-xs text-muted-foreground/55 sm:inline">
+              <span className="hidden text-xs text-muted-foreground/70 sm:inline">
                 {visibleThreadCount} open {visibleThreadCount === 1 ? "session" : "sessions"}
               </span>
               <div
@@ -847,7 +838,7 @@ export function SessionGridView({ requestedProjectKey }: SessionGridViewProps) {
                         "min-w-4 rounded-full px-1 text-center text-[10px] tabular-nums",
                         selected
                           ? "bg-foreground/8 text-foreground/70"
-                          : "bg-muted text-muted-foreground/65",
+                          : "bg-muted text-muted-foreground/70",
                       )}
                     >
                       {count}
@@ -885,14 +876,12 @@ export function SessionGridView({ requestedProjectKey }: SessionGridViewProps) {
               />
             ) : (
               <DiffWorkerPoolProvider>
-                <div
-                  className={cn(
-                    "grid h-full min-h-0 min-w-0 gap-3 bg-zinc-900 p-3 dark:bg-black",
-                    !wideGrid && "overflow-y-auto overscroll-y-contain",
-                  )}
-                  data-session-grid-columns={wideGrid ? dimensions.columns : 1}
+                <SessionGridResizableLayout
+                  columns={dimensions.columns}
+                  layoutKey={gridModel.selectedProjectKey ?? "unselected"}
                   onKeyDown={focusAdjacentGridPane}
-                  style={gridStyle}
+                  resizable={wideGrid}
+                  rows={dimensions.rows}
                 >
                   {visibleOrderedThreads.map((thread) => {
                     const physicalProject = projectByPhysicalKey.get(
@@ -984,7 +973,7 @@ export function SessionGridView({ requestedProjectKey }: SessionGridViewProps) {
                       </span>
                     </button>
                   ) : null}
-                </div>
+                </SessionGridResizableLayout>
                 {visiblePendingChangeRequestCount > 0 ? (
                   <div
                     className="pointer-events-none absolute right-3 top-3 z-20 rounded-full border border-border/70 bg-background/90 px-2.5 py-1 text-[10px] text-muted-foreground shadow-sm backdrop-blur-sm"

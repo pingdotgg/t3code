@@ -25,7 +25,7 @@ export function runServicePreflight(input: {
       status: "blocked",
       version,
       reason:
-        "This release requires a newer T3 Code service launcher. Update it on the server machine.",
+        "This release requires a newer 2code service launcher. Update it on the server machine.",
     };
   }
 

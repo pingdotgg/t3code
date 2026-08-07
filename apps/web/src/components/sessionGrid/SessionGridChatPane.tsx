@@ -122,6 +122,7 @@ export const SessionGridChatPane = memo(function SessionGridChatPane(
     .filter(Boolean)
     .join(" · ");
   const [leavingPending, setLeavingPending] = useState(false);
+  const [runContextPortalTarget, setRunContextPortalTarget] = useState<HTMLElement | null>(null);
   const openPrLink = useOpenPrLink();
   const canSettleThread =
     !props.snoozed && props.settlementSupported && canSettle(thread, { now: props.nowIso });
@@ -138,7 +139,7 @@ export const SessionGridChatPane = memo(function SessionGridChatPane(
     <div className="flex min-w-0 items-center gap-1.5">
       <span
         aria-label={`Reorder ${thread.title}`}
-        className="flex shrink-0 cursor-grab touch-none items-center text-muted-foreground/35 active:cursor-grabbing"
+        className="flex shrink-0 cursor-grab touch-none items-center text-muted-foreground/55 active:cursor-grabbing"
         draggable
         onDragEnd={props.onDragEnd}
         onDragStart={(event) => props.onDragStart(threadKey, event)}
@@ -162,7 +163,7 @@ export const SessionGridChatPane = memo(function SessionGridChatPane(
         <div className="truncate text-xs font-semibold leading-4 text-foreground">
           {thread.title}
         </div>
-        <div className="flex min-w-0 items-center gap-1.5 text-muted-foreground/65">
+        <div className="flex min-w-0 items-center gap-1.5 text-muted-foreground/70">
           <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", status.dotClassName)} />
           {subtitle ? (
             <>
@@ -202,6 +203,10 @@ export const SessionGridChatPane = memo(function SessionGridChatPane(
           )}
         </div>
       </Link>
+      <div
+        ref={setRunContextPortalTarget}
+        className="flex min-w-0 w-fit max-w-[42%] shrink-0 items-center justify-end"
+      />
       {props.prStatus ? (
         <Button
           aria-label={props.prStatus.tooltip}
@@ -283,6 +288,7 @@ export const SessionGridChatPane = memo(function SessionGridChatPane(
       <ChatView
         environmentId={thread.environmentId}
         gridHeader={header}
+        gridRunContextPortalTarget={runContextPortalTarget}
         isActiveSurface={props.focused}
         panelControlsPortalTarget={props.panelControlsPortalTarget}
         reserveTitleBarControlInset={false}

@@ -177,7 +177,7 @@ function TimelineLoadEarlierHeader({
           type="button"
           onClick={onLoadEarlier}
           disabled={loading}
-          className="w-full py-1.5 text-xs text-muted-foreground/60 hover:text-foreground disabled:cursor-default"
+          className="w-full py-1.5 text-xs text-muted-foreground/70 hover:text-foreground disabled:cursor-default"
         >
           {loading ? "Loading earlier turns…" : "Load earlier turns"}
         </button>
@@ -529,7 +529,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-muted-foreground/30">
+        <p className="text-sm text-muted-foreground/65">
           Send a message to start the conversation.
         </p>
       </div>
@@ -1238,7 +1238,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
   return (
     <section className="-mx-1 space-y-0.5 px-1 py-0.5" aria-label={groupLabel}>
       {!onlyToolEntries && (
-        <p className="px-0.5 pb-0.5 font-medium text-[11px] text-muted-foreground/65">
+        <p className="px-0.5 pb-0.5 font-medium text-[11px] text-muted-foreground/70">
           {groupLabel}
         </p>
       )}
@@ -1289,11 +1289,11 @@ function WorkGroupToggleTimelineRow({
         />
       </span>
       {row.expanded ? (
-        <span className="font-medium text-foreground/82">
+        <span className="font-medium text-foreground/88">
           Show fewer {row.onlyToolEntries ? "tool calls" : "log entries"}
         </span>
       ) : (
-        <span className="font-medium text-foreground/82">
+        <span className="font-medium text-foreground/88">
           +{row.hiddenCount} previous {labelNoun}
         </span>
       )}
@@ -2133,14 +2133,14 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       : showDestructiveRowStyle
         ? "text-destructive"
         : workEntry.tone === "tool" || showFailedIndicator
-          ? "text-muted-foreground/65"
+          ? "text-muted-foreground/70"
           : iconConfig.className,
   );
   const headingClass = showWarningIndicator
     ? "font-medium text-warning"
     : showDestructiveRowStyle
       ? "font-medium text-destructive"
-      : "font-medium text-foreground/82";
+      : "font-medium text-foreground/88";
   const turnSettled = !activity.activeTurnInProgress;
   const showNeutralIndicator = !turnSettled && workEntryIndicatesToolNeutralStatus(workEntry);
   const showSuccessIndicator =
@@ -2182,11 +2182,11 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
             <p className="flex min-w-0 w-full items-baseline gap-1.5 text-[12px] leading-5">
               <span className={cn("min-w-0 shrink truncate", headingClass)}>{heading}</span>
               {preview && (
-                <span className="min-w-0 flex-1 truncate text-muted-foreground/55">{preview}</span>
+                <span className="min-w-0 flex-1 truncate text-muted-foreground/70">{preview}</span>
               )}
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-px text-muted-foreground/55">
+          <div className="flex shrink-0 items-center gap-px text-muted-foreground/70">
             <span
               className="flex size-4 shrink-0 items-center justify-center"
               aria-hidden={!canExpand}

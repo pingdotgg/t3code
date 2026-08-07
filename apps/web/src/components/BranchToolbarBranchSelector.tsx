@@ -66,6 +66,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 interface BranchToolbarBranchSelectorProps {
   className?: string;
+  popupSide?: "top" | "bottom";
   environmentId: EnvironmentId;
   threadId: ThreadId;
   draftId?: DraftId;
@@ -85,6 +86,7 @@ function toBranchActionErrorMessage(error: unknown): string {
 
 export function BranchToolbarBranchSelector({
   className,
+  popupSide = "top",
   environmentId,
   threadId,
   draftId,
@@ -759,7 +761,7 @@ export function BranchToolbarBranchSelector({
           </ComboboxTrigger>
         </span>
       </div>
-      <ComboboxPopup align="end" side="top" className="flex w-80 flex-col">
+      <ComboboxPopup align="end" side={popupSide} className="flex w-80 flex-col">
         <div className="shrink-0 px-3 pt-2.5">
           <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
             <SearchIcon

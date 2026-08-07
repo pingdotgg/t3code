@@ -512,6 +512,8 @@ interface ChatViewSurfaceProps {
   isActiveSurface?: boolean;
   /** Grid-owned title/status/actions rendered in the pane header. */
   gridHeader?: ReactNode;
+  /** Header target for the pane-local workspace and branch controls. */
+  gridRunContextPortalTarget?: HTMLElement | null;
   /** Global grid-header target for the focused pane's workspace controls. */
   panelControlsPortalTarget?: HTMLElement | null;
   /** Fixed third-column target for the focused pane's global right-side workspace panels. */
@@ -1210,6 +1212,7 @@ function ChatViewContent(props: ChatViewProps) {
     surfaceMode = "workspace",
     isActiveSurface = true,
     gridHeader,
+    gridRunContextPortalTarget,
     panelControlsPortalTarget,
     rightPanelPortalTarget,
   } = props;
@@ -6181,6 +6184,7 @@ function ChatViewContent(props: ChatViewProps) {
         <DiffPanel
           key={`${activeThreadKey}:${diffPanelGitStatusResolutionKey}`}
           mode="embedded"
+          threadRef={activeThreadRef}
           composerDraftTarget={composerDraftTarget}
           initialGitScope={initialDiffPanelGitScope}
         />
@@ -6228,8 +6232,41 @@ function ChatViewContent(props: ChatViewProps) {
     ) : null
   ) : null;
 
+  const runContextToolbar = showComposerContextStrip ? (
+    <BranchToolbar
+      placement={isGridPane ? "grid-header" : "composer"}
+      environmentId={activeThread.environmentId}
+      threadId={activeThread.id}
+      showGitControls={isGitRepo}
+      {...(routeKind === "draft" && draftId ? { draftId } : {})}
+      onEnvModeChange={onEnvModeChange}
+      startFromOrigin={startFromOrigin}
+      onStartFromOriginChange={onStartFromOriginChange}
+      {...(canOverrideServerThreadEnvMode ? { effectiveEnvModeOverride: envMode } : {})}
+      {...(canOverrideServerThreadEnvMode
+        ? {
+            activeThreadBranchOverride: activeThreadBranch,
+            onActiveThreadBranchOverrideChange: setPendingServerThreadBranch,
+          }
+        : {})}
+      envLocked={envLocked}
+      onComposerFocusRequest={scheduleComposerFocus}
+      {...(canCheckoutPullRequestIntoThread
+        ? { onCheckoutPullRequestRequest: openPullRequestDialog }
+        : {})}
+      {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
+      availableEnvironments={logicalProjectEnvironments}
+    />
+  ) : null;
+
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+      {isGridPane && gridRunContextPortalTarget && runContextToolbar
+        ? createPortal(
+            <div className="pointer-events-auto w-full">{runContextToolbar}</div>,
+            gridRunContextPortalTarget,
+          )
+        : null}
       {isGridPane && ownsGlobalInteraction && panelControlsPortalTarget
         ? createPortal(panelToggleControls, panelControlsPortalTarget)
         : null}
@@ -6463,11 +6500,14 @@ function ChatViewContent(props: ChatViewProps) {
                     <div
                       className={cn(
                         "chat-composer-glass-shell relative mx-auto w-full max-w-3xl",
-                        showComposerContextStrip && "chat-composer-glass-shell-with-context",
+                        showComposerContextStrip &&
+                          !isGridPane &&
+                          "chat-composer-glass-shell-with-context",
                       )}
                     >
                       <div className="chat-composer-glass-host relative z-10 w-full rounded-[22px]">
                         <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10">
+                          {/* fork: project session grid — embedded panes use the compact density. */}
                           <ChatComposer
                             composerRef={composerRef}
                             composerDraftTarget={composerDraftTarget}
@@ -6480,6 +6520,7 @@ function ChatViewContent(props: ChatViewProps) {
                             activeThread={activeThread}
                             isServerThread={isServerThread}
                             isLocalDraftThread={isLocalDraftThread}
+                            compact={isGridPane}
                             forceExpandedOnMobile={forceExpandedMobileComposer && isDraftHeroState}
                             projectSelectionRequired={isLocalDraftThread && activeProject === null}
                             phase={phase}
@@ -6553,42 +6594,19 @@ function ChatViewContent(props: ChatViewProps) {
                           data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
                           className="relative z-0"
                         >
-                          {showComposerContextStrip && (
-                            <div className="pointer-events-auto">
-                              <BranchToolbar
-                                environmentId={activeThread.environmentId}
-                                threadId={activeThread.id}
-                                showGitControls={isGitRepo}
-                                {...(routeKind === "draft" && draftId ? { draftId } : {})}
-                                onEnvModeChange={onEnvModeChange}
-                                startFromOrigin={startFromOrigin}
-                                onStartFromOriginChange={onStartFromOriginChange}
-                                {...(canOverrideServerThreadEnvMode
-                                  ? { effectiveEnvModeOverride: envMode }
-                                  : {})}
-                                {...(canOverrideServerThreadEnvMode
-                                  ? {
-                                      activeThreadBranchOverride: activeThreadBranch,
-                                      onActiveThreadBranchOverrideChange:
-                                        setPendingServerThreadBranch,
-                                    }
-                                  : {})}
-                                envLocked={envLocked}
-                                onComposerFocusRequest={scheduleComposerFocus}
-                                {...(canCheckoutPullRequestIntoThread
-                                  ? { onCheckoutPullRequestRequest: openPullRequestDialog }
-                                  : {})}
-                                {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
-                                availableEnvironments={logicalProjectEnvironments}
-                              />
-                            </div>
-                          )}
+                          {!isGridPane && runContextToolbar ? (
+                            <div className="pointer-events-auto">{runContextToolbar}</div>
+                          ) : null}
                         </div>
                       </div>
                     </div>
                     <div
                       aria-hidden
-                      className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"
+                      className={cn(
+                        isGridPane
+                          ? "h-[calc(env(safe-area-inset-bottom)+1rem)]"
+                          : "h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]",
+                      )}
                     />
                   </div>
                 </div>

@@ -201,8 +201,8 @@ function PreviewPanel({
             {selected.driverKind === "codex" ? (
               <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
                 <InfoIcon className="mt-0.5 size-3.5 shrink-0" />
-                Codex also receives T3 Code&apos;s built-in collaboration-mode instructions with
-                every turn. Those are separate from the text above.
+                Codex also receives 2code&apos;s built-in collaboration-mode instructions with every
+                turn. Those are separate from the text above.
               </p>
             ) : null}
           </>

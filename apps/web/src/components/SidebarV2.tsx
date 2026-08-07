@@ -876,7 +876,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
             <span className="relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end">
               <span
                 className={cn(
-                  "inline-flex justify-end tabular-nums text-muted-foreground/55 transition-opacity",
+                  "inline-flex justify-end tabular-nums text-muted-foreground/70 transition-opacity",
                   !isWoke && "group-hover/v2-row:opacity-0",
                 )}
               >
@@ -1017,7 +1017,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                     isWokeStatus
                       ? "pointer-events-auto"
                       : "pointer-events-none group-has-[:focus-visible]/v2-status-slot:absolute group-has-[:focus-visible]/v2-status-slot:right-0 group-has-[:focus-visible]/v2-status-slot:opacity-0 group-hover/v2-row:absolute group-hover/v2-row:right-0 group-hover/v2-row:opacity-0",
-                    "self-center justify-self-end tabular-nums text-muted-foreground/65 transition-opacity",
+                    "self-center justify-self-end tabular-nums text-muted-foreground/70 transition-opacity",
                     snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
                   )}
                 >
@@ -1245,7 +1245,7 @@ const SidebarV2SearchResultRow = memo(function SidebarV2SearchResultRow(props: {
             fallbackIcon={MessageSquareIcon}
           />
           <span className="min-w-0 flex-1 truncate">{thread.title}</span>
-          <span className="shrink-0 text-xs text-muted-foreground/55 tabular-nums">
+          <span className="shrink-0 text-xs text-muted-foreground/70 tabular-nums">
             {threadTimeLabel(thread)}
           </span>
         </TooltipTrigger>
@@ -3232,7 +3232,7 @@ export default function SidebarV2() {
                           data-testid="sidebar-v2-settled-shelf-toggle"
                           className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
                         >
-                          <span className="text-xs font-medium text-muted-foreground/50">
+                          <span className="text-xs font-medium text-muted-foreground/70">
                             {settledShelfExpanded
                               ? "Settled"
                               : `Settled (${settledThreads.length})`}
@@ -3241,7 +3241,7 @@ export default function SidebarV2() {
                           <ChevronDownIcon
                             aria-hidden
                             className={cn(
-                              "size-3 text-muted-foreground/50 transition-transform",
+                              "size-3 text-muted-foreground/65 transition-transform",
                               settledShelfExpanded && "rotate-180",
                             )}
                           />

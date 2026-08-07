@@ -179,7 +179,7 @@ export function confirmDiscardChanges(
   const scope = filePaths === null ? "all uncommitted changes" : "the selected changes";
   return {
     title,
-    consequence: `This removes ${scope} from the working tree. T3 Code keeps an undo backup when Git supports it; otherwise this cannot be undone.`,
+    consequence: `This removes ${scope} from the working tree. 2code keeps an undo backup when Git supports it; otherwise this cannot be undone.`,
     body: filePaths ? renderList(filePaths) : undefined,
     confirmLabel: "Discard",
     tone: "danger",

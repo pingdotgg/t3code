@@ -1,6 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { FileDiffContentsLoader } from "@pierre/diffs";
-import { useParams } from "@tanstack/react-router";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -42,7 +41,6 @@ import {
 import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useProject, useThread } from "../state/entities";
-import { resolveThreadRouteRef } from "../threadRoutes";
 import { useClientSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
@@ -357,6 +355,8 @@ const DIFF_PANEL_UNSAFE_CSS = `
 
 interface DiffPanelProps {
   mode?: DiffPanelMode;
+  /** The chat surface owns thread selection; grid mode has no routed thread. */
+  threadRef: ScopedThreadRef;
   composerDraftTarget: ScopedThreadRef | DraftId;
   initialGitScope: "branch" | "unstaged";
 }
@@ -365,6 +365,7 @@ export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
 export default function DiffPanel({
   mode = "inline",
+  threadRef,
   composerDraftTarget,
   initialGitScope: initialGitScopeProp,
 }: DiffPanelProps) {
@@ -386,16 +387,9 @@ export default function DiffPanel({
     readonly turnId: TurnId | null;
   } | null>(null);
 
-  const routeParamsThreadRef = useParams({
-    strict: false,
-    select: (params) => resolveThreadRouteRef(params),
-  });
-  // fork: f4 — a draft route carries only `draftId`, so route params resolve no
-  // thread ref while ChatView keys the selection by the draft's reserved one.
   const draftDiffTarget = useDraftDiffTarget(composerDraftTarget);
-  const routeThreadRef = routeParamsThreadRef ?? draftDiffTarget.threadRef;
-  const activeThreadId = routeThreadRef?.threadId ?? null;
-  const activeThread = useThread(routeThreadRef);
+  const activeThreadId = threadRef.threadId;
+  const activeThread = useThread(threadRef);
   const activeProjectId = activeThread?.projectId ?? null;
   const activeProject = useProject(
     activeThread && activeProjectId
@@ -405,11 +399,13 @@ export default function DiffPanel({
         }
       : null,
   );
-  // fork: f4 — `?? draftDiffTarget.*` is the draft fallback: a file-scoped diff
-  // needs an environment and a cwd, never a turn.
+  // A draft has no server thread yet, so its working-copy diff still recovers
+  // the cwd from composer state. The thread identity itself always comes from
+  // the owning ChatView, including when that view lives inside the session grid.
   const activeCwd =
     activeThread?.worktreePath ?? activeProject?.workspaceRoot ?? draftDiffTarget.cwd ?? undefined;
-  const activeEnvironmentId = activeThread?.environmentId ?? draftDiffTarget.environmentId;
+  const activeEnvironmentId =
+    activeThread?.environmentId ?? draftDiffTarget.environmentId ?? threadRef.environmentId;
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(activeEnvironmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
     activeEnvironmentId,
@@ -425,11 +421,7 @@ export default function DiffPanel({
       : null,
   );
   const diffSelection = useDiffPanelStore((state) =>
-    selectThreadDiffPanelSelection(
-      state.byThreadKey,
-      routeThreadRef,
-      initialGitScope === "unstaged",
-    ),
+    selectThreadDiffPanelSelection(state.byThreadKey, threadRef, initialGitScope === "unstaged"),
   );
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
@@ -450,12 +442,12 @@ export default function DiffPanel({
   );
 
   useEffect(() => {
-    if (!routeThreadRef || diffSelection.kind !== "turn") return;
+    if (diffSelection.kind !== "turn") return;
     useDiffPanelStore.getState().reconcileTurnSelection(
-      routeThreadRef,
+      threadRef,
       orderedTurnDiffSummaries.map((summary) => summary.turnId),
     );
-  }, [diffSelection, orderedTurnDiffSummaries, routeThreadRef]);
+  }, [diffSelection, orderedTurnDiffSummaries, threadRef]);
 
   const selectedTurnId = diffSelection.kind === "turn" ? diffSelection.turnId : null;
   // fork: f4 hunk staging — one file, one side of the index. Every git-scope
@@ -483,14 +475,14 @@ export default function DiffPanel({
   }, [diffSelection]);
   const flipWorkingCopySide = useCallback(
     (nextSide: "staged" | "unstaged") => {
-      if (!routeThreadRef || workingCopySelection?.kind !== "working-copy") return;
-      useDiffPanelStore.getState().selectWorkingCopyFile(routeThreadRef, {
+      if (workingCopySelection?.kind !== "working-copy") return;
+      useDiffPanelStore.getState().selectWorkingCopyFile(threadRef, {
         side: nextSide,
         filePath: workingCopySelection.filePath,
         ...(workingCopySelection.oldPath ? { oldPath: workingCopySelection.oldPath } : {}),
       });
     },
-    [routeThreadRef, workingCopySelection],
+    [threadRef, workingCopySelection],
   );
   const hunkStaging = useDiffHunkStaging({
     environmentId: activeEnvironmentId,
@@ -526,9 +518,7 @@ export default function DiffPanel({
     : selectedTurn
       ? `turn:${selectedTurn.turnId}`
       : selectedGitScope;
-  const collapseScopeKey = routeThreadRef
-    ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${reviewSectionId}`
-    : null;
+  const collapseScopeKey = `${threadRef.environmentId}:${threadRef.threadId}:${reviewSectionId}`;
   const codeViewMountKey = `${collapseScopeKey ?? reviewSectionId}:${codeViewRevision}`;
   const collapsedDiffFileKeys =
     collapsedDiffFiles.scopeKey === collapseScopeKey
@@ -599,9 +589,7 @@ export default function DiffPanel({
   const refreshBranchDiffPreview = branchDiffPreview.refresh;
   const canRefreshGitDiff =
     isGitRepo && selectedTurnId === null && activeThread != null && activeCwd != null;
-  const activeThreadRefreshKey = routeThreadRef
-    ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}`
-    : null;
+  const activeThreadRefreshKey = `${threadRef.environmentId}:${threadRef.threadId}`;
 
   useEffect(() => {
     if (!canRefreshGitDiff) return;
@@ -827,7 +815,7 @@ export default function DiffPanel({
   const openDiffFile = useCallback(
     (filePath: string) => {
       openDiffFilePrimaryAction({
-        threadRef: routeThreadRef,
+        threadRef,
         filePath,
         activeCwd,
         openInEditor: (targetPath) => {
@@ -836,12 +824,8 @@ export default function DiffPanel({
             if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
               console.warn("Failed to open diff file in editor.", {
                 operation: "open-diff-file",
-                ...(routeThreadRef
-                  ? {
-                      environmentId: routeThreadRef.environmentId,
-                      threadId: routeThreadRef.threadId,
-                    }
-                  : {}),
+                environmentId: threadRef.environmentId,
+                threadId: threadRef.threadId,
                 ...safeErrorLogAttributes(squashAtomCommandFailure(result)),
               });
             }
@@ -849,7 +833,7 @@ export default function DiffPanel({
         },
       });
     },
-    [activeCwd, openInPreferredEditor, routeThreadRef],
+    [activeCwd, openInPreferredEditor, threadRef],
   );
   const toggleDiffFileCollapsed = useCallback(
     (fileKey: string) => {
@@ -880,16 +864,13 @@ export default function DiffPanel({
   }, [collapseScopeKey, diffFileKeys]);
 
   const selectTurn = (turnId: TurnId) => {
-    if (!routeThreadRef) return;
-    useDiffPanelStore.getState().selectTurn(routeThreadRef, turnId);
+    useDiffPanelStore.getState().selectTurn(threadRef, turnId);
   };
   const selectGitScope = (scope: "branch" | "unstaged") => {
-    if (!routeThreadRef) return;
-    useDiffPanelStore.getState().selectGitScope(routeThreadRef, scope);
+    useDiffPanelStore.getState().selectGitScope(threadRef, scope);
   };
   const selectBranchBaseRef = (baseRef: string | null) => {
-    if (!routeThreadRef) return;
-    useDiffPanelStore.getState().selectBranchBaseRef(routeThreadRef, baseRef);
+    useDiffPanelStore.getState().selectBranchBaseRef(threadRef, baseRef);
   };
 
   const headerRow = (
@@ -899,7 +880,7 @@ export default function DiffPanel({
             control panel, and in a narrow right panel opening it hides the very
             list the user was working from. The way back is a control, not a
             "find the tab again" exercise. */}
-        {hunkStaging.active && routeThreadRef !== null && (
+        {hunkStaging.active && (
           <Tooltip>
             <TooltipTrigger
               render={

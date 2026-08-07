@@ -920,7 +920,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --secondary: --alpha(var(--color-white) / 4%);
     --secondary-foreground: var(--color-neutral-100);
     --muted: --alpha(var(--color-white) / 4%);
-    --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
+    /* Secondary copy is frequently given an additional alpha utility in the
+       UI. Start from a legible neutral so those hierarchy steps do not turn
+       descriptions and metadata into near-black text on the workspace. */
+    --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 60%, var(--color-white));
     --accent: --alpha(var(--color-white) / 4%);
     --accent-foreground: var(--color-neutral-100);
     --destructive: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
@@ -983,7 +986,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --accent: #191a1d;
   --accent-foreground: #f7f9ff;
   --muted: #0a0a0a;
-  --muted-foreground: #a3a3a3;
+  --muted-foreground: #b3b3b3;
   --border: rgb(255 255 255 / 8%);
   --input: rgb(255 255 255 / 18%);
   --sidebar: var(--card);

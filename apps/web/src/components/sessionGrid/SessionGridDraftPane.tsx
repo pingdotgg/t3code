@@ -2,7 +2,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { PlusIcon, XIcon } from "lucide-react";
-import { memo, useEffect, useMemo } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 
 import type { DraftId, DraftSessionState } from "../../composerDraftStore";
 import { cn } from "../../lib/utils";
@@ -36,6 +36,7 @@ export const SessionGridDraftPane = memo(function SessionGridDraftPane(
   );
   const serverThread = useThread(threadRef);
   const itemKey = `draft:${props.draftId}`;
+  const [runContextPortalTarget, setRunContextPortalTarget] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
     if (threadHasStarted(serverThread)) {
@@ -55,7 +56,7 @@ export const SessionGridDraftPane = memo(function SessionGridDraftPane(
       />
       <div className="min-w-0 flex-1">
         <div className="truncate text-xs font-semibold leading-4 text-foreground">New session</div>
-        <div className="flex min-w-0 items-center gap-1.5 text-[10px] leading-3 text-muted-foreground/65">
+        <div className="flex min-w-0 items-center gap-1.5 text-[10px] leading-3 text-muted-foreground/70">
           <span>Draft</span>
           {props.environmentLabel ? (
             <>
@@ -65,6 +66,10 @@ export const SessionGridDraftPane = memo(function SessionGridDraftPane(
           ) : null}
         </div>
       </div>
+      <div
+        ref={setRunContextPortalTarget}
+        className="flex min-w-0 w-fit max-w-[42%] shrink-0 items-center justify-end"
+      />
       <Button
         aria-label="Discard new session"
         onClick={() => props.onDiscard(props.draftId)}
@@ -100,6 +105,7 @@ export const SessionGridDraftPane = memo(function SessionGridDraftPane(
         draftId={props.draftId}
         environmentId={props.draft.environmentId}
         gridHeader={header}
+        gridRunContextPortalTarget={runContextPortalTarget}
         isActiveSurface={props.focused}
         panelControlsPortalTarget={props.panelControlsPortalTarget}
         reserveTitleBarControlInset={false}

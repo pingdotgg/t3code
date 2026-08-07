@@ -9,7 +9,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ControlPillMenu } from "../../components/ControlPill";
 import { SymbolView } from "../../components/AppSymbol";
-import { T3Wordmark } from "../../components/T3Wordmark";
+import { Brand2codeMark } from "../../components/Brand2codeMark";
 import { HOME_HORIZONTAL_INSET } from "../../lib/layoutMetrics";
 import { resolveMobileStageLabel } from "../../lib/mobileBranding";
 import { useThemeColor } from "../../lib/useThemeColor";
@@ -208,10 +208,10 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
         <View className="w-full max-w-[720px] self-center gap-3">
           <View className="flex-row items-center gap-2.5">
             <View className="flex-1 flex-row items-center gap-2">
-              {/* Mirrors the desktop SidebarBrand: T3 mark + muted "Code". */}
-              <T3Wordmark color={iconColor} height={15} />
+              {/* Mirrors the desktop SidebarBrand: lime mark + 2code wordmark. */}
+              <Brand2codeMark color="#b0fe93" size={18} />
               <RNText className="-ml-0.5 text-[21px] font-t3-medium tracking-[-0.5px] text-foreground-muted">
-                Code
+                2code
               </RNText>
               <View className="rounded-full bg-subtle px-2 py-0.75">
                 <RNText className="text-[11px] font-t3-bold tracking-[1.1px] text-foreground-muted uppercase">

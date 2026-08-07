@@ -155,7 +155,7 @@ describe("buildThreadTitlePrompt", () => {
     expect(result.prompt).toContain("Investigate reconnect regressions after session restore");
     expect(result.prompt).not.toContain("Attachment metadata:");
     expect(result.prompt).toContain(
-      "Generate a title that will help the user recognize this T3 Code thread weeks later.",
+      "Generate a title that will help the user recognize this 2code thread weeks later.",
     );
     expect(result.prompt).toContain(
       "Title the subject and outcome. Discard incidental instructions.",
@@ -195,7 +195,7 @@ describe("buildThreadTitlePrompt", () => {
     });
 
     expect(result.prompt).toContain(
-      "Regenerate the title for an existing T3 Code thread so the user can recognize it weeks later.",
+      "Regenerate the title for an existing 2code thread so the user can recognize it weeks later.",
     );
     expect(result.prompt).toContain('The previous title was "Investigate reconnect regressions".');
     expect(result.prompt).toContain(

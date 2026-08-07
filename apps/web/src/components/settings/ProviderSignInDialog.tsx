@@ -214,7 +214,7 @@ function ProviderSignInDialogBody(props: {
           {phase === "idle"
             ? props.provider.auth.email
               ? `Currently signed in as ${props.provider.auth.email}.`
-              : "T3 Code never sees your credentials — the provider CLI stores them itself."
+              : "2code never sees your credentials — the provider CLI stores them itself."
             : presentation.body}
         </DialogDescription>
       </DialogHeader>

@@ -1014,7 +1014,7 @@ export function AppearanceSettingsPanel() {
       <SettingsSection id="appearance" title="Appearance">
         <SettingsRow
           {...searchableSetting("theme")}
-          description="Choose how T3 Code looks across the app."
+          description="Choose how 2code looks across the app."
           resetAction={
             theme !== "system" ? (
               <SettingResetButton label="theme" onClick={() => setTheme("system")} />
