@@ -1,9 +1,14 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { describe } from "vite-plus/test";
+
+import { ServerSettingsService } from "./serverSettings.ts";
 
 import {
   forwardVoiceTranscription,
@@ -17,6 +22,7 @@ import {
 
 describe("transcription providers", () => {
   it("uses fixed OpenAI and Groq configurations", () => {
+    expect(resolveTranscriptionProvider("codex")).toBe("codex");
     expect(resolveTranscriptionProvider("openai")).toBe("openai");
     expect(transcriptionProviderConfig("openai")).toEqual({
       endpoint: "https://api.openai.com/v1/audio/transcriptions",
@@ -96,6 +102,58 @@ describe("transcription providers", () => {
         ConfigProvider.layer(ConfigProvider.fromEnv({ env: { GROQ_API_KEY: "env-groq-key" } })),
       ),
     ),
+  );
+});
+
+it.layer(NodeServices.layer)("Codex subscription transcription", (it) => {
+  it.effect("keeps OAuth credentials host-side and forwards audio with Codex headers", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const codexHome = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-codex-transcription-",
+      });
+      yield* fileSystem.writeFileString(
+        path.join(codexHome, "auth.json"),
+        JSON.stringify({
+          tokens: { access_token: "codex-access-token", account_id: "account-123" },
+        }),
+      );
+
+      let capturedRequest: HttpClientRequest.HttpClientRequest | undefined;
+      const client = HttpClient.make((request) =>
+        Effect.sync(() => {
+          capturedRequest = request;
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({ text: " subscription transcript " }),
+          );
+        }),
+      );
+
+      const transcript = yield* forwardVoiceTranscription({
+        audio: new Uint8Array([1, 2, 3]),
+        audioMimeType: "audio/webm;codecs=opus",
+        provider: "codex",
+        apiKey: "",
+        model: "",
+      }).pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.provide(
+          ServerSettingsService.layerTest({ providers: { codex: { homePath: codexHome } } }),
+        ),
+      );
+
+      expect(transcript).toBe("subscription transcript");
+      expect(capturedRequest?.url).toBe("https://chatgpt.com/backend-api/transcribe");
+      expect(capturedRequest?.headers.authorization).toBe("Bearer codex-access-token");
+      expect(capturedRequest?.headers["chatgpt-account-id"]).toBe("account-123");
+      expect(capturedRequest?.body._tag).toBe("FormData");
+      if (capturedRequest?.body._tag === "FormData") {
+        expect(capturedRequest.body.formData.get("file")).toBeInstanceOf(Blob);
+        expect(capturedRequest.body.formData.has("model")).toBe(false);
+      }
+    }),
   );
 });
 

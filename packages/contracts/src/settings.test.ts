@@ -112,11 +112,15 @@ describe("ClientSettings sidebar v2", () => {
 });
 
 describe("ClientSettings voice transcription", () => {
-  it("defaults to OpenAI and accepts Groq", () => {
+  it("defaults to OpenAI and accepts Codex or Groq", () => {
     const settings = decodeClientSettings({});
 
     expect(settings.voiceTranscriptionProvider).toBe("openai");
     expect(settings.voiceTranscriptionModel).toBe("");
+    expect(
+      decodeClientSettingsPatch({ voiceTranscriptionProvider: "codex" })
+        .voiceTranscriptionProvider,
+    ).toBe("codex");
     expect(
       decodeClientSettingsPatch({ voiceTranscriptionProvider: "groq" }).voiceTranscriptionProvider,
     ).toBe("groq");

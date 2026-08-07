@@ -38,6 +38,20 @@ describe("voiceTranscriptionRequestHeaders", () => {
       "x-t3-transcription-model": "whisper-large-v3",
     });
   });
+
+  it("selects Codex subscription without sending credentials from the client", () => {
+    expect(
+      voiceTranscriptionRequestHeaders("audio/webm", {
+        provider: "codex",
+        apiKey: "",
+        model: "",
+      }),
+    ).toEqual({
+      "content-type": "audio/webm",
+      "x-t3-transcription-provider": "codex",
+      "x-t3-transcription-model": "",
+    });
+  });
 });
 
 describe("listVoiceTranscriptionModels", () => {

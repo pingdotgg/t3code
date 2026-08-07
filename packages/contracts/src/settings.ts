@@ -62,7 +62,7 @@ export const EnvironmentIdentificationMode = Schema.Literals(["artwork", "pill",
 export type EnvironmentIdentificationMode = typeof EnvironmentIdentificationMode.Type;
 export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationMode = "artwork";
 
-export const VoiceTranscriptionProvider = Schema.Literals(["openai", "groq"]);
+export const VoiceTranscriptionProvider = Schema.Literals(["codex", "openai", "groq"]);
 export type VoiceTranscriptionProvider = typeof VoiceTranscriptionProvider.Type;
 
 export const ClientSettingsSchema = Schema.Struct({

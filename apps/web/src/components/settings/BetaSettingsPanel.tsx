@@ -23,6 +23,11 @@ const TRANSCRIPTION_API_KEY_ENV = {
   openai: "OPENAI_API_KEY",
   groq: "GROQ_API_KEY",
 } as const;
+const TRANSCRIPTION_PROVIDER_LABEL = {
+  codex: "Codex subscription",
+  openai: "OpenAI",
+  groq: "Groq",
+} as const;
 
 function AutoSettleDaysInput({
   value,
@@ -81,6 +86,7 @@ export function BetaSettingsPanel() {
   );
   const voiceTranscriptionModel = useClientSettings((settings) => settings.voiceTranscriptionModel);
   const [environmentApiKeys, setEnvironmentApiKeys] = useState({
+    codex: false,
     openai: false,
     groq: false,
   });
@@ -102,14 +108,20 @@ export function BetaSettingsPanel() {
     };
   }, [voiceTranscriptionEnabled]);
 
-  const transcriptionProviderLabel = voiceTranscriptionProvider === "openai" ? "OpenAI" : "Groq";
+  const transcriptionProviderLabel = TRANSCRIPTION_PROVIDER_LABEL[voiceTranscriptionProvider];
+  const isCodexSubscription = voiceTranscriptionProvider === "codex";
   const transcriptionApiKeyEnvironmentVariable =
-    TRANSCRIPTION_API_KEY_ENV[voiceTranscriptionProvider];
+    voiceTranscriptionProvider === "openai"
+      ? TRANSCRIPTION_API_KEY_ENV.openai
+      : voiceTranscriptionProvider === "groq"
+        ? TRANSCRIPTION_API_KEY_ENV.groq
+        : null;
   const hasEnvironmentApiKey = environmentApiKeys[voiceTranscriptionProvider];
-  const hasTranscriptionApiKey = voiceTranscriptionApiKey.trim().length > 0 || hasEnvironmentApiKey;
+  const hasTranscriptionApiKey =
+    isCodexSubscription || voiceTranscriptionApiKey.trim().length > 0 || hasEnvironmentApiKey;
 
   useEffect(() => {
-    if (!voiceTranscriptionEnabled || !hasTranscriptionApiKey) {
+    if (!voiceTranscriptionEnabled || !hasTranscriptionApiKey || isCodexSubscription) {
       setTranscriptionModels([]);
       setTranscriptionModelsLoading(false);
       setTranscriptionModelsError(null);
@@ -148,6 +160,7 @@ export function BetaSettingsPanel() {
     };
   }, [
     hasTranscriptionApiKey,
+    isCodexSubscription,
     voiceTranscriptionApiKey,
     voiceTranscriptionEnabled,
     voiceTranscriptionProvider,
@@ -242,7 +255,7 @@ export function BetaSettingsPanel() {
           <>
             <SettingsRow
               title="Transcription provider"
-              description="Use OpenAI or Groq. T3 loads the models available to the configured API key."
+              description="Use your Codex subscription, OpenAI, or Groq."
               control={
                 <Select
                   value={voiceTranscriptionProvider}
@@ -258,6 +271,9 @@ export function BetaSettingsPanel() {
                     <SelectValue>{transcriptionProviderLabel}</SelectValue>
                   </SelectTrigger>
                   <SelectPopup align="end" alignItemWithTrigger={false}>
+                    <SelectItem hideIndicator value="codex">
+                      Codex subscription
+                    </SelectItem>
                     <SelectItem hideIndicator value="openai">
                       OpenAI
                     </SelectItem>
@@ -268,61 +284,79 @@ export function BetaSettingsPanel() {
                 </Select>
               }
             />
-            <SettingsRow
-              title={`${transcriptionProviderLabel} API key`}
-              description={
-                hasEnvironmentApiKey
-                  ? `${transcriptionApiKeyEnvironmentVariable} is configured on the connected T3 server. Enter a key here to override it for this client.`
-                  : `Stored only in this client's local settings. You can also set ${transcriptionApiKeyEnvironmentVariable} on the connected T3 server.`
-              }
-              control={
-                <Input
-                  type="password"
-                  autoComplete="off"
-                  className="w-full sm:w-64"
-                  value={voiceTranscriptionApiKey}
-                  onChange={(event) =>
-                    updateSettings({
-                      voiceTranscriptionApiKey: event.target.value,
-                      voiceTranscriptionModel: "",
-                    })
-                  }
-                  placeholder={
+            {isCodexSubscription ? (
+              <SettingsRow
+                title="Codex authentication"
+                description={
+                  hasEnvironmentApiKey
+                    ? "Uses the first configured Codex provider with file-based ChatGPT credentials on the connected T3 server."
+                    : "No file-based Codex ChatGPT login was found on the connected T3 server. Run codex login first."
+                }
+                control={
+                  <span className="text-sm text-muted-foreground">
+                    {hasEnvironmentApiKey ? "Connected" : "Unavailable"}
+                  </span>
+                }
+              />
+            ) : (
+              <>
+                <SettingsRow
+                  title={`${transcriptionProviderLabel} API key`}
+                  description={
                     hasEnvironmentApiKey
-                      ? `Using ${transcriptionApiKeyEnvironmentVariable}`
-                      : "Required"
+                      ? `${transcriptionApiKeyEnvironmentVariable} is configured on the connected T3 server. Enter a key here to override it for this client.`
+                      : `Stored only in this client's local settings. You can also set ${transcriptionApiKeyEnvironmentVariable} on the connected T3 server.`
                   }
-                  aria-label={`${transcriptionProviderLabel} transcription API key`}
+                  control={
+                    <Input
+                      type="password"
+                      autoComplete="off"
+                      className="w-full sm:w-64"
+                      value={voiceTranscriptionApiKey}
+                      onChange={(event) =>
+                        updateSettings({
+                          voiceTranscriptionApiKey: event.target.value,
+                          voiceTranscriptionModel: "",
+                        })
+                      }
+                      placeholder={
+                        hasEnvironmentApiKey
+                          ? `Using ${transcriptionApiKeyEnvironmentVariable}`
+                          : "Required"
+                      }
+                      aria-label={`${transcriptionProviderLabel} transcription API key`}
+                    />
+                  }
                 />
-              }
-            />
-            <SettingsRow
-              title="Transcription model"
-              description={transcriptionModelDescription}
-              control={
-                <Select
-                  value={voiceTranscriptionModel}
-                  disabled={transcriptionModelsLoading || transcriptionModels.length === 0}
-                  onValueChange={(value) => {
-                    if (value !== null) updateSettings({ voiceTranscriptionModel: value });
-                  }}
-                >
-                  <SelectTrigger className="w-full sm:w-64" aria-label="Transcription model">
-                    <SelectValue>
-                      {voiceTranscriptionModel ||
-                        (transcriptionModelsLoading ? "Loading models…" : "Select model")}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectPopup align="end" alignItemWithTrigger={false}>
-                    {transcriptionModels.map((model) => (
-                      <SelectItem hideIndicator key={model} value={model}>
-                        {model}
-                      </SelectItem>
-                    ))}
-                  </SelectPopup>
-                </Select>
-              }
-            />
+                <SettingsRow
+                  title="Transcription model"
+                  description={transcriptionModelDescription}
+                  control={
+                    <Select
+                      value={voiceTranscriptionModel}
+                      disabled={transcriptionModelsLoading || transcriptionModels.length === 0}
+                      onValueChange={(value) => {
+                        if (value !== null) updateSettings({ voiceTranscriptionModel: value });
+                      }}
+                    >
+                      <SelectTrigger className="w-full sm:w-64" aria-label="Transcription model">
+                        <SelectValue>
+                          {voiceTranscriptionModel ||
+                            (transcriptionModelsLoading ? "Loading models…" : "Select model")}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup align="end" alignItemWithTrigger={false}>
+                        {transcriptionModels.map((model) => (
+                          <SelectItem hideIndicator key={model} value={model}>
+                            {model}
+                          </SelectItem>
+                        ))}
+                      </SelectPopup>
+                    </Select>
+                  }
+                />
+              </>
+            )}
           </>
         ) : null}
       </SettingsSection>

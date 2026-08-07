@@ -41,12 +41,14 @@ import {
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./httpCors.ts";
 import {
+  codexTranscriptionAuthStatus,
   forwardVoiceTranscription,
   listVoiceTranscriptionModels,
   MAX_TRANSCRIPTION_AUDIO_BYTES,
   readTranscriptionAudio,
   resolveTranscriptionProvider,
   transcriptionEnvironmentApiKeyStatus,
+  TranscriptionCodexAuthError,
   TranscriptionProviderUnsupportedError,
 } from "./transcription.ts";
 
@@ -267,7 +269,8 @@ const transcriptionConfigRouteLayer = HttpRouter.add(
       transcriptionEnvironmentApiKeyStatus("openai"),
       transcriptionEnvironmentApiKeyStatus("groq"),
     ]);
-    return HttpServerResponse.jsonUnsafe({ openai, groq });
+    const codex = yield* codexTranscriptionAuthStatus;
+    return HttpServerResponse.jsonUnsafe({ codex, openai, groq });
   }).pipe(
     Effect.catchTags({
       EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
@@ -317,6 +320,8 @@ const transcriptionUploadRouteLayer = HttpRouter.add(
       TranscriptionApiKeyMissingError: (error) =>
         Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 400 })),
       TranscriptionBodyReadError: (error) =>
+        Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 400 })),
+      TranscriptionCodexAuthError: (error) =>
         Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 400 })),
       TranscriptionEmptyAudioError: (error) =>
         Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 400 })),

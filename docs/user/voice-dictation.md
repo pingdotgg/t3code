@@ -7,9 +7,15 @@ Enable it in **Settings** → **Beta features** → **Voice dictation**. The com
 microphone action. Select it to start recording and stop it when you are finished. Recordings stop
 automatically after five minutes.
 
-## Providers and API Keys
+## Providers and Authentication
 
-Choose **OpenAI** or **Groq**. T3 Code supplies the provider's transcription endpoint. After an
+Choose **Codex subscription**, **OpenAI**, or **Groq**. Codex subscription is experimental and
+reuses the first configured Codex provider with file-based ChatGPT credentials on the connected T3
+server. It does not require a separate API key. This integration uses the same private transcription
+endpoint as Codex Desktop, which is not a documented public OpenAI API and may change without
+notice.
+
+For OpenAI or Groq, T3 Code supplies the provider's transcription endpoint. After an
 API key is available, T3 Code loads the models that key can access from the provider and lets you
 select the transcription model. Model IDs are not bundled into T3 Code, so newly available models
 can appear without an app update.

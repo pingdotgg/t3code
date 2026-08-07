@@ -1,13 +1,21 @@
-import type { VoiceTranscriptionProvider } from "@t3tools/contracts";
+import { CodexSettings, type VoiceTranscriptionProvider } from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
+import { resolveCodexHomeLayout } from "./provider/Drivers/CodexHomeLayout.ts";
+import { deriveProviderInstanceConfigMap } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
+import { ServerSettingsService } from "./serverSettings.ts";
+
 export const MAX_TRANSCRIPTION_AUDIO_BYTES = 25 * 1024 * 1024;
 
-const PROVIDERS = {
+type ApiKeyVoiceTranscriptionProvider = Exclude<VoiceTranscriptionProvider, "codex">;
+
+const API_KEY_PROVIDERS = {
   openai: {
     endpoint: "https://api.openai.com/v1/audio/transcriptions",
     modelsEndpoint: "https://api.openai.com/v1/models",
@@ -19,9 +27,11 @@ const PROVIDERS = {
     apiKeyEnvironmentVariable: "GROQ_API_KEY",
   },
 } as const satisfies Record<
-  VoiceTranscriptionProvider,
+  ApiKeyVoiceTranscriptionProvider,
   { endpoint: string; modelsEndpoint: string; apiKeyEnvironmentVariable: string }
 >;
+
+const CODEX_TRANSCRIPTION_ENDPOINT = "https://chatgpt.com/backend-api/transcribe";
 
 export interface VoiceTranscriptionInput {
   readonly audio: Uint8Array;
@@ -68,7 +78,7 @@ export class TranscriptionProviderUnsupportedError extends Schema.TaggedErrorCla
   {},
 ) {
   override get message(): string {
-    return "Select OpenAI or Groq for transcription.";
+    return "Select Codex subscription, OpenAI, or Groq for transcription.";
   }
 }
 
@@ -78,6 +88,15 @@ export class TranscriptionApiKeyMissingError extends Schema.TaggedErrorClass<Tra
 ) {
   override get message(): string {
     return "Add an API key or configure the provider's API key environment variable.";
+  }
+}
+
+export class TranscriptionCodexAuthError extends Schema.TaggedErrorClass<TranscriptionCodexAuthError>()(
+  "TranscriptionCodexAuthError",
+  {},
+) {
+  override get message(): string {
+    return "Voice transcription requires file-based Codex credentials signed in with ChatGPT.";
   }
 }
 
@@ -127,28 +146,74 @@ export class TranscriptionResponseError extends Schema.TaggedErrorClass<Transcri
 }
 
 const TranscriptionResponse = Schema.Struct({ text: Schema.String });
+const CodexVoiceAuth = Schema.Struct({
+  tokens: Schema.Struct({
+    access_token: Schema.NonEmptyString,
+    account_id: Schema.NonEmptyString,
+  }),
+});
 const ModelsResponse = Schema.Struct({
   data: Schema.Array(Schema.Struct({ id: Schema.String })),
 });
 const TRANSCRIPTION_MODEL_ID_PATTERN = /(?:transcri|whisper|speech[-_ ]?to[-_ ]?text)/i;
+const decodeCodexSettings = Schema.decodeUnknownEffect(CodexSettings);
+const decodeCodexVoiceAuth = Schema.decodeEffect(Schema.fromJsonString(CodexVoiceAuth));
 
 export function resolveTranscriptionProvider(provider: string): VoiceTranscriptionProvider | null {
-  return provider === "openai" || provider === "groq" ? provider : null;
+  return provider === "codex" || provider === "openai" || provider === "groq" ? provider : null;
 }
 
-export function transcriptionProviderConfig(provider: VoiceTranscriptionProvider) {
-  return PROVIDERS[provider];
+export function transcriptionProviderConfig(provider: ApiKeyVoiceTranscriptionProvider) {
+  return API_KEY_PROVIDERS[provider];
 }
 
 export const transcriptionEnvironmentApiKeyStatus = Effect.fn(
   "transcriptionEnvironmentApiKeyStatus",
-)(function* (provider: VoiceTranscriptionProvider) {
+)(function* (provider: ApiKeyVoiceTranscriptionProvider) {
   const providerConfig = transcriptionProviderConfig(provider);
   const value = yield* Config.string(providerConfig.apiKeyEnvironmentVariable).pipe(
     Config.withDefault(""),
   );
   return value.trim().length > 0;
 });
+
+const resolveCodexVoiceCredentials = Effect.fn("voiceTranscription.resolveCodexCredentials")(
+  function* () {
+    const settingsService = yield* ServerSettingsService;
+    const settings = yield* settingsService.getSettings.pipe(
+      Effect.mapError(() => new TranscriptionCodexAuthError()),
+    );
+    const instance = Object.values(deriveProviderInstanceConfigMap(settings)).find(
+      (candidate) => candidate.driver === "codex",
+    );
+    if (!instance) {
+      return yield* new TranscriptionCodexAuthError();
+    }
+
+    const config = yield* decodeCodexSettings(instance.config ?? {}).pipe(
+      Effect.mapError(() => new TranscriptionCodexAuthError()),
+    );
+    const layout = yield* resolveCodexHomeLayout(config);
+    const path = yield* Path.Path;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const authPath = path.join(layout.effectiveHomePath ?? layout.sharedHomePath, "auth.json");
+    const encoded = yield* fileSystem.readFileString(authPath).pipe(
+      Effect.mapError(() => new TranscriptionCodexAuthError()),
+    );
+    const auth = yield* decodeCodexVoiceAuth(encoded).pipe(
+      Effect.mapError(() => new TranscriptionCodexAuthError()),
+    );
+    return {
+      accessToken: auth.tokens.access_token,
+      accountId: auth.tokens.account_id,
+    };
+  },
+);
+
+export const codexTranscriptionAuthStatus = resolveCodexVoiceCredentials().pipe(
+  Effect.as(true),
+  Effect.catchTag("TranscriptionCodexAuthError", () => Effect.succeed(false)),
+);
 
 const resolveTranscriptionApiKey = Effect.fn("voiceTranscription.resolveApiKey")(function* (
   input: VoiceTranscriptionModelsInput,
@@ -168,6 +233,7 @@ const resolveTranscriptionApiKey = Effect.fn("voiceTranscription.resolveApiKey")
 export const listVoiceTranscriptionModels = Effect.fn("voiceTranscription.listModels")(function* (
   input: VoiceTranscriptionModelsInput,
 ) {
+  if (input.provider === "codex") return [];
   const providerConfig = transcriptionProviderConfig(input.provider);
   const apiKey = yield* resolveTranscriptionApiKey(input);
   const httpClient = yield* HttpClient.HttpClient;
@@ -178,6 +244,9 @@ export const listVoiceTranscriptionModels = Effect.fn("voiceTranscription.listMo
     Effect.flatMap((response) =>
       Effect.gen(function* () {
         if (response.status < 200 || response.status >= 300) {
+          if (response.status === 401 || response.status === 403) {
+            return yield* new TranscriptionCodexAuthError();
+          }
           return yield* new TranscriptionProviderError({
             provider: input.provider,
             providerStatus: response.status,
@@ -234,6 +303,50 @@ function audioFileExtension(mimeType: string): string {
   return "webm";
 }
 
+const forwardCodexVoiceTranscription = Effect.fn("voiceTranscription.forwardCodex")(function* (
+  input: Pick<VoiceTranscriptionInput, "audio" | "audioMimeType">,
+) {
+  const credentials = yield* resolveCodexVoiceCredentials();
+  const mimeType = input.audioMimeType.split(";", 1)[0]?.trim() || "audio/webm";
+  const form = new FormData();
+  form.set(
+    "file",
+    new Blob([input.audio], { type: mimeType }),
+    `recording.${audioFileExtension(mimeType)}`,
+  );
+
+  const httpClient = yield* HttpClient.HttpClient;
+  const payload = yield* HttpClientRequest.post(CODEX_TRANSCRIPTION_ENDPOINT).pipe(
+    HttpClientRequest.bearerToken(credentials.accessToken),
+    HttpClientRequest.setHeader("ChatGPT-Account-Id", credentials.accountId),
+    HttpClientRequest.setHeader("OAI-Product-Sku", "CODEX"),
+    HttpClientRequest.setHeader("originator", "Codex Desktop"),
+    HttpClientRequest.setHeader("User-Agent", "Codex Desktop/0.1.0"),
+    HttpClientRequest.bodyFormData(form),
+    httpClient.execute,
+    Effect.mapError((cause) => new TranscriptionRequestError({ provider: "codex", cause })),
+    Effect.flatMap((response) =>
+      Effect.gen(function* () {
+        if (response.status < 200 || response.status >= 300) {
+          return yield* new TranscriptionProviderError({
+            provider: "codex",
+            providerStatus: response.status,
+          });
+        }
+        return yield* HttpClientResponse.schemaBodyJson(TranscriptionResponse)(response).pipe(
+          Effect.mapError((cause) => new TranscriptionResponseError({ provider: "codex", cause })),
+        );
+      }),
+    ),
+    Effect.timeout("2 minutes"),
+    Effect.catchTags({
+      TimeoutError: (cause) =>
+        Effect.fail(new TranscriptionRequestError({ provider: "codex", cause })),
+    }),
+  );
+  return payload.text.trim();
+});
+
 export const forwardVoiceTranscription = Effect.fn("voiceTranscription.forward")(function* (
   input: VoiceTranscriptionInput,
 ) {
@@ -244,6 +357,9 @@ export const forwardVoiceTranscription = Effect.fn("voiceTranscription.forward")
     return yield* new TranscriptionAudioTooLargeError({
       receivedBytes: input.audio.byteLength,
     });
+  }
+  if (input.provider === "codex") {
+    return yield* forwardCodexVoiceTranscription(input);
   }
   const providerConfig = transcriptionProviderConfig(input.provider);
   const model = input.model.trim();
