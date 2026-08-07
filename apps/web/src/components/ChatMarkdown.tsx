@@ -21,6 +21,7 @@ import React, {
   Suspense,
   type ClipboardEvent as ReactClipboardEvent,
   type MouseEvent as ReactMouseEvent,
+  createContext,
   isValidElement,
   use,
   useCallback,
@@ -91,6 +92,7 @@ import {
   openUrlInPreview,
   BrowserPreviewUnavailableError,
 } from "../browser/openFileInPreview";
+import { MermaidDiagram } from "./MermaidDiagram";
 
 interface ChatMarkdownProps {
   text: string;
@@ -103,6 +105,14 @@ interface ChatMarkdownProps {
   /** Treat single newlines as hard breaks — chat-style user input. */
   lineBreaks?: boolean;
 }
+
+interface MarkdownRenderContextValue {
+  readonly diffThemeName: DiffThemeName;
+  readonly isStreaming: boolean;
+  readonly resolvedTheme: "light" | "dark";
+}
+
+const MarkdownRenderContext = createContext<MarkdownRenderContextValue | null>(null);
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 
@@ -122,6 +132,47 @@ interface MarkdownActionFailureContext {
 function reportMarkdownActionFailure(context: MarkdownActionFailureContext, cause: unknown): void {
   console.error("[chat-markdown] action failed", context, cause);
 }
+
+const MarkdownPre: NonNullable<Components["pre"]> = function MarkdownPre({
+  node,
+  children,
+  ...props
+}) {
+  const renderContext = use(MarkdownRenderContext);
+  if (!renderContext) {
+    throw new Error("Markdown render context is unavailable.");
+  }
+
+  const codeBlock = extractCodeBlock(children);
+  if (!codeBlock) {
+    return <pre {...props}>{children}</pre>;
+  }
+
+  const language = extractFenceLanguage(codeBlock.className);
+  if (!renderContext.isStreaming && language.toLowerCase() === "mermaid") {
+    return <MermaidDiagram code={codeBlock.code} theme={renderContext.resolvedTheme} />;
+  }
+  const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
+  return (
+    <MarkdownCodeBlock
+      code={codeBlock.code}
+      language={language}
+      fenceTitle={fenceTitle}
+      theme={renderContext.resolvedTheme}
+    >
+      <RenderErrorBoundary fallback={<pre {...props}>{children}</pre>}>
+        <Suspense fallback={<pre {...props}>{children}</pre>}>
+          <SuspenseShikiCodeBlock
+            className={codeBlock.className}
+            code={codeBlock.code}
+            themeName={renderContext.diffThemeName}
+            isStreaming={renderContext.isStreaming}
+          />
+        </Suspense>
+      </RenderErrorBoundary>
+    </MarkdownCodeBlock>
+  );
+};
 
 const highlightedCodeCache = new LRUCache<string>(
   MAX_HIGHLIGHT_CACHE_ENTRIES,
@@ -1276,6 +1327,10 @@ function ChatMarkdown({
     serverConfig?.availableEditors ?? [],
   );
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
+  const markdownRenderContext = useMemo<MarkdownRenderContextValue>(
+    () => ({ diffThemeName, isStreaming, resolvedTheme }),
+    [diffThemeName, isStreaming, resolvedTheme],
+  );
   const markdownFileLinkMetaByHref = useMemo(() => {
     const metaByHref = new Map<
       string,
@@ -1551,41 +1606,12 @@ function ChatMarkdown({
       details({ node: _node, children, open: detailsOpen }) {
         return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
       },
-      pre({ node, children, ...props }) {
-        const codeBlock = extractCodeBlock(children);
-        if (!codeBlock) {
-          return <pre {...props}>{children}</pre>;
-        }
-
-        const language = extractFenceLanguage(codeBlock.className);
-        const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
-        return (
-          <MarkdownCodeBlock
-            code={codeBlock.code}
-            language={language}
-            fenceTitle={fenceTitle}
-            theme={resolvedTheme}
-          >
-            <RenderErrorBoundary fallback={<pre {...props}>{children}</pre>}>
-              <Suspense fallback={<pre {...props}>{children}</pre>}>
-                <SuspenseShikiCodeBlock
-                  className={codeBlock.className}
-                  code={codeBlock.code}
-                  themeName={diffThemeName}
-                  isStreaming={isStreaming}
-                />
-              </Suspense>
-            </RenderErrorBoundary>
-          </MarkdownCodeBlock>
-        );
-      },
+      pre: MarkdownPre,
     };
   }, [
     cwd,
-    diffThemeName,
     fileLinkParentSuffixByPath,
     inlineCodeFileLinkMetaByText,
-    isStreaming,
     markdownFileLinkMetaByHref,
     onTaskListChange,
     openInPreferredEditor,
@@ -1606,16 +1632,18 @@ function ChatMarkdown({
       )}
       onCopy={handleCopy}
     >
-      <ReactMarkdown
-        remarkPlugins={
-          lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
-        }
-        rehypePlugins={CHAT_MARKDOWN_REHYPE_PLUGINS}
-        components={markdownComponents}
-        urlTransform={markdownUrlTransform}
-      >
-        {text}
-      </ReactMarkdown>
+      <MarkdownRenderContext value={markdownRenderContext}>
+        <ReactMarkdown
+          remarkPlugins={
+            lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
+          }
+          rehypePlugins={CHAT_MARKDOWN_REHYPE_PLUGINS}
+          components={markdownComponents}
+          urlTransform={markdownUrlTransform}
+        >
+          {text}
+        </ReactMarkdown>
+      </MarkdownRenderContext>
     </div>
   );
 }

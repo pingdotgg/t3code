@@ -1508,6 +1508,73 @@ label:has(> select#reasoning-effort) select {
   background: transparent !important;
 }
 
+.chat-markdown .chat-markdown-mermaid {
+  margin: 0.65rem 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--muted) 35%, var(--background));
+}
+
+.chat-markdown .chat-markdown-mermaid pre {
+  margin: 0;
+  border: none;
+  background: transparent;
+  padding: 1rem;
+}
+
+.chat-markdown .chat-markdown-mermaid-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.125rem;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--muted) 55%, var(--background));
+  padding: 0.25rem 0.375rem;
+}
+
+.chat-markdown .chat-markdown-mermaid-scale {
+  min-width: 2.75rem;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 0.6875rem;
+  text-align: center;
+}
+
+.chat-markdown .chat-markdown-mermaid-viewport {
+  overflow: hidden;
+  padding: 1rem;
+  cursor: grab;
+  outline: none;
+  touch-action: pan-x pan-y;
+}
+
+.chat-markdown .chat-markdown-mermaid-viewport:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--ring);
+}
+
+.chat-markdown .chat-markdown-mermaid-viewport[data-panning="true"] {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.chat-markdown .chat-markdown-mermaid-svg svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.chat-markdown .chat-markdown-mermaid-svg {
+  transform-origin: center;
+}
+
+.chat-markdown .chat-markdown-mermaid-error {
+  padding: 1rem 1rem 0;
+  color: var(--destructive);
+  font-size: 0.75rem;
+}
+
 /* Diagnostics-style tables: row separators only, uppercase headers, and a
    scroll-fade container for horizontal overflow. The root chat-markdown
    wrapping rules (overflow-wrap: anywhere) would let columns shrink to single
