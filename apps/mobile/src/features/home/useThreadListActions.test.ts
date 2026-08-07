@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => {
     "archive",
     "delete",
     "pin",
+    "reorderPin",
     "settle",
     "snooze",
     "unarchive",
