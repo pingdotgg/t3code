@@ -436,10 +436,34 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     }
   }
 
-  private fun parseColor(value: String, fallback: Int): Int =
-    try {
-      Color.parseColor(value)
+  private fun parseColor(value: String, fallback: Int): Int {
+    val trimmed = value.trim()
+    val hex = trimmed.removePrefix("#")
+    return try {
+      when {
+        trimmed.startsWith("#") && hex.length == 3 -> Color.rgb(
+          hex[0].digitToInt(16) * 17,
+          hex[1].digitToInt(16) * 17,
+          hex[2].digitToInt(16) * 17,
+        )
+        // CSS hex colors are RRGGBBAA, while Android's packed color format
+        // is AARRGGBB.
+        trimmed.startsWith("#") && hex.length == 4 -> Color.argb(
+          hex[3].digitToInt(16) * 17,
+          hex[0].digitToInt(16) * 17,
+          hex[1].digitToInt(16) * 17,
+          hex[2].digitToInt(16) * 17,
+        )
+        trimmed.startsWith("#") && hex.length == 8 -> Color.argb(
+          hex.substring(6, 8).toInt(16),
+          hex.substring(0, 2).toInt(16),
+          hex.substring(2, 4).toInt(16),
+          hex.substring(4, 6).toInt(16),
+        )
+        else -> Color.parseColor(trimmed)
+      }
     } catch (_: IllegalArgumentException) {
       fallback
     }
+  }
 }

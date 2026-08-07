@@ -53,4 +53,14 @@ describe("buildGhosttyThemeConfig", () => {
     expect(selectionEntry?.split("=", 2)[1]?.trim()).toBe(colors.terminalSelection);
     expect(theme.palette).toEqual(getPierreTerminalTheme("dark").palette);
   });
+
+  it("preserves CSS channel order for translucent terminal selections", () => {
+    const colors = {
+      ...createManagedThemeColors("dark", "#18212b", "#5ba8ff"),
+      terminalSelection: "#21b56880",
+    };
+    const config = buildGhosttyThemeConfig(getTerminalThemeForColors("dark", colors));
+
+    expect(config).toContain("selection-background = #21b56880");
+  });
 });

@@ -574,11 +574,12 @@ internal class TerminalCanvasView(context: Context) : View(context) {
   }
 
   private fun blend(foreground: Int, background: Int, amount: Float): Int {
-    val inverseAmount = 1f - amount
+    val effectiveAmount = amount * (Color.alpha(foreground) / 255f)
+    val inverseAmount = 1f - effectiveAmount
     return Color.rgb(
-      (Color.red(foreground) * amount + Color.red(background) * inverseAmount).toInt(),
-      (Color.green(foreground) * amount + Color.green(background) * inverseAmount).toInt(),
-      (Color.blue(foreground) * amount + Color.blue(background) * inverseAmount).toInt(),
+      (Color.red(foreground) * effectiveAmount + Color.red(background) * inverseAmount).toInt(),
+      (Color.green(foreground) * effectiveAmount + Color.green(background) * inverseAmount).toInt(),
+      (Color.blue(foreground) * effectiveAmount + Color.blue(background) * inverseAmount).toInt(),
     )
   }
 
