@@ -3,7 +3,6 @@ import * as Order from "effect/Order";
 import { useNavigation } from "@react-navigation/native";
 import { useEffect, useMemo, useState } from "react";
 
-import { getCompactBrandHeaderOptions } from "../../components/CompactBrandTitle";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
@@ -20,6 +19,7 @@ import { useHomeListOptions } from "./home-list-options";
 import { buildHomeProjectScopes } from "./homeThreadList";
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
+import { getConnectionAwareBrandHeaderOptions } from "./WorkspaceConnectionTitle";
 
 /* ─── Route screen ───────────────────────────────────────────────────── */
 
@@ -42,6 +42,9 @@ export function HomeRouteScreen() {
     settleThread,
     snoozeThread,
     unsnoozeThread,
+    pinThread,
+    unpinThread,
+    movePinnedThread,
     unsettleThread,
   } = useThreadListActions();
   const pendingTasks = usePendingNewTasks();
@@ -124,8 +127,16 @@ export function HomeRouteScreen() {
       onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
     >
       <>
-        {/* Restore the compact title after the split branch blanks the detail header. */}
-        <NativeStackScreenOptions options={getCompactBrandHeaderOptions()} />
+        {/* Restore the compact title after the split branch blanks the detail
+            header. The brand slot doubles as the connection status surface:
+            while an environment reconnects, the lockup fades to a status label
+            in place (no layout shift in the list below). */}
+        <NativeStackScreenOptions
+          options={getConnectionAwareBrandHeaderOptions({
+            onOpenEnvironments: () =>
+              navigation.navigate("SettingsSheet", { screen: "SettingsEnvironments" }),
+          })}
+        />
         <HomeHeader
           environments={environments}
           projects={projectFilterOptions}
@@ -136,6 +147,9 @@ export function HomeRouteScreen() {
           threadSortOrder={listOptions.threadSortOrder}
           onEnvironmentChange={setSelectedEnvironmentId}
           onProjectChange={setSelectedProjectKey}
+          onOpenEnvironments={() =>
+            navigation.navigate("SettingsSheet", { screen: "SettingsEnvironments" })
+          }
           onOpenSettings={() => navigation.navigate("SettingsSheet", { screen: "Settings" })}
           onProjectSortOrderChange={setProjectSortOrder}
           onSearchQueryChange={setSearchQuery}
@@ -155,11 +169,11 @@ export function HomeRouteScreen() {
           onSnoozeThread={snoozeThread}
           onUnsnoozeThread={unsnoozeThread}
           onUnsettleThread={unsettleThread}
+          onPinThread={pinThread}
+          onUnpinThread={unpinThread}
+          onMovePinnedThread={movePinnedThread}
           onEnvironmentChange={setSelectedEnvironmentId}
           onProjectChange={setSelectedProjectKey}
-          onOpenEnvironments={() =>
-            navigation.navigate("SettingsSheet", { screen: "SettingsEnvironments" })
-          }
           onOpenSettings={() => navigation.navigate("SettingsSheet", { screen: "Settings" })}
           onProjectSortOrderChange={setProjectSortOrder}
           onSearchQueryChange={setSearchQuery}

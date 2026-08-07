@@ -26,7 +26,7 @@ export function ContextWindowMeter(props: {
   const showTotalProcessed = totalProcessedTokens !== null && totalProcessedTokens > 0;
   const isOverloaded = normalizedPercentage > 90;
   const usageColor = isOverloaded
-    ? "var(--color-red-500)"
+    ? "var(--color-error)"
     : "color-mix(in oklab, var(--color-muted-foreground) 72%, transparent)";
 
   return (
@@ -91,7 +91,7 @@ export function ContextWindowMeter(props: {
           <div className="flex items-center justify-between gap-3">
             <div className="font-medium text-muted-foreground text-xs">Context Window</div>
             {usage.maxTokens !== null && usedPercentage ? (
-              <div className="text-[11px] tabular-nums text-muted-foreground/70">
+              <div className="text-secondary-label text-[11px] tabular-nums">
                 <span>{usedPercentage}</span>
                 <span className="mx-1">·</span>
                 <span>
@@ -100,7 +100,7 @@ export function ContextWindowMeter(props: {
                 </span>
               </div>
             ) : (
-              <div className="text-[11px] tabular-nums text-muted-foreground/70">
+              <div className="text-secondary-label text-[11px] tabular-nums">
                 {formatContextWindowTokens(usage.usedTokens)}
               </div>
             )}
@@ -122,14 +122,14 @@ export function ContextWindowMeter(props: {
           ) : null}
           {showTotalProcessed ? (
             <div className="flex items-center justify-between gap-3 text-[11px] leading-4">
-              <span className="text-muted-foreground/60">Total processed</span>
-              <span className="font-medium tabular-nums text-muted-foreground/80">
+              <span className="text-secondary-label">Total processed</span>
+              <span className="font-medium tabular-nums text-secondary-label">
                 {formatContextWindowTokens(totalProcessedTokens)}
               </span>
             </div>
           ) : null}
           {usage.compactsAutomatically ? (
-            <div className="mt-1 text-pretty text-[11px] font-medium text-muted-foreground/70">
+            <div className="mt-1 text-pretty text-secondary-label text-[11px] font-medium">
               {providerDisplayName ?? "It"} automatically compacts its context when needed.
             </div>
           ) : null}
