@@ -671,43 +671,53 @@ function AgentInstallTerminal({
     : (AGENT_INSTALL_COMMANDS[driver] ?? "");
   const [preTypeFailed, setPreTypeFailed] = useState(false);
 
+  // Open + pre-type, and tear the PTY down again on cleanup. Both live in one
+  // effect so a Strict Mode setup/cleanup/setup cycle (or any remount) always
+  // re-opens: the previous run's session is closed and `preparedRef` is reset
+  // together, instead of the ref surviving a teardown and leaving the drawer
+  // attached to a dead session.
   useEffect(() => {
-    if (preparedRef.current || cwd === null) return;
-    void (async () => {
-      const opened = await openTerminal({
-        environmentId,
-        input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId, cwd },
-      });
-      // Only a successful open ends the attempts, so a transient RPC failure
-      // retries on the next render instead of leaving a dead terminal.
-      if (opened._tag !== "Success") return;
+    if (cwd === null) return;
+    let cancelled = false;
+    if (!preparedRef.current) {
       preparedRef.current = true;
-      if (command.length === 0) return;
-      // Pre-type without the trailing carriage return; the user submits.
-      // The terminal id is unique to this mount, so this session has never
-      // been written to before.
-      const wrote = await writeTerminal({
-        environmentId,
-        input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId, data: command },
-      });
-      // A silent failure would leave a blank prompt under copy that says
-      // "review the command" — fall back to telling the user what to type.
-      if (wrote._tag !== "Success") setPreTypeFailed(true);
-    })();
-  }, [command, cwd, environmentId, openTerminal, terminalId, writeTerminal]);
-
-  // Every exit path unmounts the drawer (Done, Continue/Skip, card switch,
-  // session exit), so unmount cleanup is the single place the PTY dies —
-  // nothing is left running behind the wizard. An interrupted install is
-  // re-runnable from the card.
-  useEffect(() => {
+      void (async () => {
+        const opened = await openTerminal({
+          environmentId,
+          input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId, cwd },
+        });
+        // A transient RPC failure should retry rather than leave a dead
+        // terminal, so only a successful open keeps the ref set.
+        if (opened._tag !== "Success") {
+          preparedRef.current = false;
+          return;
+        }
+        if (cancelled || command.length === 0) return;
+        // Pre-type without the trailing carriage return; the user submits.
+        // The terminal id is unique to this mount, so this session has never
+        // been written to before.
+        const wrote = await writeTerminal({
+          environmentId,
+          input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId, data: command },
+        });
+        // A silent failure would leave a blank prompt under copy that says
+        // "review the command" — fall back to telling the user what to type.
+        if (!cancelled && wrote._tag !== "Success") setPreTypeFailed(true);
+      })();
+    }
+    // Every exit path unmounts the drawer (Done, Continue/Skip, card switch,
+    // session exit), so this cleanup is the single place the PTY dies —
+    // nothing is left running behind the wizard. An interrupted install is
+    // re-runnable from the card.
     return () => {
+      cancelled = true;
+      preparedRef.current = false;
       void closeTerminal({
         environmentId,
         input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId },
       });
     };
-  }, [closeTerminal, environmentId, terminalId]);
+  }, [closeTerminal, command, cwd, environmentId, openTerminal, terminalId, writeTerminal]);
 
   if (cwd === null) {
     return null;
@@ -797,7 +807,11 @@ function ImportStep({ onDone }: { readonly onDone: () => void }) {
     setIsImporting(true);
     setImportError("");
     const defaultModelSelection = resolveDefaultProviderModelSelection(providers ?? [], null);
-    let failures = 0;
+    // Interrupted imports are neither failures nor successes — the command was
+    // superseded or the environment dropped — but they still didn't land, so
+    // they must not read as "imported everything".
+    let imported = 0;
+    let failed = 0;
     for (const candidate of selection) {
       const result = await createProject({
         environmentId,
@@ -809,16 +823,18 @@ function ImportStep({ onDone }: { readonly onDone: () => void }) {
           defaultModelSelection,
         },
       });
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        failures += 1;
+      if (result._tag === "Success") {
+        imported += 1;
+      } else if (!isAtomCommandInterrupted(result)) {
+        failed += 1;
       }
     }
     setIsImporting(false);
-    if (failures > 0) {
+    if (imported < selection.length) {
       setImportError(
-        failures === selection.length
+        imported === 0
           ? "Import failed. You can add projects manually from the command palette."
-          : `Imported ${selection.length - failures} of ${selection.length} projects. The rest can be added from the command palette.`,
+          : `Imported ${imported} of ${selection.length} projects. The rest can be added from the command palette.`,
       );
       return;
     }

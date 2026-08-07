@@ -87,11 +87,14 @@ export function FirstRunGate({
     workspaceFresh,
   ]);
 
+  // The fallback only guards a stalled *server* read. It must not start
+  // before settings hydrate, or slow hydration would resolve to the app
+  // without the decision effect ever seeing `onboardingCompletedAt`.
   useEffect(() => {
-    if (decision !== "pending") return;
+    if (decision !== "pending" || !hydrated) return;
     const timer = window.setTimeout(() => setDecision("app"), FIRST_RUN_DECISION_TIMEOUT_MS);
     return () => window.clearTimeout(timer);
-  }, [decision]);
+  }, [decision, hydrated]);
 
   useEffect(() => {
     if (decision === "wizard") {
