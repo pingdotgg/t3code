@@ -90,6 +90,7 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import {
+  OrchestrationV2EventSinkLayerLive,
   OrchestrationV2ProductionLayerLive,
   ProjectServiceLayerLive,
   ProjectSetupScriptRunnerLayerLive,
@@ -364,6 +365,7 @@ const WorktreeReaperLayerLive = WorktreeReaper.layer.pipe(
 );
 
 const WorktreeDeletionCleanupLayerLive = WorktreeDeletionCleanup.layer.pipe(
+  Layer.provideMerge(OrchestrationV2EventSinkLayerLive),
   Layer.provideMerge(OrchestrationApplicationLayerLive),
   Layer.provideMerge(WorktreeManagementLayerLive),
   Layer.provideMerge(ServerSettingsLayerLive),

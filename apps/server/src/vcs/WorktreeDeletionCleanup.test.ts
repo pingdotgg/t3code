@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import type { OrchestrationV2DomainEvent } from "@t3tools/contracts";
+import type { OrchestrationV2DomainEvent, OrchestrationV2StoredEvent } from "@t3tools/contracts";
 import { ThreadId, WorktreeMutationError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -10,6 +10,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as WorktreeDeletionCleanup from "./WorktreeDeletionCleanup.ts";
 import * as WorktreeService from "./WorktreeService.ts";
@@ -23,11 +24,25 @@ const deletionEvent = (worktreePath: string | null) =>
     payload: { worktreePath },
   }) as unknown as OrchestrationV2DomainEvent;
 
+const storedDeletionEvent = (sequence: number, worktreePath: string | null) =>
+  ({
+    sequence,
+    commandId: null,
+    event: deletionEvent(worktreePath),
+  }) satisfies OrchestrationV2StoredEvent;
+
+interface TestEventSource {
+  readonly latestSequence: Effect.Effect<number, EventSink.EventSinkV2Error>;
+  readonly streamStoredEventsFrom: (
+    afterSequence: number,
+  ) => Stream.Stream<OrchestrationV2StoredEvent, EventSink.EventSinkV2Error>;
+}
+
 const makeLayer = (
   pruneOrphanedWorktree: WorktreeService.WorktreeService["Service"]["pruneOrphanedWorktree"],
   options: {
     readonly deleteOrphanedImmediately: boolean;
-    readonly events?: Stream.Stream<OrchestrationV2DomainEvent, unknown>;
+    readonly eventSource?: TestEventSource;
   },
 ) => {
   const worktrees = Layer.succeed(
@@ -39,8 +54,18 @@ const makeLayer = (
       reviveWorktree: () => Effect.succeed({ revived: false }),
     }),
   );
-  return WorktreeDeletionCleanup.layerWithEventStream(options.events ?? Stream.empty).pipe(
+  const eventSource = options.eventSource ?? {
+    latestSequence: Effect.succeed(0),
+    streamStoredEventsFrom: () => Stream.empty,
+  };
+  return WorktreeDeletionCleanup.layer.pipe(
     Layer.provide(worktrees),
+    Layer.provide(
+      Layer.mock(EventSink.EventSinkV2)({
+        latestSequence: () => eventSource.latestSequence,
+        stream: (input) => eventSource.streamStoredEventsFrom(input?.afterSequence ?? 0),
+      }),
+    ),
     Layer.provide(
       ServerSettings.layerTest({
         worktrees: {
@@ -153,7 +178,13 @@ it.effect("subscribes once and routes thread deletion events to cleanup", () =>
       );
     const layer = makeLayer(prune, {
       deleteOrphanedImmediately: true,
-      events: Stream.fromIterable([deletionEvent("/worktrees/from-event")]),
+      eventSource: {
+        latestSequence: Effect.succeed(0),
+        streamStoredEventsFrom: (afterSequence) =>
+          Stream.fromIterable([storedDeletionEvent(1, "/worktrees/from-event")]).pipe(
+            Stream.filter((stored) => stored.sequence > afterSequence),
+          ),
+      },
     });
 
     yield* Effect.gen(function* () {
@@ -168,41 +199,74 @@ it.effect("subscribes once and routes thread deletion events to cleanup", () =>
   }),
 );
 
-it.effect("restarts the domain event subscription after a stream failure", () =>
+it.effect("resumes stored deletion events from the last consumed sequence after a failure", () =>
   Effect.gen(function* () {
-    const firstAttemptStarted = yield* Deferred.make<void>();
+    const firstAttemptFailed = yield* Deferred.make<void>();
     const recoveredPath = yield* Deferred.make<string>();
     const attempts = yield* Ref.make(0);
-    const events: Stream.Stream<OrchestrationV2DomainEvent, string> = Stream.unwrap(
-      Ref.getAndUpdate(attempts, (count) => count + 1).pipe(
-        Effect.map(
-          (attempt): Stream.Stream<OrchestrationV2DomainEvent, string> =>
-            attempt === 0
+    const requestedAfterSequences = yield* Ref.make<ReadonlyArray<number>>([]);
+    const storedEvents = yield* Ref.make<ReadonlyArray<OrchestrationV2StoredEvent>>([
+      storedDeletionEvent(1, "/worktrees/before-failure"),
+    ]);
+    const eventSource: TestEventSource = {
+      latestSequence: Effect.succeed(0),
+      streamStoredEventsFrom: (afterSequence) =>
+        Stream.unwrap(
+          Effect.gen(function* () {
+            yield* Ref.update(requestedAfterSequences, (current) => [...current, afterSequence]);
+            const attempt = yield* Ref.getAndUpdate(attempts, (count) => count + 1);
+            const available = (yield* Ref.get(storedEvents)).filter(
+              (stored) => stored.sequence > afterSequence,
+            );
+            return attempt === 0
               ? Stream.concat(
-                  Stream.fromEffect(Deferred.succeed(firstAttemptStarted, undefined)).pipe(
+                  Stream.fromIterable(available),
+                  Stream.fromEffect(Deferred.succeed(firstAttemptFailed, undefined)).pipe(
                     Stream.drain,
+                    Stream.concat(
+                      Stream.fail(
+                        new EventSink.EventSinkStreamError({
+                          afterSequence,
+                          cause: "simulated subscription failure",
+                        }),
+                      ),
+                    ),
                   ),
-                  Stream.fail("simulated subscription failure"),
                 )
-              : Stream.fromIterable([deletionEvent("/worktrees/recovered")]),
+              : Stream.fromIterable(available);
+          }),
         ),
-      ),
-    );
-    const prune = (path: string) => Deferred.succeed(recoveredPath, path).pipe(Effect.as(true));
+    };
+    const pruned: string[] = [];
+    const prune = (path: string) =>
+      Effect.sync(() => pruned.push(path)).pipe(
+        Effect.andThen(
+          path === "/worktrees/recovered"
+            ? Deferred.succeed(recoveredPath, path)
+            : Effect.succeed(false),
+        ),
+        Effect.as(true),
+      );
     const layer = makeLayer(prune, {
       deleteOrphanedImmediately: true,
-      events,
+      eventSource,
     });
 
     yield* Effect.gen(function* () {
       const cleanup = yield* WorktreeDeletionCleanup.WorktreeDeletionCleanup;
       yield* cleanup.start();
       yield* cleanup.start();
-      yield* Deferred.await(firstAttemptStarted);
+      yield* Deferred.await(firstAttemptFailed);
+      yield* Ref.set(storedEvents, [
+        storedDeletionEvent(1, "/worktrees/before-failure"),
+        storedDeletionEvent(2, "/worktrees/recovered"),
+      ]);
       yield* TestClock.adjust("1 second");
       assert.equal(yield* Deferred.await(recoveredPath), "/worktrees/recovered");
       yield* cleanup.drain;
       assert.equal(yield* Ref.get(attempts), 2);
+      assert.deepEqual(yield* Ref.get(requestedAfterSequences), [0, 1]);
+      assert.deepEqual(pruned, ["/worktrees/before-failure", "/worktrees/recovered"]);
     }).pipe(Effect.provide(layer));
   }),
 );

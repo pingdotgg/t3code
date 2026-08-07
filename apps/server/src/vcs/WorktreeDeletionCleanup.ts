@@ -9,7 +9,7 @@ import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
+import { EventSinkV2 } from "../orchestration-v2/EventSink.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { WorktreeService } from "./WorktreeService.ts";
 
@@ -52,73 +52,88 @@ export class WorktreeDeletionCleanup extends Context.Service<
   }
 >()("t3/vcs/WorktreeDeletionCleanup") {}
 
-export const make = (domainEvents: Stream.Stream<OrchestrationV2DomainEvent, unknown>) =>
-  Effect.gen(function* () {
-    const settings = yield* ServerSettingsService;
-    const worktrees = yield* WorktreeService;
-    const started = yield* Ref.make(false);
+export const make = Effect.gen(function* () {
+  const events = yield* EventSinkV2;
+  const settings = yield* ServerSettingsService;
+  const worktrees = yield* WorktreeService;
+  const started = yield* Ref.make(false);
+  const lastSequence = yield* Ref.make<number | null>(null);
 
-    const processDeletion = Effect.fn("WorktreeDeletionCleanup.processDeletion")(function* (
-      request: ThreadDeletionCleanupRequest,
-    ) {
-      if (request.worktreePath === null) return;
+  const processDeletion = Effect.fn("WorktreeDeletionCleanup.processDeletion")(function* (
+    request: ThreadDeletionCleanupRequest,
+  ) {
+    if (request.worktreePath === null) return;
 
-      const policy = (yield* settings.getSettings).worktrees;
-      if (!policy.deleteOrphanedImmediately) return;
+    const policy = (yield* settings.getSettings).worktrees;
+    if (!policy.deleteOrphanedImmediately) return;
 
-      const removed = yield* worktrees.pruneOrphanedWorktree(request.worktreePath);
-      if (removed) {
-        yield* Effect.logInfo("worktree.deletion-cleanup.removed", {
-          threadId: request.threadId,
-          worktreePath: request.worktreePath,
-        });
-      }
-    });
-
-    const worker = yield* makeDrainableWorker((request: ThreadDeletionCleanupRequest) =>
-      processDeletion(request).pipe(recoverDeletionFailure(request)),
-    );
-
-    const start: WorktreeDeletionCleanup["Service"]["start"] = Effect.fn(
-      "WorktreeDeletionCleanup.start",
-    )(function* () {
-      const shouldStart = yield* Ref.modify(started, (isStarted) => [!isStarted, true]);
-      if (!shouldStart) return;
-
-      yield* domainEvents.pipe(
-        Stream.catchCauseIf(
-          (cause) => !Cause.hasInterruptsOnly(cause),
-          (cause) =>
-            Stream.fromEffect(
-              Effect.logWarning("worktree.deletion-cleanup.stream-failed", {
-                cause,
-              }).pipe(Effect.andThen(Effect.fail(cause))),
-            ),
-        ),
-        Stream.retry(Schedule.exponential("1 second")),
-        Stream.runForEach((event) => {
-          const request = threadDeletionCleanupRequest(event);
-          return request === null ? Effect.void : worker.enqueue(request);
-        }),
-        Effect.forkScoped,
-      );
-    });
-
-    return WorktreeDeletionCleanup.of({
-      start,
-      enqueue: worker.enqueue,
-      drain: worker.drain,
-    });
+    const removed = yield* worktrees.pruneOrphanedWorktree(request.worktreePath);
+    if (removed) {
+      yield* Effect.logInfo("worktree.deletion-cleanup.removed", {
+        threadId: request.threadId,
+        worktreePath: request.worktreePath,
+      });
+    }
   });
 
-export const layer = Layer.effect(
-  WorktreeDeletionCleanup,
-  ThreadManagementService.pipe(Effect.flatMap((threads) => make(threads.streamDomainEvents))),
-);
+  const worker = yield* makeDrainableWorker((request: ThreadDeletionCleanupRequest) =>
+    processDeletion(request).pipe(recoverDeletionFailure(request)),
+  );
 
-export const layerWithEventStream = (
-  domainEvents: Stream.Stream<OrchestrationV2DomainEvent, unknown>,
-) => Layer.effect(WorktreeDeletionCleanup, make(domainEvents));
+  const start: WorktreeDeletionCleanup["Service"]["start"] = Effect.fn(
+    "WorktreeDeletionCleanup.start",
+  )(function* () {
+    const shouldStart = yield* Ref.modify(started, (isStarted) => [!isStarted, true]);
+    if (!shouldStart) return;
+
+    const storedEvents = Stream.unwrap(
+      Ref.get(lastSequence).pipe(
+        Effect.flatMap((current) =>
+          current === null
+            ? events.latestSequence().pipe(
+                Effect.catchCauseIf(
+                  (cause) => !Cause.hasInterruptsOnly(cause),
+                  (cause) =>
+                    Effect.logWarning("worktree.deletion-cleanup.initial-sequence-failed", {
+                      cause,
+                    }).pipe(Effect.as(0)),
+                ),
+                Effect.tap((sequence) => Ref.set(lastSequence, sequence)),
+              )
+            : Effect.succeed(current),
+        ),
+        Effect.map((afterSequence) => events.stream({ afterSequence })),
+      ),
+    );
+
+    yield* storedEvents.pipe(
+      Stream.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) =>
+          Stream.fromEffect(
+            Effect.logWarning("worktree.deletion-cleanup.stream-failed", {
+              cause,
+            }).pipe(Effect.andThen(Effect.fail(cause))),
+          ),
+      ),
+      Stream.retry(Schedule.exponential("1 second")),
+      Stream.runForEach((stored) => {
+        const request = threadDeletionCleanupRequest(stored.event);
+        const enqueue = request === null ? Effect.void : worker.enqueue(request);
+        return enqueue.pipe(Effect.andThen(Ref.set(lastSequence, stored.sequence)));
+      }),
+      Effect.forkScoped,
+    );
+  });
+
+  return WorktreeDeletionCleanup.of({
+    start,
+    enqueue: worker.enqueue,
+    drain: worker.drain,
+  });
+});
+
+export const layer = Layer.effect(WorktreeDeletionCleanup, make);
 
 /** Exposed for tests. */
 export const __testing = {
