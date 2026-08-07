@@ -42,12 +42,10 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
+import * as AgentSessionRegistry from "../../process/AgentSessionRegistry.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
+import { BUILT_IN_DRIVERS } from "../builtInDrivers.ts";
 import { CodexDriver } from "../Drivers/CodexDriver.ts";
-import { CursorDriver } from "../Drivers/CursorDriver.ts";
-import { GrokDriver } from "../Drivers/GrokDriver.ts";
-import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
@@ -285,6 +283,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
     Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(TestHttpClientLive),
+    Layer.provideMerge(AgentSessionRegistry.layer),
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
   );
 
@@ -339,7 +338,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       };
 
       const { registry } = yield* makeProviderInstanceRegistry({
-        drivers: [CodexDriver, ClaudeDriver, CursorDriver, GrokDriver, OpenCodeDriver],
+        drivers: BUILT_IN_DRIVERS,
         configMap,
       });
 

@@ -80,6 +80,12 @@ export function createPreviewEnvironmentAtoms<R, E>(
       scheduler: lifecycleScheduler,
       concurrency: lifecycleConcurrency,
     }),
+    killDiscoveredServer: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:kill-discovered-server",
+      tag: WS_METHODS.previewKillDiscoveredServer,
+      scheduler: lifecycleScheduler,
+      concurrency: lifecycleConcurrency,
+    }),
     reportStatus: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:report-status",
       tag: WS_METHODS.previewReportStatus,

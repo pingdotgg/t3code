@@ -105,9 +105,11 @@ import {
 } from "./terminal.ts";
 import {
   DiscoveredLocalServerList,
+  DiscoveredServerKillError,
   PreviewCloseInput,
   PreviewError,
   PreviewEvent,
+  PreviewKillDiscoveredServerInput,
   PreviewListInput,
   PreviewListResult,
   PreviewNavigateInput,
@@ -219,6 +221,7 @@ export const WS_METHODS = {
   previewClose: "preview.close",
   previewList: "preview.list",
   previewReportStatus: "preview.reportStatus",
+  previewKillDiscoveredServer: "preview.killDiscoveredServer",
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
@@ -688,6 +691,11 @@ export const WsSubscribeDiscoveredLocalServersRpc = Rpc.make(
   },
 );
 
+export const WsPreviewKillDiscoveredServerRpc = Rpc.make(WS_METHODS.previewKillDiscoveredServer, {
+  payload: PreviewKillDiscoveredServerInput,
+  error: Schema.Union([DiscoveredServerKillError, EnvironmentAuthorizationError]),
+});
+
 export const WsOrchestrationDispatchCommandRpc = Rpc.make(
   ORCHESTRATION_WS_METHODS.dispatchCommand,
   {
@@ -871,6 +879,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewAutomationFocusHostRpc,
   WsSubscribePreviewEventsRpc,
   WsSubscribeDiscoveredLocalServersRpc,
+  WsPreviewKillDiscoveredServerRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,

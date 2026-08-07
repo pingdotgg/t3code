@@ -610,6 +610,15 @@ function isRetryableShellSpawnError(error: PtyAdapter.PtySpawnError): boolean {
   );
 }
 
+function trySignal(pid: number, signal: "SIGTERM" | "SIGKILL"): boolean {
+  try {
+    process.kill(pid, signal);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function parseFirstChildPidFromPgrep(stdout: string): number | null {
   for (const line of stdout.split(/\r?\n/g)) {
     const n = Number.parseInt(line.trim(), 10);
@@ -1383,6 +1392,23 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
   });
 
+  const runSubprocessTreeKill = Effect.fn("terminal.runSubprocessTreeKill")(function* (
+    processIds: ReadonlyArray<number>,
+  ) {
+    const survivors = yield* Effect.sync(() =>
+      processIds.filter((pid) => trySignal(pid, "SIGTERM")),
+    );
+    if (survivors.length === 0) {
+      return;
+    }
+    yield* Effect.sleep(processKillGraceMs);
+    yield* Effect.sync(() => {
+      for (const pid of survivors) {
+        trySignal(pid, "SIGKILL");
+      }
+    });
+  });
+
   const startKillEscalation = Effect.fn("terminal.startKillEscalation")(function* (
     process: PtyAdapter.PtyProcess,
     threadId: string,
@@ -2017,12 +2043,36 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     threadId: string,
     terminalId: string,
     deleteHistoryOnClose: boolean,
+    killSubprocessesOnClose = false,
   ) {
     const key = toSessionKey(threadId, terminalId);
     const session = yield* getSession(threadId, terminalId);
     const closedEventSequence = Option.isSome(session) ? session.value.eventSequence + 1 : 0;
 
     if (Option.isSome(session)) {
+      if (killSubprocessesOnClose && session.value.pid !== null) {
+        // Capture the live descendant tree with a fresh inspection so we only
+        // ever signal PIDs that belong to this terminal right now, then kill
+        // them off the close path. The PTY itself dies via stopProcess.
+        const terminalPid = session.value.pid;
+        const inspected = yield* subprocessInspector(terminalPid).pipe(
+          Effect.catch((reason) =>
+            Effect.logWarning("failed to inspect terminal subprocess tree before kill", {
+              threadId,
+              terminalId,
+              terminalPid,
+              reason,
+            }).pipe(Effect.as(null)),
+          ),
+        );
+        const descendants =
+          inspected === null
+            ? []
+            : inspected.processIds.filter((processId) => processId !== terminalPid);
+        if (descendants.length > 0) {
+          yield* runSubprocessTreeKill(descendants).pipe(Effect.forkIn(workerScope));
+        }
+      }
       yield* stopProcess(session.value);
       yield* unregisterTerminal({ threadId, terminalId });
       yield* persistHistory(threadId, terminalId, session.value.history);
@@ -2674,14 +2724,25 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       input.threadId,
       Effect.gen(function* () {
         if (input.terminalId) {
-          yield* closeSession(input.threadId, input.terminalId, input.deleteHistory === true);
+          yield* closeSession(
+            input.threadId,
+            input.terminalId,
+            input.deleteHistory === true,
+            input.killSubprocesses === true,
+          );
           return;
         }
 
         const threadSessions = yield* sessionsForThread(input.threadId);
         yield* Effect.forEach(
           threadSessions,
-          (session) => closeSession(input.threadId, session.terminalId, false),
+          (session) =>
+            closeSession(
+              input.threadId,
+              session.terminalId,
+              false,
+              input.killSubprocesses === true,
+            ),
           { discard: true },
         );
 

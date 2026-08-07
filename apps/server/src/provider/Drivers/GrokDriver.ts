@@ -11,6 +11,7 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeGrokTextGeneration } from "../../textGeneration/GrokTextGeneration.ts";
+import { AgentSessionRegistry } from "../../process/AgentSessionRegistry.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeGrokAdapter } from "../Layers/GrokAdapter.ts";
 import {
@@ -48,6 +49,7 @@ const UPDATE = makeStaticProviderMaintenanceResolver(
 );
 
 export type GrokDriverEnv =
+  | AgentSessionRegistry
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto

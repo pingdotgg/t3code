@@ -1969,6 +1969,12 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.previewReportStatus, previewManager.reportStatus(input), {
             "rpc.aggregate": "preview",
           }),
+        [WS_METHODS.previewKillDiscoveredServer]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewKillDiscoveredServer,
+            portDiscovery.killOwnedProcess(input),
+            { "rpc.aggregate": "preview" },
+          ),
         [WS_METHODS.previewAutomationConnect]: (input) =>
           observeRpcStreamEffect(
             WS_METHODS.previewAutomationConnect,
@@ -2000,13 +2006,18 @@ const makeWsRpcLayer = (
                 const initial = yield* portDiscovery.scan();
                 const initialScannedAt = DateTime.formatIso(yield* DateTime.now);
                 yield* Queue.offer(queue, {
-                  servers: initial,
+                  servers: initial.servers,
+                  processes: initial.processes,
                   scannedAt: initialScannedAt,
                 });
-                yield* portDiscovery.subscribe((servers) =>
+                yield* portDiscovery.subscribe((snapshot) =>
                   Effect.gen(function* () {
                     const scannedAt = DateTime.formatIso(yield* DateTime.now);
-                    yield* Queue.offer(queue, { servers, scannedAt });
+                    yield* Queue.offer(queue, {
+                      servers: snapshot.servers,
+                      processes: snapshot.processes,
+                      scannedAt,
+                    });
                   }),
                 );
               }),

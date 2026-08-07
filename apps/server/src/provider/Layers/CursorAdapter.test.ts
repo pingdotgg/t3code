@@ -26,6 +26,7 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
+import * as AgentSessionRegistry from "../../process/AgentSessionRegistry.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { makeCursorAdapter } from "./CursorAdapter.ts";
@@ -163,6 +164,7 @@ const cursorAdapterTestLayer = it.layer(
         prefix: "t3code-cursor-adapter-test-",
       }),
     ),
+    Layer.provideMerge(AgentSessionRegistry.layer),
     Layer.provideMerge(NodeServices.layer),
   ),
 );
@@ -721,6 +723,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
                 prefix: "t3code-cursor-adapter-test-",
               }),
             ),
+            Layer.provideMerge(AgentSessionRegistry.layer),
             Layer.provideMerge(NodeServices.layer),
           ),
         ),

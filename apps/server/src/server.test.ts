@@ -755,7 +755,7 @@ const buildAppUnderTest = (options?: {
             ),
           }),
           Layer.mock(PortScanner.PortDiscovery)({
-            scan: () => Effect.succeed([]),
+            scan: () => Effect.succeed({ servers: [], processes: [] }),
             subscribe: () => Effect.void,
             retain: Effect.void,
             registerTerminalProcesses: () => Effect.void,

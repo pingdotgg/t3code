@@ -1,10 +1,16 @@
-import type { DiscoveredLocalServer, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type {
+  DiscoveredLocalServer,
+  EnvironmentId,
+  ThreadId,
+  ThreadOwnedProcess,
+} from "@t3tools/contracts";
 import { useMemo } from "react";
 
 import { previewEnvironment } from "./state/preview";
 import { useEnvironmentQuery } from "./state/query";
 
 const EMPTY_PORTS: ReadonlyArray<DiscoveredLocalServer> = Object.freeze([]);
+const EMPTY_PROCESSES: ReadonlyArray<ThreadOwnedProcess> = Object.freeze([]);
 
 export function useDiscoveredPorts(
   environmentId: EnvironmentId | null,
@@ -25,9 +31,36 @@ export function useThreadDiscoveredPorts(input: {
   return useMemo(
     () =>
       input.threadId
-        ? ports.filter((port) => port.terminal?.threadId === input.threadId)
+        ? ports.filter(
+            (port) =>
+              port.terminal?.threadId === input.threadId || port.agent?.threadId === input.threadId,
+          )
         : EMPTY_PORTS,
     [input.threadId, ports],
+  );
+}
+
+/**
+ * All live processes owned by the thread (agent session descendants and
+ * terminal trees), including ones without a listening port — e.g. a running
+ * `pnpm build`.
+ */
+export function useThreadOwnedProcesses(input: {
+  readonly environmentId: EnvironmentId | null;
+  readonly threadId: ThreadId | null;
+}): ReadonlyArray<ThreadOwnedProcess> {
+  const query = useEnvironmentQuery(
+    input.environmentId === null
+      ? null
+      : previewEnvironment.discoveredServers({ environmentId: input.environmentId, input: {} }),
+  );
+  const processes = query.data?.processes ?? EMPTY_PROCESSES;
+  return useMemo(
+    () =>
+      input.threadId
+        ? processes.filter((entry) => entry.threadId === input.threadId)
+        : EMPTY_PROCESSES,
+    [input.threadId, processes],
   );
 }
 

@@ -21,6 +21,7 @@ export const RIGHT_PANEL_KINDS = [
   "preview",
   "terminal",
   "agents",
+  "processes",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -44,7 +45,8 @@ export type RightPanelSurface =
       revealLine: number | null;
       revealRequestId: number;
     }
-  | { id: "agents"; kind: "agents" };
+  | { id: "agents"; kind: "agents" }
+  | { id: "processes"; kind: "processes" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
@@ -100,6 +102,8 @@ const singletonSurface = (
       return { id: "files", kind };
     case "agents":
       return { id: "agents", kind };
+    case "processes":
+      return { id: "processes", kind };
   }
 };
 

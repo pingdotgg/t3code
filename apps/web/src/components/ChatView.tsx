@@ -153,6 +153,7 @@ import {
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import ProcessesPanel from "./ProcessesPanel";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
   AlarmClockIcon,
@@ -3204,6 +3205,10 @@ function ChatViewContent(props: ChatViewProps) {
   const addAgentsSurface = useCallback(() => {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().open(activeThreadRef, "agents");
+  }, [activeThreadRef]);
+  const addProcessesSurface = useCallback(() => {
+    if (!activeThreadRef) return;
+    useRightPanelStore.getState().open(activeThreadRef, "processes");
   }, [activeThreadRef]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
@@ -6261,6 +6266,8 @@ function ChatViewContent(props: ChatViewProps) {
         environmentId={activeThreadRef?.environmentId ?? null}
         threadId={activeThreadRef?.threadId ?? null}
       />
+    ) : activeRightPanelSurface?.kind === "processes" ? (
+      <ProcessesPanel threadRef={activeThreadRef} />
     ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
       activeProject &&
       activeWorkspaceRoot ? (
@@ -6716,6 +6723,7 @@ function ChatViewContent(props: ChatViewProps) {
           onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
           onAddAgents={addAgentsSurface}
+          onAddProcesses={addProcessesSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
@@ -6744,6 +6752,7 @@ function ChatViewContent(props: ChatViewProps) {
             onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}
             onAddAgents={addAgentsSurface}
+            onAddProcesses={addProcessesSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
