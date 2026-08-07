@@ -159,6 +159,7 @@ export default function ProjectScriptsControl({
     imports: false,
   });
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [scriptPickerOpen, setScriptPickerOpen] = useState(false);
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
   const [icon, setIcon] = useState<ProjectScriptIcon>("play");
@@ -346,19 +347,13 @@ export default function ProjectScriptsControl({
     }
   };
 
-  const openAddDialogForDetectedScript = (detected: DetectedProjectScript) => {
-    setActionsMenuOpen({ scripts: false, imports: false });
-    setEditingScriptId(null);
-    setName(detected.name);
+  const applyDetectedScript = (detected: DetectedProjectScript) => {
     setCommand(detected.command);
-    setIcon(guessDetectedScriptIcon(detected.name));
-    setIconPickerOpen(false);
-    setRunOnWorktreeCreate(false);
-    setKeybinding("");
-    setPreviewUrl("");
-    setAutoOpenPreview(false);
-    setValidationError(null);
-    setDialogOpen(true);
+    if (name.trim().length === 0) {
+      setName(detected.name);
+      setIcon(guessDetectedScriptIcon(detected.name));
+    }
+    setScriptPickerOpen(false);
   };
 
   const importMenuItems = importableScripts.length > 0 && (
@@ -382,42 +377,6 @@ export default function ProjectScriptsControl({
       </MenuGroup>
     </>
   );
-
-  function detectedScriptMenuItems(
-    label: string,
-    detectedScripts: ReadonlyArray<DetectedProjectScript>,
-  ) {
-    if (detectedScripts.length === 0) return null;
-    return (
-      <MenuGroup>
-        <MenuGroupLabel>{label}</MenuGroupLabel>
-        {detectedScripts.map((detected) => (
-          <MenuItem
-            key={`${detected.source}:${detected.name}`}
-            className={dropdownItemClassName}
-            onClick={() => openAddDialogForDetectedScript(detected)}
-          >
-            <ScriptIcon icon={guessDetectedScriptIcon(detected.name)} className="size-4" />
-            <span className="truncate">{detected.name}</span>
-            <MenuShortcut className="ms-auto">
-              <PlusIcon className="size-3.5" aria-label="Add" />
-            </MenuShortcut>
-          </MenuItem>
-        ))}
-      </MenuGroup>
-    );
-  }
-
-  function renderDetectedScriptGroups(precedingContent: boolean) {
-    if (!hasDetectedScripts) return null;
-    return (
-      <>
-        {precedingContent && <MenuSeparator />}
-        {detectedScriptMenuItems("From package.json", npmScripts)}
-        {detectedScriptMenuItems("From composer.json", composerScripts)}
-      </>
-    );
-  }
 
   return (
     <>
@@ -501,7 +460,6 @@ export default function ProjectScriptsControl({
                 );
               })}
               {importMenuItems}
-              {renderDetectedScriptGroups(true)}
               <MenuItem className={dropdownItemClassName} onClick={openAddDialog}>
                 <PlusIcon className="size-4" />
                 Add action
@@ -509,7 +467,7 @@ export default function ProjectScriptsControl({
             </MenuPopup>
           </Menu>
         </Group>
-      ) : importableScripts.length > 0 || hasDetectedScripts ? (
+      ) : importableScripts.length > 0 ? (
         <Menu
           highlightItemOnHover={false}
           open={actionsMenuOpen.imports}
@@ -524,7 +482,6 @@ export default function ProjectScriptsControl({
           </MenuTrigger>
           <MenuPopup align="end">
             {importMenuItems}
-            {renderDetectedScriptGroups(importableScripts.length > 0)}
             <MenuItem className={dropdownItemClassName} onClick={openAddDialog}>
               <PlusIcon className="size-4" />
               Add action
@@ -561,6 +518,7 @@ export default function ProjectScriptsControl({
           setDialogOpen(open);
           if (!open) {
             setIconPickerOpen(false);
+            setScriptPickerOpen(false);
           }
         }}
         onOpenChangeComplete={(open) => {
@@ -651,7 +609,71 @@ export default function ProjectScriptsControl({
                 </p>
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="script-command">Command</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="script-command">Command</Label>
+                  {hasDetectedScripts && (
+                    <Popover onOpenChange={setScriptPickerOpen} open={scriptPickerOpen}>
+                      <PopoverTrigger
+                        render={
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label="Insert detected script"
+                          />
+                        }
+                      >
+                        <PlusIcon className="size-3.5" />
+                      </PopoverTrigger>
+                      <PopoverPopup align="end">
+                        <div className="flex w-56 flex-col gap-1">
+                          {npmScripts.length > 0 && (
+                            <div className="flex flex-col gap-0.5">
+                              <span className="px-2 py-1 text-xs font-medium text-muted-foreground">
+                                package.json
+                              </span>
+                              {npmScripts.map((detected) => (
+                                <button
+                                  key={`npm:${detected.name}`}
+                                  type="button"
+                                  className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+                                  onClick={() => applyDetectedScript(detected)}
+                                >
+                                  <ScriptIcon
+                                    icon={guessDetectedScriptIcon(detected.name)}
+                                    className="size-3.5"
+                                  />
+                                  <span className="truncate">{detected.name}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {composerScripts.length > 0 && (
+                            <div className="flex flex-col gap-0.5">
+                              <span className="px-2 py-1 text-xs font-medium text-muted-foreground">
+                                composer.json
+                              </span>
+                              {composerScripts.map((detected) => (
+                                <button
+                                  key={`composer:${detected.name}`}
+                                  type="button"
+                                  className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+                                  onClick={() => applyDetectedScript(detected)}
+                                >
+                                  <ScriptIcon
+                                    icon={guessDetectedScriptIcon(detected.name)}
+                                    className="size-3.5"
+                                  />
+                                  <span className="truncate">{detected.name}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </PopoverPopup>
+                    </Popover>
+                  )}
+                </div>
                 <Textarea
                   id="script-command"
                   placeholder="bun test"
