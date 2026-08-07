@@ -48,7 +48,11 @@ export function decodeThreadDetailPageCursor(encoded: string): ThreadDetailPageC
   if (typeof record.t !== "string" || record.t.length === 0) {
     return null;
   }
-  if (typeof record.a !== "string" || record.a.length === 0) {
+  // Empty strings are valid boundary values, not malformed input: the anchor
+  // is COALESCE(requested_at, started_at, ''), so a boundary turn with no
+  // timestamps encodes a: "" (and sorts before every real anchor, correctly
+  // ending the walk); the turn key is "" for a null turn_id.
+  if (typeof record.a !== "string") {
     return null;
   }
   if (typeof record.i !== "string") {
