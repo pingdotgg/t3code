@@ -74,7 +74,7 @@ export class AgentPromptResolutionError extends Schema.TaggedErrorClass<AgentPro
     profileScope: Schema.optional(Schema.Literals(["environment", "project"])),
     profileId: Schema.optional(Schema.String),
     profileRevision: Schema.optional(AgentProfileRevision),
-    cause: Schema.Defect(),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -85,7 +85,7 @@ export class AgentPromptResolutionError extends Schema.TaggedErrorClass<AgentPro
 const resolutionError = (
   stage: AgentPromptResolutionError["stage"],
   detail: string,
-  cause: unknown,
+  cause: unknown | undefined,
   profile?: Pick<AgentProfileRef, "scope" | "id" | "revision">,
 ) =>
   new AgentPromptResolutionError({
@@ -98,7 +98,7 @@ const resolutionError = (
           profileId: String(profile.id),
           profileRevision: profile.revision,
         }),
-    cause,
+    ...(cause === undefined ? {} : { cause }),
   });
 
 export class AgentPromptResolver extends Context.Service<
@@ -140,7 +140,7 @@ export const make = Effect.gen(function* () {
       );
     if (profile.revision !== ref.revision) {
       const detail = `Agent profile '${ref.scope}/${ref.id}' changed after revision ${ref.revision} was selected. Select the updated profile to continue.`;
-      return yield* resolutionError("profile-revision", detail, new Error(detail), ref);
+      return yield* resolutionError("profile-revision", detail, undefined, ref);
     }
     yield* runs
       .putProfileSnapshot(profile)

@@ -36,7 +36,7 @@ class AgentHookExecutionError extends Schema.TaggedErrorClass<AgentHookExecution
     category: Schema.Literals(["configuration", "filesystem", "process", "exit"]),
     detail: Schema.String,
     exitCode: Schema.optional(Schema.Number),
-    cause: Schema.Defect(),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -145,7 +145,6 @@ export const make = Effect.gen(function* () {
         hookKind: "context",
         category: "configuration",
         detail: "Context hook paths must be workspace-relative.",
-        cause: new Error("Absolute context hook path rejected."),
       });
     }
     const root = yield* fileSystem
@@ -174,7 +173,6 @@ export const make = Effect.gen(function* () {
             hookKind: "context",
             category: "filesystem",
             detail: "Context hook path changed or resolves outside the workspace.",
-            cause: new Error("Context hook containment or file identity check failed."),
           });
         }
         const readLength = Math.min(Number(opened.size), MAX_HOOK_OUTPUT_BYTES + 1);

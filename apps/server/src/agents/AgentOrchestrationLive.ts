@@ -54,7 +54,7 @@ const invalid = (
     operation: context?.operation ?? "agent-orchestration",
     ...(context?.profileId === undefined ? {} : { profileId: context.profileId }),
     ...(context?.runId === undefined ? {} : { runId: context.runId }),
-    cause: context?.cause ?? new Error(detail),
+    ...(context?.cause === undefined ? {} : { cause: context.cause }),
   });
 
 const minimumBudgets = (
