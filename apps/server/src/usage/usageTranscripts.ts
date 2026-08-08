@@ -74,8 +74,8 @@ export function mightCarryUsage(line: string, provider: UsageProviderKind): bool
   return line.includes('"turn_completed"');
 }
 
-/** Grok reports cost as integer nanodollars (`costUsdTicks`). */
-const GROK_USD_TICKS_PER_DOLLAR = 1_000_000_000;
+/** Grok reports cost as integer ticks (`costUsdTicks`); 1 USD = 10^10 ticks. */
+const GROK_USD_TICKS_PER_DOLLAR = 10_000_000_000;
 
 /* -------------------------------------------------------------------------- */
 /* Claude Code                                                                */

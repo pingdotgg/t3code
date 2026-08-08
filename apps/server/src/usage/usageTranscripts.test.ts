@@ -305,7 +305,7 @@ describe("parseGrokLine", () => {
       outputTokens: 134,
       reasoningTokens: 60,
     });
-    expect(records[0]?.reportedCostUsd).toBeCloseTo(0.1, 9);
+    expect(records[0]?.reportedCostUsd).toBeCloseTo(0.01, 9);
     expect(records[0]?.dedupeKey).toBe("grok:prompt-1:grok-4.5");
   });
 
