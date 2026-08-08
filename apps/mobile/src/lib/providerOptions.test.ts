@@ -3,9 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 import type { ModelCapabilities } from "@t3tools/contracts";
 
 import {
-  applyProviderOptionMenuEvent,
-  buildProviderOptionMenuActions,
-  providerOptionsConfigurationLabel,
+  applyProviderOptionSelection,
+  providerOptionValueLabels,
   resolveProviderOptionDescriptors,
 } from "./providerOptions";
 
@@ -35,31 +34,13 @@ const CODEX_CAPABILITIES: ModelCapabilities = {
 };
 
 describe("mobile provider options", () => {
-  it("renders the option descriptors advertised by the selected model", () => {
+  it("summarizes the option values currently in effect", () => {
     const descriptors = resolveProviderOptionDescriptors({
       capabilities: CODEX_CAPABILITIES,
       selections: undefined,
     });
 
-    expect(buildProviderOptionMenuActions(descriptors)).toMatchObject([
-      {
-        title: "Reasoning",
-        subtitle: "Medium",
-        subactions: [
-          { title: "Medium (default)", state: "on" },
-          { title: "High", state: undefined },
-        ],
-      },
-      {
-        title: "Service Tier",
-        subtitle: "Standard",
-        subactions: [
-          { title: "Standard (default)", state: "on" },
-          { title: "Fast", state: undefined },
-        ],
-      },
-    ]);
-    expect(providerOptionsConfigurationLabel(descriptors)).toBe("Medium · Standard");
+    expect(providerOptionValueLabels(descriptors)).toEqual(["Medium", "Standard"]);
   });
 
   it("updates generic select options without knowing provider-specific ids", () => {
@@ -67,14 +48,18 @@ describe("mobile provider options", () => {
       capabilities: CODEX_CAPABILITIES,
       selections: undefined,
     });
-    const actions = buildProviderOptionMenuActions(descriptors);
-    const fastEvent = actions[1]?.subactions?.[1]?.id;
 
-    expect(fastEvent).toBeDefined();
-    expect(applyProviderOptionMenuEvent(descriptors, fastEvent!)).toEqual([
+    expect(
+      applyProviderOptionSelection(descriptors, { id: "serviceTier", value: "priority" }),
+    ).toEqual([
       { id: "reasoningEffort", value: "medium" },
       { id: "serviceTier", value: "priority" },
     ]);
+    // Choices the model doesn't advertise are rejected, not stored.
+    expect(
+      applyProviderOptionSelection(descriptors, { id: "serviceTier", value: "turbo" }),
+    ).toBeNull();
+    expect(applyProviderOptionSelection(descriptors, { id: "unknown", value: "high" })).toBeNull();
   });
 
   it("treats an unspecified boolean capability as off", () => {
@@ -85,16 +70,9 @@ describe("mobile provider options", () => {
       selections: undefined,
     });
 
-    expect(buildProviderOptionMenuActions(descriptors)).toMatchObject([
-      {
-        title: "Fast Mode",
-        subtitle: "Off",
-        subactions: [
-          { title: "Off", state: "on" },
-          { title: "On", state: undefined },
-        ],
-      },
+    expect(providerOptionValueLabels(descriptors)).toEqual([]);
+    expect(applyProviderOptionSelection(descriptors, { id: "fastMode", value: true })).toEqual([
+      { id: "fastMode", value: true },
     ]);
-    expect(providerOptionsConfigurationLabel(descriptors)).toBe("Configuration");
   });
 });
