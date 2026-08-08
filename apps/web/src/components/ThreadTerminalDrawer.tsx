@@ -66,7 +66,11 @@ import { terminalEnvironment } from "../state/terminal";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
-import { resolveTerminalFontPreference, TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../appearanceFonts";
+import {
+  resolveTerminalFontPreference,
+  resolveTerminalFontSizePreference,
+  TYPOGRAPHY_ADVANCED_STORAGE_KEY,
+} from "../appearanceFonts";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -341,7 +345,13 @@ export function TerminalViewport({
       terminal: settings.fontFamilyTerminal,
     }),
   );
-  const terminalFontSize = useClientSettings((settings) => settings.fontSizeTerminal);
+  const terminalFontSize = useClientSettings((settings) =>
+    resolveTerminalFontSizePreference({
+      advanced: advancedTypography,
+      code: settings.fontSizeCode,
+      terminal: settings.fontSizeTerminal,
+    }),
+  );
   const terminalFontRef = useRef({ family: terminalFontFamily, size: terminalFontSize });
   const terminalSession = useAttachedTerminalSession({
     environmentId,
