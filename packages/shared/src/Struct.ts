@@ -6,8 +6,24 @@ export type DeepPartial<T> = T extends readonly (infer U)[]
     ? { [K in keyof T]?: DeepPartial<T[K]> }
     : T;
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
+}
+
 export function deepMerge<T extends Record<string, unknown>>(current: T, patch: DeepPartial<T>): T {
-  if (!P.isObject(current) || !P.isObject(patch)) {
+  if (!P.isObject(current)) {
+    return patch as T;
+  }
+
+  if (!P.isObject(patch)) {
+    if (patch !== null) {
+      throw new Error(`deepMerge: patch must be a plain object, received ${typeof patch}`);
+    }
     return patch as T;
   }
 
@@ -16,7 +32,8 @@ export function deepMerge<T extends Record<string, unknown>>(current: T, patch: 
     if (value === undefined) continue;
 
     const existing = next[key];
-    next[key] = P.isObject(existing) && P.isObject(value) ? deepMerge(existing, value) : value;
+    next[key] =
+      isPlainObject(existing) && isPlainObject(value) ? deepMerge(existing, value) : value;
   }
 
   return next as T;
