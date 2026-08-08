@@ -5,6 +5,7 @@ import { resolveThreadMetadataUpdateForNextTurn } from "./ChatView.logic";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { useEnvironments } from "../state/environments";
 import { useThreadShells } from "../state/entities";
+import { environmentPresentations } from "../state/presentation";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadShells, threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -121,11 +122,14 @@ export function WebThreadOutboxDrain() {
           (candidate) =>
             candidate.environmentId === message.environmentId && candidate.id === message.threadId,
         );
+      const freshEnvironment = appAtomRegistry.get(
+        environmentPresentations.presentationAtom(message.environmentId),
+      );
       if (
         !freshThread ||
         !shouldDrainWebThreadOutbox({
           sessionStatus: freshThread.session?.status ?? null,
-          environmentConnected: true,
+          environmentConnected: freshEnvironment?.connection.phase === "connected",
           paused: Boolean(useWebThreadOutboxStore.getState().pausedMessageIds[message.messageId]),
           activeTurnMessageBehavior: message.activeTurnMessageBehavior,
         })

@@ -298,11 +298,15 @@ export const EMPTY_WEB_THREAD_OUTBOX_QUEUE: ReadonlyArray<QueuedWebThreadMessage
 {
   const initial = readPersistedSnapshot();
   useWebThreadOutboxStore.setState(initial);
-  const legacyMessages = flattenQueues(initial.queuesByThreadKey).filter(
-    (message) => baseOutboxStorage.getItem(storageKey(message.messageId)) === null,
-  );
-  if (legacyMessages.every((message) => persistEntry(message, false))) {
-    baseOutboxStorage.removeItem(WEB_THREAD_OUTBOX_STORAGE_KEY);
+  try {
+    const legacyMessages = flattenQueues(initial.queuesByThreadKey).filter(
+      (message) => baseOutboxStorage.getItem(storageKey(message.messageId)) === null,
+    );
+    if (legacyMessages.every((message) => persistEntry(message, false))) {
+      baseOutboxStorage.removeItem(WEB_THREAD_OUTBOX_STORAGE_KEY);
+    }
+  } catch {
+    // Sandboxed browsers can expose localStorage while rejecting method calls.
   }
 }
 
