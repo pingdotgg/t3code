@@ -444,6 +444,22 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toContain("recovered the thread automatically");
   });
 
+  it("automatically interrupts a stale starting session when its provider never appears", async () => {
+    const harness = await createHarness({
+      initialSession: { status: "starting", activeTurnId: null },
+      providerSessionStatus: "connecting",
+    });
+
+    harness.clearProviderSession(asThreadId("thread-1"));
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "interrupted" && entry.session.activeTurnId === null,
+      10_000,
+    );
+    expect(thread.session?.lastError).toContain("recovered the thread automatically");
+  });
+
   it("does not interrupt a turn when provider inventory recovers before confirmation", async () => {
     const turnId = asTurnId("turn-provider-transient-gap");
     const harness = await createHarness({
