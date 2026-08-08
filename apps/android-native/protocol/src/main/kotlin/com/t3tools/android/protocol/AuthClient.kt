@@ -89,7 +89,7 @@ class AuthClient(
         "scope",
         "orchestration:read orchestration:operate terminal:operate review:write relay:read",
       )
-      .add("client_label", "T3 Code Native Phase 0")
+      .add("client_label", "T3 Code Native")
       .add("client_device_type", "mobile")
       .add("client_os", "android")
       .build()

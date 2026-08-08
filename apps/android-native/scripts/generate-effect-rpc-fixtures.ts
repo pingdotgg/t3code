@@ -2,13 +2,19 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { ClientOrchestrationCommand } from "@t3tools/contracts";
+import {
+  ClientOrchestrationCommand,
+  OrchestrationShellStreamItem,
+  OrchestrationThreadStreamItem,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const output = resolve(here, "../protocol/src/test/resources/effect-rpc.json");
 const encodeCommand = Schema.encodeSync(ClientOrchestrationCommand);
+const encodeShellItem = Schema.encodeSync(OrchestrationShellStreamItem);
+const encodeThreadItem = Schema.encodeSync(OrchestrationThreadStreamItem);
 const serialization = RpcSerialization.json.makeUnsafe();
 
 const startCommand = encodeCommand({
@@ -47,6 +53,29 @@ const startCommand = encodeCommand({
 });
 
 const encode = (message: unknown) => JSON.parse(serialization.encode(message) as string);
+const modelSelection = { instanceId: "codex", model: "gpt-5.6-sol" } as const;
+const timestamp = "2026-08-08T00:00:00.000Z";
+const threadShell = {
+  id: "thread-1",
+  projectId: "project-1",
+  title: "Hello from Kotlin",
+  modelSelection,
+  runtimeMode: "full-access" as const,
+  interactionMode: "default" as const,
+  branch: null,
+  worktreePath: null,
+  latestTurn: null,
+  createdAt: timestamp,
+  updatedAt: timestamp,
+  archivedAt: null,
+  settledOverride: null,
+  settledAt: null,
+  session: null,
+  latestUserMessageAt: null,
+  hasPendingApprovals: false,
+  hasPendingUserInput: false,
+  hasActionableProposedPlan: false,
+};
 const fixtures = {
   generatedFrom: {
     contracts: "packages/contracts/src/orchestration.ts",
@@ -97,6 +126,67 @@ const fixtures = {
     protocolError: encode({
       _tag: "ClientProtocolError",
       error: { _tag: "RpcClientError", reason: "Protocol", message: "Fixture protocol error." },
+    }),
+  },
+  domain: {
+    shellSnapshot: encodeShellItem({
+      kind: "snapshot",
+      snapshot: {
+        snapshotSequence: 10,
+        projects: [
+          {
+            id: "project-1",
+            title: "T3 Code",
+            workspaceRoot: "/repo",
+            defaultModelSelection: modelSelection,
+            scripts: [],
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+        ],
+        threads: [threadShell],
+        updatedAt: timestamp,
+      },
+    }),
+    threadSnapshot: encodeThreadItem({
+      kind: "snapshot",
+      snapshot: {
+        snapshotSequence: 10,
+        thread: {
+          ...threadShell,
+          deletedAt: null,
+          messages: [],
+          proposedPlans: [],
+          activities: [],
+          checkpoints: [],
+        },
+      },
+    }),
+    assistantDelta: encodeThreadItem({
+      kind: "event",
+      event: {
+        sequence: 11,
+        eventId: "event-1",
+        aggregateKind: "thread",
+        aggregateId: "thread-1",
+        occurredAt: timestamp,
+        commandId: "command-1",
+        causationEventId: null,
+        correlationId: "command-1",
+        metadata: {},
+        type: "thread.message-sent",
+        payload: {
+          threadId: "thread-1",
+          messageId: "message-1",
+          role: "assistant",
+          text: "Hello",
+          attachments: [],
+          turnId: "turn-1",
+          streaming: true,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      },
     }),
   },
 };

@@ -95,12 +95,14 @@ class T3ProtocolClient(
     session: EffectRpcSession,
     threadId: String,
     afterSequence: Long? = null,
+    turnLimit: Int? = null,
   ): Flow<JsonObject> = session.stream(
     "orchestration.subscribeThread",
     buildJsonObject(
       "threadId" to JsonPrimitive(threadId),
       "afterSequence" to afterSequence?.let(::JsonPrimitive),
       "requestCompletionMarker" to JsonPrimitive(true),
+      "turnLimit" to turnLimit?.let(::JsonPrimitive),
     ),
   ).mapNotNull { it as? JsonObject }
 

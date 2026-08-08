@@ -1,0 +1,11 @@
+<resources>
+  <style name="Theme.T3CodeNative" parent="android:style/Theme.Material.NoActionBar">
+    <item name="android:fontFamily">sans</item>
+    <item name="android:navigationBarColor">#000000</item>
+    <item name="android:statusBarColor">#000000</item>
+    <item name="android:windowActionModeOverlay">true</item>
+    <item name="android:windowBackground">#000000</item>
+    <item name="android:windowLightNavigationBar">false</item>
+    <item name="android:windowLightStatusBar">false</item>
+  </style>
+</resources>
