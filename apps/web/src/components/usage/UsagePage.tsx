@@ -556,7 +556,8 @@ function UsageCoverageNotice({
           (environment.summary?.sources ?? [])
             .filter(
               (source) =>
-                providerFilter === "all" || source.fingerprint.provider === providerFilter,
+                (source.status === "partial" || source.status === "failed") &&
+                (providerFilter === "all" || source.fingerprint.provider === providerFilter),
             )
             .map((source) => source.message)
             .filter((message): message is string => message !== null),
