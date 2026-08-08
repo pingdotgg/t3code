@@ -41,6 +41,21 @@ struct FeatureComposerPowerTests {
     }
 
     @Test
+    func replacementCursorLandsAfterInsertedTextInUTF16() {
+        let original = "🧪 Use $dep please"
+        let range = 6..<10
+        let replacement = "$dependency "
+
+        #expect(
+            FeatureComposerTextSelectionPolicy.cursorLocation(
+                afterReplacing: range,
+                in: original,
+                with: replacement
+            ) == "🧪 Use $dependency ".utf16.count
+        )
+    }
+
+    @Test
     func fileLinksMatchTheSharedComposerFormat() {
         #expect(
             FeatureComposerFileLinkSerializer.markdownLink(for: "path/to/package.json")

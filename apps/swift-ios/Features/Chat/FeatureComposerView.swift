@@ -12,6 +12,7 @@ struct FeatureComposerView: View {
     @State private var isPathSearchLoading = false
     @State private var pathSearchError: String?
     @State private var attachmentErrorMessage: String?
+    @State private var textSelectionRequest: FeatureComposerTextSelectionRequest?
     @Binding private var text: String
     @Binding private var selection: FeatureSelection?
     @Binding private var attachments: [FeatureDraftAttachment]
@@ -226,6 +227,7 @@ struct FeatureComposerView: View {
                     focused: focused,
                     placeholder: placeholder,
                     acceptsImages: canPasteImages,
+                    selectionRequest: textSelectionRequest,
                     onPasteImages: loadPastedImages
                 )
                 .padding(.horizontal, 16)
@@ -519,10 +521,18 @@ struct FeatureComposerView: View {
         case let .path(entry):
             replacement = FeatureComposerFileLinkSerializer.markdownLink(for: entry.path) + " "
         }
+        let cursorLocation = FeatureComposerTextSelectionPolicy.cursorLocation(
+            afterReplacing: trigger.range,
+            in: text,
+            with: replacement
+        )
         text = FeatureComposerTriggerParser.replacing(
             trigger.range,
             in: text,
             with: replacement
+        )
+        textSelectionRequest = FeatureComposerTextSelectionRequest(
+            location: cursorLocation
         )
         pathEntries = []
         pathSearchError = nil
@@ -621,7 +631,27 @@ final class FeatureComposerUITextView: UITextView {
             super.paste(sender)
             return
         }
+        if let pastedText = UIPasteboard.general.string, !pastedText.isEmpty {
+            insertText(pastedText)
+        }
         onPasteImages?(imageProviders)
+    }
+}
+
+struct FeatureComposerTextSelectionRequest: Equatable {
+    let id = UUID()
+    let location: Int
+}
+
+enum FeatureComposerTextSelectionPolicy {
+    static func cursorLocation(
+        afterReplacing range: Range<Int>,
+        in text: String,
+        with replacement: String
+    ) -> Int {
+        let lower = min(max(range.lowerBound, 0), text.count)
+        let lowerIndex = text.index(text.startIndex, offsetBy: lower)
+        return text[..<lowerIndex].utf16.count + replacement.utf16.count
     }
 }
 
@@ -630,6 +660,7 @@ private struct FeatureComposerTextInput: UIViewRepresentable {
     let focused: FocusState<Bool>.Binding
     let placeholder: String
     let acceptsImages: Bool
+    let selectionRequest: FeatureComposerTextSelectionRequest?
     let onPasteImages: ([NSItemProvider]) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -659,12 +690,22 @@ private struct FeatureComposerTextInput: UIViewRepresentable {
         textView.acceptsImages = acceptsImages
         textView.onPasteImages = onPasteImages
 
+        let shouldApplySelection = selectionRequest.map {
+            context.coordinator.lastAppliedSelectionRequestID != $0.id
+        } ?? false
         if textView.text != text {
             let selectedRange = textView.selectedRange
             textView.text = text
-            let location = min(selectedRange.location, textView.text.utf16.count)
-            let length = min(selectedRange.length, textView.text.utf16.count - location)
-            textView.selectedRange = NSRange(location: location, length: length)
+            if !shouldApplySelection {
+                let location = min(selectedRange.location, textView.text.utf16.count)
+                let length = min(selectedRange.length, textView.text.utf16.count - location)
+                textView.selectedRange = NSRange(location: location, length: length)
+            }
+        }
+        if shouldApplySelection, let selectionRequest {
+            let location = min(selectionRequest.location, textView.text.utf16.count)
+            textView.selectedRange = NSRange(location: location, length: 0)
+            context.coordinator.lastAppliedSelectionRequestID = selectionRequest.id
         }
         updateAccessibility(textView)
         Self.updateScrolling(textView)
@@ -708,6 +749,7 @@ private struct FeatureComposerTextInput: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: FeatureComposerTextInput
         var lastAppliedFocus: Bool?
+        var lastAppliedSelectionRequestID: UUID?
 
         init(_ parent: FeatureComposerTextInput) {
             self.parent = parent
