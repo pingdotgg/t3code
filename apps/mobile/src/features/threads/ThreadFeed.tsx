@@ -1582,12 +1582,20 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       return;
     }
 
+    const dataLength = state.data.length;
+    const wakeOffset = state.scroll - 1;
     // Under memory pressure, LegendList can finish its initial end-scroll
     // without Android attaching the visible recycled rows. A one-pixel scroll
     // wakes the native path; immediately restoring the intended end position
     // keeps this invisible and isolated from later prepends/user scrolling.
-    void list.scrollToOffset({ offset: state.scroll - 1, animated: false }).then(() => {
-      if (props.listRef.current === list) {
+    void list.scrollToOffset({ offset: wakeOffset, animated: false }).then(() => {
+      const settledState = list.getState();
+      const canRestoreEnd =
+        props.listRef.current === list &&
+        !userScrollSessionRef.current &&
+        settledState.data.length === dataLength &&
+        Math.abs(settledState.scroll - wakeOffset) <= 1;
+      if (canRestoreEnd) {
         void list.scrollToEnd({ animated: false });
       }
     });
