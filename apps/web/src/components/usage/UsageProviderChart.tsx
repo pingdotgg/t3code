@@ -18,13 +18,11 @@ interface UsageProviderChartProps {
   readonly metric: UsageChartMetric;
 }
 
-/** One day's stacked bands, shared by the paths and the hover readout. */
+/** One day's per-provider values, shared by the paths and the hover readout. */
 export interface DayColumn {
   readonly bands: readonly {
     readonly provider: UsageProviderKind;
     readonly value: number;
-    readonly base: number;
-    readonly top: number;
   }[];
   readonly total: number;
 }
@@ -131,28 +129,6 @@ function curvePath(segments: readonly CurveSegment[], startCommand: "M" | "L"): 
 }
 
 /**
- * The same curve walked end to start. A cubic reverses exactly by swapping its
- * control points, so this traces the identical geometry.
- *
- * Bands must use this rather than re-smoothing their base points in reverse:
- * the tangent clamp in `monotoneTangents` runs left to right, so smoothing is
- * not perfectly symmetric under reversal, and independently smoothed edges of
- * adjacent bands could hairline-gap or overlap. Sharing one curve per stack
- * boundary makes that geometrically impossible.
- */
-function reversedCurvePath(segments: readonly CurveSegment[], startCommand: "M" | "L"): string {
-  const last = segments[segments.length - 1];
-  if (last === undefined) return "";
-  let path = `${startCommand}${last.to.x.toFixed(2)},${last.to.y.toFixed(2)}`;
-  for (let index = segments.length - 1; index >= 0; index -= 1) {
-    const segment = segments[index];
-    if (segment === undefined) continue;
-    path += ` C${segment.c2.x.toFixed(2)},${segment.c2.y.toFixed(2)} ${segment.c1.x.toFixed(2)},${segment.c1.y.toFixed(2)} ${segment.from.x.toFixed(2)},${segment.from.y.toFixed(2)}`;
-  }
-  return path;
-}
-
-/**
  * Builds a scale whose maximum is a readable 1/2/5 x 10^n step at or above the
  * peak.
  *
@@ -175,7 +151,12 @@ export function niceScale(peak: number, count: number): { max: number; ticks: re
 }
 
 /**
- * Turns the merged daily totals into stacked bands, one column per day.
+ * Turns the merged daily totals into one column per day.
+ *
+ * Values are absolute, not cumulative: the series are layered from a shared
+ * zero baseline rather than stacked. A stacked chart puts whichever provider is
+ * drawn last permanently above the other, which reads as "that one is bigger"
+ * even on days where it is not.
  *
  * The chart paths and the hover readout both consume this, so the number under
  * the cursor is by construction the number that was plotted rather than a
@@ -188,14 +169,11 @@ export function buildDayColumns(
 ): readonly DayColumn[] {
   return days.map((day) => {
     const entry = byDay.get(day);
-    let stackTop = 0;
-    const bands = PROVIDER_ORDER.map((provider) => {
-      const value = valueFor(entry, provider, metric);
-      const base = stackTop;
-      stackTop += value;
-      return { provider, value, base, top: stackTop };
-    });
-    return { bands, total: stackTop };
+    const bands = PROVIDER_ORDER.map((provider) => ({
+      provider,
+      value: valueFor(entry, provider, metric),
+    }));
+    return { bands, total: bands.reduce((sum, band) => sum + band.value, 0) };
   });
 }
 
@@ -215,9 +193,15 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
       };
     }
 
-    const stacked = buildDayColumns(days, byDay, metric);
+    const columns = buildDayColumns(days, byDay, metric);
 
-    const peak = stacked.reduce((max, column) => Math.max(max, column.total), 0);
+    // The scale tops out at the largest single provider-day, not the largest
+    // sum: layered series each measure from zero, so a combined peak would
+    // leave the plot permanently half empty.
+    const peak = columns.reduce(
+      (max, column) => column.bands.reduce((inner, band) => Math.max(inner, band.value), max),
+      0,
+    );
     const { max, ticks: tickValues } = niceScale(peak, TICK_COUNT);
     const step = days.length === 1 ? 0 : VIEW_WIDTH / (days.length - 1);
     // Reserve a sliver above the top gridline so the series stroke, which is
@@ -225,30 +209,28 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
     const toY = (value: number) =>
       max === 0 ? VIEW_HEIGHT : VIEW_HEIGHT - (value / max) * (VIEW_HEIGHT - PLOT_TOP);
 
-    // One smoothed curve per stack boundary (baseline, then each provider's
-    // cumulative top). Band k is the region between boundary k and k+1, both
-    // drawn from these shared control points.
-    const boundaries = [
-      stacked.map((_, dayIndex) => ({ x: dayIndex * step, y: toY(0) })),
-      ...PROVIDER_ORDER.map((_, providerIndex) =>
-        stacked.map((column, dayIndex) => ({
-          x: dayIndex * step,
-          y: toY(column.bands[providerIndex]?.top ?? 0),
-        })),
-      ),
-    ].map(smoothCurve);
-
     const built = PROVIDER_ORDER.map((provider, providerIndex) => {
-      const top = boundaries[providerIndex + 1] ?? [];
-      const base = boundaries[providerIndex] ?? [];
+      const curve = smoothCurve(
+        columns.map((column, dayIndex) => ({
+          x: dayIndex * step,
+          y: toY(column.bands[providerIndex]?.value ?? 0),
+        })),
+      );
+      const line = curvePath(curve, "M");
       return {
         provider,
-        area: `${curvePath(top, "M")} ${reversedCurvePath(base, "L")} Z`,
-        line: curvePath(top, "M"),
+        total: columns.reduce((sum, column) => sum + (column.bands[providerIndex]?.value ?? 0), 0),
+        area: line === "" ? "" : `${line} L${VIEW_WIDTH},${VIEW_HEIGHT} L0,${VIEW_HEIGHT} Z`,
+        line,
       };
     });
 
-    return { paths: built, ticks: tickValues, stepX: step, toY, series: stacked };
+    // Paint the heavier series first so the lighter one is never buried under
+    // it. The fills are faint enough that the order barely shows, but the
+    // strokes are drawn in a second pass regardless, so neither can be hidden.
+    const ordered = [...built].sort((a, b) => b.total - a.total);
+
+    return { paths: ordered, ticks: tickValues, stepX: step, toY, series: columns };
   }, [byDay, days, metric]);
 
   const format = metric === "tokens" ? formatTokens : formatUsd;
@@ -314,17 +296,19 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
               );
             })}
 
-            {paths.map(({ provider, area, line }) => (
-              <g key={provider}>
-                <path d={area} fill={PROVIDER_COLOR[provider]} fillOpacity={0.5} />
-                <path
-                  d={line}
-                  fill="none"
-                  stroke={PROVIDER_COLOR[provider]}
-                  strokeWidth={1.5}
-                  vectorEffect="non-scaling-stroke"
-                />
-              </g>
+            {/* Fills first, then every stroke, so no series covers another's line. */}
+            {paths.map(({ provider, area }) => (
+              <path key={provider} d={area} fill={PROVIDER_COLOR[provider]} fillOpacity={0.12} />
+            ))}
+            {paths.map(({ provider, line }) => (
+              <path
+                key={provider}
+                d={line}
+                fill="none"
+                stroke={PROVIDER_COLOR[provider]}
+                strokeWidth={2}
+                vectorEffect="non-scaling-stroke"
+              />
             ))}
 
             {hoverIndex === null ? null : (
