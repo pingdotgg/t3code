@@ -541,6 +541,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     return mapping.size > 0 ? mapping : EMPTY_MODEL_JUMP_LABELS;
   }, [keybindings, modelJumpCommandByKey, modelJumpShortcutContext]);
+  const modelListExtraData = useMemo(
+    () => ({ favoritesSet, modelJumpLabelByKey }),
+    [favoritesSet, modelJumpLabelByKey],
+  );
 
   useEffect(() => {
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -710,7 +714,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 <LegendList<string>
                   ref={modelListRef}
                   data={filteredItemKeys}
-                  extraData={favoritesSet}
+                  extraData={modelListExtraData}
                   keyExtractor={(modelKey) => modelKey}
                   renderItem={({ item: modelKey, index }) => {
                     if (legacySection?.key === modelKey) {
@@ -777,7 +781,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   onLayout={updateModelListScrollFades}
                   onScroll={updateModelListScrollFades}
                   className={cn(
-                    "model-picker-list h-full overflow-x-hidden overscroll-y-contain py-1.5 [--fade-size:1.5rem]",
+                    "model-picker-list scrollbar-gutter-stable h-full overflow-x-hidden overscroll-y-contain py-1.5 [--fade-size:1.5rem]",
                     showTopScrollFade && "model-picker-list-scroll-fade-top",
                     showBottomScrollFade && "model-picker-list-scroll-fade-bottom",
                   )}

@@ -7,12 +7,16 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 import { RpcClientError } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";
 
@@ -30,6 +34,7 @@ import {
   makeEnvironmentServerConfigState,
   isLegacyUpdateHandoffLoss,
   matchesServerUpdateReadyEvent,
+  nudgeReconnectDuringUpdateRestart,
   projectServerWelcome,
   resolveServerConfigValue,
   resolveServerUpdateProgressResult,
@@ -70,6 +75,56 @@ function session(client: WsRpcProtocolClient): RpcSession {
     closed: Effect.never,
   };
 }
+
+describe("update restart reconnect nudges", () => {
+  it.effect("retries once per backoff entry instead of only the first", () =>
+    Effect.gen(function* () {
+      const retries = yield* Ref.make(0);
+      const states = [
+        { phase: "backoff" },
+        { phase: "connecting" },
+        { phase: "backoff" },
+        { phase: "backoff" },
+      ];
+
+      yield* nudgeReconnectDuringUpdateRestart({
+        stateChanges: Stream.fromIterable(states),
+        retryNow: Ref.update(retries, (count) => count + 1),
+        interval: Duration.zero,
+      });
+
+      // Three backoff entries, three nudges. The old one-shot behavior fired
+      // once and then let the supervisor's ladder stretch to 16-second gaps.
+      expect(yield* Ref.get(retries)).toBe(3);
+    }),
+  );
+
+  it.effect("paces nudges so a fast-failing connection cannot spin", () =>
+    Effect.gen(function* () {
+      const retries = yield* Ref.make(0);
+
+      const fiber = yield* Effect.forkChild(
+        nudgeReconnectDuringUpdateRestart({
+          stateChanges: Stream.fromIterable([{ phase: "backoff" }, { phase: "backoff" }]),
+          retryNow: Ref.update(retries, (count) => count + 1),
+        }),
+        { startImmediately: true },
+      );
+
+      // Each nudge waits out the interval first, so nothing fires immediately.
+      yield* TestClock.adjust(Duration.millis(999));
+      expect(yield* Ref.get(retries)).toBe(0);
+
+      yield* TestClock.adjust(Duration.millis(1));
+      expect(yield* Ref.get(retries)).toBe(1);
+
+      yield* TestClock.adjust(Duration.seconds(1));
+      expect(yield* Ref.get(retries)).toBe(2);
+
+      yield* Fiber.join(fiber);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+});
 
 describe("server state projection", () => {
   it("only treats a legacy transport interruption as an unacknowledged handoff", () => {
