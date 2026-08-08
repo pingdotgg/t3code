@@ -174,7 +174,8 @@ public struct ThreadDetailView: View {
                 // duration; idle threads render a static status instead of
                 // waking every second forever.
                 Group {
-                    if currentThread.homeStatus == .working {
+                    if currentThread.homeStatus == .working,
+                       currentThread.workingStartedAt != nil {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             headerStatus(at: context.date)
                         }
@@ -210,6 +211,20 @@ public struct ThreadDetailView: View {
         .foregroundStyle(headerStatusColor)
         .lineLimit(1)
         .accessibilityElement(children: .combine)
+        .accessibilityLabel(headerStatusAccessibilityLabel(at: now))
+        .accessibilityAddTraits(
+            currentThread.homeStatus == .working && currentThread.workingStartedAt != nil
+                ? .updatesFrequently
+                : []
+        )
+    }
+
+    private func headerStatusAccessibilityLabel(at now: Date) -> String {
+        if let startedAt = currentThread.workingStartedAt,
+           currentThread.homeStatus == .working {
+            return "Agent is working for \(HomeWorkingDuration.accessibility(since: startedAt, now: now))"
+        }
+        return currentThread.homeStatusLabel ?? "Ready"
     }
 
     private var threadActionsMenu: some View {
@@ -321,6 +336,7 @@ public struct ThreadDetailView: View {
                     renderUpdate: model.detailRenderUpdates[thread.id],
                     dynamicTypeSize: dynamicTypeSize,
                     isWorking: isWorking,
+                    workingStartedAt: detail.thread.workingStartedAt,
                     canLoadEarlier: detail.page?.hasMore == true,
                     isLoadingEarlier: detail.page?.isLoading == true,
                     onLoadEarlier: {
@@ -630,6 +646,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     let renderUpdate: FeatureDetailRenderUpdate?
     let dynamicTypeSize: DynamicTypeSize
     let isWorking: Bool
+    let workingStartedAt: Date?
     let canLoadEarlier: Bool
     let isLoadingEarlier: Bool
     let onLoadEarlier: () -> Void
@@ -662,6 +679,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             renderUpdate: renderUpdate,
             dynamicTypeSize: dynamicTypeSize,
             isWorking: isWorking,
+            workingStartedAt: workingStartedAt,
             canLoadEarlier: canLoadEarlier,
             isLoadingEarlier: isLoadingEarlier,
             onLoadEarlier: onLoadEarlier,
@@ -709,6 +727,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var currentDetailRevision: UInt64?
         private var currentDynamicTypeSize: DynamicTypeSize?
         private var currentIsWorking = false
+        private var currentWorkingStartedAt: Date?
         private var currentCanLoadEarlier = false
         private var currentIsLoadingEarlier = false
         private var markdownPrefetches: [String: MarkdownPrefetch] = [:]
@@ -736,7 +755,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 }
                 if messageID == FeatureTranscriptCollectionView.workingIndicatorID {
                     cell.contentConfiguration = UIHostingConfiguration {
-                        FeatureThreadWorkingIndicator()
+                        FeatureThreadWorkingIndicator(startedAt: self?.currentWorkingStartedAt)
                     }
                     .margins(.all, 0)
                     cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
@@ -776,6 +795,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             renderUpdate: FeatureDetailRenderUpdate?,
             dynamicTypeSize: DynamicTypeSize,
             isWorking: Bool,
+            workingStartedAt: Date?,
             canLoadEarlier: Bool,
             isLoadingEarlier: Bool,
             onLoadEarlier: @escaping () -> Void,
@@ -790,10 +810,11 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             let typeSizeChanged = currentDynamicTypeSize != dynamicTypeSize
             let revisionChanged = currentDetailRevision != renderUpdate?.revision
             let workingChanged = currentIsWorking != isWorking
+            let workingStartChanged = currentWorkingStartedAt != workingStartedAt
             let loadEarlierChanged = currentCanLoadEarlier != canLoadEarlier
                 || currentIsLoadingEarlier != isLoadingEarlier
             guard threadChanged || typeSizeChanged || revisionChanged || workingChanged
-                || loadEarlierChanged else { return }
+                || workingStartChanged || loadEarlierChanged else { return }
 
             let incremental = !threadChanged
                 ? incrementalState(messages: messages, renderUpdate: renderUpdate)
@@ -808,10 +829,11 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             currentDetailRevision = renderUpdate?.revision
             currentDynamicTypeSize = dynamicTypeSize
             currentIsWorking = isWorking
+            currentWorkingStartedAt = workingStartedAt
             currentCanLoadEarlier = canLoadEarlier
             currentIsLoadingEarlier = isLoadingEarlier
             guard threadChanged || idsChanged || !changedIDs.isEmpty || workingChanged
-                || loadEarlierChanged else { return }
+                || workingStartChanged || loadEarlierChanged else { return }
 
             if threadChanged {
                 cancelAllMarkdownPrefetches()
@@ -888,6 +910,10 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             if loadEarlierChanged,
                snapshot.indexOfItem(FeatureTranscriptCollectionView.loadEarlierID) != nil {
                 reconfiguredIDs.append(FeatureTranscriptCollectionView.loadEarlierID)
+            }
+            if workingStartChanged, !workingChanged,
+               snapshot.indexOfItem(FeatureTranscriptCollectionView.workingIndicatorID) != nil {
+                reconfiguredIDs.append(FeatureTranscriptCollectionView.workingIndicatorID)
             }
             if !reconfiguredIDs.isEmpty {
                 snapshot.reconfigureItems(reconfiguredIDs)
@@ -1168,7 +1194,27 @@ private struct FeatureLoadEarlierTurnsButton: View {
 }
 
 private struct FeatureThreadWorkingIndicator: View {
+    let startedAt: Date?
+
     var body: some View {
+        // The per-second timeline only exists while a start date is known;
+        // without one the row stays static instead of waking every second.
+        if let startedAt {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                content(
+                    duration: HomeWorkingDuration.compact(since: startedAt, now: context.date),
+                    accessibilityDuration: HomeWorkingDuration.accessibility(
+                        since: startedAt,
+                        now: context.date
+                    )
+                )
+            }
+        } else {
+            content(duration: nil, accessibilityDuration: nil)
+        }
+    }
+
+    private func content(duration: String?, accessibilityDuration: String?) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "circle.dotted")
                 .font(.system(size: 17, weight: .semibold))
@@ -1176,9 +1222,18 @@ private struct FeatureThreadWorkingIndicator: View {
                 .frame(width: 22, height: 22)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Agent is working")
-                    .font(T3Typography.supportingStrong)
-                    .foregroundStyle(T3Colors.statusRunning)
+                if let duration {
+                    (
+                        Text("Agent is working for ")
+                            + Text(duration).monospacedDigit()
+                    )
+                        .font(T3Typography.supportingStrong)
+                        .foregroundStyle(T3Colors.statusRunning)
+                } else {
+                    Text("Agent is working")
+                        .font(T3Typography.supportingStrong)
+                        .foregroundStyle(T3Colors.statusRunning)
+                }
                 Text("New output will appear here")
                     .font(T3Typography.supporting)
                     .foregroundStyle(T3Colors.textTertiary)
@@ -1187,7 +1242,15 @@ private struct FeatureThreadWorkingIndicator: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Agent is working. New output will appear here.")
+        .accessibilityLabel(
+            accessibilityDuration.map {
+                "Agent is working for \($0). New output will appear here."
+            }
+                ?? "Agent is working. New output will appear here."
+        )
+        .accessibilityAddTraits(
+            accessibilityDuration == nil ? [] : .updatesFrequently
+        )
     }
 }
 
