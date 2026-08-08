@@ -72,6 +72,9 @@ export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
         totalASTLRUCacheSize: 240,
       }}
       highlighterOptions={{
+        // Oniguruma avoids the runaway backtracking possible when TextMate grammars
+        // are translated to native JavaScript regular expressions.
+        preferredHighlighter: "shiki-wasm",
         theme: diffThemeName,
         tokenizeMaxLineLength: 1_000,
         useTokenTransformer: true,
