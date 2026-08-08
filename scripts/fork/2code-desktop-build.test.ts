@@ -47,6 +47,7 @@ it.effect("builds a legacy-compatible 2code updater configuration", () =>
     assert.deepStrictEqual(mac.target, ["dmg", "zip"]);
     assert.deepStrictEqual(config.dmg, {
       artifactName: "2code-${version}-${arch}.${ext}",
+      sign: true,
     });
     assert.deepStrictEqual(mac.protocols, [
       {

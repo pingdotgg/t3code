@@ -1630,7 +1630,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         : {}),
     };
     if (distributionProfile && target === "dmg") {
-      buildConfig.dmg = { artifactName: distributionProfile.artifactNames.dmg };
+      buildConfig.dmg = {
+        artifactName: distributionProfile.artifactNames.dmg,
+        ...(signed ? { sign: true } : {}),
+      };
     }
   }
 
