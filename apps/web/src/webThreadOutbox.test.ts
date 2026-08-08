@@ -14,6 +14,7 @@ import {
   shouldQueueWebThreadMessage,
   useWebThreadOutboxStore,
   webThreadOutboxKey,
+  writeWebThreadOutboxEntryForTest,
   writeWebThreadOutboxStorageForTest,
   type QueuedWebThreadMessage,
 } from "./webThreadOutbox";
@@ -35,6 +36,7 @@ function message(index: number): QueuedWebThreadMessage {
     },
     runtimeMode: "full-access",
     interactionMode: "default",
+    activeTurnMessageBehavior: "queue",
     createdAt: new Date(1_700_000_000_000 + index).toISOString(),
   };
 }
@@ -73,6 +75,17 @@ describe("web thread outbox", () => {
     );
   });
 
+  it("hydrates the legacy full-key snapshot", () => {
+    const queued = message(1);
+    writeWebThreadOutboxStorageForTest(persistedOutbox([queued]));
+
+    expect(
+      useWebThreadOutboxStore.getState().queuesByThreadKey[
+        webThreadOutboxKey(environmentId, threadId)
+      ],
+    ).toEqual([queued]);
+  });
+
   it("deduplicates stable message ids and removes only the delivered head", () => {
     const first = message(1);
     const second = message(2);
@@ -89,14 +102,14 @@ describe("web thread outbox", () => {
     expect(queue?.map((entry) => entry.messageId)).toEqual([second.messageId]);
   });
 
-  it("merges another tab's durable messages before enqueueing", () => {
+  it("keeps another tab's independently persisted message when enqueueing", () => {
     const first = message(1);
     const second = message(2);
     const third = message(3);
     const store = useWebThreadOutboxStore.getState();
     store.enqueue(first);
 
-    writeWebThreadOutboxStorageForTest(persistedOutbox([first, second]), {
+    writeWebThreadOutboxEntryForTest(second, {
       syncStore: false,
     });
     store.enqueue(third);
@@ -112,13 +125,13 @@ describe("web thread outbox", () => {
     ]);
   });
 
-  it("preserves another tab's messages when removing a delivered message", () => {
+  it("preserves another tab's independently persisted message when removing", () => {
     const first = message(1);
     const second = message(2);
     const store = useWebThreadOutboxStore.getState();
     store.enqueue(first);
 
-    writeWebThreadOutboxStorageForTest(persistedOutbox([first, second]), {
+    writeWebThreadOutboxEntryForTest(second, {
       syncStore: false,
     });
     store.remove(first);
@@ -139,34 +152,57 @@ describe("web thread outbox", () => {
     finishWebThreadOutboxDispatch(queued.messageId);
   });
 
-  it("drains only from a ready, connected, unpaused thread", () => {
+  it("drains ready work and running steer work, but never starting work", () => {
     expect(
       shouldDrainWebThreadOutbox({
-        phase: "ready",
-        isSendBusy: false,
-        isConnecting: false,
-        environmentUnavailable: false,
+        sessionStatus: "ready",
+        environmentConnected: true,
         paused: false,
+        activeTurnMessageBehavior: "queue",
       }),
     ).toBe(true);
     expect(
       shouldDrainWebThreadOutbox({
-        phase: "running",
-        isSendBusy: false,
-        isConnecting: false,
-        environmentUnavailable: false,
+        sessionStatus: "running",
+        environmentConnected: true,
         paused: false,
+        activeTurnMessageBehavior: "queue",
       }),
     ).toBe(false);
     expect(
       shouldDrainWebThreadOutbox({
-        phase: "ready",
-        isSendBusy: false,
-        isConnecting: false,
-        environmentUnavailable: false,
-        paused: true,
+        sessionStatus: "running",
+        environmentConnected: true,
+        paused: false,
+        activeTurnMessageBehavior: "steer",
+      }),
+    ).toBe(true);
+    expect(
+      shouldDrainWebThreadOutbox({
+        sessionStatus: "starting",
+        environmentConnected: true,
+        paused: false,
+        activeTurnMessageBehavior: "steer",
       }),
     ).toBe(false);
+    expect(
+      shouldDrainWebThreadOutbox({
+        sessionStatus: "ready",
+        environmentConnected: true,
+        paused: true,
+        activeTurnMessageBehavior: "queue",
+      }),
+    ).toBe(false);
+  });
+
+  it("persists a paused message across store hydration", () => {
+    const queued = message(4);
+    useWebThreadOutboxStore.getState().enqueue(queued);
+    useWebThreadOutboxStore.getState().pause(queued.messageId);
+
+    writeWebThreadOutboxEntryForTest(queued, { paused: true });
+
+    expect(useWebThreadOutboxStore.getState().pausedMessageIds[queued.messageId]).toBe(true);
   });
 
   it("queues active-turn messages only when queue mode or an existing FIFO requires it", () => {
@@ -175,6 +211,7 @@ describe("web thread outbox", () => {
       phase: "running" as const,
       isSendBusy: false,
       hasQueuedMessages: false,
+      threadStarting: false,
     };
 
     expect(
@@ -189,6 +226,14 @@ describe("web thread outbox", () => {
         activeTurnMessageBehavior: "steer",
       }),
     ).toBe(false);
+    expect(
+      shouldQueueWebThreadMessage({
+        ...activeThread,
+        phase: "connecting",
+        threadStarting: true,
+        activeTurnMessageBehavior: "steer",
+      }),
+    ).toBe(true);
     expect(
       shouldQueueWebThreadMessage({
         ...activeThread,

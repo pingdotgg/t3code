@@ -145,7 +145,7 @@ export function useThreadComposerState() {
       return null;
     }
 
-    const sendBehavior = await awaitActiveTurnMessageBehavior(
+    const sendBehaviorPromise = awaitActiveTurnMessageBehavior(
       appAtomRegistry,
       mobilePreferencesAtom,
     );
@@ -160,11 +160,22 @@ export function useThreadComposerState() {
 
     const metadata = makeQueuedMessageMetadata();
     const messageId = MessageId.make(metadata.messageId);
+    clearComposerDraftContent(threadKey);
+    let sendBehavior;
+    try {
+      sendBehavior = await sendBehaviorPromise;
+    } catch (error) {
+      void mergeComposerDraftContent(threadKey, { text, attachments: [] });
+      appendComposerDraftAttachments(threadKey, attachments);
+      setPendingConnectionError(
+        error instanceof Error ? error.message : "Failed to load message behavior settings.",
+      );
+      return null;
+    }
     // Enqueue publishes the queued atom synchronously (the durable write
-    // happens behind it), so clearing the draft here gives send feedback on
-    // the tap frame instead of after file I/O. If the write fails the message
-    // is rolled out of the queue and the content is merged back into the
-    // draft, preserving anything typed since.
+    // happens behind it). The draft was captured and cleared before awaiting
+    // settings, so edits made after the tap belong to the next message. If the
+    // write fails, merge the captured content back without replacing them.
     const enqueuePromise = enqueueThreadOutboxMessage({
       environmentId: selectedThreadShell.environmentId,
       threadId: selectedThreadShell.id,
@@ -178,7 +189,6 @@ export function useThreadComposerState() {
       activeTurnMessageBehavior: sendBehavior,
       createdAt: metadata.createdAt,
     });
-    clearComposerDraftContent(threadKey);
     enqueuePromise.catch((error: unknown) => {
       // Restore text via merge (idempotent) but attachments via the uncapped
       // append: the merge path slots existing attachments first and truncates

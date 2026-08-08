@@ -28,6 +28,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexClient from "effect-codex-app-server/client";
@@ -399,6 +400,13 @@ export function resolveCodexSteeringTurnId(
   session: Pick<ProviderSession, "status" | "activeTurnId">,
 ): TurnId | undefined {
   return session.status === "running" ? session.activeTurnId : undefined;
+}
+
+export function shouldRetryCodexSteerAsStart(error: CodexSessionRuntimeError): boolean {
+  // Request errors are explicit rejections, so the steer input was not
+  // accepted. Transport and process failures have an ambiguous outcome and
+  // must not be retried as a new turn.
+  return error._tag === "CodexAppServerRequestError";
 }
 
 export function buildTurnStartParams(input: {
@@ -890,6 +898,7 @@ export const makeCodexSessionRuntime = (
     /** Child provider-thread id → its currently running provider turn id. */
     const collabChildLiveTurnsRef = yield* Ref.make(new Map<string, string>());
     const closedRef = yield* Ref.make(false);
+    const sendTurnSemaphore = yield* Semaphore.make(1);
 
     // `~` is not shell-expanded when env vars are set via
     // `child_process.spawn`; `expandHomePath` lets a configured
@@ -1779,44 +1788,92 @@ export const makeCodexSessionRuntime = (
       start,
       getSession: Ref.get(sessionRef),
       sendTurn: (input) =>
-        Effect.gen(function* () {
-          const providerThreadId = yield* readProviderThreadId;
-          if (hasConfiguredMcpServer(options.appServerArgs)) {
-            yield* client.request("config/mcpServer/reload", undefined).pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("Failed to refresh Codex MCP tool catalog before turn.", {
-                  cause,
-                }),
+        sendTurnSemaphore.withPermits(1)(
+          Effect.gen(function* () {
+            const providerThreadId = yield* readProviderThreadId;
+            if (hasConfiguredMcpServer(options.appServerArgs)) {
+              yield* client.request("config/mcpServer/reload", undefined).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("Failed to refresh Codex MCP tool catalog before turn.", {
+                    cause,
+                  }),
+                ),
+              );
+            }
+            const session = yield* Ref.get(sessionRef);
+            const steeringTurnId = resolveCodexSteeringTurnId(session);
+            if (steeringTurnId) {
+              const steerResult = yield* client
+                .request(
+                  "turn/steer",
+                  buildTurnSteerParams({
+                    threadId: providerThreadId,
+                    activeTurnId: steeringTurnId,
+                    ...(input.input ? { prompt: input.input } : {}),
+                    ...(input.attachments ? { attachments: input.attachments } : {}),
+                  }),
+                )
+                .pipe(
+                  Effect.map((value) => ({ _tag: "Steered" as const, value })),
+                  Effect.catch((error) =>
+                    shouldRetryCodexSteerAsStart(error)
+                      ? Effect.succeed({ _tag: "RetryAsStart" as const })
+                      : Effect.fail(error),
+                  ),
+                );
+              if (steerResult._tag === "Steered") {
+                const turnId = TurnId.make(steerResult.value.turnId);
+                yield* updateSession(sessionRef, {
+                  status: "running",
+                  activeTurnId: turnId,
+                });
+                // Codex does not emit a second turn/started notification when
+                // turn/steer keeps the existing turn alive. Reaffirm the active
+                // turn so orchestration can reconcile the steer request with the
+                // running turn instead of leaving a stale pending-turn row.
+                yield* emitEvent({
+                  kind: "notification",
+                  threadId: options.threadId,
+                  method: "turn/started",
+                  turnId,
+                  message: "Codex turn steered.",
+                });
+                const resumedProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
+                return {
+                  threadId: options.threadId,
+                  turnId,
+                  ...(resumedProviderThreadId
+                    ? { resumeCursor: { threadId: resumedProviderThreadId } }
+                    : {}),
+                } satisfies ProviderTurnStartResult;
+              }
+            }
+            const normalizedModel = normalizeCodexModelSlug(input.model ?? session.model);
+            const params = yield* buildTurnStartParams({
+              threadId: providerThreadId,
+              runtimeMode: options.runtimeMode,
+              ...(input.input ? { prompt: input.input } : {}),
+              ...(input.attachments ? { attachments: input.attachments } : {}),
+              ...(normalizedModel ? { model: normalizedModel } : {}),
+              ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
+              ...(input.effort ? { effort: input.effort } : {}),
+              ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
+            });
+            const rawResponse = yield* client.raw.request("turn/start", params);
+            const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(
+              Effect.mapError((error) =>
+                CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
+                  "decode-response-payload",
+                  error,
+                  { method: "turn/start" },
+                ),
               ),
             );
-          }
-          const session = yield* Ref.get(sessionRef);
-          const steeringTurnId = resolveCodexSteeringTurnId(session);
-          if (steeringTurnId) {
-            const response = yield* client.request(
-              "turn/steer",
-              buildTurnSteerParams({
-                threadId: providerThreadId,
-                activeTurnId: steeringTurnId,
-                ...(input.input ? { prompt: input.input } : {}),
-                ...(input.attachments ? { attachments: input.attachments } : {}),
-              }),
-            );
-            const turnId = TurnId.make(response.turnId);
+            const turnId = TurnId.make(response.turn.id);
             yield* updateSession(sessionRef, {
               status: "running",
               activeTurnId: turnId,
-            });
-            // Codex does not emit a second turn/started notification when
-            // turn/steer keeps the existing turn alive. Reaffirm the active
-            // turn so orchestration can reconcile the steer request with the
-            // running turn instead of leaving a stale pending-turn row.
-            yield* emitEvent({
-              kind: "notification",
-              threadId: options.threadId,
-              method: "turn/started",
-              turnId,
-              message: "Codex turn steered.",
+              ...(normalizedModel ? { model: normalizedModel } : {}),
             });
             const resumedProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
             return {
@@ -1826,43 +1883,8 @@ export const makeCodexSessionRuntime = (
                 ? { resumeCursor: { threadId: resumedProviderThreadId } }
                 : {}),
             } satisfies ProviderTurnStartResult;
-          }
-          const normalizedModel = normalizeCodexModelSlug(input.model ?? session.model);
-          const params = yield* buildTurnStartParams({
-            threadId: providerThreadId,
-            runtimeMode: options.runtimeMode,
-            ...(input.input ? { prompt: input.input } : {}),
-            ...(input.attachments ? { attachments: input.attachments } : {}),
-            ...(normalizedModel ? { model: normalizedModel } : {}),
-            ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
-            ...(input.effort ? { effort: input.effort } : {}),
-            ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
-          });
-          const rawResponse = yield* client.raw.request("turn/start", params);
-          const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(
-            Effect.mapError((error) =>
-              CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
-                "decode-response-payload",
-                error,
-                { method: "turn/start" },
-              ),
-            ),
-          );
-          const turnId = TurnId.make(response.turn.id);
-          yield* updateSession(sessionRef, {
-            status: "running",
-            activeTurnId: turnId,
-            ...(normalizedModel ? { model: normalizedModel } : {}),
-          });
-          const resumedProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
-          return {
-            threadId: options.threadId,
-            turnId,
-            ...(resumedProviderThreadId
-              ? { resumeCursor: { threadId: resumedProviderThreadId } }
-              : {}),
-          } satisfies ProviderTurnStartResult;
-        }),
+          }),
+        ),
       interruptTurn: (turnId) =>
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;

@@ -316,6 +316,7 @@ export function useThreadOutboxDrain(): void {
         shellStatus,
         environmentConnected: environment?.connectionState === "connected",
         threadBusy: thread?.session?.status === "running" || thread?.session?.status === "starting",
+        threadSteerable: thread?.session?.status === "running",
         activeTurnMessageBehavior: nextQueuedMessage.activeTurnMessageBehavior,
       });
       if (deliveryAction === "wait") {
@@ -382,6 +383,7 @@ export function useThreadOutboxDrain(): void {
             deliveryAction,
             isCreation: creation !== undefined,
             threadBusy: freshThreadBusy,
+            threadSteerable: freshThread?.session?.status === "running",
             activeTurnMessageBehavior: nextQueuedMessage.activeTurnMessageBehavior,
           })
         ) {

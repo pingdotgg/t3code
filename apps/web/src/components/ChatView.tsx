@@ -74,10 +74,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
-import {
-  collapseExpandedComposerCursor,
-  parseStandaloneComposerSlashCommand,
-} from "../composer-logic";
+import { parseStandaloneComposerSlashCommand } from "../composer-logic";
 import {
   derivePendingApprovals,
   derivePendingUserInputs,
@@ -181,10 +178,7 @@ import {
   useEnvironmentSettings,
 } from "../hooks/useSettings";
 import {
-  beginWebThreadOutboxDispatch,
   EMPTY_WEB_THREAD_OUTBOX_QUEUE,
-  finishWebThreadOutboxDispatch,
-  shouldDrainWebThreadOutbox,
   shouldQueueWebThreadMessage,
   useWebThreadOutboxStore,
   webThreadOutboxKey,
@@ -1298,24 +1292,15 @@ function ChatViewContent(props: ChatViewProps) {
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
-  const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
-  const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
-  const setComposerDraftTerminalContexts = useComposerDraftStore(
-    (store) => store.setTerminalContexts,
-  );
-  const setComposerDraftElementContexts = useComposerDraftStore(
-    (store) => store.setElementContexts,
-  );
-  const setComposerDraftPreviewAnnotations = useComposerDraftStore(
-    (store) => store.setPreviewAnnotations,
-  );
-  const setComposerDraftReviewComments = useComposerDraftStore((store) => store.setReviewComments);
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
   );
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
+  const restoreComposerDraftContent = useComposerDraftStore(
+    (store) => store.restoreComposerContent,
+  );
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const getDraftSessionByLogicalProjectKey = useComposerDraftStore(
     (store) => store.getDraftSessionByLogicalProjectKey,
@@ -4815,12 +4800,17 @@ function ChatViewContent(props: ChatViewProps) {
         }),
       );
     };
+    if (!clientSettingsHydrated) {
+      notifyDirectAnnotationAttached();
+      return;
+    }
     const shouldQueueCurrentMessage = shouldQueueWebThreadMessage({
       activeTurnMessageBehavior: settings.activeTurnMessageBehavior,
       hasQueuedMessages: activeThreadOutboxQueue.length > 0,
       isSendBusy,
       isServerThread,
       phase,
+      threadStarting: activeThread?.session?.status === "starting",
     });
     if (
       !activeThread ||
@@ -4983,6 +4973,14 @@ function ChatViewContent(props: ChatViewProps) {
       const composerElementContextsSnapshot = [...composerElementContexts];
       const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
       const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
+      const composerContentSnapshot = {
+        prompt: promptForSend,
+        images: composerImagesSnapshot,
+        terminalContexts: composerTerminalContextsSnapshot,
+        elementContexts: composerElementContextsSnapshot,
+        previewAnnotations: composerPreviewAnnotationsSnapshot,
+        reviewComments: composerReviewCommentsSnapshot,
+      };
       const messageTextWithContexts = appendElementContextsToPrompt(
         appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
         composerElementContextsSnapshot,
@@ -5002,6 +5000,9 @@ function ChatViewContent(props: ChatViewProps) {
         effort: ctxSelectedPromptEffort,
         text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
       });
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
       const attachmentsResult = await settlePromise(() =>
         Promise.all(
           composerImagesSnapshot.map(async (image) => ({
@@ -5014,6 +5015,7 @@ function ChatViewContent(props: ChatViewProps) {
         ),
       );
       if (attachmentsResult._tag === "Failure") {
+        restoreComposerDraftContent(composerDraftTarget, composerContentSnapshot);
         const error = squashAtomCommandFailure(attachmentsResult);
         setThreadError(
           threadIdForSend,
@@ -5035,11 +5037,9 @@ function ChatViewContent(props: ChatViewProps) {
         modelSelection: ctxSelectedModelSelection,
         runtimeMode,
         interactionMode,
+        activeTurnMessageBehavior: settings.activeTurnMessageBehavior,
         createdAt,
       });
-      promptRef.current = "";
-      clearComposerDraftContent(composerDraftTarget);
-      composerRef.current?.resetCursorState();
       setThreadError(threadIdForSend, null);
       if (expiredTerminalContextCount > 0) {
         const toastCopy = buildExpiredTerminalContextToastCopy(
@@ -5067,24 +5067,6 @@ function ChatViewContent(props: ChatViewProps) {
       sendInFlightRef.current = false;
       return;
     }
-
-    sendInFlightRef.current = true;
-    if (isDraftHeroState && activeThreadKey) {
-      let resolveDockStarted: (() => void) | undefined;
-      const dockStarted = new Promise<void>((resolve) => {
-        resolveDockStarted = resolve;
-      });
-      const dockTransition = runMobileComposerTransition(() => {
-        flushSync(() => {
-          captureDraftHeroComposerRect();
-          setDockedDraftHeroThreadKey(activeThreadKey);
-        });
-        resolveDockStarted?.();
-      });
-      void dockTransition.catch(() => resolveDockStarted?.());
-      await dockStarted;
-    }
-    beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
 
     const composerImagesSnapshot = [...composerImages];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
@@ -5129,6 +5111,26 @@ function ChatViewContent(props: ChatViewProps) {
       sizeBytes: image.sizeBytes,
       previewUrl: image.previewUrl,
     }));
+    promptRef.current = "";
+    clearComposerDraftContent(composerDraftTarget);
+    composerRef.current?.resetCursorState();
+    sendInFlightRef.current = true;
+    if (isDraftHeroState && activeThreadKey) {
+      let resolveDockStarted: (() => void) | undefined;
+      const dockStarted = new Promise<void>((resolve) => {
+        resolveDockStarted = resolve;
+      });
+      const dockTransition = runMobileComposerTransition(() => {
+        flushSync(() => {
+          captureDraftHeroComposerRect();
+          setDockedDraftHeroThreadKey(activeThreadKey);
+        });
+        resolveDockStarted?.();
+      });
+      void dockTransition.catch(() => resolveDockStarted?.());
+      await dockStarted;
+    }
+    beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
     // Sending always returns to the live edge. The new row becomes the
     // anchored end-space target so it lands near the top while the response
     // streams into the reserved space below it.
@@ -5171,10 +5173,6 @@ function ChatViewContent(props: ChatViewProps) {
         }),
       );
     }
-    promptRef.current = "";
-    clearComposerDraftContent(composerDraftTarget);
-    composerRef.current?.resetCursorState();
-
     let firstComposerImageName: string | null = null;
     if (composerImagesSnapshot.length > 0) {
       const firstComposerImage = composerImagesSnapshot[0];
@@ -5297,41 +5295,23 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     if (failure !== null) {
-      if (
-        promptRef.current.length === 0 &&
-        composerImagesRef.current.length === 0 &&
-        composerTerminalContextsRef.current.length === 0 &&
-        composerElementContextsRef.current.length === 0 &&
-        (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.previewAnnotations
-          .length ?? 0) === 0 &&
-        (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.reviewComments
-          .length ?? 0) === 0
-      ) {
-        setOptimisticUserMessages((existing) => {
-          const removed = existing.filter((message) => message.id === messageIdForSend);
-          for (const message of removed) {
-            revokeUserMessagePreviewUrls(message);
-          }
-          const next = existing.filter((message) => message.id !== messageIdForSend);
-          return next.length === existing.length ? existing : next;
-        });
-        promptRef.current = promptForSend;
-        const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
-        composerImagesRef.current = retryComposerImages;
-        composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
-        composerElementContextsRef.current = composerElementContextsSnapshot;
-        setComposerDraftPrompt(composerDraftTarget, promptForSend);
-        addComposerDraftImages(composerDraftTarget, retryComposerImages);
-        setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
-        setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
-        setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
-        setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
-        composerRef.current?.resetCursorState({
-          cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
-          prompt: promptForSend,
-          detectTrigger: true,
-        });
-      }
+      const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
+      restoreComposerDraftContent(composerDraftTarget, {
+        prompt: promptForSend,
+        images: retryComposerImages,
+        terminalContexts: composerTerminalContextsSnapshot,
+        elementContexts: composerElementContextsSnapshot,
+        previewAnnotations: composerPreviewAnnotationsSnapshot,
+        reviewComments: composerReviewCommentsSnapshot,
+      });
+      setOptimisticUserMessages((existing) => {
+        const removed = existing.filter((message) => message.id === messageIdForSend);
+        for (const message of removed) {
+          revokeUserMessagePreviewUrls(message);
+        }
+        const next = existing.filter((message) => message.id !== messageIdForSend);
+        return next.length === existing.length ? existing : next;
+      });
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);
         setThreadError(
@@ -5352,100 +5332,6 @@ function ChatViewContent(props: ChatViewProps) {
   const nextQueuedMessage = activeThreadOutboxQueue[0] ?? null;
   const queuedMessagePaused =
     nextQueuedMessage !== null && Boolean(pausedOutboxMessageIds[nextQueuedMessage.messageId]);
-
-  useEffect(() => {
-    if (
-      !nextQueuedMessage ||
-      !activeThread ||
-      nextQueuedMessage.environmentId !== environmentId ||
-      nextQueuedMessage.threadId !== activeThread.id ||
-      !shouldDrainWebThreadOutbox({
-        phase,
-        isSendBusy,
-        isConnecting,
-        environmentUnavailable: activeEnvironmentUnavailable,
-        paused: queuedMessagePaused,
-      }) ||
-      !beginWebThreadOutboxDispatch(nextQueuedMessage.messageId)
-    ) {
-      return;
-    }
-
-    const deliver = async () => {
-      beginLocalDispatch({ preparingWorktree: false });
-      const settingsResult = await persistThreadSettingsForNextTurn({
-        threadId: nextQueuedMessage.threadId,
-        createdAt: nextQueuedMessage.createdAt,
-        modelSelection: nextQueuedMessage.modelSelection,
-        runtimeMode: nextQueuedMessage.runtimeMode,
-        interactionMode: nextQueuedMessage.interactionMode,
-      });
-      const startResult =
-        settingsResult._tag === "Failure"
-          ? settingsResult
-          : await startThreadTurn({
-              environmentId: nextQueuedMessage.environmentId,
-              input: {
-                commandId: nextQueuedMessage.commandId,
-                threadId: nextQueuedMessage.threadId,
-                message: {
-                  messageId: nextQueuedMessage.messageId,
-                  role: "user",
-                  text: nextQueuedMessage.text,
-                  attachments: nextQueuedMessage.attachments,
-                },
-                modelSelection: nextQueuedMessage.modelSelection,
-                titleSeed: activeThread.title,
-                runtimeMode: nextQueuedMessage.runtimeMode,
-                interactionMode: nextQueuedMessage.interactionMode,
-                createdAt: nextQueuedMessage.createdAt,
-              },
-            });
-
-      if (startResult._tag === "Failure") {
-        useWebThreadOutboxStore.getState().pause(nextQueuedMessage.messageId);
-        resetLocalDispatch();
-        if (!isAtomCommandInterrupted(startResult)) {
-          const error = squashAtomCommandFailure(startResult);
-          setThreadError(
-            nextQueuedMessage.threadId,
-            error instanceof Error ? error.message : "Failed to send the queued message.",
-          );
-        }
-        return;
-      }
-
-      const { durable } = useWebThreadOutboxStore.getState().remove(nextQueuedMessage);
-      if (!durable) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "warning",
-            title: "Queued message sent",
-            description:
-              "Browser storage could not save the queue update. Its stable command ID prevents a duplicate turn if it reappears after reload.",
-          }),
-        );
-      }
-    };
-
-    void deliver().finally(() => {
-      finishWebThreadOutboxDispatch(nextQueuedMessage.messageId);
-    });
-  }, [
-    activeEnvironmentUnavailable,
-    activeThread,
-    beginLocalDispatch,
-    environmentId,
-    isConnecting,
-    isSendBusy,
-    nextQueuedMessage,
-    persistThreadSettingsForNextTurn,
-    phase,
-    queuedMessagePaused,
-    resetLocalDispatch,
-    setThreadError,
-    startThreadTurn,
-  ]);
 
   const retryQueuedMessages = useCallback(() => {
     if (!nextQueuedMessage) {
@@ -6431,7 +6317,13 @@ function ChatViewContent(props: ChatViewProps) {
                             phase={phase}
                             isConnecting={isConnecting}
                             isSendBusy={isSendBusy}
-                            sendDisabledReason={threadDetailLoading ? "Messages loading" : null}
+                            sendDisabledReason={
+                              !clientSettingsHydrated
+                                ? "Settings loading"
+                                : threadDetailLoading
+                                  ? "Messages loading"
+                                  : null
+                            }
                             isPreparingWorktree={isPreparingWorktree}
                             queuedMessageCount={activeThreadOutboxQueue.length}
                             queuedMessagesPaused={queuedMessagePaused}

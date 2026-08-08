@@ -162,13 +162,14 @@ export function shouldDeferConfirmedThreadOutboxDelivery(input: {
   readonly deliveryAction: ThreadOutboxDeliveryAction;
   readonly isCreation: boolean;
   readonly threadBusy: boolean;
+  readonly threadSteerable: boolean;
   readonly activeTurnMessageBehavior?: ActiveTurnMessageBehaviorType;
 }): boolean {
   return (
     input.deliveryAction === "send" &&
     !input.isCreation &&
     input.threadBusy &&
-    input.activeTurnMessageBehavior !== "steer"
+    !(input.activeTurnMessageBehavior === "steer" && input.threadSteerable)
   );
 }
 
@@ -178,6 +179,7 @@ export function resolveThreadOutboxDeliveryAction(input: {
   readonly shellStatus: EnvironmentShellStatus;
   readonly environmentConnected: boolean;
   readonly threadBusy: boolean;
+  readonly threadSteerable: boolean;
   readonly activeTurnMessageBehavior?: ActiveTurnMessageBehaviorType;
 }): ThreadOutboxDeliveryAction {
   if (input.isCreation) {
@@ -194,7 +196,8 @@ export function resolveThreadOutboxDeliveryAction(input: {
   if (!input.threadExists) {
     return input.shellStatus === "live" ? "remove" : "wait";
   }
-  const canSendWhileBusy = input.activeTurnMessageBehavior === "steer" || !input.threadBusy;
+  const canSendWhileBusy =
+    !input.threadBusy || (input.activeTurnMessageBehavior === "steer" && input.threadSteerable);
   return input.environmentConnected && canSendWhileBusy ? "send" : "wait";
 }
 

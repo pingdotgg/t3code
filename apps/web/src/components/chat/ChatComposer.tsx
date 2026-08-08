@@ -1153,7 +1153,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
   const isPrimarySendBusy =
     isSendBusy && !(phase === "running" && settings.activeTurnMessageBehavior === "queue");
-  const showPlanSidebarToggle = Boolean(activePlan || sidebarProposedPlan || planSidebarOpen);
   const composerFooterActionLayoutKey = useMemo(() => {
     if (activePendingProgress) {
       return `pending:${activePendingProgress.questionIndex}:${activePendingProgress.isLastQuestion}:${activePendingIsResponding}`;
