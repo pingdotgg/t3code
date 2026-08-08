@@ -257,10 +257,33 @@ class AppViewModel(
     }
   }
 
-  fun signInCloud(email: String, password: String) {
+  fun startCloudEmailCode(email: String) {
     viewModelScope.launch {
       mutableDispatchState.value = DispatchState.Sending
-      runCatching { repository.signInCloud(email, password) }
+      runCatching { repository.startCloudEmailCode(email) }
+        .onSuccess { mutableDispatchState.value = DispatchState.Idle }
+        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
+  }
+
+  fun resendCloudEmailCode(email: String) {
+    viewModelScope.launch {
+      mutableDispatchState.value = DispatchState.Sending
+      runCatching { repository.resendCloudEmailCode(email) }
+        .onSuccess { mutableDispatchState.value = DispatchState.Idle }
+        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
+  }
+
+  fun cancelCloudEmailCode() {
+    repository.cancelCloudEmailCode()
+    mutableDispatchState.value = DispatchState.Idle
+  }
+
+  fun verifyCloudEmailCode(code: String) {
+    viewModelScope.launch {
+      mutableDispatchState.value = DispatchState.Sending
+      runCatching { repository.verifyCloudEmailCode(code) }
         .onSuccess { mutableDispatchState.value = DispatchState.Idle }
         .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
     }

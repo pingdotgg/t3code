@@ -3,6 +3,9 @@ package com.t3tools.android.nativeapp
 import com.clerk.api.Clerk
 import com.clerk.api.network.model.error.ClerkErrorResponse
 import com.clerk.api.network.serialization.ClerkResult
+import com.clerk.api.signin.SignIn
+import com.clerk.api.signin.sendCode
+import com.clerk.api.signin.verifyCode
 import com.clerk.api.sso.OAuthProvider
 import com.t3tools.android.protocol.AtomicStartResult
 import com.t3tools.android.protocol.ConnectedEnvironment
@@ -58,6 +61,8 @@ data class CloudAuthState(
   val accountLabel: String? = null,
   val relayEnvironments: List<RelayEnvironment> = emptyList(),
   val lastError: String? = null,
+  /** Email waiting for OTP after a successful send (not signed in yet). */
+  val pendingEmailCode: String? = null,
 )
 
 data class OnlineChatState(
@@ -173,18 +178,82 @@ class OnlineChatRepository(
     ensureSupervisor(saved, connected)
   }
 
-  suspend fun signInCloud(email: String, password: String) = withContext(Dispatchers.IO) {
+  /**
+   * Start T3 Connect email OTP (same strategy as official mobile AuthView).
+   * Does not finish the session — call [verifyCloudEmailCode] with the emailed code.
+   */
+  suspend fun startCloudEmailCode(email: String) = withContext(Dispatchers.IO) {
     val identifier = email.trim()
     require(identifier.isNotEmpty()) { "Email is required." }
-    require(password.isNotEmpty()) { "Password is required." }
     when (
-      val result = Clerk.auth.signInWithPassword {
-        this.identifier = identifier
-        this.password = password
+      val result = Clerk.auth.signInWithOtp {
+        this.email = identifier
       }
     ) {
       is ClerkResult.Success -> Unit
-      is ClerkResult.Failure -> error(result.clerkMessage("T3 Connect sign-in failed."))
+      is ClerkResult.Failure -> error(result.clerkMessage("Could not send sign-in code."))
+    }
+    synchronized(lock) {
+      cloud = cloud.copy(pendingEmailCode = identifier, lastError = null)
+      publishLocked()
+    }
+  }
+
+  suspend fun resendCloudEmailCode(email: String) = withContext(Dispatchers.IO) {
+    val identifier = email.trim().ifEmpty { cloud.pendingEmailCode.orEmpty() }
+    require(identifier.isNotEmpty()) { "Email is required." }
+    val signIn = Clerk.auth.currentSignIn
+    if (signIn == null) {
+      startCloudEmailCode(identifier)
+      return@withContext
+    }
+    when (
+      val result = signIn.sendCode {
+        this.email = identifier
+      }
+    ) {
+      is ClerkResult.Success -> Unit
+      is ClerkResult.Failure -> error(result.clerkMessage("Could not resend sign-in code."))
+    }
+    synchronized(lock) {
+      cloud = cloud.copy(pendingEmailCode = identifier, lastError = null)
+      publishLocked()
+    }
+  }
+
+  fun cancelCloudEmailCode() {
+    synchronized(lock) {
+      cloud = cloud.copy(pendingEmailCode = null)
+      publishLocked()
+    }
+  }
+
+  suspend fun verifyCloudEmailCode(code: String) = withContext(Dispatchers.IO) {
+    val otp = code.filter(Char::isDigit)
+    require(otp.isNotEmpty()) { "Enter the code from your email." }
+    val signIn = requireNotNull(Clerk.auth.currentSignIn) {
+      "Start with your email before entering the code."
+    }
+    val verified = when (val result = signIn.verifyCode(otp)) {
+      is ClerkResult.Success -> result.value
+      is ClerkResult.Failure -> error(result.clerkMessage("Invalid or expired code."))
+    }
+    when (verified.status) {
+      SignIn.Status.COMPLETE -> {
+        val sessionId = verified.createdSessionId
+        if (sessionId != null && Clerk.activeSession?.id != sessionId) {
+          when (val active = Clerk.auth.setActive(sessionId = sessionId)) {
+            is ClerkResult.Success -> Unit
+            is ClerkResult.Failure -> error(active.clerkMessage("Signed in, but session activation failed."))
+          }
+        }
+      }
+      SignIn.Status.NEEDS_SECOND_FACTOR ->
+        error("This account requires a second factor. Use the official T3 app or complete MFA there first.")
+      else -> error("Sign-in is not complete yet (${verified.status}). Try a new code.")
+    }
+    synchronized(lock) {
+      cloud = cloud.copy(pendingEmailCode = null)
     }
     refreshCloudAuth(refreshRelayList = true)
   }
@@ -751,7 +820,10 @@ class OnlineChatRepository(
     val session = Clerk.activeSession
     if (user == null || session == null) {
       synchronized(lock) {
-        cloud = CloudAuthState(signedIn = false)
+        cloud = CloudAuthState(
+          signedIn = false,
+          pendingEmailCode = cloud.pendingEmailCode,
+        )
         publishLocked()
       }
       return
@@ -775,6 +847,7 @@ class OnlineChatRepository(
         accountLabel = label,
         relayEnvironments = relay.first,
         lastError = relay.second,
+        pendingEmailCode = null,
       )
       publishLocked()
     }

@@ -257,11 +257,20 @@ private fun ConnectAuthScreen(
   onBack: () -> Unit,
 ) {
   val cloud = runtime.cloud
-  var email by remember { mutableStateOf("") }
-  var password by remember { mutableStateOf("") }
-  var showPassword by remember { mutableStateOf(false) }
+  var email by remember { mutableStateOf(cloud.pendingEmailCode.orEmpty()) }
+  var code by remember { mutableStateOf("") }
+  val awaitingCode = !cloud.signedIn && !cloud.pendingEmailCode.isNullOrBlank()
+  val busy = dispatchState is DispatchState.Sending
 
-  BackHandler(onBack = onBack)
+  BackHandler(onBack = {
+    if (awaitingCode) {
+      code = ""
+      viewModel.cancelCloudEmailCode()
+      viewModel.clearDispatchFailure()
+    } else {
+      onBack()
+    }
+  })
   Scaffold(topBar = { BackTopBar("T3 Connect", onBack) }) { padding ->
     Column(
       Modifier
@@ -286,7 +295,7 @@ private fun ConnectAuthScreen(
           OutlinedButton(onClick = viewModel::refreshCloudEnvironments) { Text("Refresh") }
           OutlinedButton(
             onClick = viewModel::signOutCloud,
-            enabled = dispatchState !is DispatchState.Sending,
+            enabled = !busy,
           ) { Text("Sign out") }
         }
         if (cloud.relayEnvironments.isEmpty()) {
@@ -299,7 +308,7 @@ private fun ConnectAuthScreen(
             val already = runtime.environments.any { it.environmentId == environment.environmentId }
             OutlinedButton(
               onClick = { viewModel.connectRelay(environment.environmentId) },
-              enabled = !already && dispatchState !is DispatchState.Sending,
+              enabled = !already && !busy,
               modifier = Modifier.fillMaxWidth(),
             ) {
               Text(
@@ -316,40 +325,69 @@ private fun ConnectAuthScreen(
           fontWeight = FontWeight.SemiBold,
         )
         Text(
-          "Welcome! Sign in to continue.",
+          if (awaitingCode) {
+            "Enter the code we emailed to ${cloud.pendingEmailCode}"
+          } else {
+            "Welcome! Sign in with the email code T3 Connect uses on mobile."
+          },
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-          value = email,
-          onValueChange = { email = it },
-          placeholder = { Text("Enter your email") },
-          singleLine = true,
-          modifier = Modifier.fillMaxWidth(),
-        )
-        if (showPassword) {
+        if (!awaitingCode) {
           OutlinedTextField(
-            value = password,
-            onValueChange = { password = it },
-            placeholder = { Text("Password") },
+            value = email,
+            onValueChange = { email = it },
+            placeholder = { Text("Enter your email") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
           )
           Button(
-            onClick = { viewModel.signInCloud(email, password) },
-            enabled = email.isNotBlank() && password.isNotBlank() &&
-              dispatchState !is DispatchState.Sending,
+            onClick = {
+              viewModel.clearDispatchFailure()
+              viewModel.startCloudEmailCode(email)
+            },
+            enabled = email.isNotBlank() && !busy,
             modifier = Modifier.fillMaxWidth(),
           ) {
-            Text(if (dispatchState is DispatchState.Sending) "Signing in…" else "Sign in")
+            Text(if (busy) "Sending code…" else "Continue")
           }
         } else {
+          OutlinedTextField(
+            value = code,
+            onValueChange = { value -> code = value.filter(Char::isDigit).take(12) },
+            placeholder = { Text("Email code") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+          )
           Button(
-            onClick = { showPassword = true },
-            enabled = email.isNotBlank() && dispatchState !is DispatchState.Sending,
+            onClick = { viewModel.verifyCloudEmailCode(code) },
+            enabled = code.isNotBlank() && !busy,
             modifier = Modifier.fillMaxWidth(),
           ) {
-            Text("Continue")
+            Text(if (busy) "Verifying…" else "Verify code")
+          }
+          Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            TextButton(
+              onClick = {
+                viewModel.clearDispatchFailure()
+                viewModel.resendCloudEmailCode(cloud.pendingEmailCode.orEmpty())
+              },
+              enabled = !busy,
+              modifier = Modifier.weight(1f),
+            ) { Text("Resend code") }
+            TextButton(
+              onClick = {
+                code = ""
+                email = cloud.pendingEmailCode.orEmpty()
+                viewModel.cancelCloudEmailCode()
+                viewModel.clearDispatchFailure()
+              },
+              enabled = !busy,
+              modifier = Modifier.weight(1f),
+            ) { Text("Change email") }
           }
         }
         Text("or", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -359,13 +397,13 @@ private fun ConnectAuthScreen(
         ) {
           OAuthButton(
             label = "Apple",
-            enabled = dispatchState !is DispatchState.Sending,
+            enabled = !busy,
             modifier = Modifier.weight(1f),
             onClick = { viewModel.signInCloudOAuth(CloudOAuthProvider.Apple) },
           )
           OAuthButton(
             label = "GitHub",
-            enabled = dispatchState !is DispatchState.Sending,
+            enabled = !busy,
             modifier = Modifier.weight(1f),
             onClick = { viewModel.signInCloudOAuth(CloudOAuthProvider.GitHub) },
           )
@@ -376,20 +414,20 @@ private fun ConnectAuthScreen(
         ) {
           OAuthButton(
             label = "Google",
-            enabled = dispatchState !is DispatchState.Sending,
+            enabled = !busy,
             modifier = Modifier.weight(1f),
             onClick = { viewModel.signInCloudOAuth(CloudOAuthProvider.Google) },
           )
           OAuthButton(
             label = "Microsoft",
-            enabled = dispatchState !is DispatchState.Sending,
+            enabled = !busy,
             modifier = Modifier.weight(1f),
             onClick = { viewModel.signInCloudOAuth(CloudOAuthProvider.Microsoft) },
           )
         }
         Spacer(Modifier.height(12.dp))
         Text(
-          "Secured by Clerk",
+          "Secured by Clerk · email code (same as official mobile)",
           style = MaterialTheme.typography.labelMedium,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

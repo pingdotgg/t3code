@@ -76,7 +76,9 @@ Sign-out clears Clerk session, in-memory relay tokens, and forgets **relay** env
 | DPoP crypto                   | n/a           | Yes         | `DpopCryptoTest` (JVM) + `AndroidDpopSignerTest` (Keystore)            |
 | Performance                   | Deferred      | Deferred    | Explicit Phase 2 non-gate                                              |
 
-**Residual external gate:** production Clerk must allowlist `clerk://com.t3tools.t3code.native.experimental.callback` before Google/OAuth can complete end-to-end. Client redirects, humanized error, DPoP/relay client, and password sign-in path are implemented.
+**Identity:** email one-time code via `Clerk.auth.signInWithOtp` + `verifyCode` (same strategy official mobile AuthView uses). Password is not the primary path.
+
+**Residual external gate:** production Clerk must allowlist `clerk://com.t3tools.t3code.native.experimental.callback` before Google/OAuth can complete end-to-end. Client redirects and humanized error are implemented; DPoP/relay follow after any successful Clerk session.
 
 ### Device / chaos
 
