@@ -54,6 +54,10 @@ const endorsementRows = [
             </span>
             <span>Rest is on us.</span>
           </h1>
+          <p class="v2-hero-description">
+            We don't sell subs. You bring your own subs and use it in the best AI coding experience
+            there is.
+          </p>
           <div class="v2-actions">
             <div class="v2-download-row">
               <div class="v2-download-button-wrap">
@@ -155,7 +159,22 @@ const endorsementRows = [
                 />
               ) : (
                 <>
-                  <img src={surface.image} alt={`T3 Code ${surface.label.toLowerCase()} view`} loading="lazy" />
+                  {surface.id === "phone" ? (
+                    <div class="v2-phone-pair">
+                      <img src={surface.image} alt="T3 Code on iPhone" loading="lazy" />
+                      <img
+                        src="/mobile-states/android-thread.png"
+                        alt="T3 Code on Android"
+                        loading="lazy"
+                      />
+                    </div>
+                  ) : (
+                    <img
+                      src={surface.image}
+                      alt={`T3 Code ${surface.label.toLowerCase()} view`}
+                      loading="lazy"
+                    />
+                  )}
                   <a
                     class="v2-surface-store-link"
                     href={IOS_APP_STORE_URL}
@@ -403,6 +422,14 @@ const endorsementRows = [
     display: block;
   }
 
+  .v2-hero-description {
+    max-width: 560px;
+    margin-top: 24px;
+    color: #8c8c95;
+    font-size: 16px;
+    line-height: 1.55;
+  }
+
   .v2-hero-provider-line {
     display: flex !important;
     align-items: baseline;
@@ -465,7 +492,7 @@ const endorsementRows = [
     flex-direction: column;
     align-items: flex-start;
     gap: 14px;
-    margin-top: 38px;
+    margin-top: 28px;
   }
 
   .v2-download-row {
@@ -735,6 +762,21 @@ const endorsementRows = [
     max-height: 530px;
   }
 
+  .v2-phone-pair {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+  }
+
+  .v2-surface-panel[data-v2-panel="phone"] .v2-phone-pair img {
+    width: auto;
+    max-width: 43%;
+    max-height: 510px;
+  }
+
   .v2-surface-panel[data-v2-panel="tablet"] img {
     max-width: 84%;
     max-height: 510px;
@@ -797,6 +839,10 @@ const endorsementRows = [
     align-items: center;
     gap: 80px;
     min-height: 650px;
+  }
+
+  .v2-connect-grid > header {
+    transform: translateY(-32px);
   }
 
   .v2-connect h2 {
@@ -1118,6 +1164,10 @@ const endorsementRows = [
 
     .v2-connect-grid {
       gap: 70px;
+    }
+
+    .v2-connect-grid > header {
+      transform: none;
     }
   }
 

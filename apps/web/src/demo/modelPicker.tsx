@@ -52,8 +52,9 @@ function ModelPickerDemo() {
     setOpen(nextOpen);
     if (!nextOpen) {
       requestAnimationFrame(() => {
-        const trigger = document.querySelector<HTMLElement>("[data-chat-provider-model-picker]");
-        if (trigger && trigger === document.activeElement) trigger.blur();
+        requestAnimationFrame(() => {
+          document.querySelector<HTMLElement>("[data-chat-provider-model-picker]")?.blur();
+        });
       });
     }
   };
@@ -71,7 +72,7 @@ function ModelPickerDemo() {
               instanceEntries={instanceEntries}
               modelOptionsByInstance={modelOptionsByInstance}
               triggerVariant="ghost"
-              triggerClassName="bg-transparent text-foreground hover:bg-white/[0.05] hover:text-foreground focus-visible:ring-0 focus-visible:ring-offset-0"
+              triggerClassName="bg-transparent text-foreground hover:bg-white/[0.05] hover:text-foreground outline-none! ring-0! ring-offset-0! focus-visible:border-transparent! focus-visible:outline-none! focus-visible:ring-0! focus-visible:ring-offset-0!"
               popupSide="top"
               open={open}
               onOpenChange={handlePickerOpenChange}
