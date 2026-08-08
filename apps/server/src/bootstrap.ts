@@ -4,6 +4,7 @@ import * as NodeNet from "node:net";
 import * as NodeReadline from "node:readline";
 import type * as NodeStream from "node:stream";
 
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -75,7 +76,7 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
   schema: Schema.Codec<A, I>,
   fd: number,
   options?: {
-    timeoutMs?: number;
+    timeout?: Duration.Input;
   },
 ): Effect.fn.Return<Option.Option<A>, BootstrapError> {
   const fdReady = yield* isFdReady(fd);
@@ -83,7 +84,7 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
 
   const stream = yield* makeBootstrapInputStream(fd);
 
-  const timeoutMs = options?.timeoutMs ?? 1000;
+  const timeout = options?.timeout ?? Duration.seconds(1);
 
   return yield* Effect.callback<
     Option.Option<A>,
@@ -142,7 +143,7 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
     input.once("close", handleClose);
 
     return Effect.sync(cleanup);
-  }).pipe(Effect.timeoutOption(timeoutMs), Effect.map(Option.flatten));
+  }).pipe(Effect.timeoutOption(timeout), Effect.map(Option.flatten));
 });
 
 const isUnavailableBootstrapFdError = Predicate.compose(
