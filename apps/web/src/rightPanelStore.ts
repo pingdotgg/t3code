@@ -5,7 +5,7 @@
  * surface descriptors and the active surface, while each feature continues to
  * own its durable resource state. Browser surfaces point at preview tab ids,
  * terminal surfaces point at terminal session ids, file surfaces point at
- * workspace paths, and diff/plan/files remain singleton surfaces.
+ * workspace paths, and diff/files remain singleton surfaces.
  */
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
@@ -17,7 +17,6 @@ import { resolveStorage } from "./lib/storage";
 // `source-control` remains decodable only so v8 can remove the old thread-scoped
 // surface. New source-control visibility lives in sourceControlStore.
 export const RIGHT_PANEL_KINDS = [
-  "plan",
   "diff",
   "files",
   "file",
@@ -48,11 +47,10 @@ export type RightPanelSurface =
       revealLine: number | null;
       revealRequestId: number;
     }
-  | { id: "plan"; kind: "plan" }
-  | { id: "source-control"; kind: "source-control" } // fork: f4 legacy source-control surface
   | { id: "agents"; kind: "agents" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
+// v9 removed the "plan" surface kind (plans render inline in the transcript).
 const RIGHT_PANEL_STORAGE_VERSION = 9;
 
 export interface ThreadRightPanelState {
@@ -111,8 +109,6 @@ const singletonSurface = (
       return { id: "diff", kind };
     case "files":
       return { id: "files", kind };
-    case "plan":
-      return { id: "plan", kind };
     case "agents":
       return { id: "agents", kind };
   }
@@ -192,71 +188,77 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
             ([threadKey, threadState]) => {
               const validThreadState =
                 threadState && typeof threadState === "object" ? threadState : null;
-              const persistedSurfaces = Array.isArray(validThreadState?.surfaces)
-                ? validThreadState.surfaces
+              const surfaces = Array.isArray(validThreadState?.surfaces)
+                ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
+                    // Plans now render inline (v9), while source control owns
+                    // its own workspace-global panel (fork v8).
+                    const persistedKind = (surface as { kind?: string }).kind;
+                    if (persistedKind === "plan" || persistedKind === "source-control") return [];
+                    if (surface.kind === "file") {
+                      const revealLine =
+                        typeof surface.revealLine === "number" &&
+                        Number.isFinite(surface.revealLine)
+                          ? Math.max(1, Math.trunc(surface.revealLine))
+                          : null;
+                      const revealRequestId =
+                        typeof surface.revealRequestId === "number" &&
+                        Number.isSafeInteger(surface.revealRequestId) &&
+                        surface.revealRequestId >= 0
+                          ? surface.revealRequestId
+                          : 0;
+                      return [{ ...surface, revealLine, revealRequestId }];
+                    }
+                    if (surface.kind !== "terminal") return [surface];
+                    if (
+                      !("resourceId" in surface) ||
+                      typeof surface.resourceId !== "string" ||
+                      surface.id !== `terminal:${surface.resourceId}`
+                    ) {
+                      return [];
+                    }
+                    const terminalIds =
+                      "terminalIds" in surface && Array.isArray(surface.terminalIds)
+                        ? [
+                            ...new Set(
+                              surface.terminalIds.filter(
+                                (terminalId): terminalId is string =>
+                                  typeof terminalId === "string",
+                              ),
+                            ),
+                          ]
+                        : [surface.resourceId];
+                    const activeTerminalId =
+                      "activeTerminalId" in surface &&
+                      typeof surface.activeTerminalId === "string" &&
+                      terminalIds.includes(surface.activeTerminalId)
+                        ? surface.activeTerminalId
+                        : (terminalIds[0] ?? surface.resourceId);
+                    return [
+                      {
+                        ...surface,
+                        terminalIds: terminalIds.length > 0 ? terminalIds : [surface.resourceId],
+                        activeTerminalId,
+                      },
+                    ];
+                  })
                 : [];
-              const removedGlobalSourceControlSurface = persistedSurfaces.some(
-                (surface) => surface.kind === "source-control",
-              );
-              const surfaces = persistedSurfaces.flatMap<RightPanelSurface>((surface) => {
-                // Source control moved to its own global panel in v8.
-                if (surface.kind === "source-control") return [];
-                if (surface.kind === "file") {
-                  const revealLine =
-                    typeof surface.revealLine === "number" && Number.isFinite(surface.revealLine)
-                      ? Math.max(1, Math.trunc(surface.revealLine))
-                      : null;
-                  const revealRequestId =
-                    typeof surface.revealRequestId === "number" &&
-                    Number.isSafeInteger(surface.revealRequestId) &&
-                    surface.revealRequestId >= 0
-                      ? surface.revealRequestId
-                      : 0;
-                  return [{ ...surface, revealLine, revealRequestId }];
-                }
-                if (surface.kind !== "terminal") return [surface];
-                if (
-                  !("resourceId" in surface) ||
-                  typeof surface.resourceId !== "string" ||
-                  surface.id !== `terminal:${surface.resourceId}`
-                ) {
-                  return [];
-                }
-                const terminalIds =
-                  "terminalIds" in surface && Array.isArray(surface.terminalIds)
-                    ? [
-                        ...new Set(
-                          surface.terminalIds.filter(
-                            (terminalId): terminalId is string => typeof terminalId === "string",
-                          ),
-                        ),
-                      ]
-                    : [surface.resourceId];
-                const activeTerminalId =
-                  "activeTerminalId" in surface &&
-                  typeof surface.activeTerminalId === "string" &&
-                  terminalIds.includes(surface.activeTerminalId)
-                    ? surface.activeTerminalId
-                    : (terminalIds[0] ?? surface.resourceId);
-                return [
-                  {
-                    ...surface,
-                    terminalIds: terminalIds.length > 0 ? terminalIds : [surface.resourceId],
-                    activeTerminalId,
-                  },
-                ];
-              });
-              const activeSurfaceId = surfaces.some(
+              const persistedActiveSurfaceId = surfaces.some(
                 (surface) => surface.id === validThreadState?.activeSurfaceId,
               )
                 ? (validThreadState?.activeSurfaceId ?? null)
                 : null;
+              // A migration that dropped every surface (e.g. plan-only panels
+              // in v9) must not reopen an empty panel.
               const isOpen =
-                removedGlobalSourceControlSurface && surfaces.length === 0
-                  ? false
-                  : typeof validThreadState?.isOpen === "boolean"
-                    ? validThreadState.isOpen
-                    : activeSurfaceId !== null;
+                surfaces.length > 0 &&
+                (typeof validThreadState?.isOpen === "boolean"
+                  ? validThreadState.isOpen
+                  : persistedActiveSurfaceId !== null);
+              // An open panel needs an active surface: if migration dropped
+              // the persisted one (e.g. plan was active), fall back to the
+              // first survivor instead of rendering an open empty panel.
+              const activeSurfaceId =
+                persistedActiveSurfaceId ?? (isOpen ? (surfaces[0]?.id ?? null) : null);
               return [threadKey, { isOpen, surfaces, activeSurfaceId }];
             },
           ),

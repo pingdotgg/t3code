@@ -21,7 +21,7 @@ import { cn } from "../../lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import ChatView from "../ChatView";
 import { ProjectFavicon } from "../ProjectFavicon";
-import { resolveSidebarV2Status } from "../Sidebar.logic";
+import { resolveSidebarThreadStatus } from "../Sidebar.logic";
 import type { PrStatusIndicator } from "../ThreadStatusIndicators";
 import { Button } from "../ui/button";
 
@@ -57,7 +57,7 @@ function paneStatus(thread: EnvironmentThreadShell, snoozed: boolean, nowIso: st
       showLabelWithSubtitle: true,
     };
   }
-  const status = resolveSidebarV2Status(thread);
+  const status = resolveSidebarThreadStatus(thread);
   if (status === "approval") {
     return {
       label: "Approval needed",

@@ -146,6 +146,7 @@ export const make = Effect.gen(function* () {
       threadSettlement: true,
       threadSnooze: true,
       threadPinning: true,
+      threadPinReorder: true,
       threadTitleRegeneration: true,
       systemPromptInjection: true, // fork: f2 system prompt injection
       claudeCodexRouting: true, // fork: f5 Claude Code → Codex routing

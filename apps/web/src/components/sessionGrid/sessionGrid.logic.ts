@@ -6,7 +6,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
-import { firstValidTimestampMs, parseTimestampMs, sortThreadsForSidebarV2 } from "../Sidebar.logic";
+import { firstValidTimestampMs, parseTimestampMs, sortThreadsForSidebar } from "../Sidebar.logic";
 
 export interface SessionGridSearch {
   readonly project?: string;
@@ -186,7 +186,7 @@ export function sortSessionGridThreads(
 ): EnvironmentThreadShell[] {
   const pinned = threads.filter((thread) => thread.pinnedAt != null);
   const unpinned = threads.filter((thread) => thread.pinnedAt == null);
-  return [...sortThreadsForSidebarV2(pinned), ...sortThreadsForSidebarV2(unpinned)];
+  return [...sortThreadsForSidebar(pinned), ...sortThreadsForSidebar(unpinned)];
 }
 
 export function sortSessionGridSnoozedThreads(

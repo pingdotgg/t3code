@@ -6,7 +6,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 //
 // Some fork databases already recorded migration 37 before upstream assigned
 // that id to the turn keyset index. Repeating the idempotent index creation here
-// ensures those databases receive both schemas when they advance to 38.
+// ensures those databases receive both schemas when they advance to 39.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const columns = yield* sql<{ readonly name: string }>`

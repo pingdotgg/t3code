@@ -11,7 +11,6 @@ import {
   ArchiveIcon,
   ArrowLeftIcon,
   BotIcon,
-  FlaskConicalIcon,
   GitBranchIcon,
   KeyboardIcon,
   Link2Icon,
@@ -56,7 +55,6 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/prompt": ScrollTextIcon, // fork: f2 system prompt injection
   "/settings/source-control": GitBranchIcon,
   "/settings/connections": Link2Icon,
-  "/settings/beta": FlaskConicalIcon,
   "/settings/archived": ArchiveIcon,
 };
 

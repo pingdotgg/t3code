@@ -63,13 +63,13 @@ export function ComposerPreviewAnnotationCards({
                 />
               </button>
             ) : (
-              <span className="grid size-10 shrink-0 place-items-center border-r border-border/70 text-blue-500">
+              <span className="grid size-10 shrink-0 place-items-center border-r border-border/70 text-message-action">
                 <MousePointerClick className="size-3.5" />
               </span>
             )}
             <div className="min-w-0 px-2.5 py-2 pr-8">
               {annotation.comment.trim() ? (
-                <p className="max-w-80 truncate text-xs font-medium text-foreground/90">
+                <p className="max-w-80 truncate text-foreground text-xs font-medium">
                   {annotation.comment.trim()}
                 </p>
               ) : null}
@@ -84,13 +84,13 @@ export function ComposerPreviewAnnotationCards({
                     {elementLabels.slice(0, 2).map(({ id, label }) => (
                       <span
                         key={id}
-                        className="max-w-40 truncate font-mono text-[10px] text-foreground/65"
+                        className="max-w-40 truncate font-mono text-secondary-label text-[10px]"
                       >
                         {label}
                       </span>
                     ))}
                     {elementLabels.length > 2 ? (
-                      <span className="text-[10px] text-muted-foreground">
+                      <span className="text-secondary-label text-[10px]">
                         +{elementLabels.length - 2}
                       </span>
                     ) : null}
@@ -131,7 +131,7 @@ export function ComposerPreviewAnnotationCards({
             <button
               type="button"
               aria-label="Remove preview annotation"
-              className="absolute right-1.5 top-1.5 grid size-5 place-items-center rounded text-muted-foreground/60 transition hover:bg-muted hover:text-foreground"
+              className="absolute right-1.5 top-1.5 grid size-5 place-items-center rounded text-icon-muted transition hover:bg-muted hover:text-foreground"
               onClick={() => onRemove(annotation.id)}
             >
               <X className="size-3" />

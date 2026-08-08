@@ -6,7 +6,7 @@ import { useEffect, useMemo } from "react";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import { resolveSessionGridProject } from "../components/sessionGrid/sessionGrid.logic";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
-import { useClientSettings, useSidebarV2Enabled } from "../hooks/useSettings";
+import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings";
 import { openCommandPalette } from "../commandPaletteBus";
 import { useProjects } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
@@ -36,7 +36,7 @@ function ChatRouteGlobalShortcuts() {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
     useHandleNewThread();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const sidebarV2Enabled = useSidebarV2Enabled();
+  const legacySidebarEnabled = useLegacySidebarEnabled();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const projectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
   const projects = useProjects();
@@ -156,10 +156,10 @@ function ChatRouteGlobalShortcuts() {
           void handleNewThread(gridProjectRef, { navigate: false });
           return;
         }
-        // Sidebar v2 routes creation through the command palette whenever
-        // there is a real choice to make; v1 (and single-project setups)
-        // keep the immediate contextual create.
-        if (gridProjectRef === null && sidebarV2Enabled && projectGroups.length > 1) {
+        // The default sidebar routes creation through the command palette
+        // whenever there is a real choice to make; the legacy sidebar (and
+        // single-project setups) keep the immediate contextual create.
+        if (!legacySidebarEnabled && projectGroups.length > 1) {
           openCommandPalette({ open: "new-thread-in" });
           return;
         }
@@ -231,7 +231,7 @@ function ChatRouteGlobalShortcuts() {
     projectGroups.length,
     routeThreadRef,
     selectedThreadKeysSize,
-    sidebarV2Enabled,
+    legacySidebarEnabled,
     shortcutProjectRef,
     terminalOpen,
   ]);
