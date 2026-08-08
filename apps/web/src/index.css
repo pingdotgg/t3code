@@ -1711,6 +1711,10 @@ label:has(> select#reasoning-effort) select {
   vertical-align: middle;
 }
 
+.chat-markdown ol > li.task-list-item input[type="checkbox"] {
+  margin-left: calc(-1.25rem - var(--chat-markdown-ol-marker-extra, 0) * 1ch);
+}
+
 .chat-markdown a {
   color: var(--info-foreground);
   text-decoration: none;
