@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UIKit
 import UniformTypeIdentifiers
 @testable import T3Code
 
@@ -90,6 +91,28 @@ struct FeatureComposerPowerTests {
                     ),
                 ]
             ) == nil
+        )
+    }
+
+    @Test
+    func mixedPasteReadsPlainTextLazilyFromUIPasteboard() {
+        let pasteboard = UIPasteboard.withUniqueName()
+        defer { UIPasteboard.remove(withName: pasteboard.name) }
+        pasteboard.items = [
+            [
+                UTType.png.identifier: Data([0x89]),
+                UTType.plainText.identifier: "image metadata",
+            ],
+            [UTType.utf8PlainText.identifier: "first"],
+            [
+                UTType.html.identifier: Data("<b>second</b>".utf8),
+                UTType.utf8PlainText.identifier: "second",
+            ],
+        ]
+
+        #expect(
+            FeatureComposerPasteTextPolicy.text(from: pasteboard)
+                == "first\nsecond"
         )
     }
 

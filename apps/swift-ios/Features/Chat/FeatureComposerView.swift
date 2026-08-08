@@ -669,13 +669,18 @@ enum FeatureComposerPasteTextPolicy {
             let typeIdentifiers = pasteboard.types(forItemSet: itemSet)?
                 .first ?? []
             var stringsByType: [String: String] = [:]
-            for typeIdentifier in preferredPlainTextTypes(in: typeIdentifiers) {
-                let value = pasteboard.values(
-                    forPasteboardType: typeIdentifier,
-                    inItemSet: itemSet
-                )?.first as? String
-                if let value {
-                    stringsByType[typeIdentifier] = value
+            let containsImage = typeIdentifiers.contains {
+                UTType($0)?.conforms(to: .image) == true
+            }
+            if !containsImage {
+                for typeIdentifier in preferredPlainTextTypes(in: typeIdentifiers) {
+                    let value = pasteboard.values(
+                        forPasteboardType: typeIdentifier,
+                        inItemSet: itemSet
+                    )?.first as? String
+                    if let value {
+                        stringsByType[typeIdentifier] = value
+                    }
                 }
             }
             return FeatureComposerPasteItem(
