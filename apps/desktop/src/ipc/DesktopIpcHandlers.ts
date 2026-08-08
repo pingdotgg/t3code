@@ -3,6 +3,10 @@ import * as Effect from "effect/Effect";
 import * as DesktopIpc from "./DesktopIpc.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
 import {
+  getDiscordRichPresenceAvailable,
+  setDiscordRichPresence,
+} from "./methods/discordPresence.ts";
+import {
   clearConnectionCatalog,
   getConnectionCatalog,
   setConnectionCatalog,
@@ -56,6 +60,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
 
   yield* ipc.handle(getClientSettings);
   yield* ipc.handle(setClientSettings);
+  yield* ipc.handleSync(getDiscordRichPresenceAvailable);
+  yield* ipc.handle(setDiscordRichPresence);
   yield* ipc.handle(getConnectionCatalog);
   yield* ipc.handle(setConnectionCatalog);
   yield* ipc.handle(clearConnectionCatalog);

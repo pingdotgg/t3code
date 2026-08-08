@@ -83,5 +83,9 @@ describe("searchSettings", () => {
       to: "/settings/appearance",
       targetId: "appearance",
     });
+    expect(searchSettings("discord rich presence")[0]).toMatchObject({
+      id: "discord-rich-presence",
+      to: "/settings/appearance",
+    });
   });
 });

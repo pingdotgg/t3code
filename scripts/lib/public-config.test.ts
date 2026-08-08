@@ -19,6 +19,7 @@ describe("loadRepoEnv", () => {
     const env = loadRepoEnv({ baseEnv: {}, repoRoot: makeTemporaryDirectory() });
 
     expect(env.T3CODE_CLERK_PUBLISHABLE_KEY).toBeUndefined();
+    expect(env.T3CODE_DISCORD_APPLICATION_ID).toBeUndefined();
     expect(env.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID).toBeUndefined();
     expect(env.VITE_CLERK_PUBLISHABLE_KEY).toBeUndefined();
     expect(env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY).toBeUndefined();
@@ -90,6 +91,7 @@ describe("loadRepoEnv", () => {
         EXPO_PUBLIC_OTLP_TRACES_TOKEN: "mobile-token",
       }),
     ).toEqual({
+      discordApplicationId: undefined,
       clerkPublishableKey: "pk_legacy",
       clerkJwtTemplate: "template_legacy",
       clerkCliOAuthClientId: "oauth_canonical",
@@ -101,6 +103,15 @@ describe("loadRepoEnv", () => {
       relayClientOtlpTracesDataset: undefined,
       relayClientOtlpTracesToken: undefined,
     });
+  });
+
+  it("projects the public Discord application ID", () => {
+    expect(
+      loadRepoEnv({
+        baseEnv: { T3CODE_DISCORD_APPLICATION_ID: " 123456789012345678 " },
+        repoRoot: makeTemporaryDirectory(),
+      }),
+    ).toEqual({ T3CODE_DISCORD_APPLICATION_ID: "123456789012345678" });
   });
 
   it("projects canonical relay client tracing values to web build aliases", () => {

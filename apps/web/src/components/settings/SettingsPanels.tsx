@@ -456,6 +456,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode
         ? ["Environment identification"]
         : []),
+      ...(settings.discordRichPresenceEnabled !==
+      DEFAULT_UNIFIED_SETTINGS.discordRichPresenceEnabled
+        ? ["Discord Rich Presence"]
+        : []),
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
@@ -520,6 +524,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
       settings.diffIgnoreWhitespace,
+      settings.discordRichPresenceEnabled,
       settings.environmentIdentificationMode,
       settings.fontFamilyCode,
       settings.fontFamilyComposer,
@@ -607,6 +612,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
+      discordRichPresenceEnabled: DEFAULT_UNIFIED_SETTINGS.discordRichPresenceEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
@@ -932,6 +938,9 @@ export function AppearanceSettingsPanel() {
   const environmentStageLabel = useEnvironmentStageLabel();
   const showEnvironmentIdentification =
     resolveEnvironmentIdentificationPillLabel(environmentStageLabel) !== null;
+  const showDiscordRichPresence = window.desktopBridge?.setDiscordRichPresence !== undefined;
+  const discordRichPresenceAvailable =
+    window.desktopBridge?.getDiscordRichPresenceAvailable?.() ?? false;
   const glassOpacityRatio =
     (settings.glassOpacity - MIN_GLASS_OPACITY) / (MAX_GLASS_OPACITY - MIN_GLASS_OPACITY);
   const glassOpacitySliderStyle = {
@@ -1042,6 +1051,41 @@ export function AppearanceSettingsPanel() {
                   ))}
                 </SelectPopup>
               </Select>
+            }
+          />
+        ) : null}
+
+        {showDiscordRichPresence ? (
+          <SettingsRow
+            {...searchableSetting("discord-rich-presence")}
+            description={
+              discordRichPresenceAvailable
+                ? "Shows “Working in T3 Code on X projects” in Discord while agents are active. Only the count is shared; project and thread names stay private."
+                : "Unavailable in this build because no Discord application ID was configured."
+            }
+            resetAction={
+              settings.discordRichPresenceEnabled !==
+              DEFAULT_UNIFIED_SETTINGS.discordRichPresenceEnabled ? (
+                <SettingResetButton
+                  label="Discord Rich Presence"
+                  onClick={() =>
+                    updateSettings({
+                      discordRichPresenceEnabled:
+                        DEFAULT_UNIFIED_SETTINGS.discordRichPresenceEnabled,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.discordRichPresenceEnabled && discordRichPresenceAvailable}
+                disabled={!discordRichPresenceAvailable}
+                onCheckedChange={(checked) =>
+                  updateSettings({ discordRichPresenceEnabled: Boolean(checked) })
+                }
+                aria-label="Discord Rich Presence"
+              />
             }
           />
         ) : null}

@@ -5,6 +5,7 @@ import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 
 export interface T3CodePublicConfig {
+  readonly discordApplicationId: string | undefined;
   readonly clerkPublishableKey: string | undefined;
   readonly clerkJwtTemplate: string | undefined;
   readonly clerkCliOAuthClientId: string | undefined;
@@ -38,6 +39,9 @@ export function loadRepoEnv({
     ...rootEnv,
     ...localEnv,
     ...baseEnv,
+    ...(config.discordApplicationId
+      ? { T3CODE_DISCORD_APPLICATION_ID: config.discordApplicationId }
+      : {}),
     ...(config.clerkPublishableKey
       ? {
           T3CODE_CLERK_PUBLISHABLE_KEY: config.clerkPublishableKey,
@@ -105,6 +109,7 @@ export function loadRepoEnv({
 
 export function resolvePublicConfig(...sources: readonly Environment[]): T3CodePublicConfig {
   return {
+    discordApplicationId: firstNonEmpty(sources, "T3CODE_DISCORD_APPLICATION_ID"),
     clerkPublishableKey: firstNonEmpty(
       sources,
       "T3CODE_CLERK_PUBLISHABLE_KEY",

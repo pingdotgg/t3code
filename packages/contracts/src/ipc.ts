@@ -994,6 +994,11 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
   input: PreviewAutomationWaitForInput,
 });
 
+export const DesktopDiscordPresenceInputSchema = Schema.Struct({
+  activeProjectCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type DesktopDiscordPresenceInput = typeof DesktopDiscordPresenceInputSchema.Type;
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   // One bootstrap per pool instance currently registered with bootstrap
@@ -1003,6 +1008,8 @@ export interface DesktopBridge {
   getLocalEnvironmentBearerToken: () => Promise<string>;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;
+  getDiscordRichPresenceAvailable?: () => boolean;
+  setDiscordRichPresence?: (input: DesktopDiscordPresenceInput) => Promise<void>;
   getConnectionCatalog?: () => Promise<string | null>;
   setConnectionCatalog?: (catalog: string) => Promise<boolean>;
   clearConnectionCatalog?: () => Promise<void>;

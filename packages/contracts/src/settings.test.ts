@@ -33,6 +33,15 @@ describe("ClientSettings word wrap", () => {
   });
 });
 
+describe("ClientSettings Discord Rich Presence", () => {
+  it("is private by default and accepts an explicit opt-in", () => {
+    expect(decodeClientSettings({}).discordRichPresenceEnabled).toBe(false);
+    expect(
+      decodeClientSettingsPatch({ discordRichPresenceEnabled: true }).discordRichPresenceEnabled,
+    ).toBe(true);
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);

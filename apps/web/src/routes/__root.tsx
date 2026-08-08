@@ -8,7 +8,7 @@ import {
   useLocation,
   useNavigate,
 } from "@tanstack/react-router";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
@@ -29,7 +29,8 @@ import {
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, useClientSettingsHydrated } from "../hooks/useSettings";
+import { countActiveDiscordPresenceProjects } from "../discordPresence";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKeyFromPath,
@@ -49,7 +50,12 @@ import {
   primaryServerConfigEventAtom,
   primaryServerWelcomeAtom,
 } from "../state/server";
-import { readProject, setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
+import {
+  readProject,
+  setActiveEnvironmentId,
+  useActiveEnvironmentId,
+  useThreadShells,
+} from "../state/entities";
 import {
   createKeybindingsUpdateToastController,
   type KeybindingsUpdateToastController,
@@ -131,6 +137,7 @@ function RootRouteView() {
         <DocumentTitleSync />
         <GlassAppearanceSync />
         <FontAppearanceSync />
+        <DiscordPresenceSync />
         {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
         <RelayClientInstallDialog />
         <ConnectOnboardingDialog />
@@ -146,6 +153,21 @@ function RootRouteView() {
       </AnchoredToastProvider>
     </ToastProvider>
   );
+}
+
+function DiscordPresenceSync() {
+  const enabled = useClientSettings((settings) => settings.discordRichPresenceEnabled);
+  const settingsHydrated = useClientSettingsHydrated();
+  const threads = useThreadShells();
+  const activeProjectCount = useMemo(() => countActiveDiscordPresenceProjects(threads), [threads]);
+
+  useEffect(() => {
+    const setPresence = window.desktopBridge?.setDiscordRichPresence;
+    if (!settingsHydrated || !setPresence) return;
+    void setPresence({ activeProjectCount: enabled ? activeProjectCount : 0 }).catch(() => {});
+  }, [activeProjectCount, enabled, settingsHydrated]);
+
+  return null;
 }
 
 function GlassAppearanceSync() {

@@ -64,6 +64,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "appearance",
   },
   {
+    id: "discord-rich-presence",
+    title: "Discord Rich Presence",
+    to: "/settings/appearance",
+  },
+  {
     id: "interface-font",
     title: "Interface font",
     to: "/settings/appearance",

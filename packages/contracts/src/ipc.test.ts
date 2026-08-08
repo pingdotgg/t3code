@@ -1,7 +1,18 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { DesktopEnvironmentBootstrapSchema } from "./ipc.ts";
+import { DesktopDiscordPresenceInputSchema, DesktopEnvironmentBootstrapSchema } from "./ipc.ts";
+
+describe("DesktopDiscordPresenceInputSchema", () => {
+  const decode = Schema.decodeUnknownSync(DesktopDiscordPresenceInputSchema);
+
+  it("accepts only non-negative integer project counts", () => {
+    expect(decode({ activeProjectCount: 0 })).toEqual({ activeProjectCount: 0 });
+    expect(decode({ activeProjectCount: 3 })).toEqual({ activeProjectCount: 3 });
+    expect(() => decode({ activeProjectCount: -1 })).toThrow();
+    expect(() => decode({ activeProjectCount: 1.5 })).toThrow();
+  });
+});
 
 describe("DesktopEnvironmentBootstrapSchema", () => {
   const decode = Schema.decodeUnknownSync(DesktopEnvironmentBootstrapSchema);
