@@ -205,6 +205,13 @@ jobs:
             --signed \
             --verbose
 
+      - name: Notarize and staple signed disk image
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: node scripts/fork/2code-release/notarize-dmg.ts --artifact-dir release-2code
+
       - name: Prepare content-addressed updater payloads
         run: |
           node scripts/fork/2code-release/release-cli.ts prepare \

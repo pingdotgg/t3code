@@ -70,6 +70,9 @@ Run the workflow manually with action `dry-run` to build, sign, notarize, and ve
 version without creating a tag or writing to R2. The verified candidate is retained as a GitHub
 Actions artifact for 30 days.
 
+The app bundle and the signed DMG container are submitted to Apple independently and stapled before
+the updater manifests and content hashes are generated.
+
 The signing build and every mutation job use the protected production environment. Inspect the
 signed dry-run artifact before approving the first real version bump.
 
