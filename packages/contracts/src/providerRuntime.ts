@@ -699,8 +699,40 @@ const AccountUpdatedPayload = Schema.Struct({
 });
 export type AccountUpdatedPayload = typeof AccountUpdatedPayload.Type;
 
+/**
+ * Whether the account may currently send work. `warning` means the provider
+ * accepted this turn but flagged the window as close to exhausted. Absent
+ * means the update did not report one — providers send sparse snapshots, and
+ * silence is not recovery.
+ */
+const RateLimitStatus = Schema.Literals(["allowed", "warning", "rejected"]);
+export type RateLimitStatus = typeof RateLimitStatus.Type;
+
+/**
+ * One rolling usage window on a provider account. Providers disagree on how
+ * many they report — Claude sends the single governing window, Codex sends a
+ * primary/secondary pair — so consumers read the array, not fixed fields.
+ */
+const RateLimitWindow = Schema.Struct({
+  /** Provider-native window name, e.g. `five_hour`, `seven_day`, `primary`. */
+  kind: TrimmedNonEmptyStringSchema,
+  /** Share of the window consumed, 0-100. */
+  usedPercent: Schema.Number,
+  /** Unix epoch seconds at which the window resets. */
+  resetsAt: Schema.optional(Schema.Number),
+  /** Window length in minutes, when the provider reports one. */
+  windowDurationMins: Schema.optional(Schema.Number),
+});
+export type RateLimitWindow = typeof RateLimitWindow.Type;
+
 const AccountRateLimitsUpdatedPayload = Schema.Struct({
-  rateLimits: Schema.Unknown,
+  status: Schema.optional(RateLimitStatus),
+  /**
+   * The windows this update reported, empty when it carried none. Updates are
+   * sparse, so a window missing here is unchanged rather than cleared — merge
+   * by `kind` instead of replacing wholesale.
+   */
+  windows: Schema.Array(RateLimitWindow),
 });
 export type AccountRateLimitsUpdatedPayload = typeof AccountRateLimitsUpdatedPayload.Type;
 
