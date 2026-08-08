@@ -48,6 +48,16 @@ function ModelPickerDemo() {
     setModelOptions(undefined);
   };
 
+  const handlePickerOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (!nextOpen) {
+      requestAnimationFrame(() => {
+        const trigger = document.querySelector<HTMLElement>("[data-chat-provider-model-picker]");
+        if (trigger && trigger === document.activeElement) trigger.blur();
+      });
+    }
+  };
+
   return (
     <main className="flex h-full w-full items-end justify-start overflow-hidden bg-transparent pb-10 pl-5 text-foreground">
       <section className="chat-composer-glass-shell h-40 w-full min-w-0">
@@ -64,7 +74,7 @@ function ModelPickerDemo() {
               triggerClassName="bg-transparent text-foreground hover:bg-white/[0.05] hover:text-foreground focus-visible:ring-0 focus-visible:ring-offset-0"
               popupSide="top"
               open={open}
-              onOpenChange={setOpen}
+              onOpenChange={handlePickerOpenChange}
               onInstanceModelChange={handleModelChange}
             />
             <TraitsPicker

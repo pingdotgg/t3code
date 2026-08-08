@@ -1,4 +1,7 @@
-[data-chat-provider-model-picker]:focus-visible {
-  outline: none;
-  box-shadow: none;
+[data-chat-provider-model-picker]:focus,
+[data-chat-provider-model-picker]:focus-visible,
+[data-chat-provider-model-picker][data-focus-visible] {
+  border-color: transparent !important;
+  outline: none !important;
+  box-shadow: none !important;
 }
