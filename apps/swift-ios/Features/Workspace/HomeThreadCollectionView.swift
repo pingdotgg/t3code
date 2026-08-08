@@ -18,11 +18,18 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     let onToggleSettled: () -> Void
     let onToggleArchive: () -> Void
     let onShowMoreSettled: () -> Void
+    let regeneratingThreadIDs: Set<String>
+    let onNewThreadOnBranch: (FeatureThread) -> Void
     let onRename: (FeatureThread) -> Void
+    let onRegenerateTitle: (FeatureThread) -> Void
     let onArchive: (FeatureThread, Bool) -> Void
     let onSettle: (FeatureThread, Bool) -> Void
     let onSnooze: (FeatureThread, Date?) -> Void
     let onPin: (FeatureThread, Bool) -> Void
+    let canCopyPath: (FeatureThread) -> Bool
+    let onCopyPath: (FeatureThread) -> Void
+    let onCopyBranch: (FeatureThread) -> Void
+    let onCopyThreadID: (FeatureThread) -> Void
     let onDelete: (FeatureThread) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -380,70 +387,115 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         }
 
         private func menuActions(for thread: FeatureThread, isArchived: Bool) -> [UIMenuElement] {
-            let rename = UIAction(title: "Rename", image: UIImage(systemName: "pencil")) { [weak self] _ in
-                self?.parent.onRename(thread)
-            }
-            let archive = UIAction(
-                title: isArchived ? "Restore" : "Archive",
-                image: UIImage(systemName: isArchived ? "arrow.uturn.backward" : "archivebox")
-            ) { [weak self] _ in
-                self?.parent.onArchive(thread, !isArchived)
-            }
-
-            var actions: [UIMenuElement] = [rename, archive]
-            if !isArchived {
-                if thread.canTogglePin {
-                    let isPinned = thread.pinnedAt != nil
-                    actions.append(
-                        UIAction(
-                            title: isPinned ? "Unpin" : "Pin",
-                            image: UIImage(systemName: isPinned ? "pin.slash" : "pin")
-                        ) { [weak self] _ in
-                            self?.parent.onPin(thread, !isPinned)
-                        }
-                    )
-                }
-                if thread.canToggleSettlement {
-                    let isSettled = thread.isEffectivelySettled(at: .now)
-                    actions.append(
-                        UIAction(
-                            title: isSettled ? "Reopen" : "Settle",
-                            image: UIImage(
-                                systemName: isSettled ? "arrow.counterclockwise" : "checkmark"
-                            )
-                        ) { [weak self] _ in
-                            self?.parent.onSettle(thread, !isSettled)
-                        }
-                    )
-                }
-
-                if thread.canToggleSnooze {
-                    let isSnoozed = thread.isEffectivelySnoozed(at: .now)
-                    let snooze = UIAction(
-                        title: isSnoozed ? "Unsnooze" : "Snooze 1 hour",
-                        image: UIImage(systemName: isSnoozed ? "bell" : "clock")
+            ThreadContextMenuModel.items(
+                for: thread,
+                isArchived: isArchived,
+                canCopyPath: parent.canCopyPath(thread)
+            ).map { item in
+                switch item {
+                case let .newThread(branch):
+                    return UIAction(
+                        title: "New thread on \(branch)",
+                        image: UIImage(systemName: "plus.bubble")
                     ) { [weak self] _ in
-                        self?.parent.onSnooze(
-                            thread,
-                            isSnoozed ? nil : Date.now.addingTimeInterval(60 * 60)
+                        self?.parent.onNewThreadOnBranch(thread)
+                    }
+                case .rename:
+                    return UIAction(
+                        title: "Rename thread",
+                        image: UIImage(systemName: "pencil")
+                    ) { [weak self] _ in
+                        self?.parent.onRename(thread)
+                    }
+                case .regenerateTitle:
+                    let action = UIAction(
+                        title: parent.regeneratingThreadIDs.contains(thread.id)
+                            ? "Regenerating…"
+                            : "Regenerate title",
+                        image: UIImage(systemName: "sparkles")
+                    ) { [weak self] _ in
+                        self?.parent.onRegenerateTitle(thread)
+                    }
+                    if parent.regeneratingThreadIDs.contains(thread.id) {
+                        action.attributes = .disabled
+                    }
+                    return action
+                case let .archive(archived):
+                    return UIAction(
+                        title: archived ? "Restore" : "Archive",
+                        image: UIImage(
+                            systemName: archived ? "arrow.uturn.backward" : "archivebox"
                         )
+                    ) { [weak self] _ in
+                        self?.parent.onArchive(thread, !archived)
                     }
-                    if thread.state == .queued
-                        || thread.state == .waitingForApproval
-                        || thread.state == .waitingForInput {
-                        snooze.attributes = .disabled
+                case let .pin(pinned):
+                    return UIAction(
+                        title: pinned ? "Unpin thread" : "Pin thread",
+                        image: UIImage(systemName: pinned ? "pin.slash" : "pin")
+                    ) { [weak self] _ in
+                        self?.parent.onPin(thread, !pinned)
                     }
-                    actions.append(snooze)
+                case let .settle(settled):
+                    return UIAction(
+                        title: settled ? "Reopen thread" : "Settle thread",
+                        image: UIImage(
+                            systemName: settled ? "arrow.counterclockwise" : "checkmark"
+                        )
+                    ) { [weak self] _ in
+                        self?.parent.onSettle(thread, !settled)
+                    }
+                case let .snooze(presets, enabled):
+                    let actions = presets.map { preset in
+                        let action = UIAction(title: preset.menuTitle) { [weak self] _ in
+                            self?.parent.onSnooze(thread, preset.until)
+                        }
+                        if !enabled { action.attributes = .disabled }
+                        return action
+                    }
+                    return UIMenu(
+                        title: "Snooze",
+                        image: UIImage(systemName: "clock"),
+                        children: actions
+                    )
+                case .unsnooze:
+                    return UIAction(
+                        title: "Wake thread",
+                        image: UIImage(systemName: "bell")
+                    ) { [weak self] _ in
+                        self?.parent.onSnooze(thread, nil)
+                    }
+                case .copyPath:
+                    return UIAction(
+                        title: "Copy path",
+                        image: UIImage(systemName: "doc.on.doc")
+                    ) { [weak self] _ in
+                        self?.parent.onCopyPath(thread)
+                    }
+                case .copyBranch:
+                    return UIAction(
+                        title: "Copy branch",
+                        image: UIImage(systemName: "arrow.triangle.branch")
+                    ) { [weak self] _ in
+                        self?.parent.onCopyBranch(thread)
+                    }
+                case .copyThreadID:
+                    return UIAction(
+                        title: "Copy Thread ID",
+                        image: UIImage(systemName: "number")
+                    ) { [weak self] _ in
+                        self?.parent.onCopyThreadID(thread)
+                    }
+                case .delete:
+                    return UIAction(
+                        title: "Delete",
+                        image: UIImage(systemName: "trash"),
+                        attributes: .destructive
+                    ) { [weak self] _ in
+                        self?.parent.onDelete(thread)
+                    }
                 }
             }
-
-            actions.append(
-                UIAction(title: "Delete", image: UIImage(systemName: "trash"), attributes: .destructive) {
-                    [weak self] _ in
-                    self?.parent.onDelete(thread)
-                }
-            )
-            return actions
         }
 
         /// Working rows show a live per-second duration, so they need a 1 Hz

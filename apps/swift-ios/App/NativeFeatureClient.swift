@@ -1248,6 +1248,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         try? await refresh(client: route.client)
     }
 
+    func regenerateThreadTitle(id: String) async throws {
+        let route = try threadRoute(for: id)
+        _ = try await route.client.regenerateTitle(threadID: route.wireID)
+        try? await refresh(client: route.client)
+    }
+
     func setThreadArchived(id: String, archived: Bool) async throws {
         let route = try threadRoute(for: id)
         let cached = cachedThread(id: route.uiID)
@@ -2210,6 +2216,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             snoozedUntil: thread.snoozedUntil,
             snoozedAt: thread.snoozedAt,
             pinnedAt: thread.pinnedAt,
+            titleRegeneration: thread.titleRegeneration,
             session: thread.session,
             latestUserMessageAt: thread.latestUserMessageAt,
             hasPendingApprovals: thread.hasPendingApprovals,
@@ -3788,6 +3795,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             supportsSnooze: environment.descriptor?.capabilities.threadSnooze,
             supportsPinning: environment.descriptor?.capabilities.threadPinning,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
+            isRegeneratingTitle: thread.titleRegeneration != nil,
             attentionAt: failureDate(
                 latestTurn: thread.latestTurn,
                 session: thread.session
@@ -3857,6 +3865,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             supportsSnooze: environment.descriptor?.capabilities.threadSnooze,
             supportsPinning: environment.descriptor?.capabilities.threadPinning,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
+            isRegeneratingTitle: thread.titleRegeneration != nil,
             attentionAt: failureDate(
                 latestTurn: thread.latestTurn,
                 session: thread.session

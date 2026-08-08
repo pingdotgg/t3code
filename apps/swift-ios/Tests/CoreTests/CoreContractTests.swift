@@ -112,6 +112,14 @@ final class CoreContractTests: XCTestCase {
             commandID: "command-unpin"
         )
         XCTAssertEqual(unpin["type"]?.stringValue, "thread.unpin")
+
+        let regenerateTitle = OrchestrationCommands.regenerateTitle(
+            threadID: "thread-1",
+            commandID: "command-regenerate-title"
+        )
+        XCTAssertEqual(regenerateTitle["type"]?.stringValue, "thread.meta.update")
+        XCTAssertEqual(regenerateTitle["threadId"]?.stringValue, "thread-1")
+        XCTAssertEqual(regenerateTitle["regenerateTitle"], .bool(true))
     }
 
     func testFirstSendCommandCarriesCanonicalBootstrapMetadata() throws {

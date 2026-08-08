@@ -35,11 +35,14 @@ public struct WorkspaceView: View {
     @State private var isArchiveExpanded = false
     @State private var settledLimit = 12
     @State private var showingNewTask = false
+    @State private var newTaskPresentationID = UUID()
     @State private var newTaskInitialProjectID: String?
+    @State private var newTaskInitialWorkspace: FeatureComposerWorkspaceDraft?
     @State private var showingAddProject = false
     @State private var showingSettings = false
     @State private var renamingThread: FeatureThread?
     @State private var renameTitle = ""
+    @State private var regeneratingThreadIDs: Set<String> = []
     @State private var sidebarBoundaryNow = Date.now
     @State private var preferredCompactColumn = NavigationSplitViewColumn.sidebar
     @State private var homePresentationCache = HomePresentationCache()
@@ -133,8 +136,10 @@ public struct WorkspaceView: View {
                     showingNewTask = false
                 },
                 onCreateProject: openProjectCreation,
-                initialProjectID: newTaskInitialProjectID
+                initialProjectID: newTaskInitialProjectID,
+                initialWorkspace: newTaskInitialWorkspace
             )
+            .id(newTaskPresentationID)
         }
         .sheet(isPresented: $showingAddProject) {
             AddProjectView(model: model)
@@ -218,6 +223,11 @@ public struct WorkspaceView: View {
             projectID: selectedProjectID,
             now: sidebarBoundaryNow
         )
+        let serverRegeneratingThreadIDs = Set(
+            model.snapshot.threads.compactMap { thread in
+                thread.isRegeneratingTitle == true ? thread.id : nil
+            }
+        )
 
         return VStack(spacing: 0) {
             projectFilter
@@ -236,9 +246,42 @@ public struct WorkspaceView: View {
                 onToggleSettled: { isSettledExpanded.toggle() },
                 onToggleArchive: { isArchiveExpanded.toggle() },
                 onShowMoreSettled: { settledLimit += 25 },
+                regeneratingThreadIDs: regeneratingThreadIDs.union(
+                    serverRegeneratingThreadIDs
+                ),
+                onNewThreadOnBranch: openNewTaskOnBranch,
                 onRename: { thread in
                     renameTitle = thread.title
                     renamingThread = thread
+                },
+                onRegenerateTitle: { thread in
+                    Task { @MainActor in
+                        guard regeneratingThreadIDs.insert(thread.id).inserted else { return }
+                        let originalTitle = thread.title
+                        guard await model.regenerateThreadTitle(thread.id) else {
+                            regeneratingThreadIDs.remove(thread.id)
+                            return
+                        }
+                        var observedServerRegeneration = false
+                        for _ in 0 ..< 240 {
+                            guard !Task.isCancelled else { break }
+                            guard let latest = model.snapshot.threads.first(where: {
+                                $0.id == thread.id
+                            }) else {
+                                break
+                            }
+                            if latest.title != originalTitle {
+                                break
+                            }
+                            if latest.isRegeneratingTitle == true {
+                                observedServerRegeneration = true
+                            } else if observedServerRegeneration {
+                                break
+                            }
+                            try? await Task.sleep(for: .milliseconds(250))
+                        }
+                        regeneratingThreadIDs.remove(thread.id)
+                    }
                 },
                 onArchive: { thread, archived in
                     Task { await model.setArchived(thread.id, archived: archived) }
@@ -251,6 +294,20 @@ public struct WorkspaceView: View {
                 },
                 onPin: { thread, pinned in
                     Task { await model.setPinned(thread.id, pinned: pinned) }
+                },
+                canCopyPath: { thread in
+                    workspacePath(for: thread) != nil
+                },
+                onCopyPath: { thread in
+                    guard let path = workspacePath(for: thread) else { return }
+                    UIPasteboard.general.string = path
+                },
+                onCopyBranch: { thread in
+                    UIPasteboard.general.string = thread.branch?
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                },
+                onCopyThreadID: { thread in
+                    UIPasteboard.general.string = thread.wireID ?? thread.id
                 },
                 onDelete: { thread in
                     Task { await model.deleteThread(thread.id) }
@@ -605,16 +662,37 @@ public struct WorkspaceView: View {
     }
 
     private func openNewTaskOrProjectCreation() {
-        openNewTaskOrProjectCreation(initialProjectID: nil)
+        openNewTaskOrProjectCreation(initialProjectID: nil, initialWorkspace: nil)
     }
 
-    private func openNewTaskOrProjectCreation(initialProjectID: String?) {
+    private func openNewTaskOrProjectCreation(
+        initialProjectID: String?,
+        initialWorkspace: FeatureComposerWorkspaceDraft? = nil
+    ) {
         if creationProjects.isEmpty {
             showingAddProject = true
         } else {
             newTaskInitialProjectID = initialProjectID
+            newTaskInitialWorkspace = initialWorkspace
+            newTaskPresentationID = UUID()
             showingNewTask = true
         }
+    }
+
+    private func openNewTaskOnBranch(_ thread: FeatureThread) {
+        guard let workspace = thread.newTaskWorkspaceSeed else { return }
+        openNewTaskOrProjectCreation(
+            initialProjectID: thread.projectID,
+            initialWorkspace: workspace
+        )
+    }
+
+    private func workspacePath(for thread: FeatureThread) -> String? {
+        if let worktreePath = thread.worktreePath?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !worktreePath.isEmpty {
+            return worktreePath
+        }
+        return model.snapshot.projects.first { $0.id == thread.projectID }?.path
     }
 
     private func consumeNavigationRequest() {
@@ -648,6 +726,7 @@ public struct WorkspaceView: View {
         showingAddProject = false
         showingSettings = false
         renamingThread = nil
+        newTaskInitialWorkspace = nil
     }
 
     private func projectMenuTitle(_ project: FeatureProject) -> String {

@@ -331,6 +331,13 @@ public final class FeatureRootModel {
         }
     }
 
+    @discardableResult
+    public func regenerateThreadTitle(_ id: String) async -> Bool {
+        await perform {
+            try await client.regenerateThreadTitle(id: id)
+        }
+    }
+
     public func setArchived(_ id: String, archived: Bool) async {
         let environment = currentEnvironmentIdentity
         await perform {
