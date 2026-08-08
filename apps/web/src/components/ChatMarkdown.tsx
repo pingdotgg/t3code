@@ -68,7 +68,8 @@ import {
 } from "../markdown-clipboard";
 import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation";
 import {
-  normalizeMarkdownLinkDestination,
+  extractMarkdownLinkHrefs,
+  normalizeMarkdownLinkHrefKey,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   rewriteMarkdownFileUriHref,
@@ -748,7 +749,6 @@ interface MarkdownFileLinkProps {
   className?: string | undefined;
 }
 
-const MARKDOWN_LINK_HREF_PATTERN = /\[[^\]]*]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
 const MARKDOWN_FILE_LINK_CLASS_NAME =
   "chat-markdown-file-link cursor-pointer transition-colors hover:bg-accent/70";
 
@@ -825,21 +825,6 @@ function extractInlineCodeSpans(text: string): string[] {
     }
   }
   return spans;
-}
-
-function extractMarkdownLinkHrefs(text: string): string[] {
-  const hrefs: string[] = [];
-  for (const match of text.matchAll(MARKDOWN_LINK_HREF_PATTERN)) {
-    const href = match[1]?.trim();
-    if (!href) continue;
-    hrefs.push(href);
-  }
-  return hrefs;
-}
-
-function normalizeMarkdownLinkHrefKey(href: string): string {
-  const normalizedHref = normalizeMarkdownLinkDestination(href);
-  return rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
 }
 
 const MARKDOWN_LINK_FAVICON_CLASS_NAME = "block size-full shrink-0 select-none";
@@ -1283,11 +1268,13 @@ function ChatMarkdown({
       NonNullable<ReturnType<typeof resolveMarkdownFileLinkMeta>>
     >();
     for (const href of extractMarkdownLinkHrefs(text)) {
-      const normalizedHref = normalizeMarkdownLinkHrefKey(href);
-      if (metaByHref.has(normalizedHref)) continue;
-      const meta = resolveMarkdownFileLinkMeta(normalizedHref, cwd);
+      const key = normalizeMarkdownLinkHrefKey(href);
+      if (metaByHref.has(key)) continue;
+      // Resolve the path from the original href (single decode); the decoded key
+      // is only used to match the render-time anchor href.
+      const meta = resolveMarkdownFileLinkMeta(href, cwd);
       if (meta) {
-        metaByHref.set(normalizedHref, meta);
+        metaByHref.set(key, meta);
       }
     }
     return metaByHref;
@@ -1529,7 +1516,7 @@ function ChatMarkdown({
 
         return fileLinkChip(
           fileLinkMeta,
-          `[${fileLinkMeta.basename}](${normalizedHref})`,
+          `[${fileLinkMeta.basename}](${href ?? normalizedHref})`,
           props.className,
         );
       },

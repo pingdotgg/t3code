@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  extractMarkdownLinkHrefs,
+  normalizeMarkdownLinkHrefKey,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   resolveMarkdownFileLinkTarget,
@@ -32,6 +34,82 @@ describe("rewriteMarkdownFileUriHref", () => {
     expect(
       rewriteMarkdownFileUriHref(" <file:///D:/Programme/t3code/apps/web/src/markdown-links.ts> "),
     ).toBe("D:/Programme/t3code/apps/web/src/markdown-links.ts");
+  });
+});
+
+describe("extractMarkdownLinkHrefs", () => {
+  it("extracts bare destinations", () => {
+    expect(extractMarkdownLinkHrefs("[control](/tmp/link%20repro/manifest.tsv)")).toEqual([
+      "/tmp/link%20repro/manifest.tsv",
+    ]);
+  });
+
+  it("extracts angle-bracket destinations that contain spaces", () => {
+    expect(extractMarkdownLinkHrefs("[angle](</tmp/link repro/manifest.tsv>)")).toEqual([
+      "/tmp/link repro/manifest.tsv",
+    ]);
+  });
+
+  it("keeps balanced parentheses inside bare destinations", () => {
+    expect(extractMarkdownLinkHrefs("[parens](/tmp/a(1).txt)")).toEqual(["/tmp/a(1).txt"]);
+  });
+
+  it("ignores a trailing title after the destination", () => {
+    expect(extractMarkdownLinkHrefs('[t](/tmp/a.txt "title")')).toEqual(["/tmp/a.txt"]);
+  });
+
+  it("finds the label end across escaped brackets", () => {
+    expect(extractMarkdownLinkHrefs("[foo \\] bar](/tmp/a.txt)")).toEqual(["/tmp/a.txt"]);
+  });
+
+  it("finds the label end across balanced nested brackets", () => {
+    expect(extractMarkdownLinkHrefs("[foo [bar]](/tmp/a.txt)")).toEqual(["/tmp/a.txt"]);
+  });
+
+  it("does not extract link-looking sequences inside a title", () => {
+    expect(extractMarkdownLinkHrefs('[t](/tmp/a.txt "see [x](/tmp/should-not-match.txt)")')).toEqual(
+      ["/tmp/a.txt"],
+    );
+  });
+
+  it("extracts every link in a multi-line message", () => {
+    const text = [
+      "[angle](</tmp/link repro/manifest.tsv>)",
+      "[parens](/tmp/a(1).txt)",
+      "[control](/tmp/link%20repro/manifest.tsv)",
+    ].join("\n\n");
+    expect(extractMarkdownLinkHrefs(text)).toEqual([
+      "/tmp/link repro/manifest.tsv",
+      "/tmp/a(1).txt",
+      "/tmp/link%20repro/manifest.tsv",
+    ]);
+  });
+});
+
+describe("normalizeMarkdownLinkHrefKey", () => {
+  it("matches a percent-encoded href to its unencoded source destination", () => {
+    // The angle-bracket source keeps a literal space; react-markdown renders it
+    // as %20. Both must normalize to the same key so the file link is detected.
+    expect(normalizeMarkdownLinkHrefKey("/tmp/link repro/manifest.tsv")).toBe(
+      normalizeMarkdownLinkHrefKey("/tmp/link%20repro/manifest.tsv"),
+    );
+  });
+
+  it("is stable for bare destinations with balanced parentheses", () => {
+    expect(normalizeMarkdownLinkHrefKey("/tmp/a(1).txt")).toBe("/tmp/a(1).txt");
+  });
+
+  it("matches a file URI key to its rewritten-path render form", () => {
+    // Pre-scan sees the raw file:// href; after markdownUrlTransform the anchor
+    // href is the rewritten path. Both must produce the same lookup key.
+    const fromFileUri = normalizeMarkdownLinkHrefKey(
+      "file:///Users/julius/project/file%2520name.md",
+    );
+    const fromRewrittenPath = normalizeMarkdownLinkHrefKey(
+      "/Users/julius/project/file%2520name.md",
+    );
+    expect(fromFileUri).toBe(fromRewrittenPath);
+    expect(fromFileUri).toBe("/Users/julius/project/file%20name.md");
   });
 });
 
