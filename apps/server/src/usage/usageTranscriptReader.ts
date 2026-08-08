@@ -22,6 +22,7 @@ import {
   mightCarryUsage,
   parseClaudeLine,
   parseCodexLine,
+  parseGrokLine,
   type UsageRecord,
 } from "./usageTranscripts.ts";
 
@@ -29,6 +30,15 @@ export interface TranscriptFile {
   readonly path: string;
   readonly size: number;
   readonly mtimeMs: number;
+}
+
+export interface ListTranscriptFilesOptions {
+  /**
+   * When set, only files whose basename equals this value are collected.
+   * Grok usage lives exclusively in `updates.jsonl`; walking chat history
+   * would waste a cold scan on files that never carry turn usage.
+   */
+  readonly fileName?: string;
 }
 
 /**
@@ -41,8 +51,10 @@ export interface TranscriptFile {
 export async function listTranscriptFiles(
   root: string,
   sinceMs: number,
+  options: ListTranscriptFilesOptions = {},
 ): Promise<readonly TranscriptFile[]> {
   const found: TranscriptFile[] = [];
+  const requiredName = options.fileName;
 
   const walk = async (dir: string): Promise<void> => {
     let entries;
@@ -58,6 +70,7 @@ export async function listTranscriptFiles(
         continue;
       }
       if (!entry.name.endsWith(".jsonl")) continue;
+      if (requiredName !== undefined && entry.name !== requiredName) continue;
       try {
         const stats = await NodeFSP.stat(child);
         if (stats.mtimeMs >= sinceMs) {
@@ -126,6 +139,12 @@ export async function readTranscriptRecords(
         }
         const record = parseCodexLine(line, codexState);
         if (record !== null) records.push(record);
+        continue;
+      }
+
+      if (provider === "grok") {
+        if (!mightCarryUsage(line, provider)) continue;
+        for (const record of parseGrokLine(line)) records.push(record);
         continue;
       }
 

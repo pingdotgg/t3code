@@ -1,6 +1,7 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { useCallback, useMemo, useRef, useState } from "react";
 
+import { cn } from "../../lib/utils";
 import type { DailyTotals } from "../../usage/usageMerge";
 import { formatDayShort, formatTokens, formatUsd } from "../../usage/usageFormat";
 import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_MARK, PROVIDER_ORDER } from "./usageProviders";
@@ -16,6 +17,8 @@ interface UsageProviderChartProps {
   readonly days: readonly string[];
   readonly daily: readonly DailyTotals[];
   readonly metric: UsageChartMetric;
+  /** When set, only this provider's series is plotted. */
+  readonly focusedProvider?: UsageProviderKind | null;
 }
 
 /** One day's per-provider values, shared by the paths and the hover readout. */
@@ -166,10 +169,11 @@ export function buildDayColumns(
   days: readonly string[],
   byDay: ReadonlyMap<string, DailyTotals>,
   metric: UsageChartMetric,
+  providers: readonly UsageProviderKind[] = PROVIDER_ORDER,
 ): readonly DayColumn[] {
   return days.map((day) => {
     const entry = byDay.get(day);
-    const bands = PROVIDER_ORDER.map((provider) => ({
+    const bands = providers.map((provider) => ({
       provider,
       value: valueFor(entry, provider, metric),
     }));
@@ -177,10 +181,19 @@ export function buildDayColumns(
   });
 }
 
-export function UsageProviderChart({ days, daily, metric }: UsageProviderChartProps) {
+export function UsageProviderChart({
+  days,
+  daily,
+  metric,
+  focusedProvider = null,
+}: UsageProviderChartProps) {
   const byDay = useMemo(() => new Map(daily.map((entry) => [entry.day, entry])), [daily]);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const plotRef = useRef<HTMLDivElement | null>(null);
+  const providers = useMemo(
+    () => (focusedProvider === null ? PROVIDER_ORDER : [focusedProvider]),
+    [focusedProvider],
+  );
 
   const { paths, ticks, stepX, toY, series } = useMemo(() => {
     if (days.length === 0) {
@@ -193,7 +206,7 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
       };
     }
 
-    const columns = buildDayColumns(days, byDay, metric);
+    const columns = buildDayColumns(days, byDay, metric, providers);
 
     // The scale tops out at the largest single provider-day, not the largest
     // sum: layered series each measure from zero, so a combined peak would
@@ -209,7 +222,7 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
     const toY = (value: number) =>
       max === 0 ? VIEW_HEIGHT : VIEW_HEIGHT - (value / max) * (VIEW_HEIGHT - PLOT_TOP);
 
-    const built = PROVIDER_ORDER.map((provider, providerIndex) => {
+    const built = providers.map((provider, providerIndex) => {
       const curve = smoothCurve(
         columns.map((column, dayIndex) => ({
           x: dayIndex * step,
@@ -231,7 +244,7 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
     const ordered = [...built].sort((a, b) => b.total - a.total);
 
     return { paths: ordered, ticks: tickValues, stepX: step, toY, series: columns };
-  }, [byDay, days, metric]);
+  }, [byDay, days, metric, providers]);
 
   const format = metric === "tokens" ? formatTokens : formatUsd;
 
@@ -334,7 +347,7 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
               }}
             >
               <div className="mb-1 text-muted-foreground">{formatDayShort(hoveredDay)}</div>
-              {PROVIDER_ORDER.map((provider) => {
+              {providers.map((provider) => {
                 const Mark = PROVIDER_MARK[provider];
                 return (
                   <div key={provider} className="flex items-center justify-between gap-3">
@@ -376,18 +389,61 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
   );
 }
 
-export function UsageChartLegend() {
+export function UsageChartLegend({
+  focusedProvider = null,
+  onSelectProvider,
+}: {
+  readonly focusedProvider?: UsageProviderKind | null;
+  readonly onSelectProvider?: (provider: UsageProviderKind | null) => void;
+}) {
+  const interactive = onSelectProvider !== undefined;
   return (
-    <div className="flex items-center gap-4">
+    <div className="flex flex-wrap items-center gap-3">
+      {focusedProvider !== null && interactive ? (
+        <button
+          type="button"
+          onClick={() => onSelectProvider(null)}
+          className="text-xs text-muted-foreground hover:text-foreground"
+        >
+          All
+        </button>
+      ) : null}
       {PROVIDER_ORDER.map((provider) => {
         // The marks carry the same fills as the bands, so they key the chart
         // just as a colour swatch would.
         const Mark = PROVIDER_MARK[provider];
+        const focused = focusedProvider === provider;
+        const dimmed = focusedProvider !== null && !focused;
+        const className = cn(
+          "flex items-center gap-1.5 text-xs",
+          focused ? "text-foreground" : "text-muted-foreground",
+          dimmed && "opacity-40",
+          interactive && "rounded-sm hover:text-foreground",
+        );
+        if (!interactive) {
+          return (
+            <span key={provider} className={className}>
+              <Mark className="size-3.5 shrink-0" aria-hidden />
+              {PROVIDER_LABEL[provider]}
+            </span>
+          );
+        }
         return (
-          <span key={provider} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <button
+            key={provider}
+            type="button"
+            aria-pressed={focused}
+            title={
+              focused
+                ? `Showing ${PROVIDER_LABEL[provider]} only. Click again for all.`
+                : `Focus ${PROVIDER_LABEL[provider]} usage`
+            }
+            onClick={() => onSelectProvider(focused ? null : provider)}
+            className={className}
+          >
             <Mark className="size-3.5 shrink-0" aria-hidden />
             {PROVIDER_LABEL[provider]}
-          </span>
+          </button>
         );
       })}
     </div>
