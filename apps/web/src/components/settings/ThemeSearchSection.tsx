@@ -37,6 +37,10 @@ const DOWNLOAD_FORMAT = new Intl.NumberFormat(undefined, {
 });
 const SUGGESTED_SEARCHES = ["Dracula", "Catppuccin", "Nord", "Tokyo Night"];
 
+function installedCollectionSnapshot(collectionId: string): string {
+  return JSON.stringify(getCustomThemes().filter((theme) => theme.collection?.id === collectionId));
+}
+
 function ThemeExtensionIcon({ extension }: { extension: OpenVsxThemeExtension }) {
   const [failed, setFailed] = useState(false);
 
@@ -125,9 +129,8 @@ export function ThemeSearchSection({
 
   const handleInstall = useCallback(
     async (extension: OpenVsxThemeExtension, allowUpdate: boolean) => {
-      const updated = getCustomThemes().some(
-        (theme) => theme.collection?.id === extension.collectionId,
-      );
+      const collectionSnapshot = installedCollectionSnapshot(extension.collectionId);
+      const updated = collectionSnapshot !== "[]";
       if (updated && !allowUpdate) {
         setPendingUpdate(extension);
         return;
@@ -141,6 +144,11 @@ export function ThemeSearchSection({
       try {
         const themes = await importOpenVsxThemeExtension(extension, controller.signal);
         if (controller.signal.aborted) return;
+        if (installedCollectionSnapshot(extension.collectionId) !== collectionSnapshot) {
+          throw new Error(
+            "Your installed themes changed while this package was downloading. Try again.",
+          );
+        }
         const imported = replaceCustomThemeCollection(extension.collectionId, themes);
         onInstalled(imported, { updated });
       } catch (cause) {

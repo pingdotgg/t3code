@@ -332,6 +332,13 @@ describe("Open VSX themes", () => {
     const renamedThemes = await importOpenVsxThemeExtension(extension);
     expect(renamedThemes.map((theme) => theme.id)).toEqual(themes.map((theme) => theme.id));
 
+    packagedManifest.contributes.themes[2]!.path = "./themes/missing.json";
+    await rebuildPackage();
+    await expect(importOpenVsxThemeExtension(extension)).rejects.toThrow(
+      "could not be imported safely",
+    );
+    packagedManifest.contributes.themes[2]!.path = "./themes/demo.json";
+
     packagedManifest.license = "Proprietary";
     await rebuildPackage();
     await expect(importOpenVsxThemeExtension(extension)).rejects.toThrow(

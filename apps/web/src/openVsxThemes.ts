@@ -680,7 +680,10 @@ export async function importOpenVsxThemeExtension(
   const themeBudget = { files: 0 };
   for (const contribution of contributions) {
     signal?.throwIfAborted();
-    if (typeof contribution.path !== "string") continue;
+    if (typeof contribution.path !== "string") {
+      failures.push("theme path is missing");
+      continue;
+    }
     try {
       const path = normalizePackagePath(contribution.path);
       const themeValue = await loadThemeObject(
@@ -712,8 +715,11 @@ export async function importOpenVsxThemeExtension(
       failures.push(cause instanceof Error ? cause.message : "theme could not be read");
     }
   }
+  if (failures.length > 0) {
+    throw new Error("One or more color themes in that extension could not be imported safely.");
+  }
   if (parsed.length === 0) {
-    throw new Error(failures[0] ?? "That extension has no compatible color themes.");
+    throw new Error("That extension has no compatible color themes.");
   }
   const extensionId = extension.id.toLowerCase();
   const resolved = resolveThemeLabelCollisions(parsed).map((theme, index) => ({
