@@ -336,8 +336,12 @@ remote_node_satisfies_engine() {
 NODE
 }
 
+remote_node_ready() {
+  command -v node >/dev/null 2>&1 && remote_node_satisfies_engine >/dev/null 2>&1
+}
+
 ensure_remote_node_path() {
-  if command -v node >/dev/null 2>&1 && remote_node_satisfies_engine >/dev/null 2>&1; then
+  if remote_node_ready; then
     return 0
   fi
 
@@ -363,7 +367,7 @@ ensure_remote_node_path() {
 
   prepend_path_if_dir "$HOME/.local/share/mise/shims"
   prepend_path_if_dir "$HOME/.mise/shims"
-  if ! command -v node >/dev/null 2>&1 && command -v mise >/dev/null 2>&1; then
+  if ! remote_node_ready && command -v mise >/dev/null 2>&1; then
     eval "$(mise activate sh)" >/dev/null 2>&1 || true
   fi
 
@@ -373,14 +377,14 @@ ensure_remote_node_path() {
   export FNM_DIR
   prepend_path_if_dir "$FNM_DIR"
   prepend_path_if_dir "$HOME/.fnm"
-  if ! command -v node >/dev/null 2>&1 && command -v fnm >/dev/null 2>&1; then
+  if ! remote_node_ready && command -v fnm >/dev/null 2>&1; then
     eval "$(fnm env --shell bash)" >/dev/null 2>&1 || true
     fnm use --silent-if-unchanged >/dev/null 2>&1 || fnm use default >/dev/null 2>&1 || true
   fi
 
   prepend_path_if_dir "$HOME/.nodenv/bin"
   prepend_path_if_dir "$HOME/.nodenv/shims"
-  if ! command -v node >/dev/null 2>&1 && command -v nodenv >/dev/null 2>&1; then
+  if ! remote_node_ready && command -v nodenv >/dev/null 2>&1; then
     eval "$(nodenv init -)" >/dev/null 2>&1 || true
   fi
 
@@ -392,21 +396,22 @@ ensure_remote_node_path() {
   if [ -s "$NVM_DIR/nvm.sh" ]; then
     # shellcheck disable=SC1090
     . "$NVM_DIR/nvm.sh"
-    if ! command -v node >/dev/null 2>&1 && command -v nvm >/dev/null 2>&1; then
+    if ! remote_node_ready && command -v nvm >/dev/null 2>&1; then
       nvm use --silent default >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1 || nvm use --silent --lts >/dev/null 2>&1 || true
     fi
   fi
 
-  if ! command -v node >/dev/null 2>&1 && [ -d "$NVM_DIR/versions/node" ]; then
+  if ! remote_node_ready && [ -d "$NVM_DIR/versions/node" ]; then
     for T3_NODE_BIN in "$NVM_DIR"/versions/node/*/bin; do
       if [ -x "$T3_NODE_BIN/node" ]; then
         PATH="$T3_NODE_BIN:$PATH"
         export PATH
+        remote_node_ready && break
       fi
     done
   fi
 
-  command -v node >/dev/null 2>&1 && remote_node_satisfies_engine
+  remote_node_ready
 }
 `;
 
