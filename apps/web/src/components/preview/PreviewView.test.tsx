@@ -74,6 +74,7 @@ vi.mock("~/previewStateStore", () => ({
         pictureInPicture: mocks.pictureInPicture,
         colorScheme: "system",
         controller: "none",
+        favicon: null,
       },
     },
     recentlySeenUrls: [],

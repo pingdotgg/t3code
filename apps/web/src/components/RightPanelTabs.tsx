@@ -12,6 +12,7 @@ import {
 } from "react";
 
 import { isElectron } from "~/env";
+import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -33,6 +34,7 @@ interface RightPanelTabsProps {
   activeSurfaceId: string | null;
   pendingSurfaceIds: ReadonlySet<string>;
   previewSessions: Readonly<Record<string, PreviewSessionSnapshot>>;
+  desktopByTabId: Readonly<Record<string, DesktopPreviewOverlay>>;
   terminalLabelsById: ReadonlyMap<string, string>;
   onActivate: (surface: RightPanelSurface) => void;
   onCloseSurface: (surface: RightPanelSurface) => void;
@@ -228,18 +230,45 @@ function surfaceTitle(
   }
 }
 
-function PreviewFavicon({ url }: { url: string | null }) {
-  const faviconUrl = faviconUrlForOrigin(url, 32);
-  const [failedUrl, setFailedUrl] = useState<string | null>(null);
-  if (!faviconUrl || failedUrl === faviconUrl) return <Globe2 className="size-3 shrink-0" />;
+export function resolvePreviewFaviconUrl(input: {
+  capturedUrl: string | null;
+  googleUrl: string | null;
+  failedCapturedUrl: string | null;
+  failedGoogleUrl: string | null;
+}): string | null {
+  if (input.capturedUrl && input.capturedUrl !== input.failedCapturedUrl) return input.capturedUrl;
+  if (input.googleUrl && input.googleUrl !== input.failedGoogleUrl) return input.googleUrl;
+  return null;
+}
+
+function PreviewFavicon({
+  capturedFaviconUrl,
+  url,
+}: {
+  capturedFaviconUrl: string | null;
+  url: string | null;
+}) {
+  const googleFaviconUrl = faviconUrlForOrigin(url, 32);
+  const [failedCapturedUrl, setFailedCapturedUrl] = useState<string | null>(null);
+  const [failedGoogleUrl, setFailedGoogleUrl] = useState<string | null>(null);
+  const faviconUrl = resolvePreviewFaviconUrl({
+    capturedUrl: capturedFaviconUrl,
+    googleUrl: googleFaviconUrl,
+    failedCapturedUrl,
+    failedGoogleUrl,
+  });
+  if (!faviconUrl) return <Globe2 className="size-3 shrink-0" />;
   return (
     <img
       src={faviconUrl}
       alt=""
       aria-hidden
       draggable={false}
-      className="size-3 shrink-0 rounded-sm"
-      onError={() => setFailedUrl(faviconUrl)}
+      className="size-3 shrink-0 rounded-sm object-contain"
+      onError={() => {
+        if (faviconUrl === capturedFaviconUrl) setFailedCapturedUrl(faviconUrl);
+        else setFailedGoogleUrl(faviconUrl);
+      }}
     />
   );
 }
@@ -247,17 +276,22 @@ function PreviewFavicon({ url }: { url: string | null }) {
 function SurfaceIcon({
   surface,
   sessions,
+  desktopByTabId,
   theme,
 }: {
   surface: RightPanelSurface;
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>;
+  desktopByTabId: Readonly<Record<string, DesktopPreviewOverlay>>;
   theme: "light" | "dark";
 }) {
   switch (surface.kind) {
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       const url = !snapshot || snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
-      return <PreviewFavicon url={url} />;
+      const capturedFaviconUrl = snapshot
+        ? (desktopByTabId[snapshot.tabId]?.favicon ?? null)
+        : null;
+      return <PreviewFavicon capturedFaviconUrl={capturedFaviconUrl} url={url} />;
     }
     case "diff":
       return <FileDiff className="size-3 shrink-0" />;
@@ -411,6 +445,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       <SurfaceIcon
                         surface={surface}
                         sessions={props.previewSessions}
+                        desktopByTabId={props.desktopByTabId}
                         theme={resolvedTheme}
                       />
                       {pending ? (

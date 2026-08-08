@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { Globe, History, RadioTower } from "lucide-react";
 
 import type { BrowserHistoryEntry } from "~/browserHistoryStore";
@@ -9,6 +9,7 @@ import { PreviewRecentUrlCard } from "./PreviewRecentUrlCard";
 import { useDiscoveredLocalServers } from "./useDiscoveredLocalServers";
 
 interface Props {
+  threadRef: ScopedThreadRef;
   environmentId: EnvironmentId;
   configuredUrls?: ReadonlyArray<string> | undefined;
   recentlySeenUrls?: ReadonlyArray<string> | undefined;
@@ -18,6 +19,7 @@ interface Props {
 }
 
 export function PreviewEmptyState({
+  threadRef,
   environmentId,
   configuredUrls,
   recentlySeenUrls,
@@ -60,6 +62,7 @@ export function PreviewEmptyState({
               {recents.map((entry) => (
                 <PreviewRecentUrlCard
                   key={entry.url}
+                  threadRef={threadRef}
                   entry={entry}
                   onOpen={() => onOpenUrl(entry.url)}
                   onRemove={() => onRemoveRecent(entry.url)}
@@ -78,6 +81,7 @@ export function PreviewEmptyState({
               {servers.map((server) => (
                 <PreviewLocalServerCard
                   key={`${server.host}:${server.port}`}
+                  threadRef={threadRef}
                   server={server}
                   onOpen={() => onOpenUrl(server.requestedUrl)}
                 />

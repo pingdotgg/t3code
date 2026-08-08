@@ -28,6 +28,7 @@ export interface DesktopPreviewOverlay {
   pictureInPicture: boolean;
   colorScheme: DesktopPreviewColorScheme;
   controller: "human" | "agent" | "none";
+  favicon: string | null;
 }
 
 export interface ThreadPreviewState {

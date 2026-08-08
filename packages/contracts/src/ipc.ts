@@ -524,6 +524,9 @@ export type DesktopPreviewColorScheme = "system" | "light" | "dark";
 export const DesktopPreviewColorSchemeSchema: Schema.Codec<DesktopPreviewColorScheme> =
   Schema.Literals(["system", "light", "dark"]);
 
+/** Shared desktop/web cap for persisted favicon data URLs. */
+export const FAVICON_DATA_URL_MAX_LENGTH = 8192;
+
 export interface DesktopPreviewTabState {
   tabId: string;
   webContentsId: number | null;
@@ -536,6 +539,8 @@ export interface DesktopPreviewTabState {
   pictureInPicture: boolean;
   colorScheme: DesktopPreviewColorScheme;
   controller: "human" | "agent" | "none";
+  favicon?: string;
+  faviconOrigin?: string;
   updatedAt: string;
 }
 
@@ -574,6 +579,8 @@ export const DesktopPreviewTabStateSchema: Schema.Codec<DesktopPreviewTabState> 
   pictureInPicture: Schema.Boolean,
   colorScheme: DesktopPreviewColorSchemeSchema,
   controller: Schema.Literals(["human", "agent", "none"]),
+  favicon: Schema.optionalKey(Schema.String),
+  faviconOrigin: Schema.optionalKey(Schema.String),
   updatedAt: Schema.String,
 });
 
