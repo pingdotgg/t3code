@@ -39,6 +39,13 @@ import {
 } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./httpCors.ts";
+import {
+  contentCacheKey,
+  isCompressibleContentType,
+  makeStaticCompressionCache,
+  negotiateStaticEncoding,
+  resolveStaticCacheControl,
+} from "./staticAssetDelivery.ts";
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
@@ -217,6 +224,8 @@ export const assetRouteLayer = HttpRouter.add(
   }),
 );
 
+const staticCompressionCache = makeStaticCompressionCache();
+
 export const staticAndDevRouteLayer = HttpRouter.add(
   "GET",
   "*",
@@ -290,9 +299,18 @@ export const staticAndDevRouteLayer = HttpRouter.add(
       if (!indexData) {
         return HttpServerResponse.text("Not Found", { status: 404 });
       }
-      return HttpServerResponse.uint8Array(indexData, {
-        status: 200,
+      return yield* respondWithStaticFile({
+        data: indexData,
         contentType: "text/html; charset=utf-8",
+        // The SPA fallback always revalidates so a new build is picked up.
+        cacheControl: resolveStaticCacheControl("index.html"),
+        // Every deep link lands here, so the document is worth compressing.
+        // This is the one path whose file keeps a stable name across builds,
+        // so it is keyed by content: metadata read separately from the bytes
+        // could describe a different build than the one being served. The
+        // document is small enough for hashing it to be cheap.
+        cacheKey: contentCacheKey(indexData),
+        acceptEncoding: request.headers["accept-encoding"],
       });
     }
 
@@ -302,9 +320,69 @@ export const staticAndDevRouteLayer = HttpRouter.add(
       return HttpServerResponse.text("Internal Server Error", { status: 500 });
     }
 
-    return HttpServerResponse.uint8Array(data, {
-      status: 200,
+    return yield* respondWithStaticFile({
+      data,
       contentType,
+      cacheControl: resolveStaticCacheControl(staticRelativePath),
+      cacheKey: staticCacheKey(filePath, fileInfo),
+      acceptEncoding: request.headers["accept-encoding"],
     });
   }),
 );
+
+/**
+ * Identifies a build of a file for the compression cache, without hashing
+ * payloads that can run to megabytes. The stat is taken before the bytes are
+ * read, so a rebuild landing between the two can only orphan an entry under
+ * the superseded key, never publish those bytes under the newer one. Files
+ * whose contents change without their name are keyed by content instead; the
+ * rest carry a content hash in their filename already.
+ */
+function staticCacheKey(filePath: string, info: FileSystem.File.Info): string {
+  const mtimeMs = info.mtime.pipe(
+    Option.map((mtime) => mtime.getTime()),
+    Option.getOrElse(() => 0),
+  );
+  return `${filePath} ${mtimeMs} ${info.size}`;
+}
+
+const respondWithStaticFile = Effect.fn("staticAndDevRoute.respond")(function* (input: {
+  readonly data: Uint8Array;
+  readonly contentType: string;
+  readonly cacheControl: string;
+  /** Null for the SPA fallback, whose bytes are re-read on every request. */
+  readonly cacheKey: string | null;
+  readonly acceptEncoding: string | undefined;
+}) {
+  const headers: Record<string, string> = {
+    "Cache-Control": input.cacheControl,
+  };
+
+  const encoding = isCompressibleContentType(input.contentType)
+    ? negotiateStaticEncoding(input.acceptEncoding)
+    : null;
+  if (isCompressibleContentType(input.contentType)) {
+    // Announce negotiation even when this client took the identity encoding,
+    // so shared caches do not hand a compressed body to a client that
+    // cannot read it.
+    headers["Vary"] = "Accept-Encoding";
+  }
+
+  const cacheKey = input.cacheKey;
+  const compressed =
+    encoding && cacheKey !== null
+      ? yield* Effect.tryPromise(() =>
+          staticCompressionCache.get({ cacheKey, data: input.data, encoding }),
+        ).pipe(Effect.orElseSucceed(() => null))
+      : null;
+
+  if (compressed && encoding) {
+    headers["Content-Encoding"] = encoding;
+  }
+
+  return HttpServerResponse.uint8Array(compressed ?? input.data, {
+    status: 200,
+    contentType: input.contentType,
+    headers,
+  });
+});
