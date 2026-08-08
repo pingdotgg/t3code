@@ -5,6 +5,7 @@ import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -947,6 +948,73 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(1);
     }),
   );
+
+  it.effect("status skips the provider lookup for a branch that was never pushed", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/never-pushed"]);
+
+      const { manager, ghCalls } = yield* makeManager();
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.refName).toBe("feature/never-pushed");
+      expect(status.pr).toBeNull();
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(0);
+    }),
+  );
+
+  it.effect("status still looks up PRs for a branch pushed without --set-upstream", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pushed-no-upstream"]);
+      // No `-u`, so the remote-tracking ref exists but branch.<name>.merge does
+      // not. Most terminal and agent pushes land this way, and they can still
+      // have a PR, so the skip must not trigger here.
+      yield* runGit(repoDir, ["push", "origin", "feature/pushed-no-upstream"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 214,
+                title: "Pushed without upstream",
+                url: "https://github.com/pingdotgg/t3code/pull/214",
+                baseRefName: "main",
+                headRefName: "feature/pushed-no-upstream",
+                state: "OPEN",
+                updatedAt: "2026-04-01T15:00:00Z",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr?.number).toBe(214);
+      expect(ghCalls.filter((call) => call.startsWith("pr list ")).length).toBeGreaterThan(0);
+    }),
+  );
+
+  it("backs off repeated PR lookup failures past the healthy refresh cadence", () => {
+    expect(Duration.toMillis(GitManager.prLookupFailureTtl(1))).toBe(20_000);
+    expect(Duration.toMillis(GitManager.prLookupFailureTtl(2))).toBe(40_000);
+    // The point of the backoff: by the third retry a failing branch must not be
+    // asking more often than a healthy one, which refreshes every 2 minutes.
+    expect(Duration.toMillis(GitManager.prLookupFailureTtl(4))).toBeGreaterThan(120_000);
+    expect(Duration.toMillis(GitManager.prLookupFailureTtl(20))).toBe(900_000);
+  });
 
   it.effect(
     "status ignores unrelated fork PRs when the current branch tracks the same repository",
