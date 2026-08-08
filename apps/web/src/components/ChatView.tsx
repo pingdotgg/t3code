@@ -6665,11 +6665,6 @@ function ChatViewContent(props: ChatViewProps) {
           ))}
       </div>
 
-      {!isGridPane && !shouldUseRightPanelSheet && sourceControlOpen ? (
-        <SourceControlPanelShell mode="inline" maximized={rightPanelMaximized}>
-          {sourceControlContent}
-        </SourceControlPanelShell>
-      ) : null}
       {!isGridPane && !shouldUseRightPanelSheet && rightPanelOpen && activeThreadRef ? (
         <RightPanelTabs
           mode="inline"
@@ -6696,6 +6691,11 @@ function ChatViewContent(props: ChatViewProps) {
         >
           {rightPanelContent}
         </RightPanelTabs>
+      ) : null}
+      {!isGridPane && !shouldUseRightPanelSheet && sourceControlOpen ? (
+        <SourceControlPanelShell mode="inline" maximized={rightPanelMaximized}>
+          {sourceControlContent}
+        </SourceControlPanelShell>
       ) : null}
       {shouldUseRightPanelSheet && sourceControlOpen ? (
         <RightPanelSheet open onClose={() => useSourceControlStore.getState().setOpen(false)}>

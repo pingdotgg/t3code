@@ -47,4 +47,15 @@ describe("PanelLayoutControls", () => {
     expect(markup).toMatch(/aria-label="Toggle source control"[^>]*data-pressed/);
     expect(markup).toMatch(/aria-label="Toggle right panel"[^>]*data-pressed/);
   });
+
+  it("keeps source control as the rightmost layout control", () => {
+    const markup = renderControls();
+
+    expect(markup.indexOf('aria-label="Toggle terminal drawer"')).toBeLessThan(
+      markup.indexOf('aria-label="Toggle right panel"'),
+    );
+    expect(markup.indexOf('aria-label="Toggle right panel"')).toBeLessThan(
+      markup.indexOf('aria-label="Toggle source control"'),
+    );
+  });
 });

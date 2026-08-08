@@ -71,28 +71,6 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
           render={
             <Toggle
               className="shrink-0 [-webkit-app-region:no-drag]"
-              pressed={sourceControlOpen}
-              onPressedChange={onToggleSourceControl}
-              aria-label="Toggle source control"
-              variant="ghost"
-              size="sm"
-              disabled={!sourceControlAvailable}
-            >
-              <GitBranchIcon className="size-3.5" />
-            </Toggle>
-          }
-        />
-        <TooltipPopup side="bottom">
-          {sourceControlAvailable
-            ? `Toggle source control (${sourceControlShortcutLabel})`
-            : "Source control is unavailable"}
-        </TooltipPopup>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Toggle
-              className="shrink-0 [-webkit-app-region:no-drag]"
               pressed={rightPanelOpen}
               onPressedChange={onToggleRightPanel}
               aria-label="Toggle right panel"
@@ -108,6 +86,28 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
           {rightPanelAvailable
             ? `Toggle right panel${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}`
             : "Right panel is unavailable"}
+        </TooltipPopup>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Toggle
+              className="shrink-0 [-webkit-app-region:no-drag]"
+              pressed={sourceControlOpen}
+              onPressedChange={onToggleSourceControl}
+              aria-label="Toggle source control"
+              variant="ghost"
+              size="sm"
+              disabled={!sourceControlAvailable}
+            >
+              <GitBranchIcon className="size-3.5" />
+            </Toggle>
+          }
+        />
+        <TooltipPopup side="bottom">
+          {sourceControlAvailable
+            ? `Toggle source control (${sourceControlShortcutLabel})`
+            : "Source control is unavailable"}
         </TooltipPopup>
       </Tooltip>
     </div>
