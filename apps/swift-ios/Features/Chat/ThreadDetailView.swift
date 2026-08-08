@@ -214,6 +214,7 @@ public struct ThreadDetailView: View {
         .lineLimit(1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(headerStatusAccessibilityLabel(at: now))
+        .accessibilityAddTraits(.updatesFrequently)
     }
 
     private func headerStatusAccessibilityLabel(at now: Date) -> String {
@@ -1297,6 +1298,7 @@ private struct FeatureThreadWorkingIndicator: View {
             }
                 ?? (detail.map { "\(title). \($0)." } ?? "\(title).")
         )
+        .accessibilityAddTraits(.updatesFrequently)
     }
 }
 
