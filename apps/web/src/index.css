@@ -146,9 +146,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
      compositor updates discrete frames instead of every vsync. */
   --animate-status-pulse: status-pulse 2s infinite;
   --animate-status-ping: status-ping 2s infinite;
-  --animate-sidebar-working-text: sidebar-working-text 3.4s infinite;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
+  --color-warning-surface: var(--warning-surface);
+  --color-error-foreground: var(--error-foreground);
+  --color-error: var(--error);
+  --color-error-surface: var(--error-surface);
+  --color-update-foreground: var(--update-foreground);
+  --color-update: var(--update);
+  --color-update-surface: var(--update-surface);
   --color-success-foreground: var(--success-foreground);
   --color-success: var(--success);
   --color-info-foreground: var(--info-foreground);
@@ -162,6 +168,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
   --color-muted: var(--muted);
+  --color-placeholder: var(--placeholder);
+  --color-secondary-label: var(--secondary-label);
+  --color-icon-muted: var(--icon-muted);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
@@ -173,6 +182,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-foreground: var(--foreground);
   --color-background: var(--background);
   --color-surface-raised: var(--surface-raised);
+  --color-message: var(--message-surface);
+  --color-message-foreground: var(--message-foreground);
+  --color-message-action: var(--message-action);
+  --color-message-action-foreground: var(--message-action-foreground);
+  --color-message-action-hover: var(--message-action-hover);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-muted-foreground: var(--sidebar-muted-foreground);
@@ -221,21 +235,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     100% {
       opacity: 0;
       scale: 2;
-    }
-  }
-  @keyframes sidebar-working-text {
-    0%,
-    36% {
-      opacity: 1;
-      animation-timing-function: steps(10);
-    }
-    50%,
-    86% {
-      opacity: 0.75;
-      animation-timing-function: steps(10);
-    }
-    100% {
-      opacity: 1;
     }
   }
 }
@@ -849,7 +848,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 @utility surface-grain {
   background-image: var(--surface-grain);
   background-repeat: repeat;
-  background-size: 256px 256px;
+  background-size: var(--surface-grain-size);
 }
 
 /* Suppress all transitions during theme changes */
@@ -866,6 +865,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --radius: 0.625rem;
   --background: var(--color-zinc-25);
   --app-chrome-background: var(--background);
+  --toolbar-background: var(--app-chrome-background);
+  --toolbar-foreground: var(--foreground);
+  --toolbar-border: var(--border);
+  --toolbar-control: var(--popover);
+  --toolbar-control-foreground: var(--foreground);
+  --toolbar-control-hover: var(--accent);
   --surface-raised: color-mix(in srgb, var(--card) 20%, transparent);
   --foreground: var(--color-zinc-800);
   --card: var(--color-white);
@@ -878,19 +883,34 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --secondary-foreground: var(--color-zinc-800);
   --muted: var(--color-zinc-50);
   --muted-foreground: var(--color-zinc-500);
+  --placeholder: var(--muted-foreground);
+  --secondary-label: var(--muted-foreground);
+  --icon-muted: var(--muted-foreground);
+  --message-surface: var(--accent);
+  --message-foreground: var(--foreground);
+  --message-action: var(--primary);
+  --message-action-foreground: var(--primary-foreground);
+  --message-action-hover: color-mix(in srgb, var(--primary) 90%, var(--background));
   --accent: var(--color-zinc-100);
   --accent-foreground: var(--color-zinc-900);
-  --destructive: var(--color-red-500);
+  --error: var(--color-red-500);
+  --error-foreground: var(--color-red-700);
+  --error-surface: color-mix(in srgb, var(--error) 8%, transparent);
+  --destructive: var(--error);
   --border: var(--color-zinc-200);
   --input: var(--color-zinc-300);
   --ring: oklch(0.488 0.217 264);
-  --destructive-foreground: var(--color-red-700);
+  --destructive-foreground: var(--error-foreground);
   --info: var(--color-blue-500);
   --info-foreground: var(--color-blue-700);
   --success: var(--color-emerald-500);
   --success-foreground: var(--color-emerald-700);
   --warning: var(--color-amber-500);
   --warning-foreground: var(--color-amber-700);
+  --warning-surface: color-mix(in srgb, var(--warning) 8%, transparent);
+  --update: var(--primary);
+  --update-foreground: var(--primary);
+  --update-surface: color-mix(in srgb, var(--update) 12%, transparent);
   /* Keep every sidebar primitive on the same light surface hierarchy, including
      portaled mobile sheets and settings navigation outside the app sidebar. */
   --sidebar: var(--color-zinc-50);
@@ -902,6 +922,14 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --sidebar-row-selected: var(--color-white);
   --sidebar-border: var(--border);
   --sidebar-stage-fade: var(--sidebar);
+  --code-background: color-mix(in srgb, var(--card) 90%, var(--background));
+  --code-foreground: var(--foreground);
+  --terminal-background: var(--background);
+  --terminal-foreground: var(--foreground);
+  --terminal-cursor: rgb(38 56 78);
+  --terminal-selection-background: rgb(37 63 99 / 20%);
+  --terminal-scrollbar: rgb(0 0 0 / 15%);
+  --terminal-scrollbar-hover: rgb(0 0 0 / 25%);
 
   @variant dark {
     color-scheme: dark;
@@ -921,19 +949,34 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --secondary-foreground: var(--color-neutral-100);
     --muted: --alpha(var(--color-white) / 4%);
     --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
+    --placeholder: var(--muted-foreground);
+    --secondary-label: var(--muted-foreground);
+    --icon-muted: var(--muted-foreground);
+    --message-surface: var(--accent);
+    --message-foreground: var(--foreground);
+    --message-action: var(--primary);
+    --message-action-foreground: var(--primary-foreground);
+    --message-action-hover: color-mix(in srgb, var(--primary) 90%, var(--background));
     --accent: --alpha(var(--color-white) / 4%);
     --accent-foreground: var(--color-neutral-100);
-    --destructive: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
+    --error: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
+    --error-foreground: var(--color-red-400);
+    --error-surface: color-mix(in srgb, var(--error) 16%, transparent);
+    --destructive: var(--error);
     --border: --alpha(var(--color-white) / 6%);
     --input: --alpha(var(--color-white) / 8%);
     --ring: oklch(0.588 0.217 264);
-    --destructive-foreground: var(--color-red-400);
+    --destructive-foreground: var(--error-foreground);
     --info: var(--color-blue-500);
     --info-foreground: var(--color-blue-400);
     --success: var(--color-emerald-500);
     --success-foreground: var(--color-emerald-400);
     --warning: var(--color-amber-500);
     --warning-foreground: var(--color-amber-400);
+    --warning-surface: color-mix(in srgb, var(--warning) 16%, transparent);
+    --update: var(--primary);
+    --update-foreground: var(--primary);
+    --update-surface: color-mix(in srgb, var(--update) 18%, transparent);
     --sidebar: var(--card);
     --sidebar-foreground: var(--foreground);
     --sidebar-muted-foreground: var(--muted-foreground);
@@ -943,15 +986,19 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --sidebar-row-selected: var(--muted);
     --sidebar-border: var(--border);
     --sidebar-stage-fade: var(--card);
+    --terminal-background: var(--background);
+    --terminal-foreground: var(--foreground);
+    --terminal-cursor: rgb(180 203 255);
+    --terminal-selection-background: rgb(180 203 255 / 25%);
+    --terminal-scrollbar: rgb(255 255 255 / 10%);
+    --terminal-scrollbar-hover: rgb(255 255 255 / 18%);
   }
 }
 
-/* Keep both navigation implementations on the same quiet zinc hierarchy:
-   zinc-50 navigation, zinc-25 hover, and white selected/raised surfaces.
-   The version attribute remains useful for layout-specific styling without
-   changing the color system when the beta is toggled. */
-[data-sidebar-version="v1"],
-[data-sidebar-version="v2"] {
+/* Keep both sidebar implementations (default and legacy) on the same quiet
+   zinc hierarchy: zinc-50 navigation, zinc-25 hover, and white selected/raised
+   surfaces. */
+[data-app-sidebar] {
   --background: var(--color-zinc-25);
   --foreground: var(--color-zinc-800);
   --card: var(--color-white);
@@ -974,8 +1021,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   background-color: var(--sidebar);
 }
 
-.dark [data-sidebar-version="v1"],
-.dark [data-sidebar-version="v2"] {
+.dark [data-app-sidebar] {
   --background: #000;
   --foreground: #f1f3f7;
   --card: #000;
@@ -998,6 +1044,334 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
      global chrome background, or the fade shows a seam (same rule as the
      light palette above). */
   --sidebar-stage-fade: var(--card);
+}
+
+/* Theme files are expressed in app color roles and mapped to the existing
+   semantic surface tokens here. Keep this block after the sidebar-version
+   compatibility overrides so both navigation implementations receive the
+   same palette. Success, info, provider, and channel identity colors remain
+   independent; error, warning, and update roles are themeable below. */
+html[data-theme-id],
+html.dark[data-theme-id] {
+  --background: var(--app-theme-canvas);
+  --app-chrome-background: var(--app-theme-chrome);
+  --toolbar-background: var(--app-theme-toolbar);
+  --toolbar-foreground: var(--app-theme-toolbar-foreground);
+  --toolbar-border: var(--app-theme-toolbar-border);
+  --toolbar-control: var(--app-theme-toolbar-control);
+  --toolbar-control-foreground: var(--app-theme-toolbar-control-foreground);
+  --toolbar-control-hover: var(--app-theme-toolbar-control-hover);
+  --surface-raised: var(--app-theme-surface-raised);
+  --foreground: var(--app-theme-text);
+  --card: var(--app-theme-surface);
+  --card-foreground: var(--app-theme-text);
+  --popover: var(--app-theme-surface-overlay);
+  --popover-foreground: var(--app-theme-text);
+  /* Solid controls (CTAs, switches, sliders, the send button) all share the
+     theme's action color so every "act now" affordance reads consistently;
+     the accent keeps driving surfaces, selection, and focus. Palettes without
+     a distinct action color make these identical. */
+  --primary: var(--app-theme-message-action);
+  --primary-foreground: var(--app-theme-message-action-foreground);
+  --secondary: var(--app-theme-secondary);
+  --secondary-foreground: var(--app-theme-secondary-foreground);
+  --muted: var(--app-theme-muted);
+  --muted-foreground: var(--app-theme-text-muted);
+  --placeholder: var(--app-theme-placeholder);
+  --secondary-label: var(--app-theme-secondary-label);
+  --icon-muted: var(--app-theme-icon-muted);
+  --accent: var(--app-theme-accent-surface);
+  --accent-foreground: var(--app-theme-accent-surface-foreground);
+  --message-surface: var(--app-theme-message-surface);
+  --message-foreground: var(--app-theme-message-foreground);
+  --message-action: var(--app-theme-message-action);
+  --message-action-foreground: var(--app-theme-message-action-foreground);
+  --message-action-hover: var(--app-theme-message-action-hover);
+  --error: var(--app-theme-error);
+  --error-foreground: var(--app-theme-error-foreground);
+  --error-surface: var(--app-theme-error-surface);
+  --destructive: var(--error);
+  --destructive-foreground: var(--error-foreground);
+  --warning: var(--app-theme-warning);
+  --warning-foreground: var(--app-theme-warning-foreground);
+  --warning-surface: var(--app-theme-warning-surface);
+  --update: var(--app-theme-update);
+  --update-foreground: var(--app-theme-update-foreground);
+  --update-surface: var(--app-theme-update-surface);
+  --border: var(--app-theme-border);
+  --input: var(--app-theme-input);
+  --ring: var(--app-theme-focus);
+  --sidebar: var(--app-theme-sidebar);
+  --sidebar-foreground: var(--app-theme-sidebar-foreground);
+  --sidebar-muted-foreground: var(--app-theme-sidebar-muted-foreground);
+  --sidebar-control-surface: var(--app-theme-sidebar-control-surface);
+  --sidebar-row-hover: var(--app-theme-sidebar-row-hover);
+  --sidebar-row-active: var(--app-theme-sidebar-row-active);
+  --sidebar-row-selected: var(--app-theme-sidebar-row-selected);
+  --sidebar-border: var(--app-theme-sidebar-border);
+  --sidebar-stage-fade: var(--app-theme-sidebar);
+  --code-background: var(--app-theme-code-background);
+  --code-foreground: var(--app-theme-code-foreground);
+  --terminal-background: var(--app-theme-terminal-background);
+  --terminal-foreground: var(--app-theme-terminal-foreground);
+  --terminal-cursor: var(--app-theme-terminal-cursor);
+  --terminal-selection-background: var(--app-theme-terminal-selection-background);
+  --terminal-scrollbar: var(--app-theme-terminal-scrollbar);
+  --terminal-scrollbar-hover: var(--app-theme-terminal-scrollbar-hover);
+}
+
+/* T3 Chat's composer is a translucent lift over --chat-background. Route its
+   measured flattened color through the raised-surface role instead of deriving
+   another tint from the canvas, which made the dark composer too red. */
+html[data-theme-id] .chat-composer-glass-shell {
+  --chat-composer-glass-surface: var(--app-theme-surface-raised);
+}
+
+html[data-theme-id]:not(.dark) .chat-composer-glass-shell {
+  --chat-composer-outline: var(--app-theme-toolbar-border);
+}
+
+html.dark[data-theme-id] .chat-composer-glass-shell {
+  --chat-composer-outline: color-mix(in srgb, var(--app-theme-input) 30%, var(--background));
+  --chat-composer-highlight: color-mix(in srgb, var(--app-theme-input) 12%, transparent);
+}
+
+html.dark[data-theme-id="t3-chat"] .chat-composer-glass-shell {
+  /* T3 Chat's visible composer edge is a dark plum, not the stock translucent
+     white outline. Its highlight is derived from --chat-input-gradient. */
+  --chat-composer-outline: #241e28;
+  --chat-composer-highlight: color-mix(in srgb, #432d48 12%, transparent);
+}
+
+html[data-theme-id]:not(.dark) {
+  color-scheme: light;
+}
+
+html.dark[data-theme-id] {
+  color-scheme: dark;
+}
+
+html[data-theme-id] body {
+  background-color: var(--app-chrome-background);
+  color: var(--foreground);
+}
+
+/* Theme-token dependency probes are restored synchronously, before paint. Keep
+   transitions from observing the temporary sentinel color in between. */
+html[data-theme-token-probe],
+html[data-theme-token-probe] *,
+html[data-theme-token-probe] *::before,
+html[data-theme-token-probe] *::after {
+  transition: none !important;
+}
+
+#theme-inspector-spotlight {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  overflow: visible;
+  pointer-events: none;
+}
+
+[data-slot="popover-positioner"]:has([data-theme-editor-panel]),
+[data-slot="tooltip-positioner"]:has([data-theme-editor-panel]) {
+  z-index: 120;
+}
+
+.theme-inspector-spotlight-dimmer {
+  fill: rgb(2 3 8 / 54%);
+}
+
+.theme-inspector-spotlight-glow {
+  fill: color-mix(in oklab, var(--ring) 9%, transparent);
+  stroke: color-mix(in oklab, var(--ring) 72%, white);
+  stroke-width: 2px;
+  opacity: 0.92;
+  vector-effect: non-scaling-stroke;
+}
+
+#theme-inspector-hover {
+  position: fixed;
+  z-index: 101;
+  pointer-events: none;
+  background: color-mix(in oklab, var(--ring) 7%, transparent);
+  border: 1px solid color-mix(in oklab, var(--ring) 70%, white);
+  box-shadow:
+    0 0 0 3px color-mix(in oklab, var(--ring) 16%, transparent),
+    0 0 18px color-mix(in oklab, var(--ring) 38%, transparent);
+}
+
+#theme-inspector-hover [data-theme-inspector-hover-label] {
+  position: absolute;
+  left: 0;
+  max-width: 12rem;
+  overflow: hidden;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid color-mix(in oklab, var(--ring) 48%, var(--border));
+  border-radius: 0.4rem;
+  background: var(--popover);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 24%);
+  color: var(--popover-foreground);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#theme-inspector-hover[data-placement="above"] [data-theme-inspector-hover-label] {
+  bottom: calc(100% + 0.35rem);
+}
+
+#theme-inspector-hover[data-placement="below"] [data-theme-inspector-hover-label] {
+  top: calc(100% + 0.35rem);
+}
+
+/* Workspace actions use a small, separate chrome hierarchy. Keeping these
+   roles explicit prevents the thread toolbar from falling back to the default
+   dark-mode whites while preserving the same theme file across clients. */
+html[data-theme-id] [data-chat-header] {
+  background-color: var(--toolbar-background);
+  color: var(--toolbar-foreground);
+}
+
+html[data-theme-id] [data-chat-header] [data-slot="button"],
+html[data-theme-id] [data-chat-header] [data-slot="menu-trigger"],
+html[data-theme-id] [data-chat-header] [data-toolbar-control] {
+  --control-icon-color: var(--toolbar-control-foreground);
+  background-color: var(--toolbar-control);
+  border-color: var(--toolbar-border);
+  color: var(--toolbar-control-foreground);
+}
+
+/* The panel layout toggles stay ghost: they render both inside the header and
+   in the titlebar strip, so filling them would make them change appearance as
+   the panel opens. They only take the themed foreground; hover and pressed
+   keep the base ghost accent. The tooltip trigger's data-slot wins over the
+   toggle's when the trigger renders the toggle, so match both. */
+html[data-theme-id] [data-panel-layout-controls] [data-slot="toggle"],
+html[data-theme-id] [data-panel-layout-controls] [data-slot="tooltip-trigger"],
+html[data-theme-id] .workspace-titlebar-controls [data-slot="toggle"],
+html[data-theme-id] .workspace-titlebar-controls [data-slot="tooltip-trigger"] {
+  --control-icon-color: var(--toolbar-foreground);
+  color: var(--toolbar-foreground);
+}
+
+html[data-theme-id] [data-chat-header] [data-slot="button"]:hover,
+html[data-theme-id] [data-chat-header] [data-slot="button"][data-pressed],
+html[data-theme-id] [data-chat-header] [data-slot="menu-trigger"]:hover,
+html[data-theme-id] [data-chat-header] [data-slot="menu-trigger"][data-pressed],
+html[data-theme-id] [data-chat-header] [data-toolbar-control]:hover,
+html[data-theme-id] [data-chat-header] [data-toolbar-control][data-pressed] {
+  background-color: var(--toolbar-control-hover);
+}
+
+html[data-theme-id] [data-chat-header] [data-slot="separator"] {
+  background-color: var(--toolbar-border);
+}
+
+/* Chat code blocks join the other code surfaces on the code tokens. The
+   default look keeps its secondary/input tints; themed palettes tint those
+   surfaces with the accent, which fights syntax highlighting. */
+html[data-theme-id] .chat-markdown .chat-markdown-codeblock {
+  background-color: var(--code-background);
+  border-color: var(--border);
+  color: var(--code-foreground);
+}
+
+html[data-theme-id] .chat-markdown pre {
+  background-color: var(--code-background);
+  color: var(--code-foreground);
+}
+
+html[data-theme-id] .chat-markdown .chat-markdown-codeblock pre {
+  background-color: transparent;
+}
+
+html[data-theme-id] .chat-markdown .chat-markdown-codeblock-header,
+html[data-theme-id] .chat-markdown .chat-markdown-chrome-action {
+  color: color-mix(in srgb, var(--code-foreground) 72%, transparent);
+}
+
+/* T3 Chat renders inline code and compact chat artifacts with its translucent
+   secondary surface flattened over the light chat canvas. The raw muted and
+   secondary tokens are substantially darker than those visible pixels. */
+html[data-theme-id="t3-chat"]:not(.dark) .chat-markdown :not(pre) > code,
+html[data-theme-id="t3-chat"]:not(.dark) [data-changed-files-state],
+html[data-theme-id="t3-chat"]:not(.dark) [data-changed-files-header] {
+  background-color: var(--message-surface);
+}
+
+html[data-theme-id="t3-chat"]:not(.dark) .chat-markdown :not(pre) > code,
+html[data-theme-id="t3-chat"]:not(.dark) [data-changed-files-state] {
+  border-color: transparent;
+}
+
+html[data-theme-id="t3-chat"]:not(.dark) .chat-markdown :not(pre) > code {
+  color: var(--message-foreground);
+}
+
+html[data-theme-id] .chat-markdown .chat-markdown-chrome-action:hover,
+html[data-theme-id] .chat-markdown .chat-markdown-chrome-action[aria-pressed="true"] {
+  color: var(--code-foreground);
+}
+
+html[data-theme-id] [data-app-sidebar] {
+  --background: var(--app-theme-canvas);
+  --foreground: var(--app-theme-text);
+  --card: var(--app-theme-surface);
+  --card-foreground: var(--app-theme-text);
+  --accent: var(--app-theme-accent-surface);
+  --accent-foreground: var(--app-theme-accent-surface-foreground);
+  --muted: var(--app-theme-muted);
+  --muted-foreground: var(--app-theme-text-muted);
+  --border: var(--app-theme-border);
+  --input: var(--app-theme-input);
+  --sidebar: var(--app-theme-sidebar);
+  --sidebar-foreground: var(--app-theme-sidebar-foreground);
+  --sidebar-muted-foreground: var(--app-theme-sidebar-muted-foreground);
+  --sidebar-control-surface: var(--app-theme-sidebar-control-surface);
+  --sidebar-row-hover: var(--app-theme-sidebar-row-hover);
+  --sidebar-row-active: var(--app-theme-sidebar-row-active);
+  --sidebar-row-selected: var(--app-theme-sidebar-row-selected);
+  --sidebar-border: var(--app-theme-sidebar-border);
+  --sidebar-stage-fade: var(--app-theme-sidebar);
+  background-color: var(--sidebar);
+}
+
+/* Keep the navigation edge as quiet as the standard palettes. Theme files may
+   still use sidebarBorder for controls and internal separators, but the outer
+   divider should not become more prominent just because a palette is vivid. */
+html[data-theme-id] [data-app-sidebar] {
+  border-color: color-mix(in srgb, var(--sidebar-foreground) 10%, transparent);
+}
+
+html.dark[data-theme-id] [data-app-sidebar] {
+  border-color: color-mix(in srgb, var(--sidebar-foreground) 8%, transparent);
+}
+
+/* T3 Chat's panel divider is deliberately pink, and its resize affordance
+   keeps that color while hovered. Do not neutralize this branded edge. */
+html.dark[data-theme-id="t3-chat"] [data-app-sidebar] {
+  border-color: var(--sidebar-border);
+}
+
+.theme-json-key {
+  color: var(--app-theme-accent, var(--color-blue-600));
+}
+
+.theme-json-string {
+  color: var(--app-theme-message-action, var(--color-emerald-600));
+}
+
+.theme-json-number {
+  color: var(--app-theme-secondary-foreground, var(--color-amber-600));
+}
+
+.theme-json-constant {
+  color: var(--app-theme-accent-surface-foreground, var(--color-violet-600));
 }
 
 body {
@@ -1044,12 +1418,21 @@ body {
    grain's subtle brightening and stand out against the body. */
 :root {
   --surface-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  --surface-grain-size: 256px 256px;
+}
+
+/* The live T3 Chat texture is a 128px grayscale tile with a constant 7/255
+   alpha. Keep our procedural texture cheap while matching that scale and
+   strength for the branded preset. */
+html[data-theme-id="t3-chat"] {
+  --surface-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 128 128' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.02745'/%3E%3C/svg%3E");
+  --surface-grain-size: 128px 128px;
 }
 
 body {
   background-image: var(--surface-grain);
   background-repeat: repeat;
-  background-size: 256px 256px;
+  background-size: var(--surface-grain-size);
 }
 
 pre,
@@ -1600,15 +1983,34 @@ label:has(> select#reasoning-effort) select {
 
 /* Diffs theme bridge (match diff surfaces to app palette) */
 .diff-panel-viewport {
-  background: color-mix(in srgb, var(--background) 94%, var(--card));
+  background: var(--background);
+}
+
+/* Diffs live directly on the panel canvas. Normal chat code blocks may use a
+   raised code surface, but carrying that fill into the diff creates a card-like
+   rectangle that does not belong in the panel. */
+.diff-render-surface {
+  --code-background: var(--background);
 }
 
 .diff-render-file,
-.diff-render-surface > diffs-container {
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
+.diff-render-surface diffs-container {
+  border: 0;
+  border-radius: 0;
   overflow: clip;
-  background: color-mix(in srgb, var(--card) 92%, var(--background));
+  background: var(--code-background);
+  color: var(--code-foreground);
+}
+
+/* Pierre's file renderer owns its own surface tokens. Keep the root of a file
+   preview on the same themeable code surface as the diff panel. */
+.diff-render-surface diffs-container,
+.file-preview-virtualizer diffs-container {
+  --diffs-bg: var(--code-background) !important;
+  --diffs-light-bg: var(--code-background) !important;
+  --diffs-dark-bg: var(--code-background) !important;
+  background-color: var(--code-background) !important;
+  color: var(--code-foreground) !important;
 }
 
 @keyframes ultrathink-rainbow {

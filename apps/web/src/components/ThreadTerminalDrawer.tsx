@@ -18,6 +18,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import * as Schema from "effect/Schema";
 import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -57,6 +58,7 @@ import {
 } from "../types";
 import { readLocalApi } from "~/localApi";
 import { useClientSettings } from "../hooks/useSettings";
+import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useAttachedTerminalSession } from "../state/terminalSessions";
 import { serverEnvironment } from "../state/server";
 import { previewEnvironment } from "../state/preview";
@@ -64,6 +66,11 @@ import { terminalEnvironment } from "../state/terminal";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
+import {
+  resolveTerminalFontPreference,
+  resolveTerminalFontSizePreference,
+  TYPOGRAPHY_ADVANCED_STORAGE_KEY,
+} from "../appearanceFonts";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -132,6 +139,10 @@ function normalizeComputedColor(value: string | null | undefined, fallback: stri
   return value ?? fallback;
 }
 
+function readThemeColor(styles: CSSStyleDeclaration, variable: string, fallback: string): string {
+  return normalizeComputedColor(styles.getPropertyValue(variable), fallback);
+}
+
 /** The surface treats an omitted family or size as "use the built-in default". */
 function terminalFontOptions(family: string, size: number): { family?: string; size: number } {
   const trimmed = family.trim();
@@ -148,6 +159,7 @@ export function terminalThemeFromApp(mountElement?: HTMLElement | null): Ghostty
     document.body;
   const drawerStyles = getComputedStyle(drawerSurface);
   const bodyStyles = getComputedStyle(document.body);
+  const themeStyles = getComputedStyle(document.documentElement);
   const background = normalizeComputedColor(
     drawerStyles.backgroundColor,
     normalizeComputedColor(bodyStyles.backgroundColor, fallbackBackground),
@@ -156,20 +168,32 @@ export function terminalThemeFromApp(mountElement?: HTMLElement | null): Ghostty
     drawerStyles.color,
     normalizeComputedColor(bodyStyles.color, fallbackForeground),
   );
-
+  const terminalBackground = readThemeColor(themeStyles, "--terminal-background", background);
+  const terminalForeground = readThemeColor(themeStyles, "--terminal-foreground", foreground);
+  const terminalCursor = readThemeColor(
+    themeStyles,
+    "--terminal-cursor",
+    isDark ? "rgb(180, 203, 255)" : "rgb(38, 56, 78)",
+  );
+  const terminalSelection = readThemeColor(
+    themeStyles,
+    "--terminal-selection-background",
+    isDark ? "rgba(180, 203, 255, 0.25)" : "rgba(37, 63, 99, 0.2)",
+  );
   return {
     background: parseTerminalColor(
-      background,
+      terminalBackground,
       isDark ? { r: 14, g: 18, b: 24 } : { r: 255, g: 255, b: 255 },
     ),
     foreground: parseTerminalColor(
-      foreground,
+      terminalForeground,
       isDark ? { r: 237, g: 241, b: 247 } : { r: 28, g: 33, b: 41 },
     ),
-    cursor: isDark ? { r: 180, g: 203, b: 255 } : { r: 38, g: 56, b: 78 },
-    // Matches the xterm selection overlays this renderer replaced; the text
-    // color underneath is left unchanged for contrast in both themes.
-    selectionBackground: isDark ? "rgba(180, 203, 255, 0.25)" : "rgba(37, 63, 99, 0.2)",
+    cursor: parseTerminalColor(
+      terminalCursor,
+      isDark ? { r: 180, g: 203, b: 255 } : { r: 38, g: 56, b: 78 },
+    ),
+    selectionBackground: terminalSelection,
   };
 }
 
@@ -241,6 +265,7 @@ export function shouldHandleTerminalExit(
 }
 
 interface TerminalViewportProps {
+  advancedTypography: boolean;
   threadRef: ScopedThreadRef;
   threadId: ThreadId;
   terminalId: string;
@@ -264,6 +289,7 @@ interface TerminalLaunchLocation {
 }
 
 export function TerminalViewport({
+  advancedTypography,
   threadRef,
   threadId,
   terminalId,
@@ -312,12 +338,20 @@ export function TerminalViewport({
     onAddTerminalContext(selection);
   });
   const readTerminalLabel = useEffectEvent(() => terminalLabel);
-  // The terminal inherits the monospace (code) preference unless it has an
-  // override of its own, so one font choice drives every mono surface.
-  const terminalFontFamily = useClientSettings(
-    (settings) => settings.fontFamilyTerminal.trim() || settings.fontFamilyCode,
+  const terminalFontFamily = useClientSettings((settings) =>
+    resolveTerminalFontPreference({
+      advanced: advancedTypography,
+      code: settings.fontFamilyCode,
+      terminal: settings.fontFamilyTerminal,
+    }),
   );
-  const terminalFontSize = useClientSettings((settings) => settings.fontSizeTerminal);
+  const terminalFontSize = useClientSettings((settings) =>
+    resolveTerminalFontSizePreference({
+      advanced: advancedTypography,
+      code: settings.fontSizeCode,
+      terminal: settings.fontSizeTerminal,
+    }),
+  );
   const terminalFontRef = useRef({ family: terminalFontFamily, size: terminalFontSize });
   const terminalSession = useAttachedTerminalSession({
     environmentId,
@@ -921,6 +955,11 @@ export default function ThreadTerminalDrawer({
   terminalLaunchLocationsById,
 }: ThreadTerminalDrawerProps) {
   const isPanel = mode === "panel";
+  const [advancedTypography] = useLocalStorage(
+    TYPOGRAPHY_ADVANCED_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
   const controlledDrawerHeight = clampDrawerHeight(height);
   const [drawerHeightState, setDrawerHeightState] = useState(() => ({
     threadId,
@@ -1357,6 +1396,7 @@ export default function ThreadTerminalDrawer({
                     >
                       <div className="h-full p-1">
                         <TerminalViewport
+                          advancedTypography={advancedTypography}
                           threadRef={threadRef}
                           threadId={threadId}
                           terminalId={terminalId}
@@ -1384,6 +1424,7 @@ export default function ThreadTerminalDrawer({
             ) : (
               <div className="h-full p-1">
                 <TerminalViewport
+                  advancedTypography={advancedTypography}
                   key={resolvedActiveTerminalId}
                   threadRef={threadRef}
                   threadId={threadId}
