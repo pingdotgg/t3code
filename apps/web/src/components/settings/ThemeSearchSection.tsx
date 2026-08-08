@@ -222,7 +222,7 @@ export function ThemeSearchSection({
 
       <div className="flex items-center justify-end gap-2">
         <span className="text-muted-foreground text-xs">Sort</span>
-        <Select value={sortBy} onValueChange={handleSortChange}>
+        <Select disabled={installingId !== null} value={sortBy} onValueChange={handleSortChange}>
           <SelectTrigger size="sm" className="w-40" aria-label="Sort themes">
             <SelectValue>
               {SORT_OPTIONS.find((option) => option.value === sortBy)?.label}
