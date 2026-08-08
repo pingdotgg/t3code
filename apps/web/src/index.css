@@ -416,6 +416,44 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     border-bottom-color: transparent;
   }
 
+  /* Match the thread sidebar's 200ms motion. The gap changes only while the
+     panel enters or exits; its fixed-width surface slides independently so
+     expensive browser, terminal, and diff contents do not reflow each frame. */
+  .right-panel-inline-gap {
+    width: var(--right-panel-width);
+    transition: width 200ms linear;
+  }
+
+  .right-panel-inline-surface {
+    translate: 0;
+    transition: translate 200ms linear;
+  }
+
+  .right-panel-inline-gap[data-right-panel-open="false"] {
+    width: 0;
+  }
+
+  .right-panel-inline-gap[data-right-panel-open="false"] .right-panel-inline-surface {
+    translate: 100%;
+  }
+
+  @starting-style {
+    .right-panel-inline-gap[data-right-panel-open="true"] {
+      width: 0;
+    }
+
+    .right-panel-inline-gap[data-right-panel-open="true"] .right-panel-inline-surface {
+      translate: 100%;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .right-panel-inline-gap,
+    .right-panel-inline-surface {
+      transition: none;
+    }
+  }
+
   .chat-composer-horizontal-inset {
     padding-inline-start: calc(env(safe-area-inset-left) + 0.75rem);
     padding-inline-end: calc(env(safe-area-inset-right) + 0.75rem);

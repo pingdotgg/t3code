@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 
 import { isElectron } from "~/env";
 import { useResizableWidth } from "~/hooks/useResizableWidth";
@@ -26,10 +26,13 @@ export function getPreviewPanelMaxWidth(viewportWidth: number): number {
 export function PreviewPanelShell(props: {
   mode: PreviewPanelMode;
   maximized?: boolean;
+  open?: boolean;
+  onExitComplete?: () => void;
   children: ReactNode;
 }) {
   const useDragRegion = isElectron && props.mode !== "sheet" && props.mode !== "embedded";
   const isInline = props.mode === "inline";
+  const open = props.open ?? true;
   const maxWidth = useViewportClampedMaxWidth();
   const { width, handlers } = useResizableWidth({
     storageKey: PREVIEW_PANEL_WIDTH_STORAGE_KEY,
@@ -38,6 +41,38 @@ export function PreviewPanelShell(props: {
     maxWidth,
     edge: "left",
   });
+
+  const panelContents = (
+    <>
+      {isInline && !props.maximized ? <RightPanelResizeHandle handlers={handlers} /> : null}
+      {useDragRegion ? <div className="electron-drag-region h-0 w-full" aria-hidden /> : null}
+      {props.children}
+    </>
+  );
+
+  if (isInline && !props.maximized) {
+    return (
+      <div
+        className="right-panel-inline-gap relative h-full min-h-0 shrink-0"
+        style={{ "--right-panel-width": `${width}px` } as CSSProperties}
+        data-preview-panel-mode={props.mode}
+        data-preview-panel-maximized="false"
+        data-right-panel-open={open ? "true" : "false"}
+        aria-hidden={open ? undefined : true}
+        inert={open ? undefined : true}
+        onTransitionEnd={(event) => {
+          if (open || event.target !== event.currentTarget || event.propertyName !== "width") {
+            return;
+          }
+          props.onExitComplete?.();
+        }}
+      >
+        <div className="right-panel-inline-surface absolute inset-y-0 right-0 flex w-(--right-panel-width) min-h-0 min-w-0 flex-col border-l border-border bg-background">
+          {panelContents}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -49,13 +84,10 @@ export function PreviewPanelShell(props: {
             : "shrink-0 border-l border-border"
           : "w-full",
       )}
-      style={isInline && !props.maximized ? { width: `${width}px` } : undefined}
       data-preview-panel-mode={props.mode}
       data-preview-panel-maximized={props.maximized ? "true" : "false"}
     >
-      {isInline && !props.maximized ? <RightPanelResizeHandle handlers={handlers} /> : null}
-      {useDragRegion ? <div className="electron-drag-region h-0 w-full" aria-hidden /> : null}
-      {props.children}
+      {panelContents}
     </div>
   );
 }

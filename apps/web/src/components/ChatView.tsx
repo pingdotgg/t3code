@@ -52,6 +52,7 @@ import {
   lazy,
   memo,
   Suspense,
+  type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -1154,6 +1155,36 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
   );
 });
 
+const RIGHT_PANEL_EXIT_FALLBACK_MS = 250;
+
+/** Keep the heavy panel mounted only until its CSS exit finishes. */
+function InlineRightPanelPresence(props: {
+  open: boolean;
+  children: (onExitComplete: () => void) => ReactNode;
+}) {
+  const [present, setPresent] = useState(props.open);
+
+  useEffect(() => {
+    if (props.open) {
+      setPresent(true);
+      return;
+    }
+    if (!present) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      setPresent(false);
+      return;
+    }
+    const timeoutId = window.setTimeout(() => setPresent(false), RIGHT_PANEL_EXIT_FALLBACK_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [present, props.open]);
+
+  const handleExitComplete = useCallback(() => {
+    if (!props.open) setPresent(false);
+  }, [props.open]);
+
+  return present ? props.children(handleExitComplete) : null;
+}
+
 // Errors surface through two maps (draft-keyed and thread-keyed) whose entries
 // can race around promotion, so each write carries its time to let the latest
 // one win when they collide.
@@ -1558,11 +1589,18 @@ function ChatViewContent(props: ChatViewProps) {
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, activeThreadRef),
   );
+  // Closing clears the active selector immediately, but the exit keeps rendering this surface.
+  const selectedRightPanelSurface = useMemo(
+    () =>
+      rightPanelState.surfaces.find((surface) => surface.id === rightPanelState.activeSurfaceId) ??
+      null,
+    [rightPanelState.activeSurfaceId, rightPanelState.surfaces],
+  );
   const activeRightPanelSurface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
   );
   const activeFileSurface =
-    activeRightPanelSurface?.kind === "file" ? activeRightPanelSurface : null;
+    selectedRightPanelSurface?.kind === "file" ? selectedRightPanelSurface : null;
   const activePreviewState = useThreadPreviewState(activeThreadRef);
   const activePreviewMiniPlayer = usePreviewMiniPlayerStore((state) =>
     selectThreadPreviewMiniPlayer(state.byThreadKey, activeThreadRef),
@@ -5941,12 +5979,12 @@ function ChatViewContent(props: ChatViewProps) {
     </div>
   );
   const rightPanelContent = activeThreadRef ? (
-    activeRightPanelSurface?.kind === "preview" ? (
+    selectedRightPanelSurface?.kind === "preview" ? (
       <Suspense fallback={null}>
         <PreviewPanel
           mode="embedded"
           threadRef={activeThreadRef}
-          tabId={activeRightPanelSurface.resourceId}
+          tabId={selectedRightPanelSurface.resourceId}
           configuredUrls={configuredPreviewUrls}
           visible
           onSendAnnotation={(annotation, image) => {
@@ -5954,10 +5992,10 @@ function ChatViewContent(props: ChatViewProps) {
           }}
         />
       </Suspense>
-    ) : activeRightPanelSurface?.kind === "terminal" ? (
+    ) : selectedRightPanelSurface?.kind === "terminal" ? (
       <PersistentThreadTerminalPanel
         threadRef={activeThreadRef}
-        surface={activeRightPanelSurface}
+        surface={selectedRightPanelSurface}
         launchContext={activeTerminalLaunchContext ?? null}
         focusRequestId={terminalFocusRequestId}
         keybindings={keybindings}
@@ -5972,7 +6010,7 @@ function ChatViewContent(props: ChatViewProps) {
         newShortcutLabel={newTerminalShortcutLabel ?? undefined}
         closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
       />
-    ) : activeRightPanelSurface?.kind === "diff" ? (
+    ) : selectedRightPanelSurface?.kind === "diff" ? (
       <Suspense fallback={null}>
         <DiffPanel
           key={`${activeThreadKey}:${diffPanelGitStatusResolutionKey}`}
@@ -5981,13 +6019,14 @@ function ChatViewContent(props: ChatViewProps) {
           initialGitScope={initialDiffPanelGitScope}
         />
       </Suspense>
-    ) : activeRightPanelSurface?.kind === "agents" ? (
+    ) : selectedRightPanelSurface?.kind === "agents" ? (
       <AgentsPanel
         model={agentPanelModel}
         environmentId={activeThreadRef?.environmentId ?? null}
         threadId={activeThreadRef?.threadId ?? null}
       />
-    ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
+    ) : (selectedRightPanelSurface?.kind === "files" ||
+        selectedRightPanelSurface?.kind === "file") &&
       activeProject &&
       activeWorkspaceRoot ? (
       <Suspense fallback={null}>
@@ -6001,7 +6040,9 @@ function ChatViewContent(props: ChatViewProps) {
           keybindings={keybindings}
           availableEditors={availableEditors}
           relativePath={
-            activeRightPanelSurface.kind === "file" ? activeRightPanelSurface.relativePath : null
+            selectedRightPanelSurface.kind === "file"
+              ? selectedRightPanelSurface.relativePath
+              : null
           }
           revealLine={activeFileSurface?.revealLine ?? null}
           revealRequestId={activeFileSurface?.revealRequestId ?? 0}
@@ -6401,33 +6442,42 @@ function ChatViewContent(props: ChatViewProps) {
         ))}
       </div>
 
-      {!shouldUseRightPanelSheet && rightPanelOpen && activeThreadRef ? (
-        <RightPanelTabs
-          mode="inline"
-          maximized={rightPanelMaximized}
-          surfaces={rightPanelState.surfaces}
-          activeSurfaceId={activeRightPanelSurface?.id ?? null}
-          pendingSurfaceIds={pendingFileSurfaceIds}
-          previewSessions={activePreviewState.sessions}
-          terminalLabelsById={activeTerminalLabelsById}
-          onActivate={activateRightPanelSurface}
-          onCloseSurface={closeRightPanelSurface}
-          onCloseOtherSurfaces={closeOtherRightPanelSurfaces}
-          onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
-          onCloseAllSurfaces={closeAllRightPanelSurfaces}
-          onCopyFilePath={copyRightPanelFilePath}
-          onAddBrowser={createBrowserSurface}
-          onAddTerminal={addTerminalSurface}
-          onAddDiff={addDiffSurface}
-          onAddFiles={addFilesSurface}
-          onAddAgents={addAgentsSurface}
-          browserAvailable={isPreviewSupportedInRuntime()}
-          diffAvailable={isServerThread && isGitRepo}
-          filesAvailable={activeProject !== null}
-          liveAgentCount={agentPanelModel.liveCount}
+      {activeThreadRef ? (
+        <InlineRightPanelPresence
+          key={`${activeThreadKey}:${shouldUseRightPanelSheet ? "sheet" : "inline"}`}
+          open={!shouldUseRightPanelSheet && rightPanelOpen}
         >
-          {rightPanelContent}
-        </RightPanelTabs>
+          {(onExitComplete) => (
+            <RightPanelTabs
+              mode="inline"
+              maximized={rightPanelMaximized}
+              open={rightPanelOpen}
+              onExitComplete={onExitComplete}
+              surfaces={rightPanelState.surfaces}
+              activeSurfaceId={selectedRightPanelSurface?.id ?? null}
+              pendingSurfaceIds={pendingFileSurfaceIds}
+              previewSessions={activePreviewState.sessions}
+              terminalLabelsById={activeTerminalLabelsById}
+              onActivate={activateRightPanelSurface}
+              onCloseSurface={closeRightPanelSurface}
+              onCloseOtherSurfaces={closeOtherRightPanelSurfaces}
+              onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
+              onCloseAllSurfaces={closeAllRightPanelSurfaces}
+              onCopyFilePath={copyRightPanelFilePath}
+              onAddBrowser={createBrowserSurface}
+              onAddTerminal={addTerminalSurface}
+              onAddDiff={addDiffSurface}
+              onAddFiles={addFilesSurface}
+              onAddAgents={addAgentsSurface}
+              browserAvailable={isPreviewSupportedInRuntime()}
+              diffAvailable={isServerThread && isGitRepo}
+              filesAvailable={activeProject !== null}
+              liveAgentCount={agentPanelModel.liveCount}
+            >
+              {rightPanelContent}
+            </RightPanelTabs>
+          )}
+        </InlineRightPanelPresence>
       ) : null}
       {shouldUseRightPanelSheet && rightPanelOpen && activeThreadRef ? (
         <RightPanelSheet open onClose={closePreviewPanel}>
@@ -6435,7 +6485,7 @@ function ChatViewContent(props: ChatViewProps) {
             mode="sheet"
             layoutControls={panelToggleControls}
             surfaces={rightPanelState.surfaces}
-            activeSurfaceId={activeRightPanelSurface?.id ?? null}
+            activeSurfaceId={selectedRightPanelSurface?.id ?? null}
             pendingSurfaceIds={pendingFileSurfaceIds}
             previewSessions={activePreviewState.sessions}
             terminalLabelsById={activeTerminalLabelsById}
