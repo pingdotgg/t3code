@@ -1,4 +1,6 @@
 import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
   CopyIcon,
   DownloadIcon,
   PenLineIcon,
@@ -75,6 +77,7 @@ function ThemeLibraryCard({
   onDuplicate,
   onDownload,
   onRemove,
+  variantNavigation,
 }: {
   theme: ThemeCardDefinition;
   isActive: boolean;
@@ -85,6 +88,17 @@ function ThemeLibraryCard({
   onDuplicate?: () => void;
   onDownload?: () => void;
   onRemove?: () => void;
+  variantNavigation?: {
+    collectionLabel: string;
+    index: number;
+    count: number;
+    activeAssignments: ReadonlyArray<{
+      mode: ThemeAppearance;
+      label: string;
+    }>;
+    onPrevious: () => void;
+    onNext: () => void;
+  };
 }) {
   // A one-appearance theme can only take its own side of the mix, so the card
   // tooltip promises exactly what clicking it does.
@@ -105,17 +119,55 @@ function ThemeLibraryCard({
             onClick={onUse}
             style={isActive ? { boxShadow: "inset 0 0 0 1px var(--ring)" } : undefined}
           >
-            <ThemePreviewCircles
-              label={theme.label}
-              activeModes={activeModes}
-              onSelectMode={onUseMode}
-              previews={theme.previews}
-            />
+            <div className="relative">
+              <ThemePreviewCircles
+                label={theme.label}
+                activeModes={activeModes}
+                onSelectMode={onUseMode}
+                previews={theme.previews}
+              />
+              {variantNavigation ? (
+                <>
+                  <Button
+                    aria-label={`Previous ${variantNavigation.collectionLabel} variant`}
+                    className="absolute left-2 top-2 z-10 bg-background/80 shadow-sm backdrop-blur-sm"
+                    size="icon-xs"
+                    variant="ghost"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      variantNavigation.onPrevious();
+                    }}
+                  >
+                    <ChevronLeftIcon />
+                  </Button>
+                  <Button
+                    aria-label={`Next ${variantNavigation.collectionLabel} variant`}
+                    className="absolute right-2 top-2 z-10 bg-background/80 shadow-sm backdrop-blur-sm"
+                    size="icon-xs"
+                    variant="ghost"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      variantNavigation.onNext();
+                    }}
+                  >
+                    <ChevronRightIcon />
+                  </Button>
+                  <span className="sr-only" aria-live="polite">
+                    {theme.label}, {variantNavigation.index + 1} of {variantNavigation.count}
+                    {variantNavigation.activeAssignments.length > 0
+                      ? `, ${variantNavigation.activeAssignments
+                          .map(({ mode, label }) => `${mode}: ${label}`)
+                          .join(", ")}`
+                      : ""}
+                  </span>
+                </>
+              ) : null}
+            </div>
             <div className="flex items-center gap-2 px-3 pb-3 pt-2">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
                   <button
-                    aria-label={`Use ${theme.label} theme${isActive ? ", currently active" : ""}`}
+                    aria-label={`Use ${variantNavigation ? `${variantNavigation.collectionLabel}, ${theme.label} variant` : `${theme.label} theme`}${isActive ? ", currently active" : ""}`}
                     aria-pressed={isActive}
                     className="min-w-0 cursor-pointer truncate rounded-sm text-left text-sm font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
                     type="button"
@@ -124,7 +176,7 @@ function ThemeLibraryCard({
                       onUse();
                     }}
                   >
-                    {theme.label}
+                    {variantNavigation?.collectionLabel ?? theme.label}
                   </button>
                 </div>
               </div>
@@ -221,6 +273,73 @@ function ThemeLibraryCard({
         {cardModes.length > 1 ? "Use for both light and dark" : `Use for ${cardModes[0]} mode only`}
       </TooltipPopup>
     </Tooltip>
+  );
+}
+
+function CustomThemeCollectionCard({
+  themes,
+  activeModesFor,
+  onUse,
+  onUseMode,
+  onDuplicate,
+  onEdit,
+  onDownload,
+  onRemove,
+}: {
+  themes: ReadonlyArray<ThemeDefinition>;
+  activeModesFor: (themeId: string) => ReadonlyArray<ThemeMode>;
+  onUse: (theme: ThemeDefinition) => void;
+  onUseMode: (theme: ThemeDefinition, mode: ThemeMode) => void;
+  onDuplicate: (theme: ThemeDefinition) => void;
+  onEdit: (theme: ThemeDefinition) => void;
+  onDownload: (theme: ThemeDefinition) => void;
+  onRemove: (theme: ThemeDefinition) => void;
+}) {
+  const [variantIndex, setVariantIndex] = useState(() => {
+    const activeIndex = themes.findIndex((theme) => activeModesFor(theme.id).length > 0);
+    return activeIndex < 0 ? 0 : activeIndex;
+  });
+  const safeIndex = Math.min(variantIndex, themes.length - 1);
+  const theme = themes[safeIndex];
+
+  useEffect(() => {
+    if (variantIndex !== safeIndex) setVariantIndex(safeIndex);
+  }, [safeIndex, variantIndex]);
+
+  if (!theme) return null;
+  const collectionLabel = theme.collection?.label ?? theme.label;
+  const activeAssignments = (["light", "dark"] as const).flatMap((mode) => {
+    const assignedTheme = themes.find((candidate) => activeModesFor(candidate.id).includes(mode));
+    return assignedTheme ? [{ mode, label: assignedTheme.label }] : [];
+  });
+  const move = (offset: number) => {
+    setVariantIndex((current) => (current + offset + themes.length) % themes.length);
+  };
+
+  return (
+    <ThemeLibraryCard
+      activeModes={activeModesFor(theme.id)}
+      isActive={false}
+      onDownload={() => onDownload(theme)}
+      onDuplicate={() => onDuplicate(theme)}
+      onEdit={() => onEdit(theme)}
+      onRemove={() => onRemove(theme)}
+      onUse={() => onUse(theme)}
+      onUseMode={(mode) => onUseMode(theme, mode)}
+      theme={getThemeCardDefinition(theme)}
+      {...(themes.length > 1
+        ? {
+            variantNavigation: {
+              collectionLabel,
+              index: safeIndex,
+              count: themes.length,
+              activeAssignments,
+              onPrevious: () => move(-1),
+              onNext: () => move(1),
+            },
+          }
+        : {})}
+    />
   );
 }
 
@@ -460,6 +579,18 @@ export function ThemeLibrary({
     </div>
   );
 
+  const customThemeCollections = [
+    ...customThemes
+      .reduce((groups, customTheme) => {
+        const groupId = customTheme.collection?.id ?? `theme:${customTheme.id}`;
+        const group = groups.get(groupId);
+        if (group) group.push(customTheme);
+        else groups.set(groupId, [customTheme]);
+        return groups;
+      }, new Map<string, ThemeDefinition[]>())
+      .entries(),
+  ];
+
   const renderPairGrid = () => (
     // One shared provider so every tooltip in the grid hands off instantly to
     // the next hovered trigger instead of stacking on top of it. The card
@@ -501,43 +632,39 @@ export function ThemeLibrary({
             />
           );
         })}
-        {customThemes.map((customTheme) => {
-          const card = getThemeCardDefinition(customTheme);
-          return (
-            <ThemeLibraryCard
-              activeModes={pickedModesFor(customTheme.id)}
-              isActive={false}
-              key={customTheme.id}
-              onDuplicate={() =>
-                openThemeEditor({
-                  editingThemeId: null,
-                  seedThemeId: customTheme.id,
-                  seedName: `${customTheme.label} copy`,
-                  initialAppearance,
-                })
-              }
-              onEdit={() =>
-                openThemeEditor({
-                  editingThemeId: customTheme.id,
-                  seedThemeId: null,
-                  seedName: null,
-                  initialAppearance,
-                })
-              }
-              onDownload={() =>
-                downloadThemeFile(`${customTheme.id}.json`, serializeThemeFile(customTheme))
-              }
-              onRemove={() => handleRemoveTheme(customTheme)}
-              onUse={() => {
-                const modes = getThemeModes(customTheme);
-                if (modes.length === 1) assignHalf(modes[0]!, customTheme.id);
-                else persistTheme(customTheme.id);
-              }}
-              onUseMode={handlePairPick(customTheme.id)}
-              theme={card}
-            />
-          );
-        })}
+        {customThemeCollections.map(([collectionId, themes]) => (
+          <CustomThemeCollectionCard
+            activeModesFor={pickedModesFor}
+            key={collectionId}
+            onDownload={(customTheme) =>
+              downloadThemeFile(`${customTheme.id}.json`, serializeThemeFile(customTheme))
+            }
+            onDuplicate={(customTheme) =>
+              openThemeEditor({
+                editingThemeId: null,
+                seedThemeId: customTheme.id,
+                seedName: `${customTheme.label} copy`,
+                initialAppearance,
+              })
+            }
+            onEdit={(customTheme) =>
+              openThemeEditor({
+                editingThemeId: customTheme.id,
+                seedThemeId: null,
+                seedName: null,
+                initialAppearance,
+              })
+            }
+            onRemove={handleRemoveTheme}
+            onUse={(customTheme) => {
+              const modes = getThemeModes(customTheme);
+              if (modes.length === 1) assignHalf(modes[0]!, customTheme.id);
+              else persistTheme(customTheme.id);
+            }}
+            onUseMode={(customTheme, mode) => handlePairPick(customTheme.id)(mode)}
+            themes={themes}
+          />
+        ))}
       </div>
     </TooltipProvider>
   );
@@ -553,9 +680,8 @@ export function ThemeLibrary({
       {renderModeTiles()}
       <div className="flex min-h-8 flex-wrap items-center justify-between gap-3 px-3 pt-2 sm:px-4">
         <h3 className="text-sm font-medium tracking-[-0.005em] text-foreground">Themes</h3>
-        <div className="flex flex-wrap items-center justify-end gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <Button
-            className="h-7 rounded-md border border-border/70 bg-muted/30 px-2 text-xs font-medium text-foreground shadow-none hover:bg-accent/40"
             size="xs"
             variant="ghost"
             onClick={() =>
@@ -579,19 +705,9 @@ export function ThemeLibrary({
       {renderPairGrid()}
       <ThemeImportDialog
         onImportedMany={(importedThemes, { updated }) => {
-          // An updated theme that is showing (as the base or either half)
-          // needs its palette re-applied.
-          if (
-            updated &&
-            importedThemes.some(
-              (imported) =>
-                getThemeDefinition(theme)?.id === imported.id ||
-                themeHalves?.light === imported.id ||
-                themeHalves?.dark === imported.id,
-            )
-          ) {
-            refreshTheme();
-          }
+          // Re-apply after collection updates. The update may remove the
+          // selected variant, in which case the theme hook falls back safely.
+          if (updated) refreshTheme();
           const verb = updated ? "updated" : "added";
           toastManager.add(
             stackedThreadToast({

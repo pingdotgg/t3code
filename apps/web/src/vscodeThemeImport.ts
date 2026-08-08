@@ -336,6 +336,9 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
  */
 export function pairVsCodeThemes(
   themes: ReadonlyArray<ThemeDefinition>,
+  options?: {
+    pairedId?: (light: ThemeDefinition, dark: ThemeDefinition) => string;
+  },
 ): ReadonlyArray<ThemeDefinition> {
   const stripAppearance = (label: string) =>
     label
@@ -371,6 +374,7 @@ export function pairVsCodeThemes(
           order: group.order,
           theme: parseThemeFile({
             version: THEME_FILE_VERSION,
+            ...(options?.pairedId ? { id: options.pairedId(group.light[0]!, group.dark[0]!) } : {}),
             name: key,
             appearance: "light",
             colors: group.light[0]!.colors,
