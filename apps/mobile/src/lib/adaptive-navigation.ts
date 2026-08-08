@@ -1,4 +1,19 @@
 export type AdaptiveNavigationAction = "push" | "replace" | "set-params";
+export type WorkspaceDetailInvalidationAction<
+  Route extends { readonly key: string; readonly name: string } = {
+    readonly key: string;
+    readonly name: string;
+  },
+> =
+  | {
+      readonly type: "pop";
+      readonly count: number;
+      readonly source: string;
+    }
+  | {
+      readonly type: "reset";
+      readonly routes: ReadonlyArray<Route | { readonly name: "Home" }>;
+    };
 
 const BASE_THREAD_ROUTE_PATTERN = /^\/threads\/[^/]+\/[^/]+\/?$/;
 
@@ -32,4 +47,80 @@ export function resolveFileSelectionNavigationAction(input: {
   readonly hasPersistentFileInspector: boolean;
 }): AdaptiveNavigationAction {
   return input.hasPersistentFileInspector ? "replace" : "push";
+}
+
+export function shouldInvalidateSelectedThreadDetail(input: {
+  readonly previous: {
+    readonly key: string | null;
+    readonly present: boolean;
+    readonly settled: boolean;
+    readonly snoozed: boolean;
+  };
+  readonly current: {
+    readonly key: string | null;
+    readonly present: boolean;
+    readonly settled: boolean;
+    readonly snoozed: boolean;
+  };
+}): boolean {
+  return (
+    input.previous.key !== null &&
+    input.previous.key === input.current.key &&
+    input.previous.present &&
+    (!input.current.present ||
+      (!input.previous.settled && input.current.settled) ||
+      (!input.previous.snoozed && input.current.snoozed))
+  );
+}
+
+export function resolveWorkspaceDetailInvalidationAction<
+  Route extends { readonly key: string; readonly name: string },
+>(input: {
+  readonly routes: ReadonlyArray<Route>;
+  readonly overlayRouteNames: ReadonlySet<string>;
+}): WorkspaceDetailInvalidationAction<Route> | null {
+  let workspaceRouteIndex = -1;
+  for (let index = input.routes.length - 1; index >= 0; index -= 1) {
+    const route = input.routes[index];
+    if (route !== undefined && !input.overlayRouteNames.has(route.name)) {
+      workspaceRouteIndex = index;
+      break;
+    }
+  }
+  if (workspaceRouteIndex === -1) {
+    return null;
+  }
+
+  const workspaceRoute = input.routes[workspaceRouteIndex];
+  if (workspaceRoute === undefined || workspaceRoute.name === "Home") {
+    return null;
+  }
+
+  let homeRouteIndex = -1;
+  for (let index = workspaceRouteIndex - 1; index >= 0; index -= 1) {
+    if (input.routes[index]?.name === "Home") {
+      homeRouteIndex = index;
+      break;
+    }
+  }
+  if (homeRouteIndex === -1) {
+    return {
+      type: "reset",
+      routes: [{ name: "Home" }, ...input.routes.slice(workspaceRouteIndex + 1)],
+    };
+  }
+
+  const overlayRoutes = input.routes.slice(workspaceRouteIndex + 1);
+  if (overlayRoutes.length > 0) {
+    return {
+      type: "reset",
+      routes: [...input.routes.slice(0, homeRouteIndex + 1), ...overlayRoutes],
+    };
+  }
+
+  return {
+    type: "pop",
+    count: workspaceRouteIndex - homeRouteIndex,
+    source: workspaceRoute.key,
+  };
 }

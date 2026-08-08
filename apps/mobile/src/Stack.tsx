@@ -1,16 +1,18 @@
 import {
+  CommonActions,
   createPathConfigForStaticNavigation,
   getPathFromState,
   NavigationState,
   StackActions,
   useNavigation,
+  type PartialState,
 } from "@react-navigation/native";
 import {
   createNativeStackNavigator,
   createNativeStackScreen,
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { DynamicColorIOS, Platform, Pressable, ScrollView, StyleSheet } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
@@ -60,6 +62,7 @@ import {
   EMPTY_INCOMING_SHARE_PRESENTATION_STATE,
   transitionIncomingSharePresentation,
 } from "./features/sharing/incoming-share-presentation";
+import { resolveWorkspaceDetailInvalidationAction } from "./lib/adaptive-navigation";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "./native/native-glass";
 import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
@@ -329,6 +332,45 @@ function RootStackLayout(props: {
       params: { incomingShareId: transition.shareIdToPresent },
     });
   }, [navigation, pendingShare, props.state]);
+  const handleInvalidateSelectedThreadDetail = useCallback(() => {
+    const state = navigation.getState();
+    if (state === undefined) {
+      return;
+    }
+    const invalidation = resolveWorkspaceDetailInvalidationAction({
+      routes: state.routes,
+      overlayRouteNames: WORKSPACE_OVERLAY_ROUTES,
+    });
+    if (invalidation === null) {
+      return;
+    }
+    if (invalidation.type === "pop") {
+      navigation.dispatch({
+        ...StackActions.pop(invalidation.count),
+        source: invalidation.source,
+        target: state.key,
+      });
+      return;
+    }
+    navigation.dispatch({
+      ...CommonActions.reset({
+        index: invalidation.routes.length - 1,
+        routes: invalidation.routes.map((route) =>
+          "key" in route
+            ? {
+                key: route.key,
+                name: route.name,
+                params: route.params,
+                path: route.path,
+                state: route.state as PartialState<NavigationState> | undefined,
+              }
+            : route,
+        ),
+        stale: true,
+      }),
+      target: state.key,
+    });
+  }, [navigation]);
   // Full pathname (sheets included) for keyboard-command scoping; the
   // workspace layout only reacts to the underlying non-overlay route.
   const path = getPathFromState(props.state, navigationPathConfig);
@@ -340,7 +382,10 @@ function RootStackLayout(props: {
       <ThreadOutboxDrainWorker />
       <ShowcaseCaptureCoordinator pathname={pathname} />
       <ClerkSettingsSheetDetentProvider initiallyExpanded={false}>
-        <AdaptiveWorkspaceLayout pathname={workspacePathname}>
+        <AdaptiveWorkspaceLayout
+          pathname={workspacePathname}
+          onInvalidateSelectedThreadDetail={handleInvalidateSelectedThreadDetail}
+        >
           {props.children}
         </AdaptiveWorkspaceLayout>
       </ClerkSettingsSheetDetentProvider>
