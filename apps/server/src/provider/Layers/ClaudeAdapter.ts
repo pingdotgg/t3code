@@ -18,7 +18,6 @@ import {
   type SDKResultMessage,
   type SettingSource,
   type SDKUserMessage,
-  type ModelUsage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import {
@@ -67,6 +66,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -390,14 +390,20 @@ function asRuntimeItemId(value: string): RuntimeItemId {
   return RuntimeItemId.make(value);
 }
 
-function maxClaudeContextWindowFromModelUsage(
-  modelUsage: Record<string, ModelUsage> | undefined,
-): number | undefined {
-  if (!modelUsage) return undefined;
+function maxClaudeContextWindowFromModelUsage(modelUsage: unknown): number | undefined {
+  if (!Predicate.isObject(modelUsage)) return undefined;
 
   let maxContextWindow: number | undefined;
   for (const value of Object.values(modelUsage)) {
+    if (!Predicate.isObject(value)) continue;
     const contextWindow = value.contextWindow;
+    if (
+      !Predicate.isNumber(contextWindow) ||
+      !Number.isFinite(contextWindow) ||
+      contextWindow <= 0
+    ) {
+      continue;
+    }
     maxContextWindow = Math.max(maxContextWindow ?? 0, contextWindow);
   }
 

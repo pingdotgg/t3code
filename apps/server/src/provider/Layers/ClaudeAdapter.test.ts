@@ -2272,7 +2272,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("emits Claude context window on result completion usage snapshots", () => {
+  it.effect("ignores malformed Claude model usage entries", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -2311,10 +2311,12 @@ describe("ClaudeAdapterLive", () => {
           output_tokens: 679,
         },
         modelUsage: {
-          "claude-opus-4-6": {
-            contextWindow: 200000,
-            maxOutputTokens: 64000,
-          },
+          null: null,
+          missing: {},
+          string: { contextWindow: "200000" },
+          infinite: { contextWindow: Number.POSITIVE_INFINITY },
+          zero: { contextWindow: 0 },
+          negative: { contextWindow: -1 },
         },
       } as unknown as SDKMessage);
       harness.query.finish();
@@ -2329,7 +2331,6 @@ describe("ClaudeAdapterLive", () => {
             lastUsedTokens: 24542,
             inputTokens: 23863,
             outputTokens: 679,
-            maxTokens: 200000,
           },
         });
       }
