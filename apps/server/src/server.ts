@@ -195,6 +195,12 @@ const HttpServerLive = Layer.unwrap(
             compress: "dedicated",
             decompress: "shared",
           },
+          // Reap connections that stop sending within 30s instead of Bun's
+          // 120s default. RPC clients ping every 5s, so a live client never
+          // idles; a suspended mobile app stops pinging and its half-dead
+          // socket (plus the server-side buffers feeding it) is released
+          // four times sooner.
+          idleTimeout: 30,
         },
       });
     } else {

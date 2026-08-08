@@ -87,11 +87,13 @@ const connectivityLayer = Connectivity.layer({
 
 const wakeupsLayer = Wakeups.layer({
   changes: Stream.merge(
-    Stream.callback<"application-active-probe" | "application-active-reconnect">((queue) =>
+    Stream.callback<
+      "application-active-probe" | "application-active-reconnect" | "network-path-changed"
+    >((queue) =>
       Effect.acquireRelease(
         Effect.sync(() => {
           let backgroundedAtMs = AppState.currentState === "background" ? Date.now() : null;
-          return AppState.addEventListener("change", (state) => {
+          const appStateSubscription = AppState.addEventListener("change", (state) => {
             if (state === "background") {
               backgroundedAtMs = Date.now();
               return;
@@ -101,6 +103,39 @@ const wakeupsLayer = Wakeups.layer({
               backgroundedAtMs = null;
             }
           });
+          // WiFi <-> cellular keeps isConnected true while invalidating the
+          // socket's path, so the coarse online/offline signal never fires.
+          // Emit an advisory wakeup on interface-type changes while active;
+          // the supervisor probes the session rather than blindly replacing
+          // it, which keeps flapping paths cheap. Seed the current type so
+          // the first flip after startup is detected; the listener only
+          // reports changes.
+          let networkType: string | null = null;
+          void Network.getNetworkStateAsync()
+            .then((current) => {
+              networkType ??= current.type ?? null;
+            })
+            .catch(() => undefined);
+          const networkSubscription = Network.addNetworkStateListener((state) => {
+            const nextType = state.type ?? null;
+            const previousType = networkType;
+            networkType = nextType;
+            if (
+              previousType !== null &&
+              nextType !== null &&
+              nextType !== previousType &&
+              state.isConnected === true &&
+              AppState.currentState === "active"
+            ) {
+              Queue.offerUnsafe(queue, "network-path-changed");
+            }
+          });
+          return {
+            remove: () => {
+              appStateSubscription.remove();
+              networkSubscription.remove();
+            },
+          };
         }),
         (subscription) => Effect.sync(() => subscription.remove()),
       ).pipe(Effect.asVoid),
