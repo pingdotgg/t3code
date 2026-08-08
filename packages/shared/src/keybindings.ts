@@ -44,8 +44,16 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+shift+n", command: "chat.newLocal", when: "!terminalFocus" },
   { key: "mod+shift+m", command: "modelPicker.toggle", when: "!terminalFocus" },
   { key: "mod+o", command: "editor.openFavorite" },
+  // `gitCanCreatePr` is only true once the ref has nothing left to send, so the
+  // shortcut stays inert while there is uncommitted or unpushed work.
+  {
+    key: "mod+shift+p",
+    command: "git.createPullRequest",
+    when: "!terminalFocus && gitCanCreatePr",
+  },
   { key: "mod+shift+[", command: "thread.previous" },
   { key: "mod+shift+]", command: "thread.next" },
+  { key: "mod+shift+a", command: "thread.archive", when: "!terminalFocus" },
   ...THREAD_JUMP_KEYBINDING_COMMANDS.map((command, index) => ({
     key: `mod+${index + 1}`,
     command,

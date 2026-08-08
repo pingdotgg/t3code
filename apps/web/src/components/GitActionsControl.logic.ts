@@ -164,6 +164,33 @@ export function buildMenuItems(
   ];
 }
 
+/**
+ * Gates the `git.createPullRequest` keybinding via the `gitCanCreatePr` when-clause
+ * variable. Deliberately narrower than the "Create PR" menu item: that item also
+ * accepts unpushed work and pushes first, whereas the shortcut only arms once the
+ * ref has nothing left to send, so a stray keypress can never publish commits the
+ * user has not pushed yet.
+ *
+ * `aheadOfDefaultCount` is optional on the wire. Servers old enough to omit it fall
+ * back to "not on the default ref", which keeps the shortcut alive there and lets the
+ * server reject the action if the ref turns out to have nothing to propose.
+ */
+export function canCreatePrFromPushedWork(
+  gitStatus: VcsStatusResult | null,
+  isBusy: boolean,
+): boolean {
+  if (isBusy || !gitStatus) return false;
+  if (!gitStatus.isRepo || !gitStatus.hasPrimaryRemote) return false;
+  if (gitStatus.refName === null) return false;
+  if (gitStatus.hasWorkingTreeChanges) return false;
+  if (!gitStatus.hasUpstream) return false;
+  if (gitStatus.aheadCount > 0 || gitStatus.behindCount > 0) return false;
+  if (gitStatus.pr?.state === "open") return false;
+  return gitStatus.aheadOfDefaultCount === undefined
+    ? !gitStatus.isDefaultRef
+    : gitStatus.aheadOfDefaultCount > 0;
+}
+
 export function resolveQuickAction(
   gitStatus: VcsStatusResult | null,
   isBusy: boolean,
