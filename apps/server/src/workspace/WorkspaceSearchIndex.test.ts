@@ -1,8 +1,16 @@
-import { FileFinder, type GrepCursor, type GrepOptions, type GrepResult } from "@ff-labs/fff-node";
+import {
+  FileFinder,
+  type GrepCursor,
+  type GrepOptions,
+  type GrepResult,
+  type MixedSearchResult,
+} from "@ff-labs/fff-node";
 import { afterEach, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
@@ -63,6 +71,109 @@ it.effect("waits for the full content index warmup before returning", () =>
     yield* Effect.scoped(WorkspaceSearchIndex.make("/workspace/project", "content"));
 
     expect(waitForIndexReady).toHaveBeenCalledWith(15_000);
+  }),
+);
+
+it.effect("bounds workspace listings with the configured maximum", () =>
+  Effect.gen(function* () {
+    const mixedSearch = vi.fn(() => ({
+      ok: true as const,
+      value: {
+        items: [
+          {
+            type: "directory" as const,
+            item: { relativePath: "", dirName: "", maxAccessFrecency: 0 },
+          },
+          {
+            type: "directory" as const,
+            item: { relativePath: "alpha/", dirName: "alpha/", maxAccessFrecency: 0 },
+          },
+          {
+            type: "directory" as const,
+            item: { relativePath: "beta/", dirName: "beta/", maxAccessFrecency: 0 },
+          },
+          {
+            type: "directory" as const,
+            item: { relativePath: "gamma/", dirName: "gamma/", maxAccessFrecency: 0 },
+          },
+        ],
+        scores: [],
+        totalMatched: 4,
+        totalFiles: 0,
+        totalDirs: 4,
+      } satisfies MixedSearchResult,
+    }));
+    const finder = {
+      destroy: vi.fn(),
+      waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+      mixedSearch,
+    } as unknown as FileFinder;
+    vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+
+    const indexLayer = WorkspaceSearchIndex.layer(
+      WorkspaceSearchIndex.workspaceSearchIndexKey("/workspace/project", "paths"),
+    ).pipe(
+      Layer.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { T3CODE_WORKSPACE_LIST_MAX_ENTRIES: "2" } }),
+        ),
+      ),
+    );
+    const result = yield* Effect.gen(function* () {
+      const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
+      return yield* searchIndex.list();
+    }).pipe(Effect.provide(indexLayer));
+
+    expect(mixedSearch).toHaveBeenCalledWith("", { pageSize: 4 });
+    expect(result).toEqual({
+      entries: [
+        { path: "alpha", kind: "directory" },
+        { path: "beta", kind: "directory" },
+      ],
+      truncated: true,
+    });
+  }),
+);
+
+it.effect("falls back to the default listing maximum for invalid configuration", () =>
+  Effect.gen(function* () {
+    const createFinder = vi.spyOn(FileFinder, "create");
+    for (const configuredValue of ["0", "25001", "not-a-number"]) {
+      const mixedSearch = vi.fn(() => ({
+        ok: true as const,
+        value: {
+          items: [],
+          scores: [],
+          totalMatched: 0,
+          totalFiles: 0,
+          totalDirs: 0,
+        } satisfies MixedSearchResult,
+      }));
+      const finder = {
+        destroy: vi.fn(),
+        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+        mixedSearch,
+      } as unknown as FileFinder;
+      createFinder.mockReturnValueOnce({ ok: true, value: finder });
+
+      const indexLayer = WorkspaceSearchIndex.layer(
+        WorkspaceSearchIndex.workspaceSearchIndexKey("/workspace/project", "paths"),
+      ).pipe(
+        Layer.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: { T3CODE_WORKSPACE_LIST_MAX_ENTRIES: configuredValue },
+            }),
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
+        yield* searchIndex.list();
+      }).pipe(Effect.provide(indexLayer));
+
+      expect(mixedSearch).toHaveBeenCalledWith("", { pageSize: 25_002 });
+    }
   }),
 );
 
