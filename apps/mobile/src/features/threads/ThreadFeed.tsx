@@ -1539,10 +1539,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // The empty↔filled key below remounts the list, which resets its imperative
   // content-inset override — and useKeyboardChatComposerInset (mounted above
   // the remount boundary) deduplicates by height, so it never re-reports the
-  // composer inset to the fresh instance. Without this, the remounted list's
-  // initial scroll-to-end computes with a zero end inset and rests one
-  // composer-height short of the end. Layout effect: it must land before the
-  // list's first positioning tick or the one-shot initial scroll misses it.
+  // composer inset to the fresh instance. Re-report the measured overlay height
+  // (composer plus any pending approval / user-input card) so the remounted
+  // list's scroll math gets the true value; on Android the declarative
+  // contentInset floor below covers the window before this effect lands.
   const listMountKey = `${props.threadId}:${props.feed.length === 0 ? "empty" : "filled"}`;
   useLayoutEffect(() => {
     const bottom = props.contentInsetEndAdjustment.value;
@@ -1847,6 +1847,19 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             // ThreadDetailScreen); this tells LegendList's scroll math about the
             // extra so programmatic end scrolls land at the true resting offset.
             contentInsetEndStaticAdjustment={usesNativeAutomaticInsets ? insets.bottom : 0}
+            // Android: the composer overlay only exists as the keyboard
+            // integration's animated bottom padding, which the list's scroll
+            // math cannot see until the inset reports above land — and those
+            // arrive via runOnJS, racing the remounted list's one-shot initial
+            // scroll-at-end. Seed the estimated overlay height as a declarative
+            // contentInset floor: LegendList consumes it in JS math only
+            // (Android's ScrollView has no native contentInset prop) and the
+            // first reported override REPLACES it instead of adding to it.
+            // Not on iOS: there the prop would reach UIKit and inset natively
+            // on top of the animated padding.
+            {...(Platform.OS === "android" && !usesNativeAutomaticInsets
+              ? { contentInset: { bottom: bottomContentInset } }
+              : {})}
             // The keyboard integration's offset math (end pinning, max scroll)
             // must add the same UIKit-added extra, or its keyboard-open end
             // targets land one safe-area short of the true resting offset.
