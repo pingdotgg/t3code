@@ -23,6 +23,7 @@ interface ReleaseAsset {
 }
 
 interface ReleaseResponse {
+  readonly id: number;
   readonly draft: boolean;
   readonly tagName: string;
   readonly targetCommitish: string;
@@ -74,33 +75,77 @@ export function githubReleaseAssetNames(plan: TwoCodeReleasePlan): readonly stri
   ].toSorted();
 }
 
-function parseReleaseResponse(raw: string): ReleaseResponse {
-  const value = JSON.parse(raw) as {
+function parseReleaseValue(value: unknown): ReleaseResponse {
+  const candidate = value as {
+    id?: unknown;
     draft?: unknown;
     tag_name?: unknown;
     target_commitish?: unknown;
     assets?: Array<{ name?: unknown; url?: unknown }>;
   };
   if (
-    typeof value.draft !== "boolean" ||
-    typeof value.tag_name !== "string" ||
-    typeof value.target_commitish !== "string" ||
-    !Array.isArray(value.assets)
+    typeof candidate.id !== "number" ||
+    !Number.isSafeInteger(candidate.id) ||
+    candidate.id <= 0 ||
+    typeof candidate.draft !== "boolean" ||
+    typeof candidate.tag_name !== "string" ||
+    typeof candidate.target_commitish !== "string" ||
+    !Array.isArray(candidate.assets)
   ) {
     throw new Error("GitHub returned an invalid release response.");
   }
-  const assets = value.assets.map((asset) => {
+  const assets = candidate.assets.map((asset) => {
     if (typeof asset.name !== "string" || typeof asset.url !== "string") {
       throw new Error("GitHub returned invalid release asset metadata.");
     }
     return { name: asset.name, url: asset.url };
   });
   return {
-    draft: value.draft,
-    tagName: value.tag_name,
-    targetCommitish: value.target_commitish,
+    id: candidate.id,
+    draft: candidate.draft,
+    tagName: candidate.tag_name,
+    targetCommitish: candidate.target_commitish,
     assets,
   };
+}
+
+function parseReleaseResponse(raw: string): ReleaseResponse {
+  return parseReleaseValue(JSON.parse(raw) as unknown);
+}
+
+export function findReleaseInPaginatedListing(
+  raw: string,
+  tag: string,
+): ReleaseResponse | undefined {
+  const value = JSON.parse(raw) as unknown;
+  if (!Array.isArray(value) || value.some((page) => !Array.isArray(page))) {
+    throw new Error("GitHub returned an invalid paginated releases response.");
+  }
+  for (const page of value) {
+    for (const release of page) {
+      const parsed = parseReleaseValue(release);
+      if (parsed.tagName === tag) return parsed;
+    }
+  }
+  return undefined;
+}
+
+export function decideEmptyDraftRetarget(
+  release: ReleaseResponse,
+  sourceCommit: string,
+): "keep" | "retarget" {
+  if (release.targetCommitish === sourceCommit) return "keep";
+  if (!release.draft) {
+    throw new Error(
+      `Published release ${release.tagName} targets ${release.targetCommitish}, not release commit ${sourceCommit}; refusing retarget.`,
+    );
+  }
+  if (release.assets.length > 0) {
+    throw new Error(
+      `Draft ${release.tagName} targets ${release.targetCommitish} and already contains assets; refusing retarget to ${sourceCommit}.`,
+    );
+  }
+  return "retarget";
 }
 
 function getRelease(config: TwoCodeReleaseConfig): ReleaseResponse | undefined {
@@ -111,8 +156,16 @@ function getRelease(config: TwoCodeReleaseConfig): ReleaseResponse | undefined {
     { allowFailure: true },
   );
   if (result.status === 0) return parseReleaseResponse(result.stdout);
-  if (/(?:404|Not Found)/i.test(`${result.stdout}\n${result.stderr}`)) return undefined;
-  throw new Error(`Could not inspect GitHub release ${tag}: ${result.stderr.trim()}`);
+  if (!/(?:404|Not Found)/i.test(`${result.stdout}\n${result.stderr}`)) {
+    throw new Error(`Could not inspect GitHub release ${tag}: ${result.stderr.trim()}`);
+  }
+  const listing = run("gh", [
+    "api",
+    "--paginate",
+    "--slurp",
+    `repos/${config.githubRepository}/releases?per_page=100`,
+  ]);
+  return findReleaseInPaginatedListing(listing.stdout, tag);
 }
 
 function resolveTagCommit(config: TwoCodeReleaseConfig, tag: string): string | undefined {
@@ -200,10 +253,26 @@ async function prepareDraft(
   if (release.tagName !== plan.tag) {
     throw new Error(`GitHub release tag ${release.tagName} does not match ${plan.tag}.`);
   }
-  if (!tagCommit && release.targetCommitish !== plan.sourceCommit) {
-    throw new Error(
-      `Draft ${plan.tag} targets ${release.targetCommitish}, not release commit ${plan.sourceCommit}.`,
-    );
+  if (!tagCommit && decideEmptyDraftRetarget(release, plan.sourceCommit) === "retarget") {
+    const releaseId = release.id;
+    run("gh", [
+      "api",
+      "--method",
+      "PATCH",
+      `repos/${config.githubRepository}/releases/${releaseId}`,
+      "-f",
+      `target_commitish=${plan.sourceCommit}`,
+    ]);
+    release = getRelease(config);
+    if (
+      !release ||
+      release.id !== releaseId ||
+      !release.draft ||
+      release.assets.length > 0 ||
+      release.targetCommitish !== plan.sourceCommit
+    ) {
+      throw new Error(`Could not safely retarget empty draft ${plan.tag}.`);
+    }
   }
   const alreadyPublished = !release.draft;
 
