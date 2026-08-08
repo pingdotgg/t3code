@@ -97,6 +97,8 @@ overrides:
   "@effect/sql-sqlite-bun": "catalog:"
   "@effect/vitest": "catalog:"
   "@effect/vitest>vitest": "-"
+  # fork: codesign parses bare digit-leading app names as PIDs; 3.1.1 prefixes the 2code path.
+  "@electron/notarize": 3.1.1
   "@expo/metro-config": 56.0.14
   "@pierre/diffs>@shikijs/transformers": ^4.2.0
   "@types/node": "catalog:"

@@ -73,6 +73,11 @@ Actions artifact for 30 days.
 The signing build and every mutation job use the protected production environment. Inspect the
 signed dry-run artifact before approving the first real version bump.
 
+The workspace pins `@electron/notarize` to at least `3.1.1`. Earlier releases pass the bare
+digit-leading name `2code.app` to `codesign`, which macOS parses as a process selector instead of a
+path. Keep the override during upstream syncs until Electron Builder itself depends on a version
+containing [electron/notarize#245](https://github.com/electron/notarize/pull/245).
+
 ## Publish a release
 
 1. Increase only `version` in `distributions/2code/release.json`. It must never be below the live
