@@ -52,9 +52,10 @@ const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${t
 const RESTART_INTERRUPTION_DETAIL =
   "The provider process ended while T3 Code was restarting. Send the message again to resume.";
 const RUNTIME_INTERRUPTION_DETAIL =
-  "The provider process ended without reporting turn completion. T3 Code recovered the thread automatically; send the message again to resume.";
+  "The provider process failed to start or ended without reporting turn completion. T3 Code recovered the thread automatically; send the message again to resume.";
 const PROVIDER_LIVENESS_SWEEP_INTERVAL = Duration.seconds(5);
 const PROVIDER_LIVENESS_CONFIRMATION_DELAY = Duration.seconds(2);
+const PROVIDER_STARTING_GRACE_PERIOD = Duration.seconds(30);
 
 // Fallback when the in-memory description cache no longer has the task name
 // (server restart, session-exit sweep, TTL/capacity eviction): earlier
@@ -2052,12 +2053,13 @@ const make = Effect.gen(function* () {
   const worker = yield* makeDrainableWorker(processInputSafely);
 
   const readMissingActiveSessions = Effect.fn("readMissingActiveProviderSessions")(function* (
-    includeStarting: boolean,
+    recovery: "restart" | "runtime",
   ) {
     const [snapshot, providerSessions] = yield* Effect.all([
       projectionSnapshotQuery.getShellSnapshot(),
       providerService.listSessions(),
     ]);
+    const observedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
     const liveThreadIds = new Set(
       providerSessions
         .filter(
@@ -2069,10 +2071,17 @@ const make = Effect.gen(function* () {
         .map((session) => session.threadId),
     );
     return snapshot.threads.filter((thread) => {
-      const status = thread.session?.status;
+      const session = thread.session;
+      const status = session?.status;
+      const staleStartingSession =
+        session !== null &&
+        status === "starting" &&
+        (recovery === "restart" ||
+          observedAtMs - DateTime.toEpochMillis(DateTime.makeUnsafe(session.updatedAt)) >=
+            Duration.toMillis(PROVIDER_STARTING_GRACE_PERIOD));
       const hasProjectedWork =
-        (status === "running" && thread.session?.activeTurnId != null) ||
-        (includeStarting && status === "starting") ||
+        (session !== null && status === "running" && session.activeTurnId != null) ||
+        staleStartingSession ||
         thread.backgroundLiveness != null;
       return hasProjectedWork && !liveThreadIds.has(thread.id);
     });
@@ -2123,20 +2132,20 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const reconcileInterruptedSessionsAfterRestart = readMissingActiveSessions(true).pipe(
+  const reconcileInterruptedSessionsAfterRestart = readMissingActiveSessions("restart").pipe(
     Effect.flatMap((threads) =>
       interruptMissingActiveSessions(threads, RESTART_INTERRUPTION_DETAIL, "restart-recovery"),
     ),
   );
 
   const reconcileInterruptedSessionsDuringRuntime = Effect.gen(function* () {
-    const firstObservation = yield* readMissingActiveSessions(false);
+    const firstObservation = yield* readMissingActiveSessions("runtime");
     if (firstObservation.length === 0) {
       return;
     }
 
     yield* Effect.sleep(PROVIDER_LIVENESS_CONFIRMATION_DELAY);
-    const secondObservation = yield* readMissingActiveSessions(false);
+    const secondObservation = yield* readMissingActiveSessions("runtime");
     const firstByThreadId = new Map(firstObservation.map((thread) => [thread.id, thread]));
     const confirmedMissing = secondObservation.filter((thread) => {
       const first = firstByThreadId.get(thread.id);
