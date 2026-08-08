@@ -14,6 +14,7 @@ import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
+import { FirstRunGate } from "../components/onboarding/FirstRunGate";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
@@ -108,6 +109,17 @@ function RootRouteView() {
     );
   }
 
+  // The welcome wizard is full-screen like /pair, but keeps toasts so its
+  // connect/import actions can report failures.
+  if (pathname === "/welcome") {
+    return (
+      <ToastProvider>
+        <DocumentTitleSync />
+        <Outlet />
+      </ToastProvider>
+    );
+  }
+
   if (authGateState.status !== "authenticated" && authGateState.status !== "hosted-static") {
     return (
       <>
@@ -125,24 +137,30 @@ function RootRouteView() {
     </CommandPalette>
   );
 
+  // FirstRunGate holds back everything below it — including EventRouter,
+  // whose welcome payload navigates into a thread — until the first-run
+  // decision is known, so a fresh install renders nothing (not the shell,
+  // not a flash of threads) before landing on the welcome wizard.
   return (
     <ToastProvider>
       <AnchoredToastProvider>
         <DocumentTitleSync />
         <GlassAppearanceSync />
         <FontAppearanceSync />
-        {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
-        <RelayClientInstallDialog />
-        <ConnectOnboardingDialog />
-        <SshPasswordPromptDialog />
-        <SlowRpcRequestToastCoordinator />
-        <HostedStaticEnvironmentBootstrap />
-        {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
-        {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
-        {appShell}
-        {/* Above the router: a theme draft is judged by walking the app, so the
-            editor has to survive navigation away from settings. */}
-        <ThemeEditorHost />
+        <FirstRunGate enabled={primaryEnvironmentAuthenticated}>
+          {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
+          <RelayClientInstallDialog />
+          <ConnectOnboardingDialog />
+          <SshPasswordPromptDialog />
+          <SlowRpcRequestToastCoordinator />
+          <HostedStaticEnvironmentBootstrap />
+          {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
+          {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
+          {appShell}
+          {/* Above the router: a theme draft is judged by walking the app, so the
+              editor has to survive navigation away from settings. */}
+          <ThemeEditorHost />
+        </FirstRunGate>
       </AnchoredToastProvider>
     </ToastProvider>
   );
