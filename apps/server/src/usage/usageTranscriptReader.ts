@@ -106,9 +106,25 @@ export async function readTranscriptRecords(
   filePath: string,
   provider: UsageProviderKind,
 ): Promise<readonly UsageRecord[] | null> {
-  const records: UsageRecord[] = [];
-  const codexState = initialCodexScanState();
+  // Selected once per file, exhaustively: extending `UsageProviderKind` fails
+  // to compile here instead of silently running another provider's parser.
+  const parseLine = ((): ((line: string) => UsageRecord | null) => {
+    switch (provider) {
+      case "claude":
+        return (line) => (mightCarryUsage(line, provider) ? parseClaudeLine(line) : null);
+      case "codex": {
+        const state = initialCodexScanState();
+        return (line) =>
+          mightCarryUsage(line, provider) ||
+          line.includes('"turn_context"') ||
+          line.includes('"session_meta"')
+            ? parseCodexLine(line, state)
+            : null;
+      }
+    }
+  })();
 
+  const records: UsageRecord[] = [];
   try {
     const lines = NodeReadline.createInterface({
       input: NodeFS.createReadStream(filePath, { encoding: "utf8" }),
@@ -116,21 +132,7 @@ export async function readTranscriptRecords(
     });
 
     for await (const line of lines) {
-      if (provider === "codex") {
-        if (
-          !mightCarryUsage(line, provider) &&
-          !line.includes('"turn_context"') &&
-          !line.includes('"session_meta"')
-        ) {
-          continue;
-        }
-        const record = parseCodexLine(line, codexState);
-        if (record !== null) records.push(record);
-        continue;
-      }
-
-      if (!mightCarryUsage(line, provider)) continue;
-      const record = parseClaudeLine(line);
+      const record = parseLine(line);
       if (record !== null) records.push(record);
     }
   } catch {

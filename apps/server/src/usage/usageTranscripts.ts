@@ -66,9 +66,17 @@ export function totalTokens(totals: UsageTokenTotals): number {
  * Transcripts are mostly tool output; only a minority of lines carry usage. On
  * a 30-day window this skips roughly half the lines outright and is worth about
  * an order of magnitude.
+ *
+ * Exhaustive over the provider kinds, so extending `UsageProviderKind` fails
+ * to compile here instead of silently reusing another provider's gate.
  */
 export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
-  return provider === "claude" ? line.includes('"usage"') : line.includes('"token_count"');
+  switch (provider) {
+    case "claude":
+      return line.includes('"usage"');
+    case "codex":
+      return line.includes('"token_count"');
+  }
 }
 
 /* -------------------------------------------------------------------------- */

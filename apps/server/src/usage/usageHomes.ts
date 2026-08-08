@@ -38,6 +38,15 @@ export interface UsageHomeCandidate {
   /** Raw (undecoded) driver config blob for one configured instance. */
   readonly config: unknown;
   /**
+   * Display name for buckets read from this instance's home: the configured
+   * `displayName`, falling back to the instance id for non-default instances.
+   * `null` for the default slot and the legacy blob, whose usage should render
+   * under the plain provider name.
+   */
+  readonly label: string | null;
+  /** The default slot (instance id === driver kind) or the legacy blob. */
+  readonly isDefault: boolean;
+  /**
    * Effective value of the provider's home variable in the instance's spawn
    * environment, or `null`. Mirrors `mergeProviderInstanceEnvironment`: the
    * server's own environment is the base and per-instance entries override it,
@@ -93,12 +102,19 @@ export function listProviderHomeCandidates(
       // `??`, not an `undefined` check: the registry coalesces an explicit
       // `null` payload into driver defaults the same way.
       config: envelope.config ?? {},
+      label: envelope.displayName ?? (instanceId === driver ? null : instanceId),
+      isDefault: instanceId === driver,
       homeEnvValue,
     });
   }
 
   if (!defaultSlotClaimed) {
-    candidates.push({ config: settings.providers[driver], homeEnvValue: inheritedHome });
+    candidates.push({
+      config: settings.providers[driver],
+      label: null,
+      isDefault: true,
+      homeEnvValue: inheritedHome,
+    });
   }
   return candidates;
 }
@@ -122,4 +138,56 @@ export function scanHomePath(
 ): string {
   if (configHomePath.trim().length > 0 || shadowed) return configHomePath;
   return homeEnvValue ?? "";
+}
+
+/** One candidate whose home directory has been resolved on this machine. */
+export interface ResolvedUsageHome {
+  readonly provider: UsageProviderKind;
+  readonly dir: string;
+  readonly label: string | null;
+  /** False for a shadow overlay, which shares another instance's home. */
+  readonly isDirect: boolean;
+  readonly isDefault: boolean;
+}
+
+export interface UsageTranscriptDir {
+  readonly provider: UsageProviderKind;
+  readonly dir: string;
+  readonly label: string | null;
+}
+
+/**
+ * Collapses candidates that resolved to the same directory into one scan
+ * entry, keeping input order.
+ *
+ * Label precedence when several instances share a directory: a direct
+ * instance beats a shadow overlay (overlays share another instance's home),
+ * and the default slot beats named extras — a config-less extra instance
+ * resolves to the same home as the default, and that home's usage should
+ * render under the plain provider name, not the extra's.
+ */
+export function dedupeUsageHomes(
+  homes: readonly ResolvedUsageHome[],
+): readonly UsageTranscriptDir[] {
+  const rank = (home: ResolvedUsageHome) => (home.isDirect ? 2 : 0) + (home.isDefault ? 1 : 0);
+
+  const byKey = new Map<string, { entry: { label: string | null }; rank: number }>();
+  const dirs: { provider: UsageProviderKind; dir: string; label: string | null }[] = [];
+
+  for (const home of homes) {
+    const key = `${home.provider}\0${home.dir}`;
+    const existing = byKey.get(key);
+    if (existing === undefined) {
+      const entry = { provider: home.provider, dir: home.dir, label: home.label };
+      byKey.set(key, { entry, rank: rank(home) });
+      dirs.push(entry);
+      continue;
+    }
+    if (rank(home) > existing.rank) {
+      existing.entry.label = home.label;
+      existing.rank = rank(home);
+    }
+  }
+
+  return dirs;
 }

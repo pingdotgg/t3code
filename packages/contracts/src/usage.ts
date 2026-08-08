@@ -12,6 +12,7 @@
  *
  * @module usage
  */
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -21,8 +22,19 @@ import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 3 as const;
+export const USAGE_CONTRACT_VERSION = 4 as const;
 
+/**
+ * Providers whose transcripts the scan can read.
+ *
+ * Extending this union is compile-guided: it breaks the driver and
+ * home-variable maps in the server's `usageHomes`, the per-line reducer in
+ * `usageTranscriptReader`, and the branding records in the web's
+ * `usageProviders` — each names what the new provider must supply. The hard
+ * requirement is a local transcript store carrying token usage; a provider
+ * that only reports usage server-side, or writes no usage to disk, needs a
+ * different source than this scan.
+ */
 export const UsageProviderKind = Schema.Literals(["claude", "codex"]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
 
@@ -78,6 +90,25 @@ export type UsageTokenTotals = typeof UsageTokenTotals.Type;
 export const UsageBucket = Schema.Struct({
   day: UsageDay,
   provider: UsageProviderKind,
+  /**
+   * Resolved transcript directory the records came from. Matches the
+   * `resolvedHomePath` of exactly one of the summary's source fingerprints, so
+   * clients can attribute buckets to the sources they decided to count.
+   *
+   * Decoding defaults on this and `homeLabel` keep a pre-v4 summary decodable:
+   * `UsageSummary` is the RPC success schema, so a required field would fail
+   * the whole response before the contract-version check could exclude the
+   * environment as stale. Current servers always populate both.
+   */
+  homePath: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /**
+   * Display name of the provider instance configured for `homePath`, when the
+   * user gave it one. Several instances can overlay one home (shadow homes
+   * share the shared home's `sessions`); the direct instance's name wins.
+   */
+  homeLabel: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   model: TrimmedNonEmptyString,
   totals: UsageTokenTotals,
   costUsd: Schema.Number,
@@ -125,6 +156,13 @@ export type UsageSourceStatus = typeof UsageSourceStatus.Type;
 
 export const UsageSource = Schema.Struct({
   fingerprint: UsageSourceFingerprint,
+  /**
+   * Display name of the provider instance behind this directory, if any.
+   * Defaulted for the same pre-v4 decode tolerance as `UsageBucket.homePath`.
+   */
+  label: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   status: UsageSourceStatus,
   scannedFiles: NonNegativeInt,
   skippedFiles: NonNegativeInt,

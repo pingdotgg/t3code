@@ -1,19 +1,24 @@
 import {
   USAGE_CONTRACT_VERSION,
+  UsageSummary,
   type EnvironmentId,
   type UsageBucket,
   type UsageDay,
   type UsageProviderKind,
-  type UsageSummary,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeUsage, type EnvironmentUsage } from "./usageMerge";
+import { mergeUsage, seriesKey, type EnvironmentUsage } from "./usageMerge";
+
+const decodeUsageSummary = Schema.decodeUnknownSync(UsageSummary);
 
 function bucket(overrides: Partial<UsageBucket> = {}): UsageBucket {
   return {
     day: "2026-08-07" as UsageDay,
     provider: "claude",
+    homePath: "/home/theo/.claude",
+    homeLabel: null,
     model: "claude-fable-5",
     totals: {
       uncachedInputTokens: 100,
@@ -40,6 +45,7 @@ function summary(
     homePath: string;
     volumeId?: string;
     distinctSessions?: number;
+    label?: string | null;
   }[],
   contractVersion: number = USAGE_CONTRACT_VERSION,
 ): UsageSummary {
@@ -57,6 +63,7 @@ function summary(
         resolvedHomePath: source.homePath,
         volumeId: source.volumeId ?? `vol-${source.hostId}`,
       },
+      label: source.label ?? null,
       status: "ok" as const,
       scannedFiles: 1,
       skippedFiles: 0,
@@ -79,11 +86,17 @@ describe("mergeUsage", () => {
       [
         environment(
           "env-a",
-          summary([bucket()], [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }]),
+          summary(
+            [bucket({ homePath: "/a/.claude" })],
+            [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
+          ),
         ),
         environment(
           "env-b",
-          summary([bucket()], [{ provider: "claude", hostId: "linux", homePath: "/b/.claude" }]),
+          summary(
+            [bucket({ homePath: "/b/.claude" })],
+            [{ provider: "claude", hostId: "linux", homePath: "/b/.claude" }],
+          ),
         ),
       ],
       USAGE_CONTRACT_VERSION,
@@ -124,7 +137,15 @@ describe("mergeUsage", () => {
         environment(
           "env-b",
           summary(
-            [bucket(), bucket({ provider: "codex", model: "gpt-5.6-sol", costUsd: 4 })],
+            [
+              bucket(),
+              bucket({
+                provider: "codex",
+                homePath: "/home/theo/.codex",
+                model: "gpt-5.6-sol",
+                costUsd: 4,
+              }),
+            ],
             [sharedClaude, { provider: "codex", hostId: "mac", homePath: "/home/theo/.codex" }],
           ),
         ),
@@ -140,17 +161,118 @@ describe("mergeUsage", () => {
     ]);
   });
 
+  it("drops only the duplicated home, keeping the same provider's other home", () => {
+    // Both environments scan the shared work home; only env-b sees personal.
+    // Ownership is per directory, so env-b still contributes personal even
+    // though its work directory lost the claim.
+    const work = {
+      provider: "codex" as const,
+      hostId: "mac",
+      homePath: "/home/theo/.codex-t3/work/sessions",
+      label: "Work",
+    };
+    const personal = {
+      provider: "codex" as const,
+      hostId: "mac",
+      homePath: "/home/theo/.codex-t3/personal/sessions",
+      label: "Personal",
+    };
+    const workBucket = bucket({
+      provider: "codex",
+      homePath: work.homePath,
+      homeLabel: "Work",
+      model: "gpt-5.6-sol",
+    });
+    const merged = mergeUsage(
+      [
+        environment("env-a", summary([workBucket], [work])),
+        environment(
+          "env-b",
+          summary(
+            [
+              workBucket,
+              bucket({
+                provider: "codex",
+                homePath: personal.homePath,
+                homeLabel: "Personal",
+                model: "gpt-5.6-sol",
+                costUsd: 3,
+              }),
+            ],
+            [work, personal],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(13);
+    expect(merged.duplicateSources).toHaveLength(1);
+    expect(merged.providers.map((provider) => provider.homeLabel).sort()).toEqual([
+      "Personal",
+      "Work",
+    ]);
+  });
+
+  it("splits one provider into series per home label", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({
+                provider: "codex",
+                homePath: "/a/work/sessions",
+                homeLabel: "Work",
+                model: "gpt-5.6-sol",
+                costUsd: 8,
+              }),
+              bucket({
+                provider: "codex",
+                homePath: "/a/personal/sessions",
+                homeLabel: "Personal",
+                model: "gpt-5.6-sol",
+                costUsd: 2,
+              }),
+            ],
+            [
+              { provider: "codex", hostId: "mac", homePath: "/a/work/sessions", label: "Work" },
+              {
+                provider: "codex",
+                hostId: "mac",
+                homePath: "/a/personal/sessions",
+                label: "Personal",
+              },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.providers).toHaveLength(2);
+    expect(merged.providers[0]?.homeLabel).toBe("Work");
+    expect(merged.providers[0]?.costShare).toBeCloseTo(0.8, 5);
+    expect(merged.providers[1]?.homeLabel).toBe("Personal");
+    expect(merged.daily[0]?.bySeries.get(seriesKey("codex", "Work"))?.costUsd).toBe(8);
+    expect(merged.daily[0]?.bySeries.get(seriesKey("codex", "Personal"))?.costUsd).toBe(2);
+  });
+
   it("excludes an environment reporting an older contract version", () => {
     const merged = mergeUsage(
       [
         environment(
           "env-a",
-          summary([bucket()], [{ provider: "claude", hostId: "mac", homePath: "/a" }]),
+          summary(
+            [bucket({ homePath: "/a" })],
+            [{ provider: "claude", hostId: "mac", homePath: "/a" }],
+          ),
         ),
         environment(
           "env-b",
           summary(
-            [bucket()],
+            [bucket({ homePath: "/b" })],
             [{ provider: "claude", hostId: "linux", homePath: "/b" }],
             USAGE_CONTRACT_VERSION - 1,
           ),
@@ -170,8 +292,14 @@ describe("mergeUsage", () => {
           "env-a",
           summary(
             [
-              bucket({ costUsd: 75 }),
-              bucket({ provider: "codex", model: "gpt-5.6-sol", costUsd: 25, unpricedRecords: 5 }),
+              bucket({ homePath: "/a/.claude", costUsd: 75 }),
+              bucket({
+                provider: "codex",
+                homePath: "/a/.codex",
+                model: "gpt-5.6-sol",
+                costUsd: 25,
+                unpricedRecords: 5,
+              }),
             ],
             [
               { provider: "claude", hostId: "mac", homePath: "/a/.claude" },
@@ -195,8 +323,20 @@ describe("mergeUsage", () => {
     const shape = { provider: "claude" as const, hostId: "mac", homePath: "/Users/theo/.claude" };
     const merged = mergeUsage(
       [
-        environment("env-a", summary([bucket()], [{ ...shape, volumeId: "16777220:1234" }])),
-        environment("env-b", summary([bucket()], [{ ...shape, volumeId: "16777221:9999" }])),
+        environment(
+          "env-a",
+          summary(
+            [bucket({ homePath: shape.homePath })],
+            [{ ...shape, volumeId: "16777220:1234" }],
+          ),
+        ),
+        environment(
+          "env-b",
+          summary(
+            [bucket({ homePath: shape.homePath })],
+            [{ ...shape, volumeId: "16777221:9999" }],
+          ),
+        ),
       ],
       USAGE_CONTRACT_VERSION,
     );
@@ -214,8 +354,8 @@ describe("mergeUsage", () => {
     };
     const merged = mergeUsage(
       [
-        environment("env-a", summary([bucket()], [same])),
-        environment("env-b", summary([bucket()], [same])),
+        environment("env-a", summary([bucket({ homePath: same.homePath })], [same])),
+        environment("env-b", summary([bucket({ homePath: same.homePath })], [same])),
       ],
       USAGE_CONTRACT_VERSION,
     );
@@ -232,7 +372,10 @@ describe("mergeUsage", () => {
         environment(
           "env-a",
           summary(
-            [bucket({ day: "2026-08-06" as UsageDay }), bucket({ day: "2026-08-07" as UsageDay })],
+            [
+              bucket({ day: "2026-08-06" as UsageDay, homePath: "/a/.claude" }),
+              bucket({ day: "2026-08-07" as UsageDay, homePath: "/a/.claude" }),
+            ],
             [
               {
                 provider: "claude",
@@ -254,5 +397,30 @@ describe("mergeUsage", () => {
     const merged = mergeUsage([], USAGE_CONTRACT_VERSION);
     expect(merged.costUsd).toBe(0);
     expect(merged.daily).toHaveLength(0);
+  });
+
+  it("decodes a pre-v4 summary so the version check can exclude it as stale", () => {
+    // UsageSummary is the RPC success schema: if the home fields were
+    // required, an older environment's response would fail as an RPC error
+    // before the contract-version check ever ran.
+    const v3 = summary(
+      [bucket({ homePath: "/a" })],
+      [{ provider: "claude", hostId: "mac", homePath: "/a" }],
+      USAGE_CONTRACT_VERSION - 1,
+    );
+    const stripped = {
+      ...v3,
+      buckets: v3.buckets.map(({ homePath: _path, homeLabel: _label, ...rest }) => rest),
+      sources: v3.sources.map(({ label: _sourceLabel, ...rest }) => rest),
+    };
+
+    const decoded = decodeUsageSummary(stripped);
+    expect(decoded.buckets[0]?.homePath).toBe("");
+    expect(decoded.buckets[0]?.homeLabel).toBeNull();
+    expect(decoded.sources[0]?.label).toBeNull();
+
+    const merged = mergeUsage([environment("env-old", decoded)], USAGE_CONTRACT_VERSION);
+    expect(merged.costUsd).toBe(0);
+    expect(merged.staleEnvironments).toEqual(["env-old"]);
   });
 });

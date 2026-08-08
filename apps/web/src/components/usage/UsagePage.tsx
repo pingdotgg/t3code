@@ -14,9 +14,10 @@ import {
   formatUsd,
   makeWindow,
 } from "../../usage/usageFormat";
+import { seriesKey } from "../../usage/usageMerge";
 import { ScrollArea } from "../ui/scroll-area";
 import { UsageChartLegend, UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
-import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_MARK, PROVIDER_ORDER } from "./usageProviders";
+import { buildSeries, PROVIDER_KINDS_ORDERED, PROVIDER_LABEL, PROVIDER_MARK } from "./usageProviders";
 
 const WINDOW_OPTIONS = [
   { days: 7, label: "7 days" },
@@ -47,6 +48,11 @@ export function UsagePage() {
     [window.sinceDay, window.untilDay],
   );
   const recentDays = useMemo(() => merged.daily.toReversed().slice(0, 8), [merged.daily]);
+
+  // One series per provider home (e.g. one per configured Codex instance); a
+  // provider with a single unnamed home collapses to the plain provider series.
+  const series = useMemo(() => buildSeries(merged.providers), [merged.providers]);
+  const seriesByKey = useMemo(() => new Map(series.map((entry) => [entry.key, entry])), [series]);
 
   // Ranked by whatever the toggle is showing, so the bars always descend.
   const orderedProviders = useMemo(
@@ -153,12 +159,14 @@ export function UsagePage() {
 
                 {orderedProviders.map((provider) => {
                   const share = metric === "cost" ? provider.costShare : provider.tokenShare;
+                  const key = seriesKey(provider.provider, provider.homeLabel);
+                  const entry = seriesByKey.get(key);
                   return (
-                    <div key={provider.provider} className="flex flex-col gap-1.5">
+                    <div key={key} className="flex flex-col gap-1.5">
                       <div className="flex items-baseline justify-between">
                         <span className="flex items-center gap-2 text-sm text-foreground">
                           <ProviderMark provider={provider.provider} className="size-4" />
-                          {PROVIDER_LABEL[provider.provider]}
+                          {entry?.label ?? provider.provider}
                         </span>
                         <span className="text-sm text-foreground tabular-nums">
                           {metric === "cost"
@@ -171,7 +179,7 @@ export function UsagePage() {
                           className="h-full"
                           style={{
                             width: `${(share * 100).toFixed(1)}%`,
-                            backgroundColor: PROVIDER_COLOR[provider.provider],
+                            backgroundColor: entry?.color,
                           }}
                         />
                       </div>
@@ -208,10 +216,10 @@ export function UsagePage() {
                         </button>
                       ))}
                     </div>
-                    <UsageChartLegend />
+                    <UsageChartLegend series={series} />
                   </div>
                 </div>
-                <UsageProviderChart days={days} daily={merged.daily} metric={metric} />
+                <UsageProviderChart days={days} daily={merged.daily} series={series} metric={metric} />
               </div>
             </section>
 
@@ -317,9 +325,9 @@ export function UsagePage() {
                   <thead>
                     <tr className="border-b border-border text-left text-xs text-muted-foreground">
                       <th className="py-2 font-normal">Day</th>
-                      {PROVIDER_ORDER.map((provider) => (
-                        <th key={provider} className="py-2 text-right font-normal">
-                          {PROVIDER_LABEL[provider]}
+                      {series.map((entry) => (
+                        <th key={entry.key} className="py-2 text-right font-normal">
+                          {entry.label}
                         </th>
                       ))}
                       <th className="py-2 text-right font-normal">Total</th>
@@ -329,7 +337,10 @@ export function UsagePage() {
                   <tbody>
                     {recentDays.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="py-6 text-center text-muted-foreground">
+                        <td
+                          colSpan={series.length + 3}
+                          className="py-6 text-center text-muted-foreground"
+                        >
                           No activity in this window.
                         </td>
                       </tr>
@@ -337,12 +348,12 @@ export function UsagePage() {
                       recentDays.map((day) => (
                         <tr key={day.day} className="border-b border-border/50">
                           <td className="py-2 text-foreground">{formatDayShort(day.day)}</td>
-                          {PROVIDER_ORDER.map((provider) => (
+                          {series.map((entry) => (
                             <td
-                              key={provider}
+                              key={entry.key}
                               className="py-2 text-right text-muted-foreground tabular-nums"
                             >
-                              {formatUsd(day.byProvider.get(provider)?.costUsd ?? 0)}
+                              {formatUsd(day.bySeries.get(entry.key)?.costUsd ?? 0)}
                             </td>
                           ))}
                           <td className="py-2 text-right text-foreground tabular-nums">
@@ -515,7 +526,7 @@ function UsageSkeleton() {
             <div className="h-3 w-28 rounded-sm bg-muted" />
           </div>
 
-          {PROVIDER_ORDER.map((provider) => (
+          {PROVIDER_KINDS_ORDERED.map((provider) => (
             <div key={provider} className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-2 text-sm text-foreground">

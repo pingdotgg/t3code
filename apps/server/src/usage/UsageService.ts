@@ -39,7 +39,12 @@ import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
-import { listProviderHomeCandidates, scanHomePath } from "./usageHomes.ts";
+import {
+  dedupeUsageHomes,
+  listProviderHomeCandidates,
+  scanHomePath,
+  type ResolvedUsageHome,
+} from "./usageHomes.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -224,23 +229,17 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-    const dirs: { provider: UsageProviderKind; dir: string }[] = [];
-    const seen = new Set<string>();
+    const homes: ResolvedUsageHome[] = [];
+
     // Two instances can point at one physical directory through symlinks
     // (or macOS's /tmp → /private/tmp). Canonicalising before de-duplication
-    // stops the same transcripts being counted once per alias. A directory
-    // that does not resolve (typically: does not exist) keeps its configured
-    // path and is reported as missing further down.
-    const push = (provider: UsageProviderKind, dir: string) =>
-      Effect.gen(function* () {
-        const canonical = yield* fileSystem
-          .realPath(dir)
-          .pipe(Effect.catchCause(() => Effect.succeed(dir)));
-        const key = `${provider}\0${canonical}`;
-        if (seen.has(key)) return;
-        seen.add(key);
-        dirs.push({ provider, dir: canonical });
-      });
+    // stops the same transcripts being counted once per alias, and puts the
+    // canonical path into the source fingerprints, so environments that
+    // configured different aliases of one directory collapse client-side
+    // too. A directory that does not resolve (typically: does not exist)
+    // keeps its configured path and is reported as missing further down.
+    const canonicalDir = (dir: string) =>
+      fileSystem.realPath(dir).pipe(Effect.catchCause(() => Effect.succeed(dir)));
 
     for (const candidate of listProviderHomeCandidates(settings, "claude")) {
       // A blob that fails to decode belongs to an instance the registry
@@ -252,7 +251,13 @@ export const make = Effect.gen(function* () {
       const claudeHome = yield* resolveClaudeHomePath({
         homePath: scanHomePath(config.homePath, candidate.homeEnvValue, false),
       });
-      yield* push("claude", yield* resolveClaudeTranscriptDir(claudeHome));
+      homes.push({
+        provider: "claude",
+        dir: yield* canonicalDir(yield* resolveClaudeTranscriptDir(claudeHome)),
+        label: candidate.label,
+        isDirect: true,
+        isDefault: candidate.isDefault,
+      });
     }
 
     for (const candidate of listProviderHomeCandidates(settings, "codex")) {
@@ -268,10 +273,16 @@ export const make = Effect.gen(function* () {
           config.shadowHomePath.trim().length > 0,
         ),
       });
-      yield* push("codex", path.join(layout.sharedHomePath, "sessions"));
+      homes.push({
+        provider: "codex",
+        dir: yield* canonicalDir(path.join(layout.sharedHomePath, "sessions")),
+        label: candidate.label,
+        isDirect: layout.mode === "direct",
+        isDefault: candidate.isDefault,
+      });
     }
 
-    return dirs;
+    return dedupeUsageHomes(homes);
   });
 
   /**
@@ -375,7 +386,7 @@ export const make = Effect.gen(function* () {
     const livePaths = new Set<string>();
     const walkedRoots: string[] = [];
 
-    for (const { provider, dir } of dirs) {
+    for (const { provider, dir, label } of dirs) {
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
       const exists = yield* fileSystem
         .exists(dir)
@@ -384,6 +395,7 @@ export const make = Effect.gen(function* () {
       if (!exists) {
         sources.push({
           fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
+          label,
           status: "missing",
           scannedFiles: 0,
           skippedFiles: 0,
@@ -396,6 +408,7 @@ export const make = Effect.gen(function* () {
 
       walkedRoots.push(dir);
       const files = yield* Effect.promise(() => listTranscriptFiles(dir, windowStartMs));
+      const home = { path: dir, label };
       let scannedFiles = 0;
       let skippedFiles = 0;
       // Distinct per directory. Buckets carry per-cell session counts, but a
@@ -413,7 +426,7 @@ export const make = Effect.gen(function* () {
         for (const record of records) {
           // Only sessions that contributed in-window count: the mtime slack
           // admits boundary files whose records fall outside the range.
-          if (aggregator.add(record) && record.sessionId.length > 0) {
+          if (aggregator.add(record, home) && record.sessionId.length > 0) {
             sessionIds.add(record.sessionId);
           }
         }
@@ -421,6 +434,7 @@ export const make = Effect.gen(function* () {
 
       sources.push({
         fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
+        label,
         status: "ok",
         scannedFiles,
         skippedFiles,

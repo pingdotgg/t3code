@@ -36,6 +36,8 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
   };
 }
 
+const HOME = { path: "/home/user/.claude/projects", label: null };
+
 function aggregate(records: readonly UsageRecord[], timeZone = "UTC") {
   const aggregator = new UsageAggregator({
     timeZone,
@@ -43,7 +45,7 @@ function aggregate(records: readonly UsageRecord[], timeZone = "UTC") {
     untilDay: "2026-08-31",
     rates,
   });
-  for (const item of records) aggregator.add(item);
+  for (const item of records) aggregator.add(item, HOME);
   return aggregator.finish();
 }
 
@@ -115,9 +117,11 @@ describe("UsageAggregator", () => {
       rates,
     });
 
-    expect(aggregator.add(record({ dedupeKey: "msg_1:" }))).toBe(true);
-    expect(aggregator.add(record({ dedupeKey: "msg_1:" }))).toBe(false);
-    expect(aggregator.add(record({ timestampMs: Date.parse("2026-07-01T12:00:00Z") }))).toBe(false);
+    expect(aggregator.add(record({ dedupeKey: "msg_1:" }), HOME)).toBe(true);
+    expect(aggregator.add(record({ dedupeKey: "msg_1:" }), HOME)).toBe(false);
+    expect(aggregator.add(record({ timestampMs: Date.parse("2026-07-01T12:00:00Z") }), HOME)).toBe(
+      false,
+    );
   });
 
   it("separates providers and models into their own buckets", () => {
@@ -128,5 +132,30 @@ describe("UsageAggregator", () => {
     ]);
 
     expect(result.buckets).toHaveLength(3);
+  });
+
+  it("separates identical records from different homes into their own buckets", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+    });
+    aggregator.add(record({ provider: "codex", model: "gpt-5.6-sol" }), {
+      path: "/home/user/.codex-t3/work/sessions",
+      label: "Work",
+    });
+    aggregator.add(record({ provider: "codex", model: "gpt-5.6-sol", sessionId: "session-b" }), {
+      path: "/home/user/.codex-t3/personal/sessions",
+      label: "Personal",
+    });
+    const result = aggregator.finish();
+
+    expect(result.buckets).toHaveLength(2);
+    expect(result.buckets.map((bucket) => bucket.homeLabel)).toEqual(["Personal", "Work"]);
+    expect(result.buckets.map((bucket) => bucket.homePath)).toEqual([
+      "/home/user/.codex-t3/personal/sessions",
+      "/home/user/.codex-t3/work/sessions",
+    ]);
   });
 });
