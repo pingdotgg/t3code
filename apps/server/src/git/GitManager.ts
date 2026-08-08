@@ -40,6 +40,7 @@ import {
 } from "@t3tools/shared/git";
 import {
   getChangeRequestTerminologyForKind,
+  parseAzureDevOpsRepositoryCoordinates,
   type ChangeRequestTerminology,
 } from "@t3tools/shared/sourceControl";
 
@@ -234,6 +235,32 @@ function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): st
     );
   const repositoryNameWithOwner = match?.[1]?.trim() ?? "";
   return repositoryNameWithOwner.length > 0 ? repositoryNameWithOwner : null;
+}
+
+function parseRepositoryIdentityFromRemoteUrl(url: string | null): {
+  readonly repositoryNameWithOwner: string | null;
+  readonly ownerLogin: string | null;
+} {
+  const githubRepositoryNameWithOwner = parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url);
+  if (githubRepositoryNameWithOwner) {
+    return {
+      repositoryNameWithOwner: githubRepositoryNameWithOwner,
+      ownerLogin: parseRepositoryOwnerLogin(githubRepositoryNameWithOwner),
+    };
+  }
+
+  const azureRepository = parseAzureDevOpsRepositoryCoordinates(url);
+  if (azureRepository) {
+    return {
+      repositoryNameWithOwner: `${azureRepository.organization}/${azureRepository.project}/${azureRepository.repository}`,
+      ownerLogin: azureRepository.organization,
+    };
+  }
+
+  return {
+    repositoryNameWithOwner: null,
+    ownerLogin: null,
+  };
 }
 
 function parseRepositoryOwnerLogin(nameWithOwner: string | null): string | null {
@@ -1130,11 +1157,11 @@ export const make = Effect.gen(function* () {
     }
 
     const remoteUrl = yield* readConfigValueNullable(cwd, `remote.${remoteName}.url`);
-    const repositoryNameWithOwner = parseGitHubRepositoryNameWithOwnerFromRemoteUrl(remoteUrl);
+    const repositoryIdentity = parseRepositoryIdentityFromRemoteUrl(remoteUrl);
     return {
       remoteUrlKey: remoteUrl ? normalizeGitRemoteUrl(remoteUrl) : null,
-      repositoryNameWithOwner,
-      ownerLogin: parseRepositoryOwnerLogin(repositoryNameWithOwner),
+      repositoryNameWithOwner: repositoryIdentity.repositoryNameWithOwner,
+      ownerLogin: repositoryIdentity.ownerLogin,
     };
   });
 

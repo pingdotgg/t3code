@@ -117,6 +117,7 @@ describe("DesktopShellEnvironment", () => {
             PATH: "/opt/homebrew/bin:/usr/bin",
             SSH_AUTH_SOCK: "/tmp/secretive.sock",
             HOMEBREW_PREFIX: "/opt/homebrew",
+            AZURE_DEVOPS_EXT_PAT: "pat-from-login-shell",
           });
         },
       });
@@ -126,6 +127,7 @@ describe("DesktopShellEnvironment", () => {
       assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/Users/test/.local/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
       assert.equal(env.HOMEBREW_PREFIX, "/opt/homebrew");
+      assert.equal(env.AZURE_DEVOPS_EXT_PAT, "pat-from-login-shell");
     }),
   );
 
@@ -135,6 +137,7 @@ describe("DesktopShellEnvironment", () => {
         SHELL: "/bin/zsh",
         PATH: "/usr/bin",
         SSH_AUTH_SOCK: "/tmp/inherited.sock",
+        AZURE_DEVOPS_EXT_PAT: "inherited-pat",
       };
 
       yield* runShellEnvironment({
@@ -144,11 +147,13 @@ describe("DesktopShellEnvironment", () => {
           envOutput({
             PATH: "/opt/homebrew/bin:/usr/bin",
             SSH_AUTH_SOCK: "/tmp/login-shell.sock",
+            AZURE_DEVOPS_EXT_PAT: "pat-from-login-shell",
           }),
       });
 
       assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/inherited.sock");
+      assert.equal(env.AZURE_DEVOPS_EXT_PAT, "inherited-pat");
     }),
   );
 

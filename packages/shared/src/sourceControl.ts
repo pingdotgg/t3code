@@ -133,6 +133,77 @@ export function getChangeRequestTerminologyForKind(
   };
 }
 
+/** Identifies an Azure DevOps organization, project, and repository. */
+export interface AzureDevOpsRepositoryCoordinates {
+  readonly organization: string;
+  readonly project: string;
+  readonly repository: string;
+}
+
+function decodeAzureDevOpsPathSegment(segment: string): string | null {
+  try {
+    const decoded = decodeURIComponent(segment).trim();
+    return decoded.length > 0 ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Extracts organization, project, and repository from an Azure Repos clone URL. */
+export function parseAzureDevOpsRepositoryCoordinates(
+  remoteUrl: string | null | undefined,
+): AzureDevOpsRepositoryCoordinates | undefined {
+  const trimmed = remoteUrl?.trim() ?? "";
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  let hostname: string;
+  let segments: ReadonlyArray<string>;
+
+  if (trimmed.startsWith("git@")) {
+    const separatorIndex = trimmed.indexOf(":");
+    if (separatorIndex <= "git@".length) {
+      return undefined;
+    }
+    hostname = trimmed.slice("git@".length, separatorIndex).toLowerCase();
+    segments = trimmed
+      .slice(separatorIndex + 1)
+      .split("/")
+      .filter((segment) => segment.length > 0);
+  } else {
+    try {
+      const url = new URL(trimmed);
+      hostname = url.hostname.toLowerCase();
+      segments = url.pathname.split("/").filter((segment) => segment.length > 0);
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (hostname !== "dev.azure.com" && hostname !== "ssh.dev.azure.com") {
+    return undefined;
+  }
+
+  const isSshClonePath = segments[0]?.toLowerCase() === "v3";
+  const isHttpClonePath = segments[2]?.toLowerCase() === "_git";
+  const [organizationSegment, projectSegment, repositorySegment] = isSshClonePath
+    ? [segments[1], segments[2], segments[3]]
+    : isHttpClonePath
+      ? [segments[0], segments[1], segments[3]]
+      : [];
+
+  const organization = organizationSegment
+    ? decodeAzureDevOpsPathSegment(organizationSegment)
+    : null;
+  const project = projectSegment ? decodeAzureDevOpsPathSegment(projectSegment) : null;
+  const repository = repositorySegment
+    ? decodeAzureDevOpsPathSegment(repositorySegment.replace(/\.git$/iu, ""))
+    : null;
+
+  return organization && project && repository ? { organization, project, repository } : undefined;
+}
+
 function parseRemoteHost(remoteUrl: string): string | null {
   const trimmed = remoteUrl.trim();
   if (trimmed.length === 0) {
@@ -176,7 +247,9 @@ function isGitLabHost(host: string): boolean {
 }
 
 function isAzureDevOpsHost(host: string): boolean {
-  return host === "dev.azure.com" || host.endsWith(".visualstudio.com");
+  return (
+    host === "dev.azure.com" || host === "ssh.dev.azure.com" || host.endsWith(".visualstudio.com")
+  );
 }
 
 function isBitbucketHost(host: string): boolean {
@@ -212,7 +285,7 @@ export function detectSourceControlProviderFromRemoteUrl(
     return {
       kind: "azure-devops",
       name: "Azure DevOps",
-      baseUrl: toBaseUrl(host),
+      baseUrl: toBaseUrl(hostname === "ssh.dev.azure.com" ? "dev.azure.com" : host),
     };
   }
 

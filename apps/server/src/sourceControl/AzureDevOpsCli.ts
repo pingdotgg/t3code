@@ -10,6 +10,10 @@ import {
   type SourceControlRepositoryVisibility,
   type VcsError,
 } from "@t3tools/contracts";
+import {
+  parseAzureDevOpsRepositoryCoordinates,
+  type AzureDevOpsRepositoryCoordinates,
+} from "@t3tools/shared/sourceControl";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import {
@@ -20,6 +24,104 @@ import {
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+/** Identifies the Azure DevOps repository targeted by a CLI request. */
+export type AzureDevOpsRepositoryContext = AzureDevOpsRepositoryCoordinates;
+
+/** Extracts repository coordinates from an Azure DevOps SSH or HTTPS clone URL. */
+export function parseAzureDevOpsRemoteUrl(
+  remoteUrl: string,
+): AzureDevOpsRepositoryContext | undefined {
+  return parseAzureDevOpsRepositoryCoordinates(remoteUrl);
+}
+
+/** Builds explicit Azure CLI repository arguments when remote detection is unreliable. */
+function repositoryDetectionArgs(
+  repositoryContext: AzureDevOpsRepositoryContext | undefined,
+): ReadonlyArray<string> {
+  return repositoryContext
+    ? [
+        "--organization",
+        `https://dev.azure.com/${repositoryContext.organization}`,
+        "--project",
+        repositoryContext.project,
+        "--repository",
+        repositoryContext.repository,
+      ]
+    : ["--detect", "true"];
+}
+
+/** Builds the organization argument used by PR commands that do not accept a repository. */
+function repositoryOrganizationArgs(
+  repositoryContext: AzureDevOpsRepositoryContext | undefined,
+): ReadonlyArray<string> {
+  return repositoryContext
+    ? ["--organization", `https://dev.azure.com/${repositoryContext.organization}`]
+    : ["--detect", "true"];
+}
+
+/** Resolves a repository selector against the current Azure organization and project. */
+function repositorySelectorCoordinates(
+  repositoryContext: AzureDevOpsRepositoryContext,
+  repository: string,
+): AzureDevOpsRepositoryContext {
+  const parts = repository
+    .split("/")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  const repositoryName = parts.at(-1) ?? repositoryContext.repository;
+  const project =
+    parts.length > 1 ? (parts.at(-2) ?? repositoryContext.project) : repositoryContext.project;
+  const organization =
+    parts.length > 2
+      ? (parts.at(-3) ?? repositoryContext.organization)
+      : repositoryContext.organization;
+
+  return {
+    organization,
+    project,
+    repository: repositoryName,
+  };
+}
+
+/** Parses an organization/project/repository selector without relying on Git remote detection. */
+function qualifiedRepositorySelectorCoordinates(
+  repository: string,
+): AzureDevOpsRepositoryContext | undefined {
+  const parts = repository
+    .split("/")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  const organization = parts.at(-3);
+  const project = parts.at(-2);
+  const repositoryName = parts.at(-1);
+  return organization && project && repositoryName
+    ? { organization, project, repository: repositoryName }
+    : undefined;
+}
+
+/** Builds repository-show arguments while retaining the CLI's fallback repository selector. */
+function repositoryShowArgs(
+  repositoryContext: AzureDevOpsRepositoryContext | undefined,
+  repository: string,
+): ReadonlyArray<string> {
+  const selectedRepository =
+    repositoryContext === undefined
+      ? qualifiedRepositorySelectorCoordinates(repository)
+      : repositorySelectorCoordinates(repositoryContext, repository);
+  if (selectedRepository === undefined) {
+    return ["--detect", "true", "--repository", repository];
+  }
+
+  return [
+    "--organization",
+    `https://dev.azure.com/${selectedRepository.organization}`,
+    "--project",
+    selectedRepository.project,
+    "--repository",
+    selectedRepository.repository,
+  ];
+}
 
 const azureDevOpsCommandErrorFields = {
   operation: Schema.Literal("execute"),
@@ -114,6 +216,26 @@ export class AzureDevOpsCommandFailedError extends Schema.TaggedErrorClass<Azure
   }
 }
 
+export class AzureDevOpsGitCommandFailedError extends Schema.TaggedErrorClass<AzureDevOpsGitCommandFailedError>()(
+  "AzureDevOpsGitCommandFailedError",
+  {
+    operation: Schema.Literal("checkoutPullRequest"),
+    stage: Schema.Literals(["fetch", "checkout"]),
+    command: Schema.Literal("git"),
+    cwd: Schema.String,
+    argumentCount: NonNegativeInt,
+    cause: Schema.Defect(),
+  },
+) {
+  get detail(): string {
+    return `Git ${this.stage} command failed.`;
+  }
+
+  override get message(): string {
+    return `Azure DevOps Git ${this.stage} command failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
 const azureDevOpsDecodeErrorFields = {
   command: Schema.Literal("az"),
   cwd: Schema.String,
@@ -180,6 +302,7 @@ export const AzureDevOpsCliError = Schema.Union([
   AzureDevOpsCliAuthenticationError,
   AzureDevOpsPullRequestNotFoundError,
   AzureDevOpsCommandFailedError,
+  AzureDevOpsGitCommandFailedError,
   AzureDevOpsPullRequestListDecodeError,
   AzureDevOpsPullRequestDecodeError,
   AzureDevOpsRepositoryDecodeError,
@@ -206,6 +329,7 @@ export class AzureDevOpsCli extends Context.Service<
     readonly listPullRequests: (input: {
       readonly cwd: string;
       readonly headSelector: string;
+      readonly repositoryContext?: AzureDevOpsRepositoryContext;
       readonly source?: SourceControlProvider.SourceControlRefSelector;
       readonly state: "open" | "closed" | "merged" | "all";
       readonly limit?: number;
@@ -214,11 +338,13 @@ export class AzureDevOpsCli extends Context.Service<
     readonly getPullRequest: (input: {
       readonly cwd: string;
       readonly reference: string;
+      readonly repositoryContext?: AzureDevOpsRepositoryContext;
     }) => Effect.Effect<NormalizedAzureDevOpsPullRequestRecord, AzureDevOpsCliError>;
 
     readonly getRepositoryCloneUrls: (input: {
       readonly cwd: string;
       readonly repository: string;
+      readonly repositoryContext?: AzureDevOpsRepositoryContext;
     }) => Effect.Effect<AzureDevOpsRepositoryCloneUrls, AzureDevOpsCliError>;
 
     readonly createRepository: (input: {
@@ -231,6 +357,7 @@ export class AzureDevOpsCli extends Context.Service<
       readonly cwd: string;
       readonly baseBranch: string;
       readonly headSelector: string;
+      readonly repositoryContext?: AzureDevOpsRepositoryContext;
       readonly source?: SourceControlProvider.SourceControlRefSelector;
       readonly target?: SourceControlProvider.SourceControlRefSelector;
       readonly title: string;
@@ -239,12 +366,15 @@ export class AzureDevOpsCli extends Context.Service<
 
     readonly getDefaultBranch: (input: {
       readonly cwd: string;
+      readonly repositoryContext?: AzureDevOpsRepositoryContext;
     }) => Effect.Effect<string | null, AzureDevOpsCliError>;
 
     readonly checkoutPullRequest: (input: {
       readonly cwd: string;
       readonly reference: string;
+      readonly repositoryContext?: AzureDevOpsRepositoryContext;
       readonly remoteName?: string;
+      readonly remoteUrl?: string;
     }) => Effect.Effect<void, AzureDevOpsCliError>;
   }
 >()("t3/sourceControl/AzureDevOpsCli") {}
@@ -314,6 +444,29 @@ function parseRepositorySpecifier(repository: string): {
   };
 }
 
+/** Returns whether a Git remote uses an SSH transport. */
+function isSshRemoteUrl(remoteUrl: string | undefined): boolean {
+  const trimmed = remoteUrl?.trim() ?? "";
+  return /^git@/iu.test(trimmed) || /^ssh:\/\//iu.test(trimmed);
+}
+
+/** Chooses a fork clone URL that matches the local repository's Git transport. */
+function forkRepositoryRemote(input: {
+  readonly pullRequest: NormalizedAzureDevOpsPullRequestRecord;
+  readonly remoteName: string;
+  readonly remoteUrl?: string;
+}): string {
+  const sshUrl = input.pullRequest.sourceRepositorySshUrl;
+  const httpsUrl = input.pullRequest.sourceRepositoryRemoteUrl;
+  if (isSshRemoteUrl(input.remoteUrl)) {
+    return sshUrl ?? httpsUrl ?? input.remoteName;
+  }
+  if (input.remoteUrl !== undefined) {
+    return httpsUrl ?? sshUrl ?? input.remoteName;
+  }
+  return sshUrl ?? httpsUrl ?? input.remoteName;
+}
+
 function decodeAzureDevOpsJson<S extends Schema.Top>(
   raw: string,
   schema: S,
@@ -366,6 +519,68 @@ export const make = Effect.gen(function* () {
       args: [...input.args, "--only-show-errors", "--output", "json"],
     });
 
+  /** Runs one git step of the SSH-safe pull-request checkout flow. */
+  const runGit = (input: {
+    readonly cwd: string;
+    readonly stage: "fetch" | "checkout";
+    readonly args: ReadonlyArray<string>;
+  }) =>
+    process
+      .run({
+        operation: "AzureDevOpsCli.checkoutPullRequest",
+        command: "git",
+        args: input.args,
+        cwd: input.cwd,
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new AzureDevOpsGitCommandFailedError({
+              operation: "checkoutPullRequest",
+              stage: input.stage,
+              command: "git",
+              cwd: input.cwd,
+              argumentCount: input.args.length,
+              cause,
+            }),
+        ),
+      );
+
+  /** Loads a pull request using explicit organization context when available. */
+  const getPullRequest: AzureDevOpsCli["Service"]["getPullRequest"] = (input) =>
+    executeJson({
+      cwd: input.cwd,
+      args: [
+        "repos",
+        "pr",
+        "show",
+        ...repositoryOrganizationArgs(input.repositoryContext),
+        "--id",
+        normalizeChangeRequestId(input.reference),
+      ],
+    }).pipe(
+      Effect.map((result) => result.stdout.trim()),
+      Effect.flatMap((raw) =>
+        Effect.sync(() => decodeAzureDevOpsPullRequestJson(raw)).pipe(
+          Effect.flatMap((decoded) => {
+            if (!Result.isSuccess(decoded)) {
+              return Effect.fail(
+                new AzureDevOpsPullRequestDecodeError({
+                  operation: "getPullRequest",
+                  command: "az",
+                  cwd: input.cwd,
+                  outputLength: raw.length,
+                  cause: decoded.failure,
+                }),
+              );
+            }
+
+            return Effect.succeed(decoded.success);
+          }),
+        ),
+      ),
+    );
+
   return AzureDevOpsCli.of({
     execute,
     listPullRequests: (input) =>
@@ -375,8 +590,7 @@ export const make = Effect.gen(function* () {
           "repos",
           "pr",
           "list",
-          "--detect",
-          "true",
+          ...repositoryDetectionArgs(input.repositoryContext),
           "--source-branch",
           SourceControlProvider.sourceBranch(input),
           "--status",
@@ -408,44 +622,11 @@ export const make = Effect.gen(function* () {
               ),
         ),
       ),
-    getPullRequest: (input) =>
-      executeJson({
-        cwd: input.cwd,
-        args: [
-          "repos",
-          "pr",
-          "show",
-          "--detect",
-          "true",
-          "--id",
-          normalizeChangeRequestId(input.reference),
-        ],
-      }).pipe(
-        Effect.map((result) => result.stdout.trim()),
-        Effect.flatMap((raw) =>
-          Effect.sync(() => decodeAzureDevOpsPullRequestJson(raw)).pipe(
-            Effect.flatMap((decoded) => {
-              if (!Result.isSuccess(decoded)) {
-                return Effect.fail(
-                  new AzureDevOpsPullRequestDecodeError({
-                    operation: "getPullRequest",
-                    command: "az",
-                    cwd: input.cwd,
-                    outputLength: raw.length,
-                    cause: decoded.failure,
-                  }),
-                );
-              }
-
-              return Effect.succeed(decoded.success);
-            }),
-          ),
-        ),
-      ),
+    getPullRequest,
     getRepositoryCloneUrls: (input) =>
       executeJson({
         cwd: input.cwd,
-        args: ["repos", "show", "--detect", "true", "--repository", input.repository],
+        args: ["repos", "show", ...repositoryShowArgs(input.repositoryContext, input.repository)],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
@@ -491,8 +672,7 @@ export const make = Effect.gen(function* () {
           "pr",
           "create",
           "--only-show-errors",
-          "--detect",
-          "true",
+          ...repositoryDetectionArgs(input.repositoryContext),
           "--target-branch",
           input.target?.refName ?? input.baseBranch,
           "--source-branch",
@@ -506,7 +686,7 @@ export const make = Effect.gen(function* () {
     getDefaultBranch: (input) =>
       executeJson({
         cwd: input.cwd,
-        args: ["repos", "show", "--detect", "true"],
+        args: ["repos", "show", ...repositoryDetectionArgs(input.repositoryContext)],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
@@ -514,22 +694,56 @@ export const make = Effect.gen(function* () {
         ),
         Effect.map((repo) => normalizeDefaultBranch(repo.defaultBranch)),
       ),
-    checkoutPullRequest: (input) =>
-      execute({
+    checkoutPullRequest: (input) => {
+      const reference = normalizeChangeRequestId(input.reference);
+      const remoteName = input.remoteName ?? "origin";
+
+      if (input.repositoryContext === undefined) {
+        return execute({
+          cwd: input.cwd,
+          args: [
+            "repos",
+            "pr",
+            "checkout",
+            "--only-show-errors",
+            "--id",
+            reference,
+            "--remote-name",
+            remoteName,
+          ],
+        }).pipe(Effect.asVoid);
+      }
+
+      return getPullRequest({
         cwd: input.cwd,
-        args: [
-          "repos",
-          "pr",
-          "checkout",
-          "--only-show-errors",
-          "--detect",
-          "true",
-          "--id",
-          normalizeChangeRequestId(input.reference),
-          "--remote-name",
-          input.remoteName ?? "origin",
-        ],
-      }).pipe(Effect.asVoid),
+        reference,
+        repositoryContext: input.repositoryContext,
+      }).pipe(
+        Effect.flatMap((pullRequest) => {
+          const branch = pullRequest.headRefName;
+          return Effect.gen(function* () {
+            yield* runGit({
+              cwd: input.cwd,
+              stage: "fetch",
+              args: [
+                "fetch",
+                forkRepositoryRemote({
+                  pullRequest,
+                  remoteName,
+                  ...(input.remoteUrl !== undefined ? { remoteUrl: input.remoteUrl } : {}),
+                }),
+                `+refs/heads/${branch}`,
+              ],
+            });
+            yield* runGit({
+              cwd: input.cwd,
+              stage: "checkout",
+              args: ["checkout", "-B", branch, "FETCH_HEAD"],
+            });
+          });
+        }),
+      );
+    },
   });
 });
 

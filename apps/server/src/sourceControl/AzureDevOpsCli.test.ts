@@ -19,6 +19,12 @@ const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
   stderrTruncated: false,
 });
 
+const repositoryContext = {
+  organization: "acme",
+  project: "project",
+  repository: "repo",
+} as const;
+
 const mockRun = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
 
 const supportLayer = Layer.mergeAll(
@@ -31,6 +37,16 @@ const layer = Layer.mergeAll(AzureDevOpsCli.layer.pipe(Layer.provide(supportLaye
 
 afterEach(() => {
   mockRun.mockReset();
+});
+
+it("parses the Azure DevOps SSH clone URL used by Azure Repos", () => {
+  expect(
+    AzureDevOpsCli.parseAzureDevOpsRemoteUrl("git@ssh.dev.azure.com:v3/acme/project/repo"),
+  ).toEqual({
+    organization: "acme",
+    project: "project",
+    repository: "repo",
+  });
 });
 
 describe("AzureDevOpsCli.layer", () => {
@@ -80,6 +96,56 @@ describe("AzureDevOpsCli.layer", () => {
           "show",
           "--detect",
           "true",
+          "--id",
+          "42",
+          "--only-show-errors",
+          "--output",
+          "json",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("uses explicit organization context when showing an SSH-backed pull request", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              pullRequestId: 42,
+              title: "Add Azure provider",
+              sourceRefName: "refs/heads/feature/source-control",
+              targetRefName: "refs/heads/main",
+              status: "active",
+              _links: {
+                web: {
+                  href: "https://dev.azure.com/acme/project/_git/repo/pullrequest/42",
+                },
+              },
+            }),
+          ),
+        ),
+      );
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* az.getPullRequest({
+        cwd: "/repo",
+        reference: "42",
+        repositoryContext,
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "AzureDevOpsCli.execute",
+        command: "az",
+        args: [
+          "repos",
+          "pr",
+          "show",
+          "--organization",
+          "https://dev.azure.com/acme",
           "--id",
           "42",
           "--only-show-errors",
@@ -188,6 +254,52 @@ describe("AzureDevOpsCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("uses explicit repository arguments when Azure cannot detect an SSH remote", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("[]")));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* az.listPullRequests({
+        cwd: "/repo",
+        headSelector: "feature/source-control",
+        state: "open",
+        limit: 10,
+        repositoryContext: {
+          organization: "acme",
+          project: "project",
+          repository: "repo",
+        },
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "AzureDevOpsCli.execute",
+        command: "az",
+        args: [
+          "repos",
+          "pr",
+          "list",
+          "--organization",
+          "https://dev.azure.com/acme",
+          "--project",
+          "project",
+          "--repository",
+          "repo",
+          "--source-branch",
+          "feature/source-control",
+          "--status",
+          "active",
+          "--top",
+          "10",
+          "--only-show-errors",
+          "--output",
+          "json",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("reads repository clone URLs", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(
@@ -210,13 +322,80 @@ describe("AzureDevOpsCli.layer", () => {
       const az = yield* AzureDevOpsCli.AzureDevOpsCli;
       const result = yield* az.getRepositoryCloneUrls({
         cwd: "/repo",
-        repository: "repo",
+        repository: "acme/fork-project/fork-repo",
+        repositoryContext: { ...repositoryContext, repository: "working-repo" },
       });
 
       assert.deepStrictEqual(result, {
         nameWithOwner: "project/repo",
         url: "https://dev.azure.com/acme/project/_git/repo",
         sshUrl: "git@ssh.dev.azure.com:v3/acme/project/repo",
+      });
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "AzureDevOpsCli.execute",
+        command: "az",
+        args: [
+          "repos",
+          "show",
+          "--organization",
+          "https://dev.azure.com/acme",
+          "--project",
+          "fork-project",
+          "--repository",
+          "fork-repo",
+          "--only-show-errors",
+          "--output",
+          "json",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("resolves qualified repository selectors without remote context", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              name: "fork-repo",
+              webUrl: "https://dev.azure.com/acme/fork-project/_git/fork-repo",
+              remoteUrl: "https://dev.azure.com/acme/fork-project/_git/fork-repo",
+              sshUrl: "git@ssh.dev.azure.com:v3/acme/fork-project/fork-repo",
+              project: {
+                name: "fork-project",
+              },
+            }),
+          ),
+        ),
+      );
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* az.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "acme/fork-project/fork-repo",
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "AzureDevOpsCli.execute",
+        command: "az",
+        args: [
+          "repos",
+          "show",
+          "--organization",
+          "https://dev.azure.com/acme",
+          "--project",
+          "fork-project",
+          "--repository",
+          "fork-repo",
+          "--only-show-errors",
+          "--output",
+          "json",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
       });
     }).pipe(Effect.provide(layer)),
   );
@@ -274,6 +453,52 @@ describe("AzureDevOpsCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("uses explicit repository context when reading the default branch", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              name: "repo",
+              webUrl: "https://dev.azure.com/acme/project/_git/repo",
+              remoteUrl: "https://dev.azure.com/acme/project/_git/repo",
+              sshUrl: "git@ssh.dev.azure.com:v3/acme/project/repo",
+              defaultBranch: "refs/heads/main",
+            }),
+          ),
+        ),
+      );
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const branch = yield* az.getDefaultBranch({
+        cwd: "/repo",
+        repositoryContext,
+      });
+
+      assert.strictEqual(branch, "main");
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "AzureDevOpsCli.execute",
+        command: "az",
+        args: [
+          "repos",
+          "show",
+          "--organization",
+          "https://dev.azure.com/acme",
+          "--project",
+          "project",
+          "--repository",
+          "repo",
+          "--only-show-errors",
+          "--output",
+          "json",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("creates pull requests using the body file as the Azure description", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -286,6 +511,7 @@ describe("AzureDevOpsCli.layer", () => {
         cwd: "/repo",
         baseBranch: "main",
         headSelector: "feature/provider",
+        repositoryContext,
         title: "Provider PR",
         bodyFile,
       });
@@ -294,9 +520,19 @@ describe("AzureDevOpsCli.layer", () => {
         expect.objectContaining({
           command: "az",
           cwd: "/repo",
-          args: expect.arrayContaining(["--description", `@${bodyFile}`]),
+          args: expect.arrayContaining([
+            "--organization",
+            "https://dev.azure.com/acme",
+            "--project",
+            "project",
+            "--repository",
+            "repo",
+            "--description",
+            `@${bodyFile}`,
+          ]),
         }),
       );
+      expect(mockRun.mock.calls[0]?.[0].args).not.toContain("--detect");
       expect(mockRun.mock.calls[0]?.[0].args).not.toContain("--output");
     }).pipe(Effect.provide(layer)),
   );
@@ -319,8 +555,6 @@ describe("AzureDevOpsCli.layer", () => {
           "pr",
           "checkout",
           "--only-show-errors",
-          "--detect",
-          "true",
           "--id",
           "42",
           "--remote-name",
@@ -329,6 +563,152 @@ describe("AzureDevOpsCli.layer", () => {
         cwd: "/repo",
         timeoutMs: 30_000,
       });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("checks out an SSH-backed pull request without Azure remote auto-detection", () =>
+    Effect.gen(function* () {
+      mockRun
+        .mockReturnValueOnce(
+          Effect.succeed(
+            processOutput(
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              JSON.stringify({
+                pullRequestId: 42,
+                title: "Add Azure provider",
+                sourceRefName: "refs/heads/feature/source-control",
+                targetRefName: "refs/heads/main",
+                status: "active",
+                _links: {
+                  web: {
+                    href: "https://dev.azure.com/acme/project/_git/repo/pullrequest/42",
+                  },
+                },
+              }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(processOutput("")))
+        .mockReturnValueOnce(Effect.succeed(processOutput("")))
+        .mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* az.checkoutPullRequest({
+        cwd: "/repo",
+        reference: "42",
+        repositoryContext,
+      });
+
+      expect(mockRun.mock.calls.map(([input]) => input)).toEqual([
+        {
+          operation: "AzureDevOpsCli.execute",
+          command: "az",
+          args: [
+            "repos",
+            "pr",
+            "show",
+            "--organization",
+            "https://dev.azure.com/acme",
+            "--id",
+            "42",
+            "--only-show-errors",
+            "--output",
+            "json",
+          ],
+          cwd: "/repo",
+          timeoutMs: 30_000,
+        },
+        {
+          operation: "AzureDevOpsCli.checkoutPullRequest",
+          command: "git",
+          args: ["fetch", "origin", "+refs/heads/feature/source-control"],
+          cwd: "/repo",
+        },
+        {
+          operation: "AzureDevOpsCli.checkoutPullRequest",
+          command: "git",
+          args: ["checkout", "-B", "feature/source-control", "FETCH_HEAD"],
+          cwd: "/repo",
+        },
+      ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("checks out a pull request from an Azure DevOps fork repository", () =>
+    Effect.gen(function* () {
+      mockRun
+        .mockReturnValueOnce(
+          Effect.succeed(
+            processOutput(
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              JSON.stringify({
+                pullRequestId: 42,
+                title: "Add Azure provider",
+                sourceRefName: "refs/heads/feature/source-control",
+                targetRefName: "refs/heads/main",
+                status: "active",
+                forkSource: {
+                  repository: {
+                    remoteUrl: "https://dev.azure.com/acme/fork-project/_git/fork-repo",
+                    sshUrl: "git@ssh.dev.azure.com:v3/acme/fork-project/fork-repo",
+                  },
+                },
+                _links: {
+                  web: {
+                    href: "https://dev.azure.com/acme/project/_git/repo/pullrequest/42",
+                  },
+                },
+              }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(processOutput("")))
+        .mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* az.checkoutPullRequest({
+        cwd: "/repo",
+        reference: "42",
+        repositoryContext,
+        remoteUrl: "https://dev.azure.com/acme/project/_git/repo",
+      });
+
+      expect(mockRun.mock.calls.map(([input]) => input)).toEqual([
+        {
+          operation: "AzureDevOpsCli.execute",
+          command: "az",
+          args: [
+            "repos",
+            "pr",
+            "show",
+            "--organization",
+            "https://dev.azure.com/acme",
+            "--id",
+            "42",
+            "--only-show-errors",
+            "--output",
+            "json",
+          ],
+          cwd: "/repo",
+          timeoutMs: 30_000,
+        },
+        {
+          operation: "AzureDevOpsCli.checkoutPullRequest",
+          command: "git",
+          args: [
+            "fetch",
+            "https://dev.azure.com/acme/fork-project/_git/fork-repo",
+            "+refs/heads/feature/source-control",
+          ],
+          cwd: "/repo",
+        },
+        {
+          operation: "AzureDevOpsCli.checkoutPullRequest",
+          command: "git",
+          args: ["checkout", "-B", "feature/source-control", "FETCH_HEAD"],
+          cwd: "/repo",
+        },
+      ]);
     }).pipe(Effect.provide(layer)),
   );
 

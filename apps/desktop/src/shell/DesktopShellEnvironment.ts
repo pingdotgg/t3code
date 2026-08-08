@@ -78,6 +78,9 @@ const LOGIN_SHELL_ENV_NAMES = [
   "XDG_CONFIG_HOME",
   "XDG_CURRENT_DESKTOP",
   "XDG_DATA_HOME",
+  // Azure DevOps CLI commonly receives its PAT from the user's login shell.
+  // Keep it available when the desktop app is launched outside a terminal.
+  "AZURE_DEVOPS_EXT_PAT",
   "XDG_RUNTIME_DIR",
   "XDG_SESSION_DESKTOP",
   "XDG_SESSION_TYPE",
@@ -456,6 +459,7 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       "HOMEBREW_REPOSITORY",
       "XDG_CONFIG_HOME",
       "XDG_DATA_HOME",
+      "AZURE_DEVOPS_EXT_PAT",
       "XDG_RUNTIME_DIR",
       "WAYLAND_DISPLAY",
     ] as const) {

@@ -12,6 +12,16 @@ function makeProvider(azure: Partial<AzureDevOpsCli.AzureDevOpsCli["Service"]>) 
   );
 }
 
+const sshRepositoryContext = {
+  provider: {
+    kind: "azure-devops",
+    name: "Azure DevOps",
+    baseUrl: "https://dev.azure.com",
+  },
+  remoteName: "origin",
+  remoteUrl: "git@ssh.dev.azure.com:v3/acme/project/repo",
+} as const;
+
 it.effect("maps Azure DevOps PR summaries into provider-neutral change requests", () =>
   Effect.gen(function* () {
     const provider = yield* makeProvider({
@@ -43,6 +53,134 @@ it.effect("maps Azure DevOps PR summaries into provider-neutral change requests"
       updatedAt: Option.none(),
       isCrossRepository: false,
     });
+  }),
+);
+
+it.effect("preserves Azure DevOps fork identity in change requests", () =>
+  Effect.gen(function* () {
+    const provider = yield* makeProvider({
+      getPullRequest: () =>
+        Effect.succeed({
+          number: 42,
+          title: "Add Azure provider",
+          url: "https://dev.azure.com/acme/project/_git/repo/pullrequest/42",
+          baseRefName: "main",
+          headRefName: "feature/source-control",
+          state: "open",
+          updatedAt: Option.none(),
+          isCrossRepository: true,
+          headRepositoryNameWithOwner: "acme/fork-project/fork-repo",
+          headRepositoryOwnerLogin: "acme",
+        }),
+    });
+
+    const changeRequest = yield* provider.getChangeRequest({
+      cwd: "/repo",
+      reference: "42",
+    });
+
+    assert.deepStrictEqual(changeRequest, {
+      provider: "azure-devops",
+      number: 42,
+      title: "Add Azure provider",
+      url: "https://dev.azure.com/acme/project/_git/repo/pullrequest/42",
+      baseRefName: "main",
+      headRefName: "feature/source-control",
+      state: "open",
+      updatedAt: Option.none(),
+      isCrossRepository: true,
+      headRepositoryNameWithOwner: "acme/fork-project/fork-repo",
+      headRepositoryOwnerLogin: "acme",
+    });
+  }),
+);
+
+it.effect("passes the SSH remote repository context to Azure CLI PR lookup", () =>
+  Effect.gen(function* () {
+    let getInput:
+      | Parameters<AzureDevOpsCli.AzureDevOpsCli["Service"]["getPullRequest"]>[0]
+      | undefined;
+    const provider = yield* makeProvider({
+      getPullRequest: (input) => {
+        getInput = input;
+        return Effect.succeed({
+          number: 42,
+          title: "Azure provider",
+          url: "https://dev.azure.com/acme/project/_git/repo/pullrequest/42",
+          baseRefName: "main",
+          headRefName: "feature/source-control",
+          state: "open",
+          updatedAt: Option.none(),
+        });
+      },
+    });
+
+    yield* provider.getChangeRequest({
+      cwd: "/repo",
+      context: sshRepositoryContext,
+      reference: "42",
+    });
+
+    assert.deepStrictEqual(getInput?.repositoryContext, {
+      organization: "acme",
+      project: "project",
+      repository: "repo",
+    });
+  }),
+);
+
+it.effect("passes the SSH remote repository context to Azure CLI PR listing", () =>
+  Effect.gen(function* () {
+    let listInput:
+      | Parameters<AzureDevOpsCli.AzureDevOpsCli["Service"]["listPullRequests"]>[0]
+      | undefined;
+    const provider = yield* makeProvider({
+      listPullRequests: (input) => {
+        listInput = input;
+        return Effect.succeed([]);
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: sshRepositoryContext,
+      headSelector: "feature/source-control",
+      state: "open",
+    });
+
+    assert.deepStrictEqual(listInput?.repositoryContext, {
+      organization: "acme",
+      project: "project",
+      repository: "repo",
+    });
+  }),
+);
+
+it.effect("passes the SSH remote repository context to Azure CLI checkout", () =>
+  Effect.gen(function* () {
+    let checkoutInput:
+      | Parameters<AzureDevOpsCli.AzureDevOpsCli["Service"]["checkoutPullRequest"]>[0]
+      | undefined;
+    const provider = yield* makeProvider({
+      checkoutPullRequest: (input) => {
+        checkoutInput = input;
+        return Effect.void;
+      },
+    });
+
+    yield* provider.checkoutChangeRequest({
+      cwd: "/repo",
+      context: sshRepositoryContext,
+      reference: "42",
+    });
+
+    assert.deepStrictEqual(checkoutInput?.repositoryContext, {
+      organization: "acme",
+      project: "project",
+      repository: "repo",
+    });
+    assert.strictEqual(checkoutInput?.remoteName, "origin");
+    assert.strictEqual(checkoutInput?.remoteUrl, sshRepositoryContext.remoteUrl);
   }),
 );
 
@@ -100,6 +238,7 @@ it.effect("creates Azure DevOps PRs through provider-neutral input names", () =>
 
     yield* provider.createChangeRequest({
       cwd: "/repo",
+      context: sshRepositoryContext,
       baseRefName: "main",
       headSelector: "feature/provider",
       title: "Provider PR",
@@ -110,6 +249,11 @@ it.effect("creates Azure DevOps PRs through provider-neutral input names", () =>
       cwd: "/repo",
       baseBranch: "main",
       headSelector: "feature/provider",
+      repositoryContext: {
+        organization: "acme",
+        project: "project",
+        repository: "repo",
+      },
       title: "Provider PR",
       bodyFile: "/tmp/body.md",
     });
@@ -118,17 +262,27 @@ it.effect("creates Azure DevOps PRs through provider-neutral input names", () =>
 
 it.effect("uses Azure CLI repository detection for default branch lookup", () =>
   Effect.gen(function* () {
-    let cwdInput: string | null = null;
+    let defaultBranchInput:
+      | Parameters<AzureDevOpsCli.AzureDevOpsCli["Service"]["getDefaultBranch"]>[0]
+      | undefined;
     const provider = yield* makeProvider({
       getDefaultBranch: (input) => {
-        cwdInput = input.cwd;
+        defaultBranchInput = input;
         return Effect.succeed("main");
       },
     });
 
-    const defaultBranch = yield* provider.getDefaultBranch({ cwd: "/repo" });
+    const defaultBranch = yield* provider.getDefaultBranch({
+      cwd: "/repo",
+      context: sshRepositoryContext,
+    });
 
     assert.strictEqual(defaultBranch, "main");
-    assert.strictEqual(cwdInput, "/repo");
+    assert.strictEqual(defaultBranchInput?.cwd, "/repo");
+    assert.deepStrictEqual(defaultBranchInput?.repositoryContext, {
+      organization: "acme",
+      project: "project",
+      repository: "repo",
+    });
   }),
 );
