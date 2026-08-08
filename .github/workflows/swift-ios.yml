@@ -1,0 +1,56 @@
+name: SwiftUI iOS
+
+on:
+  pull_request:
+    paths:
+      - "apps/swift-ios/**"
+      - "packages/contracts/**"
+      - "scripts/generate-swift-wire-fixtures.ts"
+      - ".github/workflows/swift-ios.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/swift-ios/**"
+      - "packages/contracts/**"
+      - "scripts/generate-swift-wire-fixtures.ts"
+      - ".github/workflows/swift-ios.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+
+concurrency:
+  group: swift-ios-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Contract fixtures and native tests
+    runs-on: blacksmith-6vcpu-macos-26
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/contracts...
+
+      - name: Verify generated wire fixtures
+        run: node scripts/generate-swift-wire-fixtures.ts --check
+
+      - name: Test SwiftUI client
+        run: apps/swift-ios/Scripts/ci-test.sh

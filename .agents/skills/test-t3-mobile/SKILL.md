@@ -1,11 +1,20 @@
 ---
 name: test-t3-mobile
-description: Launch and test T3 Code Mobile on an iOS Simulator or Android Emulator against disposable local T3 environments, including Metro and dev-client reuse, native rebuild decisions, per-client pairing, seeded projects, semantic UI control, screenshots, and iOS serve-sim streaming. Use after mobile UI or native changes, when reproducing phone or tablet behavior, pairing an emulator to isolated state, or verifying mobile behavior on macOS, Linux, or Windows.
+description: "Launch and test either T3 Code mobile client against disposable local environments: the React Native iOS/Android app in apps/mobile or the separate native SwiftUI iOS app in apps/swift-ios. Covers client selection, native rebuild decisions, Metro and dev-client reuse for React Native only, per-client pairing, seeded projects, semantic UI control, screenshots, and iOS serve-sim streaming. Use after mobile UI or native changes, when reproducing phone or tablet behavior, pairing a device to isolated state, or verifying mobile behavior on macOS, Linux, or Windows."
 ---
 
 # Test T3 Mobile
 
 Run one focused, end-to-end mobile verification pass against disposable T3 state. Use the sibling [`test-t3-app`](../test-t3-app/SKILL.md) skill as the detailed reference for pairing-token semantics and SQLite fixtures.
+
+## Choose the mobile client first
+
+T3 Code has two independent mobile implementations:
+
+- **React Native mobile** lives in `apps/mobile` and targets iOS and Android. Its development workflow uses Expo, Metro, and the `T3 Code Dev` identity documented below.
+- **SwiftUI mobile** lives in `apps/swift-ios` and targets iOS. It is a native Xcode project and never uses Expo or Metro. Its Debug identity is `T3 Swift Dev`, bundle identifier `com.t3tools.t3code.swiftui.dev`, and URL scheme `t3code-swiftui-dev`.
+
+Inspect the affected paths and choose one before launching anything. Do not use one client as verification for the other. For SwiftUI, load [`ios-debugger-agent`](../ios-debugger-agent/SKILL.md), set the project to `<repo>/apps/swift-ios/T3Code.xcodeproj`, scheme `T3Code`, configuration `Debug`, and use the selected simulator. Then use this skill's disposable-backend, pairing, UI-driving, and cleanup guidance while skipping every Metro, Expo, and Android step.
 
 Command examples use POSIX shell syntax. On Windows, use PowerShell equivalents: set variables with `$env:NAME = "value"`, use an explicit temporary directory from `[System.IO.Path]::GetTempPath()`, and run multiline examples on one line or with PowerShell backticks. Use `$env:ANDROID_HOME\platform-tools\adb.exe` when `adb` is not already on `PATH`.
 
@@ -13,7 +22,7 @@ Command examples use POSIX shell syntax. On Windows, use PowerShell equivalents:
 
 Inspect the host and the affected code before launching processes:
 
-- On macOS with Xcode, prefer one representative iOS Simulator when the change is cross-platform so the user can watch through serve-sim. Load and follow [`ios-debugger-agent`](../ios-debugger-agent/SKILL.md), and load [`ios-simulator-browser`](../ios-simulator-browser/SKILL.md) when live streaming is available.
+- On macOS with Xcode, prefer one representative iOS Simulator when the change is cross-platform so the user can watch through serve-sim. This can be either mobile client; use the project selected above. Load and follow [`ios-debugger-agent`](../ios-debugger-agent/SKILL.md), and load [`ios-simulator-browser`](../ios-simulator-browser/SKILL.md) when live streaming is available.
 - On macOS, Linux, or Windows with the Android SDK, use one Android Emulator when Android is the affected surface or iOS tooling is unavailable.
 - When the change is platform-specific, test that platform. When neither platform is viable, report the missing SDK, emulator, or dev-client prerequisite rather than claiming verification.
 
@@ -21,12 +30,13 @@ Do not treat unavailable iOS tooling as a blocker when Android is a valid repres
 
 ## Choose the lightest valid launch path
 
-- For JavaScript, TypeScript, or asset-only changes, reuse a compatible installed development client and start Metro. Do not rebuild native code merely to load a new bundle.
+- For React Native JavaScript, TypeScript, or asset-only changes, reuse a compatible installed development client and start Metro. Do not rebuild native code merely to load a new bundle.
+- For SwiftUI changes, build or reuse the native `T3Code` scheme with `ios-debugger-agent`; Metro and Expo compatibility do not apply.
 - For native source, native dependencies, entitlements, config plugins, or generated project changes, rebuild the affected platform.
 - Use `vp run ios:dev` or `vp run android:dev` only when an Expo clean prebuild is actually required; both commands regenerate the native project.
 - If the user requested no native rebuild and no compatible app is installed, reuse an existing compatible `.app` or `.apk` artifact when available. Otherwise report the missing dev client instead of silently rebuilding.
 
-The development identity on both platforms is:
+The React Native development identity on both platforms is:
 
 - App: `T3 Code Dev`
 - Bundle/package identifier: `com.t3tools.t3code.dev`
@@ -70,7 +80,7 @@ Enter the complete `http://` origin to make the test transport explicit. Bare IP
 
 ## Start or reuse Metro safely
 
-Run Metro from `apps/mobile`.
+This section applies only to React Native mobile. Run Metro from `apps/mobile`. Skip it entirely for SwiftUI mobile.
 
 1. Inspect any process on the intended Metro port and its `/status` response. Reuse it only when it is healthy, belongs to this worktree, and matches `APP_VARIANT=development`, `--dev-client`, and scheme `t3code-dev`.
 2. Never kill another worktree's Metro. Use a free explicit port when necessary.
@@ -89,7 +99,7 @@ Run Metro from `apps/mobile`.
 
 4. Open the exact development-client URL for the selected device and confirm the loaded bundle belongs to this worktree and Metro port.
 
-### iOS launch
+### React Native iOS launch
 
 Use `ios-debugger-agent` to select one UDID and set these XcodeBuildMCP session defaults:
 
@@ -108,7 +118,7 @@ xcrun simctl openurl <simulator-udid> <printed-dev-client-url>
 
 Accept the iOS confirmation prompt and dismiss the developer menu when it obscures the app.
 
-### Android launch
+### React Native Android launch
 
 Select one running emulator serial from `adb devices` and check the installed client:
 
@@ -137,10 +147,16 @@ T3CODE_PORT=<server-port> node apps/server/src/bin.ts auth pairing create \
 
 In PowerShell, set `$env:T3CODE_PORT = "<server-port>"` first and run the `node ... auth pairing create` command without the leading assignment.
 
-If the visible Add Environment action is not exposed as a semantic target, open the app's registered route instead of guessing coordinates:
+If the visible Add Environment action is not exposed as a semantic target, open the selected app's registered route instead of guessing coordinates:
 
 ```bash
+# React Native iOS
 xcrun simctl openurl <simulator-udid> 't3code-dev://connections/new'
+
+# SwiftUI iOS
+xcrun simctl openurl <simulator-udid> 't3code-swiftui-dev://connections/new'
+
+# React Native Android
 adb -s <emulator-serial> shell am start -W \
   -a android.intent.action.VIEW \
   -d 't3code-dev://connections/new' \
@@ -149,7 +165,7 @@ adb -s <emulator-serial> shell am start -W \
 
 Run only the command for the selected platform.
 
-In T3 Code Dev, open Add Environment and enter the complete `<mobile-origin>` and newly printed `Token`. Verify the expected seeded projects appear before exercising the affected flow.
+In the selected development app, open Add Environment and enter the complete `<mobile-origin>` and newly printed `Token`. Verify the expected seeded projects appear before exercising the affected flow.
 
 Pairing credentials are secret, short-lived, and single-use. Create a different credential for every simulator, emulator, physical device, or browser. If an attempt fails, issue a new credential rather than retrying the old one. Do not expose tokens in screenshots, commits, or final responses.
 

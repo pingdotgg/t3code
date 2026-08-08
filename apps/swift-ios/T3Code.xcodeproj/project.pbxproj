@@ -1,0 +1,999 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B10000000000000000000001 /* ClerkKit in Frameworks */ = {isa = PBXBuildFile; productRef = B30000000000000000000001 /* ClerkKit */; };
+		B10000000000000000000002 /* ClerkKitUI in Frameworks */ = {isa = PBXBuildFile; productRef = B30000000000000000000002 /* ClerkKitUI */; };
+		D10000000000000000000001 /* GhosttyKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = D40000000000000000000001 /* GhosttyKit.xcframework */; };
+		C10000000000000000000001 /* AgentActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000001 /* AgentActivityAttributes.swift */; };
+		C10000000000000000000002 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000002 /* SharedContainer.swift */; };
+		C10000000000000000000003 /* TaskWidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000003 /* TaskWidgetSnapshot.swift */; };
+		C10000000000000000000004 /* ShareInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000004 /* ShareInbox.swift */; };
+		C10000000000000000000005 /* AgentActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000001 /* AgentActivityAttributes.swift */; };
+		C10000000000000000000006 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000002 /* SharedContainer.swift */; };
+		C10000000000000000000007 /* TaskWidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000003 /* TaskWidgetSnapshot.swift */; };
+		C10000000000000000000008 /* T3CodeWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000006 /* T3CodeWidgets.swift */; };
+		C10000000000000000000009 /* AgentActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000007 /* AgentActivityWidget.swift */; };
+		C1000000000000000000000A /* RecentTasksWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000008 /* RecentTasksWidget.swift */; };
+		C1000000000000000000000B /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000002 /* SharedContainer.swift */; };
+		C1000000000000000000000C /* ShareInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000004 /* ShareInbox.swift */; };
+		C1000000000000000000000D /* SharePayloadLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4000000000000000000000B /* SharePayloadLoader.swift */; };
+		C1000000000000000000000E /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4000000000000000000000C /* ShareViewController.swift */; };
+		C1000000000000000000000F /* T3CodeWidgets.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = C4000000000000000000000F /* T3CodeWidgets.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		C10000000000000000000010 /* T3CodeShare.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = C40000000000000000000010 /* T3CodeShare.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		C10000000000000000000011 /* ExtensionContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000011 /* ExtensionContractTests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		CE0000000000000000000001 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				C1000000000000000000000F /* T3CodeWidgets.appex in Embed App Extensions */,
+				C10000000000000000000010 /* T3CodeShare.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		BE0000000000000000000001 /* Exceptions for "Resources" folder in "T3Code" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = A50000000000000000000001 /* T3Code */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		A10000000000000000000001 /* App */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = App;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000002 /* Core */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Core;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000003 /* Features */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Features;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000004 /* DesignSystem */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = DesignSystem;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000005 /* Resources */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				BE0000000000000000000001 /* Exceptions for "Resources" folder in "T3Code" target */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000006 /* Tests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Tests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A20000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B10000000000000000000001 /* ClerkKit in Frameworks */,
+				B10000000000000000000002 /* ClerkKitUI in Frameworks */,
+				D10000000000000000000001 /* GhosttyKit.xcframework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A20000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C20000000000000000000003 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C20000000000000000000004 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXContainerItemProxy section */
+		AC0000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A90000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A50000000000000000000001;
+			remoteInfo = T3Code;
+		};
+		CC0000000000000000000002 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A90000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C50000000000000000000003;
+			remoteInfo = T3CodeWidgets;
+		};
+		CC0000000000000000000003 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A90000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C50000000000000000000004;
+			remoteInfo = T3CodeShare;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXGroup section */
+		A30000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000001 /* App */,
+				A10000000000000000000002 /* Core */,
+				A10000000000000000000003 /* Features */,
+				A10000000000000000000004 /* DesignSystem */,
+				A10000000000000000000005 /* Resources */,
+				A10000000000000000000006 /* Tests */,
+				C30000000000000000000001 /* Extensions */,
+				D40000000000000000000001 /* GhosttyKit.xcframework */,
+				A30000000000000000000002 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A30000000000000000000002 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A40000000000000000000001 /* T3 Code.app */,
+				A40000000000000000000002 /* T3CodeTests.xctest */,
+				C4000000000000000000000F /* T3CodeWidgets.appex */,
+				C40000000000000000000010 /* T3CodeShare.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		C30000000000000000000001 /* Extensions */ = {
+			isa = PBXGroup;
+			children = (
+				C30000000000000000000002 /* Shared */,
+				C30000000000000000000003 /* Widgets */,
+				C30000000000000000000004 /* Share */,
+				C30000000000000000000005 /* Tests */,
+			);
+			path = Extensions;
+			sourceTree = "<group>";
+		};
+		C30000000000000000000002 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				C40000000000000000000001 /* AgentActivityAttributes.swift */,
+				C40000000000000000000002 /* SharedContainer.swift */,
+				C40000000000000000000003 /* TaskWidgetSnapshot.swift */,
+				C40000000000000000000004 /* ShareInbox.swift */,
+				C40000000000000000000005 /* T3Code.entitlements */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		C30000000000000000000003 /* Widgets */ = {
+			isa = PBXGroup;
+			children = (
+				C40000000000000000000006 /* T3CodeWidgets.swift */,
+				C40000000000000000000007 /* AgentActivityWidget.swift */,
+				C40000000000000000000008 /* RecentTasksWidget.swift */,
+				C40000000000000000000009 /* Info.plist */,
+				C4000000000000000000000A /* T3CodeWidgets.entitlements */,
+			);
+			path = Widgets;
+			sourceTree = "<group>";
+		};
+		C30000000000000000000004 /* Share */ = {
+			isa = PBXGroup;
+			children = (
+				C4000000000000000000000B /* SharePayloadLoader.swift */,
+				C4000000000000000000000C /* ShareViewController.swift */,
+				C4000000000000000000000D /* Info.plist */,
+				C4000000000000000000000E /* T3CodeShare.entitlements */,
+			);
+			path = Share;
+			sourceTree = "<group>";
+		};
+		C30000000000000000000005 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				C40000000000000000000011 /* ExtensionContractTests.swift */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A50000000000000000000001 /* T3Code */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A60000000000000000000002 /* Build configuration list for PBXNativeTarget "T3Code" */;
+			buildPhases = (
+				A70000000000000000000001 /* Sources */,
+				A20000000000000000000001 /* Frameworks */,
+				A80000000000000000000001 /* Resources */,
+				CE0000000000000000000001 /* Embed App Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				CD0000000000000000000002 /* PBXTargetDependency */,
+				CD0000000000000000000003 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A10000000000000000000001 /* App */,
+				A10000000000000000000002 /* Core */,
+				A10000000000000000000003 /* Features */,
+				A10000000000000000000004 /* DesignSystem */,
+				A10000000000000000000005 /* Resources */,
+			);
+			name = T3Code;
+			packageProductDependencies = (
+				B30000000000000000000001 /* ClerkKit */,
+				B30000000000000000000002 /* ClerkKitUI */,
+			);
+			productName = T3Code;
+			productReference = A40000000000000000000001 /* T3 Code.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A50000000000000000000002 /* T3CodeTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A60000000000000000000003 /* Build configuration list for PBXNativeTarget "T3CodeTests" */;
+			buildPhases = (
+				A70000000000000000000002 /* Sources */,
+				A20000000000000000000002 /* Frameworks */,
+				A80000000000000000000002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AD0000000000000000000001 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A10000000000000000000006 /* Tests */,
+			);
+			name = T3CodeTests;
+			packageProductDependencies = (
+			);
+			productName = T3CodeTests;
+			productReference = A40000000000000000000002 /* T3CodeTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		C50000000000000000000003 /* T3CodeWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C60000000000000000000004 /* Build configuration list for PBXNativeTarget "T3CodeWidgets" */;
+			buildPhases = (
+				C70000000000000000000003 /* Sources */,
+				C20000000000000000000003 /* Frameworks */,
+				C80000000000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = T3CodeWidgets;
+			packageProductDependencies = (
+			);
+			productName = T3CodeWidgets;
+			productReference = C4000000000000000000000F /* T3CodeWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		C50000000000000000000004 /* T3CodeShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C60000000000000000000005 /* Build configuration list for PBXNativeTarget "T3CodeShare" */;
+			buildPhases = (
+				C70000000000000000000004 /* Sources */,
+				C20000000000000000000004 /* Frameworks */,
+				C80000000000000000000004 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = T3CodeShare;
+			packageProductDependencies = (
+			);
+			productName = T3CodeShare;
+			productReference = C40000000000000000000010 /* T3CodeShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A90000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					A50000000000000000000001 = {
+						CreatedOnToolsVersion = 16.0;
+						SystemCapabilities = {
+							com.apple.ApplicationGroups.iOS = {
+								enabled = 1;
+							};
+							com.apple.Push = {
+								enabled = 1;
+							};
+							com.apple.SafariKeychain = {
+								enabled = 1;
+							};
+							com.apple.SignInWithApple = {
+								enabled = 1;
+							};
+						};
+					};
+					A50000000000000000000002 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = A50000000000000000000001;
+					};
+					C50000000000000000000003 = {
+						CreatedOnToolsVersion = 16.0;
+						SystemCapabilities = {
+							com.apple.ApplicationGroups.iOS = {
+								enabled = 1;
+							};
+						};
+					};
+					C50000000000000000000004 = {
+						CreatedOnToolsVersion = 16.0;
+						SystemCapabilities = {
+							com.apple.ApplicationGroups.iOS = {
+								enabled = 1;
+							};
+						};
+					};
+				};
+			};
+			buildConfigurationList = A60000000000000000000001 /* Build configuration list for PBXProject "T3Code" */;
+			compatibilityVersion = "Xcode 16.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A30000000000000000000001;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = A30000000000000000000002 /* Products */;
+			packageReferences = (
+				B20000000000000000000001 /* XCRemoteSwiftPackageReference "clerk-ios" */,
+			);
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A50000000000000000000001 /* T3Code */,
+				A50000000000000000000002 /* T3CodeTests */,
+				C50000000000000000000003 /* T3CodeWidgets */,
+				C50000000000000000000004 /* T3CodeShare */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A80000000000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A80000000000000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C80000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C80000000000000000000004 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A70000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C10000000000000000000001 /* AgentActivityAttributes.swift in Sources */,
+				C10000000000000000000002 /* SharedContainer.swift in Sources */,
+				C10000000000000000000003 /* TaskWidgetSnapshot.swift in Sources */,
+				C10000000000000000000004 /* ShareInbox.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A70000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C10000000000000000000011 /* ExtensionContractTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C70000000000000000000003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C10000000000000000000005 /* AgentActivityAttributes.swift in Sources */,
+				C10000000000000000000006 /* SharedContainer.swift in Sources */,
+				C10000000000000000000007 /* TaskWidgetSnapshot.swift in Sources */,
+				C10000000000000000000008 /* T3CodeWidgets.swift in Sources */,
+				C10000000000000000000009 /* AgentActivityWidget.swift in Sources */,
+				C1000000000000000000000A /* RecentTasksWidget.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C70000000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C1000000000000000000000B /* SharedContainer.swift in Sources */,
+				C1000000000000000000000C /* ShareInbox.swift in Sources */,
+				C1000000000000000000000D /* SharePayloadLoader.swift in Sources */,
+				C1000000000000000000000E /* ShareViewController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AD0000000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A50000000000000000000001 /* T3Code */;
+			targetProxy = AC0000000000000000000001 /* PBXContainerItemProxy */;
+		};
+		CD0000000000000000000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = C50000000000000000000003 /* T3CodeWidgets */;
+			targetProxy = CC0000000000000000000002 /* PBXContainerItemProxy */;
+		};
+		CD0000000000000000000003 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = C50000000000000000000004 /* T3CodeShare */;
+			targetProxy = CC0000000000000000000003 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		AB0000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		AB0000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_STRICT_CONCURRENCY = complete;
+			};
+			name = Release;
+		};
+		AB0000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APS_ENVIRONMENT = development;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconDev;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Extensions/Shared/T3Code.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 19;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Resources/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "T3 Swift Dev";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Scan pairing QR codes and attach photos to T3 Code tasks.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Allow T3 Code to connect to T3 Code servers on your local network or tailnet.";
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
+				INFOPLIST_KEY_NSSupportsLiveActivitiesFrequentUpdates = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleLightContent;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lc++",
+					"-lz",
+					"-framework",
+					IOSurface,
+					"-framework",
+					Metal,
+					"-framework",
+					MetalKit,
+					"-framework",
+					QuartzCore,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.dev;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui.dev;
+				T3CODE_URL_SCHEME = t3code-swiftui-dev;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AB0000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APS_ENVIRONMENT = production;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Extensions/Shared/T3Code.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 19;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Resources/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "T3 Code SwiftUI";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Scan pairing QR codes and attach photos to T3 Code tasks.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Allow T3 Code to connect to T3 Code servers on your local network or tailnet.";
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
+				INFOPLIST_KEY_NSSupportsLiveActivitiesFrequentUpdates = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleLightContent;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lc++",
+					"-lz",
+					"-framework",
+					IOSurface,
+					"-framework",
+					Metal,
+					"-framework",
+					MetalKit,
+					"-framework",
+					QuartzCore,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui;
+				T3CODE_URL_SCHEME = t3code-swiftui;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		AB0000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/T3Code.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/T3Code";
+			};
+			name = Debug;
+		};
+		AB0000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/T3Code.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/T3Code";
+			};
+			name = Release;
+		};
+		CB0000000000000000000007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Extensions/Widgets/T3CodeWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 19;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Extensions/Widgets/Info.plist;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.dev.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui.dev;
+				T3CODE_WIDGET_DISPLAY_NAME = "T3 Swift Dev Widgets";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		CB0000000000000000000008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Extensions/Widgets/T3CodeWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 19;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Extensions/Widgets/Info.plist;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui;
+				T3CODE_WIDGET_DISPLAY_NAME = "T3 Code Widgets";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		CB0000000000000000000009 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Extensions/Share/T3CodeShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 19;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Extensions/Share/Info.plist;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.dev.sharing;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui.dev;
+				T3CODE_SHARE_DISPLAY_NAME = "T3 Swift Dev";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		CB000000000000000000000A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Extensions/Share/T3CodeShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 19;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Extensions/Share/Info.plist;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.sharing;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui;
+				T3CODE_SHARE_DISPLAY_NAME = "T3 Code (SwiftUI)";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A60000000000000000000001 /* Build configuration list for PBXProject "T3Code" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AB0000000000000000000001 /* Debug */,
+				AB0000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A60000000000000000000002 /* Build configuration list for PBXNativeTarget "T3Code" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AB0000000000000000000003 /* Debug */,
+				AB0000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A60000000000000000000003 /* Build configuration list for PBXNativeTarget "T3CodeTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AB0000000000000000000005 /* Debug */,
+				AB0000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C60000000000000000000004 /* Build configuration list for PBXNativeTarget "T3CodeWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CB0000000000000000000007 /* Debug */,
+				CB0000000000000000000008 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C60000000000000000000005 /* Build configuration list for PBXNativeTarget "T3CodeShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CB0000000000000000000009 /* Debug */,
+				CB000000000000000000000A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		B20000000000000000000001 /* XCRemoteSwiftPackageReference "clerk-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/clerk/clerk-ios.git";
+			requirement = {
+				kind = exactVersion;
+				version = 1.2.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B30000000000000000000001 /* ClerkKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B20000000000000000000001 /* XCRemoteSwiftPackageReference "clerk-ios" */;
+			productName = ClerkKit;
+		};
+		B30000000000000000000002 /* ClerkKitUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B20000000000000000000001 /* XCRemoteSwiftPackageReference "clerk-ios" */;
+			productName = ClerkKitUI;
+		};
+/* End XCSwiftPackageProductDependency section */
+
+/* Begin PBXFileReference section */
+		A40000000000000000000001 /* T3 Code.app */ = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.application;
+			includeInIndex = 0;
+			path = "T3 Code.app";
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		A40000000000000000000002 /* T3CodeTests.xctest */ = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			includeInIndex = 0;
+			path = T3CodeTests.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		C40000000000000000000001 /* AgentActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentActivityAttributes.swift; sourceTree = "<group>"; };
+		C40000000000000000000002 /* SharedContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedContainer.swift; sourceTree = "<group>"; };
+		C40000000000000000000003 /* TaskWidgetSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskWidgetSnapshot.swift; sourceTree = "<group>"; };
+		C40000000000000000000004 /* ShareInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareInbox.swift; sourceTree = "<group>"; };
+		C40000000000000000000005 /* T3Code.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = T3Code.entitlements; sourceTree = "<group>"; };
+		C40000000000000000000006 /* T3CodeWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = T3CodeWidgets.swift; sourceTree = "<group>"; };
+		C40000000000000000000007 /* AgentActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentActivityWidget.swift; sourceTree = "<group>"; };
+		C40000000000000000000008 /* RecentTasksWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentTasksWidget.swift; sourceTree = "<group>"; };
+		C40000000000000000000009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		C4000000000000000000000A /* T3CodeWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = T3CodeWidgets.entitlements; sourceTree = "<group>"; };
+		C4000000000000000000000B /* SharePayloadLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharePayloadLoader.swift; sourceTree = "<group>"; };
+		C4000000000000000000000C /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		C4000000000000000000000D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		C4000000000000000000000E /* T3CodeShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = T3CodeShare.entitlements; sourceTree = "<group>"; };
+		C4000000000000000000000F /* T3CodeWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = T3CodeWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		C40000000000000000000010 /* T3CodeShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = T3CodeShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		C40000000000000000000011 /* ExtensionContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionContractTests.swift; sourceTree = "<group>"; };
+		D40000000000000000000001 /* GhosttyKit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = GhosttyKit.xcframework; path = ../mobile/modules/t3-terminal/Vendor/libghostty/GhosttyKit.xcframework; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+	};
+	rootObject = A90000000000000000000001 /* Project object */;
+}
