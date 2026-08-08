@@ -43,7 +43,7 @@ describe("serverSettings helpers", () => {
     expect(Duration.toMillis(resolved.sourceControlAllRemotesFetchInterval)).toBe(300_000);
   });
 
-  it("moves the previous five-minute default to the panel-specific balanced interval", () => {
+  it("preserves an explicit five-minute upstream-status override", () => {
     const resolved = resolveServerBackgroundActivitySettings({
       ...DEFAULT_SERVER_SETTINGS,
       backgroundActivity: {
@@ -57,7 +57,7 @@ describe("serverSettings helpers", () => {
     });
 
     expect(resolved.profile).toBe("balanced");
-    expect(Duration.toMillis(resolved.automaticGitFetchInterval)).toBe(30_000);
+    expect(Duration.toMillis(resolved.automaticGitFetchInterval)).toBe(300_000);
     expect(Duration.toMillis(resolved.sourceControlAllRemotesFetchInterval)).toBe(300_000);
   });
 

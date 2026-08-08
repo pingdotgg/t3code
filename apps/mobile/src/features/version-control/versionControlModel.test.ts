@@ -11,6 +11,7 @@ import {
   discardableFiles,
   discardPathGroups,
   localBranchForRemoteBranch,
+  newlyInitializedCurrentChangeSetCwds,
   operationPaths,
   panelChangeSets,
   reconcileSelectedPaths,
@@ -349,6 +350,21 @@ describe("native Version Control model", () => {
     expect([...next.entries()].map(([cwd, paths]) => [cwd, [...paths]])).toEqual([
       ["/repo", ["src/a.ts", "src/new.ts"]],
     ]);
+  });
+
+  it("initializes expansion only when a working tree becomes current", () => {
+    const initializedCwds = new Set<string>();
+    const [current] = panelChangeSets(snapshot(), "/repo/current");
+    if (!current) throw new Error("Expected a current working-tree fixture");
+    const sibling = { ...current, cwd: "/repo/sibling", current: false };
+
+    expect(newlyInitializedCurrentChangeSetCwds([sibling], initializedCwds)).toEqual([]);
+    expect(initializedCwds.has(sibling.cwd)).toBe(false);
+    expect(
+      newlyInitializedCurrentChangeSetCwds([{ ...sibling, current: true }], initializedCwds),
+    ).toEqual([sibling.cwd]);
+    expect(newlyInitializedCurrentChangeSetCwds([current], initializedCwds)).toEqual([current.cwd]);
+    expect(newlyInitializedCurrentChangeSetCwds([current], initializedCwds)).toEqual([]);
   });
 
   it("applies cwd-scoped untracked file enrichment", () => {

@@ -38,6 +38,7 @@ import {
   discardPathGroups,
   operationPaths,
   panelChangeSets,
+  newlyInitializedCurrentChangeSetCwds,
   reconcileSelectedPaths,
   selectedFileStats,
   snapshotForCwd,
@@ -164,11 +165,10 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
 
   const syncSelections = useCallback((nextSnapshot: VcsPanelSnapshotResult, cwd: string) => {
     const changeSets = panelChangeSets(nextSnapshot, cwd);
-    const newlyInitializedCurrentCwds = changeSets.flatMap((changeSet) => {
-      if (initializedChangeSetCwds.current.has(changeSet.cwd)) return [];
-      initializedChangeSetCwds.current.add(changeSet.cwd);
-      return changeSet.current ? [changeSet.cwd] : [];
-    });
+    const newlyInitializedCurrentCwds = newlyInitializedCurrentChangeSetCwds(
+      changeSets,
+      initializedChangeSetCwds.current,
+    );
     const previousKnownPaths = knownPathsByCwd.current;
     const nextKnownPaths = new Map(
       changeSets.map(

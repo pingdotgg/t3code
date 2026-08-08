@@ -302,6 +302,7 @@ import {
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   shouldWriteThreadErrorToCurrentServerThread,
+  isLatestRequestSequence,
   startNewThreadForProject,
   waitForStartedServerThread,
 } from "./ChatView.logic";
@@ -1569,8 +1570,6 @@ function ChatViewContent(props: ChatViewProps) {
   const activeRightPanelSurface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
   );
-  const activeFileSurface =
-    activeRightPanelSurface?.kind === "file" ? activeRightPanelSurface : null;
   const activePreviewState = useThreadPreviewState(activeThreadRef);
   const activePreviewMiniPlayer = usePreviewMiniPlayerStore((state) =>
     selectThreadPreviewMiniPlayer(state.byThreadKey, activeThreadRef),
@@ -1693,6 +1692,25 @@ function ChatViewContent(props: ChatViewProps) {
     ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
     : null;
   const activeProject = useProject(activeProjectRef);
+  const gitCwd = activeProject
+    ? projectScriptCwd({
+        project: { cwd: activeProject.workspaceRoot },
+        worktreePath: activeThread?.worktreePath ?? null,
+      })
+    : null;
+  const {
+    addSourceControlSurface,
+    sourceControlAvailable,
+    visibleActiveRightPanelSurface,
+    visibleRightPanelSurfaces,
+  } = useSourceControlRightPanelSurfaceState({
+    activeRightPanelSurface,
+    activeThreadRef,
+    gitCwd,
+    rightPanelSurfaces: rightPanelState.surfaces,
+  });
+  const activeFileSurface =
+    visibleActiveRightPanelSurface?.kind === "file" ? visibleActiveRightPanelSurface : null;
   const handleNewThreadInActiveProject = useCallback(() => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   }, [activeProjectRef, handleNewThread]);
@@ -2591,12 +2609,6 @@ function ChatViewContent(props: ChatViewProps) {
     return byUserMessageId;
   }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
 
-  const gitCwd = activeProject
-    ? projectScriptCwd({
-        project: { cwd: activeProject.workspaceRoot },
-        worktreePath: activeThread?.worktreePath ?? null,
-      })
-    : null;
   const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
   const gitStatusQuery = useEnvironmentQuery(
     gitStatusCwd === null
@@ -2606,17 +2618,6 @@ function ChatViewContent(props: ChatViewProps) {
           input: { cwd: gitStatusCwd },
         }),
   );
-  const {
-    addSourceControlSurface,
-    sourceControlAvailable,
-    visibleActiveRightPanelSurface,
-    visibleRightPanelSurfaces,
-  } = useSourceControlRightPanelSurfaceState({
-    activeRightPanelSurface,
-    activeThreadRef,
-    gitCwd,
-    rightPanelSurfaces: rightPanelState.surfaces,
-  });
   const sourceControlPanelTarget = resolveSourceControlPanelTarget({
     activeThreadRef,
     gitCwd,
@@ -4350,6 +4351,7 @@ function ChatViewContent(props: ChatViewProps) {
   const activeBackgroundLiveness =
     !isWorking && activeThread ? (activeThreadShell?.backgroundLiveness ?? null) : null;
   const [isStoppingBackgroundWork, setIsStoppingBackgroundWork] = useState(false);
+  const backgroundStopRequestSequenceRef = useRef(0);
   useEffect(() => {
     // "Stopping..." holds until the liveness clears; the interrupt command
     // returning only means the request was accepted.
@@ -4360,10 +4362,12 @@ function ChatViewContent(props: ChatViewProps) {
   useEffect(() => {
     // Per-thread state: switching threads while A's stop is pending must not
     // disable B's Stop button (review finding).
+    backgroundStopRequestSequenceRef.current += 1;
     setIsStoppingBackgroundWork(false);
-  }, [activeThreadId]);
+  }, [activeThreadKey]);
   const handleStopBackgroundWork = useCallback(async () => {
     if (!activeThread) return;
+    const requestSequence = ++backgroundStopRequestSequenceRef.current;
     setIsStoppingBackgroundWork(true);
     const result = await interruptThreadTurn({
       environmentId,
@@ -4372,8 +4376,15 @@ function ChatViewContent(props: ChatViewProps) {
     if (result._tag === "Failure") {
       // Every failure clears the pending state — an interrupted command
       // never reached the server, so liveness would hold "Stopping..."
-      // forever. Only real failures toast.
-      setIsStoppingBackgroundWork(false);
+      // forever. A stale completion cannot clear a newer thread's request.
+      if (
+        isLatestRequestSequence({
+          currentSequence: backgroundStopRequestSequenceRef.current,
+          requestSequence,
+        })
+      ) {
+        setIsStoppingBackgroundWork(false);
+      }
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         setThreadError(

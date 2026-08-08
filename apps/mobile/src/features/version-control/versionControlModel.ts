@@ -78,6 +78,17 @@ export function reconcileSelectedPaths(input: {
   return next;
 }
 
+export function newlyInitializedCurrentChangeSetCwds(
+  changeSets: readonly VersionControlChangeSet[],
+  initializedCwds: Set<string>,
+): readonly string[] {
+  return changeSets.flatMap((changeSet) => {
+    if (!changeSet.current || initializedCwds.has(changeSet.cwd)) return [];
+    initializedCwds.add(changeSet.cwd);
+    return [changeSet.cwd];
+  });
+}
+
 export function actionableLocalBranches(snapshot: VcsPanelSnapshotResult): VcsRef[] {
   return snapshot.localBranches.filter((branch) => {
     const { aheadCount, behindCount } = panelBranchSyncCounts(branch, snapshot);

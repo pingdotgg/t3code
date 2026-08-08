@@ -121,17 +121,6 @@ function isDefaultBackgroundActivitySettings(
   );
 }
 
-function isLegacySourceControlDefault(backgroundActivity: BackgroundActivitySettings): boolean {
-  const fetchInterval = backgroundActivity.overrides.automaticGitFetchInterval;
-  return (
-    backgroundActivity.profile === "custom" &&
-    backgroundActivity.baseProfile === DEFAULT_BACKGROUND_ACTIVITY_PROFILE &&
-    Object.keys(backgroundActivity.overrides).length === 1 &&
-    fetchInterval !== undefined &&
-    durationsEqual(fetchInterval, DEFAULT_SOURCE_CONTROL_ALL_REMOTES_FETCH_INTERVAL)
-  );
-}
-
 function resolvedSettingsEqual(
   a: ResolvedBackgroundActivitySettings,
   b: ResolvedBackgroundActivitySettings,
@@ -236,22 +225,6 @@ export function normalizeBackgroundActivitySettings(
 export function resolveServerBackgroundActivitySettings(
   settings: ServerSettings,
 ): ResolvedBackgroundActivitySettings {
-  const legacySourceControlDefault = isLegacySourceControlDefault(settings.backgroundActivity);
-  if (
-    legacySourceControlDefault &&
-    settings.backgroundActivityProfile === DEFAULT_BACKGROUND_ACTIVITY_PROFILE &&
-    durationsEqual(
-      settings.providerHealthRefreshInterval,
-      DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
-    ) &&
-    (durationsEqual(settings.automaticGitFetchInterval, DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL) ||
-      durationsEqual(
-        settings.automaticGitFetchInterval,
-        DEFAULT_SOURCE_CONTROL_ALL_REMOTES_FETCH_INTERVAL,
-      ))
-  ) {
-    return getBackgroundActivityPresetSettings(DEFAULT_BACKGROUND_ACTIVITY_PROFILE);
-  }
   const backgroundActivityIsDefault = isDefaultBackgroundActivitySettings(
     settings.backgroundActivity,
   );

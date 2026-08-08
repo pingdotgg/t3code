@@ -14,7 +14,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useTheme } from "~/hooks/useTheme";
 import { readLocalApi } from "~/localApi";
@@ -40,6 +40,7 @@ import {
 } from "../ui/dialog";
 import { Textarea } from "../ui/textarea";
 import {
+  beginPanelAction,
   beginPanelFileDiffLoad,
   branchHasUpstream,
   branchIsCheckedOut,
@@ -83,6 +84,7 @@ export function useSourceControlPanelActions(
   state: SourceControlPanelState,
   refresh: (mode?: "full" | "working-tree") => Promise<void>,
 ) {
+  const runningActionKeysRef = useRef(new Set<string>());
   const {
     api,
     changedFiles,
@@ -122,6 +124,7 @@ export function useSourceControlPanelActions(
   } = state;
   const runAction = useCallback(
     async (actionKey: string, action: () => Promise<void>) => {
+      if (!beginPanelAction(runningActionKeysRef.current, actionKey)) return;
       setRunningActions((current) => new Set(current).add(actionKey));
       setError(null);
       setMutationError(null);
@@ -142,6 +145,7 @@ export function useSourceControlPanelActions(
         if (isSourceControlPanelCommandInterrupted(nextError)) return;
         setMutationError(errorMessage(nextError));
       } finally {
+        runningActionKeysRef.current.delete(actionKey);
         setRunningActions((current) => {
           const next = new Set(current);
           next.delete(actionKey);

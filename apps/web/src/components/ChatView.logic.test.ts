@@ -25,6 +25,7 @@ import {
   hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
+  isLatestRequestSequence,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   retainThreadKeyRecord,
@@ -610,6 +611,13 @@ describe("shouldApplySourceControlMetadataUpdateResult", () => {
         requestSequence: 1,
       }),
     ).toBe(false);
+  });
+});
+
+describe("isLatestRequestSequence", () => {
+  it("rejects a stop completion after a newer thread starts another request", () => {
+    expect(isLatestRequestSequence({ currentSequence: 4, requestSequence: 3 })).toBe(false);
+    expect(isLatestRequestSequence({ currentSequence: 4, requestSequence: 4 })).toBe(true);
   });
 });
 

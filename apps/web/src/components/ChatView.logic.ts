@@ -167,12 +167,14 @@ export function retainThreadKeyRecord<T>(
   return changed ? next : existing;
 }
 
-export function shouldApplySourceControlMetadataUpdateResult(input: {
+export function isLatestRequestSequence(input: {
   readonly currentSequence: number | undefined;
   readonly requestSequence: number;
 }): boolean {
   return input.currentSequence === input.requestSequence;
 }
+
+export const shouldApplySourceControlMetadataUpdateResult = isLatestRequestSequence;
 
 export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "session">): {
   threadId: ThreadId;

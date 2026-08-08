@@ -119,6 +119,12 @@ export async function runPanelActionAndReconcile(options: {
   return result;
 }
 
+export function beginPanelAction(runningActionKeys: Set<string>, actionKey: string): boolean {
+  if (runningActionKeys.has(actionKey)) return false;
+  runningActionKeys.add(actionKey);
+  return true;
+}
+
 export function beginPanelDetailRequest(requestsByKey: Map<string, number>, key: string): number {
   const requestId = (requestsByKey.get(key) ?? 0) + 1;
   requestsByKey.set(key, requestId);

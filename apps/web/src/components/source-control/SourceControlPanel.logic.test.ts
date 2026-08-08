@@ -8,6 +8,7 @@ import {
 
 import {
   beginPanelFileDiffLoad,
+  beginPanelAction,
   beginPanelDetailRequest,
   branchAttention,
   branchHasUpstream,
@@ -320,6 +321,17 @@ describe("SourceControlPanel stash identity", () => {
 });
 
 describe("SourceControlPanel refresh stability logic", () => {
+  it("suppresses a duplicate panel action until the first action releases its key", () => {
+    const runningActionKeys = new Set<string>();
+
+    expect(beginPanelAction(runningActionKeys, "commit:/repo")).toBe(true);
+    expect(beginPanelAction(runningActionKeys, "commit:/repo")).toBe(false);
+    expect(beginPanelAction(runningActionKeys, "push:feature")).toBe(true);
+
+    runningActionKeys.delete("commit:/repo");
+    expect(beginPanelAction(runningActionKeys, "commit:/repo")).toBe(true);
+  });
+
   it("reconciles repository state after a failed panel action", async () => {
     const calls: string[] = [];
     const failure = new Error("merge produced conflicts");

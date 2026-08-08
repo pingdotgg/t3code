@@ -153,6 +153,22 @@ describe("source control right panel surface visibility", () => {
         visibleSurfaces: [],
       }),
     ).toBe(null);
+
+    const siblingFileSurface = {
+      id: "file:/repo/sibling:src/index.ts",
+      kind: "file",
+      cwd: "/repo/sibling",
+      relativePath: "src/index.ts",
+      revealLine: 12,
+      revealRequestId: 3,
+    } as const;
+    expect(
+      resolveVisibleSourceControlSurface({
+        sourceControlAvailable: false,
+        surface: sourceControlSurface,
+        visibleSurfaces: [siblingFileSurface],
+      }),
+    ).toBe(siblingFileSurface);
   });
 
   it("retargets an open singleton surface across grouped project drafts without leaking errors", () => {
