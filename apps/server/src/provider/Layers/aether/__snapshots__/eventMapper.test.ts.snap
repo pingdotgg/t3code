@@ -1,0 +1,380 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`AetherEventMapper — durable reconciliation > snapshots a full delta replay from a cold cursor 1`] = `
+[
+  {
+    "createdAt": "2026-08-08T10:00:01.500Z",
+    "eventId": "aether:task-1:item:thinking:m2",
+    "itemId": "thinking:m2",
+    "payload": {
+      "detail": "The test asserts…",
+      "itemType": "reasoning",
+      "status": "completed",
+    },
+    "provider": "aether",
+    "providerInstanceId": "aether",
+    "threadId": "thread-1",
+    "turnId": "aether-turn-u1",
+    "type": "item.completed",
+  },
+  {
+    "createdAt": "2026-08-08T10:00:02.000Z",
+    "eventId": "aether:task-1:item:m1",
+    "itemId": "m1",
+    "payload": {
+      "detail": "Looking at the failing test.",
+      "itemType": "assistant_message",
+      "status": "completed",
+    },
+    "provider": "aether",
+    "providerInstanceId": "aether",
+    "threadId": "thread-1",
+    "turnId": "aether-turn-u1",
+    "type": "item.completed",
+  },
+  {
+    "createdAt": "2026-08-08T10:00:03.000Z",
+    "eventId": "aether:task-1:tool:call-fc-codex:output-available",
+    "itemId": "call-fc-codex",
+    "payload": {
+      "data": {
+        "files": [
+          {
+            "path": "src/app.ts",
+          },
+          {
+            "path": "src/new.ts",
+          },
+        ],
+        "toolCallId": "call-fc-codex",
+      },
+      "itemType": "file_change",
+      "status": "completed",
+      "title": "Edit src/app.ts, src/new.ts",
+    },
+    "provider": "aether",
+    "providerInstanceId": "aether",
+    "threadId": "thread-1",
+    "turnId": "aether-turn-u1",
+    "type": "item.completed",
+  },
+  {
+    "createdAt": "2026-08-08T10:00:04.000Z",
+    "eventId": "aether:task-1:seq:5",
+    "payload": {
+      "state": "compacted",
+    },
+    "provider": "aether",
+    "providerInstanceId": "aether",
+    "threadId": "thread-1",
+    "type": "thread.state.changed",
+  },
+  {
+    "createdAt": "2026-08-08T12:00:00.000Z",
+    "eventId": "aether:task-1:turn:u1:settled",
+    "payload": {
+      "state": "completed",
+    },
+    "provider": "aether",
+    "providerInstanceId": "aether",
+    "threadId": "thread-1",
+    "turnId": "aether-turn-u1",
+    "type": "turn.completed",
+  },
+]
+`;
+
+exports[`AetherEventMapper — live WS events > snapshots the full golden turn (13-kind coverage) 1`] = `
+[
+  {
+    "createdAt": "2026-08-08T10:00:00.500Z",
+    "eventId": "aether:task-1:stream:thinking:m2:1",
+    "itemId": "thinking:m2",
+    "payload": {
+      "delta": "The test asserts…",
+      "streamKind": "reasoning_text",
+    },
+    "provider": "aether",
+    "providerInstanceId": "aether",
+    "threadId": "thread-1",
+    "turnId": "aether-turn-u1",
+    "type": "content.delta",
+  },
+  {
+    "createdAt": "2026-08-08T10:00:01.500Z",
+    "eventId": "aether:task-1:item:thinking:m2",
+    "itemId": "thinking:m2",
+    "payload": {
+      "detail": "The test asserts…",
+      "itemType": "reasoning",
+      "status": "completed",
+    },
+    "provider": "aether",
+    "providerInstanceId": "aether",
+    "threadId": "thread-1",
+    "turnId": "aether-turn-u1",
+    "type": "item.completed",
+  },
+  {
+    "createdAt": "2026-08-08T10:00:01.500Z",
+    "eventId": "aether:task-1:stream:m1:1",
+    "itemId": "m1",
+    "payload": {
+      "delta": "Looking at the",
+      "streamKind": "assistant_text",
+    },
+    "provider": "aether",
+    "providerInstanceId": "aether",
+    "threadId": "thread-1",
+    "turnId": "aether-turn-u1",
+    "type": "content.delta",
+  },
+  {
+    "createdAt": "2026-08-08T10:00:01.500Z",
+    "eventId": "aether:task-1:stream:m1:2",
+    "itemId": "m1",
+    "payload": {
+      "delta": " failing test.",
+      "streamKind": "assistant_text",
+    },
+    "provider": "aether",
+    "providerInstanceId": "aether",
+    "threadId": "thread-1",
+    "turnId": "aether-turn-u1",
+    "type": "content.delta",
+  },
+  {
+    "createdAt": "2026-08-08T10:00:02.000Z",
+    "eventId": "aether:task-1:item:m1",
+    "itemId": "m1",
+    "payload": {
+      "detail": "Looking at the failing test.",
+      "itemType": "assistant_message",
+      "status": "completed",
+    },
+    "provider": "aether",
+    "providerInstanceId": "aether",
+    "threadId": "thread-1",
+    "turnId": "aether-turn-u1",
+    "type": "item.completed",
+  },
+  {
+    "createdAt": "2026-08-08T10:00:03.000Z",
+    "eventId": "aether:task-1:tool:call-fc-codex:output-available",
+    "itemId": "call-fc-codex",
+    "payload": {
+      "data": {
+        "files": [
+          {
+            "path": "src/app.ts",
+          },
+          {
+            "path": "src/new.ts",
+          },
+        ],
+        "toolCallId": "call-fc-codex",
+      },
+      "itemType": "file_change",
+      "status": "completed",
+      "title": "Edit src/app.ts, src/new.ts",
+    },
+    "provider": "aether",
+    "providerInstanceId": "aether",
+    "threadId": "thread-1",
+    "turnId": "aether-turn-u1",
+    "type": "item.completed",
+  },
+  {
+    "createdAt": "2026-08-08T10:00:04.000Z",
+    "eventId": "aether:task-1:tool:call-fc-claude:output-available",
+    "itemId": "call-fc-claude",
+    "payload": {
+      "data": {
+        "files": [
+          {
+            "path": "src/util.ts",
+          },
+        ],
+        "toolCallId": "call-fc-claude",
+      },
+      "itemType": "file_change",
+      "status": "completed",
+      "title": "Edit src/util.ts",
+    },
+    "provider": "aether",
+    "providerInstanceId": "aether",
+    "threadId": "thread-1",
+    "turnId": "aether-turn-u1",
+    "type": "item.completed",
+  },
+  {
+    "createdAt": "2026-08-08T10:00:05.000Z",
+    "eventId": "aether:task-1:tool:call-bash:input-available",
+    "itemId": "call-bash",
+    "payload": {
+      "data": {
+        "item": {
+          "command": "pnpm test",
+          "cwd": "/home/coder/project",
+        },
+        "toolCallId": "call-bash",
+      },
+      "detail": "pnpm test",
+      "itemType": "command_execution",
+      "status": "inProgress",
+      "title": "pnpm test",
+    },
+    "provider": "aether",
+    "providerInstanceId": "aether",
+    "threadId": "thread-1",
+    "turnId": "aether-turn-u1",
+    "type": "item.started",
+  },
+  {
+    "createdAt": "2026-08-08T10:00:06.000Z",
+    "eventId": "aether:task-1:tool:call-bash:output-error",
+    "itemId": "call-bash",
+    "payload": {
+      "data": {
+        "item": {
+          "command": "pnpm test",
+          "cwd": "/home/coder/project",
+        },
+        "toolCallId": "call-bash",
+      },
+      "detail": "pnpm test
+1 test failed
+<exited with exit code 1>",
+      "itemType": "command_execution",
+      "status": "failed",
+      "title": "pnpm test",
+    },
+    "provider": "aether",
+    "providerInstanceId": "aether",
+    "threadId": "thread-1",
+    "turnId": "aether-turn-u1",
+    "type": "item.completed",
+  },
+  {
+    "createdAt": "2026-08-08T10:00:07.000Z",
+    "eventId": "aether:task-1:tool:call-denied:output-denied",
+    "itemId": "call-denied",
+    "payload": {
+      "data": {
+        "item": {
+          "command": "rm -rf /",
+        },
+        "toolCallId": "call-denied",
+      },
+      "detail": "rm -rf /",
+      "itemType": "command_execution",
+      "status": "declined",
+      "title": "rm -rf /",
+    },
+    "provider": "aether",
+    "providerInstanceId": "aether",
+    "threadId": "thread-1",
+    "turnId": "aether-turn-u1",
+    "type": "item.completed",
+  },
+  {
+    "createdAt": "2026-08-08T10:00:07.000Z",
+    "eventId": "aether:task-1:tool:call-denied:output-denied:denied",
+    "payload": {
+      "reason": "denied by policy",
+      "toolName": "Bash",
+      "toolUseId": "call-denied",
+    },
+    "provider": "aether",
+    "providerInstanceId": "aether",
+    "threadId": "thread-1",
+    "turnId": "aether-turn-u1",
+    "type": "tool.denied",
+  },
+  {
+    "createdAt": "2026-08-08T10:00:08.000Z",
+    "eventId": "aether:task-1:tool:call-mcp:output-available",
+    "itemId": "call-mcp",
+    "payload": {
+      "data": {
+        "item": {
+          "args": {
+            "title": "Fix flake",
+          },
+          "result": "{"id":"LIN-1"}",
+          "server": "linear",
+          "tool": "create_issue",
+        },
+        "toolCallId": "call-mcp",
+      },
+      "itemType": "mcp_tool_call",
+      "status": "completed",
+      "title": "linear: create_issue",
+    },
+    "provider": "aether",
+    "providerInstanceId": "aether",
+    "threadId": "thread-1",
+    "turnId": "aether-turn-u1",
+    "type": "item.completed",
+  },
+  {
+    "createdAt": "2026-08-08T10:00:09.000Z",
+    "eventId": "aether:task-1:tool:call-todo:output-available",
+    "itemId": "call-todo",
+    "payload": {
+      "data": {
+        "item": {
+          "input": {},
+          "name": "TodoWrite",
+        },
+        "toolCallId": "call-todo",
+      },
+      "itemType": "dynamic_tool_call",
+      "status": "completed",
+      "title": "Update plan",
+    },
+    "provider": "aether",
+    "providerInstanceId": "aether",
+    "threadId": "thread-1",
+    "turnId": "aether-turn-u1",
+    "type": "item.completed",
+  },
+  {
+    "createdAt": "2026-08-08T10:00:09.000Z",
+    "eventId": "aether:task-1:tool:call-todo:output-available:plan",
+    "payload": {
+      "plan": [
+        {
+          "status": "completed",
+          "step": "Reproduce the failure",
+        },
+        {
+          "status": "inProgress",
+          "step": "Fix the reducer",
+        },
+        {
+          "status": "pending",
+          "step": "Add a regression test",
+        },
+      ],
+    },
+    "provider": "aether",
+    "providerInstanceId": "aether",
+    "threadId": "thread-1",
+    "turnId": "aether-turn-u1",
+    "type": "turn.plan.updated",
+  },
+  {
+    "createdAt": "2026-08-08T10:00:10.000Z",
+    "eventId": "aether:task-1:turn:u1:settled",
+    "payload": {
+      "state": "completed",
+    },
+    "provider": "aether",
+    "providerInstanceId": "aether",
+    "threadId": "thread-1",
+    "turnId": "aether-turn-u1",
+    "type": "turn.completed",
+  },
+]
+`;

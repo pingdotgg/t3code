@@ -369,6 +369,109 @@ export const AetherRespondToTaskResponse = Schema.Struct({
 export type AetherRespondToTaskResponse = typeof AetherRespondToTaskResponse.Type;
 
 // ---------------------------------------------------------------------------
+// Workspace connect (state-discriminated union + 409 conflict union)
+// ---------------------------------------------------------------------------
+
+// `POST /workspaces/{id}/connect` 200 body — a oneOf discriminated on
+// `state` (apps/api/apitypes/workspaces.go ConnectWorkspaceResponse):
+// `transport` belongs to running, `retry_after_ms` to connecting.
+const AetherConnectRunning = Schema.Struct({
+  state: Schema.Literal("running"),
+  transport: Schema.Struct({
+    websocket_path: Schema.String,
+    preview_token: Schema.String,
+  }),
+});
+const AetherConnectConnecting = Schema.Struct({
+  state: Schema.Literal("connecting"),
+  retry_after_ms: Schema.Number,
+});
+
+// The three kinds of connect 409, discriminated by what the client should DO
+// (apitypes RegisterWorkspaceConnectConflictSchema): `transitional` — ask
+// again after retry_after_ms; `startable` — a connect with start=true would
+// actually start the workspace; `not_connectable` — nothing the client does
+// will change it.
+const AetherConnectConflictTransitional = Schema.Struct({
+  kind: Schema.Literal("transitional"),
+  error: Schema.String,
+  retry_after_ms: Schema.Number,
+});
+const AetherConnectConflictStartable = Schema.Struct({
+  kind: Schema.Literal("startable"),
+  error: Schema.String,
+});
+const AetherConnectConflictNotConnectable = Schema.Struct({
+  kind: Schema.Literal("not_connectable"),
+  error: Schema.String,
+  display_state: Schema.String,
+});
+
+export type AetherWorkspaceConnectConflict =
+  | typeof AetherConnectConflictTransitional.Type
+  | typeof AetherConnectConflictStartable.Type
+  | typeof AetherConnectConflictNotConnectable.Type;
+
+/**
+ * The decoded connect outcome. The 409 conflict union is DATA, not an error:
+ * a suspended workspace answering a passive attach is an expected state the
+ * caller must branch on (durable-only mode), never an exception path.
+ */
+export type AetherWorkspaceConnectOutcome =
+  | typeof AetherConnectRunning.Type
+  | typeof AetherConnectConnecting.Type
+  | { readonly state: "conflict"; readonly conflict: AetherWorkspaceConnectConflict };
+
+const decodeStateProbe = Schema.decodeUnknownEffect(Schema.Struct({ state: Schema.String }));
+const decodeConnectRunning = Schema.decodeUnknownEffect(AetherConnectRunning);
+const decodeConnectConnecting = Schema.decodeUnknownEffect(AetherConnectConnecting);
+
+/** Decode the 200 connect union. An unknown state fails loudly. */
+export const decodeAetherConnectResponse = (
+  input: unknown,
+): Effect.Effect<AetherWorkspaceConnectOutcome, Schema.SchemaError> =>
+  Effect.gen(function* () {
+    const probe = yield* decodeStateProbe(input);
+    switch (probe.state) {
+      case "running":
+        return yield* decodeConnectRunning(input);
+      case "connecting":
+        return yield* decodeConnectConnecting(input);
+      default:
+        // Unlike the growable task-status enum, connect states are the two
+        // halves of one handshake — a third one means this client cannot
+        // know whether a socket exists, so it must fail, not guess.
+        return yield* decodeConnectRunning(input);
+    }
+  });
+
+const decodeConflictKindProbe = Schema.decodeUnknownEffect(Schema.Struct({ kind: Schema.String }));
+const decodeConflictTransitional = Schema.decodeUnknownEffect(AetherConnectConflictTransitional);
+const decodeConflictStartable = Schema.decodeUnknownEffect(AetherConnectConflictStartable);
+const decodeConflictNotConnectable = Schema.decodeUnknownEffect(
+  AetherConnectConflictNotConnectable,
+);
+
+/** Decode the 409 conflict union. An unknown kind fails loudly. */
+export const decodeAetherConnectConflict = (
+  input: unknown,
+): Effect.Effect<AetherWorkspaceConnectConflict, Schema.SchemaError> =>
+  Effect.gen(function* () {
+    const probe = yield* decodeConflictKindProbe(input);
+    switch (probe.kind) {
+      case "transitional":
+        return yield* decodeConflictTransitional(input);
+      case "startable":
+        return yield* decodeConflictStartable(input);
+      case "not_connectable":
+        return yield* decodeConflictNotConnectable(input);
+      default:
+        // The kind IS the client's next move; an unknown one is undecidable.
+        return yield* decodeConflictTransitional(input);
+    }
+  });
+
+// ---------------------------------------------------------------------------
 // Projects
 // ---------------------------------------------------------------------------
 

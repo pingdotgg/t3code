@@ -5,13 +5,26 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import type { GitStatusDetails } from "../../vcs/GitVcsDriver.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import type { ProviderAdapterError } from "../Errors.ts";
-import { makeAetherAdapter, parseAetherResume, type AetherSessionGit } from "./AetherAdapter.ts";
+import {
+  makeAetherAdapter,
+  parseAetherResume,
+  type AetherAdapterSocketOptions,
+  type AetherSessionGit,
+} from "./AetherAdapter.ts";
 import { AetherApiNotFoundError, type AetherRestClient } from "./aether/restClient.ts";
-import type { AetherProject, AetherTask, AetherTimelineMessage } from "./aether/restSchemas.ts";
+import type {
+  AetherConversationDelta,
+  AetherProject,
+  AetherTask,
+  AetherTimelineMessage,
+} from "./aether/restSchemas.ts";
+import { wsAssistantDelta, wsTurnCompleted } from "./aether/eventMapper.fixtures.ts";
+import type { AetherWebSocketLike } from "./aether/workspaceSocket.ts";
 
 const instanceId = ProviderInstanceId.make("aether");
 
@@ -50,6 +63,7 @@ const unusedRestClient: AetherRestClient = {
   removeFromQueue: () => Effect.die("removeFromQueue must not be called"),
   updateTask: () => Effect.die("updateTask must not be called"),
   getTask: () => Effect.die("getTask must not be called"),
+  connectWorkspace: () => Effect.die("connectWorkspace must not be called"),
   getConversationMessages: () => Effect.die("getConversationMessages must not be called"),
   getConversationDelta: () => Effect.die("getConversationDelta must not be called"),
   listProjects: () => Effect.die("listProjects must not be called"),
@@ -99,6 +113,7 @@ const withAdapter = <A, E>(
     readonly git?: AetherSessionGit;
     readonly restClient?: AetherRestClient | undefined;
     readonly hasRestClient?: boolean;
+    readonly socket?: AetherAdapterSocketOptions;
   },
   use: (adapter: ProviderAdapterShape<ProviderAdapterError>) => Effect.Effect<A, E, Scope.Scope>,
 ) =>
@@ -109,6 +124,7 @@ const withAdapter = <A, E>(
       git: options.git ?? gitWith(cleanStatus),
       restClient:
         options.hasRestClient === false ? undefined : (options.restClient ?? unusedRestClient),
+      socket: options.socket,
     });
     return yield* use(adapter);
   }).pipe(Effect.scoped, Effect.provideService(Crypto.Crypto, testCrypto));
@@ -776,5 +792,194 @@ describe("AetherAdapter readThread", () => {
           expect(error.message).toContain("no older-page cursor");
         }),
     ),
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Event pipeline (T4+T5): passive attach + live streaming + reconciliation
+// ---------------------------------------------------------------------------
+
+/** Minimal fake WebSocket: opens on listener registration, records sends. */
+class FakeAdapterSocket implements AetherWebSocketLike {
+  readonly sent: Array<string> = [];
+  closed = false;
+  private opened = false;
+  private readonly listeners = new Map<string, Array<(event: unknown) => void>>();
+
+  addEventListener(type: string, listener: (event: never) => void): void {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener as (event: unknown) => void);
+    this.listeners.set(type, list);
+    if (type === "open" && this.opened) {
+      (listener as () => void)();
+    }
+  }
+
+  send(data: string): void {
+    this.sent.push(data);
+  }
+
+  close(): void {
+    if (this.closed) {
+      return;
+    }
+    this.closed = true;
+    this.fire("close", { code: 1000, reason: "client closed" });
+  }
+
+  open(): void {
+    this.opened = true;
+    this.fire("open", undefined);
+  }
+
+  message(frame: unknown): void {
+    this.fire("message", { data: JSON.stringify(frame) });
+  }
+
+  private fire(type: string, event: unknown): void {
+    for (const listener of this.listeners.get(type) ?? []) {
+      listener(event);
+    }
+  }
+}
+
+const emptyDelta = (task: AetherTask, latestSequence: number): AetherConversationDelta => ({
+  task,
+  messages: [],
+  activity: [],
+  activeProcessingTurn: null,
+  latestSequence,
+  removedMessageIds: [],
+  truncated: false,
+});
+
+const settleAdapterPump = Effect.gen(function* () {
+  for (let i = 0; i < 8; i++) {
+    yield* TestClock.adjust("0 millis");
+    yield* Effect.yieldNow;
+  }
+});
+
+describe("AetherAdapter event pipeline", () => {
+  const zeroTiming = {
+    pollInitialMs: 0,
+    pollMaxMs: 0,
+    reconnectInitialMs: 0,
+    reconnectMaxMs: 0,
+    connectDefaultRetryMs: 0,
+  };
+
+  const streamingRestClient = (deltaSequences: Array<number>): AetherRestClient => ({
+    ...unusedRestClient,
+    listProjects: () => Effect.succeed([project()]),
+    getTask: () => Effect.succeed(processingTask),
+    connectWorkspace: () =>
+      Effect.succeed({
+        state: "running",
+        transport: { websocket_path: "/workspaces/ws-1/ws", preview_token: "t".repeat(32) },
+      } as const),
+    getConversationDelta: (_taskId, after) =>
+      Effect.sync(() => {
+        deltaSequences.push(after);
+      }).pipe(Effect.as(emptyDelta(processingTask, after))),
+  });
+
+  it.effect("attaches passively on resume and streams mapped live events", () =>
+    Effect.gen(function* () {
+      const sockets: Array<FakeAdapterSocket> = [];
+      const deltaSequences: Array<number> = [];
+      yield* withAdapter(
+        {
+          restClient: streamingRestClient(deltaSequences),
+          socket: {
+            apiBaseUrl: "https://api.runaether.dev",
+            apiKey: "aether_test_key",
+            timing: zeroTiming,
+            webSocketFactory: () => {
+              const socket = new FakeAdapterSocket();
+              sockets.push(socket);
+              socket.open();
+              return socket;
+            },
+          },
+        },
+        (adapter) =>
+          Effect.gen(function* () {
+            const collector = yield* adapter.streamEvents.pipe(
+              Stream.take(5),
+              Stream.runCollect,
+              Effect.forkScoped,
+            );
+            const session = yield* adapter.startSession(
+              startInput({
+                resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 7 },
+              }),
+            );
+            yield* settleAdapterPump;
+
+            // Passive attach: subscribed to the agent channel for the task,
+            // and the delta reconciliation ran from the CURSOR's sequence.
+            expect(sockets).toHaveLength(1);
+            expect(sockets[0]!.sent[0]).toBe(
+              '{"channel":"agent","type":"subscribe","taskId":"task-1"}',
+            );
+            expect(deltaSequences).toEqual([7]);
+
+            // Live frames flow through the mapper into streamEvents.
+            sockets[0]!.message(wsAssistantDelta);
+            sockets[0]!.message(wsTurnCompleted);
+            yield* settleAdapterPump;
+            yield* adapter.stopSession(session.threadId);
+            expect(sockets[0]!.closed).toBe(true);
+
+            const events = yield* Fiber.join(collector);
+            expect(events.map((event) => event.type)).toEqual([
+              "session.started",
+              // The reconcile's status projection: resuming onto a
+              // processing task shows the session as running, not idle.
+              "session.state.changed",
+              "content.delta",
+              "turn.completed",
+              "session.exited",
+            ]);
+            expect(events[1]).toMatchObject({ payload: { state: "running" } });
+            const delta = events[2]!;
+            expect(delta).toMatchObject({
+              eventId: "aether:task-1:stream:m1:1",
+              threadId: session.threadId,
+              payload: { streamKind: "assistant_text", delta: "Looking at the" },
+            });
+          }),
+      );
+    }),
+  );
+
+  it.effect("does not attach when the thread has no task yet", () =>
+    Effect.gen(function* () {
+      const sockets: Array<FakeAdapterSocket> = [];
+      yield* withAdapter(
+        {
+          restClient: { ...unusedRestClient, listProjects: () => Effect.succeed([project()]) },
+          socket: {
+            apiBaseUrl: "https://api.runaether.dev",
+            apiKey: "aether_test_key",
+            timing: zeroTiming,
+            webSocketFactory: () => {
+              const socket = new FakeAdapterSocket();
+              sockets.push(socket);
+              socket.open();
+              return socket;
+            },
+          },
+        },
+        (adapter) =>
+          Effect.gen(function* () {
+            yield* adapter.startSession(startInput());
+            yield* settleAdapterPump;
+            // No task → nothing to attach to until the first sendTurn (T6).
+            expect(sockets).toHaveLength(0);
+          }),
+      );
+    }),
   );
 });

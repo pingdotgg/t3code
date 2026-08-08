@@ -3,10 +3,11 @@
  *
  * A real snapshot (probe = authenticated `GET /profile`, models from the
  * vendored platform catalog) over the session-core adapter (REST task client
- * + git preflight; turn streaming still pending) and deterministic
- * text-generation stubs. There is no local binary — the driver talks to the
- * Aether REST API, authenticated by the sensitive `AETHER_API_KEY` instance
- * environment variable.
+ * + git preflight + workspace WS event pipeline; the turn surface lands with
+ * build item 7) and deterministic text-generation stubs. There is no local
+ * binary — the driver talks to the Aether REST API and workspace WS,
+ * authenticated by the sensitive `AETHER_API_KEY` instance environment
+ * variable.
  *
  * @module provider/Drivers/AetherDriver
  */
@@ -122,6 +123,8 @@ export const AetherDriver: ProviderDriver<AetherSettings, AetherDriverEnv> = {
         defaultCwd: serverConfig.cwd,
         git: gitVcsDriver,
         restClient,
+        socket:
+          apiKey === undefined ? undefined : { apiBaseUrl: effectiveConfig.apiBaseUrl, apiKey },
       });
       const textGeneration = makeAetherTextGeneration();
 

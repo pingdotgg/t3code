@@ -1,0 +1,779 @@
+import { describe, expect, it } from "@effect/vitest";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ThreadId,
+  type ProviderRuntimeEvent,
+} from "@t3tools/contracts";
+
+import { makeAetherEventMapper, parseAetherQuestions } from "./eventMapper.ts";
+import type { AetherTask } from "./restSchemas.ts";
+import {
+  FIXTURE_TASK_ID,
+  deltaRows,
+  makeDelta,
+  taskAwaitingMessage,
+  taskAwaitingPlan,
+  taskAwaitingQuestions,
+  taskErrored,
+  taskProcessing,
+  wsAssistantDelta,
+  wsAwaitingInputPlan,
+  wsAwaitingInputQuestions,
+  wsAwaitingInputStopTask,
+  wsClaudeEdit,
+  wsCodexFileChange,
+  wsCommandFailed,
+  wsCommandStarted,
+  wsConversationTruncated,
+  wsGoldenTurn,
+  wsMcpToolCall,
+  wsSlashCommandsUpdated,
+  wsThinkingDelta,
+  wsTodoTool,
+  wsToolDenied,
+  wsTurnCompleted,
+  wsTurnFailed,
+} from "./eventMapper.fixtures.ts";
+import { parseAetherAgentFrame, type AetherAgentEvent } from "./wireEvents.ts";
+
+const NOW = "2026-08-08T12:00:00.000Z";
+
+const makeMapper = (initialSequence = 0) =>
+  makeAetherEventMapper({
+    provider: ProviderDriverKind.make("aether"),
+    instanceId: ProviderInstanceId.make("aether"),
+    threadId: ThreadId.make("thread-1"),
+    taskId: FIXTURE_TASK_ID,
+    initialSequence,
+  });
+
+/** Fixtures are RAW wire frames; route them through the real frame parser so
+ * the fixtures also pin the wireEvents schemas to the golden shapes. */
+function parseFrame(frame: unknown): AetherAgentEvent {
+  const result = parseAetherAgentFrame(JSON.stringify(frame));
+  if (result._tag !== "event") {
+    throw new Error(`fixture did not parse as an event: ${JSON.stringify(result)}`);
+  }
+  return result.event;
+}
+
+function eventIds(events: ReadonlyArray<ProviderRuntimeEvent>): ReadonlyArray<string> {
+  return events.map((event) => event.eventId);
+}
+
+describe("AetherEventMapper — live WS events", () => {
+  it("snapshots the full golden turn (13-kind coverage)", () => {
+    const mapper = makeMapper();
+    const events = wsGoldenTurn.flatMap((frame) => [...mapper.mapWsEvent(parseFrame(frame), NOW)]);
+    expect(events).toMatchSnapshot();
+  });
+
+  it("maps assistant deltas to assistant_text with deterministic ids", () => {
+    const mapper = makeMapper();
+    const [event] = mapper.mapWsEvent(parseFrame(wsAssistantDelta), NOW);
+    expect(event).toMatchObject({
+      type: "content.delta",
+      eventId: "aether:task-1:stream:m1:1",
+      itemId: "m1",
+      turnId: "aether-turn-u1",
+      payload: { streamKind: "assistant_text", delta: "Looking at the" },
+    });
+  });
+
+  it("maps thinking deltas to reasoning_text, never assistant_text", () => {
+    const mapper = makeMapper();
+    const [event] = mapper.mapWsEvent(parseFrame(wsThinkingDelta), NOW);
+    expect(event).toMatchObject({
+      type: "content.delta",
+      itemId: "thinking:m2",
+      payload: { streamKind: "reasoning_text" },
+    });
+  });
+
+  it("parses codex file_change input into data.files path chips", () => {
+    const mapper = makeMapper();
+    const [event] = mapper.mapWsEvent(parseFrame(wsCodexFileChange), NOW);
+    expect(event).toMatchObject({
+      type: "item.completed",
+      eventId: "aether:task-1:tool:call-fc-codex:output-available",
+      itemId: "call-fc-codex",
+      payload: {
+        itemType: "file_change",
+        status: "completed",
+        data: {
+          toolCallId: "call-fc-codex",
+          files: [{ path: "src/app.ts" }, { path: "src/new.ts" }],
+        },
+      },
+    });
+  });
+
+  it("parses a claude Edit into a single data.files entry", () => {
+    const mapper = makeMapper();
+    const [event] = mapper.mapWsEvent(parseFrame(wsClaudeEdit), NOW);
+    expect(event).toMatchObject({
+      payload: {
+        itemType: "file_change",
+        data: { files: [{ path: "src/util.ts" }] },
+      },
+    });
+  });
+
+  it("tracks command lifecycle and appends the nonzero exit-code marker", () => {
+    const mapper = makeMapper();
+    const [started] = mapper.mapWsEvent(parseFrame(wsCommandStarted), NOW);
+    expect(started).toMatchObject({
+      type: "item.started",
+      payload: {
+        itemType: "command_execution",
+        status: "inProgress",
+        data: { item: { command: "pnpm test", cwd: "/home/coder/project" } },
+      },
+    });
+    const [failed] = mapper.mapWsEvent(parseFrame(wsCommandFailed), NOW);
+    expect(failed).toMatchObject({
+      type: "item.completed",
+      eventId: "aether:task-1:tool:call-bash:output-error",
+      payload: { itemType: "command_execution", status: "failed" },
+    });
+    expect(failed?.type === "item.completed" && failed.payload.detail).toBe(
+      "pnpm test\n1 test failed\n<exited with exit code 1>",
+    );
+  });
+
+  it("maps output-denied to declined plus a tool.denied event", () => {
+    const mapper = makeMapper();
+    const events = mapper.mapWsEvent(parseFrame(wsToolDenied), NOW);
+    expect(events.map((event) => event.type)).toEqual(["item.completed", "tool.denied"]);
+    expect(events[0]).toMatchObject({ payload: { status: "declined" } });
+    expect(events[1]).toMatchObject({
+      payload: { toolName: "Bash", toolUseId: "call-denied", reason: "denied by policy" },
+    });
+  });
+
+  it("shapes mcp tool cards as data.item {server, tool, args, result}", () => {
+    const mapper = makeMapper();
+    const [event] = mapper.mapWsEvent(parseFrame(wsMcpToolCall), NOW);
+    expect(event).toMatchObject({
+      payload: {
+        itemType: "mcp_tool_call",
+        data: {
+          item: {
+            server: "linear",
+            tool: "create_issue",
+            args: { title: "Fix flake" },
+            result: '{"id":"LIN-1"}',
+          },
+        },
+      },
+    });
+  });
+
+  it("projects todo_list display blocks into turn.plan.updated", () => {
+    const mapper = makeMapper();
+    const events = mapper.mapWsEvent(parseFrame(wsTodoTool), NOW);
+    const plan = events.find((event) => event.type === "turn.plan.updated");
+    expect(plan).toMatchObject({
+      payload: {
+        plan: [
+          { step: "Reproduce the failure", status: "completed" },
+          { step: "Fix the reducer", status: "inProgress" },
+          { step: "Add a regression test", status: "pending" },
+        ],
+      },
+    });
+  });
+
+  it("settles turn.completed exactly once per wire turn", () => {
+    const mapper = makeMapper();
+    const first = mapper.mapWsEvent(parseFrame(wsTurnCompleted), NOW);
+    expect(first).toHaveLength(1);
+    expect(first[0]).toMatchObject({
+      type: "turn.completed",
+      eventId: "aether:task-1:turn:u1:settled",
+      turnId: "aether-turn-u1",
+      payload: { state: "completed" },
+    });
+    expect(mapper.mapWsEvent(parseFrame(wsTurnCompleted), NOW)).toHaveLength(0);
+  });
+
+  it("maps turn.failed to a failed settle plus runtime.error", () => {
+    const mapper = makeMapper();
+    const events = mapper.mapWsEvent(parseFrame(wsTurnFailed), NOW);
+    expect(events.map((event) => event.type)).toEqual(["turn.completed", "runtime.error"]);
+    expect(events[0]).toMatchObject({
+      payload: { state: "failed", errorMessage: "agent crashed" },
+    });
+    // NO turnId on the error card: ingestion's runtime.error branch would
+    // reinstate activeTurnId to it AFTER the settle just cleared it, wedging
+    // the session on a settled turn.
+    expect(events[1]!.turnId).toBeUndefined();
+  });
+
+  it("drops live deltas whose item.completed twin already landed (reconnect overlap window)", () => {
+    const mapper = makeMapper();
+    // Frames queue from the moment the socket opens but drain only after the
+    // reconcile — a message that completed inside that window arrives twice:
+    // durable row first, stale live deltas second.
+    mapper.reconcileDelta(makeDelta(), NOW);
+    expect(mapper.mapWsEvent(parseFrame(wsAssistantDelta), NOW)).toHaveLength(0);
+    expect(mapper.mapWsEvent(parseFrame(wsThinkingDelta), NOW)).toHaveLength(0);
+    // A message the reconcile has NOT completed still streams normally.
+    const fresh = mapper.mapWsEvent(parseFrame({ ...wsAssistantDelta, messageId: "m9" }), NOW);
+    expect(fresh.map((event) => event.type)).toContain("content.delta");
+  });
+
+  it("settles the displaced predecessor before the first event of a DIFFERENT live turn", () => {
+    const mapper = makeMapper();
+    mapper.mapWsEvent(parseFrame(wsAssistantDelta), NOW); // tracks u1
+    // u1's live-only settle was missed; u2 starting proves u1 ended.
+    const events = mapper.mapWsEvent(
+      parseFrame({ ...wsAssistantDelta, turnId: "u2", messageId: "m9" }),
+      NOW,
+    );
+    expect(events.map((event) => event.type)).toEqual(["turn.completed", "content.delta"]);
+    expect(events[0]).toMatchObject({
+      eventId: "aether:task-1:turn:u1:settled",
+      turnId: "aether-turn-u1",
+      payload: { state: "completed" },
+    });
+  });
+
+  it("maps live ask_user to settle + user-input.requested + waiting", () => {
+    const mapper = makeMapper();
+    const events = mapper.mapWsEvent(parseFrame(wsAwaitingInputQuestions), NOW);
+    expect(events.map((event) => event.type)).toEqual([
+      "turn.completed",
+      "user-input.requested",
+      "session.state.changed",
+    ]);
+    const requested = events[1]!;
+    expect(requested).toMatchObject({
+      eventId: "aether:task-1:input:pi-1",
+      requestId: "pi-1",
+      turnId: "aether-turn-u1",
+    });
+    if (requested.type !== "user-input.requested") {
+      throw new Error("expected user-input.requested");
+    }
+    // The wire option without a description gets one synthesized (= label).
+    expect(requested.payload.questions).toEqual([
+      {
+        id: "q1",
+        header: "Approach",
+        question: "Which approach should I take?",
+        options: [
+          { label: "Patch the reducer", description: "Smallest change" },
+          { label: "Rewrite the module", description: "Rewrite the module" },
+        ],
+        multiSelect: false,
+      },
+    ]);
+    expect(events[2]).toMatchObject({ payload: { state: "waiting" } });
+  });
+
+  it("maps live propose_plan to settle + turn.proposed.completed + waiting", () => {
+    const mapper = makeMapper();
+    const events = mapper.mapWsEvent(parseFrame(wsAwaitingInputPlan), NOW);
+    expect(events.map((event) => event.type)).toEqual([
+      "turn.completed",
+      "turn.proposed.completed",
+      "session.state.changed",
+    ]);
+    expect(events[1]).toMatchObject({
+      requestId: "pi-2",
+      payload: { planMarkdown: "1. Reproduce\n2. Fix\n3. Test" },
+    });
+  });
+
+  it("maps stop_task to settle only — no prompt, no waiting", () => {
+    const mapper = makeMapper();
+    const events = mapper.mapWsEvent(parseFrame(wsAwaitingInputStopTask), NOW);
+    expect(events.map((event) => event.type)).toEqual(["turn.completed"]);
+  });
+
+  it("surfaces conversation.truncated as a runtime.warning", () => {
+    const mapper = makeMapper();
+    const [event] = mapper.mapWsEvent(parseFrame(wsConversationTruncated), NOW);
+    expect(event).toMatchObject({
+      type: "runtime.warning",
+      eventId: "aether:task-1:truncated:m1",
+      payload: { detail: { anchorMessageId: "m1" } },
+    });
+  });
+
+  it("maps slash_commands.updated to nothing", () => {
+    const mapper = makeMapper();
+    expect(mapper.mapWsEvent(parseFrame(wsSlashCommandsUpdated), NOW)).toHaveLength(0);
+  });
+});
+
+describe("AetherEventMapper — durable reconciliation", () => {
+  it("snapshots a full delta replay from a cold cursor", () => {
+    const mapper = makeMapper();
+    expect(mapper.reconcileDelta(makeDelta(), NOW)).toMatchSnapshot();
+    expect(mapper.latestSequence()).toBe(5);
+  });
+
+  it("dedupes REST twins of live completions, including prefixed id forms", () => {
+    const mapper = makeMapper();
+    // Live path first: bare assistant id, thinking-prefixed thinking id.
+    const live = wsGoldenTurn.flatMap((frame) => [...mapper.mapWsEvent(parseFrame(frame), NOW)]);
+    expect(eventIds(live)).toContain("aether:task-1:item:m1");
+    expect(eventIds(live)).toContain("aether:task-1:item:thinking:m2");
+    // Durable twins: `assistant:m1` / `thinking:m2` rows plus the same tool
+    // re-emitted; the only NEW row is the compaction seam.
+    const replay = mapper.reconcileDelta(makeDelta(), NOW);
+    const types = replay.map((event) => event.type);
+    expect(types).not.toContain("user-input.requested");
+    expect(eventIds(replay)).not.toContain("aether:task-1:item:m1");
+    expect(eventIds(replay)).not.toContain("aether:task-1:item:thinking:m2");
+    expect(types).toContain("thread.state.changed");
+  });
+
+  it("replays a crash idempotently: identical deterministic eventIds", () => {
+    // Two fresh mappers on the same stale cursor (a restart) must emit the
+    // SAME ids so t3's eventId-keyed persistence collides instead of duping.
+    const first = makeMapper(0).reconcileDelta(makeDelta(), NOW);
+    const second = makeMapper(0).reconcileDelta(makeDelta(), NOW);
+    expect(eventIds(second)).toEqual(eventIds(first));
+    expect(eventIds(first).length).toBeGreaterThan(0);
+  });
+
+  it("feeding the same delta twice through one mapper emits nothing new", () => {
+    const mapper = makeMapper();
+    const first = mapper.reconcileDelta(makeDelta(), NOW);
+    expect(first.length).toBeGreaterThan(0);
+    expect(mapper.reconcileDelta(makeDelta(), NOW)).toHaveLength(0);
+  });
+
+  it("maps the compaction seam row to thread.state.changed compacted", () => {
+    const mapper = makeMapper();
+    const events = mapper.reconcileDelta(makeDelta(), NOW);
+    const seam = events.find((event) => event.type === "thread.state.changed");
+    expect(seam).toMatchObject({
+      eventId: "aether:task-1:seq:5",
+      payload: { state: "compacted" },
+    });
+  });
+
+  it("completed→message settles the tracked turn with NO state emission", () => {
+    const mapper = makeMapper();
+    // A processing delta tracks the in-flight turn via activeProcessingTurn.
+    mapper.reconcileDelta(
+      makeDelta({
+        task: taskProcessing,
+        activeProcessingTurn: { messageId: "u1", startedAt: "2026-08-08T10:00:00Z" },
+      }),
+      NOW,
+    );
+    // The settle arrives ONLY via the REST status flip (turn.* is live-only).
+    const events = mapper.reconcileDelta(
+      makeDelta({ task: taskAwaitingMessage, messages: [] }),
+      NOW,
+    );
+    expect(events.map((event) => event.type)).toEqual(["turn.completed"]);
+    expect(events[0]).toMatchObject({
+      turnId: "aether-turn-u1",
+      payload: { state: "completed" },
+    });
+    // READY is the absence of a state emission — never `waiting` here.
+    expect(events.some((event) => event.type === "session.state.changed")).toBe(false);
+  });
+
+  it("completed→questions settles AND emits the pending input + waiting", () => {
+    const mapper = makeMapper();
+    mapper.reconcileDelta(
+      makeDelta({
+        task: taskProcessing,
+        activeProcessingTurn: { messageId: "u1", startedAt: "2026-08-08T10:00:00Z" },
+      }),
+      NOW,
+    );
+    const events = mapper.reconcileDelta(
+      makeDelta({ task: taskAwaitingQuestions, messages: [] }),
+      NOW,
+    );
+    expect(events.map((event) => event.type)).toEqual([
+      "turn.completed",
+      "user-input.requested",
+      "session.state.changed",
+    ]);
+    // requestId is the REST tool_id — the same value as the WS pendingInputId.
+    expect(events[1]).toMatchObject({ requestId: "pi-1" });
+    expect(events[2]).toMatchObject({ payload: { state: "waiting" } });
+  });
+
+  it("correlates the WS pendingInputId with the REST tool_id as ONE input", () => {
+    const mapper = makeMapper();
+    const live = mapper.mapWsEvent(parseFrame(wsAwaitingInputQuestions), NOW);
+    expect(live.some((event) => event.type === "user-input.requested")).toBe(true);
+    // The durable projection of the SAME pending input must not double it.
+    const replay = mapper.reconcileDelta(
+      makeDelta({ task: taskAwaitingQuestions, messages: [] }),
+      NOW,
+    );
+    expect(replay.some((event) => event.type === "user-input.requested")).toBe(false);
+    expect(replay.some((event) => event.type === "session.state.changed")).toBe(false);
+  });
+
+  it("projects the REST plan twin when the live event was missed", () => {
+    const mapper = makeMapper();
+    const events = mapper.reconcileDelta(makeDelta({ task: taskAwaitingPlan, messages: [] }), NOW);
+    expect(events.map((event) => event.type)).toEqual([
+      "turn.proposed.completed",
+      "session.state.changed",
+    ]);
+  });
+
+  it("projects an errored task once: failed settle + runtime.error", () => {
+    const mapper = makeMapper();
+    mapper.reconcileDelta(
+      makeDelta({
+        task: taskProcessing,
+        activeProcessingTurn: { messageId: "u1", startedAt: "2026-08-08T10:00:00Z" },
+      }),
+      NOW,
+    );
+    const events = mapper.reconcileDelta(makeDelta({ task: taskErrored, messages: [] }), NOW);
+    expect(events.map((event) => event.type)).toEqual(["turn.completed", "runtime.error"]);
+    expect(events[0]).toMatchObject({
+      payload: { state: "failed", errorMessage: "VM provisioning failed" },
+    });
+    expect(events[1]).toMatchObject({ eventId: "aether:task-1:errored" });
+    // Re-observing the errored task must not duplicate the surface.
+    expect(mapper.reconcileDelta(makeDelta({ task: taskErrored, messages: [] }), NOW)).toHaveLength(
+      0,
+    );
+  });
+
+  it("suppresses durable tool-row replays of (toolCallId, status) pairs already emitted", () => {
+    const mapper = makeMapper();
+    // Live first: the rich projection (turnId + display blocks).
+    const live = mapper.mapWsEvent(parseFrame(wsCodexFileChange), NOW);
+    expect(eventIds(live)).toContain("aether:task-1:tool:call-fc-codex:output-available");
+    // The durable twin re-fetched on reconnect shares the deterministic
+    // eventId but is a strict data downgrade (no turnId, no blocks) —
+    // re-emitting it would overwrite the richer live activity wholesale.
+    const replay = mapper.reconcileDelta(makeDelta(), NOW);
+    expect(eventIds(replay)).not.toContain("aether:task-1:tool:call-fc-codex:output-available");
+  });
+
+  it("attributes REST-only rows to the in-flight turn so its settle owns them", () => {
+    const mapper = makeMapper();
+    // WS-down degradation: the active turn's rows reach t3 ONLY as durable
+    // rows, which carry no turn field of their own.
+    const streamed = mapper.reconcileDelta(
+      makeDelta({
+        task: taskProcessing,
+        activeProcessingTurn: { messageId: "u1", startedAt: "2026-08-08T10:00:00.000Z" },
+      }),
+      NOW,
+    );
+    expect(streamed.find((event) => event.eventId === "aether:task-1:item:m1")).toMatchObject({
+      type: "item.completed",
+      turnId: "aether-turn-u1",
+    });
+    expect(
+      streamed.find(
+        (event) => event.eventId === "aether:task-1:tool:call-fc-codex:output-available",
+      ),
+    ).toMatchObject({ type: "item.completed", turnId: "aether-turn-u1" });
+    // The settle arrives only from the REST status flip — it must name the
+    // same turn the rows above were attributed to.
+    const settle = mapper.reconcileDelta(
+      makeDelta({ task: taskAwaitingMessage, messages: [] }),
+      NOW,
+    );
+    expect(settle.map((event) => event.type)).toEqual(["turn.completed"]);
+    expect(settle[0]).toMatchObject({ turnId: "aether-turn-u1", payload: { state: "completed" } });
+  });
+
+  it("stops attributing at the active turn's opening row: earlier rows stay unowned", () => {
+    const mapper = makeMapper();
+    const events = mapper.reconcileDelta(
+      makeDelta({
+        task: taskProcessing,
+        activeProcessingTurn: { messageId: "u2", startedAt: "2026-08-08T10:10:00.000Z" },
+        messages: [
+          {
+            id: "tail-of-u1",
+            role: "assistant",
+            variant: "text",
+            content: "Done with the first turn.",
+            timestamp: "2026-08-08T10:09:00.000Z",
+            sequence: 1,
+          },
+          {
+            id: "u2",
+            role: "user",
+            content: "now fix the lint error",
+            deliveryStatus: "delivered",
+            timestamp: "2026-08-08T10:10:00.000Z",
+            sequence: 2,
+          },
+          {
+            id: "assistant:m9",
+            role: "assistant",
+            variant: "text",
+            content: "Looking at the lint error.",
+            timestamp: "2026-08-08T10:10:01.000Z",
+            sequence: 3,
+          },
+        ],
+      }),
+      NOW,
+    );
+    expect(events.find((event) => event.eventId === "aether:task-1:item:tail-of-u1")?.turnId).toBe(
+      undefined,
+    );
+    expect(events.find((event) => event.eventId === "aether:task-1:item:m9")).toMatchObject({
+      turnId: "aether-turn-u2",
+    });
+  });
+
+  it("attributes the previous turn's late tail across a warm turn transition", () => {
+    const mapper = makeMapper();
+    // Warm the mapper: u1 is the tracked in-flight turn.
+    mapper.reconcileDelta(
+      makeDelta({
+        task: taskProcessing,
+        activeProcessingTurn: { messageId: "u1", startedAt: "2026-08-08T10:00:00.000Z" },
+        messages: [
+          {
+            id: "u1",
+            role: "user",
+            content: "fix the bug",
+            deliveryStatus: "delivered",
+            timestamp: "2026-08-08T10:00:00.000Z",
+            sequence: 1,
+          },
+        ],
+      }),
+      NOW,
+    );
+    // The transition delta carries u1's late tail, u2's opener, and u2's
+    // first output — the reviewer's exact repro. The tail must stay owned by
+    // u1 (the mapper is already tracking it), never finalize unowned.
+    const events = mapper.reconcileDelta(
+      makeDelta({
+        task: taskProcessing,
+        activeProcessingTurn: { messageId: "u2", startedAt: "2026-08-08T10:10:00.000Z" },
+        messages: [
+          {
+            id: "tail-of-u1",
+            role: "assistant",
+            variant: "text",
+            content: "Done with the first turn.",
+            timestamp: "2026-08-08T10:09:00.000Z",
+            sequence: 5,
+          },
+          {
+            id: "u2",
+            role: "user",
+            content: "now fix the lint error",
+            deliveryStatus: "delivered",
+            timestamp: "2026-08-08T10:10:00.000Z",
+            sequence: 6,
+          },
+          {
+            id: "assistant:m2",
+            role: "assistant",
+            variant: "text",
+            content: "Looking at the lint error.",
+            timestamp: "2026-08-08T10:10:01.000Z",
+            sequence: 7,
+          },
+        ],
+      }),
+      NOW,
+    );
+    expect(events.find((event) => event.eventId === "aether:task-1:item:tail-of-u1")).toMatchObject(
+      { turnId: "aether-turn-u1" },
+    );
+    expect(events.find((event) => event.eventId === "aether:task-1:item:m2")).toMatchObject({
+      turnId: "aether-turn-u2",
+    });
+    const settle = events.find(
+      (event) => event.type === "turn.completed" && event.turnId === "aether-turn-u1",
+    );
+    expect(settle).toBeDefined();
+    // Ordering: u1's tail is emitted before u1 settles, which happens before
+    // u2's first output.
+    const tailIndex = events.findIndex(
+      (event) => event.eventId === "aether:task-1:item:tail-of-u1",
+    );
+    const settleIndex = events.findIndex(
+      (event) => event.type === "turn.completed" && event.turnId === "aether-turn-u1",
+    );
+    const nextOutputIndex = events.findIndex((event) => event.eventId === "aether:task-1:item:m2");
+    expect(tailIndex).toBeLessThan(settleIndex);
+    expect(settleIndex).toBeLessThan(nextOutputIndex);
+  });
+
+  it("owns rows and the pending input on a cold resume to an awaiting task", () => {
+    // activeProcessingTurn is null once a task parks at awaiting_input, but
+    // the delta still carries the opening user row — the opener itself is
+    // the turn boundary, so output AND the pending-input request must land
+    // owned by aether-turn-u1, never unowned.
+    const mapper = makeMapper();
+    const events = mapper.reconcileDelta(
+      makeDelta({
+        task: taskAwaitingQuestions,
+        activeProcessingTurn: null,
+        messages: [
+          {
+            id: "u1",
+            role: "user",
+            content: "fix the bug",
+            deliveryStatus: "delivered",
+            timestamp: "2026-08-08T10:00:00.000Z",
+            sequence: 1,
+          },
+          {
+            id: "assistant:a1",
+            role: "assistant",
+            variant: "text",
+            content: "I have a question first.",
+            timestamp: "2026-08-08T10:00:05.000Z",
+            sequence: 2,
+          },
+        ],
+      }),
+      NOW,
+    );
+    expect(events.find((event) => event.eventId === "aether:task-1:item:a1")).toMatchObject({
+      turnId: "aether-turn-u1",
+    });
+    const request = events.find((event) => event.type === "user-input.requested");
+    expect(request).toBeDefined();
+    expect(request?.turnId).toBe("aether-turn-u1");
+  });
+
+  it("does not treat a queued user row as a turn opener", () => {
+    // A steer parks in the timeline with deliveryStatus queued while the
+    // current turn still streams — output after it belongs to the OLD turn.
+    const mapper = makeMapper();
+    const events = mapper.reconcileDelta(
+      makeDelta({
+        task: taskProcessing,
+        activeProcessingTurn: { messageId: "u1", startedAt: "2026-08-08T10:00:00.000Z" },
+        messages: [
+          {
+            id: "u1",
+            role: "user",
+            content: "fix the bug",
+            deliveryStatus: "delivered",
+            timestamp: "2026-08-08T10:00:00.000Z",
+            sequence: 1,
+          },
+          {
+            id: "u-steer",
+            role: "user",
+            content: "also update the docs",
+            deliveryStatus: "queued",
+            timestamp: "2026-08-08T10:00:03.000Z",
+            sequence: 2,
+          },
+          {
+            id: "assistant:a1",
+            role: "assistant",
+            variant: "text",
+            content: "Still working on the bug.",
+            timestamp: "2026-08-08T10:00:05.000Z",
+            sequence: 3,
+          },
+        ],
+      }),
+      NOW,
+    );
+    expect(events.find((event) => event.eventId === "aether:task-1:item:a1")).toMatchObject({
+      turnId: "aether-turn-u1",
+    });
+  });
+
+  it("settles a turn displaced by a NEW active wire turn between observations", () => {
+    const mapper = makeMapper();
+    // awaiting_input→processing skipped between polls (fast remote respond):
+    // the only evidence turn u1 ended is u2 being active now.
+    mapper.reconcileDelta(
+      makeDelta({
+        task: taskProcessing,
+        messages: [],
+        activeProcessingTurn: { messageId: "u1", startedAt: "2026-08-08T10:00:00Z" },
+      }),
+      NOW,
+    );
+    const events = mapper.reconcileDelta(
+      makeDelta({
+        task: taskProcessing,
+        messages: [],
+        activeProcessingTurn: { messageId: "u2", startedAt: "2026-08-08T10:10:00Z" },
+      }),
+      NOW,
+    );
+    expect(events.map((event) => event.type)).toEqual(["turn.completed", "session.state.changed"]);
+    expect(events[0]).toMatchObject({
+      turnId: "aether-turn-u1",
+      payload: { state: "completed" },
+    });
+    // The settle flipped ingestion to ready; the new turn re-projects running.
+    expect(events[1]).toMatchObject({ payload: { state: "running" } });
+  });
+
+  it("projects the working indicator: queued→starting, processing→running, once per transition", () => {
+    const taskQueued: AetherTask = { ...taskProcessing, status: "queued", run_context: null };
+    const mapper = makeMapper();
+    const starting = mapper.reconcileTask(taskQueued, NOW);
+    expect(starting).toHaveLength(1);
+    expect(starting[0]).toMatchObject({
+      type: "session.state.changed",
+      payload: { state: "starting" },
+    });
+    // Re-observing the same status emits nothing new.
+    expect(mapper.reconcileTask(taskQueued, NOW)).toHaveLength(0);
+    const running = mapper.reconcileTask(taskProcessing, NOW);
+    expect(running).toHaveLength(1);
+    expect(running[0]).toMatchObject({ payload: { state: "running" } });
+    expect(mapper.reconcileTask(taskProcessing, NOW)).toHaveLength(0);
+  });
+
+  it("projects the error state on a COLD errored observation (no turn in flight)", () => {
+    const mapper = makeMapper();
+    const events = mapper.reconcileTask(taskErrored, NOW);
+    expect(events.map((event) => event.type)).toEqual(["runtime.error", "session.state.changed"]);
+    expect(events[1]).toMatchObject({
+      payload: { state: "error", reason: "VM provisioning failed" },
+    });
+    expect(mapper.reconcileTask(taskErrored, NOW)).toHaveLength(0);
+  });
+
+  it("never rewinds the cursor below the initial sequence", () => {
+    const mapper = makeMapper(deltaRows.length);
+    const events = mapper.reconcileDelta(makeDelta(), NOW);
+    // Every row is at or below the cursor: nothing replays.
+    expect(events).toHaveLength(0);
+    expect(mapper.latestSequence()).toBe(deltaRows.length);
+  });
+});
+
+describe("parseAetherQuestions", () => {
+  it("reports malformed questions as issues instead of dropping silently", () => {
+    const { questions, issues } = parseAetherQuestions({
+      questions: [
+        { question: "Valid?", options: [{ label: "Yes" }] },
+        { options: [{ label: "orphan option" }] },
+        "not-an-object",
+      ],
+    });
+    expect(questions).toHaveLength(1);
+    expect(issues).toHaveLength(2);
+  });
+
+  it("fails loudly (empty + issue) when there is no questions array", () => {
+    const { questions, issues } = parseAetherQuestions({ foo: 1 });
+    expect(questions).toHaveLength(0);
+    expect(issues).toEqual(["ask_user input carries no questions array"]);
+  });
+});

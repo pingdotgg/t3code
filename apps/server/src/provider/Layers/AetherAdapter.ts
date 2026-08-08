@@ -1,10 +1,14 @@
 /**
  * AetherAdapter — session core for the Aether cloud-task driver.
  *
- * T2+T3 slice: real startSession/listSessions/hasSession/readThread/
- * stopSession/stopAll over the REST client, with the turn surface
- * (sendTurn/interruptTurn/respondToUserInput/rollbackThread) still failing
- * loudly until the streaming slices (build items 5–7, 9, 10) land.
+ * T2–T5 slice: real startSession/listSessions/hasSession/readThread/
+ * stopSession/stopAll over the REST client, plus the event pipeline (build
+ * items 5+6): a session resumed onto a live task attaches PASSIVELY to its
+ * workspace WS (never booting a VM to view), maps the 13-kind live event
+ * union through `eventMapper`, and reconciles the durable conversation delta
+ * on every (re)connect. The turn surface (sendTurn/interruptTurn/
+ * respondToUserInput/rollbackThread) still fails loudly until build items
+ * 7, 9 and 10 land.
  *
  * Design invariants (docs/aether-driver-plumbing-spec.md §2.3):
  *   - startSession NEVER creates a task — the task is created on the first
@@ -14,9 +18,13 @@
  *     exists remotely.
  *   - stopSession / stopAll are PURE DISCONNECTS: the cloud task keeps
  *     running and the VM idles itself out. `/stop` is never called here.
+ *     Closing the session scope tears the socket down (the reaper-safe idle
+ *     path: dropping the WS and ceasing activity pings lets the VM suspend).
  *   - resumeCursor = `{schemaVersion: 1, taskId, latestSequence, turnLedger?}`;
  *     t3 persists it at startSession/sendTurn returns, so a fresh session
- *     (no task yet) carries none.
+ *     (no task yet) carries none. latestSequence refreshes in memory as the
+ *     mapper advances; replay safety comes from the mapper's deterministic
+ *     event IDs, not cursor freshness.
  *
  * @module provider/Layers/AetherAdapter
  */
@@ -33,6 +41,7 @@ import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -51,10 +60,16 @@ import type {
   ProviderThreadTurnSnapshot,
 } from "../Services/ProviderAdapter.ts";
 import { AETHER_API_KEY_ENV_VAR } from "./AetherProvider.ts";
+import { makeAetherEventMapper, type AetherEventMapper } from "./aether/eventMapper.ts";
 import type { AetherRestClient } from "./aether/restClient.ts";
 import type { AetherProject, AetherTimelineMessage } from "./aether/restSchemas.ts";
 import { toolLifecycleItemTypeFromAether } from "./aether/vendored/canonicalItemType.ts";
 import { parseFileChanges } from "./aether/vendored/toolDisplay.ts";
+import {
+  runAetherAgentStream,
+  type AetherStreamTiming,
+  type AetherWebSocketFactory,
+} from "./aether/workspaceSocket.ts";
 
 const PROVIDER = ProviderDriverKind.make("aether");
 
@@ -130,6 +145,18 @@ export interface AetherSessionGit {
   ) => Effect.Effect<string | null, GitCommandError>;
 }
 
+/** Transport coordinates for the workspace WS attach (build item 5). */
+export interface AetherAdapterSocketOptions {
+  /** Same origin the REST client talks to; the wss URL derives from it. */
+  readonly apiBaseUrl: string;
+  /** The instance's `AETHER_API_KEY` — the socket authenticates with it. */
+  readonly apiKey: string;
+  /** Test seam; defaults to the Node global WebSocket. */
+  readonly webSocketFactory?: AetherWebSocketFactory;
+  /** Test seam for poll/reconnect pacing. */
+  readonly timing?: Partial<AetherStreamTiming>;
+}
+
 export interface AetherAdapterOptions {
   readonly instanceId: ProviderInstanceId;
   /** Fallback session cwd when the start input carries none (ServerConfig.cwd). */
@@ -140,6 +167,11 @@ export interface AetherAdapterOptions {
    * fails loudly with the remediation instead of the driver failing create().
    */
   readonly restClient: AetherRestClient | undefined;
+  /**
+   * Undefined only when `restClient` is (keyless instance) or in REST-only
+   * unit tests; the driver always passes it alongside a real client.
+   */
+  readonly socket?: AetherAdapterSocketOptions | undefined;
 }
 
 interface AetherSessionContext {
@@ -151,6 +183,10 @@ interface AetherSessionContext {
   latestSequence: number;
   /** Opaque turn ledger carried from the resume cursor (see AetherResumeCursor). */
   turnLedger: unknown;
+  /** Owns the attach pump + socket; closed on stopSession/stopAll. */
+  sessionScope: Scope.Closeable | undefined;
+  /** The session's event mapper; its latestSequence() is the live cursor. */
+  mapper: AetherEventMapper | undefined;
 }
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -310,6 +346,202 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       : Effect.fail(new ProviderAdapterSessionNotFoundError({ provider: PROVIDER, threadId }));
   };
 
+  const closeSessionScope = (context: AetherSessionContext) =>
+    context.sessionScope === undefined
+      ? Effect.void
+      : Effect.ignore(Scope.close(context.sessionScope, Exit.void));
+
+  // Registry/instance teardown must also stop every attach pump (delete =
+  // full teardown). Registered AFTER the queue's acquireRelease so it runs
+  // FIRST on close: pumps stop emitting, then the queue shuts down.
+  yield* Effect.acquireRelease(Effect.void, () =>
+    Effect.gen(function* () {
+      for (const context of sessions.values()) {
+        yield* closeSessionScope(context);
+      }
+    }),
+  );
+
+  const emitAll = (events: ReadonlyArray<ProviderRuntimeEvent>) =>
+    Effect.forEach(events, emit, { discard: true });
+
+  /**
+   * The event pipeline (build items 5+6): attach passively to the task's
+   * workspace WS, feed live events through the mapper, and reconcile the
+   * durable delta on every (re)connect — the REST backstop is the ONLY
+   * recovery for live-only turn.* settles missed while detached. Forked into
+   * the session scope; failures surface as runtime.error events (the session
+   * itself stays readable via REST).
+   */
+  const startStreamPump = Effect.fn("startAetherStreamPump")(function* (
+    context: AetherSessionContext,
+    restClient: AetherRestClient,
+    socket: AetherAdapterSocketOptions,
+    taskId: string,
+  ) {
+    const sessionScope = yield* Scope.make();
+    context.sessionScope = sessionScope;
+    const threadId = context.session.threadId;
+    const mapper = makeAetherEventMapper({
+      provider: PROVIDER,
+      instanceId: options.instanceId,
+      threadId,
+      taskId,
+      initialSequence: context.latestSequence,
+    });
+    context.mapper = mapper;
+
+    // Stream-pump callbacks must be infallible (a failing callback would
+    // kill the socket loop); crypto id generation dying is the only
+    // acceptable defect here.
+    const freshEventId = Effect.orDie(randomEventId);
+
+    // The durable reconciliation — also the poll hook the T6 turn engine
+    // will drive for turn-settle backstops. A transient REST failure warns
+    // loudly and leaves the cursor untouched, so the next (re)connect
+    // retries the exact same range instead of silently skipping it.
+    const reconcile = Effect.gen(function* () {
+      const delta = yield* restClient.getConversationDelta(taskId, mapper.latestSequence());
+      const events = mapper.reconcileDelta(delta, yield* nowIso);
+      context.latestSequence = mapper.latestSequence();
+      yield* emitAll(events);
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          yield* Effect.logWarning("aether.reconcile.failed", { taskId, error: String(error) });
+          yield* emit({
+            eventId: yield* freshEventId,
+            provider: PROVIDER,
+            providerInstanceId: options.instanceId,
+            threadId,
+            createdAt: yield* nowIso,
+            type: "runtime.warning",
+            payload: {
+              message: `Could not reconcile the Aether conversation feed: ${error.message}`,
+            },
+          });
+        }),
+      ),
+    );
+
+    let sessionStartedEmitted = false;
+    let slashCommandsLogged = false;
+    // Degradation warning: once per failure streak, reset on reconnect.
+    let connectRetryWarned = false;
+
+    yield* runAetherAgentStream({
+      restClient,
+      apiBaseUrl: socket.apiBaseUrl,
+      apiKey: socket.apiKey,
+      taskId,
+      ...(socket.webSocketFactory !== undefined
+        ? { webSocketFactory: socket.webSocketFactory }
+        : {}),
+      ...(socket.timing !== undefined ? { timing: socket.timing } : {}),
+      onConnected: () =>
+        Effect.gen(function* () {
+          connectRetryWarned = false;
+          if (!sessionStartedEmitted) {
+            sessionStartedEmitted = true;
+            yield* emit({
+              eventId: yield* freshEventId,
+              provider: PROVIDER,
+              providerInstanceId: options.instanceId,
+              threadId,
+              createdAt: yield* nowIso,
+              type: "session.started",
+              payload: { message: "Attached to the Aether workspace stream." },
+            });
+          }
+          yield* reconcile;
+        }),
+      onEvent: (event) =>
+        Effect.gen(function* () {
+          if (event.kind === "slash_commands.updated" && !slashCommandsLogged) {
+            // No t3 slash-command surface for cloud sessions yet; log once.
+            slashCommandsLogged = true;
+            yield* Effect.logInfo("aether.slash-commands.ignored", { taskId });
+          }
+          const events = mapper.mapWsEvent(event, yield* nowIso);
+          context.latestSequence = mapper.latestSequence();
+          yield* emitAll(events);
+        }),
+      onFrameDropped: (problem) =>
+        Effect.gen(function* () {
+          yield* Effect.logWarning("aether.frame.dropped", { taskId, ...problem });
+          yield* emit({
+            eventId: yield* freshEventId,
+            provider: PROVIDER,
+            providerInstanceId: options.instanceId,
+            threadId,
+            createdAt: yield* nowIso,
+            type: "runtime.warning",
+            payload: {
+              message:
+                "Dropped an Aether live event t3 could not parse; the durable feed remains authoritative.",
+              detail: problem,
+            },
+          });
+        }),
+      onConnectRetry: (failure) =>
+        Effect.gen(function* () {
+          // The attach never reached subscribe, so onConnected's reconcile
+          // will not run — surface the degradation ONCE per failure streak
+          // and drive the durable backstop from this retry beat instead
+          // (REST-delta-only degrade, spec §3.11): live turn settles are
+          // unrecoverable except through this reconcile while opens fail.
+          yield* Effect.logWarning("aether.stream.connect-retry", { taskId, ...failure });
+          if (!connectRetryWarned) {
+            connectRetryWarned = true;
+            yield* emit({
+              eventId: yield* freshEventId,
+              provider: PROVIDER,
+              providerInstanceId: options.instanceId,
+              threadId,
+              createdAt: yield* nowIso,
+              type: "runtime.warning",
+              payload: {
+                message:
+                  "Cannot reach the Aether workspace's live stream; retrying. The transcript keeps updating from the durable feed meanwhile.",
+                detail: failure,
+              },
+            });
+          }
+          yield* reconcile;
+        }),
+      onDurableOnly: (reason) =>
+        Effect.gen(function* () {
+          // Stable end state for this attach: replay the durable feed once
+          // so the transcript catches up; the next sendTurn re-attaches.
+          yield* Effect.logInfo("aether.stream.durable-only", { taskId, reason });
+          yield* reconcile;
+        }),
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          yield* Effect.logWarning("aether.stream.failed", { taskId, error: String(error) });
+          const isTaskErrored = error._tag === "AetherTaskErroredError";
+          yield* emit({
+            // The task-errored surface shares the mapper's deterministic id
+            // so a REST-side projection of the same failure collides
+            // (idempotent) instead of duplicating.
+            eventId: isTaskErrored ? EventId.make(`aether:${taskId}:errored`) : yield* freshEventId,
+            provider: PROVIDER,
+            providerInstanceId: options.instanceId,
+            threadId,
+            createdAt: yield* nowIso,
+            type: "runtime.error",
+            payload: {
+              message: error.message,
+              class: isTaskErrored ? "provider_error" : "transport_error",
+            },
+          });
+        }),
+      ),
+      Effect.forkIn(sessionScope),
+    );
+  });
+
   const startSession: ProviderAdapterShape<ProviderAdapterError>["startSession"] = Effect.fn(
     "startSession",
   )(function* (input) {
@@ -433,27 +665,47 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       taskId,
       latestSequence,
       turnLedger,
+      sessionScope: undefined,
+      mapper: undefined,
     };
     const resumeCursor = buildAetherResumeCursor(context);
     if (resumeCursor !== undefined) {
       context.session = { ...context.session, resumeCursor };
     }
+    // A re-entrant start (mode change, worktree hop) replaces the previous
+    // attach: tear its socket down before binding the new one.
+    const previous = sessions.get(input.threadId);
+    if (previous !== undefined) {
+      yield* closeSessionScope(previous);
+    }
     sessions.set(input.threadId, context);
+
+    // (5) Passive stream attach: a resumed live task starts streaming
+    // immediately. No task yet (fresh thread) → nothing to attach until the
+    // first sendTurn (T6) creates one.
+    if (taskId !== undefined && options.socket !== undefined) {
+      yield* startStreamPump(context, restClient, options.socket, taskId);
+    }
     return context.session;
   });
 
   // Shared pure-disconnect teardown: the cloud task keeps running and the VM
   // idles itself out (spec §2.3 reaper-safety) — never POST /tasks/{id}/stop.
-  // Ingestion relies on one graceful session.exited per thread to clear
+  // Closing the scope interrupts the attach pump and its finalizer closes the
+  // WS; ingestion relies on one graceful session.exited per thread to clear
   // active-turn/liveness state, so every disconnect path emits it.
   const disconnectSession = Effect.fn("disconnectSession")(function* (
     threadId: ThreadId,
     context: AetherSessionContext,
   ) {
+    yield* closeSessionScope(context);
     sessions.delete(threadId);
     yield* emit({
       eventId: yield* randomEventId,
       provider: PROVIDER,
+      // Ingestion rewrites the thread session from this event and preserves
+      // instance identity only when the event carries it.
+      providerInstanceId: options.instanceId,
       threadId,
       createdAt: yield* nowIso,
       type: "session.exited",
@@ -542,8 +794,8 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
     readThread,
     rollbackThread: () => notImplemented("rollbackThread"),
     // Pure disconnect for every session; remote tasks are untouched. Each
-    // thread gets the same graceful session.exited stopSession emits —
-    // ingestion clears per-session turn/liveness state from that event.
+    // thread gets the same scope-closing teardown and graceful session.exited
+    // stopSession emits — ingestion clears per-session state from that event.
     stopAll: () =>
       Effect.gen(function* () {
         for (const [threadId, context] of [...sessions.entries()]) {

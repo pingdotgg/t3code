@@ -35,6 +35,8 @@ import {
   AetherCreateTaskResponse,
   AetherProjectListResponse,
   AetherRespondToTaskResponse,
+  decodeAetherConnectConflict,
+  decodeAetherConnectResponse,
   decodeAetherTask,
   type AetherConversationDelta,
   type AetherConversationMessagesPage,
@@ -43,6 +45,7 @@ import {
   type AetherRespondToTaskRequest,
   type AetherTask,
   type AetherUpdateTaskRequest,
+  type AetherWorkspaceConnectOutcome,
 } from "./restSchemas.ts";
 
 // ---------------------------------------------------------------------------
@@ -236,6 +239,20 @@ export interface AetherRestClient {
     taskId: string,
     after: number,
   ) => Effect.Effect<AetherConversationDelta, AetherRestError>;
+  /**
+   * `POST /workspaces/{id}/connect?start=...` → the state-discriminated
+   * connect union. `start` is the POSITIVE permission to boot the workspace
+   * (a query flag on the aether router, workspaces_openapi.go:69-78):
+   * `start:false` is the passive attach that treats a not-running workspace
+   * as durable-only and NEVER boots a VM just to view; `start:true` is
+   * reserved for user-initiated turns (T6). The 409 conflict union decodes
+   * into the `conflict` outcome variant — it is a state to branch on, not an
+   * error.
+   */
+  readonly connectWorkspace: (
+    workspaceId: string,
+    input: { readonly start: boolean },
+  ) => Effect.Effect<AetherWorkspaceConnectOutcome, AetherRestError>;
   /** `GET /projects` → the caller's linked projects. */
   readonly listProjects: () => Effect.Effect<ReadonlyArray<AetherProject>, AetherRestError>;
   /** `GET /profile` — identity probe (same schema the provider probe uses). */
@@ -503,6 +520,38 @@ export function makeAetherRestClient(options: AetherRestClientOptions): AetherRe
       ).pipe(
         Effect.flatMap((response) => readJson(endpoint, response)),
         Effect.flatMap(decodeDelta(endpoint)),
+      );
+    },
+
+    connectWorkspace: (workspaceId, input) => {
+      const endpoint = "POST /workspaces/{id}/connect";
+      const url = `${baseUrl}/workspaces/${workspaceId}/connect?start=${input.start ? "true" : "false"}`;
+      // The 409 conflict union is a decoded OUTCOME here, so this request
+      // cannot go through `execute` (which maps every non-2xx to an error).
+      return httpClient.execute(prepare(HttpClientRequest.post(url))).pipe(
+        Effect.timeout(timeoutMs),
+        Effect.mapError(
+          (cause) =>
+            new AetherApiTransportError({
+              endpoint,
+              detail: `Request failed before a response arrived: ${String(cause)}`,
+              cause,
+            }),
+        ),
+        Effect.flatMap((response) => {
+          if (response.status >= 200 && response.status < 300) {
+            return readJson(endpoint, response).pipe(
+              Effect.flatMap(decodeWith(endpoint, decodeAetherConnectResponse)),
+            );
+          }
+          if (response.status === 409) {
+            return readJson(endpoint, response).pipe(
+              Effect.flatMap(decodeWith(endpoint, decodeAetherConnectConflict)),
+              Effect.map((conflict) => ({ state: "conflict", conflict }) as const),
+            );
+          }
+          return mapErrorStatus(endpoint, response);
+        }),
       );
     },
 
