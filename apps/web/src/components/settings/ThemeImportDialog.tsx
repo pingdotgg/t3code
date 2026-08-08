@@ -436,8 +436,8 @@ export function ThemeImportDialog({
         </DialogHeader>
         <DialogPanel className="space-y-5">
           <ThemeSearchSection
-            onInstalled={(themes) => {
-              onImportedMany(themes, { updated: false });
+            onInstalled={(themes, context) => {
+              onImportedMany(themes, context);
               onOpenChange(false);
             }}
             open={open}

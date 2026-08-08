@@ -16,6 +16,7 @@ import {
   parseThemeFile,
   parseThemeHalves,
   removeCustomTheme,
+  replaceCustomThemeCollection,
   resolveDesktopTheme,
   resolveThemeAppearance,
   serializeThemeFile,
@@ -544,6 +545,74 @@ describe("theme files", () => {
       { id: "github-light" },
     ]);
     expect(getCustomThemes()[1]).not.toHaveProperty("collection");
+
+    vi.unstubAllGlobals();
+    invalidateCustomThemes();
+  });
+
+  it("atomically replaces an imported collection and removes stale variants", () => {
+    const collection = { id: "open-vsx:demo.theme", label: "Demo Theme" };
+    const stored = new Map<string, string>([
+      [
+        CUSTOM_THEMES_STORAGE_KEY,
+        JSON.stringify([
+          { id: "personal", label: "Personal", appearance: "dark", colors: { canvas: "#111111" } },
+          {
+            id: "old-light",
+            label: "Old Light",
+            appearance: "light",
+            colors: { canvas: "#ffffff" },
+            collection,
+          },
+          {
+            id: "removed-dark",
+            label: "Removed Dark",
+            appearance: "dark",
+            colors: { canvas: "#000000" },
+            collection,
+          },
+        ]),
+      ],
+    ]);
+    const setItem = vi.fn((key: string, value: string) => stored.set(key, value));
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => stored.get(key) ?? null,
+        setItem,
+      },
+    });
+
+    invalidateCustomThemes();
+    const replacement = [
+      {
+        ...parseThemeFile({
+          version: THEME_FILE_VERSION,
+          id: "old-light",
+          name: "New Light",
+          appearance: "light",
+          colors: { canvas: "#fafafa" },
+        }),
+        collection,
+      },
+      {
+        ...parseThemeFile({
+          version: THEME_FILE_VERSION,
+          id: "new-dark",
+          name: "New Dark",
+          appearance: "dark",
+          colors: { canvas: "#101010" },
+        }),
+        collection,
+      },
+    ];
+
+    expect(replaceCustomThemeCollection(collection.id, replacement)).toEqual(replacement);
+    expect(getCustomThemes().map((theme) => theme.id)).toEqual([
+      "personal",
+      "old-light",
+      "new-dark",
+    ]);
+    expect(setItem).toHaveBeenCalledTimes(1);
 
     vi.unstubAllGlobals();
     invalidateCustomThemes();

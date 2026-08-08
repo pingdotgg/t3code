@@ -1,4 +1,11 @@
-import { CheckCircle2Icon, PaletteIcon, PlusIcon, SearchIcon, ShieldCheckIcon } from "lucide-react";
+import {
+  CheckCircle2Icon,
+  PaletteIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  SearchIcon,
+  ShieldCheckIcon,
+} from "lucide-react";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -8,11 +15,18 @@ import {
 } from "../../openVsxThemes";
 import {
   getCustomThemes,
-  installCustomTheme,
-  removeCustomTheme,
-  updateCustomTheme,
+  replaceCustomThemeCollection,
   type ThemeDefinition,
 } from "../../themePalette";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Spinner } from "../ui/spinner";
@@ -28,13 +42,14 @@ export function ThemeSearchSection({
   onInstalled,
 }: {
   open: boolean;
-  onInstalled: (themes: ReadonlyArray<ThemeDefinition>) => void;
+  onInstalled: (themes: ReadonlyArray<ThemeDefinition>, context: { updated: boolean }) => void;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ReadonlyArray<OpenVsxThemeExtension> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [installingId, setInstallingId] = useState<string | null>(null);
+  const [pendingUpdate, setPendingUpdate] = useState<OpenVsxThemeExtension | null>(null);
   const requestRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -46,6 +61,7 @@ export function ThemeSearchSection({
       setError(null);
       setIsSearching(false);
       setInstallingId(null);
+      setPendingUpdate(null);
     }
     return () => {
       requestRef.current?.abort();
@@ -87,7 +103,15 @@ export function ThemeSearchSection({
   );
 
   const handleInstall = useCallback(
-    async (extension: OpenVsxThemeExtension) => {
+    async (extension: OpenVsxThemeExtension, allowUpdate: boolean) => {
+      const updated = getCustomThemes().some(
+        (theme) => theme.collection?.id === extension.collectionId,
+      );
+      if (updated && !allowUpdate) {
+        setPendingUpdate(extension);
+        return;
+      }
+
       requestRef.current?.abort();
       const controller = new AbortController();
       requestRef.current = controller;
@@ -96,40 +120,8 @@ export function ThemeSearchSection({
       try {
         const themes = await importOpenVsxThemeExtension(extension, controller.signal);
         if (controller.signal.aborted) return;
-        const existingById = new Map(getCustomThemes().map((theme) => [theme.id, theme]));
-        const installedIds: string[] = [];
-        const replaced: ThemeDefinition[] = [];
-        const imported: ThemeDefinition[] = [];
-        try {
-          for (const theme of themes) {
-            const existing = existingById.get(theme.id);
-            if (existing) {
-              replaced.push(existing);
-              imported.push(updateCustomTheme(theme));
-            } else {
-              const installed = installCustomTheme(theme);
-              installedIds.push(installed.id);
-              imported.push(installed);
-            }
-          }
-        } catch (cause) {
-          for (const themeId of installedIds) {
-            try {
-              removeCustomTheme(themeId);
-            } catch {
-              // Best effort rollback. The original storage failure is clearer.
-            }
-          }
-          for (const theme of replaced) {
-            try {
-              updateCustomTheme(theme);
-            } catch {
-              // Best effort rollback. The original storage failure is clearer.
-            }
-          }
-          throw cause;
-        }
-        onInstalled(imported);
+        const imported = replaceCustomThemeCollection(extension.collectionId, themes);
+        onInstalled(imported, { updated });
       } catch (cause) {
         if (!controller.signal.aborted) {
           setError(cause instanceof Error ? cause.message : "That theme could not be added.");
@@ -225,6 +217,11 @@ export function ThemeSearchSection({
           <div className="grid gap-2 sm:grid-cols-2">
             {results.map((extension) => {
               const isInstalling = installingId === extension.id;
+              const isInstalled = getCustomThemes().some(
+                (theme) => theme.collection?.id === extension.collectionId,
+              );
+              const action = isInstalled ? "Update" : "Add";
+              const progressAction = isInstalled ? "Updating" : "Adding";
               return (
                 <article
                   className="group flex min-w-0 flex-col gap-3 rounded-xl border border-border/70 bg-card/60 p-3 transition-colors hover:bg-accent/20"
@@ -250,14 +247,14 @@ export function ThemeSearchSection({
                       <ShieldCheckIcon className="size-3" /> {extension.license}
                     </span>
                     <Button
-                      aria-label={`${isInstalling ? "Adding" : "Add"} ${extension.name}`}
+                      aria-label={`${isInstalling ? progressAction : action} ${extension.name}`}
                       disabled={installingId !== null}
                       size="xs"
                       variant="outline"
-                      onClick={() => void handleInstall(extension)}
+                      onClick={() => void handleInstall(extension, false)}
                     >
-                      {isInstalling ? <Spinner /> : <PlusIcon />}
-                      {isInstalling ? "Adding..." : "Add"}
+                      {isInstalling ? <Spinner /> : isInstalled ? <RefreshCwIcon /> : <PlusIcon />}
+                      {isInstalling ? `${progressAction}...` : action}
                     </Button>
                   </div>
                 </article>
@@ -270,6 +267,35 @@ export function ThemeSearchSection({
       <div className="flex items-center gap-1.5 text-muted-foreground text-[11px]">
         <CheckCircle2Icon className="size-3" /> Licensed themes only, with package integrity checks
       </div>
+
+      <AlertDialog
+        open={pendingUpdate !== null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setPendingUpdate(null);
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Update “{pendingUpdate?.name}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This replaces its installed variants, including any local edits. Variants no longer in
+              the extension will be removed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <Button
+              onClick={() => {
+                const extension = pendingUpdate;
+                setPendingUpdate(null);
+                if (extension) void handleInstall(extension, true);
+              }}
+            >
+              Update theme
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
     </section>
   );
 }

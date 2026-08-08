@@ -259,6 +259,7 @@ describe("Open VSX themes", () => {
       contributes: { themes: [{ label: "Wrong", path: "./themes/missing.json" }] },
     };
     const extension: OpenVsxThemeExtension = {
+      collectionId: "open-vsx:demo.theme",
       id: "demo.theme",
       name: "Demo Theme",
       publisher: "demo",
@@ -328,6 +329,7 @@ describe("Open VSX themes", () => {
       .join("");
     const controller = new AbortController();
     const extension: OpenVsxThemeExtension = {
+      collectionId: "open-vsx:demo.theme",
       id: "demo.theme",
       name: "Demo Theme",
       publisher: "demo",
@@ -363,6 +365,7 @@ describe("Open VSX themes", () => {
 
   it("rejects a package whose Open VSX checksum does not match", async () => {
     const extension: OpenVsxThemeExtension = {
+      collectionId: "open-vsx:demo.theme",
       id: "demo.theme",
       name: "Demo Theme",
       publisher: "demo",

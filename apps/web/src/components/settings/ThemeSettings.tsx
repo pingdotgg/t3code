@@ -719,19 +719,9 @@ export function ThemeLibrary({
       {renderPairGrid()}
       <ThemeImportDialog
         onImportedMany={(importedThemes, { updated }) => {
-          // An updated theme that is showing (as the base or either half)
-          // needs its palette re-applied.
-          if (
-            updated &&
-            importedThemes.some(
-              (imported) =>
-                getThemeDefinition(theme)?.id === imported.id ||
-                themeHalves?.light === imported.id ||
-                themeHalves?.dark === imported.id,
-            )
-          ) {
-            refreshTheme();
-          }
+          // Re-apply after collection updates. The update may remove the
+          // selected variant, in which case the theme hook falls back safely.
+          if (updated) refreshTheme();
           const verb = updated ? "updated" : "added";
           toastManager.add(
             stackedThreadToast({

@@ -1677,6 +1677,42 @@ export function updateCustomTheme(theme: ThemeDefinition): ThemeDefinition {
   return canonicalTheme;
 }
 
+export function replaceCustomThemeCollection(
+  collectionId: string,
+  themes: ReadonlyArray<ThemeDefinition>,
+): ReadonlyArray<ThemeDefinition> {
+  if (themes.length === 0) throw new Error("A theme collection cannot be empty.");
+
+  const validated = themes.map((theme) => parseStoredTheme(theme));
+  if (
+    validated.some((theme) => theme === null || theme.collection?.id !== collectionId) ||
+    new Set(validated.map((theme) => theme?.id)).size !== validated.length
+  ) {
+    throw new Error("That theme collection is invalid.");
+  }
+  const replacement = validated as ThemeDefinition[];
+  const current = getCustomThemes();
+  const firstCollectionIndex = current.findIndex((theme) => theme.collection?.id === collectionId);
+  const withoutCollection = current.filter((theme) => theme.collection?.id !== collectionId);
+  const occupiedIds = new Set([
+    ...BUILT_IN_THEME_DEFINITIONS.map((theme) => theme.id),
+    ...withoutCollection.map((theme) => theme.id),
+  ]);
+  const conflictingTheme = replacement.find(
+    (theme) => RESERVED_THEME_IDS.has(theme.id) || occupiedIds.has(theme.id),
+  );
+  if (conflictingTheme) {
+    throw new Error(`A theme named "${conflictingTheme.label}" is already installed.`);
+  }
+
+  const insertionIndex =
+    firstCollectionIndex === -1 ? withoutCollection.length : firstCollectionIndex;
+  const nextThemes = [...withoutCollection];
+  nextThemes.splice(insertionIndex, 0, ...replacement);
+  saveCustomThemes(nextThemes);
+  return replacement;
+}
+
 export function removeCustomTheme(themeId: string): void {
   const library = getWritableCustomThemeLibrary();
   const nextThemes = library.themes.filter((theme) => theme.id !== themeId);

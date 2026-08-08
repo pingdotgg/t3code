@@ -83,6 +83,7 @@ const USED_WORKBENCH_COLORS = new Set([
 
 export type OpenVsxThemeExtension = {
   id: string;
+  collectionId: string;
   name: string;
   publisher: string;
   description: string;
@@ -154,8 +155,10 @@ function extensionFromDetail(value: unknown): OpenVsxThemeExtension | null {
     throw new Error("Open VSX returned malformed theme details.");
   }
   if (!SUPPORTED_LICENSES.has(license)) return null;
+  const id = `${namespace}.${extensionName}`;
   return {
-    id: `${namespace}.${extensionName}`,
+    id,
+    collectionId: openVsxCollectionId(id),
     name: displayName,
     publisher: namespace,
     description: typeof value.description === "string" ? value.description : "",
@@ -713,7 +716,7 @@ export async function importOpenVsxThemeExtension(
   });
   const themes = resolveThemeLabelCollisions(paired.map((theme) => ({ theme })));
   const collection = {
-    id: openVsxCollectionId(extension.id),
+    id: extension.collectionId,
     label: extension.name.slice(0, 48),
   };
   return themes.map((theme) => ({ ...theme, collection }));
