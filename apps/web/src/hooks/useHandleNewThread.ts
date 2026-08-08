@@ -22,7 +22,7 @@ import {
 } from "../logicalProject";
 import { readThreadShell, useProjects, useThread } from "../state/entities";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
-import { primaryServerSettingsAtom } from "../state/server";
+import { settingsServerSettingsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
@@ -30,11 +30,13 @@ import { useClientSettings } from "./useSettings";
 export function useNewThreadHandler() {
   const projects = useProjects();
   // New-thread defaults are a user preference, and the settings UI only ever
-  // edits the primary environment's settings.json. Reading the target
+  // edits the settings environment's settings.json. Reading the target
   // environment's own settings here would silently reset remote projects to
   // the decoded defaults ("local" mode, current branch), since nothing can
-  // set those values on a remote server.
-  const primaryServerSettings = useAtomValue(primaryServerSettingsAtom);
+  // set those values on a remote server. This must stay the same environment
+  // the settings panels write to, or the General controls would save and
+  // re-display values that new threads never pick up.
+  const settingsServerSettings = useAtomValue(settingsServerSettingsAtom);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const router = useRouter();
   const getCurrentRouteTarget = useCallback(() => {
@@ -146,7 +148,7 @@ export function useNewThreadHandler() {
           // preserved. When the draft is already open and no options were
           // passed, leave it alone entirely — the user may have just picked a
           // branch in the composer.
-          const defaultEnvMode = primaryServerSettings.defaultThreadEnvMode;
+          const defaultEnvMode = settingsServerSettings.defaultThreadEnvMode;
           const workspaceContext = hasExplicitWorkspaceOption
             ? {
                 ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
@@ -162,7 +164,7 @@ export function useNewThreadHandler() {
                   envMode: defaultEnvMode,
                   startFromOrigin: resolveNewDraftStartFromOrigin({
                     envMode: defaultEnvMode,
-                    newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
+                    newWorktreesStartFromOrigin: settingsServerSettings.newWorktreesStartFromOrigin,
                   }),
                 };
           if (workspaceContext) {
@@ -244,7 +246,7 @@ export function useNewThreadHandler() {
       const draftId = newDraftId();
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
-      const initialEnvMode = options?.envMode ?? primaryServerSettings.defaultThreadEnvMode;
+      const initialEnvMode = options?.envMode ?? settingsServerSettings.defaultThreadEnvMode;
       return (async () => {
         setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId, {
           threadId,
@@ -256,7 +258,7 @@ export function useNewThreadHandler() {
             options?.startFromOrigin ??
             resolveNewDraftStartFromOrigin({
               envMode: initialEnvMode,
-              newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
+              newWorktreesStartFromOrigin: settingsServerSettings.newWorktreesStartFromOrigin,
             }),
           runtimeMode: carryRuntimeMode ?? DEFAULT_RUNTIME_MODE,
           ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
@@ -278,7 +280,7 @@ export function useNewThreadHandler() {
         });
       })();
     },
-    [getCurrentRouteTarget, primaryServerSettings, projectGroupingSettings, projects, router],
+    [getCurrentRouteTarget, settingsServerSettings, projectGroupingSettings, projects, router],
   );
 }
 

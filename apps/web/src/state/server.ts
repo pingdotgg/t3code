@@ -17,6 +17,7 @@ import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 import { environmentSession } from "./session";
+import { settingsEnvironmentIdAtom } from "./settingsEnvironment";
 
 export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRuntime, {
   initialConfigValueAtom: environmentSession.initialConfigValueAtom,
@@ -79,6 +80,24 @@ export const primaryServerProvidersAtom = Atom.make(
   (get): ReadonlyArray<ServerProvider> =>
     get(primaryServerConfigAtom)?.providers ?? EMPTY_SERVER_PROVIDERS,
 ).pipe(Atom.withLabel("web-primary-server-providers"));
+
+/**
+ * Server config for the environment the global settings UI edits. Distinct
+ * from `primaryServerConfigAtom`: it resolves to a connected device even when
+ * the session has no primary one. See `settingsEnvironmentIdAtom`.
+ */
+export const settingsServerConfigAtom = Atom.make((get): ServerConfig | null =>
+  get(serverEnvironment.configValueAtom(get(settingsEnvironmentIdAtom))),
+).pipe(Atom.withLabel("web-settings-server-config"));
+
+export const settingsServerSettingsAtom = Atom.make(
+  (get): ServerSettings => get(settingsServerConfigAtom)?.settings ?? DEFAULT_SERVER_SETTINGS,
+).pipe(Atom.withLabel("web-settings-server-settings"));
+
+export const settingsServerProvidersAtom = Atom.make(
+  (get): ReadonlyArray<ServerProvider> =>
+    get(settingsServerConfigAtom)?.providers ?? EMPTY_SERVER_PROVIDERS,
+).pipe(Atom.withLabel("web-settings-server-providers"));
 
 export const primaryServerKeybindingsAtom = Atom.make(
   (get): ServerConfig["keybindings"] =>
