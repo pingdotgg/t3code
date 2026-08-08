@@ -371,6 +371,16 @@ describe("makeMemoryConsolidationNotificationFilter", () => {
     );
     NodeAssert.equal(
       shouldSuppress({
+        method: "serverRequest/resolved",
+        params: {
+          requestId: "memory-approval",
+          threadId: "memory-thread",
+        },
+      }),
+      false,
+    );
+    NodeAssert.equal(
+      shouldSuppress({
         method: "warning",
         params: {
           message: "internal warning",

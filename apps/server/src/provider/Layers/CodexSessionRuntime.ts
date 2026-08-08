@@ -573,6 +573,10 @@ export function makeMemoryConsolidationNotificationFilter(): (
       return false;
     }
 
+    if (notification.method === "serverRequest/resolved") {
+      return false;
+    }
+
     if (notification.method === "thread/closed") {
       threadIds.delete(threadId);
     }
