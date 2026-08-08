@@ -345,6 +345,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
+  /** Adds a "Regenerate title" menu item when provided AND supported. */
+  readonly onRegenerateTitle?: (thread: EnvironmentThreadShell) => void;
+  readonly titleRegenerationSupported?: boolean;
   readonly onPinThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnpinThread: (thread: EnvironmentThreadShell) => void;
   /** False on environments whose server predates thread.settle/unsettle:
@@ -388,6 +391,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onUnsnoozeThread,
     onUnsettleThread,
     onArchiveThread,
+    onRegenerateTitle,
     onPinThread,
     onUnpinThread,
     onMovePinnedThread,
@@ -434,6 +438,33 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     [onMovePinnedThread, thread],
   );
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
+  const handleRegenerateTitle = useCallback(
+    () => onRegenerateTitle?.(thread),
+    [onRegenerateTitle, thread],
+  );
+  // Regenerate title leads every variant of the row menu, above the lifecycle
+  // and delete items, so both surfaces (this list and the v1 list) expose it
+  // regardless of settle/snooze/pin state.
+  const showRegenerateTitle =
+    props.titleRegenerationSupported === true && onRegenerateTitle != null;
+  // A regeneration already running owns the title until it lands: disable the
+  // item and label it "Regenerating…" so a second long-press reads as inert
+  // rather than actionable (mirrors web's action menu).
+  const regeneratingTitle = thread.titleRegeneration != null;
+  const titleMenuItems = useMemo<MenuAction[]>(
+    () =>
+      showRegenerateTitle
+        ? [
+            {
+              id: "regenerate-title",
+              title: regeneratingTitle ? "Regenerating…" : "Regenerate title",
+              image: "arrow.clockwise",
+              attributes: { disabled: regeneratingTitle },
+            },
+          ]
+        : [],
+    [regeneratingTitle, showRegenerateTitle],
+  );
 
   // Swipe: the v2 primary action is the lifecycle transition. Every settled
   // row can un-settle — explicit settles clear the override, auto-settled
@@ -525,6 +556,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
+      if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
       if (nativeEvent.event === "settle") handleSettle();
       if (nativeEvent.event === "unsettle") handleUnsettle();
       if (nativeEvent.event === "unsnooze") handleUnsnooze();
@@ -551,6 +583,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handleMovePinnedDown,
       handleMovePinnedUp,
       handlePin,
+      handleRegenerateTitle,
       handleSettle,
       handleSnooze,
       handleUnpin,
@@ -885,8 +918,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       >
         {(close) => (
           <ControlPillMenu
-            actions={
-              snoozedRow
+            actions={[
+              ...titleMenuItems,
+              ...(snoozedRow
                 ? SNOOZED_MENU_ACTIONS
                 : !props.settlementSupported
                   ? LEGACY_MENU_ACTIONS
@@ -894,8 +928,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                     ? SLIM_MENU_ACTIONS
                     : swipeActions.secondary === "snooze"
                       ? snoozableCardMenuActions
-                      : cardMenuActions
-            }
+                      : cardMenuActions),
+            ]}
             onPressAction={handleMenuAction}
             shouldOpenOnLongPress
           >

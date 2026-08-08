@@ -101,6 +101,7 @@ interface HomeScreenProps {
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
+  readonly onRegenerateTitle: (thread: EnvironmentThreadShell) => void;
   /** Resolves true iff the settle was dispatched and succeeded. */
   readonly onSettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onSnoozeThread: (
@@ -615,6 +616,15 @@ export function HomeScreen(props: HomeScreenProps) {
     }
     return supported;
   }, [serverConfigs]);
+  const titleRegenerationEnvironmentIds = useMemo(() => {
+    const supported = new Set<EnvironmentId>();
+    for (const [environmentId, config] of serverConfigs) {
+      if (config.environment.capabilities.threadTitleRegeneration === true) {
+        supported.add(environmentId);
+      }
+    }
+    return supported;
+  }, [serverConfigs]);
   // Canonical arranged pinned order (reorder-capable threads only) for the
   // Move up/down position flags. Computed from all shells, not the rendered
   // list, so search/scope filtering never disables or misdirects a move.
@@ -811,6 +821,8 @@ export function HomeScreen(props: HomeScreenProps) {
           onSelectThread={props.onSelectThread}
           onDeleteThread={handleDeleteThread}
           onArchiveThread={props.onArchiveThread}
+          onRegenerateTitle={props.onRegenerateTitle}
+          titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
           settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
           onSettleThread={handleSettleThread}
           snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
@@ -854,6 +866,7 @@ export function HomeScreen(props: HomeScreenProps) {
       projectByKey,
       projectCwdByKey,
       props.onArchiveThread,
+      props.onRegenerateTitle,
       props.onDeletePendingTask,
       props.onSelectPendingTask,
       props.onSelectThread,
@@ -861,6 +874,7 @@ export function HomeScreen(props: HomeScreenProps) {
       serverConfigs,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
+      titleRegenerationEnvironmentIds,
       threadListV2Items,
       threadSearchMatchByKey,
       toggleSettledShelf,
@@ -967,6 +981,8 @@ export function HomeScreen(props: HomeScreenProps) {
               searchQuery={props.searchQuery}
               onArchiveThread={props.onArchiveThread}
               onDeleteThread={props.onDeleteThread}
+              onRegenerateTitle={props.onRegenerateTitle}
+              titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
               onSelectThread={props.onSelectThread}
               onSwipeableClose={handleSwipeableClose}
               onSwipeableWillOpen={handleSwipeableWillOpen}
@@ -992,11 +1008,13 @@ export function HomeScreen(props: HomeScreenProps) {
       props.onArchiveThread,
       props.onDeletePendingTask,
       props.onDeleteThread,
+      props.onRegenerateTitle,
       props.onNewThreadInProject,
       props.onSelectPendingTask,
       props.onSelectThread,
       props.searchQuery,
       props.savedConnectionsById,
+      titleRegenerationEnvironmentIds,
       threadSearchMatchByKey,
       updateGroupDisplay,
     ],
