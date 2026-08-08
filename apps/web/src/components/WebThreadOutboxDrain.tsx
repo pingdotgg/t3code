@@ -2,6 +2,7 @@ import { CommandId } from "@t3tools/contracts";
 import { useEffect, useMemo, useState } from "react";
 
 import { resolveThreadMetadataUpdateForNextTurn } from "./ChatView.logic";
+import { shouldPauseWebThreadOutboxDelivery } from "./WebThreadOutboxDrain.logic";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { useEnvironments } from "../state/environments";
 import { useThreadShells } from "../state/entities";
@@ -161,6 +162,7 @@ export function WebThreadOutboxDrain() {
       .then((result) => {
         if (result._tag === "Deferred") return;
         if (result._tag === "Failure") {
+          if (!shouldPauseWebThreadOutboxDelivery(result)) return;
           useWebThreadOutboxStore.getState().pause(message.messageId);
           toastManager.add(
             stackedThreadToast({

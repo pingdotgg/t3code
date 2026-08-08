@@ -402,6 +402,13 @@ export function resolveCodexSteeringTurnId(
   return session.status === "running" ? session.activeTurnId : undefined;
 }
 
+export function shouldReaffirmCodexSteer(
+  session: Pick<ProviderSession, "status" | "activeTurnId">,
+  steeringTurnId: TurnId,
+): boolean {
+  return resolveCodexSteeringTurnId(session) === steeringTurnId;
+}
+
 export function buildTurnStartParams(input: {
   readonly threadId: string;
   readonly runtimeMode: RuntimeMode;
@@ -1818,21 +1825,22 @@ export const makeCodexSessionRuntime = (
                 );
               if (steerResult._tag === "Steered") {
                 const turnId = TurnId.make(steerResult.value.turnId);
-                yield* updateSession(sessionRef, {
-                  status: "running",
-                  activeTurnId: turnId,
-                });
-                // Codex does not emit a second turn/started notification when
-                // turn/steer keeps the existing turn alive. Reaffirm the active
-                // turn so orchestration can reconcile the steer request with the
-                // running turn instead of leaving a stale pending-turn row.
-                yield* emitEvent({
-                  kind: "notification",
-                  threadId: options.threadId,
-                  method: "turn/started",
-                  turnId,
-                  message: "Codex turn steered.",
-                });
+                const sessionAfterSteer = yield* Ref.get(sessionRef);
+                if (shouldReaffirmCodexSteer(sessionAfterSteer, steeringTurnId)) {
+                  // Codex does not emit a second turn/started notification when
+                  // turn/steer keeps the existing turn alive. Reaffirm the active
+                  // turn so orchestration can reconcile the steer request with the
+                  // running turn instead of leaving a stale pending-turn row.
+                  // If the turn completed while the RPC was in flight, its
+                  // notification already settled the lifecycle and must win.
+                  yield* emitEvent({
+                    kind: "notification",
+                    threadId: options.threadId,
+                    method: "turn/started",
+                    turnId,
+                    message: "Codex turn steered.",
+                  });
+                }
                 const resumedProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
                 return {
                   threadId: options.threadId,
