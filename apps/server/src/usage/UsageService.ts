@@ -204,7 +204,10 @@ export const make = Effect.gen(function* () {
         (cause) =>
           new UsageReadError({
             reason: "scanFailed",
-            detail: `Server settings could not be read: ${String(cause)}`,
+            // Bounded description only; the chain travels in `cause` so defect
+            // text never leaks into the wire-serialized message.
+            detail: "Server settings could not be read.",
+            cause,
           }),
       ),
     );
@@ -347,8 +350,11 @@ export const make = Effect.gen(function* () {
         }
         scannedFiles += 1;
         for (const record of records) {
-          aggregator.add(record);
-          if (record.sessionId.length > 0) sessionIds.add(record.sessionId);
+          // Only sessions that contributed in-window count: the mtime slack
+          // admits boundary files whose records fall outside the range.
+          if (aggregator.add(record) && record.sessionId.length > 0) {
+            sessionIds.add(record.sessionId);
+          }
         }
       }
 

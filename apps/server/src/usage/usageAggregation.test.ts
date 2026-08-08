@@ -107,6 +107,19 @@ describe("UsageAggregator", () => {
     expect(result.buckets).toHaveLength(0);
   });
 
+  it("reports whether a record contributed", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+    });
+
+    expect(aggregator.add(record({ dedupeKey: "msg_1:" }))).toBe(true);
+    expect(aggregator.add(record({ dedupeKey: "msg_1:" }))).toBe(false);
+    expect(aggregator.add(record({ timestampMs: Date.parse("2026-07-01T12:00:00Z") }))).toBe(false);
+  });
+
   it("separates providers and models into their own buckets", () => {
     const result = aggregate([
       record(),

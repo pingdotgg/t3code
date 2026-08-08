@@ -76,6 +76,27 @@ describe("scan cache round trip", () => {
     const restored = decodeScanCache(JSON.parse(JSON.stringify(withJunk)));
     expect([...restored.keys()]).toEqual(["/good.jsonl"]);
   });
+
+  it("drops the whole entry when any row is corrupt, forcing a cold re-parse", () => {
+    // Keeping the surviving rows under the original (size, mtime) would read
+    // as a valid warm hit and the file would never be re-parsed.
+    const encoded = encodeScanCache(
+      cacheWith([["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:" })]]]),
+    );
+    const rows = encoded.files["/a.jsonl"]!.r;
+    const poisoned = {
+      ...encoded,
+      files: {
+        "/a.jsonl": {
+          ...encoded.files["/a.jsonl"]!,
+          r: [rows[0]!, [...rows[1]!.slice(0, 3), "not-a-number", ...rows[1]!.slice(4)]],
+        },
+      },
+    };
+
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(poisoned)));
+    expect(restored.has("/a.jsonl")).toBe(false);
+  });
 });
 
 describe("pruneScanCache", () => {
@@ -153,25 +174,6 @@ describe("pruneScanCache with an unwalked root", () => {
 
     expect(removed).toBe(0);
     expect(cache.size).toBe(1);
-  });
-});
-
-describe("decodeScanCache numeric validation", () => {
-  it("rejects rows whose token fields are not numbers", () => {
-    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
-    const rows = encoded.files["/a.jsonl"]!.r;
-    const poisoned = {
-      ...encoded,
-      files: {
-        "/a.jsonl": {
-          ...encoded.files["/a.jsonl"]!,
-          r: [[...rows[0]!.slice(0, 3), "not-a-number", ...rows[0]!.slice(4)]],
-        },
-      },
-    };
-
-    const restored = decodeScanCache(JSON.parse(JSON.stringify(poisoned)));
-    expect(restored.get("/a.jsonl")?.records).toHaveLength(0);
   });
 });
 

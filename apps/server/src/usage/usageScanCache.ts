@@ -132,8 +132,15 @@ export function decodeScanCache(document: unknown): ScanCache {
 
     const provider: UsageProviderKind = entry.p;
     const records: UsageRecord[] = [];
+    // Any corrupt row disqualifies the whole entry. Keeping the survivors
+    // under the original (size, mtime) would read as a valid warm hit and the
+    // file would never be re-parsed, silently losing the dropped rows' usage.
+    let corrupt = false;
     for (const row of entry.r) {
-      if (!isRecordArray(row) || row.length < 10) continue;
+      if (!isRecordArray(row) || row.length < 10) {
+        corrupt = true;
+        break;
+      }
       const [
         timestampMs,
         modelIndex,
@@ -148,18 +155,18 @@ export function decodeScanCache(document: unknown): ScanCache {
       ] = row as SerializedRecord;
 
       const model = typeof modelIndex === "number" ? models[modelIndex] : undefined;
-      if (typeof timestampMs !== "number" || !Number.isFinite(timestampMs)) continue;
-      if (model === undefined) continue;
-      // Token fields must be real numbers: a corrupt row must cost a cold
-      // re-parse of its file, never flow into the aggregate as NaN or a string.
       if (
+        typeof timestampMs !== "number" ||
+        !Number.isFinite(timestampMs) ||
+        model === undefined ||
         !Number.isFinite(uncached) ||
         !Number.isFinite(cached) ||
         !Number.isFinite(cacheCreation) ||
         !Number.isFinite(output) ||
         !Number.isFinite(reasoning)
       ) {
-        continue;
+        corrupt = true;
+        break;
       }
 
       records.push({
@@ -179,6 +186,7 @@ export function decodeScanCache(document: unknown): ScanCache {
       });
     }
 
+    if (corrupt) continue;
     cache.set(path, { size: entry.s, mtimeMs: entry.m, provider, records });
   }
 
