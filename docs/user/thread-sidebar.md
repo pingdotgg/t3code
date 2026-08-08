@@ -11,3 +11,12 @@ other connected devices.
 If reordering is unavailable for one environment, update the T3 Code server running in that
 environment. Older servers can still pin and unpin threads, but do not understand synced ordering;
 their pinned threads keep the default newest-first order below the ones you have arranged.
+
+## Clearing settled threads
+
+Threads you have finished with collect in the **Settled** section at the bottom of the sidebar. On
+web and desktop, **Clear all** in that section's header empties it in one step, after asking you to
+confirm.
+
+Clearing archives those threads rather than deleting them. Their conversations are kept, and you can
+bring any of them back from **Settings → Archived**.
