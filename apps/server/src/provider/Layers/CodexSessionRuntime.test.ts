@@ -21,7 +21,6 @@ import {
   isRecoverableThreadResumeError,
   openCodexThread,
   resolveCodexSteeringTurnId,
-  shouldRetryCodexSteerAsStart,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
 
@@ -286,27 +285,6 @@ describe("buildTurnSteerParams", () => {
           },
         ],
       },
-    );
-  });
-
-  it("retries an explicitly rejected steer without retrying ambiguous transport failures", () => {
-    NodeAssert.equal(
-      shouldRetryCodexSteerAsStart(
-        new CodexErrors.CodexAppServerRequestError({
-          code: -32602,
-          errorMessage: "expected turn is no longer active",
-        }),
-      ),
-      true,
-    );
-    NodeAssert.equal(
-      shouldRetryCodexSteerAsStart(
-        new CodexErrors.CodexAppServerTransportError({
-          operation: "read-input-stream",
-          cause: new Error("connection lost"),
-        }),
-      ),
-      false,
     );
   });
 });

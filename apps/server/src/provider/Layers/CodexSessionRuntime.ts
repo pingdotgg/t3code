@@ -402,13 +402,6 @@ export function resolveCodexSteeringTurnId(
   return session.status === "running" ? session.activeTurnId : undefined;
 }
 
-export function shouldRetryCodexSteerAsStart(error: CodexSessionRuntimeError): boolean {
-  // Request errors are explicit rejections, so the steer input was not
-  // accepted. Transport and process failures have an ambiguous outcome and
-  // must not be retried as a new turn.
-  return error._tag === "CodexAppServerRequestError";
-}
-
 export function buildTurnStartParams(input: {
   readonly threadId: string;
   readonly runtimeMode: RuntimeMode;
@@ -1815,11 +1808,13 @@ export const makeCodexSessionRuntime = (
                 )
                 .pipe(
                   Effect.map((value) => ({ _tag: "Steered" as const, value })),
-                  Effect.catch((error) =>
-                    shouldRetryCodexSteerAsStart(error)
-                      ? Effect.succeed({ _tag: "RetryAsStart" as const })
-                      : Effect.fail(error),
-                  ),
+                  // Request errors are explicit rejections, so the steer input
+                  // was not accepted. Transport and process failures keep their
+                  // ambiguous outcome and remain in the error channel.
+                  Effect.catchTags({
+                    CodexAppServerRequestError: () =>
+                      Effect.succeed({ _tag: "RetryAsStart" as const }),
+                  }),
                 );
               if (steerResult._tag === "Steered") {
                 const turnId = TurnId.make(steerResult.value.turnId);
