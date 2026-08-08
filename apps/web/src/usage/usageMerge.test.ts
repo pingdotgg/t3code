@@ -34,7 +34,12 @@ function bucket(overrides: Partial<UsageBucket> = {}): UsageBucket {
 
 function summary(
   buckets: readonly UsageBucket[],
-  sources: readonly { provider: UsageProviderKind; hostId: string; homePath: string }[],
+  sources: readonly {
+    provider: UsageProviderKind;
+    hostId: string;
+    homePath: string;
+    volumeId?: string;
+  }[],
   contractVersion: number = USAGE_CONTRACT_VERSION,
 ): UsageSummary {
   return {
@@ -49,6 +54,7 @@ function summary(
         hostId: source.hostId,
         provider: source.provider,
         resolvedHomePath: source.homePath,
+        volumeId: source.volumeId ?? `vol-${source.hostId}`,
       },
       status: "ok" as const,
       scannedFiles: 1,
@@ -178,6 +184,41 @@ describe("mergeUsage", () => {
     expect(merged.providers[0]?.costShare).toBeCloseTo(0.75, 5);
     expect(merged.costQuality.unpricedShare).toBeCloseTo(0.5, 5);
     expect(merged.costQuality.cacheSavingsUsd).toBe(4);
+  });
+
+  it("keeps two machines apart when hostname and home path collide", () => {
+    // Every Mac resolves /Users/theo/.claude, so a hostname clash used to make
+    // one machine's usage vanish. Filesystem identity separates them.
+    const shape = { provider: "claude" as const, hostId: "mac", homePath: "/Users/theo/.claude" };
+    const merged = mergeUsage(
+      [
+        environment("env-a", summary([bucket()], [{ ...shape, volumeId: "16777220:1234" }])),
+        environment("env-b", summary([bucket()], [{ ...shape, volumeId: "16777221:9999" }])),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(20);
+    expect(merged.duplicateSources).toHaveLength(0);
+  });
+
+  it("still collapses two servers reading the same directory", () => {
+    const same = {
+      provider: "claude" as const,
+      hostId: "mac",
+      homePath: "/Users/theo/.claude",
+      volumeId: "16777220:1234",
+    };
+    const merged = mergeUsage(
+      [
+        environment("env-a", summary([bucket()], [same])),
+        environment("env-b", summary([bucket()], [same])),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(10);
+    expect(merged.duplicateSources).toHaveLength(1);
   });
 
   it("returns empty totals with no environments", () => {

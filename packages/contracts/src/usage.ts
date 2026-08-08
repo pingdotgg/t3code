@@ -21,7 +21,7 @@ import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 1 as const;
+export const USAGE_CONTRACT_VERSION = 2 as const;
 
 export const UsageProviderKind = Schema.Literals(["claude", "codex"]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
@@ -103,6 +103,16 @@ export const UsageSourceFingerprint = Schema.Struct({
   hostId: TrimmedNonEmptyString,
   provider: UsageProviderKind,
   resolvedHomePath: TrimmedNonEmptyString,
+  /**
+   * Filesystem identity of the transcript directory, as `device:inode`.
+   *
+   * Hostname and path alone are not enough: every Mac in a fleet resolves
+   * `/Users/<user>/.claude`, so two machines that happen to share a hostname
+   * would look like one source and have their usage silently dropped. The
+   * device/inode pair is stable for two servers reading the same directory and
+   * effectively never collides across machines. Empty when it cannot be read.
+   */
+  volumeId: Schema.String,
 });
 export type UsageSourceFingerprint = typeof UsageSourceFingerprint.Type;
 

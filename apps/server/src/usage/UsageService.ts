@@ -38,7 +38,18 @@ import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
-import { listTranscriptFiles, readTranscriptRecords } from "./usageTranscriptReader.ts";
+import {
+  listTranscriptFiles,
+  readDirectoryVolumeId,
+  readTranscriptRecords,
+} from "./usageTranscriptReader.ts";
+import {
+  decodeScanCache,
+  dedupeWithinFile,
+  encodeScanCache,
+  pruneScanCache,
+  type ScanCache,
+} from "./usageScanCache.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
 
 const LITELLM_RATES_URL =
@@ -53,8 +64,8 @@ const RATES_TTL_MS = 24 * 60 * 60 * 1000;
  */
 const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
 
-/** Bounds the memo cache so a long-lived server cannot grow without limit. */
-const MAX_CACHED_RECORDS = 400_000;
+/** Longest window the UI offers, plus slack. Older entries are pruned. */
+const CACHE_RETENTION_DAYS = 90;
 
 /** On-disk shape of the rate snapshot. */
 const RatesCacheFile = Schema.Struct({
@@ -68,11 +79,10 @@ const encodeRatesCache = Schema.encodeEffect(
   Schema.fromJsonString(RatesCacheFile as unknown as Schema.Codec<typeof RatesCacheFile.Type>),
 );
 
-interface CachedFile {
-  readonly size: number;
-  readonly mtimeMs: number;
-  readonly records: readonly UsageRecord[];
-}
+/** The scan cache is narrowed by hand in `usageScanCache`, so JSON is enough here. */
+const ScanCacheJson = Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>);
+const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
+const encodeScanCacheFile = Schema.encodeEffect(ScanCacheJson);
 
 export class UsageService extends Context.Service<
   UsageService,
@@ -112,10 +122,12 @@ const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
 
-  const fileCache = new Map<string, CachedFile>();
-  let cachedRecordCount = 0;
+  const fileCache: ScanCache = new Map();
+  let cacheLoaded = false;
+  let cacheDirty = false;
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
+  const scanCachePath = path.join(config.stateDir, "usage-scan-cache.json");
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
   let ratesStatus: UsageSummary["pricing"]["status"] = "unavailable";
@@ -198,7 +210,31 @@ const make = Effect.gen(function* () {
     ];
   });
 
-  /** Parses one transcript, reusing the memoised result when it is unchanged. */
+  /** Loads the persisted scan cache once per process. */
+  const ensureScanCacheLoaded = Effect.fn("UsageService.ensureScanCacheLoaded")(function* () {
+    if (cacheLoaded) return;
+    cacheLoaded = true;
+
+    const document = yield* fileSystem.readFileString(scanCachePath).pipe(
+      Effect.flatMap((raw) => decodeScanCacheFile(raw)),
+      Effect.catchCause(() => Effect.succeed(null)),
+    );
+    if (document === null) return;
+
+    for (const [path, entry] of decodeScanCache(document)) fileCache.set(path, entry);
+  });
+
+  const persistScanCache = Effect.fn("UsageService.persistScanCache")(function* () {
+    if (!cacheDirty) return;
+    cacheDirty = false;
+    yield* encodeScanCacheFile(encodeScanCache(fileCache)).pipe(
+      Effect.flatMap((serialized) => fileSystem.writeFileString(scanCachePath, serialized)),
+      // A cache we cannot write is a slower next start, not a failed read.
+      Effect.catchCause(() => Effect.void),
+    );
+  });
+
+  /** Parses one transcript, reusing the cached result when it is unchanged. */
   const readFileRecords = (
     filePath: string,
     size: number,
@@ -209,14 +245,13 @@ const make = Effect.gen(function* () {
       const cached = fileCache.get(filePath);
       if (cached && cached.size === size && cached.mtimeMs === mtimeMs) return cached.records;
 
-      const records = yield* Effect.promise(() => readTranscriptRecords(filePath, provider));
+      const parsed = yield* Effect.promise(() => readTranscriptRecords(filePath, provider));
+      // Stored already de-duplicated within the file, which is 99% of all
+      // duplicates. The aggregator still runs the cross-file dedupe pass.
+      const records = dedupeWithinFile(parsed);
 
-      if (cachedRecordCount > MAX_CACHED_RECORDS) {
-        fileCache.clear();
-        cachedRecordCount = 0;
-      }
-      fileCache.set(filePath, { size, mtimeMs, records });
-      cachedRecordCount += records.length;
+      fileCache.set(filePath, { size, mtimeMs, provider, records });
+      cacheDirty = true;
       return records;
     });
 
@@ -230,6 +265,7 @@ const make = Effect.gen(function* () {
 
     const startedAtMs = yield* Clock.currentTimeMillis;
     yield* ensureRates();
+    yield* ensureScanCacheLoaded();
 
     const hostId = NodeOS.hostname();
     // The home resolvers ask for `Path` themselves; satisfy them from the
@@ -252,15 +288,17 @@ const make = Effect.gen(function* () {
     });
 
     const sources: UsageSource[] = [];
+    const livePaths = new Set<string>();
 
     for (const { provider, dir } of dirs) {
+      const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
       const exists = yield* fileSystem
         .exists(dir)
         .pipe(Effect.catchCause(() => Effect.succeed(false)));
 
       if (!exists) {
         sources.push({
-          fingerprint: { hostId, provider, resolvedHomePath: dir },
+          fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
           status: "missing",
           scannedFiles: 0,
           skippedFiles: 0,
@@ -275,6 +313,7 @@ const make = Effect.gen(function* () {
       let skippedFiles = 0;
 
       for (const file of files) {
+        livePaths.add(file.path);
         const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
         if (records.length === 0) {
           skippedFiles += 1;
@@ -285,7 +324,7 @@ const make = Effect.gen(function* () {
       }
 
       sources.push({
-        fingerprint: { hostId, provider, resolvedHomePath: dir },
+        fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
         status: "ok",
         scannedFiles,
         skippedFiles,
@@ -293,6 +332,14 @@ const make = Effect.gen(function* () {
         message: null,
       });
     }
+
+    const pruned = pruneScanCache(fileCache, {
+      livePaths,
+      windowStartMs,
+      retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+    });
+    if (pruned > 0) cacheDirty = true;
+    yield* persistScanCache();
 
     const aggregated = aggregator.finish();
     const readAt = yield* DateTime.now;

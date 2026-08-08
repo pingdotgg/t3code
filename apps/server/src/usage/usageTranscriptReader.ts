@@ -74,6 +74,22 @@ export async function listTranscriptFiles(
 }
 
 /**
+ * Filesystem identity of a directory, as `device:inode`.
+ *
+ * Used to tell "two servers reading the same transcript directory" apart from
+ * "two machines whose hostname and home path happen to match". Returns an empty
+ * string when the directory cannot be stat'd.
+ */
+export async function readDirectoryVolumeId(path: string): Promise<string> {
+  try {
+    const stats = await NodeFSP.stat(path);
+    return `${stats.dev}:${stats.ino}`;
+  } catch {
+    return "";
+  }
+}
+
+/**
  * Streams one transcript and returns the usage records it contains.
  *
  * Codex carries the active model on `turn_context` lines that hold no usage of
