@@ -218,6 +218,11 @@ export interface TraitsMenuContentProps {
   triggerClassName?: string;
 }
 
+type TraitsMenuContentImplProps = TraitsMenuContentProps &
+  TraitsPersistence & {
+    onRequestClose?: () => void;
+  };
+
 export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   provider,
   instanceId,
@@ -227,8 +232,9 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   onPromptChange,
   modelOptions,
   allowPromptInjectedEffort = true,
+  onRequestClose,
   ...persistence
-}: TraitsMenuContentProps & TraitsPersistence) {
+}: TraitsMenuContentImplProps) {
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
   const updateModelOptions = useCallback(
     (nextOptions: ProviderOptions | undefined) => {
@@ -279,6 +285,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
           ? ULTRATHINK_PROMPT_PREFIX
           : applyClaudePromptEffortPrefix(prompt, "ultrathink");
       onPromptChange(nextPrompt);
+      onRequestClose?.();
       return;
     }
     if (ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id) return;
@@ -287,6 +294,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
       onPromptChange(stripped);
     }
     updateDescriptors(replaceDescriptorCurrentValue(descriptors, descriptor.id, value));
+    onRequestClose?.();
   };
 
   if (!hasAnyControls) {
@@ -359,6 +367,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                   updateDescriptors(
                     replaceDescriptorCurrentValue(descriptors, descriptor.id, value === "on"),
                   );
+                  onRequestClose?.();
                 }}
               >
                 {(["on", "off"] as const).map((value) => (
@@ -533,6 +542,7 @@ export const TraitsPicker = memo(function TraitsPicker({
           onPromptChange={onPromptChange}
           modelOptions={modelOptions}
           allowPromptInjectedEffort={allowPromptInjectedEffort}
+          onRequestClose={() => setIsMenuOpen(false)}
           {...persistence}
         />
       </MenuPopup>
