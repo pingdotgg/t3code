@@ -16,6 +16,7 @@ on:
         options:
           - build
           - update
+          - swiftui-testflight
       platform:
         description: "Target platform"
         required: true
@@ -33,6 +34,7 @@ on:
 jobs:
   production:
     name: EAS Production ${{ inputs.mode }}
+    if: inputs.mode != 'swiftui-testflight'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     permissions:
       contents: read
@@ -117,3 +119,226 @@ jobs:
             --platform ${{ inputs.platform }} \
             --message "${{ inputs.message || format('Production OTA ({0})', github.sha) }}" \
             --non-interactive
+
+  swiftui-testflight:
+    name: Upload SwiftUI build 23 to TestFlight
+    if: inputs.mode == 'swiftui-testflight'
+    runs-on: blacksmith-6vcpu-macos-26
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Archive and upload build 23
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for name in APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            if [ -z "${!name:-}" ]; then
+              echo "$name is not configured" >&2
+              exit 1
+            fi
+          done
+
+          key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          archive_path="$RUNNER_TEMP/T3Code.xcarchive"
+          export_path="$RUNNER_TEMP/T3CodeExport"
+          export_options="$RUNNER_TEMP/ExportOptions.plist"
+          printf '%s' "$APPLE_API_KEY" > "$key_path"
+
+          xcodebuild \
+            -project apps/swift-ios/T3Code.xcodeproj \
+            -scheme T3Code \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$archive_path" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$key_path" \
+            -authenticationKeyID "$APPLE_API_KEY_ID" \
+            -authenticationKeyIssuerID "$APPLE_API_ISSUER" \
+            DEVELOPMENT_TEAM=ARK85ZXQ4Z \
+            CURRENT_PROJECT_VERSION=23 \
+            T3CODE_CLERK_PUBLISHABLE_KEY=pk_live_Y2xlcmsudDMuY29kZXMk \
+            T3CODE_CLERK_JWT_TEMPLATE=t3-relay \
+            T3CODE_RELAY_URL=https://relay.t3.codes \
+            archive
+
+          cat > "$export_options" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>destination</key>
+            <string>upload</string>
+            <key>manageAppVersionAndBuildNumber</key>
+            <false/>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>stripSwiftSymbols</key>
+            <true/>
+            <key>teamID</key>
+            <string>ARK85ZXQ4Z</string>
+            <key>uploadSymbols</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+
+          xcodebuild \
+            -exportArchive \
+            -archivePath "$archive_path" \
+            -exportPath "$export_path" \
+            -exportOptionsPlist "$export_options" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$key_path" \
+            -authenticationKeyID "$APPLE_API_KEY_ID" \
+            -authenticationKeyIssuerID "$APPLE_API_ISSUER"
+
+      - name: Add build 23 to private and public testing
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import crypto from "node:crypto"
+
+          const bundleId = "com.t3tools.t3code.swiftui"
+          const buildNumber = "23"
+          const apiBase = "https://api.appstoreconnect.apple.com/v1"
+
+          const base64url = (value) => Buffer.from(value).toString("base64url")
+          const createToken = () => {
+            const issuedAt = Math.floor(Date.now() / 1000)
+            const header = base64url(JSON.stringify({
+              alg: "ES256",
+              kid: process.env.APPLE_API_KEY_ID,
+              typ: "JWT",
+            }))
+            const payload = base64url(JSON.stringify({
+              iss: process.env.APPLE_API_ISSUER,
+              iat: issuedAt,
+              exp: issuedAt + 1_200,
+              aud: "appstoreconnect-v1",
+            }))
+            const unsigned = `${header}.${payload}`
+            const signature = crypto.sign("sha256", Buffer.from(unsigned), {
+              key: process.env.APPLE_API_KEY,
+              dsaEncoding: "ieee-p1363",
+            })
+            return `${unsigned}.${signature.toString("base64url")}`
+          }
+
+          const request = async (path, options = {}) => {
+            const response = await fetch(`${apiBase}${path}`, {
+              ...options,
+              signal: AbortSignal.timeout(20_000),
+              headers: {
+                Authorization: `Bearer ${createToken()}`,
+                "Content-Type": "application/json",
+                ...options.headers,
+              },
+            })
+            const body = await response.text()
+            const json = body ? JSON.parse(body) : null
+            if (!response.ok) {
+              const details = json?.errors?.map((error) =>
+                `${error.status ?? response.status} ${error.code ?? ""}: ${error.detail ?? error.title ?? "Unknown error"}`
+              ).join("; ")
+              const error = new Error(details || `${response.status} ${response.statusText}`)
+              error.status = response.status
+              throw error
+            }
+            return json
+          }
+
+          const query = (path, params) => `${path}?${new URLSearchParams(params)}`
+          const apps = await request(query("/apps", {
+            "filter[bundleId]": bundleId,
+            limit: "2",
+          }))
+          if (apps.data.length !== 1) {
+            throw new Error(`Expected one app for ${bundleId}; found ${apps.data.length}`)
+          }
+          const appId = apps.data[0].id
+
+          let build = null
+          for (let attempt = 1; attempt <= 80; attempt += 1) {
+            const builds = await request(query("/builds", {
+              "filter[app]": appId,
+              "filter[version]": buildNumber,
+              "fields[builds]": "version,processingState,expired",
+              limit: "1",
+            }))
+            build = builds.data[0] ?? null
+            const state = build?.attributes?.processingState ?? "NOT_FOUND"
+            console.log(`Build ${buildNumber}: ${state}`)
+            if (state === "VALID") break
+            if (["FAILED", "INVALID"].includes(state)) {
+              throw new Error(`Build ${buildNumber} cannot be tested: ${state}`)
+            }
+            if (attempt === 80) throw new Error(`Build ${buildNumber} did not finish processing`)
+            await new Promise((resolve) => setTimeout(resolve, 15_000))
+          }
+
+          const groups = await request(query(`/apps/${appId}/betaGroups`, {
+            "fields[betaGroups]": "name,isInternalGroup,hasAccessToAllBuilds,publicLinkEnabled",
+            limit: "200",
+          }))
+          const selected = groups.data.filter((group) =>
+            group.attributes.isInternalGroup || group.attributes.publicLinkEnabled
+          )
+          if (!selected.some((group) => group.attributes.isInternalGroup)) {
+            throw new Error("No internal TestFlight group was found")
+          }
+          if (!selected.some((group) => !group.attributes.isInternalGroup)) {
+            throw new Error("No public TestFlight group was found")
+          }
+
+          for (const group of selected) {
+            if (group.attributes.hasAccessToAllBuilds) {
+              console.log(`${group.attributes.name}: already receives every build`)
+              continue
+            }
+            const relationship = await request(query(
+              `/betaGroups/${group.id}/relationships/builds`,
+              { limit: "200" }
+            ))
+            if (relationship.data.some((candidate) => candidate.id === build.id)) {
+              console.log(`${group.attributes.name}: build ${buildNumber} already available`)
+              continue
+            }
+            await request(`/betaGroups/${group.id}/relationships/builds`, {
+              method: "POST",
+              body: JSON.stringify({ data: [{ type: "builds", id: build.id }] }),
+            })
+            console.log(`${group.attributes.name}: added build ${buildNumber}`)
+          }
+
+          let review = null
+          try {
+            review = (await request(`/builds/${build.id}/betaAppReviewSubmission`)).data
+          } catch (error) {
+            if (error.status !== 404) throw error
+          }
+          if (!review) {
+            review = (await request("/betaAppReviewSubmissions", {
+              method: "POST",
+              body: JSON.stringify({
+                data: {
+                  type: "betaAppReviewSubmissions",
+                  relationships: {
+                    build: { data: { type: "builds", id: build.id } },
+                  },
+                },
+              }),
+            })).data
+          }
+          console.log(`Build ${buildNumber} review: ${review.attributes.betaReviewState}`)
+          NODE
