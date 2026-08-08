@@ -58,5 +58,58 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         );
       }),
     );
+
+    it.effect("applies CLIProxyAPI variables only when the Claude setting is enabled", () =>
+      Effect.gen(function* () {
+        const baseEnv = {
+          PATH: "/bin",
+          ANTHROPIC_BASE_URL: "https://api.anthropic.com",
+          ANTHROPIC_AUTH_TOKEN: "ambient-token",
+          ANTHROPIC_API_KEY: "ambient-api-key",
+        };
+
+        expect(
+          yield* makeClaudeEnvironment(
+            {
+              homePath: "",
+              useCliProxyApi: true,
+              cliProxyApiUrl: "http://localhost:8317",
+              cliProxyApiKey: "proxy-key",
+            },
+            baseEnv,
+          ),
+        ).toEqual({
+          ...baseEnv,
+          ANTHROPIC_BASE_URL: "http://localhost:8317",
+          ANTHROPIC_AUTH_TOKEN: "proxy-key",
+          ANTHROPIC_API_KEY: "",
+        });
+
+        expect(
+          yield* makeClaudeEnvironment(
+            {
+              homePath: "",
+              useCliProxyApi: false,
+              cliProxyApiUrl: "http://localhost:8317",
+              cliProxyApiKey: "proxy-key",
+            },
+            baseEnv,
+          ),
+        ).toBe(baseEnv);
+      }),
+    );
+
+    it.effect("uses the local CLIProxyAPI defaults without forwarding an ambient token", () =>
+      Effect.gen(function* () {
+        const environment = yield* makeClaudeEnvironment(
+          { homePath: "", useCliProxyApi: true, cliProxyApiUrl: "", cliProxyApiKey: "" },
+          { PATH: "/bin", ANTHROPIC_AUTH_TOKEN: "ambient-token" },
+        );
+
+        expect(environment.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8317");
+        expect(environment.ANTHROPIC_AUTH_TOKEN).toBe("");
+        expect(environment.ANTHROPIC_API_KEY).toBe("");
+      }),
+    );
   });
 });

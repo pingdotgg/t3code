@@ -37,6 +37,27 @@ describe("ProviderSettingsForm helpers", () => {
     });
   });
 
+  it("exposes CLIProxyAPI as Claude-only provider settings", () => {
+    const claude = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("claudeAgent")];
+    const codex = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("codex")];
+
+    expect(claude).toBeDefined();
+    expect(deriveProviderSettingsFields(claude!).map((field) => field.key)).toEqual([
+      "binaryPath",
+      "homePath",
+      "useCliProxyApi",
+      "cliProxyApiUrl",
+      "cliProxyApiKey",
+      "launchArgs",
+    ]);
+    expect(
+      deriveProviderSettingsFields(claude!).find((field) => field.key === "useCliProxyApi"),
+    ).toMatchObject({ control: "switch", defaultBooleanValue: false });
+    expect(
+      deriveProviderSettingsFields(codex!).some((field) => field.key.includes("CliProxy")),
+    ).toBe(false);
+  });
+
   it("preserves unknown config keys while omitting empty configurable fields", () => {
     const opencode = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode")];
     expect(opencode).toBeDefined();
