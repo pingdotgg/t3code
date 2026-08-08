@@ -1,10 +1,14 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { HostProcessExecutablePath, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -202,9 +206,12 @@ describe("ssh tunnel scripts", () => {
     );
     assert.include(buildRemoteLaunchScript(), 'PID_TO_STOP="${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"');
     assert.include(buildRemoteLaunchScript(), 'REMOTE_PORT="$DEFAULT_REMOTE_PORT"');
+    assert.include(buildRemoteLaunchScript(), "DEFAULT_RUNTIME_IS_MANAGED=1");
+    assert.include(buildRemoteLaunchScript(), '[ "$DEFAULT_RUNTIME_IS_MANAGED" -eq 0 ]');
     assert.include(buildRemoteLaunchScript(), 'rm -f "$PID_FILE"');
     assert.include(buildRemoteLaunchScript(), "printf 'external\\n' >\"$MANAGED_FILE\"");
     assert.include(buildRemoteLaunchScript(), 'if [ -z "$REMOTE_PORT" ]; then');
+    assert.include(buildRemoteLaunchScript(), "refusing to replace it with a managed SSH server");
     assert.isBelow(
       buildRemoteLaunchScript().indexOf('if [ "$REMOTE_MANAGED" = "managed" ]'),
       buildRemoteLaunchScript().indexOf("printf 'external\\n' >\"$MANAGED_FILE\""),
@@ -214,6 +221,85 @@ describe("ssh tunnel scripts", () => {
       buildRemoteLaunchScript().indexOf('elif [ -n "$REMOTE_PID" ]'),
     );
   });
+
+  it.effect("reuses its own managed runtime without replacing it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        if ((yield* HostProcessPlatform) === "win32") return;
+
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const executablePath = yield* HostProcessExecutablePath;
+        const home = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-ssh-launch-test-",
+        });
+        const stateKey = "managed-runtime";
+        const stateDir = path.join(home, ".t3", "ssh-launch", stateKey);
+        const runtimeDir = path.join(home, ".t3", "userdata");
+        const server = yield* spawner.spawn(
+          ChildProcess.make(
+            executablePath,
+            [
+              "-e",
+              `const http = require("node:http");
+const server = http.createServer((_request, response) => {
+  response.writeHead(200);
+  response.end("ok");
+});
+server.listen(0, "127.0.0.1", () => process.stdout.write(String(server.address().port) + "\\n"));`,
+            ],
+            { detached: false },
+          ),
+        );
+        yield* Effect.addFinalizer(() => server.kill().pipe(Effect.catchCause(() => Effect.void)));
+
+        const portLine = yield* server.stdout.pipe(
+          Stream.decodeText(),
+          Stream.splitLines,
+          Stream.runHead,
+        );
+        const port = Number.parseInt(Option.getOrThrow(portLine), 10);
+        assert.isTrue(Number.isInteger(port));
+
+        yield* fileSystem.makeDirectory(stateDir, { recursive: true });
+        yield* fileSystem.makeDirectory(runtimeDir, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(stateDir, "managed"), "managed\n");
+        yield* fileSystem.writeFileString(path.join(stateDir, "pid"), `${server.pid}\n`);
+        yield* fileSystem.writeFileString(path.join(stateDir, "port"), `${port}\n`);
+        yield* fileSystem.writeFileString(
+          path.join(stateDir, "run-t3.sh"),
+          `${buildRemoteT3RunnerScript()}\n`,
+        );
+        yield* fileSystem.writeFileString(
+          path.join(runtimeDir, "server-runtime.json"),
+          `{"version":1,"pid":${server.pid},"port":${port},"origin":"http://127.0.0.1:${port}","startedAt":"2026-08-08T18:42:26.000Z"}\n`,
+        );
+
+        const shell = yield* spawner.spawn(
+          ChildProcess.make("sh", ["-s", "--", stateKey], {
+            detached: false,
+            env: { HOME: home },
+            extendEnv: true,
+            stdin: Stream.make(new TextEncoder().encode(buildRemoteLaunchScript())),
+          }),
+        );
+        const [stdout, stderr, exitCode] = yield* Effect.all(
+          [
+            Stream.mkString(Stream.decodeText(shell.stdout)),
+            Stream.mkString(Stream.decodeText(shell.stderr)),
+            shell.exitCode,
+          ],
+          { concurrency: "unbounded" },
+        );
+
+        assert.equal(exitCode, 0, stderr);
+        assert.include(stdout, `{"remotePort":${port},"serverKind":"managed"}`);
+        assert.isTrue(yield* server.isRunning);
+        assert.equal(yield* fileSystem.readFileString(path.join(stateDir, "managed")), "managed\n");
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
 
   it.effect("accepts launch JSON after remote shell startup noise", () => {
     const target = {

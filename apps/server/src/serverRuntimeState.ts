@@ -155,3 +155,20 @@ export const readPersistedServerRuntimeState = (path: string) =>
         ),
     }),
   );
+
+export const clearPersistedServerRuntimeStateIfOwned = (input: {
+  readonly path: string;
+  readonly state: Pick<PersistedServerRuntimeState, "pid" | "startedAt">;
+}) =>
+  Effect.gen(function* () {
+    const current = yield* readPersistedServerRuntimeState(input.path);
+    if (
+      Option.isNone(current) ||
+      current.value.pid !== input.state.pid ||
+      current.value.startedAt !== input.state.startedAt
+    ) {
+      return;
+    }
+
+    yield* clearPersistedServerRuntimeState(input.path);
+  });
