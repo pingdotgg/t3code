@@ -63,6 +63,12 @@ export const DeleteProjectionThreadInput = Schema.Struct({
 });
 export type DeleteProjectionThreadInput = typeof DeleteProjectionThreadInput.Type;
 
+export const TouchProjectionThreadInput = Schema.Struct({
+  threadId: ThreadId,
+  updatedAt: IsoDateTime,
+});
+export type TouchProjectionThreadInput = typeof TouchProjectionThreadInput.Type;
+
 export const ListProjectionThreadsByProjectInput = Schema.Struct({
   projectId: ProjectId,
 });
@@ -85,6 +91,11 @@ export interface ProjectionThreadRepositoryShape {
   readonly getById: (
     input: GetProjectionThreadInput,
   ) => Effect.Effect<Option.Option<ProjectionThread>, ProjectionRepositoryError>;
+
+  /** Update only the activity timestamp without rewriting the thread shell. */
+  readonly touchUpdatedAt: (
+    input: TouchProjectionThreadInput,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**
    * List projected threads for a project.

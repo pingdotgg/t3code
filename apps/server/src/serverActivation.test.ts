@@ -21,3 +21,15 @@ it.effect("proves a root is parked before returning and releases it with one gat
     }),
   ),
 );
+
+it.effect("lets an unparked child start before returning", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+
+      yield* forkParked(Deferred.succeed(started, undefined));
+
+      expect(yield* Deferred.isDone(started)).toBe(true);
+    }),
+  ),
+);

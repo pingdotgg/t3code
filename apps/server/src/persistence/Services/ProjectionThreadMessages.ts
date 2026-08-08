@@ -63,6 +63,13 @@ export interface ProjectionThreadMessageRepositoryShape {
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**
+   * Insert a streaming message or atomically append text to its existing row.
+   */
+  readonly appendStreaming: (
+    message: ProjectionThreadMessage,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+
+  /**
    * Read a projected thread message by id.
    */
   readonly getByMessageId: (
