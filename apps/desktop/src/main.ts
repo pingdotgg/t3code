@@ -35,6 +35,7 @@ import * as DesktopApp from "./app/DesktopApp.ts";
 import * as DesktopAppIdentity from "./app/DesktopAppIdentity.ts";
 import * as DesktopConnectionCatalogStore from "./app/DesktopConnectionCatalogStore.ts";
 import * as DesktopClerk from "./app/DesktopClerk.ts";
+import { desktopOpenUrlBuffer } from "./app/DesktopDeepLink.ts";
 import * as DesktopApplicationMenu from "./window/DesktopApplicationMenu.ts";
 import * as DesktopAssets from "./app/DesktopAssets.ts";
 import * as DesktopBackendConfiguration from "./backend/DesktopBackendConfiguration.ts";
@@ -62,6 +63,10 @@ import * as PreviewManager from "./preview/Manager.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
+
+// macOS can deliver a cold-start protocol URL before the Effect runtime and its
+// scoped lifecycle listeners are ready, so capture it synchronously at startup.
+Electron.app.on("open-url", desktopOpenUrlBuffer.handle);
 
 const desktopEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {

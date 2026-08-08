@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as Electron from "electron";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { vi } from "vite-plus/test";
 
 vi.mock("electron", async (importOriginal) => ({
@@ -41,7 +42,11 @@ import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { MENU_ACTION_CHANNEL, WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/channels.ts";
+import {
+  DEEP_LINK_CHANNEL,
+  MENU_ACTION_CHANNEL,
+  WINDOW_FULLSCREEN_STATE_CHANNEL,
+} from "../ipc/channels.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import * as PreviewManager from "../preview/Manager.ts";
@@ -61,6 +66,7 @@ const environmentInput = {
 function makeFakeBrowserWindow() {
   const windowListeners = new Map<string, (...args: readonly unknown[]) => void>();
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
+  const webContentsOnceListeners = new Map<string, (...args: readonly unknown[]) => void>();
   const webContents = {
     copyImageAt: vi.fn(),
     getURL: vi.fn(() => "t3code-dev://app/"),
@@ -68,7 +74,9 @@ function makeFakeBrowserWindow() {
     on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
       webContentsListeners.set(eventName, listener);
     }),
-    once: vi.fn(),
+    once: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
+      webContentsOnceListeners.set(eventName, listener);
+    }),
     openDevTools: vi.fn(),
     reload: vi.fn(),
     replaceMisspelling: vi.fn(),
@@ -113,11 +121,14 @@ function makeFakeBrowserWindow() {
     isMinimized: window.isMinimized,
     loadURL: window.loadURL,
     maximize: window.maximize,
+    isLoadingMainFrame: webContents.isLoadingMainFrame,
     openDevTools: webContents.openDevTools,
     reload: webContents.reload,
     send: webContents.send,
     setAutoHideCursor: window.setAutoHideCursor,
     webContentsListeners,
+    webContentsOnceListeners,
+    webContentsOnce: webContents.once,
     windowListeners,
   };
 }
@@ -1140,6 +1151,78 @@ describe("DesktopWindow", () => {
 
         assert.equal(yield* Ref.get(scenario.createCalls), 3);
         assert.deepEqual(main.send.mock.calls, [[MENU_ACTION_CHANNEL, "open-settings"]]);
+      }).pipe(Effect.provide(scenario.layer));
+    }),
+  );
+
+  it.effect("queues a deep link until the backend and main window are ready", () =>
+    Effect.gen(function* () {
+      const main = makeFakeBrowserWindow();
+      const scenario = yield* makeSplashScenario([main.window]);
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.dispatchDeepLink({
+          type: "thread",
+          environmentId: EnvironmentId.make("environment-1"),
+          threadId: ThreadId.make("thread-1"),
+        });
+
+        assert.equal(main.send.mock.calls.length, 0);
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        assert.deepEqual(main.send.mock.calls, [
+          [
+            DEEP_LINK_CHANNEL,
+            {
+              type: "thread",
+              environmentId: "environment-1",
+              threadId: "thread-1",
+            },
+          ],
+        ]);
+        assert.deepEqual(yield* Ref.get(scenario.revealedWindows), [main.window]);
+      }).pipe(Effect.provide(scenario.layer));
+    }),
+  );
+
+  it.effect("keeps only the latest deep link while the renderer is loading", () =>
+    Effect.gen(function* () {
+      const main = makeFakeBrowserWindow();
+      main.isLoadingMainFrame.mockReturnValue(true);
+      const scenario = yield* makeSplashScenario([main.window]);
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.dispatchDeepLink({
+          type: "thread",
+          environmentId: EnvironmentId.make("environment-1"),
+          threadId: ThreadId.make("thread-1"),
+        });
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        yield* desktopWindow.dispatchDeepLink({
+          type: "thread",
+          environmentId: EnvironmentId.make("environment-1"),
+          threadId: ThreadId.make("thread-2"),
+        });
+
+        assert.equal(main.webContentsOnce.mock.calls.length, 1);
+        assert.equal(main.send.mock.calls.length, 0);
+
+        main.isLoadingMainFrame.mockReturnValue(false);
+        main.webContentsOnceListeners.get("did-finish-load")?.();
+        yield* Effect.promise(() => Promise.resolve());
+
+        assert.deepEqual(main.send.mock.calls, [
+          [
+            DEEP_LINK_CHANNEL,
+            {
+              type: "thread",
+              environmentId: "environment-1",
+              threadId: "thread-2",
+            },
+          ],
+        ]);
       }).pipe(Effect.provide(scenario.layer));
     }),
   );

@@ -8,6 +8,7 @@ import * as Ref from "effect/Ref";
 
 import * as Electron from "electron";
 
+import type { DesktopDeepLinkTarget } from "@t3tools/contracts";
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
@@ -16,7 +17,11 @@ import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { MENU_ACTION_CHANNEL, WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/channels.ts";
+import {
+  DEEP_LINK_CHANNEL,
+  MENU_ACTION_CHANNEL,
+  WINDOW_FULLSCREEN_STATE_CHANNEL,
+} from "../ipc/channels.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 
@@ -88,6 +93,9 @@ export class DesktopWindow extends Context.Service<
     // produce a stranded window pointing at nothing.
     readonly handleBackendNotReady: Effect.Effect<void>;
     readonly flushMainWindowBounds: Effect.Effect<void>;
+    readonly dispatchDeepLink: (
+      target: DesktopDeepLinkTarget,
+    ) => Effect.Effect<void, DesktopWindowError>;
     readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
     // Zooms the main window's own webContents. The Electron `zoomIn`/`zoomOut`
     // menu roles act on whichever webContents has keyboard focus, so with an
@@ -267,6 +275,8 @@ export const make = Effect.gen(function* () {
   // createMainIfBackendReady, which gates the post-readiness window
   // open in development and the macOS "activate without windows" path.
   const backendReadyRef = yield* Ref.make(false);
+  const pendingDeepLinkRef = yield* Ref.make<Option.Option<DesktopDeepLinkTarget>>(Option.none());
+  const deepLinkLoadWaiters = new WeakSet<Electron.BrowserWindow>();
   // The transient "Connecting to WSL" splash window, tracked separately so it
   // is never mistaken for the real main window.
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
@@ -785,6 +795,31 @@ export const make = Effect.gen(function* () {
     Effect.withSpan("desktop.window.showConnectingSplash"),
   );
 
+  const flushPendingDeepLink = Effect.gen(function* () {
+    if (Option.isNone(yield* Ref.get(pendingDeepLinkRef))) return;
+
+    const existingWindow = yield* currentMainWindow;
+    if (Option.isNone(existingWindow) && !(yield* Ref.get(backendReadyRef))) return;
+    const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* ensureMain;
+    if (targetWindow.isDestroyed()) return;
+
+    if (targetWindow.webContents.isLoadingMainFrame()) {
+      if (!deepLinkLoadWaiters.has(targetWindow)) {
+        deepLinkLoadWaiters.add(targetWindow);
+        targetWindow.webContents.once("did-finish-load", () => {
+          deepLinkLoadWaiters.delete(targetWindow);
+          void runPromise(flushPendingDeepLink);
+        });
+      }
+      return;
+    }
+
+    const pending = yield* Ref.getAndSet(pendingDeepLinkRef, Option.none());
+    if (Option.isNone(pending)) return;
+    targetWindow.webContents.send(DEEP_LINK_CHANNEL, pending.value);
+    yield* electronWindow.reveal(targetWindow);
+  }).pipe(Effect.withSpan("desktop.window.flushPendingDeepLink"));
+
   return DesktopWindow.of({
     createMain,
     ensureMain,
@@ -809,6 +844,7 @@ export const make = Effect.gen(function* () {
         }
       }
       yield* createMainIfBackendReady;
+      yield* flushPendingDeepLink;
     }).pipe(Effect.withSpan("desktop.window.activate")),
     createMainIfBackendReady,
     showConnectingSplash,
@@ -816,6 +852,7 @@ export const make = Effect.gen(function* () {
       yield* Ref.set(backendReadyRef, true);
       yield* logWindowInfo("backend ready", { source: "http", url: httpBaseUrl.href });
       yield* createMainIfBackendReady;
+      yield* flushPendingDeepLink;
     }),
     handleBackendNotReady: Ref.set(backendReadyRef, false).pipe(
       Effect.withSpan("desktop.window.handleBackendNotReady"),
@@ -823,6 +860,15 @@ export const make = Effect.gen(function* () {
     flushMainWindowBounds: Effect.suspend(() => flushMainWindowBounds).pipe(
       Effect.withSpan("desktop.window.flushMainWindowBounds"),
     ),
+    dispatchDeepLink: Effect.fn("desktop.window.dispatchDeepLink")(function* (target) {
+      yield* Effect.annotateCurrentSpan({
+        type: target.type,
+        environmentId: target.environmentId,
+        threadId: target.threadId,
+      });
+      yield* Ref.set(pendingDeepLinkRef, Option.some(target));
+      yield* flushPendingDeepLink;
+    }),
     dispatchMenuAction: Effect.fn("desktop.window.dispatchMenuAction")(function* (action) {
       yield* Effect.annotateCurrentSpan({ action });
       const existingWindow = yield* focusedMainWindow;
