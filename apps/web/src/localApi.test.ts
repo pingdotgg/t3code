@@ -13,8 +13,14 @@ const showContextMenuFallbackMock =
     ) => Promise<T | null>
   >();
 
+const requestConfirmDialogMock = vi.fn<(message: string) => Promise<boolean> | undefined>();
+
 vi.mock("./contextMenuFallback", () => ({
   showContextMenuFallback: showContextMenuFallbackMock,
+}));
+
+vi.mock("./confirmDialog", () => ({
+  requestConfirmDialog: requestConfirmDialogMock,
 }));
 
 function createLocalStorageStub(): Storage {
@@ -77,6 +83,21 @@ describe("LocalApi", () => {
     expect(showContextMenuFallbackMock).toHaveBeenCalledWith(items, { x: 4, y: 5 });
   });
 
+  it("uses the themed confirmation host when it is available", async () => {
+    requestConfirmDialogMock.mockResolvedValue(true);
+    const { createLocalApi } = await import("./localApi");
+
+    await expect(createLocalApi().dialogs.confirm("Delete this thread?")).resolves.toBe(true);
+    expect(requestConfirmDialogMock).toHaveBeenCalledWith("Delete this thread?");
+  });
+
+  it("fails closed in a browser when no themed host is available", async () => {
+    requestConfirmDialogMock.mockReturnValue(undefined);
+    const { createLocalApi } = await import("./localApi");
+
+    await expect(createLocalApi().dialogs.confirm("Delete this thread?")).resolves.toBe(false);
+  });
+
   it("delegates host capabilities and persistence to the desktop bridge", async () => {
     const showContextMenu = vi.fn().mockResolvedValue("delete");
     const pickFolder = vi.fn().mockResolvedValue("/tmp/project");
@@ -94,6 +115,8 @@ describe("LocalApi", () => {
     const items = [{ id: "delete", label: "Delete" }] as const;
 
     await expect(api.contextMenu.show(items)).resolves.toBe("delete");
+    requestConfirmDialogMock.mockReturnValue(undefined);
+    await expect(api.dialogs.confirm("Install update?")).resolves.toBe(false);
     await expect(api.dialogs.pickFolder({ initialPath: "/tmp" })).resolves.toBe("/tmp/project");
     await expect(api.persistence.getClientSettings()).resolves.toEqual(DEFAULT_CLIENT_SETTINGS);
     await api.persistence.setClientSettings(DEFAULT_CLIENT_SETTINGS);
