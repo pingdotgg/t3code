@@ -1,0 +1,12 @@
+[data-chat-provider-model-picker],
+[data-chat-provider-model-picker]:focus,
+[data-chat-provider-model-picker]:focus-visible,
+[data-chat-provider-model-picker][data-focus-visible],
+[data-chat-provider-model-picker][data-pressed] {
+  --tw-ring-color: transparent !important;
+  --tw-ring-offset-shadow: 0 0 #0000 !important;
+  --tw-ring-shadow: 0 0 #0000 !important;
+  border-color: transparent !important;
+  outline: none !important;
+  box-shadow: none !important;
+}

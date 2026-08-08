@@ -1,20 +1,89 @@
 ---
+import devAppIcon from "../assets/t3-dev-384.webp?url";
+import nightlyAppIcon from "../assets/t3-nightly-384.webp?url";
+import stableAppIcon from "../assets/t3-latest-384.webp?url";
 import Layout from "../layouts/Layout.astro";
 import { RELEASES_URL } from "../lib/releases";
-import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "../lib/site";
+import {
+  GITHUB_REPOSITORY_URL,
+  GOOGLE_PLAY_STORE_URL,
+  IOS_APP_STORE_URL,
+} from "../lib/site";
 ---
 
-<Layout title="Download — T3 Code" description="Download T3 Code for macOS, Windows, or Linux.">
+<Layout
+  title="Download — T3 Code"
+  description="Download T3 Code for iPhone, iPad, Android, macOS, Windows, or Linux."
+  pageClass="marketing-downloads"
+  favicon={stableAppIcon}
+>
   <div class="download-page">
-  <h1 class="heading">Download T3 Code</h1>
-  <p class="subheading">
-    <span id="version-label">Loading latest release&hellip;</span>
-    <a id="changelog-link" class="changelog-link" href="#" target="_blank" rel="noopener noreferrer" style="display:none">View changelog<span aria-hidden="true"> &#8599;</span></a>
-  </p>
+  <section id="download-channel-hero" class="download-channel-hero" data-stage="latest">
+    <div class="download-channel-art" aria-hidden="true">
+      <span class="download-stage-art download-stage-art--latest"></span>
+      <span class="download-stage-art download-stage-art--nightly"></span>
+      <span class="download-stage-art download-stage-art--dev"></span>
+    </div>
+    <div class="download-channel-inner">
+      <div class="download-app-icon" aria-hidden="true">
+        <img class="download-app-icon--latest" src={stableAppIcon} alt="" />
+        <img class="download-app-icon--nightly" src={nightlyAppIcon} alt="" />
+        <img class="download-app-icon--dev" src={devAppIcon} alt="" />
+      </div>
+      <h1 class="heading">Download T3 Code</h1>
+      <div class="download-stage-picker" aria-label="Desktop release channel">
+        <button type="button" data-download-stage="latest" aria-pressed="true">
+          <span>Latest</span>
+        </button>
+        <button type="button" data-download-stage="nightly" aria-pressed="false">
+          <span>Nightly</span>
+        </button>
+        <button type="button" data-download-stage="dev" aria-pressed="false">
+          <span>Dev</span>
+        </button>
+      </div>
+    </div>
+  </section>
 
   <div class="platforms" id="platforms">
+    <section class="platform-section dev-source" id="dev-source" data-platform="source" hidden>
+      <div class="platform-header">
+        <svg
+          class="platform-icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="m8 9-4 3 4 3"></path>
+          <path d="m16 9 4 3-4 3"></path>
+          <path d="m14 5-4 14"></path>
+        </svg>
+        <h2 class="platform-name">Build from source</h2>
+      </div>
+      <div class="source-card">
+        <div class="source-copy">
+          <p>Dev doesn't publish binaries.</p>
+        </div>
+        <div class="source-command-row">
+          <div class="source-code">
+            <code>git clone https://github.com/pingdotgg/t3code.git</code>
+            <button type="button" id="copy-clone-command" aria-label="Copy clone command"
+              >Copy</button
+            >
+          </div>
+          <a class="source-github" href={GITHUB_REPOSITORY_URL} target="_blank" rel="noopener noreferrer"
+            >Open GitHub <span aria-hidden="true">&#8599;</span></a
+          >
+        </div>
+      </div>
+    </section>
+
     <!-- macOS -->
-    <section class="platform-section">
+    <section class="platform-section" data-desktop-platform data-platform="macos">
       <div class="platform-header">
         <svg class="platform-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 814 1000" aria-hidden="true"><path fill="currentColor" d="M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76.5 0-103.7 40.8-165.9 40.8s-105.6-57-155.5-127C46.7 790.7 0 663 0 541.8c0-194.4 126.4-297.5 250.8-297.5 66.1 0 121.2 43.4 162.7 43.4 39.5 0 101.1-46 176.3-46 28.5 0 130.9 2.6 198.3 99.2zm-234-181.5c31.1-36.9 53.1-88.1 53.1-139.3 0-7.1-.6-14.3-1.9-20.1-50.6 1.9-110.8 33.7-147.1 75.8-28.5 32.4-55.1 83.6-55.1 135.5 0 7.8 1.3 15.6 1.9 18.1 3.2.6 8.4 1.3 13.6 1.3 45.4 0 102.5-30.4 135.5-71.3z"/></svg>
         <h2 class="platform-name">macOS</h2>
@@ -32,7 +101,7 @@ import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "../lib/site";
     </section>
 
     <!-- Windows -->
-    <section class="platform-section">
+    <section class="platform-section" data-desktop-platform data-platform="windows">
       <div class="platform-header">
         <svg class="platform-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 88 88" aria-hidden="true"><path fill="currentColor" d="m0 12.402 35.687-4.86.016 34.423-35.67.203zm35.67 33.529.028 34.453L.028 75.48.026 45.7zm4.326-39.025L87.314 0v41.527l-47.318.376zm47.329 39.349-.011 41.34-47.318-6.678-.066-34.739z"/></svg>
         <h2 class="platform-name">Windows</h2>
@@ -46,7 +115,7 @@ import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "../lib/site";
     </section>
 
     <!-- Linux -->
-    <section class="platform-section">
+    <section class="platform-section" data-desktop-platform data-platform="linux">
       <div class="platform-header">
         <svg class="platform-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139zm.529 3.405h.013c.213 0 .396.062.584.198.19.135.33.332.438.533.105.259.158.459.166.724 0-.02.006-.04.006-.06v.105a.086.086 0 01-.004-.021l-.004-.024a1.807 1.807 0 01-.15.706.953.953 0 01-.213.335.71.71 0 00-.088-.042c-.104-.045-.198-.064-.284-.133a1.312 1.312 0 00-.22-.066c.05-.06.146-.133.183-.198.053-.128.082-.264.088-.402v-.02a1.21 1.21 0 00-.061-.4c-.045-.134-.101-.2-.183-.333-.084-.066-.167-.132-.267-.132h-.016c-.093 0-.176.03-.262.132a.8.8 0 00-.205.334 1.18 1.18 0 00-.09.4v.019c.002.089.008.179.02.267-.193-.067-.438-.135-.607-.202a1.635 1.635 0 01-.018-.2v-.02a1.772 1.772 0 01.15-.768c.082-.22.232-.406.43-.533a.985.985 0 01.594-.2zm-2.962.059h.036c.142 0 .27.048.399.135.146.129.264.288.344.465.09.199.14.4.153.667v.004c.007.134.006.2-.002.266v.08c-.03.007-.056.018-.083.024-.152.055-.274.135-.393.2.012-.09.013-.18.003-.267v-.015c-.012-.133-.04-.2-.082-.333a.613.613 0 00-.166-.267.248.248 0 00-.183-.064h-.021c-.071.006-.13.04-.186.132a.552.552 0 00-.12.27.944.944 0 00-.023.33v.015c.012.135.037.2.08.334.046.134.098.2.166.268.01.009.02.018.034.024-.07.057-.117.07-.176.136a.304.304 0 01-.131.068 2.62 2.62 0 01-.275-.402 1.772 1.772 0 01-.155-.667 1.759 1.759 0 01.08-.668 1.43 1.43 0 01.283-.535c.128-.133.26-.2.418-.2zm1.37 1.706c.332 0 .733.065 1.216.399.293.2.523.269 1.052.468h.003c.255.136.405.266.478.399v-.131a.571.571 0 01.016.47c-.123.31-.516.643-1.063.842v.002c-.268.135-.501.333-.775.465-.276.135-.588.292-1.012.267a1.139 1.139 0 01-.448-.067 3.566 3.566 0 01-.322-.198c-.195-.135-.363-.332-.612-.465v-.005h-.005c-.4-.246-.616-.512-.686-.71-.07-.268-.005-.47.193-.6.224-.135.38-.271.483-.336.104-.074.143-.102.176-.131h.002v-.003c.169-.202.436-.47.839-.601.139-.036.294-.065.466-.065zm2.8 2.142c.358 1.417 1.196 3.475 1.735 4.473.286.534.855 1.659 1.102 3.024.156-.005.33.018.513.064.646-1.671-.546-3.467-1.089-3.966-.22-.2-.232-.335-.123-.335.59.534 1.365 1.572 1.646 2.757.13.535.16 1.104.021 1.67.067.028.135.06.205.067 1.032.534 1.413.938 1.23 1.537v-.043c-.06-.003-.12 0-.18 0h-.016c.151-.467-.182-.825-1.065-1.224-.915-.4-1.646-.336-1.77.465-.008.043-.013.066-.018.135-.068.023-.139.053-.209.064-.43.268-.662.669-.793 1.187-.13.533-.17 1.156-.205 1.869v.003c-.02.334-.17.838-.319 1.35-1.5 1.072-3.58 1.538-5.348.334a2.645 2.645 0 00-.402-.533 1.45 1.45 0 00-.275-.333c.182 0 .338-.03.465-.067a.615.615 0 00.314-.334c.108-.267 0-.697-.345-1.163-.345-.467-.931-.995-1.788-1.521-.63-.4-.986-.87-1.15-1.396-.165-.534-.143-1.085-.015-1.645.245-1.07.873-2.11 1.274-2.763.107-.065.037.135-.408.974-.396.751-1.14 2.497-.122 3.854a8.123 8.123 0 01.647-2.876c.564-1.278 1.743-3.504 1.836-5.268.048.036.217.135.289.202.218.133.38.333.59.465.21.201.477.335.876.335.039.003.075.006.11.006.412 0 .73-.134.997-.268.29-.134.52-.334.74-.4h.005c.467-.135.835-.402 1.044-.7zm2.185 8.958c.037.6.343 1.245.882 1.377.588.134 1.434-.333 1.791-.765l.211-.01c.315-.007.577.01.847.268l.003.003c.208.199.305.53.391.876.085.4.154.78.409 1.066.486.527.645.906.636 1.14l.003-.007v.018l-.003-.012c-.015.262-.185.396-.498.595-.63.401-1.746.712-2.457 1.57-.618.737-1.37 1.14-2.036 1.191-.664.053-1.237-.2-1.574-.898l-.005-.003c-.21-.4-.12-1.025.056-1.69.176-.668.428-1.344.463-1.897.037-.714.076-1.335.195-1.814.12-.465.308-.797.641-.984l.045-.022zm-10.814.049h.01c.053 0 .105.005.157.014.376.055.706.333 1.023.752l.91 1.664.003.003c.243.533.754 1.064 1.189 1.637.434.598.77 1.131.729 1.57v.006c-.057.744-.48 1.148-1.125 1.294-.645.135-1.52.002-2.395-.464-.968-.536-2.118-.469-2.857-.602-.369-.066-.61-.2-.723-.4-.11-.2-.113-.602.123-1.23v-.004l.002-.003c.117-.334.03-.752-.027-1.118-.055-.401-.083-.71.043-.94.16-.334.396-.4.69-.533.294-.135.64-.202.915-.47h.002v-.002c.256-.268.445-.601.668-.838.19-.201.38-.336.663-.336zm7.159-9.074c-.435.201-.945.535-1.488.535-.542 0-.97-.267-1.28-.466-.154-.134-.28-.268-.373-.335-.164-.134-.144-.333-.074-.333.109.016.129.134.199.2.096.066.215.2.36.333.292.2.68.467 1.167.467.485 0 1.053-.267 1.398-.466.195-.135.445-.334.648-.467.156-.136.149-.267.279-.267.128.016.034.134-.147.332a8.097 8.097 0 01-.69.468zm-1.082-1.583V5.64c-.006-.02.013-.042.029-.05.074-.043.18-.027.26.004.063 0 .16.067.15.135-.006.049-.085.066-.135.066-.055 0-.092-.043-.141-.068-.052-.018-.146-.008-.163-.065zm-.551 0c-.02.058-.113.049-.166.066-.047.025-.086.068-.14.068-.05 0-.13-.02-.136-.068-.01-.066.088-.133.15-.133.08-.031.184-.047.259-.005.019.009.036.03.03.05v.02h.003z"/></svg>
         <h2 class="platform-name">Linux</h2>
@@ -60,85 +129,321 @@ import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "../lib/site";
     </section>
 
     <!-- Mobile -->
-    <section class="platform-section">
+    <section class="platform-section" data-mobile-platform data-platform="mobile">
       <div class="platform-header">
-        <svg class="platform-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18.5h2"/></svg>
+        <svg
+          class="platform-icon"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <rect width="14" height="20" x="5" y="2" rx="2"></rect>
+          <path d="M12 18h.01"></path>
+        </svg>
         <h2 class="platform-name">Mobile</h2>
       </div>
       <div class="download-cards">
-        <a class="download-card" href={IOS_APP_STORE_URL} target="_blank" rel="noopener noreferrer">
-          <span class="card-arch">iPhone &amp; iPad</span>
-          <span class="card-format">App Store</span>
+        <a
+          class="download-card"
+          href={IOS_APP_STORE_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <span class="card-arch">iPhone and iPad</span>
+          <span class="card-format">App Store <span aria-hidden="true">&#8599;</span></span>
         </a>
-        <a class="download-card" href={ANDROID_PLAY_STORE_URL} target="_blank" rel="noopener noreferrer">
-          <span class="card-arch">Android</span>
-          <span class="card-format">Google Play</span>
+        <a
+          class="download-card"
+          href={GOOGLE_PLAY_STORE_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <span class="card-arch">Android phones and tablets</span>
+          <span class="card-format">Google Play <span aria-hidden="true">&#8599;</span></span>
         </a>
       </div>
     </section>
   </div>
 
   <p class="releases-link">
-    Looking for older versions? Check the{" "}
-    <a href="https://github.com/pingdotgg/t3code/releases" target="_blank" rel="noopener noreferrer">
+    Looking for another build? Check the{" "}
+    <a id="releases-link" href={RELEASES_URL} target="_blank" rel="noopener noreferrer">
       GitHub releases page<span aria-hidden="true"> &#8599;</span>
     </a>
   </p>
+
   </div>
 </Layout>
 
 <script>
-  import { fetchLatestRelease, RELEASES_URL } from "../lib/releases";
+  import {
+    fetchLatestRelease,
+    fetchNightlyRelease,
+    findReleaseAssetUrl,
+    NIGHTLY_RELEASES_URL,
+    RELEASES_URL,
+    type Release,
+    type ReleasePlatform,
+  } from "../lib/releases";
+  import { GITHUB_REPOSITORY_URL } from "../lib/site";
 
-  async function init() {
-    const versionLabel = document.getElementById("version-label");
-    // Only release-asset cards; mobile store cards have no data-asset and keep their href.
-    const cards = document.querySelectorAll<HTMLAnchorElement>(".download-card[data-asset]");
+  type Stage = "latest" | "nightly" | "dev";
 
-    try {
-      const release = await fetchLatestRelease();
+  function isStage(value: unknown): value is Stage {
+    return value === "latest" || value === "nightly" || value === "dev";
+  }
 
-      if (versionLabel && release.tag_name) {
-        versionLabel.textContent = `Latest (${release.tag_name})`;
-      }
+  const versionLabel = document.getElementById("version-label");
+  const changelogLink = document.getElementById("changelog-link") as HTMLAnchorElement | null;
+  const releasesLink = document.getElementById("releases-link") as HTMLAnchorElement | null;
+  const devSource = document.getElementById("dev-source");
+  const desktopSections = document.querySelectorAll<HTMLElement>("[data-desktop-platform]");
+  const mobileSection = document.querySelector<HTMLElement>("[data-mobile-platform]");
+  const desktopCards =
+    document.querySelectorAll<HTMLAnchorElement>(".download-card[data-asset]");
+  let releaseRequest = 0;
 
-      const changelogLink = document.getElementById("changelog-link") as HTMLAnchorElement | null;
-      if (changelogLink && release.html_url) {
-        changelogLink.href = release.html_url;
-        changelogLink.style.display = "";
-      }
+  function platformForAsset(suffix: string): ReleasePlatform | null {
+    if (suffix === "arm64.dmg") return { os: "mac", arch: "arm64" };
+    if (suffix === "x64.dmg") return { os: "mac", arch: "x64" };
+    if (suffix === "x64.exe") return { os: "win", arch: "x64" };
+    if (suffix === "x86_64.AppImage") return { os: "linux", arch: "x64" };
+    return null;
+  }
 
-      cards.forEach((card) => {
-        const suffix = card.dataset.asset;
-        if (!suffix) return;
+  function setDesktopCards(release: Release | null, fallbackUrl: string) {
+    desktopCards.forEach((card) => {
+      const suffix = card.dataset.asset;
+      const platform = suffix ? platformForAsset(suffix) : null;
+      card.href =
+        release && platform
+          ? findReleaseAssetUrl(release.assets, platform) ?? fallbackUrl
+          : fallbackUrl;
+    });
+  }
 
-        const match = (release.assets ?? []).find((a) => a.name.endsWith(`-${suffix}`));
-        if (match) {
-          card.href = match.browser_download_url;
-        } else {
-          card.href = RELEASES_URL;
-        }
-      });
-    } catch {
-      if (versionLabel) {
-        versionLabel.textContent = "Could not load release info.";
-      }
-      cards.forEach((card) => {
-        card.href = RELEASES_URL;
-      });
+  function updateStageControls(stage: Stage) {
+    for (const button of document.querySelectorAll<HTMLButtonElement>("[data-download-stage]")) {
+      button.setAttribute("aria-pressed", String(button.dataset.downloadStage === stage));
     }
   }
 
-  init();
+  async function applyStage(stage: Stage) {
+    const request = ++releaseRequest;
+    const channelHero = document.getElementById("download-channel-hero");
+    if (channelHero) channelHero.dataset.stage = stage;
+    updateStageControls(stage);
+    const isDev = stage === "dev";
+    devSource?.toggleAttribute("hidden", !isDev);
+    desktopSections.forEach((section) => section.toggleAttribute("hidden", isDev));
+    mobileSection?.toggleAttribute("hidden", isDev);
+
+    if (isDev) {
+      if (versionLabel) versionLabel.textContent = "Dev tracks the current source on GitHub.";
+      if (changelogLink) changelogLink.style.display = "none";
+      if (releasesLink) releasesLink.href = GITHUB_REPOSITORY_URL;
+      return;
+    }
+
+    const isNightly = stage === "nightly";
+    const fallbackUrl = isNightly ? NIGHTLY_RELEASES_URL : RELEASES_URL;
+    if (versionLabel) {
+      versionLabel.textContent = `Loading ${isNightly ? "nightly" : "latest"} desktop release…`;
+    }
+    if (changelogLink) changelogLink.style.display = "none";
+    if (releasesLink) releasesLink.href = fallbackUrl;
+    setDesktopCards(null, fallbackUrl);
+
+    try {
+      const release = await (isNightly ? fetchNightlyRelease() : fetchLatestRelease());
+      if (request !== releaseRequest) return;
+
+      if (versionLabel) {
+        versionLabel.textContent = `${isNightly ? "Nightly" : "Latest"} desktop release (${release.tag_name})`;
+      }
+      if (changelogLink) {
+        changelogLink.href = release.html_url;
+        changelogLink.style.display = "";
+      }
+      setDesktopCards(release, fallbackUrl);
+    } catch {
+      if (request !== releaseRequest) return;
+      if (versionLabel) {
+        versionLabel.textContent = `Could not load the ${isNightly ? "nightly" : "latest"} release.`;
+      }
+      setDesktopCards(null, fallbackUrl);
+    }
+  }
+
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-download-stage]")) {
+    button.addEventListener("click", () => {
+      const stage = button.dataset.downloadStage;
+      if (!isStage(stage)) return;
+      document.dispatchEvent(
+        new CustomEvent("t3-marketing-stage-request", { detail: { stage } }),
+      );
+    });
+  }
+
+  document.addEventListener("t3-marketing-stage-change", (event) => {
+    const stage = (event as CustomEvent<{ stage?: unknown }>).detail?.stage;
+    if (isStage(stage)) void applyStage(stage);
+  });
+
+  const copyButton = document.getElementById("copy-clone-command");
+  copyButton?.addEventListener("click", () => {
+    void navigator.clipboard
+      .writeText(`git clone ${GITHUB_REPOSITORY_URL}.git`)
+      .then(() => {
+        copyButton.textContent = "Copied";
+        window.setTimeout(() => {
+          copyButton.textContent = "Copy";
+        }, 1600);
+      })
+      .catch(() => {
+        copyButton.textContent = "Copy failed";
+      });
+  });
+
+  const initialStage = document.documentElement.dataset.stage;
+  void applyStage(isStage(initialStage) ? initialStage : "latest");
 </script>
 
 <style>
   .download-page {
+    --download-surface: rgba(8, 8, 10, 0.9);
+    --download-surface-hover: rgba(13, 13, 16, 0.95);
+    --download-surface-border: rgba(255, 255, 255, 0.12);
     flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 8vh 1.5rem 4rem;
+    min-height: 100vh;
+    padding: 0 1.5rem 4rem;
+  }
+
+  :global(html[data-stage="nightly"]) .download-page {
+    --download-surface: rgba(12, 10, 24, 0.88);
+    --download-surface-hover: rgba(18, 15, 34, 0.95);
+    --download-surface-border: rgba(180, 167, 255, 0.2);
+  }
+
+  :global(html[data-stage="dev"]) .download-page {
+    --download-surface: rgba(6, 19, 42, 0.88);
+    --download-surface-hover: rgba(8, 26, 56, 0.95);
+    --download-surface-border: rgba(177, 215, 255, 0.24);
+  }
+
+  .download-channel-hero {
+    --channel-fade-duration: 700ms;
+    position: relative;
+    display: grid;
+    width: calc(100% + 3rem);
+    min-height: 100svh;
+    overflow: hidden;
+    place-items: center;
+    margin-bottom: 0;
+    background: #050506;
+    isolation: isolate;
+  }
+
+  .download-channel-hero::before {
+    position: absolute;
+    z-index: 2;
+    content: "";
+    pointer-events: none;
+  }
+
+  .download-channel-hero::before {
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 34%;
+    background: linear-gradient(to bottom, transparent, rgba(0, 0, 0, 0.62) 56%, #000 100%);
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 62%);
+    mask-image: linear-gradient(to bottom, transparent, #000 62%);
+  }
+
+  .download-channel-art,
+  .download-stage-art {
+    position: absolute;
+    inset: 0;
+  }
+
+  .download-channel-art {
+    z-index: 0;
+  }
+
+  .download-stage-art {
+    opacity: 0;
+    transition: opacity var(--channel-fade-duration) ease;
+  }
+
+  .download-channel-hero[data-stage="latest"] .download-stage-art--latest,
+  .download-channel-hero[data-stage="nightly"] .download-stage-art--nightly,
+  .download-channel-hero[data-stage="dev"] .download-stage-art--dev {
+    opacity: 1;
+  }
+
+  .download-stage-art--latest {
+    background: #050506;
+  }
+
+  .download-stage-art--nightly {
+    background:
+      url("/nightly-stars.svg") center / cover,
+      url("/nightly-clouds-foreground.webp") center bottom / max(130%, 1600px) auto no-repeat,
+      url("/nightly-clouds.webp") center / cover no-repeat,
+      #101329;
+  }
+
+  .download-stage-art--dev {
+    background-color: #173d82;
+    background-image:
+      linear-gradient(rgba(199, 225, 255, 0.12) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(199, 225, 255, 0.12) 1px, transparent 1px);
+    background-size: 32px 32px, 32px 32px;
+  }
+
+  .download-channel-inner {
+    position: relative;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    flex-direction: column;
+    padding: 56px 28px;
+    text-align: center;
+    transform: translateY(-22vh);
+  }
+
+  .download-app-icon {
+    position: relative;
+    width: clamp(82px, 8vw, 112px);
+    aspect-ratio: 1;
+    margin-bottom: 20px;
+  }
+
+  .download-app-icon img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    opacity: 0;
+    transition: opacity var(--channel-fade-duration) ease;
+  }
+
+  .download-channel-hero[data-stage="latest"] .download-app-icon--latest,
+  .download-channel-hero[data-stage="nightly"] .download-app-icon--nightly,
+  .download-channel-hero[data-stage="dev"] .download-app-icon--dev {
+    opacity: 1;
   }
 
   /* ── Heading ── */
@@ -149,17 +454,69 @@ import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "../lib/site";
     letter-spacing: -0.035em;
     line-height: 1.15;
     text-align: center;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0;
     opacity: 0;
     animation: fade-in 1s ease-out forwards;
   }
 
-  .subheading {
-    font-size: 0.9rem;
-    color: var(--fg-dim);
-    margin-bottom: 3.5rem;
+  .download-stage-picker {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 28px;
+    margin: 2rem 0 1.3rem;
     opacity: 0;
     animation: fade-in 1s ease-out 0.1s forwards;
+  }
+
+  .download-stage-picker button {
+    position: relative;
+    padding: 5px 1px 9px;
+    color: rgba(255, 255, 255, 0.62);
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1;
+    transition:
+      color 0.18s ease,
+      opacity 0.18s ease;
+  }
+
+  .download-stage-picker button::after {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 1px;
+    border-radius: 999px;
+    background: currentColor;
+    content: "";
+    opacity: 0;
+    transform: scaleX(0.4);
+    transition:
+      opacity 0.22s ease,
+      transform 0.22s ease;
+  }
+
+  .download-stage-picker button:hover {
+    color: var(--fg-muted);
+  }
+
+  .download-stage-picker button[aria-pressed="true"] {
+    color: var(--fg);
+  }
+
+  .download-stage-picker button[aria-pressed="true"]::after {
+    opacity: 0.8;
+    transform: scaleX(1);
+  }
+
+  .subheading {
+    font-size: 0.875rem;
+    color: rgba(255, 255, 255, 0.68);
+    min-height: 1.35rem;
+    margin-bottom: 2.25rem;
+    opacity: 0;
+    animation: fade-in 1s ease-out 0.15s forwards;
     display: flex;
     align-items: center;
     gap: 0.75rem;
@@ -167,108 +524,258 @@ import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "../lib/site";
 
   .changelog-link {
     color: var(--fg-muted);
-    font-size: 0.8rem;
-    text-decoration: underline;
-    text-decoration-color: rgba(161, 161, 170, 0.4);
-    text-underline-offset: 3px;
-    transition: color 0.3s ease, text-decoration-color 0.3s ease;
+    font-size: 0.875rem;
+    text-decoration: none;
+    transition: color 0.2s ease;
   }
 
   .changelog-link:hover {
     color: var(--fg);
-    text-decoration-color: var(--fg);
+    text-decoration: none;
   }
 
   /* ── Platforms ── */
 
   .platforms {
+    position: relative;
+    z-index: 4;
     width: 100%;
-    max-width: 720px;
-    display: flex;
-    flex-direction: column;
-    gap: 2.5rem;
+    max-width: 820px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 22px 20px;
+    margin-top: -60svh;
     opacity: 0;
     animation: fade-in 1s ease-out 0.2s forwards;
   }
 
   .platform-section {
+    --platform-hover: var(--fg);
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 12px;
+    min-width: 0;
+    padding: 0.5rem 0;
+  }
+
+  [data-platform="source"],
+  [data-platform="macos"],
+  [data-platform="mobile"] {
+    grid-column: 1 / -1;
+  }
+
+  [data-platform="macos"] {
+    --platform-hover: #f5f5f7;
+  }
+
+  [data-platform="windows"] {
+    --platform-hover: #00a4ef;
+  }
+
+  [data-platform="linux"] {
+    --platform-hover: #f5f5f7;
+  }
+
+  .platform-section[hidden] {
+    display: none;
   }
 
   .platform-header {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid var(--border);
+    gap: 0.75rem;
+    padding: 0 0.15rem;
+    color: var(--fg);
+    transition: color 0.18s ease;
   }
 
   .platform-icon {
-    width: 1.15em;
-    height: 1.15em;
-    color: var(--fg-muted);
+    width: 1.25rem;
+    height: 1.25rem;
+    color: rgba(255, 255, 255, 0.68);
     flex-shrink: 0;
+    transition: color 0.18s ease;
   }
 
   .platform-name {
     font-weight: 500;
-    font-size: 1.1rem;
+    font-size: 1rem;
     letter-spacing: -0.01em;
+    transition: color 0.18s ease;
+  }
+
+  .platform-section:is([data-platform="macos"], [data-platform="windows"], [data-platform="linux"]):hover
+    .platform-icon,
+  .platform-section:is(
+      [data-platform="macos"],
+      [data-platform="windows"],
+      [data-platform="linux"]
+    ):focus-within
+    .platform-icon {
+    color: var(--platform-hover);
   }
 
   /* ── Download cards ── */
 
   .download-cards {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 0.5rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  [data-platform="windows"] .download-cards,
+  [data-platform="linux"] .download-cards {
+    grid-template-columns: 1fr;
   }
 
   .download-card {
     display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-    padding: 0.85rem 1rem;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-width: 0;
+    min-height: 52px;
+    padding: 0.75rem 0.875rem;
+    border: 1px solid var(--download-surface-border);
     border-radius: 10px;
-    border: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.02);
-    transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+    background: var(--download-surface);
+    color: rgba(255, 255, 255, 0.92);
+    -webkit-backdrop-filter: blur(42px) saturate(0.8);
+    backdrop-filter: blur(42px) saturate(0.8);
+    transition:
+      border-color 0.18s ease,
+      background 0.18s ease,
+      color 0.18s ease;
   }
 
   .download-card:hover {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.15);
-    transform: translateY(-1px);
+    border-color: rgba(255, 255, 255, 0.16);
+    background: var(--download-surface-hover);
+    color: var(--fg);
   }
 
-  .download-card:active {
-    transform: translateY(0);
+  .download-card:hover .card-format {
+    color: var(--fg-muted);
   }
 
   .card-arch {
-    font-weight: 600;
-    font-size: 0.95rem;
+    min-width: 0;
+    font-weight: 500;
+    font-size: 0.875rem;
+    line-height: 1.25;
   }
 
   .card-format {
-    font-size: 0.8rem;
-    color: var(--fg-dim);
+    flex: 0 0 auto;
+    font-size: 0.8125rem;
+    color: rgba(255, 255, 255, 0.58);
+    white-space: nowrap;
+  }
+
+  .source-card {
+    display: grid;
+    gap: 16px;
+    padding: 0.875rem;
+    border-radius: 10px;
+    border: 1px solid var(--download-surface-border);
+    background: var(--download-surface);
+    -webkit-backdrop-filter: blur(42px) saturate(0.8);
+    backdrop-filter: blur(42px) saturate(0.8);
+  }
+
+  .source-copy {
+    display: grid;
+    gap: 5px;
+  }
+
+  .source-card p {
+    max-width: 520px;
+    color: rgba(255, 255, 255, 0.76);
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+
+  .source-command-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .source-code {
+    position: relative;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .source-card code {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    padding: 9px 60px 9px 11px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.24);
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    line-height: 1.35;
+    white-space: nowrap;
+  }
+
+  .source-code button {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    padding: 5px 8px;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--fg-muted);
+    font-size: 0.75rem;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-50%);
+    transition:
+      background 0.18s ease,
+      color 0.18s ease,
+      opacity 0.18s ease;
+  }
+
+  .source-code:hover button,
+  .source-code:focus-within button {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .source-code button:hover {
+    background: rgba(255, 255, 255, 0.13);
+    color: var(--fg);
+  }
+
+  .source-github {
+    flex: 0 0 auto;
+    padding: 7px 0;
+    color: var(--fg-muted);
+    font-size: 0.875rem;
+    transition: color 0.18s ease;
+  }
+
+  .source-github:hover {
+    color: var(--fg);
   }
 
   /* ── Releases link ── */
 
   .releases-link {
     margin-top: 3rem;
-    font-size: 0.825rem;
-    color: var(--fg-dim);
+    font-size: 0.875rem;
+    color: rgba(255, 255, 255, 0.68);
     opacity: 0;
     animation: fade-in 1s ease-out 0.35s forwards;
   }
 
   .releases-link a {
-    color: var(--fg-muted);
+    color: rgba(255, 255, 255, 0.84);
     text-decoration: underline;
     text-decoration-color: rgba(161, 161, 170, 0.4);
     text-underline-offset: 3px;
@@ -284,15 +791,62 @@ import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "../lib/site";
 
   @media (max-width: 640px) {
     .download-page {
-      padding: 5vh 1.25rem 4rem;
+      padding: 0 1.25rem 4rem;
+    }
+
+    .download-channel-hero {
+      width: calc(100% + 2.5rem);
+    }
+
+    .download-channel-inner {
+      transform: translateY(-9vh);
     }
 
     .platforms {
+      margin-top: -8rem;
+    }
+
+    .download-stage-picker {
+      gap: 24px;
+      margin-top: 1.5rem;
+    }
+
+    .subheading {
+      flex-direction: column;
+      gap: 0.35rem;
+      text-align: center;
+    }
+
+    .platforms {
+      grid-template-columns: 1fr;
       padding: 0 0.25rem;
+    }
+
+    .platform-section,
+    [data-platform] {
+      grid-column: auto;
+      gap: 12px;
+      padding: 0.5rem 0;
+    }
+
+    .platform-header {
+      padding: 0;
     }
 
     .download-cards {
       grid-template-columns: 1fr;
+      gap: 8px;
+    }
+
+    .source-command-row {
+      align-items: stretch;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .source-code button {
+      opacity: 1;
+      pointer-events: auto;
     }
   }
 </style>

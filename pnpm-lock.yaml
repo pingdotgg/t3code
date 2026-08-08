@@ -183,9 +183,15 @@ importers:
       '@astrojs/check':
         specifier: ^0.9.7
         version: 0.9.9(prettier@3.8.3)(typescript@6.0.3)
+      '@t3tools/web':
+        specifier: workspace:*
+        version: link:../web
       '@vercel/config':
         specifier: ^0.3.0
         version: 0.3.0
+      playwright-core:
+        specifier: 1.60.0
+        version: 1.60.0
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
