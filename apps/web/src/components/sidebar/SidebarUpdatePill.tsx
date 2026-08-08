@@ -159,11 +159,11 @@ export function SidebarUpdatePill() {
       )}
       {visible && (
         <div
-          className={`group/update relative flex h-7 w-full items-center rounded-lg bg-primary/15 text-xs font-medium text-primary ${
+          className={`group/update relative flex h-7 w-full items-center rounded-lg bg-update-surface text-xs font-medium text-update ${
             disabled ? " cursor-not-allowed opacity-60" : ""
           }`}
         >
-          <div className="pointer-events-none absolute inset-0 rounded-lg transition-colors group-has-[button.update-main:hover]/update:bg-primary/22" />
+          <div className="pointer-events-none absolute inset-0 rounded-lg transition-colors group-has-[button.update-main:hover]/update:bg-update/12" />
           <Tooltip>
             <TooltipTrigger
               render={
@@ -224,7 +224,7 @@ export function SidebarUpdatePill() {
                   <button
                     type="button"
                     aria-label="Dismiss update"
-                    className="mr-1 inline-flex size-5 items-center justify-center rounded-md text-primary/60 transition-colors hover:text-primary"
+                    className="mr-1 inline-flex size-5 items-center justify-center rounded-md text-update/60 transition-colors hover:text-update"
                     onClick={() => setDismissed(true)}
                   >
                     <XIcon className="size-3.5" />
