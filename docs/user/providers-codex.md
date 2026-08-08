@@ -117,6 +117,12 @@ both.
 If you add a third Codex provider with a completely different `CODEX_HOME path`, T3 Code treats it
 as a different workspace. It will not be offered for existing threads created under `~/.codex`.
 
+## Structured Questions In Default Mode
+
+When Codex's effective configuration enables its experimental
+`default_mode_request_user_input` feature, T3 Code respects that state automatically. There is no
+separate T3 Code setting. Restart T3 Code and start a fresh thread after changing the flag.
+
 ## If Both Accounts Look The Same
 
 If two Codex providers show the same account or the same unexpected model list:
