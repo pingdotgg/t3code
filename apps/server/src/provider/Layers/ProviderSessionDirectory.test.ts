@@ -227,6 +227,61 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       }
     }));
 
+  it.effect("touch refreshes lastSeenAt and leaves every other field unchanged", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const threadId = ThreadId.make("thread-touch");
+
+      yield* runtimeRepository.upsert({
+        threadId,
+        providerName: "claudeAgent",
+        providerInstanceId: null,
+        adapterKey: "claudeAgent",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: "2026-01-01T00:00:00.000Z",
+        resumeCursor: {
+          opaque: "resume-touch",
+        },
+        runtimePayload: {
+          cwd: "/tmp/touch",
+        },
+      });
+
+      yield* directory.touch(threadId);
+
+      const runtime = yield* runtimeRepository.getByThreadId({ threadId });
+      assert.equal(Option.isSome(runtime), true);
+      if (Option.isSome(runtime)) {
+        assert.notEqual(runtime.value.lastSeenAt, "2026-01-01T00:00:00.000Z");
+        assert.equal(Number.isNaN(Date.parse(runtime.value.lastSeenAt)), false);
+        assert.equal(runtime.value.providerName, "claudeAgent");
+        assert.equal(runtime.value.adapterKey, "claudeAgent");
+        assert.equal(runtime.value.runtimeMode, "full-access");
+        assert.equal(runtime.value.status, "running");
+        assert.deepEqual(runtime.value.resumeCursor, {
+          opaque: "resume-touch",
+        });
+        assert.deepEqual(runtime.value.runtimePayload, {
+          cwd: "/tmp/touch",
+        });
+      }
+    }),
+  );
+
+  it.effect("touch never creates a row for an unknown thread", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = ThreadId.make("thread-touch-missing");
+
+      yield* directory.touch(threadId);
+
+      const binding = yield* directory.getBinding(threadId);
+      assert.equal(Option.isNone(binding), true);
+    }),
+  );
+
   it("rehydrates persisted mappings across layer restart", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-directory-"));

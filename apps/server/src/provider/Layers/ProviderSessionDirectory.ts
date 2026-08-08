@@ -148,6 +148,13 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
       .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.upsert:upsert")));
   });
 
+  const touch: ProviderSessionDirectoryShape["touch"] = Effect.fn(function* (threadId) {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    yield* repository
+      .touchByThreadId({ threadId, lastSeenAt: now })
+      .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.touch:touchByThreadId")));
+  });
+
   const getProvider: ProviderSessionDirectoryShape["getProvider"] = (threadId) =>
     getBinding(threadId).pipe(
       Effect.flatMap((binding) =>
@@ -184,6 +191,7 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
 
   return {
     upsert,
+    touch,
     getProvider,
     getBinding,
     listThreadIds,
