@@ -16,6 +16,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
+  chatAreaReservedComposerHeight,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   dismissBranchMismatchForSession,
@@ -31,6 +32,7 @@ import {
   scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
   shouldShowBranchMismatchBanner,
+  shouldShowDraftHeroHeadline,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
 
@@ -715,5 +717,108 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingApproval: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingUserInput: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, threadError: "failed" })).toBe(true);
+  });
+});
+
+describe("chatAreaReservedComposerHeight", () => {
+  it("reserves the docked composer's height so it cannot spill over the header", () => {
+    expect(
+      chatAreaReservedComposerHeight({
+        isDraftHeroState: false,
+        composerOverlayHeight: 318,
+        composerStackHeight: 310,
+        heroBannerHeight: 0,
+      }),
+    ).toBe(318);
+  });
+
+  it("reserves only the hero composer stack, so the terminal keeps its height", () => {
+    expect(
+      chatAreaReservedComposerHeight({
+        isDraftHeroState: true,
+        composerOverlayHeight: 173,
+        composerStackHeight: 204,
+        heroBannerHeight: 0,
+      }),
+    ).toBe(204);
+  });
+
+  it("reserves twice any hero banner, since centering mirrors it below", () => {
+    expect(
+      chatAreaReservedComposerHeight({
+        isDraftHeroState: true,
+        composerOverlayHeight: 173,
+        composerStackHeight: 204,
+        heroBannerHeight: 40,
+      }),
+    ).toBe(284);
+  });
+
+  it("ignores the hero overlay's own height, which is the chat area's height", () => {
+    expect(
+      chatAreaReservedComposerHeight({
+        isDraftHeroState: true,
+        composerOverlayHeight: 900,
+        composerStackHeight: 204,
+        heroBannerHeight: 0,
+      }),
+    ).toBe(204);
+  });
+
+  it("reserves nothing before the composer has been measured", () => {
+    expect(
+      chatAreaReservedComposerHeight({
+        isDraftHeroState: false,
+        composerOverlayHeight: 0,
+        composerStackHeight: 0,
+        heroBannerHeight: 0,
+      }),
+    ).toBe(0);
+  });
+});
+
+describe("shouldShowDraftHeroHeadline", () => {
+  it("shows the headline when the chat area holds it above and below the composer", () => {
+    expect(
+      shouldShowDraftHeroHeadline({
+        chatAreaHeight: 342,
+        composerStackHeight: 204,
+        heroHeadlineHeight: 69,
+        heroBannerHeight: 0,
+      }),
+    ).toBe(true);
+  });
+
+  it("hides the headline one pixel short, rather than shrinking the terminal", () => {
+    expect(
+      shouldShowDraftHeroHeadline({
+        chatAreaHeight: 341,
+        composerStackHeight: 204,
+        heroHeadlineHeight: 69,
+        heroBannerHeight: 0,
+      }),
+    ).toBe(false);
+  });
+
+  it("counts banners, which keep their space, against the headline's room", () => {
+    expect(
+      shouldShowDraftHeroHeadline({
+        chatAreaHeight: 342,
+        composerStackHeight: 204,
+        heroHeadlineHeight: 69,
+        heroBannerHeight: 40,
+      }),
+    ).toBe(false);
+  });
+
+  it("assumes room before anything has been measured", () => {
+    expect(
+      shouldShowDraftHeroHeadline({
+        chatAreaHeight: 0,
+        composerStackHeight: 0,
+        heroHeadlineHeight: 0,
+        heroBannerHeight: 0,
+      }),
+    ).toBe(true);
   });
 });
