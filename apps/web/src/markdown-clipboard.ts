@@ -18,6 +18,11 @@ const SANITIZED_HTML_SELECTOR = [
   ...SKIPPED_CLASS_NAMES.map((className) => `.${className}`),
 ].join(", ");
 
+const PARTIAL_CODE_BLOCK_ATTRIBUTE = "data-markdown-partial-code";
+/** Fences already survive tidying; partially selected code needs its own guard. */
+const VERBATIM_MARKER = "\uE000";
+const VERBATIM_SPLIT_PATTERN = /(```[\s\S]*?(?:```|$)|\uE000[\s\S]*?(?:\uE000|$))/;
+
 export interface MarkdownClipboardPayload {
   text: string;
   html: string;
@@ -65,6 +70,12 @@ function resolveCodeBlockLanguage(pre: Element): string | null {
 
 function serializeCodeBlock(pre: Element): string {
   const code = (pre.textContent ?? "").replace(/\n$/, "");
+  // A block the selection only cut into is not a code block the user copied;
+  // fencing it would paste delimiters they never highlighted. It still has to be
+  // guarded from `tidyMarkdown`, which would otherwise reindent and reflow it.
+  if (pre.hasAttribute(PARTIAL_CODE_BLOCK_ATTRIBUTE)) {
+    return `${VERBATIM_MARKER}${code}${VERBATIM_MARKER}\n\n`;
+  }
   const fence = codeFenceFor(code);
   return `${fence}${resolveCodeBlockLanguage(pre) ?? ""}\n${code}\n${fence}\n\n`;
 }
@@ -238,15 +249,20 @@ function serializeNode(node: Node): string {
   }
 }
 
-/** Collapses serializer spacing artifacts without touching fenced code content. */
+/** Collapses serializer spacing artifacts without touching verbatim code content. */
 function tidyMarkdown(markdown: string): string {
-  return markdown
-    .split(/(```[\s\S]*?(?:```|$))/)
-    .map((part, index) =>
-      index % 2 === 1 ? part : part.replace(/[ \t]+(?=\n)/g, "").replace(/\n{3,}/g, "\n\n"),
-    )
-    .join("")
-    .trim();
+  return (
+    markdown
+      .split(VERBATIM_SPLIT_PATTERN)
+      .map((part, index) =>
+        index % 2 === 1 ? part : part.replace(/[ \t]+(?=\n)/g, "").replace(/\n{3,}/g, "\n\n"),
+      )
+      .join("")
+      // Trimming before the markers are dropped keeps a leading indent that the
+      // user actually selected, while still trimming the payload's own padding.
+      .trim()
+      .replaceAll(VERBATIM_MARKER, "")
+  );
 }
 
 export function serializeRenderedMarkdownFragment(container: Node): string {
@@ -291,6 +307,25 @@ function sanitizedHtmlFrom(container: Element): string {
   return `<meta charset="utf-8">${container.innerHTML}`;
 }
 
+function isInsideCodeBlock(node: Node): boolean {
+  const element = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+  return element?.closest("pre") != null;
+}
+
+/**
+ * `cloneContents` clones whole nodes except at the range's own boundaries, so a
+ * code block the selection cuts through is the fragment's first or last `<pre>`.
+ */
+function markPartialCodeBlocks(range: Range, container: Element): void {
+  const blocks = container.querySelectorAll("pre");
+  if (isInsideCodeBlock(range.startContainer)) {
+    blocks[0]?.setAttribute(PARTIAL_CODE_BLOCK_ATTRIBUTE, "");
+  }
+  if (isInsideCodeBlock(range.endContainer)) {
+    blocks[blocks.length - 1]?.setAttribute(PARTIAL_CODE_BLOCK_ATTRIBUTE, "");
+  }
+}
+
 export function chatMarkdownClipboardPayload(
   selection: Selection,
 ): MarkdownClipboardPayload | null {
@@ -301,7 +336,13 @@ export function chatMarkdownClipboardPayload(
     if (range.collapsed) continue;
     const container = document.createElement("div");
     container.appendChild(range.cloneContents());
-    const text = serializeRenderedMarkdownFragment(container);
+    markPartialCodeBlocks(range, container);
+    // A selection that stays inside one code block has no `<pre>` to mark, because
+    // `cloneContents` stops at the common ancestor. Its text is code and nothing
+    // else, so take it verbatim rather than running it through the serializer.
+    const text = isInsideCodeBlock(range.commonAncestorContainer)
+      ? range.toString()
+      : serializeRenderedMarkdownFragment(container);
     if (!text) continue;
     texts.push(text);
     htmls.push(sanitizedHtmlFrom(container));
