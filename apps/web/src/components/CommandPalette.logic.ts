@@ -157,7 +157,7 @@ export type BuildThreadActionItemsThread = Pick<
   "archivedAt" | "branch" | "createdAt" | "environmentId" | "id" | "projectId" | "title"
 > & {
   updatedAt: string;
-  latestUserMessageAt?: string | null;
+  latestUserMessageAt?: string | null | undefined;
 };
 
 export function buildThreadActionItems<TThread extends BuildThreadActionItemsThread>(input: {

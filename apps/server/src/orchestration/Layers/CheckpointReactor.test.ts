@@ -316,6 +316,7 @@ describe("CheckpointReactor", () => {
     });
     const vcsStatusBroadcasterLayer = Layer.succeed(VcsStatusBroadcaster, {
       getStatus: () => Effect.die("getStatus should not be called in this test"),
+      peekStatus: () => Effect.succeed(null),
       refreshLocalStatus: (cwd: string) =>
         Effect.sync(() => {
           options?.gitStatusRefreshCalls?.push(cwd);

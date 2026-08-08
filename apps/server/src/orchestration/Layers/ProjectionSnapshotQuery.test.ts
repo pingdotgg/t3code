@@ -324,6 +324,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           pinnedAt: "2026-02-24T00:00:01.000Z",
           pinOrderKey: "gm",
           titleRegeneration: null,
+          latestUserMessageAt: "2026-02-24T00:00:04.000Z",
           deletedAt: null,
           messages: [
             {

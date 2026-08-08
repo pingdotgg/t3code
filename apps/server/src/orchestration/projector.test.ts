@@ -93,6 +93,7 @@ describe("orchestration projector", () => {
         settledAt: null,
         snoozedUntil: null,
         snoozedAt: null,
+        latestUserMessageAt: null,
         deletedAt: null,
         messages: [],
         proposedPlans: [],
@@ -701,6 +702,10 @@ describe("orchestration projector", () => {
     ).toEqual([{ id: "activity-1", turnId: "turn-1" }]);
     expect(thread?.checkpoints.map((checkpoint) => checkpoint.checkpointTurnCount)).toEqual([1]);
     expect(thread?.latestTurn?.turnId).toBe("turn-1");
+    // The stamp rewinds with the messages: leaving the reverted-away second
+    // user message's time here would block settle/snooze on a message that
+    // no longer exists (and backdate settledAt to removed work).
+    expect(thread?.latestUserMessageAt).toBe("2026-02-23T10:00:01.000Z");
   });
 
   it("does not fallback-retain messages tied to removed turn IDs", async () => {

@@ -104,8 +104,35 @@ function hasOpenBlockingRequest(thread: {
  * as long as the skew lasts, extending the block far past the intended two
  * minutes.
  */
+// The newest user-message time visible to the decider. Reads the projected
+// latestUserMessageAt stamp first — the engine's command read model boots
+// threads with an EMPTY messages array (bodies are never rehydrated), so a
+// messages-only scan silently loses all pre-restart activity — and still
+// scans the in-memory messages as a floor for mid-session freshness.
+function threadLatestUserMessageAtMs(thread: {
+  readonly latestUserMessageAt?: string | null | undefined;
+  readonly messages: ReadonlyArray<{ readonly role: string; readonly createdAt: string }>;
+}): number {
+  const stampedMs =
+    thread.latestUserMessageAt == null
+      ? Number.NEGATIVE_INFINITY
+      : Date.parse(thread.latestUserMessageAt);
+  // Skip unparseable candidates: Math.max(x, NaN) is NaN, so one malformed
+  // client-supplied createdAt would otherwise poison the whole reduction and
+  // disable the queued-turn guard.
+  return thread.messages.reduce(
+    (latest, message) => {
+      if (message.role !== "user") return latest;
+      const parsed = Date.parse(message.createdAt);
+      return Number.isNaN(parsed) ? latest : Math.max(latest, parsed);
+    },
+    Number.isNaN(stampedMs) ? Number.NEGATIVE_INFINITY : stampedMs,
+  );
+}
+
 function threadHasQueuedTurnStart(
   thread: {
+    readonly latestUserMessageAt?: string | null | undefined;
     readonly messages: ReadonlyArray<{ readonly role: string; readonly createdAt: string }>;
     readonly latestTurn: {
       readonly requestedAt: string;
@@ -116,11 +143,7 @@ function threadHasQueuedTurnStart(
   },
   occurredAt: string,
 ): boolean {
-  const latestUserMessageAtMs = thread.messages.reduce(
-    (latest, message) =>
-      message.role === "user" ? Math.max(latest, Date.parse(message.createdAt)) : latest,
-    Number.NEGATIVE_INFINITY,
-  );
+  const latestUserMessageAtMs = threadLatestUserMessageAtMs(thread);
   const latestTurnAtMs =
     thread.latestTurn === null
       ? Number.NEGATIVE_INFINITY
@@ -140,6 +163,49 @@ function threadHasQueuedTurnStart(
     latestUserMessageAtMs > latestTurnAtMs &&
     Math.abs(queuedAgeMs) <= QUEUED_TURN_START_GRACE_MS
   );
+}
+
+// The settled shelf orders by when work ended, so thread.settled stamps the
+// thread's last recorded activity (newest user message, latestTurn
+// timestamp, or an elapsed snooze wake) rather than the settle time — an
+// auto-settle three quiet days later must not float the thread to the top
+// of the shelf. Candidates ahead of the command time are ignored: message
+// timestamps are client-supplied and a still-pending snooze wake is not
+// activity, so a skewed clock cannot forge a future shelf position.
+// Threads with no recorded activity fall back to the command time.
+function threadLastActivityAt(
+  thread: {
+    readonly latestUserMessageAt?: string | null | undefined;
+    readonly messages: ReadonlyArray<{ readonly role: string; readonly createdAt: string }>;
+    readonly latestTurn: {
+      readonly requestedAt: string;
+      readonly startedAt: string | null;
+      readonly completedAt: string | null;
+    } | null;
+    readonly snoozedUntil?: string | null | undefined;
+  },
+  occurredAt: string,
+): string {
+  const occurredAtMs = Date.parse(occurredAt);
+  let latest: string | null = null;
+  let latestMs = Number.NEGATIVE_INFINITY;
+  const candidates = [
+    thread.latestUserMessageAt,
+    ...thread.messages.filter((message) => message.role === "user").map((m) => m.createdAt),
+    thread.latestTurn?.requestedAt,
+    thread.latestTurn?.startedAt,
+    thread.latestTurn?.completedAt,
+    thread.snoozedUntil,
+  ];
+  for (const candidate of candidates) {
+    if (candidate == null) continue;
+    const parsed = Date.parse(candidate);
+    if (!Number.isNaN(parsed) && parsed > latestMs && parsed <= occurredAtMs) {
+      latest = candidate;
+      latestMs = parsed;
+    }
+  }
+  return latest ?? occurredAt;
 }
 
 function withEventBase(
@@ -497,7 +563,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.settled" as const,
         payload: {
           threadId: command.threadId,
-          settledAt: alreadySettled ? thread.settledAt : occurredAt,
+          // Derived server-side from the read model (never from the command)
+          // so callers cannot forge shelf ordering: user settles and the
+          // auto-settle sweep both stamp when the work actually ended.
+          settledAt: alreadySettled ? thread.settledAt : threadLastActivityAt(thread, occurredAt),
           // A re-emission is a projected no-op: keep the existing updatedAt
           // so duplicate settles neither rewind nor churn ordering. A fresh
           // settle stamps the command time.

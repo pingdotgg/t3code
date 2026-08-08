@@ -364,12 +364,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly canMovePinnedDown?: boolean;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
-  /** Reports this row's live PR state up so the partition can auto-settle
-      merged/closed work (mirrors web's onChangeRequestState). */
-  readonly onChangeRequestState?: (
-    threadKey: string,
-    state: "open" | "closed" | "merged" | null,
-  ) => void;
   readonly projectCwd?: string | null;
   readonly searchMatch?: EnvironmentThreadSearchMatch;
   readonly searchQuery?: string;
@@ -391,17 +385,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onPinThread,
     onUnpinThread,
     onMovePinnedThread,
-    onChangeRequestState,
   } = props;
   const snoozedRow = props.snoozed === true;
   const pinnedRow = props.pinned === true;
 
   const pr = useThreadPr(thread, props.projectCwd ?? props.project?.workspaceRoot ?? null);
-  const prState = pr?.state ?? null;
-  const threadKey = `${thread.environmentId}:${thread.id}`;
-  useEffect(() => {
-    onChangeRequestState?.(threadKey, prState);
-  }, [onChangeRequestState, prState, threadKey]);
 
   const screenColor = useThemeColor("--color-screen");
   const drawerColor = useThemeColor("--color-drawer");

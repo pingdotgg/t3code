@@ -297,6 +297,7 @@ export function projectEvent(
             settledAt: null,
             snoozedUntil: null,
             snoozedAt: null,
+            latestUserMessageAt: null,
             deletedAt: null,
             messages: [],
             activities: [],
@@ -532,10 +533,22 @@ export function projectEvent(
           : [...thread.messages, message];
         const cappedMessages = messages.slice(-MAX_THREAD_MESSAGES);
 
+        // Maintained separately from the capped messages array so the stamp
+        // survives message eviction AND the unhydrated command read model
+        // (which boots with messages: []) — the decider's settle logic keys
+        // on it.
+        const latestUserMessageAt =
+          message.role === "user" &&
+          (thread.latestUserMessageAt == null ||
+            Date.parse(message.createdAt) > Date.parse(thread.latestUserMessageAt))
+            ? message.createdAt
+            : thread.latestUserMessageAt;
+
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             messages: cappedMessages,
+            latestUserMessageAt,
             updatedAt: event.occurredAt,
           }),
         };
@@ -748,6 +761,18 @@ export function projectEvent(
                   assistantMessageId: latestCheckpoint.assistantMessageId,
                 };
 
+          // Recompute the stamp from the retained messages: a revert that
+          // removes the newest user message must not leave the decider
+          // seeing it as still queued (blocking settle/snooze) or backdate
+          // settledAt to reverted-away work.
+          let latestUserMessageAt: string | null = null;
+          for (const message of messages) {
+            if (message.role !== "user") continue;
+            if (latestUserMessageAt === null || message.createdAt > latestUserMessageAt) {
+              latestUserMessageAt = message.createdAt;
+            }
+          }
+
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
@@ -756,6 +781,7 @@ export function projectEvent(
               proposedPlans,
               activities,
               latestTurn,
+              latestUserMessageAt,
               updatedAt: event.occurredAt,
             }),
           };
