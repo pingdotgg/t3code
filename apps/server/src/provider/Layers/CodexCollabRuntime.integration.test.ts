@@ -291,6 +291,45 @@ describe("CodexSessionRuntime collab integration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("replays a terminal child error received before registration", () =>
+    Effect.gen(function* () {
+      const childThreadId = "00000000-0000-4000-8000-000000000801";
+      const childTurnId = "00000000-0000-4000-8000-000000000802";
+      const events = yield* runMockCollabScript(
+        "thread-collab-preregistration-error",
+        "fail before registration",
+        [
+          {
+            method: "turn/started",
+            params: {
+              threadId: childThreadId,
+              turn: { id: childTurnId, status: "inProgress", items: [] },
+            },
+          },
+          {
+            method: "error",
+            params: {
+              threadId: childThreadId,
+              turnId: childTurnId,
+              error: { message: "Synthetic terminal child error" },
+              willRetry: false,
+            },
+          },
+          mockChildActivity(childThreadId, "call_fixture_preregistration_error"),
+        ],
+      );
+      const childEvents = eventsForChild(events, childThreadId);
+      assert.deepEqual(
+        childEvents.map((event) => event.method),
+        ["collabAgent/activity", "collabAgent/statusChanged"],
+      );
+      assert.equal(
+        (childEvents.at(-1)?.payload as { status?: { type?: string } } | undefined)?.status?.type,
+        "systemError",
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("replays settlement after duplicate child registration signals", () =>
     Effect.gen(function* () {
       const childThreadId = "00000000-0000-4000-8000-000000000401";

@@ -656,6 +656,14 @@ function toCollabChildSettlement(notification: CodexServerNotification) {
     }
     case "thread/closed":
       return { method: "collabAgent/closed", payload: {} } as const;
+    case "error":
+      if (notification.params.willRetry) {
+        return undefined;
+      }
+      return {
+        method: "collabAgent/statusChanged",
+        payload: { status: { type: "systemError" } },
+      } as const;
     default:
       return undefined;
   }
@@ -1328,10 +1336,10 @@ export const makeCodexSessionRuntime = (
               yield* setCollabChildLifecycleState(child.agentThreadId, "active");
               return true;
             }
-            yield* setCollabChildLifecycleState(child.agentThreadId, {
-              method: "collabAgent/statusChanged",
-              payload: { status: { type: "systemError" } },
-            });
+            const settlement = toCollabChildSettlement(notification);
+            if (settlement) {
+              yield* setCollabChildLifecycleState(child.agentThreadId, settlement);
+            }
             yield* Ref.update(collabChildLiveTurnsRef, (current) => {
               const next = new Map(current);
               next.delete(child.agentThreadId);
@@ -1397,9 +1405,11 @@ export const makeCodexSessionRuntime = (
             providerConversationId !== suppressRootId
           );
         })();
+        const isTerminalChildError =
+          notification.method === "error" && notification.params.willRetry === false;
         if (
           (childParentTurnId !== undefined || foreignConversation) &&
-          shouldSuppressChildConversationNotification(notification.method)
+          (shouldSuppressChildConversationNotification(notification.method) || isTerminalChildError)
         ) {
           // Stop-everything must not depend on registration timing: a
           // child's turn/started can arrive before the subAgentActivity that
@@ -1451,7 +1461,8 @@ export const makeCodexSessionRuntime = (
               }
             } else if (
               notification.method === "turn/completed" ||
-              notification.method === "thread/closed"
+              notification.method === "thread/closed" ||
+              isTerminalChildError
             ) {
               yield* Ref.update(collabChildLiveTurnsRef, (current) => {
                 const next = new Map(current);
