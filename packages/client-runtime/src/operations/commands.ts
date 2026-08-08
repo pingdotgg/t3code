@@ -35,6 +35,8 @@ export type CreateThreadInput = CommandInput<"thread.create">;
 export type DeleteThreadInput = CommandInput<"thread.delete">;
 export type ArchiveThreadInput = CommandInput<"thread.archive">;
 export type UnarchiveThreadInput = CommandInput<"thread.unarchive">;
+export type MarkThreadViewedInput = CommandInput<"thread.mark-viewed">;
+export type MarkThreadUnreadInput = CommandInput<"thread.mark-unread">;
 export type SettleThreadInput = CommandInput<"thread.settle">;
 export type UnsettleThreadInput = CommandInput<"thread.unsettle">;
 export type SnoozeThreadInput = CommandInput<"thread.snooze">;
@@ -156,6 +158,26 @@ export const unarchiveThread: (input: UnarchiveThreadInput) => CommandEffect = E
   return yield* dispatch({
     ...input,
     type: "thread.unarchive",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const markThreadViewed: (input: MarkThreadViewedInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.markThreadViewed",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.mark-viewed",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const markThreadUnread: (input: MarkThreadUnreadInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.markThreadUnread",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.mark-unread",
     commandId: yield* commandId(input),
   });
 });

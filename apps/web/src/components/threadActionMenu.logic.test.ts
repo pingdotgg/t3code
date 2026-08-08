@@ -8,8 +8,15 @@ const baseState: ThreadActionMenuState = {
   isSettled: false,
   isSnoozed: false,
   canSnoozeNow: true,
+  canMarkUnread: true,
   isRegeneratingTitle: false,
-  supports: { settlement: true, snooze: true, pinning: true, titleRegeneration: true },
+  supports: {
+    settlement: true,
+    snooze: true,
+    pinning: true,
+    titleRegeneration: true,
+    viewStatus: true,
+  },
   snoozePresets: [
     { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: "2026-08-07T15:00:00Z" },
   ],
@@ -24,9 +31,15 @@ describe("buildThreadActionMenuItems", () => {
     expect(
       ids({
         ...baseState,
-        supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
+        supports: {
+          settlement: false,
+          snooze: false,
+          pinning: false,
+          titleRegeneration: false,
+          viewStatus: false,
+        },
       }),
-    ).toEqual(["rename", "mark-unread", "copy-path", "delete"]);
+    ).toEqual(["rename", "copy-path", "delete"]);
   });
 
   it("includes branch items only for threads with a branch", () => {
@@ -57,6 +70,10 @@ describe("buildThreadActionMenuItems", () => {
       (candidate) => candidate.id === "regenerate-title",
     );
     expect(item).toMatchObject({ label: "Regenerating…", disabled: true });
+  });
+
+  it("hides mark unread until the thread has a completed turn", () => {
+    expect(ids({ ...baseState, canMarkUnread: false })).not.toContain("mark-unread");
   });
 
   it("marks delete as destructive and keeps it last", () => {

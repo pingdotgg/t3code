@@ -121,7 +121,7 @@ import {
   resolveActiveThreadRouteRef,
   resolveThreadRouteTarget,
 } from "../threadRoutes";
-import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
+import { formatRelativeTimeLabel } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
@@ -130,6 +130,7 @@ import {
   formatWorkingDurationLabel,
   firstValidTimestampMs,
   hasUnseenCompletion,
+  hasUnseenWake,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   planPinnedReorder,
@@ -439,6 +440,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   settlementSupported: boolean;
   // Same contract for thread.snooze/unsnooze.
   snoozeSupported: boolean;
+  // Read/unread and Woke acknowledgement require server-owned view state.
+  viewStatusSupported: boolean;
   // Renders the pin glyph. Pinned cards keep the full settle/snooze quick
   // actions: settling clears the pin server-side, and snoozing hides the
   // card until wake with the pin intact underneath. The glyph is also the
@@ -509,7 +512,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   );
   const threadKey = scopedThreadKey(threadRef);
   const isRegeneratingTitle = thread.titleRegeneration != null;
-  const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const openPrLink = useOpenPrLink();
   const runningTerminalIds = useThreadRunningTerminalIds({
@@ -534,9 +536,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   });
   const prState = pr?.state ?? null;
 
-  // Same semantics as the legacy sidebar (never-visited counts as read):
-  // switching sidebars must not light up every historical thread as unread.
-  const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
+  // Missing server state counts as read so upgrading does not light up every
+  // historical thread as unread.
+  const isUnread = hasUnseenCompletion(thread);
   const status = resolveSidebarThreadStatus(thread);
   // A woken thread reappears at its original position (the sort is
   // deliberately static), so the pill has to carry the weight. Snoozing is
@@ -544,13 +546,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // reading a completion-triggered wake, clicking the pill, sending a
   // message, settling, archiving — or finishing the work outright (merged
   // or closed PR). Timer wakes survive a mere visit. An unparseable visit
-  // timestamp counts as never-visited — corrupt local data must not eat
+  // timestamp counts as never-viewed — corrupt server data must not eat
   // the wake signal.
-  const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
-  const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
   const isWoke =
-    wokeAtDate !== null &&
-    (lastVisitedDate === null || lastVisitedDate < wokeAtDate) &&
+    hasUnseenWake({
+      viewStatusSupported: props.viewStatusSupported,
+      wokeAt: props.wokeAt,
+      lastViewedAt: thread.lastViewedAt,
+    }) &&
     prState !== "merged" &&
     prState !== "closed";
   // In-flight rows (working, or waiting on approval/input) fade as a whole:
@@ -1433,18 +1436,31 @@ export default function Sidebar() {
     [],
   );
   const { environments } = useEnvironments();
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
-  const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
-  const markThreadVisited = useUiStateStore((s) => s.markThreadVisited);
+  const markThreadUnread = useAtomCommand(threadEnvironment.markUnread, {
+    reportFailure: false,
+  });
+  const markThreadViewed = useAtomCommand(threadEnvironment.markViewed, {
+    reportFailure: false,
+  });
   const acknowledgeWoke = useCallback(
     (threadRef: ScopedThreadRef, visitedAt: string) => {
-      markThreadVisited(scopedThreadKey(threadRef), visitedAt);
+      if (
+        serverConfigs.get(threadRef.environmentId)?.environment.capabilities.threadViewStatus !==
+        true
+      )
+        return;
+      void markThreadViewed({
+        environmentId: threadRef.environmentId,
+        input: { threadId: threadRef.threadId, viewedAt: visitedAt },
+      });
     },
-    [markThreadVisited],
+    [markThreadViewed, serverConfigs],
   );
   const routeTarget = useParams({
     strict: false,
@@ -1758,7 +1774,6 @@ export default function Sidebar() {
   // the partition works directly off live shells: no archived-snapshot
   // merging, no optimistic holds. Archived threads remain hidden here —
   // archive keeps its original "remove from sidebar" meaning.
-  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const {
     pinnedThreads,
     reorderablePinnedKeys,
@@ -2529,6 +2544,11 @@ export default function Sidebar() {
       const regeneratableTitleThreads = titleRegenerationThreads.filter(
         (thread) => thread.titleRegeneration == null,
       );
+      const markUnreadThreads = selectedThreads.filter(
+        (thread) =>
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadViewStatus ===
+            true && thread.latestTurn?.completedAt != null,
+      );
       const titleRegenerationMenuItem = buildBulkTitleRegenerationContextMenuItem({
         supportedCount: titleRegenerationThreads.length,
         actionableCount: regeneratableTitleThreads.length,
@@ -2551,7 +2571,9 @@ export default function Sidebar() {
                 ]
               : []),
             ...(titleRegenerationMenuItem ? [titleRegenerationMenuItem] : []),
-            { id: "mark-unread", label: `Mark unread (${count})` },
+            ...(markUnreadThreads.length > 0
+              ? [{ id: "mark-unread", label: `Mark unread (${markUnreadThreads.length})` }]
+              : []),
             { id: "delete", label: `Delete (${count})`, destructive: true },
           ],
           position,
@@ -2656,9 +2678,25 @@ export default function Sidebar() {
         return;
       }
       if (clicked.value === "mark-unread") {
-        for (const threadKey of threadKeys) {
-          const thread = threadByKeyRef.current.get(threadKey);
-          markThreadUnread(threadKey, thread?.latestTurn?.completedAt);
+        for (const thread of markUnreadThreads) {
+          const result = await markThreadUnread({
+            environmentId: thread.environmentId,
+            input: { threadId: thread.id },
+          });
+          if (result._tag === "Success") continue;
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to mark threads unread",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+          // Keep the selection so a transient failure can be retried. Commands
+          // that already landed are idempotent.
+          return;
         }
         clearSelection();
         return;
@@ -2750,6 +2788,9 @@ export default function Sidebar() {
         const supportsTitleRegeneration =
           serverConfigs.get(thread.environmentId)?.environment.capabilities
             .threadTitleRegeneration === true;
+        const supportsViewStatus =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadViewStatus ===
+          true;
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
@@ -2764,12 +2805,14 @@ export default function Sidebar() {
               isSettled,
               isSnoozed,
               canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
+              canMarkUnread: thread.latestTurn?.completedAt != null,
               isRegeneratingTitle,
               supports: {
                 settlement: supportsSettlement,
                 snooze: supportsSnooze,
                 pinning: supportsPinning,
                 titleRegeneration: supportsTitleRegeneration,
+                viewStatus: supportsViewStatus,
               },
               snoozePresets,
             }),
@@ -2844,9 +2887,23 @@ export default function Sidebar() {
             }
             return;
           }
-          case "mark-unread":
-            markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+          case "mark-unread": {
+            const result = await markThreadUnread({
+              environmentId: thread.environmentId,
+              input: { threadId: thread.id },
+            });
+            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+              const error = squashAtomCommandFailure(result);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Failed to mark thread unread",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                }),
+              );
+            }
             return;
+          }
           case "copy-path":
             if (!threadWorkspacePath) {
               toastManager.add(
@@ -3304,6 +3361,10 @@ export default function Sidebar() {
                         pinningSupported={
                           serverConfigs.get(thread.environmentId)?.environment.capabilities
                             .threadPinning === true
+                        }
+                        viewStatusSupported={
+                          serverConfigs.get(thread.environmentId)?.environment.capabilities
+                            .threadViewStatus === true
                         }
                         isPinned={section === "pinned"}
                         sortable={sortable}

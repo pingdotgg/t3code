@@ -2,7 +2,6 @@ import {
   parseScopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
-  scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { canSettle, canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
@@ -26,13 +25,13 @@ import {
   readEnvironmentSupportsPinReorder,
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
+  readEnvironmentSupportsViewStatus,
   readEnvironmentThreadRefs,
   readProject,
   readThreadShell,
   readThreadShells,
 } from "../state/entities";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
-import { useUiStateStore } from "../uiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
@@ -167,6 +166,9 @@ export function useThreadActions() {
   const unsnoozeThreadMutation = useAtomCommand(threadEnvironment.unsnooze, {
     reportFailure: false,
   });
+  const markThreadViewed = useAtomCommand(threadEnvironment.markViewed, {
+    reportFailure: false,
+  });
   const stopThreadSession = useAtomCommand(threadEnvironment.stopSession);
   const removeWorktree = useAtomCommand(vcsEnvironment.removeWorktree, {
     reportFailure: false,
@@ -181,7 +183,6 @@ export function useThreadActions() {
     (store) => store.clearProjectDraftThreadById,
   );
   const clearTerminalUiState = useTerminalUiStateStore((state) => state.clearTerminalUiState);
-  const markThreadVisited = useUiStateStore((state) => state.markThreadVisited);
   const router = useRouter();
   const handleNewThread = useNewThreadHandler();
   // Keep a ref so archiveThread can call handleNewThread without appearing in
@@ -234,8 +235,15 @@ export function useThreadActions() {
         return archiveResult;
       }
       const wokeAt = threadWokeAt(thread, { now: new Date().toISOString() });
-      if (wokeAt !== null) {
-        markThreadVisited(scopedThreadKey(threadRef), wokeAt);
+      if (wokeAt !== null && readEnvironmentSupportsViewStatus(threadRef.environmentId)) {
+        void markThreadViewed({
+          environmentId: threadRef.environmentId,
+          input: {
+            threadId: threadRef.threadId,
+            viewedAt: wokeAt,
+            expectedLastViewedAt: thread.lastViewedAt ?? null,
+          },
+        });
       }
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
       opts.onArchived?.();
@@ -252,7 +260,7 @@ export function useThreadActions() {
 
       return archiveResult;
     },
-    [archiveThreadMutation, getCurrentRouteThreadRef, markThreadVisited, resolveThreadTarget],
+    [archiveThreadMutation, getCurrentRouteThreadRef, markThreadViewed, resolveThreadTarget],
   );
 
   const unarchiveThread = useCallback(
@@ -504,12 +512,22 @@ export function useThreadActions() {
         environmentId: target.environmentId,
         input: { threadId: target.threadId },
       });
-      if (result._tag === "Success" && wokeAt !== null) {
-        markThreadVisited(scopedThreadKey(target), wokeAt);
+      if (
+        result._tag === "Success" &&
+        wokeAt !== null &&
+        readEnvironmentSupportsViewStatus(target.environmentId)
+      ) {
+        void markThreadViewed({
+          environmentId: target.environmentId,
+          input: {
+            threadId: target.threadId,
+            viewedAt: wokeAt,
+          },
+        });
       }
       return result;
     },
-    [markThreadVisited, resolveThreadTarget, settleThreadMutation],
+    [markThreadViewed, resolveThreadTarget, settleThreadMutation],
   );
 
   const unsettleThread = useCallback(

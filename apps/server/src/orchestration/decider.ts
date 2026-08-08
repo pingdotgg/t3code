@@ -372,6 +372,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          lastViewedAt: command.createdAt,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -441,6 +442,68 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "thread.mark-viewed": {
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      const previousViewedAt = thread.lastViewedAt ?? null;
+      if (
+        previousViewedAt !== command.expectedLastViewedAt &&
+        previousViewedAt !== command.supersededViewedAt
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} view status changed after this view was queued`,
+        });
+      }
+      const occurredAt = yield* nowIso;
+      const lastViewedAt =
+        previousViewedAt != null && Date.parse(previousViewedAt) > Date.parse(command.viewedAt)
+          ? previousViewedAt
+          : command.viewedAt;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.view-status-updated",
+        payload: { threadId: command.threadId, lastViewedAt },
+      };
+    }
+
+    case "thread.mark-unread": {
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      const completedAt = thread.latestTurn?.completedAt;
+      if (completedAt == null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} has no completed turn to mark unread`,
+        });
+      }
+      const occurredAt = yield* nowIso;
+      const previousViewedAt = thread.lastViewedAt;
+      // Repeated unread actions still move the optimistic view token.
+      const unreadFrom =
+        previousViewedAt != null && Date.parse(previousViewedAt) < Date.parse(completedAt)
+          ? previousViewedAt
+          : completedAt;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.view-status-updated",
+        payload: {
+          threadId: command.threadId,
+          lastViewedAt: DateTime.formatIso(
+            DateTime.subtract(DateTime.makeUnsafe(unreadFrom), { milliseconds: 1 }),
+          ),
         },
       };
     }

@@ -92,6 +92,7 @@ export function applyThreadDetailEvent(
           archivedAt: null,
           settledOverride: null,
           settledAt: null,
+          lastViewedAt: event.payload.lastViewedAt ?? null,
           snoozedUntil: null,
           snoozedAt: null,
           deletedAt: null,
@@ -121,6 +122,12 @@ export function applyThreadDetailEvent(
       return {
         kind: "updated",
         thread: { ...thread, archivedAt: null, updatedAt: event.payload.updatedAt },
+      };
+
+    case "thread.view-status-updated":
+      return {
+        kind: "updated",
+        thread: { ...thread, lastViewedAt: event.payload.lastViewedAt },
       };
 
     case "thread.settled":

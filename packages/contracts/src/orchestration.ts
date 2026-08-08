@@ -369,6 +369,9 @@ export const OrchestrationThread = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   settledAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  // Optional so threads from servers predating synchronized read state still decode.
+  // Missing means read-by-default, avoiding an unread flood on upgrade.
+  lastViewedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   // Snooze is an overlay on the active lifecycle, not a fourth destination:
   // a snoozed thread stays "active" in the model and is only suppressed from
   // the inbox until snoozedUntil passes (or the thread raises its hand).
@@ -436,6 +439,7 @@ export const OrchestrationThreadShell = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   settledAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  lastViewedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
@@ -667,6 +671,27 @@ const ThreadUnarchiveCommand = Schema.Struct({
   threadId: ThreadId,
 });
 
+const ThreadMarkViewedCommand = Schema.Struct({
+  type: Schema.Literal("thread.mark-viewed"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  // A boundary copied from server-owned thread state (completion or wake).
+  // It is not the client's wall clock.
+  viewedAt: IsoDateTime,
+  // Captured when the client queues the view, so it cannot overwrite a newer
+  // explicit unread action.
+  expectedLastViewedAt: Schema.NullOr(IsoDateTime),
+  // The preceding queued view boundary. This lets serialized completion views
+  // advance in order without treating an explicit unread as their predecessor.
+  supersededViewedAt: Schema.NullOr(IsoDateTime),
+});
+
+const ThreadMarkUnreadCommand = Schema.Struct({
+  type: Schema.Literal("thread.mark-unread"),
+  commandId: CommandId,
+  threadId: ThreadId,
+});
+
 const ThreadSettleCommand = Schema.Struct({
   type: Schema.Literal("thread.settle"),
   commandId: CommandId,
@@ -880,6 +905,8 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
+  ThreadMarkViewedCommand,
+  ThreadMarkUnreadCommand,
   ThreadSettleCommand,
   ThreadUnsettleCommand,
   ThreadSnoozeCommand,
@@ -908,6 +935,8 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
+  ThreadMarkViewedCommand,
+  ThreadMarkUnreadCommand,
   ThreadSettleCommand,
   ThreadUnsettleCommand,
   ThreadSnoozeCommand,
@@ -1026,6 +1055,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.deleted",
   "thread.archived",
   "thread.unarchived",
+  "thread.view-status-updated",
   "thread.settled",
   "thread.unsettled",
   "thread.snoozed",
@@ -1092,6 +1122,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  lastViewedAt: Schema.optional(IsoDateTime),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -1110,6 +1141,11 @@ export const ThreadArchivedPayload = Schema.Struct({
 export const ThreadUnarchivedPayload = Schema.Struct({
   threadId: ThreadId,
   updatedAt: IsoDateTime,
+});
+
+export const ThreadViewStatusUpdatedPayload = Schema.Struct({
+  threadId: ThreadId,
+  lastViewedAt: IsoDateTime,
 });
 
 export const ThreadSettledPayload = Schema.Struct({
@@ -1334,6 +1370,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.unarchived"),
     payload: ThreadUnarchivedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.view-status-updated"),
+    payload: ThreadViewStatusUpdatedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

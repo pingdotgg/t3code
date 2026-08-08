@@ -183,7 +183,7 @@ export function effectiveSnoozed(
  * still snoozed. Used for the "Woke" indicator: the thread reappears in its
  * original sort position (the inbox sort is deliberately static), so the
  * wake signal has to carry the weight. Compare against the client's
- * lastVisitedAt — visiting clears the indicator like it clears unread.
+ * server-owned lastViewedAt — viewing clears the indicator like it clears unread.
  *
  * Timer wakes report the wake time itself; raised-hand wakes report the
  * triggering timestamp so a visit BEFORE the early wake doesn't suppress
@@ -199,7 +199,7 @@ export function threadWokeAt(
   // An early hand-raise wake stays authoritative even after the scheduled
   // wake time passes: reporting snoozedUntil then would resurface a Woke
   // indicator the user already cleared by visiting (snoozedUntil is newer
-  // than that visit's lastVisitedAt).
+  // than that view's lastViewedAt).
   if (threadRaisedHandWhileSnoozed(shell)) {
     if (
       shell.snoozedAt != null &&

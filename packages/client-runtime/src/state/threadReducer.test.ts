@@ -231,6 +231,25 @@ describe("applyThreadDetailEvent", () => {
     });
   });
 
+  it("applies synchronized thread view status without changing updatedAt", () => {
+    const lastViewedAt = "2026-04-01T06:30:00.000Z";
+    const result = applyThreadDetailEvent(baseThread, {
+      ...baseEventFields,
+      sequence: 7,
+      occurredAt: lastViewedAt,
+      aggregateKind: "thread",
+      aggregateId: ThreadId.make("thread-1"),
+      type: "thread.view-status-updated",
+      payload: { threadId: ThreadId.make("thread-1"), lastViewedAt },
+    });
+
+    expect(result.kind).toBe("updated");
+    if (result.kind === "updated") {
+      expect(result.thread.lastViewedAt).toBe(lastViewedAt);
+      expect(result.thread.updatedAt).toBe(baseThread.updatedAt);
+    }
+  });
+
   describe("thread.pinned / thread.unpinned", () => {
     it("sets pinnedAt", () => {
       const pinnedAt = "2026-04-01T05:00:00.000Z";
