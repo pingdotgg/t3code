@@ -15,7 +15,7 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 
 import * as ServerConfig from "../config.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
@@ -53,7 +53,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const execPath = yield* HostProcessExecutablePath;
-  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const inFlight = yield* Ref.make(false);
 
   const capability: ServerSelfUpdateCapability | null =

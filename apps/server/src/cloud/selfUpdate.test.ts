@@ -9,10 +9,7 @@ import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ServerConfig from "../config.ts";
-import {
-  ProjectionSnapshotQuery,
-  type ProjectionSnapshotQueryShape,
-} from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL } from "./servicePreflight.ts";
@@ -105,11 +102,11 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
         })),
       });
     },
-  } as unknown as ProjectionSnapshotQueryShape;
+  } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"];
   const selfUpdate = yield* ServerSelfUpdate.make().pipe(
     Effect.provideService(ProcessRunner.ProcessRunner, runner),
     Effect.provideService(ServiceLauncherClient.ServiceLauncherClient, launcher),
-    Effect.provideService(ProjectionSnapshotQuery, projectionSnapshotQuery),
+    Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, projectionSnapshotQuery),
     Effect.provideService(HostProcessExecutablePath, "/usr/bin/node"),
     Effect.provide(ServerConfig.layer({ ...config, mode: options.mode ?? "web" })),
   );
