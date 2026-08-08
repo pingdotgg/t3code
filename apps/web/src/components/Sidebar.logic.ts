@@ -213,7 +213,11 @@ type ThreadArchiveState = {
 };
 
 export function isThreadArchiveBlocked(thread: ThreadArchiveState | null | undefined): boolean {
-  return isThreadSessionRunning(thread?.session) || thread?.backgroundLiveness != null;
+  return (
+    thread?.session?.status === "starting" ||
+    isThreadSessionRunning(thread?.session) ||
+    thread?.backgroundLiveness != null
+  );
 }
 
 export function canArchiveSettledSidebarThread(input: {

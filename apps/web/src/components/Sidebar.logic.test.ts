@@ -533,6 +533,7 @@ describe("shouldRenderSidebarArchiveAll", () => {
 describe("archive lifecycle guards", () => {
   it("filters active turns and background work from archive batches", () => {
     const ready = { id: "ready", session: null };
+    const starting = { id: "starting", session: { status: "starting" } };
     const running = {
       id: "running",
       session: { status: "running", activeTurnId: "turn-running" },
@@ -546,14 +547,17 @@ describe("archive lifecycle guards", () => {
 
     expect(isThreadSessionRunning(running.session)).toBe(true);
     expect(isThreadArchiveBlocked(ready)).toBe(false);
+    expect(isThreadArchiveBlocked(starting)).toBe(true);
     expect(isThreadArchiveBlocked(running)).toBe(true);
     expect(isThreadArchiveBlocked(working)).toBe(true);
     expect(isThreadArchiveBlocked(monitoring)).toBe(true);
-    expect(filterArchivableSidebarThreads([ready, running, working, monitoring])).toEqual([ready]);
+    expect(filterArchivableSidebarThreads([ready, starting, running, working, monitoring])).toEqual(
+      [ready],
+    );
   });
 
   it("re-checks settled membership and background work before a settled-partition archive", () => {
-    const settledThreadKeys = new Set(["ready", "running", "working", "monitoring"]);
+    const settledThreadKeys = new Set(["ready", "starting", "running", "working", "monitoring"]);
 
     expect(
       canArchiveSettledSidebarThread({
@@ -563,6 +567,14 @@ describe("archive lifecycle guards", () => {
         backgroundLiveness: null,
       }),
     ).toBe(true);
+    expect(
+      canArchiveSettledSidebarThread({
+        threadKey: "starting",
+        settledThreadKeys,
+        session: { status: "starting" },
+        backgroundLiveness: null,
+      }),
+    ).toBe(false);
     expect(
       canArchiveSettledSidebarThread({
         threadKey: "running",
