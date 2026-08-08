@@ -394,11 +394,22 @@ const mobileEndorsementRows = [
 
   type Platform = { os: "mac" | "win" | "linux"; label: string; arch?: string };
 
-  function detectPlatform(): Platform | null {
+  async function detectPlatform(): Promise<Platform | null> {
     const ua = navigator.userAgent;
     if (/Win/i.test(ua)) return { os: "win", label: "Download for Windows" };
     if (/Mac/i.test(ua)) {
-      return { os: "mac", label: "Download for macOS", arch: "arm64" };
+      let arch = "arm64";
+      try {
+        const uad = (navigator as { userAgentData?: { getHighEntropyValues: (hints: string[]) => Promise<{ architecture?: string }> } }).userAgentData;
+        if (uad?.getHighEntropyValues) {
+          const values = await uad.getHighEntropyValues(["architecture"]);
+          if (values.architecture === "x86") arch = "x64";
+        }
+      } catch {
+        // UA-based fallback is unreliable — all macOS UAs report "Intel Mac OS X",
+        // even on Apple Silicon. Default to arm64 (majority of modern Macs).
+      }
+      return { os: "mac", label: "Download for macOS", arch };
     }
     if (/Linux/i.test(ua)) return { os: "linux", label: "Download for Linux" };
     return null;
@@ -426,7 +437,7 @@ const mobileEndorsementRows = [
     const ctaLabel = document.getElementById("cta-download-label");
     const kbd = document.getElementById("pr-button-kbd");
 
-    const platform = detectPlatform();
+    const platform = await detectPlatform();
     if (!platform) return;
     document.documentElement.dataset.platform = platform.os;
     if (label) label.textContent = platform.label;
