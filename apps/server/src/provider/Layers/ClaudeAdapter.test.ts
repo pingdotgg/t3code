@@ -1828,6 +1828,153 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("reports lost background agents when the stream ends cleanly", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "spawn agents",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-lost-a",
+        description: "Pass 5: fix-wave regression",
+        task_type: "local_agent",
+        tool_use_id: "toolu_lost_a",
+        uuid: "task-lost-a-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-lost-b",
+        description: "Pass 5: blind feature sweep",
+        task_type: "local_agent",
+        tool_use_id: "toolu_lost_b",
+        uuid: "task-lost-b-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      // The claude child process exiting ends the SDK iterable cleanly.
+      // This is the incident shape: background agents still live, no error.
+      harness.query.finish();
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      runtimeEventsFiber.interruptUnsafe();
+
+      const runtimeError = runtimeEvents.find((event) => event.type === "runtime.error");
+      assert.equal(runtimeError?.type, "runtime.error");
+      if (runtimeError?.type === "runtime.error") {
+        assert.match(runtimeError.payload.message, /2 background agents were still running/);
+        assert.match(runtimeError.payload.message, /Pass 5: fix-wave regression/);
+        assert.match(runtimeError.payload.message, /Pass 5: blind feature sweep/);
+        assert.match(runtimeError.payload.message, /sending a new message resumes the session/i);
+      }
+
+      const stoppedTasks = runtimeEvents.filter(
+        (event) => event.type === "task.completed" && event.payload.status === "stopped",
+      );
+      assert.deepEqual(
+        stoppedTasks
+          .map((event) => (event.type === "task.completed" ? String(event.payload.taskId) : ""))
+          .sort(),
+        ["task-lost-a", "task-lost-b"],
+      );
+
+      assert.equal(
+        runtimeEvents.some((event) => event.type === "session.exited"),
+        true,
+      );
+      assert.equal(yield* adapter.hasSession(THREAD_ID), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("reports lost background agents when the stream fails", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "spawn agents",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-lost-on-failure",
+        description: "Pass 5: concurrency and consistency",
+        task_type: "local_agent",
+        tool_use_id: "toolu_lost_failure",
+        uuid: "task-lost-failure-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      harness.query.fail(new Error("stream transport died"));
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      runtimeEventsFiber.interruptUnsafe();
+
+      // Trigger-agnostic: a failure exit with live tasks must be as loud as
+      // a clean one.
+      const lossReport = runtimeEvents.find(
+        (event) =>
+          event.type === "runtime.error" &&
+          /background agent was still running/.test(event.payload.message),
+      );
+      assert.equal(lossReport?.type, "runtime.error");
+      if (lossReport?.type === "runtime.error") {
+        assert.match(lossReport.payload.message, /Pass 5: concurrency and consistency/);
+      }
+
+      const stoppedTask = runtimeEvents.find(
+        (event) => event.type === "task.completed" && event.payload.status === "stopped",
+      );
+      assert.equal(stoppedTask?.type, "task.completed");
+      if (stoppedTask?.type === "task.completed") {
+        assert.equal(String(stoppedTask.payload.taskId), "task-lost-on-failure");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("keeps Claude stream failure events structural", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

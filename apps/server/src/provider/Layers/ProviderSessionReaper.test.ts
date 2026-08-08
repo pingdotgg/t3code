@@ -18,6 +18,8 @@ import * as Stream from "effect/Stream";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
+import { ThreadBackgroundLivenessService } from "../../orchestration/ThreadBackgroundLiveness.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
 import { ProviderValidationError } from "../Errors.ts";
@@ -150,6 +152,8 @@ describe("ProviderSessionReaper", () => {
     readonly stopSessionImplementation?: (input: {
       readonly threadId: ThreadId;
     }) => ReturnType<ProviderServiceShape["stopSession"]>;
+    readonly backgroundLiveness?: ThreadBackgroundLivenessService["Service"];
+    readonly backgroundWorkMaxIdleMs?: number;
   }) {
     const stoppedThreadIds = new Set<ThreadId>();
     const stopSession = vi.fn<ProviderServiceShape["stopSession"]>(
@@ -196,10 +200,18 @@ describe("ProviderSessionReaper", () => {
     const layer = makeProviderSessionReaperLive({
       inactivityThresholdMs: 1_000,
       sweepIntervalMs: 60_000,
+      ...(input.backgroundWorkMaxIdleMs !== undefined
+        ? { backgroundWorkMaxIdleMs: input.backgroundWorkMaxIdleMs }
+        : {}),
     }).pipe(
       Layer.provideMerge(providerSessionDirectoryLayer),
       Layer.provideMerge(runtimeRepositoryLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, providerService)),
+      Layer.provideMerge(
+        input.backgroundLiveness !== undefined
+          ? Layer.succeed(ThreadBackgroundLivenessService, input.backgroundLiveness)
+          : ThreadBackgroundLiveness.layer,
+      ),
       Layer.provideMerge(
         Layer.succeed(ProjectionSnapshotQuery, {
           getCommandReadModel: () => Effect.die("unused"),
@@ -330,6 +342,10 @@ describe("ProviderSessionReaper", () => {
   it("skips stale sessions while background work is still live", async () => {
     const threadId = ThreadId.make("thread-reaper-background-work");
     const now = "2026-01-01T00:00:00.000Z";
+    // The sweep reads ThreadBackgroundLivenessService directly rather than
+    // the projected thread shell: the shell's backgroundLiveness is computed
+    // from the same service at snapshot-build time, so the direct read is
+    // the same signal without the snapshot staleness.
     const harness = await createHarness({
       readModel: makeReadModel([
         {
@@ -343,14 +359,23 @@ describe("ProviderSessionReaper", () => {
             lastError: null,
             updatedAt: now,
           },
-          backgroundLiveness: "working",
         },
       ]),
+      backgroundLiveness: {
+        recordTaskLiveness: () => {},
+        clearThreadLiveness: () => {},
+        getThreadBackgroundLiveness: () => "working",
+      },
     });
     const repository = await runtime!.runPromise(
       Effect.service(ProviderSessionRuntime.ProviderSessionRuntimeRepository),
     );
 
+    // Stale past the inactivity threshold but inside the wedge cap: live
+    // background work defers the reap. A session idle beyond the cap is
+    // reaped even with "live" work — that case is pinned by the wedge-cap
+    // test below.
+    const nowMs = await runtime!.runPromise(Clock.currentTimeMillis);
     await runtime!.runPromise(
       repository.upsert({
         threadId,
@@ -359,7 +384,7 @@ describe("ProviderSessionReaper", () => {
         adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
-        lastSeenAt: "2026-04-14T00:00:00.000Z",
+        lastSeenAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs - 10_000)),
         resumeCursor: {
           opaque: "resume-background-work",
         },
@@ -373,6 +398,116 @@ describe("ProviderSessionReaper", () => {
     expect(harness.stopSession).not.toHaveBeenCalled();
     const remaining = await runtime!.runPromise(repository.getByThreadId({ threadId }));
     expect(Option.isSome(remaining)).toBe(true);
+  });
+
+  it("skips idle sessions while background work is live", async () => {
+    const threadId = ThreadId.make("thread-reaper-background-work");
+    const now = "2026-01-01T00:00:00.000Z";
+    const harness = await createHarness({
+      readModel: makeReadModel([
+        {
+          id: threadId,
+          session: {
+            threadId,
+            status: "ready",
+            providerName: "claudeAgent",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      ]),
+      backgroundLiveness: {
+        recordTaskLiveness: () => {},
+        clearThreadLiveness: () => {},
+        getThreadBackgroundLiveness: (id) => (id === threadId ? "working" : null),
+      },
+    });
+    const repository = await runtime!.runPromise(
+      Effect.service(ProviderSessionRuntime.ProviderSessionRuntimeRepository),
+    );
+
+    // Past the inactivity threshold (1s) but inside the default wedge cap.
+    const nowMs = await runtime!.runPromise(Clock.currentTimeMillis);
+    await runtime!.runPromise(
+      repository.upsert({
+        threadId,
+        providerName: "claudeAgent",
+        providerInstanceId: null,
+        adapterKey: "claudeAgent",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs - 10_000)),
+        resumeCursor: {
+          opaque: "resume-background-work",
+        },
+        runtimePayload: null,
+      }),
+    );
+
+    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    scope = await runtime!.runPromise(Scope.make("sequential"));
+    await runtime!.runPromise(reaper.start().pipe(Scope.provide(scope)));
+    await runtime!.runPromise(drainFibers);
+
+    expect(harness.stopSession).not.toHaveBeenCalled();
+  });
+
+  it("reaps sessions with live background work once past the wedge cap", async () => {
+    const threadId = ThreadId.make("thread-reaper-wedged-background-work");
+    const now = "2026-01-01T00:00:00.000Z";
+    const harness = await createHarness({
+      readModel: makeReadModel([
+        {
+          id: threadId,
+          session: {
+            threadId,
+            status: "ready",
+            providerName: "claudeAgent",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      ]),
+      backgroundLiveness: {
+        recordTaskLiveness: () => {},
+        clearThreadLiveness: () => {},
+        getThreadBackgroundLiveness: () => "working",
+      },
+      backgroundWorkMaxIdleMs: 5_000,
+    });
+    const repository = await runtime!.runPromise(
+      Effect.service(ProviderSessionRuntime.ProviderSessionRuntimeRepository),
+    );
+
+    // Idle longer than the wedge cap: "live" background work that never
+    // reaches a terminal state must not pin the session forever.
+    const nowMs = await runtime!.runPromise(Clock.currentTimeMillis);
+    await runtime!.runPromise(
+      repository.upsert({
+        threadId,
+        providerName: "claudeAgent",
+        providerInstanceId: null,
+        adapterKey: "claudeAgent",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs - 60_000)),
+        resumeCursor: {
+          opaque: "resume-wedged-background-work",
+        },
+        runtimePayload: null,
+      }),
+    );
+
+    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    scope = await runtime!.runPromise(Scope.make("sequential"));
+    await runtime!.runPromise(reaper.start().pipe(Scope.provide(scope)));
+
+    await waitFor(() => harness.stopSession.mock.calls.length === 1);
+    expect(harness.stoppedThreadIds.has(threadId)).toBe(true);
   });
 
   it("does not reap sessions that are still within the inactivity threshold", async () => {

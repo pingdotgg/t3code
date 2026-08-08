@@ -25,6 +25,7 @@ import {
   type ProviderSession,
 } from "@t3tools/contracts";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -281,10 +282,142 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
     });
 
+  // The event pump is the one funnel every adapter shares, so two binding
+  // invariants live here. Both are best-effort: a missing binding is a
+  // no-op and failures must never break event delivery.
+  //
+  // 1. `session.exited`: adapter-internal exits (stream end, session
+  //    replace, adapter stopAll) never pass through `stopSession`, which
+  //    left the persisted binding `running` — a ghost row the reaper keeps
+  //    sweeping and diagnosis tooling misreads. Guarded against stale
+  //    exits: if the adapter still holds a live session for the thread
+  //    (a replacement started before the old session's exit event drained),
+  //    the binding must stay `running`.
+  // 2. Turn and task lifecycle events: `lastSeenAt` previously moved only
+  //    on user-initiated `sendTurn`. Turns the provider starts on its own
+  //    (background task notifications waking the agent) and long-running
+  //    background tasks that heartbeat via `task.progress` never routed
+  //    through it, so a thread doing autonomous work read as idle from the
+  //    moment the user last typed — and got reaped mid-work. Touching the
+  //    binding on these events (throttled — task.progress ticks every few
+  //    seconds) makes the reaper's clock measure actual inactivity, and
+  //    turns the reaper's wedge cap into "no heartbeat at all for the cap
+  //    window", which is the definition of wedged.
+  const BINDING_TOUCH_THROTTLE_MS = 60_000;
+  const lastBindingTouchAtMs = new Map<string, number>();
+
+  const BINDING_TOUCH_EVENT_TYPES: ReadonlySet<ProviderRuntimeEvent["type"]> = new Set([
+    "turn.started",
+    "turn.completed",
+    "task.started",
+    "task.progress",
+    "task.updated",
+    "task.completed",
+  ]);
+
+  const syncBindingOnRuntimeEvent = (
+    adapter: ProviderAdapterShape<ProviderAdapterError>,
+    event: ProviderRuntimeEvent,
+  ): Effect.Effect<void> => {
+    const isSessionExit = event.type === "session.exited";
+    const isActivityTouch = BINDING_TOUCH_EVENT_TYPES.has(event.type);
+    if (!isSessionExit && !isActivityTouch) {
+      return Effect.void;
+    }
+    return Effect.gen(function* () {
+      const threadKey = String(event.threadId);
+      if (!isSessionExit) {
+        const nowMs = yield* Clock.currentTimeMillis;
+        const lastTouch = lastBindingTouchAtMs.get(threadKey);
+        if (lastTouch !== undefined && nowMs - lastTouch < BINDING_TOUCH_THROTTLE_MS) {
+          return;
+        }
+      } else {
+        lastBindingTouchAtMs.delete(threadKey);
+      }
+      const binding = Option.getOrUndefined(yield* directory.getBinding(event.threadId));
+      const providerInstanceId = binding?.providerInstanceId;
+      if (
+        binding === undefined ||
+        binding.status === "stopped" ||
+        providerInstanceId === undefined
+      ) {
+        return;
+      }
+      if (isSessionExit) {
+        // A session.exited that raced a replacement session must not stomp
+        // the fresh binding.
+        //
+        // Cross-instance replacement: the pump stamps every event with the
+        // instance that emitted it, so a binding owned by a DIFFERENT
+        // instance means the thread has already moved on — this exit belongs
+        // to a superseded session and the fresh binding must survive.
+        // (The emitting adapter's own listSessions cannot see a replacement
+        // living on another instance, so this check has to come first.)
+        if (
+          event.providerInstanceId !== undefined &&
+          event.providerInstanceId !== providerInstanceId
+        ) {
+          return;
+        }
+        // Same-instance replacement: thread-level `hasSession` is not enough
+        // here — a Codex child-process crash emits session.exited without
+        // tearing down the adapter's map entry, so the dead session itself
+        // still reports live. Skip only when the adapter holds a session
+        // created strictly after this exit event — that can only be a
+        // replacement. NaN-safe on purpose: an unparseable timestamp must
+        // not count as a replacement, or the ghost `running` row this sync
+        // exists to prevent comes back.
+        const activeSessions = yield* adapter.listSessions();
+        const current = activeSessions.find((session) => session.threadId === event.threadId);
+        if (current !== undefined) {
+          const currentCreatedAtMs = Date.parse(current.createdAt);
+          const exitCreatedAtMs = Date.parse(event.createdAt);
+          const replacementIsLive =
+            Number.isFinite(currentCreatedAtMs) &&
+            Number.isFinite(exitCreatedAtMs) &&
+            currentCreatedAtMs > exitCreatedAtMs;
+          if (replacementIsLive) {
+            return;
+          }
+        }
+      }
+      const lastRuntimeEventAt = yield* nowIso;
+      // On activity touches `status` is omitted so the directory preserves
+      // the existing value; the upsert itself refreshes `lastSeenAt`.
+      yield* directory.upsert({
+        threadId: event.threadId,
+        provider: binding.provider,
+        providerInstanceId,
+        ...(isSessionExit ? { status: "stopped" as const } : {}),
+        runtimePayload: {
+          ...(isSessionExit ? { activeTurnId: null } : {}),
+          lastRuntimeEvent: event.type,
+          lastRuntimeEventAt,
+        },
+      });
+      if (!isSessionExit) {
+        // Spend the throttle only after the touch actually landed — a missing
+        // binding or a failed upsert must not suppress the next 60s of
+        // touches for a refresh that never happened.
+        lastBindingTouchAtMs.set(threadKey, yield* Clock.currentTimeMillis);
+      }
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider.session.binding-sync-failed", {
+          threadId: event.threadId,
+          eventType: event.type,
+          cause,
+        }),
+      ),
+    );
+  };
+
   const processRuntimeEvent = (
     source: {
       readonly instanceId: ProviderInstanceId;
       readonly provider: ProviderDriverKind;
+      readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
     },
     event: ProviderRuntimeEvent,
   ): Effect.Effect<void> =>
@@ -293,7 +426,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         increment(providerRuntimeEventsTotal, {
           provider: canonicalEvent.provider,
           eventType: canonicalEvent.type,
-        }).pipe(Effect.andThen(publishRuntimeEvent(canonicalEvent))),
+        }).pipe(
+          Effect.andThen(publishRuntimeEvent(canonicalEvent)),
+          Effect.andThen(syncBindingOnRuntimeEvent(source.adapter, canonicalEvent)),
+        ),
       ),
     );
 
@@ -336,6 +472,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             {
               instanceId: id,
               provider: adapter.provider,
+              adapter,
             },
             event,
           ),

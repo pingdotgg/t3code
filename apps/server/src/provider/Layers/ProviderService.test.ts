@@ -642,6 +642,411 @@ it.effect("ProviderServiceLive writes canonical events to the emitting thread se
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("marks the persisted binding stopped when session.exited flows through the pump", () =>
+  Effect.gen(function* () {
+    const codex = makeFakeCodexAdapter();
+    const registry = makeAdapterRegistryMock({
+      [ProviderDriverKind.make("codex")]: codex.adapter,
+    });
+    const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+      Layer.provide(SqlitePersistenceMemory),
+    );
+    const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+    const providerLayer = makeProviderServiceLive().pipe(
+      Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
+      Layer.provide(directoryLayer),
+      Layer.provide(defaultServerSettingsLayer),
+      Layer.provide(AnalyticsService.layerTest),
+      Layer.provide(
+        Layer.succeed(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
+      ),
+    );
+
+    const threadId = asThreadId("thread-session-exit-binding");
+
+    // Single provide so every reference to the directory/repository layers
+    // resolves to the same in-memory database instance.
+    const testLayer = providerLayer.pipe(
+      Layer.provideMerge(directoryLayer),
+      Layer.provideMerge(runtimeRepositoryLayer),
+    );
+
+    // Adapter-internal exits (stream end, replace, adapter stopAll) never
+    // pass through ProviderService.stopSession; the pump must still leave
+    // the persisted binding stopped instead of a ghost `running` row.
+    yield* Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      yield* ProviderService.ProviderService;
+      yield* directory.upsert({
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        status: "running",
+      });
+      yield* advanceTestClock(10);
+      codex.emit({
+        eventId: asEventId("evt-session-exited-binding"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        type: "session.exited",
+        payload: {
+          reason: "Session stopped",
+          exitKind: "graceful",
+        },
+      });
+      yield* advanceTestClock(20);
+
+      // The pump processes the event on a forked fiber; poll briefly.
+      let runtime = yield* repository.getByThreadId({ threadId });
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (Option.isSome(runtime) && runtime.value.status === "stopped") {
+          break;
+        }
+        yield* Effect.yieldNow;
+        runtime = yield* repository.getByThreadId({ threadId });
+      }
+      assert.equal(Option.isSome(runtime), true);
+      if (Option.isSome(runtime)) {
+        assert.equal(runtime.value.status, "stopped");
+      }
+    }).pipe(Effect.provide(testLayer));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "does not mark the binding stopped for a stale session.exited while a live session exists",
+  () =>
+    Effect.gen(function* () {
+      const codex = makeFakeCodexAdapter();
+      const registry = makeAdapterRegistryMock({
+        [ProviderDriverKind.make("codex")]: codex.adapter,
+      });
+      const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+        Layer.provide(SqlitePersistenceMemory),
+      );
+      const directoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+      const providerLayer = makeProviderServiceLive().pipe(
+        Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
+        Layer.provide(directoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      );
+
+      const threadId = asThreadId("thread-stale-exit-guard");
+
+      const testLayer = providerLayer.pipe(
+        Layer.provideMerge(directoryLayer),
+        Layer.provideMerge(runtimeRepositoryLayer),
+      );
+
+      // Replacement race: a new session is already live in the adapter when
+      // the torn-down session's exit event drains through the pump. The
+      // binding must stay running — marking it stopped would hide a live
+      // child process from the reaper and diagnosis tooling. The guard is
+      // identity-based (session createdAt newer than the exit event): a
+      // crash-exit for the CURRENT session — which some adapters emit
+      // without tearing down their session map — must still mark the
+      // binding stopped.
+      yield* Effect.gen(function* () {
+        const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+        const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+        yield* ProviderService.ProviderService;
+        yield* codex.adapter.startSession({
+          threadId,
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: codexInstanceId,
+          runtimeMode: "full-access",
+        });
+        yield* directory.upsert({
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: codexInstanceId,
+          threadId,
+          status: "running",
+        });
+        yield* advanceTestClock(10);
+        // The fake adapter stamps sessions createdAt 2026-01-01T00:00:00Z;
+        // an exit event created BEFORE that models the replaced (old)
+        // session's teardown emission.
+        codex.emit({
+          eventId: asEventId("evt-stale-session-exited"),
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          createdAt: "2025-12-31T23:59:00.000Z",
+          type: "session.exited",
+          payload: {
+            reason: "Session stopped",
+            exitKind: "graceful",
+          },
+        });
+        yield* advanceTestClock(20);
+        for (let attempt = 0; attempt < 50; attempt++) {
+          yield* Effect.yieldNow;
+        }
+
+        const runtime = yield* repository.getByThreadId({ threadId });
+        assert.equal(Option.isSome(runtime), true);
+        if (Option.isSome(runtime)) {
+          assert.equal(runtime.value.status, "running");
+        }
+      }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "does not mark the binding stopped when the exit comes from a different provider instance",
+  () =>
+    Effect.gen(function* () {
+      const codex = makeFakeCodexAdapter();
+      const registry = makeAdapterRegistryMock({
+        [ProviderDriverKind.make("codex")]: codex.adapter,
+      });
+      const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+        Layer.provide(SqlitePersistenceMemory),
+      );
+      const directoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+      const providerLayer = makeProviderServiceLive().pipe(
+        Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
+        Layer.provide(directoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      );
+
+      const threadId = asThreadId("thread-cross-instance-exit-guard");
+
+      const testLayer = providerLayer.pipe(
+        Layer.provideMerge(directoryLayer),
+        Layer.provideMerge(runtimeRepositoryLayer),
+      );
+
+      // Cross-instance replacement: the thread has moved to a session on a
+      // DIFFERENT provider instance, then the old instance's queued exit
+      // drains through the pump. The old adapter's listSessions cannot see
+      // the replacement, so only the instance-id comparison protects the
+      // fresh binding — it must stay running.
+      yield* Effect.gen(function* () {
+        const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+        const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+        yield* ProviderService.ProviderService;
+        yield* directory.upsert({
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: ProviderInstanceId.make("codex-replacement"),
+          threadId,
+          status: "running",
+        });
+        yield* advanceTestClock(10);
+        // No session exists in this adapter for the thread (the replacement
+        // lives elsewhere), and the exit event is stamped with this
+        // adapter's instance id ("codex") by the pump.
+        codex.emit({
+          eventId: asEventId("evt-cross-instance-session-exited"),
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          createdAt: "2026-01-01T00:00:10.000Z",
+          type: "session.exited",
+          payload: {
+            reason: "Session stopped",
+            exitKind: "graceful",
+          },
+        });
+        yield* advanceTestClock(20);
+        for (let attempt = 0; attempt < 50; attempt++) {
+          yield* Effect.yieldNow;
+        }
+
+        const runtime = yield* repository.getByThreadId({ threadId });
+        assert.equal(Option.isSome(runtime), true);
+        if (Option.isSome(runtime)) {
+          assert.equal(runtime.value.status, "running");
+        }
+      }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "marks the binding stopped for a crash exit even when the adapter still reports the session",
+  () =>
+    Effect.gen(function* () {
+      const codex = makeFakeCodexAdapter();
+      const registry = makeAdapterRegistryMock({
+        [ProviderDriverKind.make("codex")]: codex.adapter,
+      });
+      const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+        Layer.provide(SqlitePersistenceMemory),
+      );
+      const directoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+      const providerLayer = makeProviderServiceLive().pipe(
+        Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
+        Layer.provide(directoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      );
+
+      const threadId = asThreadId("thread-crash-exit-binding");
+
+      const testLayer = providerLayer.pipe(
+        Layer.provideMerge(directoryLayer),
+        Layer.provideMerge(runtimeRepositoryLayer),
+      );
+
+      // Codex-style crash: the child process dies, the adapter emits
+      // session.exited but never removes its session map entry. The exit
+      // event is NEWER than the session, so the identity guard must not
+      // treat the dead session as a live replacement.
+      yield* Effect.gen(function* () {
+        const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+        const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+        yield* ProviderService.ProviderService;
+        yield* codex.adapter.startSession({
+          threadId,
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: codexInstanceId,
+          runtimeMode: "full-access",
+        });
+        yield* directory.upsert({
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: codexInstanceId,
+          threadId,
+          status: "running",
+        });
+        yield* advanceTestClock(10);
+        codex.emit({
+          eventId: asEventId("evt-crash-session-exited"),
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          createdAt: "2026-01-01T00:00:05.000Z",
+          type: "session.exited",
+          payload: {
+            reason: "codex app-server exited unexpectedly",
+            exitKind: "crash",
+          },
+        });
+        yield* advanceTestClock(20);
+
+        let runtime = yield* repository.getByThreadId({ threadId });
+        for (let attempt = 0; attempt < 100; attempt++) {
+          if (Option.isSome(runtime) && runtime.value.status === "stopped") {
+            break;
+          }
+          yield* Effect.yieldNow;
+          runtime = yield* repository.getByThreadId({ threadId });
+        }
+        assert.equal(Option.isSome(runtime), true);
+        if (Option.isSome(runtime)) {
+          assert.equal(runtime.value.status, "stopped");
+        }
+      }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("refreshes the binding lastSeenAt when turn activity flows through the pump", () =>
+  Effect.gen(function* () {
+    const codex = makeFakeCodexAdapter();
+    const registry = makeAdapterRegistryMock({
+      [ProviderDriverKind.make("codex")]: codex.adapter,
+    });
+    const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+      Layer.provide(SqlitePersistenceMemory),
+    );
+    const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+    const providerLayer = makeProviderServiceLive().pipe(
+      Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
+      Layer.provide(directoryLayer),
+      Layer.provide(defaultServerSettingsLayer),
+      Layer.provide(AnalyticsService.layerTest),
+      Layer.provide(
+        Layer.succeed(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
+      ),
+    );
+
+    const threadId = asThreadId("thread-turn-activity-touch");
+    const staleLastSeenAt = "2026-01-01T00:00:00.000Z";
+
+    const testLayer = providerLayer.pipe(
+      Layer.provideMerge(directoryLayer),
+      Layer.provideMerge(runtimeRepositoryLayer),
+    );
+
+    // Provider-initiated turns (background task notifications waking the
+    // agent) never route through sendTurn, so the pump must be the thing
+    // that keeps lastSeenAt honest — otherwise the reaper reads a thread
+    // doing autonomous work as idle since the user's last message.
+    yield* Effect.gen(function* () {
+      const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      yield* ProviderService.ProviderService;
+      yield* repository.upsert({
+        threadId,
+        providerName: "codex",
+        providerInstanceId: codexInstanceId,
+        adapterKey: "codex",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: staleLastSeenAt,
+        resumeCursor: null,
+        runtimePayload: null,
+      });
+      yield* advanceTestClock(10);
+      codex.emit({
+        eventId: asEventId("evt-turn-activity-touch"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        type: "turn.completed",
+        payload: {
+          state: "completed",
+        },
+      });
+      yield* advanceTestClock(20);
+
+      let runtime = yield* repository.getByThreadId({ threadId });
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (Option.isSome(runtime) && runtime.value.lastSeenAt !== staleLastSeenAt) {
+          break;
+        }
+        yield* Effect.yieldNow;
+        runtime = yield* repository.getByThreadId({ threadId });
+      }
+      assert.equal(Option.isSome(runtime), true);
+      if (Option.isSome(runtime)) {
+        assert.notEqual(runtime.value.lastSeenAt, staleLastSeenAt);
+        // Turn activity must not change the binding status.
+        assert.equal(runtime.value.status, "running");
+      }
+    }).pipe(Effect.provide(testLayer));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", () =>
   Effect.gen(function* () {
     const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-service-"));
