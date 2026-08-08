@@ -12,6 +12,14 @@ import {
 
 const DEFAULT_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("codex");
 
+const CLAUDE_OPUS_FALLBACK_MODELS = [
+  "claude-opus-5",
+  "claude-opus-4-8",
+  "claude-opus-4-7",
+  "claude-opus-4-6",
+  "claude-opus-4-5",
+] as const;
+
 export interface SelectableModelOption {
   slug: string;
   name: string;
@@ -287,7 +295,22 @@ export function resolveSelectableModel(
   }
 
   const resolved = options.find((option) => option.slug === normalized);
-  return resolved ? resolved.slug : null;
+  if (resolved) {
+    return resolved.slug;
+  }
+
+  // The bare Claude `opus` alias tracks the newest Opus model, but newer
+  // models can be omitted from the live catalog when the installed Claude
+  // Code version is too old. In that case, preserve the model family instead
+  // of falling through to the provider's unrelated default model. Use a fixed
+  // built-in priority so user-defined picker ordering and custom model slugs
+  // cannot change which fallback is selected.
+  if (provider === ProviderDriverKind.make("claudeAgent") && trimmed === "opus") {
+    const availableSlugs = new Set(options.map((option) => option.slug));
+    return CLAUDE_OPUS_FALLBACK_MODELS.find((slug) => availableSlugs.has(slug)) ?? null;
+  }
+
+  return null;
 }
 
 function resolveModelSlug(model: string | null | undefined, provider: ProviderDriverKind): string {

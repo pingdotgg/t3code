@@ -12,6 +12,7 @@ import {
   getProviderOptionStringSelectionValue,
   normalizeCustomModelSlug,
   normalizeModelSlug,
+  resolveSelectableModel,
 } from "./model.ts";
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
@@ -153,5 +154,25 @@ describe("model slug normalization", () => {
 
     expect(normalizeModelSlug("opus", claude)).toBe("claude-opus-5");
     expect(normalizeCustomModelSlug(" opus ")).toBe("opus");
+  });
+
+  it("resolves the bare Opus alias to the newest available Claude model", () => {
+    const claude = ProviderDriverKind.make("claudeAgent");
+    const currentModels = [
+      { slug: "claude-opus-5", name: "Claude Opus 5" },
+      { slug: "claude-opus-4-8", name: "Claude Opus 4.8" },
+    ];
+    const olderModels = [
+      { slug: "claude-opus-custom", name: "Custom Opus" },
+      { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
+      { slug: "claude-sonnet-5", name: "Claude Sonnet 5" },
+      { slug: "claude-opus-4-8", name: "Claude Opus 4.8" },
+    ];
+    const customModels = [{ slug: "claude-opus-custom", name: "Custom Opus" }];
+
+    expect(resolveSelectableModel(claude, "opus", currentModels)).toBe("claude-opus-5");
+    expect(resolveSelectableModel(claude, "opus", olderModels)).toBe("claude-opus-4-8");
+    expect(resolveSelectableModel(claude, "opus-5", olderModels)).toBeNull();
+    expect(resolveSelectableModel(claude, "opus", customModels)).toBeNull();
   });
 });

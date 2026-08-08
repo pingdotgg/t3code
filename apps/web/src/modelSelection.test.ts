@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "./providerInstances";
 import {
   getAppModelOptionsForInstance,
+  resolveAppModelSelection,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
 } from "./modelSelection";
@@ -319,5 +320,30 @@ describe("instance-scoped model selection", () => {
       instanceId: ProviderInstanceId.make("claude_openrouter"),
       model: "openai/gpt-5.5",
     });
+  });
+});
+
+describe("provider-scoped model selection", () => {
+  it("keeps the bare Opus alias in the Opus family when Opus 5 is gated out", () => {
+    // Mirrors Claude Code 2.1.169-2.1.218, where Opus 5 is filtered out of the
+    // served catalog. The provider default is the first built-in that survives
+    // filtering (Fable 5), so without the family fallback `opus` resolves to a
+    // different model family while Opus 4.8 is still available.
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: "claudeAgent",
+        models: ["claude-fable-5", "claude-opus-4-8", "claude-sonnet-5"],
+      }),
+    ];
+
+    expect(
+      resolveAppModelSelection(
+        ProviderDriverKind.make("claudeAgent"),
+        settingsWithProviderInstances(),
+        providers,
+        "opus",
+      ),
+    ).toBe("claude-opus-4-8");
   });
 });
