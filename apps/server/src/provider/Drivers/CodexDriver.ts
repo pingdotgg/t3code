@@ -23,6 +23,7 @@
  */
 import { CodexSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -36,7 +37,11 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
-import { checkCodexProviderStatus, makePendingCodexProvider } from "../Layers/CodexProvider.ts";
+import {
+  checkCodexProviderStatus,
+  listCodexProviderSkills,
+  makePendingCodexProvider,
+} from "../Layers/CodexProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
@@ -198,6 +203,29 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         ),
       );
 
+      const listSkills = (cwd: string) =>
+        listCodexProviderSkills({
+          binaryPath: effectiveConfig.binaryPath,
+          homePath: effectiveConfig.homePath,
+          launchArgs: effectiveConfig.launchArgs,
+          cwd,
+          environment: processEnv,
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.scoped,
+          Effect.timeout(Duration.seconds(10)),
+          Effect.catch((error) =>
+            Effect.logWarning("Codex workspace skill discovery failed; using global skills.", {
+              cwd,
+              cause: error,
+              instanceId,
+            }).pipe(
+              Effect.andThen(snapshot.getSnapshot),
+              Effect.map((provider) => provider.skills),
+            ),
+          ),
+        );
+
       return {
         instanceId,
         driverKind: DRIVER_KIND,
@@ -208,6 +236,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        listSkills,
       } satisfies ProviderInstance;
     }),
 };

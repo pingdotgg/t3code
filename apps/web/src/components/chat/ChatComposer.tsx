@@ -75,6 +75,7 @@ import {
   removeInlineTerminalContextPlaceholder,
 } from "../../lib/terminalContext";
 import { useComposerPathSearch } from "../../lib/composerPathSearchState";
+import { useProviderSkills } from "../../state/queries";
 import { type ElementContextDraft } from "../../lib/elementContext";
 import { ComposerPendingElementContexts } from "./ComposerPendingElementContexts";
 import { ComposerPendingReviewComments } from "./ComposerPendingReviewComments";
@@ -849,6 +850,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => selectedProviderEntry?.models ?? [],
     [selectedProviderEntry],
   );
+  const providerSkills = useProviderSkills({
+    environmentId,
+    instanceId: selectedInstanceId,
+    cwd: gitCwd,
+  });
+  // An empty workspace result means the query could not answer — an unknown
+  // instance, or a driver without workspace discovery — rather than a user with
+  // no skills, so fall back to the global snapshot instead of showing nothing.
+  // Repo-scoped entries are dropped from that fallback because the snapshot is
+  // cached per instance and may describe a different workspace.
+  const selectedProviderSkills = useMemo(() => {
+    const workspaceSkills = providerSkills.data?.skills;
+    if (workspaceSkills !== undefined && workspaceSkills.length > 0) {
+      return workspaceSkills;
+    }
+    return selectedProviderStatus?.skills.filter((skill) => skill.scope !== "repo") ?? [];
+  }, [providerSkills.data, selectedProviderStatus]);
 
   const composerPromptInjectionState = useMemo(
     () => getComposerPromptInjectionState(prompt),
@@ -1082,25 +1100,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return searchSlashCommandItems(slashCommandItems, query);
     }
     if (composerTrigger.kind === "skill") {
-      return searchProviderSkills(selectedProviderStatus?.skills ?? [], composerTrigger.query).map(
-        (skill) => ({
-          id: `skill:${selectedProvider}:${skill.name}`,
-          type: "skill" as const,
-          provider: selectedProvider,
-          skill,
-          label: formatProviderSkillDisplayName(skill),
-          description:
-            skill.shortDescription ??
-            skill.description ??
-            (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
-        }),
-      );
+      return searchProviderSkills(selectedProviderSkills, composerTrigger.query).map((skill) => ({
+        id: `skill:${selectedProvider}:${skill.name}`,
+        type: "skill" as const,
+        provider: selectedProvider,
+        skill,
+        label: formatProviderSkillDisplayName(skill),
+        description:
+          skill.shortDescription ??
+          skill.description ??
+          (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+      }));
     }
     return [];
   }, [
     composerTrigger,
     planModeUiEnabled,
     selectedProvider,
+    selectedProviderSkills,
     selectedProviderStatus,
     workspaceEntries.entries,
   ]);
@@ -3032,7 +3049,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     ? composerTerminalContexts
                     : []
                 }
-                skills={selectedProviderStatus?.skills ?? []}
+                skills={selectedProviderSkills}
                 {...(showMobilePendingAnswerActions ? { className: "max-sm:pb-11" } : {})}
                 onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                 onChange={onPromptChange}
