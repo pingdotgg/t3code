@@ -113,6 +113,103 @@ index 0eb1f09dee82edd99e3e614938233db5cdeaebfe..73298f10807520970f625e166d7f5dd1
  
  #if !TARGET_OS_TV || __TV_OS_VERSION_MAX_ALLOWED >= 170000
    if (@available(tvOS 17.0, *)) {
+diff --git a/ios/RNSScreen.mm b/ios/RNSScreen.mm
+index 69d4d9a..6a90e3d 100644
+--- a/ios/RNSScreen.mm
++++ b/ios/RNSScreen.mm
+@@ -36,6 +36,10 @@
+ namespace react = facebook::react;
+ 
+ constexpr NSInteger SHEET_FIT_TO_CONTENTS = -1;
++// Sentinel `sheetAllowedDetents` entries requesting a UIKit-defined detent. Ascending by
++// resulting height, so arrays using them stay sorted as the JS side asserts.
++constexpr NSInteger SHEET_SYSTEM_DETENT_MEDIUM = -3;
++constexpr NSInteger SHEET_SYSTEM_DETENT_LARGE = -2;
+ constexpr NSInteger SHEET_LARGEST_UNDIMMED_DETENT_NONE = -1;
+ 
+ struct ContentWrapperBox {
+@@ -897,11 +901,42 @@ - (void)setLargestUndimmedDetentForSheet:(UISheetPresentationController *)sheet
+   }
+ }
+ 
++- (UISheetPresentationControllerDetentIdentifier)systemDetentIdentifierForAllowedDetent:(NSNumber *)allowedDetent
++{
++  switch (allowedDetent.intValue) {
++    case SHEET_SYSTEM_DETENT_MEDIUM:
++      return UISheetPresentationControllerDetentIdentifierMedium;
++    case SHEET_SYSTEM_DETENT_LARGE:
++      return UISheetPresentationControllerDetentIdentifierLarge;
++    default:
++      return nil;
++  }
++}
++
++- (NSInteger)indexOfAllowedDetentWithSystemIdentifier:(UISheetPresentationControllerDetentIdentifier)identifier
++{
++  if (identifier == nil) {
++    return NSNotFound;
++  }
++  for (NSUInteger index = 0; index < _sheetAllowedDetents.count; index++) {
++    UISheetPresentationControllerDetentIdentifier candidate =
++        [self systemDetentIdentifierForAllowedDetent:_sheetAllowedDetents[index]];
++    if (candidate != nil && [candidate isEqualToString:identifier]) {
++      return index;
++    }
++  }
++  return NSNotFound;
++}
++
+ - (NSInteger)detentIndexFromDetentIdentifier:(UISheetPresentationControllerDetentIdentifier)identifier
+ {
+   // We first check if we are running on iOS 16+ as the API is different
+ #if RNS_IPHONE_OS_VERSION_AVAILABLE(16_0)
+   if (_sheetAllowedDetents.count > 0) {
++    NSInteger systemDetentIndex = [self indexOfAllowedDetentWithSystemIdentifier:identifier];
++    if (systemDetentIndex != NSNotFound) {
++      return systemDetentIndex;
++    }
+     // We should be running on custom detents in this case, thus identifier should be a stringified number.
+     return identifier.integerValue;
+   } else
+@@ -1053,7 +1088,12 @@ - (void)updateFormSheetPresentationStyle
+       }
+     } else {
+       // We're on iOS 16+ & have custom detents.
+-      [self setLargestUndimmedDetentForSheet:sheet to:[NSNumber numberWithInt:ludIndex].stringValue animate:YES];
++      UISheetPresentationControllerDetentIdentifier systemIdent = (NSUInteger)ludIndex < _sheetAllowedDetents.count
++          ? [self systemDetentIdentifierForAllowedDetent:_sheetAllowedDetents[ludIndex]]
++          : nil;
++      [self setLargestUndimmedDetentForSheet:sheet
++                                          to:systemIdent ?: [NSNumber numberWithInt:ludIndex].stringValue
++                                     animate:YES];
+     }
+   } else {
+     RCTLogError(@"[RNScreens] Value of sheetLargestUndimmedDetent prop must be >= -1");
+@@ -1069,7 +1109,7 @@ - (void)updateFormSheetPresentationStyle
+ /**
+  * Creates array of detent objects based on provided `values` & `resolver`. Since we need to name the detents to be able
+  * to later refer to them, this method names the detents by stringifying their indices, e.g. detent on index 2 will be
+- * named "2".
++ * named "2". Entries requesting a system detent keep UIKit's own identifier instead.
+  */
+ - (NSArray<UISheetPresentationControllerDetent *> *)
+     detentsFromValues:(NSArray<NSNumber *> *)values
+@@ -1079,6 +1119,15 @@ - (void)updateFormSheetPresentationStyle
+   NSMutableArray<UISheetPresentationControllerDetent *> *customDetents =
+       [NSMutableArray arrayWithCapacity:values.count];
+   [values enumerateObjectsUsingBlock:^(NSNumber *value, NSUInteger index, BOOL *stop) {
++    UISheetPresentationControllerDetentIdentifier systemIdent =
++        [self systemDetentIdentifierForAllowedDetent:value];
++    if (systemIdent != nil) {
++      [customDetents
++          addObject:[systemIdent isEqualToString:UISheetPresentationControllerDetentIdentifierLarge]
++              ? UISheetPresentationControllerDetent.largeDetent
++              : UISheetPresentationControllerDetent.mediumDetent];
++      return;
++    }
+     UISheetPresentationControllerDetentIdentifier ident = [[NSNumber numberWithUnsignedInteger:index] stringValue];
+     [customDetents addObject:[UISheetPresentationControllerDetent
+                                  customDetentWithIdentifier:ident
 diff --git a/ios/RNSScreenStackHeaderConfig.h b/ios/RNSScreenStackHeaderConfig.h
 index 919b984edc9f91ee9ac26faf257d8a721e26457c..5bb0cd6736ed6bc51db57e2a9326f758f22c51d8 100644
 --- a/ios/RNSScreenStackHeaderConfig.h

@@ -133,6 +133,11 @@ const LEGAL_DOCUMENT_HEADER_OPTIONS: AppScreenOptions = {
   presentation: "fullScreenModal",
 };
 
+// Negative values ask for UIKit's own `.medium()`/`.large()` detents, via
+// patches/react-native-screens@4.25.2.patch; Android has none, so it keeps fractions.
+const SYSTEM_MEDIUM_LARGE_DETENTS = Platform.OS === "ios" ? [-3, -2] : [0.55, 0.92];
+const SYSTEM_LARGE_DETENTS = Platform.OS === "ios" ? [-2] : [0.92];
+
 const SettingsSheetStack = createNativeStackNavigator({
   initialRouteName: "Settings",
   screenOptions: {
@@ -426,7 +431,7 @@ export const RootStack = createNativeStackNavigator({
         // Android cannot host the keyboard-driven comment composer inside a
         // formSheet; use a full-screen modal there instead.
         presentation: Platform.OS === "android" ? "fullScreenModal" : "formSheet",
-        sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.55, 0.92],
+        sheetAllowedDetents: Platform.OS === "android" ? undefined : SYSTEM_MEDIUM_LARGE_DETENTS,
         sheetGrabberVisible: Platform.OS !== "android",
       },
     }),
@@ -452,7 +457,7 @@ export const RootStack = createNativeStackNavigator({
       linking: `${THREAD_LINKING_PREFIX}/git`,
       options: {
         presentation: "formSheet",
-        sheetAllowedDetents: [0.55, 0.92],
+        sheetAllowedDetents: SYSTEM_MEDIUM_LARGE_DETENTS,
         sheetGrabberVisible: true,
       },
     }),
@@ -461,7 +466,7 @@ export const RootStack = createNativeStackNavigator({
       linking: `${THREAD_LINKING_PREFIX}/git/commit`,
       options: {
         presentation: "formSheet",
-        sheetAllowedDetents: [0.55, 0.92],
+        sheetAllowedDetents: SYSTEM_MEDIUM_LARGE_DETENTS,
         sheetGrabberVisible: true,
       },
     }),
@@ -470,7 +475,7 @@ export const RootStack = createNativeStackNavigator({
       linking: `${THREAD_LINKING_PREFIX}/git/branches`,
       options: {
         presentation: "formSheet",
-        sheetAllowedDetents: [0.55, 0.92],
+        sheetAllowedDetents: SYSTEM_MEDIUM_LARGE_DETENTS,
         sheetGrabberVisible: true,
       },
     }),
@@ -495,7 +500,7 @@ export const RootStack = createNativeStackNavigator({
           ? { presentation: "card" as const }
           : {
               presentation: "formSheet" as const,
-              sheetAllowedDetents: [0.7, 0.92],
+              sheetAllowedDetents: SYSTEM_MEDIUM_LARGE_DETENTS,
               sheetGrabberVisible: true,
             }),
       },
@@ -518,7 +523,7 @@ export const RootStack = createNativeStackNavigator({
         title: "Set up T3 Connect",
         gestureEnabled: true,
         presentation: "formSheet",
-        sheetAllowedDetents: [0.6, 0.95],
+        sheetAllowedDetents: SYSTEM_MEDIUM_LARGE_DETENTS,
         sheetGrabberVisible: true,
       },
     }),
@@ -563,7 +568,7 @@ export const RootStack = createNativeStackNavigator({
           ? { presentation: "card" as const }
           : {
               presentation: "formSheet" as const,
-              sheetAllowedDetents: [0.92],
+              sheetAllowedDetents: SYSTEM_LARGE_DETENTS,
               sheetGrabberVisible: true,
             }),
       },
