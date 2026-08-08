@@ -6,7 +6,6 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import {
-  getComposerPromptInjectionState,
   getComposerProviderState,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
@@ -22,7 +21,6 @@ const MODEL = "test-model";
 function selectDescriptor(
   id: string,
   options: ReadonlyArray<{ id: string; label: string; isDefault?: boolean }>,
-  promptInjectedValues?: ReadonlyArray<string>,
 ): Extract<ProviderOptionDescriptor, { type: "select" }> {
   const defaultId = options.find((option) => option.isDefault)?.id;
   return {
@@ -31,9 +29,6 @@ function selectDescriptor(
     type: "select",
     options: [...options],
     ...(defaultId ? { currentValue: defaultId } : {}),
-    ...(promptInjectedValues && promptInjectedValues.length > 0
-      ? { promptInjectedValues: [...promptInjectedValues] }
-      : {}),
   };
 }
 
@@ -55,20 +50,7 @@ function selections(
   return entries.map(([id, value]) => ({ id, value }));
 }
 
-const ULTRATHINK_FRAME_CLASSES = {
-  composerFrameClassName: "ultrathink-frame",
-  composerSurfaceClassName: "shadow-[0_0_0_1px_rgba(255,255,255,0.07)_inset]",
-  modelPickerIconClassName: "ultrathink-chroma",
-} as const;
-
 describe("getComposerProviderState", () => {
-  it("derives a stable prompt injection state for ordinary prompt edits", () => {
-    expect(getComposerPromptInjectionState("Investigate this failure")).toBe("none");
-    expect(getComposerPromptInjectionState("Ultrathink:\nInvestigate this failure")).toBe(
-      "ultrathink",
-    );
-  });
-
   it("returns descriptor defaults when no selections are provided", () => {
     const state = getComposerProviderState({
       provider: PROVIDER,
@@ -84,7 +66,6 @@ describe("getComposerProviderState", () => {
 
     expect(state).toEqual({
       provider: PROVIDER,
-      promptEffort: "high",
       modelOptionsForDispatch: selections(["effort", "high"]),
     });
   });
@@ -105,7 +86,6 @@ describe("getComposerProviderState", () => {
 
     expect(state).toEqual({
       provider: PROVIDER,
-      promptEffort: "low",
       modelOptionsForDispatch: selections(["effort", "low"], ["fastMode", true]),
     });
   });
@@ -136,12 +116,11 @@ describe("getComposerProviderState", () => {
 
     expect(state).toEqual({
       provider: PROVIDER,
-      promptEffort: null,
       modelOptionsForDispatch: selections(["thinking", false]),
     });
   });
 
-  it("derives promptEffort from the first select descriptor and preserves all others for dispatch", () => {
+  it("preserves every declared descriptor for dispatch", () => {
     const state = getComposerProviderState({
       provider: PROVIDER,
       model: MODEL,
@@ -159,7 +138,6 @@ describe("getComposerProviderState", () => {
       modelOptions: selections(["agent", "plan"]),
     });
 
-    expect(state.promptEffort).toBe("high");
     expect(state.modelOptionsForDispatch).toEqual(
       selections(["effort", "high"], ["contextWindow", "200k"], ["agent", "plan"]),
     );
@@ -175,56 +153,8 @@ describe("getComposerProviderState", () => {
 
     expect(state).toEqual({
       provider: PROVIDER,
-      promptEffort: null,
       modelOptionsForDispatch: undefined,
     });
-  });
-
-  it("adds ultrathink class names when the prompt triggers a promptInjectedValues descriptor", () => {
-    const state = getComposerProviderState({
-      provider: PROVIDER,
-      model: MODEL,
-      models: modelWith([
-        selectDescriptor(
-          "effort",
-          [
-            { id: "medium", label: "Medium" },
-            { id: "high", label: "High", isDefault: true },
-            { id: "ultrathink", label: "Ultrathink" },
-          ],
-          ["ultrathink"],
-        ),
-      ]),
-      promptInjectionState: getComposerPromptInjectionState(
-        "Ultrathink:\nInvestigate this failure",
-      ),
-      modelOptions: selections(["effort", "medium"]),
-    });
-
-    expect(state).toEqual({
-      provider: PROVIDER,
-      promptEffort: "medium",
-      modelOptionsForDispatch: selections(["effort", "medium"]),
-      ...ULTRATHINK_FRAME_CLASSES,
-    });
-  });
-
-  it("does not add ultrathink class names when the descriptor has no promptInjectedValues", () => {
-    const state = getComposerProviderState({
-      provider: PROVIDER,
-      model: MODEL,
-      models: modelWith([
-        selectDescriptor("effort", [{ id: "high", label: "High", isDefault: true }]),
-      ]),
-      promptInjectionState: getComposerPromptInjectionState(
-        "Ultrathink:\nInvestigate this failure",
-      ),
-      modelOptions: undefined,
-    });
-
-    expect(state).not.toHaveProperty("composerFrameClassName");
-    expect(state).not.toHaveProperty("composerSurfaceClassName");
-    expect(state).not.toHaveProperty("modelPickerIconClassName");
   });
 });
 
@@ -238,8 +168,6 @@ describe("provider traits render guards", () => {
       model: MODEL,
       models,
       modelOptions: undefined,
-      prompt: "",
-      onPromptChange: () => {},
     };
 
     expect(renderProviderTraitsPicker(args)).toBeNull();

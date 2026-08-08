@@ -134,21 +134,21 @@ describe("ProviderSendTurnInput", () => {
     expect(getOptionValue(parsed.modelSelection?.options, "fastMode")).toBe(true);
   });
 
-  it("accepts claude modelSelection including ultrathink", () => {
+  it("accepts claude modelSelection", () => {
     const parsed = decodeProviderSendTurnInput({
       threadId: "thread-1",
       modelSelection: {
         provider: "claudeAgent",
         model: "claude-sonnet-4-6",
         options: [
-          { id: "effort", value: "ultrathink" },
+          { id: "effort", value: "max" },
           { id: "fastMode", value: true },
         ],
       },
     });
 
     expect(parsed.modelSelection?.instanceId).toBe("claudeAgent");
-    expect(getOptionValue(parsed.modelSelection?.options, "effort")).toBe("ultrathink");
+    expect(getOptionValue(parsed.modelSelection?.options, "effort")).toBe("max");
     expect(getOptionValue(parsed.modelSelection?.options, "fastMode")).toBe(true);
   });
 });

@@ -39,8 +39,6 @@ function display(descriptors: ReadonlyArray<ProviderOptionDescriptor>) {
   return buildTraitsTriggerDisplay({
     provider: CODEX,
     descriptors,
-    primarySelectDescriptorId: "reasoningEffort",
-    ultrathinkPromptControlled: false,
   });
 }
 
@@ -117,16 +115,5 @@ describe("buildTraitsTriggerDisplay", () => {
       ],
     };
     expect(display([unresolved])).toEqual({ label: "", showFastModeIcon: false });
-  });
-
-  it("still renders the prompt-controlled ultrathink label alongside the bolt", () => {
-    expect(
-      buildTraitsTriggerDisplay({
-        provider: CODEX,
-        descriptors: [EFFORT, fastModeDescriptor(true)],
-        primarySelectDescriptorId: "reasoningEffort",
-        ultrathinkPromptControlled: true,
-      }),
-    ).toEqual({ label: "Ultrathink", showFastModeIcon: true });
   });
 });

@@ -226,31 +226,6 @@ function makeDeterministicRandomService(seed = 0x1234_5678): {
   };
 }
 
-async function readFirstPromptText(
-  input:
-    | {
-        readonly prompt: AsyncIterable<SDKUserMessage>;
-      }
-    | undefined,
-): Promise<string | undefined> {
-  const iterator = input?.prompt[Symbol.asyncIterator]();
-  if (!iterator) {
-    return undefined;
-  }
-  const next = await iterator.next();
-  if (next.done) {
-    return undefined;
-  }
-  if (typeof next.value.message.content === "string") {
-    return next.value.message.content;
-  }
-  const content = next.value.message.content[0];
-  if (!content || content.type !== "text") {
-    return undefined;
-  }
-  return content.text;
-}
-
 async function readFirstPromptMessage(
   input:
     | {
@@ -694,42 +669,6 @@ describe("ClaudeAdapterLive", () => {
 
       const createInput = harness.getLastCreateQueryInput();
       assert.equal(createInput?.options.settings, undefined);
-    }).pipe(
-      Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
-    );
-  });
-
-  it.effect("treats ultrathink as a prompt keyword instead of a session effort", () => {
-    const harness = makeHarness();
-    return Effect.gen(function* () {
-      const adapter = yield* ClaudeAdapter;
-      const session = yield* adapter.startSession({
-        threadId: THREAD_ID,
-        provider: ProviderDriverKind.make("claudeAgent"),
-        modelSelection: createModelSelection(
-          ProviderInstanceId.make("claudeAgent"),
-          "claude-sonnet-4-6",
-          [{ id: "effort", value: "ultrathink" }],
-        ),
-        runtimeMode: "full-access",
-      });
-
-      yield* adapter.sendTurn({
-        threadId: session.threadId,
-        input: "Investigate the edge cases",
-        attachments: [],
-        modelSelection: createModelSelection(
-          ProviderInstanceId.make("claudeAgent"),
-          "claude-sonnet-4-6",
-          [{ id: "effort", value: "ultrathink" }],
-        ),
-      });
-
-      const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.effort, "high");
-      const promptText = yield* Effect.promise(() => readFirstPromptText(createInput));
-      assert.equal(promptText, "Ultrathink:\nInvestigate the edge cases");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
