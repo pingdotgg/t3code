@@ -44,6 +44,7 @@ import {
   runAppUpdateCheck,
 } from "../updates/app-updates";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+import { AndroidLiveUpdatePreviewSection } from "./AndroidLiveUpdatePreviewSection";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
@@ -134,6 +135,8 @@ function LocalSettingsRouteScreen() {
         <LegacySettingsSection />
 
         <ArchivedThreadsSettingsSection />
+
+        {Platform.OS === "android" && __DEV__ ? <AndroidLiveUpdatePreviewSection /> : null}
 
         <AppSettingsSection />
       </ScrollView>
@@ -522,6 +525,8 @@ function ConfiguredSettingsRouteScreen() {
         <LegacySettingsSection />
 
         <ArchivedThreadsSettingsSection />
+
+        {Platform.OS === "android" && __DEV__ ? <AndroidLiveUpdatePreviewSection /> : null}
 
         <AppSettingsSection />
       </ScrollView>
