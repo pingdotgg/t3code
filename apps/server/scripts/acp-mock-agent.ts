@@ -283,13 +283,26 @@ const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
   { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
 ];
 
+/** Prefixed ids used by Kimi ACP resolution (`resolveKimiAcpBaseModelId`). */
+const kimiAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
+  { modelId: "kimi-code/kimi-for-coding", name: "Kimi for Coding" },
+  { modelId: "kimi-code/kimi-for-coding-highspeed", name: "Kimi for Coding Highspeed" },
+  { modelId: "kimi-code/k3", name: "K3" },
+  { modelId: "kimi-code/k3-256k", name: "K3 256k" },
+  // Allows tests that pass short Grok mock ids to still succeed after Kimi prefixing.
+  { modelId: "kimi-code/grok-mock-alt", name: "Grok Mock Alt (Kimi-prefixed)" },
+  { modelId: "kimi-code/grok-build", name: "Grok Build (Kimi-prefixed)" },
+];
+
+const knownAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [...grokAcpModels, ...kimiAcpModels];
+
 function modelState(): AcpSchema.SessionModelState {
-  const modelId = grokAcpModels.some((model) => model.modelId === currentModelId)
+  const modelId = knownAcpModels.some((model) => model.modelId === currentModelId)
     ? currentModelId
     : "grok-build";
   return {
     currentModelId: modelId,
-    availableModels: grokAcpModels,
+    availableModels: knownAcpModels,
   };
 }
 
@@ -382,7 +395,7 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleSetSessionModel((request) =>
     Effect.gen(function* () {
-      if (!grokAcpModels.some((model) => model.modelId === request.modelId)) {
+      if (!knownAcpModels.some((model) => model.modelId === request.modelId)) {
         return yield* AcpError.AcpRequestError.invalidParams(
           `Unknown mock model id: ${request.modelId}`,
           {
