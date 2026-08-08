@@ -631,7 +631,9 @@ final class FeatureComposerUITextView: UITextView {
             super.paste(sender)
             return
         }
-        if let pastedText = UIPasteboard.general.string, !pastedText.isEmpty {
+        if let pastedText = FeatureComposerPasteTextPolicy.text(
+            from: UIPasteboard.general.items
+        ) {
             insertText(pastedText)
         }
         onPasteImages?(imageProviders)
@@ -655,6 +657,29 @@ enum FeatureComposerTextSelectionPolicy {
     }
 }
 
+enum FeatureComposerPasteTextPolicy {
+    static func text(from items: [[String: Any]]) -> String? {
+        let strings = items.compactMap { item -> String? in
+            let containsImage = item.keys.contains {
+                UTType($0)?.conforms(to: .image) == true
+            }
+            guard !containsImage else { return nil }
+
+            let textKey = item.keys.first {
+                UTType($0)?.conforms(to: .text) == true
+            }
+            guard let textKey,
+                  let text = item[textKey] as? String,
+                  !text.isEmpty else {
+                return nil
+            }
+            return text
+        }
+        guard !strings.isEmpty else { return nil }
+        return strings.joined(separator: "\n")
+    }
+}
+
 private struct FeatureComposerTextInput: UIViewRepresentable {
     @Binding var text: String
     let focused: FocusState<Bool>.Binding
@@ -669,6 +694,7 @@ private struct FeatureComposerTextInput: UIViewRepresentable {
 
     func makeUIView(context: Context) -> FeatureComposerUITextView {
         let textView = FeatureComposerUITextView()
+        context.coordinator.lastAppliedSelectionRequestID = selectionRequest?.id
         textView.delegate = context.coordinator
         textView.acceptsImages = acceptsImages
         textView.onPasteImages = onPasteImages

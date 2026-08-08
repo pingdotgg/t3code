@@ -1,4 +1,5 @@
 import Testing
+import UniformTypeIdentifiers
 @testable import T3Code
 
 @Suite("Composer power features")
@@ -52,6 +53,25 @@ struct FeatureComposerPowerTests {
                 in: original,
                 with: replacement
             ) == "🧪 Use $dependency ".utf16.count
+        )
+    }
+
+    @Test
+    func mixedPasteKeepsOnlyTextFromNonImageItems() {
+        let items: [[String: Any]] = [
+            [
+                UTType.png.identifier: Data([0x89]),
+                UTType.plainText.identifier: "image metadata",
+            ],
+            [UTType.plainText.identifier: "first"],
+            [UTType.utf8PlainText.identifier: "second"],
+        ]
+
+        #expect(FeatureComposerPasteTextPolicy.text(from: items) == "first\nsecond")
+        #expect(
+            FeatureComposerPasteTextPolicy.text(
+                from: [[UTType.jpeg.identifier: Data([0xFF])]]
+            ) == nil
         )
     }
 
