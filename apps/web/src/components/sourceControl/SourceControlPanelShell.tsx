@@ -22,22 +22,30 @@ export function SourceControlPanelShell(props: {
       {...(props.maximized !== undefined ? { maximized: props.maximized } : {})}
     >
       <div
-        className={cn(
-          "workspace-topbar flex items-center pl-2",
-          props.mode !== "inline" && "[--workspace-topbar-height:--spacing(11)]",
-          props.mode === "inline" ? "pr-32" : "pr-3",
-          ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+8rem)]",
-          props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
-        )}
-        data-source-control-panel-titlebar
+        className="flex min-h-0 flex-1 flex-col bg-sidebar surface-grain text-sidebar-foreground"
+        data-sidebar-version="v2"
+        data-source-control-panel-surface
       >
-        <span className="truncate px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-          Source Control
-        </span>
-        {props.layoutControls ? <div className="ml-auto h-full">{props.layoutControls}</div> : null}
-      </div>
-      <div className="flex min-h-0 flex-1 flex-col" data-source-control-panel-content>
-        {props.children}
+        <div
+          className={cn(
+            "workspace-topbar flex items-center pl-2",
+            props.mode !== "inline" && "[--workspace-topbar-height:--spacing(11)]",
+            props.mode === "inline" ? "pr-32" : "pr-3",
+            ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+8rem)]",
+            props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+          )}
+          data-source-control-panel-titlebar
+        >
+          <span className="truncate px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-sidebar-muted-foreground">
+            Source Control
+          </span>
+          {props.layoutControls ? (
+            <div className="ml-auto h-full">{props.layoutControls}</div>
+          ) : null}
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col" data-source-control-panel-content>
+          {props.children}
+        </div>
       </div>
     </PreviewPanelShell>
   );

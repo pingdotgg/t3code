@@ -155,6 +155,33 @@ export const ProviderAccountRateLimitWindow = Schema.Struct({
 export type ProviderAccountRateLimitWindow = typeof ProviderAccountRateLimitWindow.Type;
 
 /**
+ * A provider-named rolling window. Claude exposes more than the short/long
+ * pair used by Codex (for example an all-model weekly window plus a
+ * model-specific weekly window), so preserving the provider's stable id and
+ * display label avoids squeezing richer quota data into two misleading slots.
+ */
+export const ProviderAccountNamedRateLimitWindow = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  /** 0–100. Clamped by the producer. */
+  usedPercent: Schema.Number,
+  resetsAt: Schema.optional(IsoDateTime),
+  /** Open provider severity, retained for warning presentation. */
+  severity: Schema.optional(TrimmedNonEmptyString),
+  isActive: Schema.optional(Schema.Boolean),
+});
+export type ProviderAccountNamedRateLimitWindow = typeof ProviderAccountNamedRateLimitWindow.Type;
+
+export const ProviderAccountExtraUsage = Schema.Struct({
+  isEnabled: Schema.Boolean,
+  usedPercent: Schema.optional(Schema.Number),
+  usedCredits: Schema.optional(Schema.Number),
+  monthlyLimit: Schema.optional(Schema.Number),
+  currency: Schema.optional(TrimmedNonEmptyString),
+});
+export type ProviderAccountExtraUsage = typeof ProviderAccountExtraUsage.Type;
+
+/**
  * Quota snapshot for the signed-in account, read at `checkedAt`.
  *
  * Deliberately *not* a mirror of the provider's wire shape: every field here
@@ -167,6 +194,9 @@ export const ProviderAccountRateLimits = Schema.Struct({
   checkedAt: IsoDateTime,
   primary: Schema.optional(ProviderAccountRateLimitWindow),
   secondary: Schema.optional(ProviderAccountRateLimitWindow),
+  /** Ordered, provider-labelled windows when a primary/secondary pair is insufficient. */
+  windows: Schema.optional(Schema.Array(ProviderAccountNamedRateLimitWindow)),
+  extraUsage: Schema.optional(ProviderAccountExtraUsage),
   /** True when the provider says the account is currently limited. */
   limitReached: Schema.optional(Schema.Boolean),
   /** Free-form reason slug, rendered as-is when present. */

@@ -11,7 +11,6 @@ import {
   ArrowUpRightIcon,
   GitBranchIcon,
   GitPullRequestIcon,
-  GripVerticalIcon,
   XIcon,
 } from "lucide-react";
 import { memo, useMemo, useState, type DragEvent } from "react";
@@ -19,11 +18,16 @@ import { memo, useMemo, useState, type DragEvent } from "react";
 import { useOpenPrLink } from "../../lib/openPullRequestLink";
 import { cn } from "../../lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
+import { useUiStateStore } from "../../uiStateStore";
 import ChatView from "../ChatView";
 import { ProjectFavicon } from "../ProjectFavicon";
-import { resolveSidebarThreadStatus } from "../Sidebar.logic";
+import { resolveThreadStatusPill, type ThreadStatusPill } from "../Sidebar.logic";
 import type { PrStatusIndicator } from "../ThreadStatusIndicators";
 import { Button } from "../ui/button";
+import {
+  sessionGridCompletionNeedsAttention,
+  sessionGridThreadNeedsAttention,
+} from "./sessionGrid.logic";
 
 interface SessionGridChatPaneProps {
   readonly thread: EnvironmentThreadShell;
@@ -46,7 +50,49 @@ interface SessionGridChatPaneProps {
   readonly onDragEnd: () => void;
 }
 
-function paneStatus(thread: EnvironmentThreadShell, snoozed: boolean, nowIso: string) {
+type SessionGridPaneActivity = "attention" | "running" | "idle";
+
+interface SessionGridPaneStatus {
+  readonly label: string;
+  readonly className: string;
+  readonly dotClassName: string;
+  readonly headerClassName: string;
+  readonly showLabelWithSubtitle: boolean;
+  readonly activity: SessionGridPaneActivity;
+  readonly pulse: boolean;
+}
+
+const COMPLETED_STATUS: ThreadStatusPill = {
+  label: "Completed",
+  colorClass: "text-emerald-600 dark:text-emerald-300/90",
+  dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
+  pulse: false,
+};
+
+function headerClassForStatus(label: ThreadStatusPill["label"]): string {
+  switch (label) {
+    case "Pending Approval":
+      return "border-b-amber-500/25 bg-amber-500/10 dark:bg-amber-400/10";
+    case "Awaiting Input":
+      return "border-b-indigo-500/25 bg-indigo-500/12 dark:bg-indigo-400/12";
+    case "Plan Ready":
+      return "border-b-violet-500/25 bg-violet-500/10 dark:bg-violet-400/10";
+    case "Completed":
+      return "border-b-emerald-500/25 bg-emerald-500/10 dark:bg-emerald-400/10";
+    case "Working":
+    case "Connecting":
+      return "border-b-sky-500/20 bg-sky-500/8 dark:bg-sky-400/8";
+    case "Monitoring":
+      return "border-b-sky-500/15 bg-sky-500/6 dark:bg-sky-400/6";
+  }
+}
+
+function paneStatus(
+  thread: EnvironmentThreadShell,
+  snoozed: boolean,
+  nowIso: string,
+  lastVisitedAt: string | undefined,
+): SessionGridPaneStatus {
   if (snoozed) {
     return {
       label: thread.snoozedUntil
@@ -54,47 +100,65 @@ function paneStatus(thread: EnvironmentThreadShell, snoozed: boolean, nowIso: st
         : "Snoozed",
       className: "text-violet-600 dark:text-violet-300",
       dotClassName: "bg-violet-500",
+      headerClassName: "border-b-violet-500/15 bg-violet-500/6 dark:bg-violet-400/6",
       showLabelWithSubtitle: true,
+      activity: "idle",
+      pulse: false,
     };
   }
-  const status = resolveSidebarThreadStatus(thread);
-  if (status === "approval") {
-    return {
-      label: "Approval needed",
-      className: "text-amber-700 dark:text-amber-300",
-      dotClassName: "bg-amber-500",
-      showLabelWithSubtitle: true,
-    };
-  }
-  if (status === "input") {
-    return {
-      label: "Input needed",
-      className: "text-indigo-700 dark:text-indigo-300",
-      dotClassName: "bg-indigo-500",
-      showLabelWithSubtitle: true,
-    };
-  }
-  if (status === "working") {
-    return {
-      label: thread.session?.status === "starting" ? "Connecting" : "Working",
-      className: "text-sky-700 dark:text-sky-300",
-      dotClassName: "bg-sky-500",
-      showLabelWithSubtitle: false,
-    };
-  }
-  if (status === "failed") {
+  if (thread.session?.status === "error" || thread.latestTurn?.state === "error") {
     return {
       label: "Run failed",
       className: "text-red-700 dark:text-red-300",
       dotClassName: "bg-red-500",
+      headerClassName: "border-b-red-500/25 bg-red-500/10 dark:bg-red-400/10",
       showLabelWithSubtitle: true,
+      activity: "attention",
+      pulse: false,
     };
   }
+
+  const resolvedStatus =
+    resolveThreadStatusPill({ thread: { ...thread, lastVisitedAt } }) ??
+    (sessionGridCompletionNeedsAttention({
+      completedAt: thread.latestTurn?.completedAt,
+      lastVisitedAt,
+    })
+      ? COMPLETED_STATUS
+      : null);
+  if (resolvedStatus) {
+    const running =
+      resolvedStatus.label === "Working" ||
+      resolvedStatus.label === "Connecting" ||
+      resolvedStatus.label === "Monitoring";
+    return {
+      label:
+        resolvedStatus.label === "Pending Approval"
+          ? "Approval needed"
+          : resolvedStatus.label === "Awaiting Input"
+            ? "Input needed"
+            : resolvedStatus.label,
+      className: resolvedStatus.colorClass,
+      dotClassName: resolvedStatus.dotClass,
+      headerClassName: headerClassForStatus(resolvedStatus.label),
+      showLabelWithSubtitle: !running,
+      activity: running
+        ? "running"
+        : sessionGridThreadNeedsAttention({ thread, lastVisitedAt })
+          ? "attention"
+          : "idle",
+      pulse: resolvedStatus.pulse,
+    };
+  }
+
   return {
     label: "Ready",
     className: "text-muted-foreground",
     dotClassName: "bg-muted-foreground/45",
+    headerClassName: "bg-muted/15",
     showLabelWithSubtitle: false,
+    activity: "idle",
+    pulse: false,
   };
 }
 
@@ -109,9 +173,11 @@ export const SessionGridChatPane = memo(function SessionGridChatPane(
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
+  const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
+  const markThreadVisited = useUiStateStore((state) => state.markThreadVisited);
   const subtitle = displayThreadSubtitle(thread);
   const routeParams = useMemo(() => buildThreadRouteParams(threadRef), [threadRef]);
-  const status = paneStatus(thread, props.snoozed, props.nowIso);
+  const status = paneStatus(thread, props.snoozed, props.nowIso, lastVisitedAt);
   const headerTitle = [
     `Open ${thread.title}`,
     subtitle,
@@ -126,6 +192,11 @@ export const SessionGridChatPane = memo(function SessionGridChatPane(
   const openPrLink = useOpenPrLink();
   const canSettleThread =
     !props.snoozed && props.settlementSupported && canSettle(thread, { now: props.nowIso });
+  const focusPane = () => {
+    props.onFocus(threadKey);
+    const completedAt = thread.latestTurn?.completedAt;
+    if (completedAt) markThreadVisited(threadKey, completedAt);
+  };
 
   const leaveGrid = async (action: "settle" | "wake") => {
     if (leavingPending) return;
@@ -137,18 +208,6 @@ export const SessionGridChatPane = memo(function SessionGridChatPane(
 
   const header = (
     <div className="flex min-w-0 items-center gap-1.5">
-      <span
-        aria-label={`Reorder ${thread.title}`}
-        className="flex shrink-0 cursor-grab touch-none items-center text-muted-foreground/55 active:cursor-grabbing"
-        draggable
-        onDragEnd={props.onDragEnd}
-        onDragStart={(event) => props.onDragStart(threadKey, event)}
-        role="button"
-        tabIndex={-1}
-        title="Drag to reorder"
-      >
-        <GripVerticalIcon className="size-3.5" />
-      </span>
       <ProjectFavicon
         className="size-3.5 shrink-0"
         cwd={props.project.workspaceRoot}
@@ -164,7 +223,14 @@ export const SessionGridChatPane = memo(function SessionGridChatPane(
           {thread.title}
         </div>
         <div className="flex min-w-0 items-center gap-1.5 text-muted-foreground/70">
-          <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", status.dotClassName)} />
+          <span
+            aria-hidden
+            className={cn(
+              "size-1.5 shrink-0 rounded-full",
+              status.dotClassName,
+              status.pulse && "animate-status-pulse",
+            )}
+          />
           {subtitle ? (
             <>
               {status.showLabelWithSubtitle ? (
@@ -266,6 +332,7 @@ export const SessionGridChatPane = memo(function SessionGridChatPane(
         props.snoozed && "bg-muted/10",
       )}
       data-session-grid-pane
+      data-session-grid-activity={status.activity}
       onDragOver={(event) => {
         event.preventDefault();
         event.dataTransfer.dropEffect = "move";
@@ -275,8 +342,8 @@ export const SessionGridChatPane = memo(function SessionGridChatPane(
         event.preventDefault();
         props.onDrop(threadKey);
       }}
-      onFocusCapture={() => props.onFocus(threadKey)}
-      onPointerDownCapture={() => props.onFocus(threadKey)}
+      onFocusCapture={focusPane}
+      onPointerDownCapture={focusPane}
       tabIndex={0}
     >
       {props.focused ? (
@@ -288,6 +355,12 @@ export const SessionGridChatPane = memo(function SessionGridChatPane(
       <ChatView
         environmentId={thread.environmentId}
         gridHeader={header}
+        gridHeaderClassName={status.headerClassName}
+        gridHeaderDragProps={{
+          draggable: true,
+          onDragEnd: props.onDragEnd,
+          onDragStart: (event) => props.onDragStart(threadKey, event),
+        }}
         gridRunContextPortalTarget={runContextPortalTarget}
         isActiveSurface={props.focused}
         panelControlsPortalTarget={props.panelControlsPortalTarget}

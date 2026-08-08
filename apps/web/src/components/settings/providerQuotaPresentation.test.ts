@@ -26,6 +26,8 @@ describe("providerQuotaTone", () => {
     expect(providerQuotaTone(80)).toBe("warning");
     expect(providerQuotaTone(99)).toBe("warning");
     expect(providerQuotaTone(100)).toBe("destructive");
+    expect(providerQuotaTone(20, "warning")).toBe("warning");
+    expect(providerQuotaTone(20, "normal")).toBe("normal");
   });
 });
 
@@ -102,11 +104,46 @@ describe("providerQuotaMeters", () => {
     );
     expect(meters.map((meter) => meter.id)).toEqual(["primary", "secondary"]);
   });
+
+  it("renders every provider-named Claude window without duplicating legacy slots", () => {
+    const meters = providerQuotaMeters(
+      auth({
+        rateLimits: {
+          checkedAt: "2026-08-01T11:59:00.000Z",
+          primary: { usedPercent: 1 },
+          windows: [
+            { id: "session", label: "Session", usedPercent: 73 },
+            {
+              id: "weekly-scoped:fable",
+              label: "Week · Fable",
+              usedPercent: 24,
+              severity: "normal",
+              resetsAt: "2026-08-04T12:00:00.000Z",
+            },
+          ],
+          extraUsage: { isEnabled: true, usedPercent: 8 },
+        },
+      }),
+      NOW,
+    );
+    expect(meters).toEqual([
+      { id: "session", label: "Session", usedPercent: 73, tone: "normal" },
+      {
+        id: "weekly-scoped:fable",
+        label: "Week · Fable",
+        usedPercent: 24,
+        tone: "normal",
+        detail: "resets in 3d",
+      },
+      { id: "extra-usage", label: "Extra usage", usedPercent: 8, tone: "normal" },
+    ]);
+  });
 });
 
 describe("providerPlanLabel", () => {
   it("humanises known tiers", () => {
     expect(providerPlanLabel(auth({ planType: "pro" }))).toBe("Pro");
+    expect(providerPlanLabel(auth({ planType: "max" }))).toBe("Max");
     expect(providerPlanLabel(auth({ planType: "self_serve_business_usage_based" }))).toBe(
       "Business",
     );

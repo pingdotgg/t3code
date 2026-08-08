@@ -43,6 +43,7 @@ import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 import { withClaudeCodexRoutedModel } from "../claudeCodex/ClaudeCodexModelCatalog.ts"; // fork: f5
+import { mapClaudeAccountQuota } from "./claudeAccountQuota.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -627,6 +628,8 @@ type ClaudeCapabilitiesProbe = {
    */
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  /** Experimental SDK usage payload, decoded only at the provider boundary. */
+  readonly accountUsage?: unknown;
 };
 
 function parseClaudeInitializationCommands(
@@ -708,8 +711,9 @@ function waitForAbortSignal(signal: AbortSignal): Promise<void> {
  * We pass a never-yielding AsyncIterable as the prompt so that no user
  * message is ever written to the subprocess stdin. This means the Claude
  * Code subprocess completes its local initialization IPC (returning
- * account info and slash commands) but never starts an API request to
- * Anthropic. We read the init data and then abort the subprocess.
+ * account info and slash commands) but never starts a model inference request.
+ * For claude.ai subscriptions we also read the structured `/usage` payload,
+ * then abort the subprocess.
  *
  * This is used as a fallback when `claude auth status` does not include
  * subscription type information.
@@ -750,12 +754,16 @@ const probeClaudeCapabilities = (
             readonly apiProvider?: string;
           }
         | undefined;
+      const accountUsage: unknown = account?.subscriptionType
+        ? await q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET().catch(() => undefined)
+        : undefined;
       return {
         email: account?.email,
         subscriptionType: account?.subscriptionType,
         tokenSource: account?.tokenSource,
         apiProvider: account?.apiProvider,
         slashCommands: parseClaudeInitializationCommands(init.commands),
+        accountUsage,
       } satisfies ClaudeCapabilitiesProbe;
     });
   }).pipe(
@@ -939,9 +947,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
+  const accountQuota = mapClaudeAccountQuota(capabilities.accountUsage, checkedAt);
+  const subscriptionType = accountQuota.subscriptionType ?? capabilities.subscriptionType;
   const authMetadata =
     claudeAuthMetadata({
-      subscriptionType: capabilities.subscriptionType,
+      subscriptionType,
       authMethod: capabilities.tokenSource,
     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
   return buildServerProvider({
@@ -959,6 +969,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         status: "authenticated",
         ...(capabilities.email ? { email: capabilities.email } : {}),
         ...(authMetadata ? authMetadata : {}),
+        ...(subscriptionType ? { planType: subscriptionType } : {}),
+        ...(accountQuota.rateLimits ? { rateLimits: accountQuota.rateLimits } : {}),
       },
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
     },

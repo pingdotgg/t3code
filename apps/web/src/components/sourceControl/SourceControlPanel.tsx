@@ -618,7 +618,11 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
 
   if (props.cwd === null) {
     return (
-      <DiffPanelShell mode={props.mode} header={<span className="text-sm">Source control</span>}>
+      <DiffPanelShell
+        className={props.mode === "embedded" ? "bg-transparent" : undefined}
+        mode={props.mode}
+        header={<span className="text-sm">Source control</span>}
+      >
         <Empty className="min-h-0 flex-1">
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -636,7 +640,11 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
 
   if (status.status !== null && !status.status.isRepo) {
     return (
-      <DiffPanelShell mode={props.mode} header={<span className="text-sm">Source control</span>}>
+      <DiffPanelShell
+        className={props.mode === "embedded" ? "bg-transparent" : undefined}
+        mode={props.mode}
+        header={<span className="text-sm">Source control</span>}
+      >
         <Empty className="min-h-0 flex-1">
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -654,14 +662,22 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
 
   if (status.status === null && !status.showErrorBanner) {
     return (
-      <DiffPanelShell mode={props.mode} header={sourceControlHeader}>
+      <DiffPanelShell
+        className={props.mode === "embedded" ? "bg-transparent" : undefined}
+        mode={props.mode}
+        header={sourceControlHeader}
+      >
         <SourceControlInitialLoading />
       </DiffPanelShell>
     );
   }
 
   return (
-    <DiffPanelShell mode={props.mode} header={sourceControlHeader}>
+    <DiffPanelShell
+      className={props.mode === "embedded" ? "bg-transparent" : undefined}
+      mode={props.mode}
+      header={sourceControlHeader}
+    >
       {/* fork: f4 focus model — the panel owns its keys (`/` here, `j/k/s/u/x`
           in the lists below), so the chat composer's type-to-focus must not
           swallow them before they are dispatched. */}

@@ -22,6 +22,7 @@ import {
 } from "../ui/sidebar";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
+import { SidebarProviderUsage } from "./SidebarProviderUsage";
 import { SessionGridSidebarLink } from "../sessionGrid/SessionGridSidebarLink";
 import { Brand2codeMark } from "../Brand2codeMark";
 import { APP_BASE_NAME } from "../../branding";
@@ -109,6 +110,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
     <SidebarFooter className="p-[var(--sidebar-content-inset)]">
       <SidebarProviderUpdatePill />
       <SidebarUpdatePill />
+      <SidebarProviderUsage />
       <SidebarMenu>
         {/* fork: project session grid — shared by both sidebar generations. */}
         <SessionGridSidebarLink />

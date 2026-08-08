@@ -12,6 +12,7 @@ import {
   reorderProjects,
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
+  setProviderUsageExpanded,
   setProjectExpanded,
   setSessionGridThreadOrder,
   setThreadChangedFilesExpanded,
@@ -22,6 +23,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
+    providerUsageExpanded: true,
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     sessionGridThreadOrderByProjectKey: {},
@@ -163,6 +165,15 @@ describe("uiStateStore pure functions", () => {
       defaultAdvertisedEndpointKey: null,
     });
   });
+
+  it("keeps provider usage expanded by default and stores an explicit collapse", () => {
+    const initialState = makeUiState();
+    const collapsed = setProviderUsageExpanded(initialState, false);
+
+    expect(initialState.providerUsageExpanded).toBe(true);
+    expect(collapsed.providerUsageExpanded).toBe(false);
+    expect(setProviderUsageExpanded(collapsed, false)).toBe(collapsed);
+  });
 });
 
 describe("parsePersistedState", () => {
@@ -173,6 +184,7 @@ describe("parsePersistedState", () => {
         invalid: "no" as unknown as boolean,
       },
       projectOrder: ["physical-b", "", "physical-a", "physical-b"],
+      providerUsageExpanded: false,
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
         invalid: "not-a-date",
@@ -195,6 +207,7 @@ describe("parsePersistedState", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      providerUsageExpanded: false,
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -221,6 +234,7 @@ describe("parsePersistedState", () => {
     });
 
     expect(parsed.threadChangedFilesExpandedById).toEqual({});
+    expect(parsed.providerUsageExpanded).toBe(true);
   });
 
   it("migrates legacy CWD project preferences into local alias keys", () => {
@@ -295,6 +309,7 @@ describe("uiStateStore persistence", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      providerUsageExpanded: false,
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -320,6 +335,7 @@ describe("uiStateStore persistence", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      providerUsageExpanded: false,
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },

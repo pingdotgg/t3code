@@ -20,6 +20,7 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
+  providerUsageExpanded?: boolean;
   threadLastVisitedAtById?: Record<string, string>;
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
@@ -45,11 +46,14 @@ export interface UiEndpointState {
   defaultAdvertisedEndpointKey: string | null;
 }
 
-export interface UiState extends UiProjectState, UiThreadState, UiEndpointState {}
+export interface UiState extends UiProjectState, UiThreadState, UiEndpointState {
+  providerUsageExpanded: boolean;
+}
 
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
+  providerUsageExpanded: true,
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   sessionGridThreadOrderByProjectKey: {}, // fork: project session grid
@@ -142,6 +146,8 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
   return {
     projectExpandedById,
     projectOrder,
+    providerUsageExpanded:
+      typeof parsed.providerUsageExpanded === "boolean" ? parsed.providerUsageExpanded : true,
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
@@ -223,6 +229,7 @@ export function persistState(state: UiState): void {
       JSON.stringify({
         projectExpandedById,
         projectOrder: state.projectOrder,
+        providerUsageExpanded: state.providerUsageExpanded,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
@@ -323,6 +330,12 @@ export function setDefaultAdvertisedEndpointKey(state: UiState, key: string | nu
     ...state,
     defaultAdvertisedEndpointKey: nextKey,
   };
+}
+
+export function setProviderUsageExpanded(state: UiState, expanded: boolean): UiState {
+  return state.providerUsageExpanded === expanded
+    ? state
+    : { ...state, providerUsageExpanded: expanded };
 }
 
 // fork: project session grid
@@ -431,6 +444,7 @@ interface UiStateStore extends UiState {
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
+  setProviderUsageExpanded: (expanded: boolean) => void;
   setSessionGridThreadOrder: (projectKey: string, threadKeys: readonly string[]) => void; // fork: project session grid
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
@@ -450,6 +464,7 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
+  setProviderUsageExpanded: (expanded) => set((state) => setProviderUsageExpanded(state, expanded)),
   // fork: project session grid
   setSessionGridThreadOrder: (projectKey, threadKeys) =>
     set((state) => setSessionGridThreadOrder(state, projectKey, threadKeys)),

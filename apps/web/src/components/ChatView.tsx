@@ -58,6 +58,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEventHandler,
   type ReactNode,
 } from "react";
 import { createPortal, flushSync } from "react-dom";
@@ -512,6 +513,14 @@ interface ChatViewSurfaceProps {
   isActiveSurface?: boolean;
   /** Grid-owned title/status/actions rendered in the pane header. */
   gridHeader?: ReactNode;
+  /** Activity tint applied to the complete grid header surface. */
+  gridHeaderClassName?: string;
+  /** Native drag handlers owned by the complete grid header surface. */
+  gridHeaderDragProps?: {
+    readonly draggable: true;
+    readonly onDragStart: DragEventHandler<HTMLElement>;
+    readonly onDragEnd: DragEventHandler<HTMLElement>;
+  };
   /** Header target for the pane-local workspace and branch controls. */
   gridRunContextPortalTarget?: HTMLElement | null;
   /** Global grid-header target for the focused pane's workspace controls. */
@@ -1212,6 +1221,8 @@ function ChatViewContent(props: ChatViewProps) {
     surfaceMode = "workspace",
     isActiveSurface = true,
     gridHeader,
+    gridHeaderClassName,
+    gridHeaderDragProps,
     gridRunContextPortalTarget,
     panelControlsPortalTarget,
     rightPanelPortalTarget,
@@ -6035,7 +6046,16 @@ function ChatViewContent(props: ChatViewProps) {
   if (!activeThread) {
     return isGridPane ? (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
-        <header className="flex min-h-11 shrink-0 items-center gap-1 border-border/70 border-b bg-muted/15 px-2.5 py-1.5">
+        <header
+          className={cn(
+            "flex min-h-11 shrink-0 items-center gap-1 border-border/70 border-b px-2.5 py-1.5 transition-colors",
+            gridHeaderClassName ?? "bg-muted/15",
+            gridHeaderDragProps &&
+              "cursor-grab touch-none active:cursor-grabbing [&_button]:cursor-pointer",
+          )}
+          data-session-grid-drag-header={gridHeaderDragProps ? "true" : undefined}
+          {...gridHeaderDragProps}
+        >
           <div className="min-w-0 flex-1">{gridHeader}</div>
         </header>
         <NoActiveThreadState />
@@ -6216,11 +6236,6 @@ function ChatViewContent(props: ChatViewProps) {
       {isGridPane && ownsGlobalInteraction && rightPanelPortalTarget
         ? createPortal(
             <>
-              {sourceControlOpen ? (
-                <SourceControlPanelShell mode="inline">
-                  {sourceControlContent}
-                </SourceControlPanelShell>
-              ) : null}
               {rightPanelOpen && activeThreadRef ? (
                 <RightPanelTabs
                   mode="inline"
@@ -6247,6 +6262,11 @@ function ChatViewContent(props: ChatViewProps) {
                   {rightPanelContent}
                 </RightPanelTabs>
               ) : null}
+              {sourceControlOpen ? (
+                <SourceControlPanelShell mode="inline">
+                  {sourceControlContent}
+                </SourceControlPanelShell>
+              ) : null}
             </>,
             rightPanelPortalTarget,
           )
@@ -6262,8 +6282,15 @@ function ChatViewContent(props: ChatViewProps) {
         {/* Top bar */}
         {isGridPane ? (
           <header
-            className="flex min-h-11 shrink-0 items-center gap-1 border-border/70 border-b bg-muted/15 px-2.5 py-1.5"
+            className={cn(
+              "flex min-h-11 shrink-0 items-center gap-1 border-border/70 border-b px-2.5 py-1.5 transition-colors",
+              gridHeaderClassName ?? "bg-muted/15",
+              gridHeaderDragProps &&
+                "cursor-grab touch-none active:cursor-grabbing [&_button]:cursor-pointer",
+            )}
             data-chat-header
+            data-session-grid-drag-header={gridHeaderDragProps ? "true" : undefined}
+            {...gridHeaderDragProps}
           >
             <div className="min-w-0 flex-1">{gridHeader}</div>
           </header>

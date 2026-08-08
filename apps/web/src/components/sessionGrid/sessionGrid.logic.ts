@@ -1,12 +1,22 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { ContextMenuItem } from "@t3tools/contracts";
 import {
   effectiveSettled,
   effectiveSnoozed,
   type ChangeRequestStateLike,
 } from "@t3tools/client-runtime/state/thread-settled";
 
-import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
-import { firstValidTimestampMs, parseTimestampMs, sortThreadsForSidebar } from "../Sidebar.logic";
+import type {
+  SidebarProjectGroupMember,
+  SidebarProjectSnapshot,
+} from "../../sidebarProjectGrouping";
+import {
+  firstValidTimestampMs,
+  parseTimestampMs,
+  resolveThreadStatusPill,
+  sortSettledThreadsForSidebar,
+  sortThreadsForSidebar,
+} from "../Sidebar.logic";
 
 export interface SessionGridSearch {
   readonly project?: string;
@@ -26,6 +36,198 @@ export interface SessionGridSection {
 export interface SessionGridDimensions {
   readonly columns: number;
   readonly rows: number;
+}
+
+export interface SessionGridProjectPanelEntry {
+  readonly project: SidebarProjectSnapshot;
+  readonly openThreads: readonly EnvironmentThreadShell[];
+  readonly settledThreads: readonly EnvironmentThreadShell[];
+  readonly attentionCount: number;
+}
+
+export type SessionGridProjectContextAction =
+  | "open-project"
+  | "new-session"
+  | "toggle-settled"
+  | "remove-all"
+  | `copy-path:${string}`
+  | `remove:${string}`;
+
+function gridProjectMemberLabel(
+  member: SidebarProjectGroupMember,
+  groupedProjectCount: number,
+): string {
+  if (groupedProjectCount <= 1) return member.title;
+  return member.environmentLabel
+    ? `${member.environmentLabel} — ${member.workspaceRoot}`
+    : member.workspaceRoot;
+}
+
+/** Shared by right-click and the visible overflow button in the grid project navigator. */
+export function buildSessionGridProjectContextMenuItems(input: {
+  readonly project: SidebarProjectSnapshot;
+  readonly settledCount: number;
+  readonly settledExpanded: boolean;
+}): readonly ContextMenuItem<SessionGridProjectContextAction>[] {
+  const { project } = input;
+  const copyPathItems = project.memberProjects.map(
+    (member): ContextMenuItem<SessionGridProjectContextAction> => ({
+      id: `copy-path:${member.physicalProjectKey}`,
+      label: gridProjectMemberLabel(member, project.groupedProjectCount),
+      icon: "copy",
+    }),
+  );
+  const removeItems = project.memberProjects.map(
+    (member): ContextMenuItem<SessionGridProjectContextAction> => ({
+      id: `remove:${member.physicalProjectKey}`,
+      label: gridProjectMemberLabel(member, project.groupedProjectCount),
+      destructive: true,
+      icon: "trash",
+    }),
+  );
+
+  return [
+    { id: "open-project", label: "Show project grid" },
+    { id: "new-session", label: "New session" },
+    ...(input.settledCount > 0
+      ? [
+          {
+            id: "toggle-settled" as const,
+            label: `${input.settledExpanded ? "Hide" : "Show"} settled sessions`,
+          },
+        ]
+      : []),
+    project.memberProjects.length === 1
+      ? { ...copyPathItems[0]!, label: "Copy project path" }
+      : { id: "copy-path:menu", label: "Copy project path", children: copyPathItems },
+    project.memberProjects.length === 1
+      ? { ...removeItems[0]!, label: "Remove project" }
+      : {
+          id: "remove:menu",
+          label: "Remove project…",
+          icon: "trash",
+          children: [
+            ...removeItems,
+            {
+              id: "remove-all",
+              label: "All grouped entries",
+              destructive: true,
+              icon: "trash",
+            },
+          ],
+        },
+  ];
+}
+
+/**
+ * Grid panes treat a completed turn as attention until that exact completion
+ * has been viewed. Unlike the sidebar's historical-thread-safe unread model,
+ * a missing visit timestamp is attention here: every pane in the live grid is
+ * an explicitly unsettled work item and should be reviewed once before it can
+ * visually recede.
+ */
+export function sessionGridCompletionNeedsAttention(input: {
+  readonly completedAt: string | null | undefined;
+  readonly lastVisitedAt: string | null | undefined;
+}): boolean {
+  if (!input.completedAt) return false;
+  const completedAtMs = Date.parse(input.completedAt);
+  if (Number.isNaN(completedAtMs)) return false;
+  if (!input.lastVisitedAt) return true;
+
+  const lastVisitedAtMs = Date.parse(input.lastVisitedAt);
+  return Number.isNaN(lastVisitedAtMs) || completedAtMs > lastVisitedAtMs;
+}
+
+/** Keep project rollups aligned with the activity treatment used by grid headers. */
+export function sessionGridThreadNeedsAttention(input: {
+  readonly thread: EnvironmentThreadShell;
+  readonly lastVisitedAt: string | null | undefined;
+}): boolean {
+  const { thread, lastVisitedAt } = input;
+  if (thread.session?.status === "error" || thread.latestTurn?.state === "error") return true;
+
+  const status = resolveThreadStatusPill({
+    thread: { ...thread, lastVisitedAt: lastVisitedAt ?? undefined },
+  });
+  if (status) {
+    return (
+      status.label !== "Working" && status.label !== "Connecting" && status.label !== "Monitoring"
+    );
+  }
+
+  return sessionGridCompletionNeedsAttention({
+    completedAt: thread.latestTurn?.completedAt,
+    lastVisitedAt,
+  });
+}
+
+export function buildSessionGridProjectPanelEntries(input: {
+  readonly projects: readonly SidebarProjectSnapshot[];
+  readonly threads: readonly EnvironmentThreadShell[];
+  readonly lifecycleByThreadKey: ReadonlyMap<string, SessionGridLifecycle>;
+  readonly lastVisitedAtByThreadKey: Readonly<Record<string, string>>;
+}): SessionGridProjectPanelEntry[] {
+  const projectKeyByPhysicalKey = new Map(
+    input.projects.flatMap((project) =>
+      project.memberProjectRefs.map(
+        (member) =>
+          [
+            sessionGridPhysicalProjectKey({
+              environmentId: member.environmentId,
+              projectId: member.projectId,
+            }),
+            project.projectKey,
+          ] as const,
+      ),
+    ),
+  );
+  const threadsByProjectKey = new Map<string, EnvironmentThreadShell[]>();
+  for (const thread of input.threads) {
+    const projectKey = projectKeyByPhysicalKey.get(
+      sessionGridPhysicalProjectKey({
+        environmentId: thread.environmentId,
+        projectId: thread.projectId,
+      }),
+    );
+    if (!projectKey) continue;
+    const existing = threadsByProjectKey.get(projectKey);
+    if (existing) existing.push(thread);
+    else threadsByProjectKey.set(projectKey, [thread]);
+  }
+
+  return input.projects.map((project) => {
+    const openThreads: EnvironmentThreadShell[] = [];
+    const settledThreads: EnvironmentThreadShell[] = [];
+    let attentionCount = 0;
+
+    for (const thread of threadsByProjectKey.get(project.projectKey) ?? []) {
+      const threadKey = `${thread.environmentId}:${thread.id}`;
+      const lifecycle = input.lifecycleByThreadKey.get(threadKey);
+      if (lifecycle === "settled") {
+        settledThreads.push(thread);
+        continue;
+      }
+      if (lifecycle !== "active" && lifecycle !== "snoozed") continue;
+      openThreads.push(thread);
+      if (
+        lifecycle === "active" &&
+        sessionGridThreadNeedsAttention({
+          thread,
+          lastVisitedAt: input.lastVisitedAtByThreadKey[threadKey],
+        })
+      ) {
+        attentionCount++;
+      }
+    }
+
+    return {
+      project,
+      openThreads: sortSessionGridThreads(openThreads),
+      settledThreads: sortSettledThreadsForSidebar(settledThreads),
+      attentionCount,
+    };
+  });
 }
 
 /** Match 2code's compact, near-square pane layout. */

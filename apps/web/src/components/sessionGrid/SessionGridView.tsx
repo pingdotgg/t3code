@@ -45,9 +45,8 @@ import {
 } from "../../state/entities";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../../uiStateStore";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../../workspaceTitlebar";
-import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "../Sidebar.logic";
+import { orderItemsByPreferredIds } from "../Sidebar.logic";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
-import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { SidebarInset } from "../ui/sidebar";
@@ -66,17 +65,12 @@ import {
   resolveSessionGridLifecycle,
   resolveSessionGridProject,
   sessionGridChangeRequestKey,
-  stabilizeSessionGridProjectKeys,
   stabilizeSessionGridThreadKeys,
   type SessionGridChangeRequestState,
 } from "./sessionGrid.logic";
 
 const MAX_QUIET_CHECKOUT_OBSERVERS = 6;
 const MAX_QUIET_THREAD_OBSERVERS = 24;
-const SESSION_GRID_PAGE_PADDING = isElectron
-  ? "px-3 sm:px-4"
-  : "pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] sm:pl-[calc(env(safe-area-inset-left)+1rem)] sm:pr-[calc(env(safe-area-inset-right)+1rem)]";
-
 function samePrStatus(
   left: SessionGridChangeRequestObservation["prStatus"],
   right: SessionGridChangeRequestObservation["prStatus"],
@@ -139,7 +133,6 @@ export function SessionGridView({ requestedProjectKey }: SessionGridViewProps) {
   );
   const setSessionGridThreadOrder = useUiStateStore((state) => state.setSessionGridThreadOrder);
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
-  const projectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const nowMinute = useNowMinute();
   const wideGrid = useMediaQuery("md");
@@ -214,48 +207,16 @@ export function SessionGridView({ requestedProjectKey }: SessionGridViewProps) {
       }),
     [projectOrder, projects],
   );
-  const unsortedProjectGroups = useMemo(
+  const projectGroups = useMemo(
     () =>
       buildSidebarProjectSnapshots({
-        projects: projectSortOrder === "manual" ? orderedProjects : projects,
+        projects: orderedProjects,
         settings: projectGroupingSettings,
         primaryEnvironmentId,
         resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
       }),
-    [
-      environmentLabelById,
-      orderedProjects,
-      primaryEnvironmentId,
-      projectGroupingSettings,
-      projectSortOrder,
-      projects,
-    ],
+    [environmentLabelById, orderedProjects, primaryEnvironmentId, projectGroupingSettings],
   );
-  const sortedProjectGroups = useMemo(
-    () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, projectSortOrder),
-    [projectSortOrder, threads, unsortedProjectGroups],
-  );
-  const projectLayoutPreferenceKey = `${projectSortOrder}\0${JSON.stringify(
-    projectGroupingSettings,
-  )}\0${projectSortOrder === "manual" ? projectOrder.join("\0") : ""}`;
-  const frozenProjectOrderRef = useRef<{
-    readonly preferenceKey: string;
-    readonly keys: readonly string[];
-  } | null>(null);
-  const projectGroups = useMemo(() => {
-    const sortedKeys = sortedProjectGroups.map((project) => project.projectKey);
-    const previous = frozenProjectOrderRef.current;
-    const keys =
-      previous?.preferenceKey === projectLayoutPreferenceKey
-        ? stabilizeSessionGridProjectKeys(previous.keys, sortedKeys)
-        : sortedKeys;
-    frozenProjectOrderRef.current = { preferenceKey: projectLayoutPreferenceKey, keys };
-    const byKey = new Map(sortedProjectGroups.map((project) => [project.projectKey, project]));
-    return keys.flatMap((key) => {
-      const project = byKey.get(key);
-      return project ? [project] : [];
-    });
-  }, [projectLayoutPreferenceKey, sortedProjectGroups]);
   const projectByPhysicalKey = useMemo(
     () =>
       new Map(
@@ -371,15 +332,22 @@ export function SessionGridView({ requestedProjectKey }: SessionGridViewProps) {
     }
   }, [selectedDraftItemKey]);
   useEffect(() => {
+    const store = useSessionGridFocusStore.getState();
+    const draftFocused = focusedThreadKey !== null && focusedThreadKey === selectedDraftItemKey;
+    store.setFocusedThreadKey(focusedThreadKey && !draftFocused ? focusedThreadKey : null);
+    store.setFocusedDraftId(draftFocused ? selectedDraftId : null);
+  }, [focusedThreadKey, selectedDraftId, selectedDraftItemKey]);
+  useEffect(() => {
     useSessionGridFocusStore
       .getState()
-      .setFocusedThreadKey(
-        focusedThreadKey && focusedThreadKey !== selectedDraftItemKey ? focusedThreadKey : null,
-      );
-  }, [focusedThreadKey, selectedDraftItemKey]);
+      .setChangeRequestStateByKey(changeRequestSnapshot.stateByKey);
+  }, [changeRequestSnapshot.stateByKey]);
   useEffect(
     () => () => {
-      useSessionGridFocusStore.getState().setFocusedThreadKey(null);
+      const store = useSessionGridFocusStore.getState();
+      store.setFocusedThreadKey(null);
+      store.setFocusedDraftId(null);
+      store.setChangeRequestStateByKey(new Map());
     },
     [],
   );
@@ -481,24 +449,6 @@ export function SessionGridView({ requestedProjectKey }: SessionGridViewProps) {
   const visiblePendingChangeRequestCount = lifecycle.pendingChangeRequest.filter((thread) =>
     selectedProjectMemberKeys.has(`${thread.environmentId}:${thread.projectId}`),
   ).length;
-  const pendingChangeRequestCountsByProjectKey = useMemo(() => {
-    const logicalKeyByPhysicalProject = new Map(
-      projectGroups.flatMap((project) =>
-        project.memberProjectRefs.map(
-          (projectRef) =>
-            [`${projectRef.environmentId}:${projectRef.projectId}`, project.projectKey] as const,
-        ),
-      ),
-    );
-    const counts = new Map<string, number>();
-    for (const thread of lifecycle.pendingChangeRequest) {
-      const projectKey = logicalKeyByPhysicalProject.get(
-        `${thread.environmentId}:${thread.projectId}`,
-      );
-      if (projectKey) counts.set(projectKey, (counts.get(projectKey) ?? 0) + 1);
-    }
-    return counts;
-  }, [lifecycle.pendingChangeRequest, projectGroups]);
   const pendingChangeRequestThreadKeys = useMemo(
     () =>
       new Set(
@@ -799,56 +749,6 @@ export function SessionGridView({ requestedProjectKey }: SessionGridViewProps) {
               </Button>
             </div>
           </header>
-
-          {projectGroups.length > 0 ? (
-            <nav
-              aria-label="Session grid projects"
-              className={cn(
-                "scrollbar-none flex h-10 shrink-0 items-center gap-1 overflow-x-auto border-border/70 border-b bg-muted/8 py-1.5",
-                SESSION_GRID_PAGE_PADDING,
-              )}
-            >
-              {projectGroups.map((project) => {
-                const selected = project.projectKey === gridModel.selectedProjectKey;
-                const count = gridModel.countsByProjectKey.get(project.projectKey) ?? 0;
-                const pending = pendingChangeRequestCountsByProjectKey.get(project.projectKey) ?? 0;
-                return (
-                  <button
-                    aria-current={selected ? "page" : undefined}
-                    className={cn(
-                      "flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs outline-none transition-colors",
-                      "focus-visible:ring-2 focus-visible:ring-ring/45",
-                      selected
-                        ? "bg-foreground/7 font-medium text-foreground dark:bg-foreground/10"
-                        : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-                    )}
-                    data-session-grid-project-selector={selected ? "true" : undefined}
-                    key={project.projectKey}
-                    onClick={() => void selectProject(project.projectKey)}
-                    type="button"
-                  >
-                    <ProjectFavicon
-                      className="size-3.5"
-                      cwd={project.workspaceRoot}
-                      environmentId={project.environmentId}
-                    />
-                    <span className="max-w-44 truncate">{project.displayName}</span>
-                    <span
-                      className={cn(
-                        "min-w-4 rounded-full px-1 text-center text-[10px] tabular-nums",
-                        selected
-                          ? "bg-foreground/8 text-foreground/70"
-                          : "bg-muted text-muted-foreground/70",
-                      )}
-                    >
-                      {count}
-                      {pending > 0 ? "+" : ""}
-                    </span>
-                  </button>
-                );
-              })}
-            </nav>
-          ) : null}
 
           <main
             aria-busy={visiblePendingChangeRequestCount > 0}

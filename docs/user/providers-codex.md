@@ -28,6 +28,15 @@ Log in with Codex normally:
 codex login
 ```
 
+## Codex Plan Usage
+
+The sidebar shows the short and long usage windows reported by the signed-in Codex account, with
+their used percentages and reset countdowns. When both Codex and Claude plan usage are available,
+Codex is shown first. The refresh button updates only that provider instance, including when the
+client is connected to a remote environment. The shared **Usage** group starts expanded; select its
+header to collapse it, and T3 Code remembers that choice locally across the normal and Session Grid
+sidebars.
+
 ## I Want Work And Personal Codex Accounts
 
 Use one real Codex home and one shadow home.

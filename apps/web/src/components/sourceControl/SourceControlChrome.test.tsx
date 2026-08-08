@@ -2,8 +2,10 @@ import type { WorkingCopyStatusResult } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
+import { DiffPanelShell } from "../DiffPanelShell";
 import { CommitComposer } from "./CommitComposer";
 import { SourceControlHeader } from "./SourceControlHeader";
+import { SourceControlPanelShell } from "./SourceControlPanelShell";
 
 const noop = () => undefined;
 const status: WorkingCopyStatusResult = {
@@ -75,6 +77,23 @@ describe("SourceControlHeader", () => {
     expect(markup).toContain("animate-spin");
     expect(markup).toContain('aria-busy="true"');
     expect(markup).toContain('aria-label="More source control actions" disabled=""');
+  });
+});
+
+describe("SourceControlPanelShell", () => {
+  it("uses the same sidebar surface as the project and session panel", () => {
+    const markup = renderToStaticMarkup(
+      <SourceControlPanelShell mode="inline">
+        <DiffPanelShell className="bg-transparent" header={<span>Repository</span>} mode="embedded">
+          <div>Changes</div>
+        </DiffPanelShell>
+      </SourceControlPanelShell>,
+    );
+
+    expect(markup).toContain('data-sidebar-version="v2"');
+    expect(markup).toContain("bg-sidebar surface-grain text-sidebar-foreground");
+    expect(markup).toContain("flex h-full min-w-0 flex-col w-full bg-transparent");
+    expect(markup).not.toContain("flex h-full min-w-0 flex-col w-full bg-background");
   });
 });
 

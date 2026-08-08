@@ -22,6 +22,7 @@ export function DiffPanelShell(props: {
   mode: DiffPanelMode;
   header: ReactNode;
   children: ReactNode;
+  className?: string | undefined;
 }) {
   const shouldUseDragRegion = isElectron && props.mode !== "sheet" && props.mode !== "embedded";
 
@@ -32,6 +33,7 @@ export function DiffPanelShell(props: {
         props.mode === "inline"
           ? "w-[42vw] min-w-[360px] max-w-[560px] shrink-0 border-l border-border"
           : "w-full",
+        props.className,
       )}
     >
       {shouldUseDragRegion ? (

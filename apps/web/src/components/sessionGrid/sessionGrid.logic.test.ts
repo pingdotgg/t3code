@@ -5,6 +5,8 @@ import { describe, expect, it } from "vite-plus/test";
 import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
 import type { Project } from "../../types";
 import {
+  buildSessionGridProjectContextMenuItems,
+  buildSessionGridProjectPanelEntries,
   buildSessionGridSections,
   isSessionGridMissingChangeRequestError,
   parseSessionGridSearch,
@@ -14,6 +16,8 @@ import {
   resolveSessionGridLifecycle,
   resolveSessionGridProject,
   sessionGridChangeRequestKey,
+  sessionGridCompletionNeedsAttention,
+  sessionGridThreadNeedsAttention,
   stabilizeSessionGridProjectKeys,
   stabilizeSessionGridThreadKeys,
 } from "./sessionGrid.logic";
@@ -243,6 +247,202 @@ describe("stabilizeSessionGridProjectKeys", () => {
       "a",
       "c",
       "d",
+    ]);
+  });
+});
+
+describe("sessionGridCompletionNeedsAttention", () => {
+  it("keeps an unvisited completed pane in the attention state", () => {
+    expect(
+      sessionGridCompletionNeedsAttention({
+        completedAt: "2026-08-05T12:00:00.000Z",
+        lastVisitedAt: undefined,
+      }),
+    ).toBe(true);
+  });
+
+  it("clears attention once that completion has been viewed", () => {
+    expect(
+      sessionGridCompletionNeedsAttention({
+        completedAt: "2026-08-05T12:00:00.000Z",
+        lastVisitedAt: "2026-08-05T12:00:00.000Z",
+      }),
+    ).toBe(false);
+  });
+
+  it("returns attention again for a newer completion", () => {
+    expect(
+      sessionGridCompletionNeedsAttention({
+        completedAt: "2026-08-05T12:00:01.000Z",
+        lastVisitedAt: "2026-08-05T12:00:00.000Z",
+      }),
+    ).toBe(true);
+  });
+
+  it("ignores absent or invalid completion timestamps", () => {
+    expect(
+      sessionGridCompletionNeedsAttention({ completedAt: null, lastVisitedAt: undefined }),
+    ).toBe(false);
+    expect(
+      sessionGridCompletionNeedsAttention({
+        completedAt: "not-a-date",
+        lastVisitedAt: undefined,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("sessionGridThreadNeedsAttention", () => {
+  it("counts blocked, failed, and unvisited completed work but not running work", () => {
+    expect(
+      sessionGridThreadNeedsAttention({
+        thread: makeThread({ hasPendingUserInput: true }),
+        lastVisitedAt: NOW,
+      }),
+    ).toBe(true);
+    expect(
+      sessionGridThreadNeedsAttention({
+        thread: makeThread({ latestTurn: { ...makeThread().latestTurn!, state: "error" } }),
+        lastVisitedAt: NOW,
+      }),
+    ).toBe(true);
+    expect(
+      sessionGridThreadNeedsAttention({
+        thread: makeThread(),
+        lastVisitedAt: undefined,
+      }),
+    ).toBe(true);
+    expect(
+      sessionGridThreadNeedsAttention({
+        thread: makeThread({
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "running",
+            providerName: "Codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: NOW,
+          },
+        }),
+        lastVisitedAt: undefined,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("buildSessionGridProjectPanelEntries", () => {
+  it("rolls open, attention, snoozed, and settled sessions into their project", () => {
+    const project = makeProject();
+    const groups = buildSidebarProjectSnapshots({
+      projects: [project],
+      settings: {
+        sidebarProjectGroupingMode: "repository",
+        sidebarProjectGroupingOverrides: {},
+      },
+      primaryEnvironmentId: ENVIRONMENT_A,
+      resolveEnvironmentLabel: () => "Local",
+    });
+    const attention = makeThread({
+      id: ThreadId.make("attention"),
+      hasPendingApprovals: true,
+    });
+    const snoozed = makeThread({ id: ThreadId.make("snoozed"), createdAt: NOW });
+    const settled = makeThread({
+      id: ThreadId.make("settled"),
+      settledAt: NOW,
+      settledOverride: "settled",
+    });
+    const key = (thread: EnvironmentThreadShell) => `${thread.environmentId}:${thread.id}`;
+
+    const [entry] = buildSessionGridProjectPanelEntries({
+      projects: groups,
+      threads: [settled, snoozed, attention],
+      lifecycleByThreadKey: new Map([
+        [key(attention), "active"],
+        [key(snoozed), "snoozed"],
+        [key(settled), "settled"],
+      ]),
+      lastVisitedAtByThreadKey: {},
+    });
+
+    expect(entry?.openThreads.map((thread) => thread.id)).toEqual([snoozed.id, attention.id]);
+    expect(entry?.attentionCount).toBe(1);
+    expect(entry?.settledThreads.map((thread) => thread.id)).toEqual([settled.id]);
+  });
+});
+
+describe("buildSessionGridProjectContextMenuItems", () => {
+  it("keeps the common project actions direct for a single project entry", () => {
+    const [project] = buildSidebarProjectSnapshots({
+      projects: [makeProject()],
+      settings: {
+        sidebarProjectGroupingMode: "repository",
+        sidebarProjectGroupingOverrides: {},
+      },
+      primaryEnvironmentId: ENVIRONMENT_A,
+      resolveEnvironmentLabel: () => "Local",
+    });
+
+    const items = buildSessionGridProjectContextMenuItems({
+      project: project!,
+      settledCount: 2,
+      settledExpanded: false,
+    });
+
+    expect(items.map((item) => [item.id, item.label])).toEqual([
+      ["open-project", "Show project grid"],
+      ["new-session", "New session"],
+      ["toggle-settled", "Show settled sessions"],
+      [`copy-path:${project!.memberProjects[0]!.physicalProjectKey}`, "Copy project path"],
+      [`remove:${project!.memberProjects[0]!.physicalProjectKey}`, "Remove project"],
+    ]);
+    expect(items.at(-1)?.destructive).toBe(true);
+  });
+
+  it("targets individual environments or all entries for a grouped project", () => {
+    const repositoryIdentity = {
+      canonicalKey: "github.com/acme/shared",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "git@github.com:acme/shared.git",
+      },
+      displayName: "Shared",
+    };
+    const [project] = buildSidebarProjectSnapshots({
+      projects: [
+        makeProject({ repositoryIdentity }),
+        makeProject({
+          environmentId: ENVIRONMENT_B,
+          id: ProjectId.make("project-b"),
+          workspaceRoot: "/remote/shared",
+          repositoryIdentity,
+        }),
+      ],
+      settings: {
+        sidebarProjectGroupingMode: "repository",
+        sidebarProjectGroupingOverrides: {},
+      },
+      primaryEnvironmentId: ENVIRONMENT_A,
+      resolveEnvironmentLabel: (environmentId) =>
+        environmentId === ENVIRONMENT_A ? "Local" : "Remote",
+    });
+
+    const items = buildSessionGridProjectContextMenuItems({
+      project: project!,
+      settledCount: 0,
+      settledExpanded: false,
+    });
+    const copyPath = items.find((item) => item.id === "copy-path:menu");
+    const remove = items.find((item) => item.id === "remove:menu");
+
+    expect(items.some((item) => item.id === "toggle-settled")).toBe(false);
+    expect(copyPath?.children).toHaveLength(2);
+    expect(remove?.children?.map((item) => item.id)).toEqual([
+      `remove:${project!.memberProjects[0]!.physicalProjectKey}`,
+      `remove:${project!.memberProjects[1]!.physicalProjectKey}`,
+      "remove-all",
     ]);
   });
 });

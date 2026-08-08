@@ -46,6 +46,9 @@ yay -S t3code-bin
 T3 Code drives provider CLIs; it does not ship them. Install the CLI for each provider you want
 to use, then authenticate it.
 
+Codex and Claude are enabled initially. Cursor, Grok Build, and OpenCode remain available but start
+disabled; enable them from **Settings** when you want to use them.
+
 | Provider   | CLI                                                   | Default binary | Log in with           |
 | ---------- | ----------------------------------------------------- | -------------- | --------------------- |
 | Codex      | [Codex CLI](https://developers.openai.com/codex/cli)  | `codex`        | `codex login`         |

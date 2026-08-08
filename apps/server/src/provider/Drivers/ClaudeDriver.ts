@@ -58,7 +58,10 @@ import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
-const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
+// Match the short server cache used by 2code's usage service: repeated UI
+// refreshes cannot spawn a subprocess storm, while a deliberate refresh is no
+// longer stuck behind the five-minute provider-health cadence.
+const CAPABILITIES_PROBE_TTL = Duration.seconds(30);
 
 function isClaudeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);

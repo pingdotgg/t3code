@@ -2,7 +2,9 @@
 
 The session grid gives you a live, project-focused workspace for your unsettled threads. Open **Session grid** from the bottom of the sidebar, or search for **Open session grid** in the command palette.
 
-Choose a project from the horizontal project row at the top. T3 Code remembers the selection in the page URL, so reload, back and forward navigation, and shared links keep the same project. When no project is selected yet, the grid opens the first project with unsettled work.
+Choose a project from **Grid projects** in the left panel. T3 Code remembers the selection in the page URL, so reload, back and forward navigation, and shared links keep the same project. When no project is selected yet, the grid opens the first project with unsettled work.
+
+Right-click a project, or use its **Project actions** button, to open the same compact menu. From there you can show its grid, start a new session, copy its path, reveal settled sessions, or remove the project. Removing a project always asks for confirmation: it removes the project entry and its conversation history, but never deletes the project files on disk. When one logical project groups multiple environments, the menu lets you remove a single environment entry or every grouped entry explicitly.
 
 ## What appears in the grid
 
@@ -15,7 +17,7 @@ It leaves out:
 - settled threads;
 - archived threads.
 
-Pane positions remain stable while messages and statuses update. Drag a pane by its grip to arrange the project the way you work; T3 Code remembers that order locally.
+Pane positions remain stable while messages and statuses update. Drag a pane by its header to arrange the project the way you work; T3 Code remembers that order locally.
 
 ## Working in a pane
 

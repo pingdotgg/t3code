@@ -37,6 +37,24 @@ When you set this field, T3 Code points Claude Code at that directory with the
 `CLAUDE_CONFIG_DIR` environment variable. It does not change `HOME`, so your system keychain and
 the rest of your environment stay as they are.
 
+## Claude Plan Usage
+
+For a Claude.ai subscription, the sidebar shows the usage windows reported by Claude Code, such as
+the current session window, the all-model weekly window, and any model-specific weekly window. Each
+row includes its used percentage and reset countdown. Usage at 80% or above is highlighted.
+
+Use the refresh button in the usage header to update that Claude instance. T3 Code also refreshes
+the data with its normal provider health check. A short server-side cache prevents repeated clicks
+or multiple connected clients from spawning redundant Claude Code status processes.
+
+The shared **Usage** group starts expanded. Select its header to collapse it; T3 Code remembers the
+choice locally across the normal and Session Grid sidebars.
+
+Multiple Claude instances are shown separately. The data comes from the environment running Claude
+Code, so it also works when the sidebar is connected remotely. Claude Code does not expose plan
+limits for API-key, Bedrock, Vertex, or other non-Claude.ai sessions; the usage block stays hidden for
+those instances.
+
 ## I Want Work And Personal Claude Accounts
 
 Use a different Claude config directory for each account.

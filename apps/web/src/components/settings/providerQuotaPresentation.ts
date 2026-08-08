@@ -19,7 +19,7 @@ const QUOTA_WARNING_PERCENT = 80;
 export type ProviderQuotaTone = "normal" | "warning" | "destructive";
 
 export interface ProviderQuotaMeter {
-  readonly id: "primary" | "secondary";
+  readonly id: string;
   readonly label: string;
   readonly usedPercent: number;
   readonly tone: ProviderQuotaTone;
@@ -27,11 +27,15 @@ export interface ProviderQuotaMeter {
   readonly detail?: string;
 }
 
-export function providerQuotaTone(usedPercent: number): ProviderQuotaTone {
+export function providerQuotaTone(usedPercent: number, severity?: string): ProviderQuotaTone {
   if (usedPercent >= 100) {
     return "destructive";
   }
-  return usedPercent >= QUOTA_WARNING_PERCENT ? "warning" : "normal";
+  const normalizedSeverity = severity?.trim().toLowerCase();
+  return usedPercent >= QUOTA_WARNING_PERCENT ||
+    (normalizedSeverity !== undefined && normalizedSeverity !== "normal")
+    ? "warning"
+    : "normal";
 }
 
 /**
@@ -87,6 +91,28 @@ export function providerQuotaMeters(
     return [];
   }
   const meters: Array<ProviderQuotaMeter> = [];
+  if (rateLimits.windows && rateLimits.windows.length > 0) {
+    for (const window of rateLimits.windows) {
+      const detail = formatQuotaReset(window.resetsAt, now);
+      meters.push({
+        id: window.id,
+        label: window.label,
+        usedPercent: window.usedPercent,
+        tone: providerQuotaTone(window.usedPercent, window.severity),
+        ...(detail !== undefined ? { detail } : {}),
+      });
+    }
+    const extra = rateLimits.extraUsage;
+    if (extra?.isEnabled && extra.usedPercent !== undefined) {
+      meters.push({
+        id: "extra-usage",
+        label: "Extra usage",
+        usedPercent: extra.usedPercent,
+        tone: providerQuotaTone(extra.usedPercent),
+      });
+    }
+    return meters;
+  }
   for (const id of ["primary", "secondary"] as const) {
     const window = rateLimits[id];
     if (window === undefined) {
@@ -109,6 +135,7 @@ const PLAN_LABELS: Readonly<Record<string, string>> = {
   go: "Go",
   plus: "Plus",
   pro: "Pro",
+  max: "Max",
   prolite: "Pro 5x",
   team: "Team",
   business: "Business",
@@ -179,7 +206,10 @@ export function providerQuotaNotice(
   }
   const reset =
     formatQuotaReset(auth.rateLimits.primary?.resetsAt, now) ??
-    formatQuotaReset(auth.rateLimits.secondary?.resetsAt, now);
+    formatQuotaReset(auth.rateLimits.secondary?.resetsAt, now) ??
+    auth.rateLimits.windows
+      ?.map((window) => formatQuotaReset(window.resetsAt, now))
+      .find((value) => value !== undefined);
   return reset === undefined ? "Usage limit reached." : `Usage limit reached — ${reset}.`;
 }
 
@@ -189,6 +219,7 @@ export function hasProviderQuota(auth: ServerProviderAuth | undefined, now: numb
     providerQuotaMeters(auth, now).length > 0 ||
     providerUsageSummary(auth) !== undefined ||
     providerQuotaNotice(auth, now) !== undefined ||
-    auth?.rateLimits?.creditBalance !== undefined
+    auth?.rateLimits?.creditBalance !== undefined ||
+    auth?.rateLimits?.extraUsage?.isEnabled === true
   );
 }
