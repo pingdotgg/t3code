@@ -126,6 +126,7 @@ import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
 import {
+  archiveSelectedThreadEntries,
   buildBulkTitleRegenerationContextMenuItem,
   formatWorkingDurationLabel,
   firstValidTimestampMs,
@@ -1935,39 +1936,8 @@ export default function Sidebar() {
   );
   const [settledShelfExpanded, setSettledShelfExpanded] = useState(true);
   const toggleSettledShelf = useCallback(() => setSettledShelfExpanded((value) => !value), []);
-  // Empties the whole shelf in one action. Archive, not delete: "clear" is
-  // about the sidebar, so every row stays recoverable from Settings → Archived.
-  const clearSettledThreads = useCallback(async () => {
-    const count = settledThreads.length;
-    if (count === 0) return;
-    const api = readLocalApi();
-    if (!api) return;
-    const confirmed = await settlePromise(() =>
-      api.dialogs.confirm(
-        [
-          `Clear ${count} settled thread${count === 1 ? "" : "s"} from the sidebar?`,
-          "They move to Archived and can be restored from Settings.",
-        ].join("\n"),
-      ),
-    );
-    if (confirmed._tag === "Failure" || !confirmed.value) return;
-    for (const thread of settledThreads) {
-      const result = await archiveThread(scopeThreadRef(thread.environmentId, thread.id));
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Failed to clear settled threads",
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
-        }
-        return;
-      }
-    }
-  }, [archiveThread, settledThreads]);
+  const settledThreadsRef = useRef(settledThreads);
+  settledThreadsRef.current = settledThreads;
   const renderedSettledThreads = useMemo(() => {
     if (settledShelfExpanded) return visibleSettledThreads;
     if (routeThreadKey === null) return [];
@@ -2530,6 +2500,67 @@ export default function Sidebar() {
   );
 
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
+  // Empties the whole shelf in one action. Archive, not delete: "clear" is
+  // about the sidebar, so every row stays recoverable from Settings → Archived.
+  const clearSettledThreads = useCallback(async () => {
+    const confirmedTargets = settledThreadsRef.current;
+    const count = confirmedTargets.length;
+    if (count === 0) return;
+    const api = readLocalApi();
+    if (!api) return;
+    const confirmed = await settlePromise(() =>
+      api.dialogs.confirm(
+        [
+          `Clear ${count} settled thread${count === 1 ? "" : "s"} from the sidebar?`,
+          "They move to Archived and can be restored from Settings.",
+        ].join("\n"),
+      ),
+    );
+    if (confirmed._tag === "Failure" || !confirmed.value) return;
+    // The dialog stays open as long as the user takes, so re-read the shelf:
+    // a thread that stopped being settled meanwhile is no longer part of what
+    // was agreed to, and archiving it anyway would be a surprise.
+    const stillSettled = new Set(
+      settledThreadsRef.current.map((thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ),
+    );
+    const entries = confirmedTargets
+      .map((thread) => {
+        const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+        return { threadRef, threadKey: scopedThreadKey(threadRef) };
+      })
+      .filter((entry) => stillSettled.has(entry.threadKey));
+    const outcome = await archiveSelectedThreadEntries({
+      entries,
+      archive: ({ threadRef }, onArchived) => archiveThread(threadRef, { onArchived }),
+    });
+    // Archiving the open thread navigates away afterwards; that followup can
+    // fail on its own without undoing the archive, so it must not abort the
+    // rest of the batch.
+    for (const failure of outcome.followupFailures) {
+      if (isAtomCommandInterrupted(failure)) continue;
+      const error = squashAtomCommandFailure(failure);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Thread archived, but navigation failed",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    }
+    removeFromSelection(outcome.archivedThreadKeys);
+    if (outcome.mutationFailure && !isAtomCommandInterrupted(outcome.mutationFailure)) {
+      const error = squashAtomCommandFailure(outcome.mutationFailure);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to clear settled threads",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    }
+  }, [archiveThread, removeFromSelection]);
   const handleMultiSelectContextMenu = useCallback(
     async (position: { x: number; y: number }) => {
       const api = readLocalApi();
