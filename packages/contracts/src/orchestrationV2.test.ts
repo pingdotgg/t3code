@@ -20,10 +20,13 @@ import {
   TurnItemId,
 } from "./index.ts";
 import {
+  ORCHESTRATION_V2_HANDOFF_PAYLOAD_MAX_BYTES,
+  ORCHESTRATION_V2_HANDOFF_PAYLOAD_WARN_BYTES,
   OrchestrationV2Checkpoint,
   OrchestrationV2CheckpointScope,
   OrchestrationV2Command,
   OrchestrationV2DomainEvent,
+  OrchestrationV2HandoffBundleV1,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
   OrchestrationV2ShellSnapshot,
@@ -768,5 +771,126 @@ describe("orchestration V2 contracts", () => {
     });
 
     expect(shell.pendingBackgroundTasks).toEqual([]);
+  });
+});
+
+describe("thread handoff bundle", () => {
+  const decodeBundle = Schema.decodeUnknownSync(OrchestrationV2HandoffBundleV1);
+  const digest = "a".repeat(64);
+
+  const bundle = (overrides: Record<string, unknown> = {}) => ({
+    version: 1,
+    handoffId: "handoff-1",
+    origin: {
+      environmentId: "environment-mac",
+      threadId: "thread-1",
+      serverVersion: "0.1.0",
+    },
+    repository: {
+      canonicalKey: "github.com/pingdotgg/t3code",
+      locator: {
+        source: "git-remote",
+        remoteName: "origin",
+        remoteUrl: "git@github.com:pingdotgg/t3code.git",
+      },
+    },
+    workspace: {
+      branch: "feat/thread-handoff",
+      headSha: "a91f2c4",
+      strategy: { type: "root" },
+    },
+    conversation: {
+      items: [],
+      coveredRunOrdinals: [0, 1],
+    },
+    provider: {
+      driverKind: "claude",
+      modelSelection: {
+        instanceId: "claude-default",
+        model: "claude-sonnet-4-6",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+    },
+    thread: { title: "Thread handoff" },
+    terminals: [],
+    lineage: { previousHandoffId: null, hopCount: 0 },
+    parts: [{ kind: "git-bundle", digest, byteLength: 4096 }],
+    ...overrides,
+  });
+
+  it("decodes a bundle with no previous hop", () => {
+    const decoded = decodeBundle(bundle());
+
+    expect(decoded.lineage).toEqual({ previousHandoffId: null, hopCount: 0 });
+    expect(decoded.parts[0]?.kind).toBe("git-bundle");
+  });
+
+  it("carries the previous hop so a chain can be walked back", () => {
+    const decoded = decodeBundle(
+      bundle({ lineage: { previousHandoffId: "handoff-0", hopCount: 1 } }),
+    );
+
+    expect(decoded.lineage.previousHandoffId).toBe("handoff-0");
+    expect(decoded.lineage.hopCount).toBe(1);
+  });
+
+  it("keeps the workspace strategy so a worktree thread can be reprovisioned", () => {
+    const decoded = decodeBundle(
+      bundle({
+        workspace: {
+          branch: "feat/thread-handoff",
+          headSha: "a91f2c4",
+          strategy: { type: "worktree", baseRef: "main", branch: "feat/thread-handoff" },
+        },
+      }),
+    );
+
+    expect(decoded.workspace.strategy).toEqual({
+      type: "worktree",
+      baseRef: "main",
+      branch: "feat/thread-handoff",
+    });
+  });
+
+  it("restores terminals by relative path so the receiver can rebase them", () => {
+    const decoded = decodeBundle(
+      bundle({
+        terminals: [
+          {
+            terminalId: "terminal-1",
+            title: "dev server",
+            relativeCwd: "apps/server",
+            shell: "/bin/zsh",
+            history: "$ pnpm dev\n",
+          },
+        ],
+      }),
+    );
+
+    expect(decoded.terminals[0]?.relativeCwd).toBe("apps/server");
+    expect(decoded.terminals[0]?.history).toBe("$ pnpm dev\n");
+  });
+
+  it("rejects a part digest that is not a sha-256", () => {
+    expect(() =>
+      decodeBundle(bundle({ parts: [{ kind: "git-bundle", digest: "nope", byteLength: 1 }] })),
+    ).toThrow();
+  });
+
+  it("rejects an unknown part kind rather than moving bytes it cannot place", () => {
+    expect(() =>
+      decodeBundle(bundle({ parts: [{ kind: "surprise-tar", digest, byteLength: 1 }] })),
+    ).toThrow();
+  });
+
+  it("rejects a bundle version it was not written for", () => {
+    expect(() => decodeBundle(bundle({ version: 2 }))).toThrow();
+  });
+
+  it("refuses at a payload ceiling above the warning threshold", () => {
+    expect(ORCHESTRATION_V2_HANDOFF_PAYLOAD_MAX_BYTES).toBeGreaterThan(
+      ORCHESTRATION_V2_HANDOFF_PAYLOAD_WARN_BYTES,
+    );
   });
 });

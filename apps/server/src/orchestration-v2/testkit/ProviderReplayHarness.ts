@@ -79,6 +79,7 @@ export function makeReplayServerConfig(
     const terminalLogsDir = path.join(logsDir, "terminals");
     const attachmentsDir = path.join(stateDir, "attachments");
     const worktreesDir = path.join(baseDir, "worktrees");
+    const handoffsDir = path.join(stateDir, "handoffs");
     const providerStatusCacheDir = path.join(baseDir, "caches");
 
     for (const directory of [
@@ -88,6 +89,7 @@ export function makeReplayServerConfig(
       terminalLogsDir,
       attachmentsDir,
       worktreesDir,
+      handoffsDir,
       providerStatusCacheDir,
     ]) {
       yield* fs.makeDirectory(directory, { recursive: true });
@@ -125,6 +127,7 @@ export function makeReplayServerConfig(
       settingsPath: path.join(stateDir, "settings.json"),
       providerStatusCacheDir,
       worktreesDir,
+      handoffsDir,
       attachmentsDir,
       logsDir,
       serverLogPath: path.join(logsDir, "server.log"),

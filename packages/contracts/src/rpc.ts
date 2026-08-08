@@ -73,6 +73,7 @@ import {
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
+  OrchestrationV2HandoffError,
   OrchestrationV2RpcSchemas,
   OrchestrationV2ThreadLaunchError,
 } from "./orchestrationV2.ts";
@@ -798,6 +799,24 @@ export const WsOrchestrationV2LaunchThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_MET
   error: Schema.Union([OrchestrationV2ThreadLaunchError, EnvironmentAuthorizationError]),
 });
 
+export const WsOrchestrationV2PrepareThreadHandoffRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.prepareThreadHandoff,
+  {
+    payload: OrchestrationV2RpcSchemas.prepareThreadHandoff.input,
+    success: OrchestrationV2RpcSchemas.prepareThreadHandoff.output,
+    error: Schema.Union([OrchestrationV2HandoffError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsOrchestrationV2ReceiveThreadHandoffRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.receiveThreadHandoff,
+  {
+    payload: OrchestrationV2RpcSchemas.receiveThreadHandoff.input,
+    success: OrchestrationV2RpcSchemas.receiveThreadHandoff.output,
+    error: Schema.Union([OrchestrationV2HandoffError, EnvironmentAuthorizationError]),
+  },
+);
+
 export const WsOrchestrationV2SubscribeArchivedShellRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell,
   {
@@ -1005,6 +1024,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetArchivedShellSnapshotRpc,
   WsOrchestrationV2GetThreadProjectionRpc,
   WsOrchestrationV2LaunchThreadRpc,
+  WsOrchestrationV2PrepareThreadHandoffRpc,
+  WsOrchestrationV2ReceiveThreadHandoffRpc,
   WsOrchestrationV2SubscribeArchivedShellRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,

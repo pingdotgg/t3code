@@ -217,6 +217,9 @@ function commandThreadId(command: OrchestrationV2Command): ThreadId {
     case "runtime-request.respond":
     case "checkpoint.rollback":
     case "provider.switch":
+    case "thread.handoff.depart":
+    case "thread.handoff.complete":
+    case "thread.handoff.abort":
       return command.threadId;
     case "delegated_task.request":
     case "delegated_task.wake-policy":
@@ -1332,6 +1335,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
   });
 
+  // Mutations a departed (away) thread still accepts: the handoff verbs that
+  // end the trip, plus the lifecycle and read-state mirrors that describe the
+  // local copy rather than the conversation.
+  const AWAY_ALLOWED_MUTATIONS = new Set<string>([
+    "thread.handoff.complete",
+    "thread.handoff.abort",
+    "thread.delete",
+    "thread.archive",
+    "thread.unarchive",
+    "thread.visit",
+    "thread.mark-unread",
+  ]);
+
   const dispatchThreadMutation = Effect.fn("orchestrationV2.dispatch.threadMutation")(function* (
     command: Extract<
       OrchestrationV2Command,
@@ -1353,7 +1369,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.runtime-mode.set"
           | "thread.interaction-mode.set"
           | "thread.model-selection.set"
-          | "provider.switch";
+          | "provider.switch"
+          | "thread.handoff.depart"
+          | "thread.handoff.complete"
+          | "thread.handoff.abort";
       }
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -1428,6 +1447,91 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandType: command.type,
         cause: `Thread ${command.threadId} has active or blocked work and cannot be settled.`,
       });
+    }
+
+    // A thread can only leave once, and only the hop that locked it may report
+    // its landing or release it. Without these the client could lock a thread
+    // twice and lose track of which peer owns it.
+    if (command.type === "thread.handoff.depart" && thread.handoff?.presence === "away") {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is already handed off to ${thread.handoff.peerEnvironmentId}.`,
+      });
+    }
+    // The preflight ran before this command took the thread lock, so a
+    // message could have started a run in between. Depart transfers a
+    // snapshot and locks the source; a live run here would keep mutating it
+    // after the other side goes live.
+    if (
+      command.type === "thread.handoff.depart" &&
+      projection.runs.some((run) =>
+        ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
+      )
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} has an agent still working and cannot be handed off.`,
+      });
+    }
+    // An away thread is read-only here: the peer owns the conversation. Read
+    // state and lifecycle mirrors still apply so the local copy can be
+    // archived, deleted or marked read while the work lives elsewhere.
+    if (
+      thread.handoff?.presence === "away" &&
+      !AWAY_ALLOWED_MUTATIONS.has(command.type) &&
+      command.type !== "thread.handoff.depart"
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is running on ${
+          thread.handoff.peerLabel ?? thread.handoff.peerEnvironmentId
+        }.`,
+      });
+    }
+    if (command.type === "thread.handoff.complete" || command.type === "thread.handoff.abort") {
+      const link = thread.handoff ?? null;
+      if (link === null || link.handoffId !== command.handoffId) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has no handoff ${command.handoffId} in flight.`,
+        });
+      }
+      if (link.presence !== "away") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} owns handoff ${command.handoffId} and cannot report on it.`,
+        });
+      }
+      // A peer thread on the link means complete already finalized this hop.
+      // A late abort clearing the link would make this side live again while
+      // the peer is running — the one state the whole protocol exists to
+      // prevent.
+      if (command.type === "thread.handoff.abort" && link.peerThreadId !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Handoff ${command.handoffId} already completed to ${link.peerThreadId} and can no longer be aborted.`,
+        });
+      }
+      // A completion is idempotent for the peer it already recorded, but a
+      // different peer under the same handoff id is a stale or forged
+      // duplicate — accepting it would repoint the return-target link.
+      if (
+        command.type === "thread.handoff.complete" &&
+        link.peerThreadId !== null &&
+        link.peerThreadId !== command.peerThreadId
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Handoff ${command.handoffId} already completed to ${link.peerThreadId}; refusing to repoint it to ${command.peerThreadId}.`,
+        });
+      }
     }
 
     const providerSwitchPlan =
@@ -1638,6 +1742,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             modelSelection: command.modelSelection,
             updatedAt: now,
           };
+        case "thread.handoff.depart":
+          return {
+            ...thread,
+            handoff: {
+              handoffId: command.handoffId,
+              presence: "away" as const,
+              peerEnvironmentId: command.peerEnvironmentId,
+              peerThreadId: null,
+              peerLabel: command.peerLabel,
+              previousHandoffId: command.previousHandoffId,
+              hopCount: command.hopCount,
+              updatedAt: now,
+            },
+            updatedAt: now,
+          };
+        case "thread.handoff.complete":
+          return {
+            ...thread,
+            ...(thread.handoff == null
+              ? {}
+              : {
+                  handoff: {
+                    ...thread.handoff,
+                    peerThreadId: command.peerThreadId,
+                    updatedAt: now,
+                  },
+                }),
+            updatedAt: now,
+          };
+        // Releasing the link is what makes this side live again, so an aborted
+        // hop leaves no trace to clean up later.
+        case "thread.handoff.abort":
+          return { ...thread, handoff: null, updatedAt: now };
       }
     })();
     const eventType = (() => {
@@ -1675,6 +1812,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.model-selection-updated" as const;
         case "provider.switch":
           return "thread.provider-switched" as const;
+        case "thread.handoff.depart":
+          return "thread.handoff-departed" as const;
+        case "thread.handoff.complete":
+          return "thread.handoff-arrived" as const;
+        case "thread.handoff.abort":
+          return "thread.handoff-failed" as const;
       }
     })();
     yield* emit(
@@ -2778,6 +2921,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) =>
     Effect.gen(function* () {
       let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      // A departed thread is a read-only record of work that is now running
+      // somewhere else. Refusing the send here — rather than in the client — is
+      // what makes "exactly one side is live" an invariant instead of a
+      // convention, and it is the reason a handoff never has to merge two
+      // divergent conversations.
+      const handoff = projection.thread.handoff ?? null;
+      if (handoff !== null && handoff.presence === "away") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is running on ${handoff.peerLabel ?? handoff.peerEnvironmentId}.`,
+        });
+      }
       if (projection.thread.settledOverride !== null) {
         const now = yield* DateTime.now;
         const thread: OrchestrationV2AppThread = {
@@ -6700,6 +6856,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.interaction-mode.set":
       case "thread.model-selection.set":
       case "provider.switch":
+      case "thread.handoff.depart":
+      case "thread.handoff.complete":
+      case "thread.handoff.abort":
         yield* dispatchThreadMutation(command, events, effects);
         break;
       case "provider-session.detach":

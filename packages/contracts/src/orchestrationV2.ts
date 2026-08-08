@@ -8,6 +8,7 @@ import {
   CommandId,
   ContextHandoffId,
   ContextTransferId,
+  EnvironmentId,
   EventId,
   IsoDateTime,
   MessageId,
@@ -23,11 +24,13 @@ import {
   RunAttemptId,
   RunId,
   RuntimeRequestId,
+  ThreadHandoffId,
   ThreadId,
   TrimmedNonEmptyString,
   TurnItemId,
 } from "./baseSchemas.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
+import { RepositoryIdentity } from "./environment.ts";
 import {
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
@@ -83,6 +86,31 @@ export const OrchestrationV2AppThreadLineage = Schema.Struct({
   rootThreadId: ThreadId,
 });
 export type OrchestrationV2AppThreadLineage = typeof OrchestrationV2AppThreadLineage.Type;
+
+/**
+ * Where this thread sits in a handoff, from this environment's point of view.
+ *
+ * `away` means the work moved to another environment and this side is a
+ * read-only record until it comes back; `here` means this environment received
+ * the thread and owns it. Exactly one side of a hop is `here`, which is what
+ * keeps two live conversations — and the unanswerable merge they would need —
+ * from existing in the first place.
+ */
+export const OrchestrationV2ThreadHandoffPresence = Schema.Literals(["away", "here"]);
+export type OrchestrationV2ThreadHandoffPresence = typeof OrchestrationV2ThreadHandoffPresence.Type;
+
+export const OrchestrationV2ThreadHandoffLink = Schema.Struct({
+  handoffId: ThreadHandoffId,
+  presence: OrchestrationV2ThreadHandoffPresence,
+  peerEnvironmentId: EnvironmentId,
+  /** The peer's thread id, once the peer has reported it. */
+  peerThreadId: Schema.NullOr(ThreadId),
+  peerLabel: Schema.NullOr(TrimmedNonEmptyString),
+  previousHandoffId: Schema.NullOr(ThreadHandoffId),
+  hopCount: NonNegativeInt,
+  updatedAt: Schema.DateTimeUtc,
+});
+export type OrchestrationV2ThreadHandoffLink = typeof OrchestrationV2ThreadHandoffLink.Type;
 
 export const OrchestrationV2ContextTransferType = Schema.Literals([
   "fork",
@@ -328,6 +356,12 @@ export const OrchestrationV2AppThread = Schema.Struct({
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /**
+   * Set while this thread is one side of a handoff. Absent on threads that
+   * have never left the environment they were created in, so older servers
+   * and older stored payloads decode unchanged.
+   */
+  handoff: Schema.optional(Schema.NullOr(OrchestrationV2ThreadHandoffLink)),
   /** In-flight title regeneration marker; cleared when a new title lands. */
   titleRegeneration: Schema.optional(
     Schema.NullOr(
@@ -1105,6 +1139,10 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.interaction-mode-updated",
       "thread.model-selection-updated",
       "thread.provider-switched",
+      "thread.handoff-departed",
+      "thread.handoff-arrived",
+      "thread.handoff-returned",
+      "thread.handoff-failed",
     ]),
     payload: OrchestrationV2AppThread,
   }),
@@ -1315,6 +1353,11 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
       }),
     ),
   ),
+  /**
+   * Carried on the shell so a sidebar can mark a thread as away or here
+   * without loading its detail. Omitted by servers that predate handoff.
+   */
+  handoff: Schema.optional(Schema.NullOr(OrchestrationV2ThreadHandoffLink)),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
@@ -1399,6 +1442,14 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
         requestId: CommandId,
         startedAt: Schema.DateTimeUtcFromString,
       }),
+    ),
+  ),
+  handoff: Schema.optional(
+    Schema.NullOr(
+      OrchestrationV2ThreadHandoffLink.mapFields((linkFields) => ({
+        ...linkFields,
+        updatedAt: Schema.DateTimeUtcFromString,
+      })),
     ),
   ),
   deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -1774,6 +1825,14 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   lastVisitedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  handoff: Schema.optional(
+    Schema.NullOr(
+      OrchestrationV2ThreadHandoffLink.mapFields((linkFields) => ({
+        ...linkFields,
+        updatedAt: Schema.DateTimeUtcFromString,
+      })),
+    ),
+  ),
   deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
 }));
 export type OrchestrationV2ThreadShellJson = typeof OrchestrationV2ThreadShellJson.Type;
@@ -1825,6 +1884,10 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.interaction-mode-updated",
       "thread.model-selection-updated",
       "thread.provider-switched",
+      "thread.handoff-departed",
+      "thread.handoff-arrived",
+      "thread.handoff-returned",
+      "thread.handoff-failed",
     ]),
     payload: OrchestrationV2AppThreadJson,
   }),
@@ -2226,6 +2289,39 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     modelSelection: ModelSelection,
   }),
+  /**
+   * Hands this thread's work to another environment. Dispatched before any
+   * bundle is applied there: locking the side that is giving the thread up
+   * first is what guarantees the two sides can never both be live, and an
+   * interrupted transfer leaves a locked thread that `thread.handoff.abort`
+   * releases rather than a second conversation nobody can merge.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.handoff.depart"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    handoffId: ThreadHandoffId,
+    peerEnvironmentId: EnvironmentId,
+    peerLabel: Schema.NullOr(TrimmedNonEmptyString),
+    previousHandoffId: Schema.NullOr(ThreadHandoffId),
+    hopCount: NonNegativeInt,
+  }),
+  /** Records the peer's thread id once it has confirmed the bundle landed. */
+  Schema.Struct({
+    type: Schema.Literal("thread.handoff.complete"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    handoffId: ThreadHandoffId,
+    peerThreadId: ThreadId,
+  }),
+  /** Releases a departed thread whose transfer never landed. */
+  Schema.Struct({
+    type: Schema.Literal("thread.handoff.abort"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    handoffId: ThreadHandoffId,
+    reason: Schema.NullOr(TrimmedNonEmptyString),
+  }),
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
@@ -2238,6 +2334,8 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getThreadProjection: "orchestration.getThreadProjection",
   getWorkflowScript: "orchestration.getWorkflowScript",
   launchThread: "orchestration.launchThread",
+  prepareThreadHandoff: "orchestration.prepareThreadHandoff",
+  receiveThreadHandoff: "orchestration.receiveThreadHandoff",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
@@ -2318,6 +2416,216 @@ export const OrchestrationV2ThreadLaunchResult = Schema.Struct({
   resumed: Schema.Boolean,
 });
 export type OrchestrationV2ThreadLaunchResult = typeof OrchestrationV2ThreadLaunchResult.Type;
+
+/**
+ * Thread handoff moves one thread from the environment that owns it to another
+ * connected environment: the conversation, the provider continuation, and the
+ * git working state the thread was left in.
+ *
+ * The bundle below is the wire contract between the two servers. It is a
+ * manifest plus content-addressed parts: everything small and structural is
+ * inline, everything large is a part fetched separately by digest. Keeping the
+ * bytes out of the manifest is what allows the transport to change later —
+ * today the client reads from one environment and writes to the other, because
+ * it is the only component authenticated to both — without the manifest or the
+ * ids changing with it.
+ */
+export const OrchestrationV2HandoffPartKind = Schema.Literals([
+  "git-bundle",
+  "tracked-patch",
+  "untracked-tar",
+  "attachments-tar",
+  "terminals-tar",
+]);
+export type OrchestrationV2HandoffPartKind = typeof OrchestrationV2HandoffPartKind.Type;
+
+/** Lowercase hex SHA-256, the address of a part's bytes. */
+export const OrchestrationV2HandoffPartDigest = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^[0-9a-f]{64}$/),
+);
+
+export const OrchestrationV2HandoffPart = Schema.Struct({
+  kind: OrchestrationV2HandoffPartKind,
+  digest: OrchestrationV2HandoffPartDigest,
+  byteLength: NonNegativeInt,
+});
+export type OrchestrationV2HandoffPart = typeof OrchestrationV2HandoffPart.Type;
+
+/**
+ * A terminal as it can be reconstructed elsewhere. The process itself cannot
+ * travel; the working directory, the shell, and the scrollback the user reads
+ * can. `cwd` is relative to the origin workspace root so the receiving
+ * environment can rebase it onto its own.
+ */
+export const OrchestrationV2HandoffTerminal = Schema.Struct({
+  terminalId: TrimmedNonEmptyString,
+  title: Schema.NullOr(TrimmedNonEmptyString),
+  relativeCwd: Schema.String,
+  shell: Schema.NullOr(TrimmedNonEmptyString),
+  history: Schema.String,
+});
+export type OrchestrationV2HandoffTerminal = typeof OrchestrationV2HandoffTerminal.Type;
+
+/**
+ * Where this hop sits in the chain. A round trip is not a special case: it is a
+ * hop whose destination is an environment already in the lineage, so laptop →
+ * server → phone → laptop is a walk rather than a pair of push/pull verbs.
+ */
+export const OrchestrationV2HandoffLineage = Schema.Struct({
+  previousHandoffId: Schema.NullOr(ThreadHandoffId),
+  hopCount: NonNegativeInt,
+});
+export type OrchestrationV2HandoffLineage = typeof OrchestrationV2HandoffLineage.Type;
+
+export const OrchestrationV2HandoffBundleV1 = Schema.Struct({
+  version: Schema.Literal(1),
+  handoffId: ThreadHandoffId,
+  origin: Schema.Struct({
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    serverVersion: TrimmedNonEmptyString,
+    /** The origin's human label, so the far side can say where the thread came
+        from without resolving an environment id it may not know. */
+    label: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
+  repository: RepositoryIdentity,
+  workspace: Schema.Struct({
+    branch: Schema.NullOr(TrimmedNonEmptyString),
+    headSha: TrimmedNonEmptyString,
+    strategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  }),
+  conversation: Schema.Struct({
+    items: Schema.Array(OrchestrationV2TurnItem),
+    coveredRunOrdinals: Schema.Array(NonNegativeInt),
+  }),
+  provider: Schema.Struct({
+    driverKind: ProviderDriverKind,
+    modelSelection: ModelSelection,
+    runtimeMode: RuntimeMode,
+    interactionMode: ProviderInteractionMode,
+  }),
+  thread: Schema.Struct({
+    title: TrimmedNonEmptyString,
+  }),
+  terminals: Schema.Array(OrchestrationV2HandoffTerminal),
+  lineage: OrchestrationV2HandoffLineage,
+  parts: Schema.Array(OrchestrationV2HandoffPart),
+});
+export type OrchestrationV2HandoffBundleV1 = typeof OrchestrationV2HandoffBundleV1.Type;
+
+/**
+ * Lifecycle of one hop, recorded on both sides.
+ *
+ * The origin moves preparing → departed and stays there until it observes
+ * `arrived` or `aborted`; the destination moves applying → arrived. `applying`
+ * is the only state in which the receiving repository has been written to, so
+ * it is also the only state that needs recovery on startup.
+ */
+export const OrchestrationV2HandoffState = Schema.Literals([
+  "preparing",
+  "departed",
+  "applying",
+  "arrived",
+  "failed",
+  "aborted",
+]);
+export type OrchestrationV2HandoffState = typeof OrchestrationV2HandoffState.Type;
+
+export const OrchestrationV2HandoffErrorReason = Schema.Literals([
+  "environment_unsupported",
+  "thread_missing",
+  "thread_already_away",
+  "thread_busy",
+  "repository_mismatch",
+  "project_missing",
+  "workspace_diverged",
+  "payload_too_large",
+  "part_missing",
+  "part_digest_mismatch",
+  "apply_failed",
+  "store_failed",
+]);
+export type OrchestrationV2HandoffErrorReason = typeof OrchestrationV2HandoffErrorReason.Type;
+
+export class OrchestrationV2HandoffError extends Schema.TaggedErrorClass<OrchestrationV2HandoffError>()(
+  "OrchestrationV2HandoffError",
+  {
+    reason: OrchestrationV2HandoffErrorReason,
+    handoffId: Schema.optional(ThreadHandoffId),
+    /**
+     * The situation-specific facts a user can act on: the ref the commits
+     * were parked at, the size that blew the ceiling. Written where the
+     * failure happens, because only that site knows them.
+     */
+    detail: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
+/**
+ * Payload ceilings, in bytes, applied to the sum of every part.
+ *
+ * A dirty tree that has swallowed a build directory is the common case these
+ * catch, and the difference between the two is whether the user is told before
+ * or instead of the transfer. Both are enforced while preparing, so a refusal
+ * costs nothing on either machine.
+ */
+export const ORCHESTRATION_V2_HANDOFF_PAYLOAD_WARN_BYTES = 200 * 1024 * 1024;
+export const ORCHESTRATION_V2_HANDOFF_PAYLOAD_MAX_BYTES = 1024 * 1024 * 1024;
+
+/**
+ * Asks the environment that owns a thread to stage a hop toward
+ * `peerEnvironmentId`. Read-only with respect to anything the user can see:
+ * the thread is not locked until `thread.handoff.depart` is dispatched, so a
+ * preflight the user then declines leaves no trace but staged bytes.
+ */
+export const OrchestrationV2PrepareHandoffInput = Schema.Struct({
+  threadId: ThreadId,
+  peerEnvironmentId: EnvironmentId,
+  /** The destination's tip for this branch, so the bundle carries only what it lacks. */
+  peerBranchTip: Schema.NullOr(TrimmedNonEmptyString),
+  /**
+   * Bundle the repository's entire history. Set when the destination does not
+   * have the repository at all, so the bundle is enough to clone from with no
+   * remote, credentials, or network on the far side.
+   */
+  fullHistory: Schema.optionalKey(Schema.Boolean),
+  previousHandoffId: Schema.NullOr(ThreadHandoffId),
+  hopCount: NonNegativeInt,
+});
+export type OrchestrationV2PrepareHandoffInput = typeof OrchestrationV2PrepareHandoffInput.Type;
+
+export const OrchestrationV2PrepareHandoffResult = Schema.Struct({
+  bundle: OrchestrationV2HandoffBundleV1,
+  totalBytes: NonNegativeInt,
+  /** "warn" still transfers; the ceiling that refuses is enforced while preparing. */
+  verdict: Schema.Literals(["ok", "warn"]),
+  dirtyFileCount: NonNegativeInt,
+  untrackedFileCount: NonNegativeInt,
+});
+export type OrchestrationV2PrepareHandoffResult = typeof OrchestrationV2PrepareHandoffResult.Type;
+
+export const OrchestrationV2ReceiveHandoffInput = Schema.Struct({
+  bundle: OrchestrationV2HandoffBundleV1,
+  /** Null when the repository must first be cloned from the bundle. */
+  projectId: Schema.NullOr(ProjectId),
+  /** Where to clone when `projectId` is null; the project is created there. */
+  cloneWorkspaceRoot: Schema.NullOr(TrimmedNonEmptyString),
+  /** Set when the hop returns to a thread this environment already owns. */
+  returningThreadId: Schema.NullOr(ThreadId),
+});
+export type OrchestrationV2ReceiveHandoffInput = typeof OrchestrationV2ReceiveHandoffInput.Type;
+
+export const OrchestrationV2ReceiveHandoffResult = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  classification: Schema.Literals(["advance", "absorb"]),
+});
+export type OrchestrationV2ReceiveHandoffResult = typeof OrchestrationV2ReceiveHandoffResult.Type;
 
 export const OrchestrationV2DispatchCommandResult = Schema.Struct({
   sequence: NonNegativeInt,
@@ -2507,6 +2815,14 @@ export const OrchestrationV2RpcSchemas = {
   launchThread: {
     input: OrchestrationV2ThreadLaunchInput,
     output: OrchestrationV2ThreadLaunchResult,
+  },
+  prepareThreadHandoff: {
+    input: OrchestrationV2PrepareHandoffInput,
+    output: OrchestrationV2PrepareHandoffResult,
+  },
+  receiveThreadHandoff: {
+    input: OrchestrationV2ReceiveHandoffInput,
+    output: OrchestrationV2ReceiveHandoffResult,
   },
   subscribeArchivedShell: {
     input: Schema.Struct({}),

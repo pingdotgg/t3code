@@ -7,6 +7,7 @@ import {
   type EnvironmentThreadState,
   createThreadEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/threads";
+import { createThreadHandoffAtoms } from "@t3tools/client-runtime/state/threadHandoffCommands";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -44,3 +45,9 @@ export function useEnvironmentThread(
   ) as EnvironmentThreadState;
   return state;
 }
+
+/**
+ * Moving a thread spans two environments, so it lives beside the per-thread
+ * commands rather than inside them: no single environment owns the hop.
+ */
+export const threadHandoff = createThreadHandoffAtoms(connectionAtomRuntime);

@@ -26,6 +26,7 @@ it.effect("runs projection repair, recovery, worker startup, and bootstrap in or
       verify: record("verify").pipe(Effect.as({ valid: false })),
       rebuild: record("rebuild").pipe(Effect.as({ valid: true })),
       recover: record("recover").pipe(Effect.as({ closedRequests: 2 })),
+      recoverHandoffs: record("recover-handoffs").pipe(Effect.as(1)),
       startEffectWorker: record("worker"),
       autoBootstrap: record("bootstrap").pipe(Effect.as({ projectId: "project-1" })),
     });
@@ -35,11 +36,13 @@ it.effect("runs projection repair, recovery, worker startup, and bootstrap in or
       "verify",
       "rebuild",
       "recover",
+      "recover-handoffs",
       "worker",
       "bootstrap",
     ]);
     assert.deepEqual(result, {
       recovery: { closedRequests: 2 },
+      interruptedHandoffs: 1,
       bootstrap: { projectId: "project-1" },
     });
   }),
@@ -53,6 +56,7 @@ it.effect("does not rebuild valid projections", () =>
       verify: Effect.succeed({ valid: true }),
       rebuild: Ref.set(rebuilt, true).pipe(Effect.as({ valid: true })),
       recover: Effect.void,
+      recoverHandoffs: Effect.succeed(0),
       startEffectWorker: Effect.void,
       autoBootstrap: Effect.void,
     });

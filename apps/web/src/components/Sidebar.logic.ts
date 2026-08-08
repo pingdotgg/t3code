@@ -105,15 +105,45 @@ export function filterSidebarV2VisibleThreads<
   T extends Pick<SidebarThreadSummary, "archivedAt" | "lineage"> & {
     environmentId: string;
     projectId: string;
+    id?: string | undefined;
+    handoff?:
+      | {
+          readonly presence: "away" | "here";
+          readonly peerEnvironmentId: string;
+          readonly peerThreadId: string | null;
+        }
+      | null
+      | undefined;
   },
 >(threads: readonly T[], scopedProjectKeys: ReadonlySet<string> | null): T[] {
-  return threads.filter(
-    (thread) =>
-      thread.archivedAt === null &&
-      !isSidebarSubagentThread(thread) &&
-      (scopedProjectKeys === null ||
-        scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+  // A handed-off thread exists on both environments, but the sidebar shows
+  // one row: the live copy. The away copy hides only while its live
+  // counterpart is actually in the list — if the owning device is offline,
+  // the away row stays visible so the thread never disappears entirely.
+  const isVisibleOnItsOwn = (thread: T): boolean =>
+    thread.archivedAt === null &&
+    !isSidebarSubagentThread(thread) &&
+    (scopedProjectKeys === null ||
+      scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`));
+  // Only a row the sidebar would actually show can stand in for its peer —
+  // hiding an away copy behind an archived live one loses the thread entirely.
+  const present = new Set(
+    threads.flatMap((thread) =>
+      thread.id === undefined || !isVisibleOnItsOwn(thread)
+        ? []
+        : [`${thread.environmentId}:${thread.id}`],
+    ),
   );
+  const awayWithVisiblePeer = (thread: T): boolean => {
+    const handoff = thread.handoff ?? null;
+    return (
+      handoff !== null &&
+      handoff.presence === "away" &&
+      handoff.peerThreadId !== null &&
+      present.has(`${handoff.peerEnvironmentId}:${handoff.peerThreadId}`)
+    );
+  };
+  return threads.filter((thread) => isVisibleOnItsOwn(thread) && !awayWithVisiblePeer(thread));
 }
 
 export function getSidebarForkParentThreadId(

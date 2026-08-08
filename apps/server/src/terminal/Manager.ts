@@ -1070,7 +1070,7 @@ function legacySafeThreadId(threadId: string): string {
   return threadId.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
-function toSafeThreadId(threadId: string): string {
+export function toSafeThreadId(threadId: string): string {
   return `terminal_${Encoding.encodeBase64Url(threadId)}`;
 }
 

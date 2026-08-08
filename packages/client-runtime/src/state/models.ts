@@ -107,6 +107,11 @@ export interface EnvironmentThreadShell {
   readonly lastVisitedAt?: string | null;
   /** Pending title regeneration marker; null when no request is in flight. */
   readonly titleRegeneration?: { readonly requestId: string; readonly startedAt: string } | null;
+  /**
+   * Set while this thread is one side of a handoff. `undefined` means the
+   * environment's server predates handoff, so a client offers no move.
+   */
+  readonly handoff?: OrchestrationV2ThreadShell["handoff"];
   readonly deletedAt: string | null;
   readonly source: OrchestrationV2ThreadShell;
 }
@@ -220,6 +225,7 @@ export function presentThreadShell(
             requestId: thread.titleRegeneration.requestId,
             startedAt: iso(thread.titleRegeneration.startedAt),
           },
+    ...(thread.handoff === undefined ? {} : { handoff: thread.handoff }),
     deletedAt: nullableIso(thread.deletedAt),
     source: thread,
   };

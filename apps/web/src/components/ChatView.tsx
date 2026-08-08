@@ -164,6 +164,7 @@ import {
   GitBranchIcon,
   TriangleAlertIcon,
   WifiOffIcon,
+  CloudIcon,
 } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
@@ -222,7 +223,7 @@ import {
   serverEnvironment,
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
-import { threadEnvironment } from "../state/threads";
+import { threadEnvironment, threadHandoff } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
@@ -235,11 +236,13 @@ import {
   useThreadVisibleTurnItems,
   waitForThreadShell,
 } from "../state/entities";
+import { setPendingHandoffNavigation } from "../state/handoffNavigation";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
+import { ThreadHandoffDialog } from "./ThreadHandoffDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
@@ -1203,6 +1206,10 @@ function ChatViewContent(props: ChatViewProps) {
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
+  const releaseThreadHandoff = useAtomCommand(threadEnvironment.releaseHandoff, {
+    reportFailure: false,
+  });
+  const moveThreadCommand = useAtomCommand(threadHandoff.move, { reportFailure: true });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -2065,6 +2072,83 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const systemComposerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const items: ComposerBannerStackItem[] = [];
+    // A departed thread is a read-only record of work running elsewhere. The
+    // server refuses the send either way; this says where it went so the
+    // refusal is not a mystery.
+    const awayHandoff = isServerThread ? (serverThread?.handoff ?? null) : null;
+    if (awayHandoff !== null && awayHandoff.presence === "away") {
+      items.push({
+        id: `thread-handoff-away:${awayHandoff.handoffId}`,
+        variant: "info",
+        icon: <CloudIcon />,
+        title: `Running on ${
+          awayHandoff.peerLabel ??
+          environmentById.get(awayHandoff.peerEnvironmentId)?.label ??
+          "another device"
+        }`,
+        description:
+          "The thread now lives there — keep working with it from any device, or pull it back to run it here.",
+        actions: (
+          <>
+            {/* The reverse hop: the peer prepares and this side receives into
+                the same thread, so the conversation and the work come home. */}
+            {awayHandoff.peerThreadId !== null ? (
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  if (serverThread && awayHandoff.peerThreadId !== null) {
+                    const homeRef = scopeThreadRef(serverThread.environmentId, serverThread.id);
+                    void moveThreadCommand({
+                      threadId: awayHandoff.peerThreadId,
+                      originEnvironmentId: awayHandoff.peerEnvironmentId,
+                      targetEnvironmentId: serverThread.environmentId,
+                      targetLabel: activeEnvironment?.label ?? null,
+                      targetProjectId: serverThread.projectId,
+                      cloneWorkspaceRoot: null,
+                      returningThreadId: serverThread.id,
+                      targetBranchTip: null,
+                      previousHandoffId: awayHandoff.handoffId,
+                      hopCount: awayHandoff.hopCount + 1,
+                    }).then((result) => {
+                      if (result._tag === "Success") {
+                        setPendingHandoffNavigation({
+                          environmentId: homeRef.environmentId,
+                          threadId: homeRef.threadId,
+                        });
+                      }
+                    });
+                  }
+                }}
+              >
+                Pull back
+              </Button>
+            ) : null}
+            {/* Escape hatch for a hop whose transfer never landed: releasing
+                makes this side live again without waiting for the peer. Once
+                the peer thread exists the transfer did land, and releasing
+                would fork the thread — pull it back instead. */}
+            {awayHandoff.peerThreadId !== null ? null : (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  if (serverThread) {
+                    void releaseThreadHandoff({
+                      environmentId: serverThread.environmentId,
+                      input: { threadId: serverThread.id, handoffId: awayHandoff.handoffId },
+                    });
+                  }
+                }}
+              >
+                Continue here
+              </Button>
+            )}
+          </>
+        ),
+      });
+    }
     const updateRunning = serverUpdateState.status === "running";
     const unavailableConnection = activeEnvironmentUnavailableState?.connection ?? null;
     const environmentReconnecting =
@@ -2202,6 +2286,12 @@ function ChatViewContent(props: ChatViewProps) {
     serverUpdateEnvironmentId,
     versionMismatchSelfUpdate,
     versionMismatchServerLabel,
+    isServerThread,
+    serverThread,
+    releaseThreadHandoff,
+    moveThreadCommand,
+    activeEnvironment,
+    environmentById,
   ]);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
   const unlockedSelectedProvider = resolveSelectableProvider(
@@ -2694,6 +2784,34 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadRef, diffOpen, isServerThread, onDiffPanelOpen]);
 
   const envLocked = Boolean(activeThread && (activeMessageCount > 0 || activeRuntime !== null));
+
+  // Moving is offered only for a real thread that is locked to its
+  // environment: a draft has nothing to move yet, and a thread already away
+  // is being run somewhere else.
+  const [moveTargetEnvironmentId, setMoveTargetEnvironmentId] = useState<EnvironmentId | null>(
+    null,
+  );
+  // A pending move belongs to the thread it was picked on; switching threads
+  // must not open its dialog against the new one.
+  useEffect(() => {
+    setMoveTargetEnvironmentId(null);
+  }, [activeThread?.id]);
+  const activeHandoff = isServerThread ? (serverThread?.handoff ?? null) : null;
+  const canMoveThread =
+    isServerThread &&
+    envLocked &&
+    activeHandoff?.presence !== "away" &&
+    logicalProjectEnvironments.length > 1;
+  const onMoveThread = useCallback((nextEnvironmentId: EnvironmentId) => {
+    setMoveTargetEnvironmentId(nextEnvironmentId);
+  }, []);
+
+  const moveTargetEnvironment =
+    moveTargetEnvironmentId === null
+      ? null
+      : (logicalProjectEnvironments.find(
+          (candidate) => candidate.environmentId === moveTargetEnvironmentId,
+        ) ?? null);
 
   // Handle environment change for draft threads.  When the user picks a
   // different environment we update the draft context to point at the physical
@@ -6105,6 +6223,15 @@ function ChatViewContent(props: ChatViewProps) {
     envLocked,
     availableEnvironments: logicalProjectEnvironments,
     onEnvironmentChange,
+    ...(canMoveThread ? { onMoveThread } : {}),
+    ...(activeHandoff?.presence === "here"
+      ? {
+          movedFromLabel:
+            activeHandoff.peerLabel ??
+            environmentById.get(activeHandoff.peerEnvironmentId)?.label ??
+            "another device",
+        }
+      : {}),
     onEnvModeChange,
     ...(canOverrideServerThreadEnvMode ? { effectiveEnvModeOverride: envMode } : {}),
     ...(canOverrideServerThreadEnvMode
@@ -6506,6 +6633,16 @@ function ChatViewContent(props: ChatViewProps) {
                                     ? { onCheckoutPullRequestRequest: openPullRequestDialog }
                                     : {})}
                                   {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
+                                  {...(canMoveThread ? { onMoveThread } : {})}
+                                  {...(activeHandoff?.presence === "here"
+                                    ? {
+                                        movedFromLabel:
+                                          activeHandoff.peerLabel ??
+                                          environmentById.get(activeHandoff.peerEnvironmentId)
+                                            ?.label ??
+                                          "another device",
+                                      }
+                                    : {})}
                                   availableEnvironments={logicalProjectEnvironments}
                                 />
                               </div>
@@ -6576,6 +6713,54 @@ function ChatViewContent(props: ChatViewProps) {
                   }
                 }}
                 onPrepared={handlePreparedPullRequestThread}
+              />
+            ) : null}
+
+            {moveTargetEnvironment !== null && isServerThread && serverThread ? (
+              <ThreadHandoffDialog
+                open
+                onOpenChange={(open) => {
+                  if (!open) {
+                    setMoveTargetEnvironmentId(null);
+                  }
+                }}
+                threadId={serverThread.id}
+                threadTitle={serverThread.title}
+                originEnvironmentId={serverThread.environmentId}
+                targetEnvironmentId={moveTargetEnvironment.environmentId}
+                targetLabel={moveTargetEnvironment.label}
+                targetProjectId={moveTargetEnvironment.projectId}
+                branch={serverThread.branch}
+                {...(activeHandoff?.presence === "here" &&
+                activeHandoff.peerEnvironmentId === moveTargetEnvironment.environmentId &&
+                activeHandoff.peerThreadId !== null
+                  ? {
+                      returnTo: {
+                        threadId: activeHandoff.peerThreadId,
+                        previousHandoffId: activeHandoff.handoffId,
+                        hopCount: activeHandoff.hopCount + 1,
+                      },
+                    }
+                  : {})}
+                onMoved={(targetThreadId) => {
+                  // The live thread is now on the other device; follow it
+                  // once its shell lands so the user never sees a blank draft.
+                  setPendingHandoffNavigation({
+                    environmentId: moveTargetEnvironment.environmentId,
+                    threadId: targetThreadId,
+                  });
+                }}
+                isBusy={
+                  // Must match the server's busy guard exactly: it refuses on
+                  // an active RUN, and the runtime summary alone stays
+                  // non-null on an idle thread — using it here made the
+                  // dialog wait forever for an interrupt of nothing.
+                  serverThread.latestRun !== null &&
+                  ["preparing", "queued", "starting", "running", "waiting"].includes(
+                    serverThread.latestRun.status,
+                  )
+                }
+                onInterrupt={onInterrupt}
               />
             ) : null}
           </div>

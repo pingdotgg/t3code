@@ -65,6 +65,11 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server can stream self-update progress before acknowledging the
       restart. Clients fall back to server.updateServer when absent. */
   serverSelfUpdateProgress: Schema.optionalKey(Schema.Boolean),
+  /** Server can send and receive thread handoff bundles. Same version-skew
+      contract as threadSettlement: absent means unsupported, so clients list
+      such an environment as an unavailable destination rather than starting a
+      transfer that would fail once the bytes are already moving. */
+  threadHandoff: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

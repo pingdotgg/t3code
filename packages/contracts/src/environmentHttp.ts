@@ -24,8 +24,15 @@ import {
   AuthWebSocketTicketResult,
   ServerAuthSessionMethod,
 } from "./auth.ts";
-import { AuthSessionId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  AuthSessionId,
+  NonNegativeInt,
+  ThreadHandoffId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { OrchestrationV2HandoffPartKind } from "./orchestrationV2.ts";
 import {
   OrchestrationV2ShellSnapshot,
   OrchestrationV2ThreadDetailSnapshot,
@@ -54,6 +61,10 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "invalid_scope",
   "scope_not_granted",
   "invalid_command",
+  /** A handoff part chunk that does not continue the bytes already staged. */
+  "handoff_part_offset_mismatch",
+  /** A handoff part write that would grow the staged file past the payload ceiling. */
+  "handoff_part_exceeds_max_bytes",
 ]);
 export type EnvironmentRequestInvalidReason = typeof EnvironmentRequestInvalidReason.Type;
 
@@ -83,6 +94,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "project_mutation_failed",
   "orchestration_snapshot_failed",
   "orchestration_thread_snapshot_failed",
+  "orchestration_handoff_part_failed",
   "internal_error",
 ]);
 export type EnvironmentInternalErrorReason = typeof EnvironmentInternalErrorReason.Type;
@@ -157,7 +169,10 @@ export class EnvironmentInternalError extends Schema.TaggedErrorClass<Environmen
   }
 }
 
-export const EnvironmentResourceNotFoundReason = Schema.Literals(["thread_not_found"]);
+export const EnvironmentResourceNotFoundReason = Schema.Literals([
+  "thread_not_found",
+  "handoff_part_not_found",
+]);
 export type EnvironmentResourceNotFoundReason = typeof EnvironmentResourceNotFoundReason.Type;
 
 export class EnvironmentResourceNotFoundError extends Schema.TaggedErrorClass<EnvironmentResourceNotFoundError>()(
@@ -294,6 +309,12 @@ const EnvironmentOrchestrationSnapshotErrors = [
   EnvironmentInternalError,
 ] as const;
 const EnvironmentOrchestrationThreadSnapshotErrors = [
+  EnvironmentScopeRequiredError,
+  EnvironmentResourceNotFoundError,
+  EnvironmentInternalError,
+] as const;
+const EnvironmentOrchestrationHandoffPartErrors = [
+  EnvironmentRequestInvalidError,
   EnvironmentScopeRequiredError,
   EnvironmentResourceNotFoundError,
   EnvironmentInternalError,
@@ -460,6 +481,47 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
   threadId: ThreadId,
 });
 
+/**
+ * Handoff part bytes move in chunks rather than as one body.
+ *
+ * A part can be up to the payload ceiling, so streaming it in bounded pieces
+ * keeps both servers from holding a whole payload in memory, and makes a
+ * transfer that dies partway resumable from the offset it reached instead of
+ * starting over.
+ */
+export const ENVIRONMENT_HANDOFF_PART_CHUNK_BYTES = 4 * 1024 * 1024;
+
+const EnvironmentHandoffPartParams = Schema.Struct({
+  handoffId: ThreadHandoffId,
+  kind: OrchestrationV2HandoffPartKind,
+});
+
+export const EnvironmentHandoffPartRead = Schema.Struct({
+  offset: NonNegativeInt,
+});
+export type EnvironmentHandoffPartRead = typeof EnvironmentHandoffPartRead.Type;
+
+export const EnvironmentHandoffPartChunk = Schema.Struct({
+  offset: NonNegativeInt,
+  totalBytes: NonNegativeInt,
+  data: Schema.Uint8Array,
+  /** True when this chunk reaches the end of the part. */
+  complete: Schema.Boolean,
+});
+export type EnvironmentHandoffPartChunk = typeof EnvironmentHandoffPartChunk.Type;
+
+export const EnvironmentHandoffPartWrite = Schema.Struct({
+  /** Byte offset this chunk starts at; a write that does not continue the staged part is rejected. */
+  offset: NonNegativeInt,
+  data: Schema.Uint8Array,
+});
+export type EnvironmentHandoffPartWrite = typeof EnvironmentHandoffPartWrite.Type;
+
+export const EnvironmentHandoffPartWriteResult = Schema.Struct({
+  receivedBytes: NonNegativeInt,
+});
+export type EnvironmentHandoffPartWriteResult = typeof EnvironmentHandoffPartWriteResult.Type;
+
 export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
   .add(
     HttpApiEndpoint.get("shellSnapshot", "/api/orchestration/shell", {
@@ -474,6 +536,31 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
       params: EnvironmentOrchestrationThreadSnapshotParams,
       success: OrchestrationV2ThreadDetailSnapshot,
       error: EnvironmentOrchestrationThreadSnapshotErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    // Reading takes a payload rather than a query string: the offset is part of
+    // a resumable transfer, not a filter, and it keeps both directions on the
+    // same typed shape.
+    HttpApiEndpoint.post(
+      "readHandoffPart",
+      "/api/orchestration/handoffs/:handoffId/parts/:kind/read",
+      {
+        headers: OptionalBearerHeaders,
+        params: EnvironmentHandoffPartParams,
+        payload: EnvironmentHandoffPartRead,
+        success: EnvironmentHandoffPartChunk,
+        error: EnvironmentOrchestrationHandoffPartErrors,
+      },
+    ).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("writeHandoffPart", "/api/orchestration/handoffs/:handoffId/parts/:kind", {
+      headers: OptionalBearerHeaders,
+      params: EnvironmentHandoffPartParams,
+      payload: EnvironmentHandoffPartWrite,
+      success: EnvironmentHandoffPartWriteResult,
+      error: EnvironmentOrchestrationHandoffPartErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
