@@ -107,8 +107,10 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
   const session = yield* ClientCapabilities.CloudSession;
   const connectivity = yield* Connectivity.Connectivity;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
+  const scope = yield* Effect.scope;
   const state = yield* SubscriptionRef.make(EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE);
   const refreshLock = yield* Semaphore.make(1);
+  const networkStateLock = yield* Semaphore.make(1);
   const hasRefreshed = yield* Ref.make(false);
   const accountGeneration = yield* Ref.make(0);
   const activeAccountId = yield* Ref.make<Option.Option<string>>(Option.none());
@@ -204,23 +206,32 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
   const refresh = refreshLock.withPermits(1)(
     Effect.gen(function* () {
       yield* Ref.set(hasRefreshed, true);
-      if ((yield* connectivity.status) === "offline") {
-        yield* SubscriptionRef.update(state, (current) => ({
-          ...current,
-          refreshing: false,
-          offline: true,
-        }));
+      const canRefresh = yield* networkStateLock.withPermits(1)(
+        Effect.gen(function* () {
+          if ((yield* connectivity.status) === "offline") {
+            yield* SubscriptionRef.update(state, (current) => ({
+              ...current,
+              refreshing: false,
+              offline: true,
+            }));
+            return false;
+          }
+
+          yield* SubscriptionRef.set(state, {
+            environments: new Map(),
+            refreshing: true,
+            offline: false,
+            error: Option.none(),
+          });
+          return true;
+        }),
+      );
+      if (!canRefresh) {
         return;
       }
 
       let generation = yield* Ref.get(accountGeneration);
       yield* Ref.set(refreshGeneration, generation);
-      yield* SubscriptionRef.set(state, {
-        environments: new Map(),
-        refreshing: true,
-        offline: false,
-        error: Option.none(),
-      });
 
       // Signed out is the idle state, not a failure: the proactive refresh on
       // credentials-changed also runs on sign-out and must settle back to a
@@ -309,21 +320,26 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
     ),
   );
 
-  yield* connectivity.changes.pipe(
-    Stream.changes,
-    Stream.runForEach((networkStatus) =>
-      networkStatus === "offline"
-        ? SubscriptionRef.update(state, (current) => ({
-            ...current,
-            refreshing: false,
-            offline: true,
-          }))
-        : Ref.get(hasRefreshed).pipe(
-            Effect.flatMap((shouldRefresh) => (shouldRefresh ? refresh : Effect.void)),
-          ),
-    ),
-    Effect.forkScoped,
-  );
+  yield* Connectivity.followNetworkStatus({
+    apply: (networkStatus) =>
+      networkStateLock.withPermits(1)(
+        networkStatus === "offline"
+          ? SubscriptionRef.update(state, (current) => ({
+              ...current,
+              refreshing: false,
+              offline: true,
+            }))
+          : Effect.gen(function* () {
+              yield* SubscriptionRef.update(state, (current) => ({
+                ...current,
+                offline: false,
+              }));
+              if (yield* Ref.get(hasRefreshed)) {
+                yield* refresh.pipe(Effect.forkIn(scope));
+              }
+            }),
+      ),
+  });
   yield* wakeups.changes.pipe(
     Stream.runForEach((reason) =>
       reason === "credentials-changed"

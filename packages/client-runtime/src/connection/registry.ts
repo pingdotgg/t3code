@@ -652,10 +652,9 @@ export const make = Effect.gen(function* () {
       ),
     ),
   );
-  yield* connectivity.changes.pipe(
-    Stream.runForEach((status) => SubscriptionRef.set(networkStatus, status)),
-    Effect.forkScoped,
-  );
+  yield* Connectivity.followNetworkStatus({
+    apply: (status) => SubscriptionRef.set(networkStatus, status),
+  });
 
   return EnvironmentRegistry.of({
     entries,
