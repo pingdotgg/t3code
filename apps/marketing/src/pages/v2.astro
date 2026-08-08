@@ -2,7 +2,6 @@
 import stableAppIcon from "../assets/t3-latest-384.webp?url";
 import Layout from "../layouts/Layout.astro";
 import {
-  GITHUB_REPOSITORY_URL,
   GOOGLE_PLAY_STORE_URL,
   IOS_APP_STORE_URL,
   MARKETING_STATS,
@@ -244,37 +243,6 @@ const endorsementRows = [
           <div class="v2-connect-phone">
             <img src="/mobile-states/ios-review.png" alt="" loading="lazy" />
           </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="v2-open-source" aria-labelledby="v2-open-source-title">
-    <div class="v2-shell v2-open-source-grid">
-      <header>
-        <h2 id="v2-open-source-title">Don't like it?<br />Make it yours.</h2>
-        <p>
-          Change the interface, wire in another agent, or ship your own build. T3 Code is open
-          source from top to bottom.
-        </p>
-        <div class="v2-open-source-actions">
-          <a
-            class="btn btn-primary"
-            href={`${GITHUB_REPOSITORY_URL}/fork`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Fork T3 Code
-          </a>
-          <a href={GITHUB_REPOSITORY_URL} target="_blank" rel="noreferrer">Browse source ↗</a>
-        </div>
-      </header>
-      <div class="v2-fork-flow">
-        <code><span>$</span> gh repo fork pingdotgg/t3code --clone</code>
-        <div>
-          <span><i>01</i> Change the UI</span>
-          <span><i>02</i> Add an agent</span>
-          <span><i>03</i> Ship your build</span>
         </div>
       </div>
     </div>
@@ -831,16 +799,18 @@ const endorsementRows = [
   .v2-phone-device {
     position: relative;
     display: grid;
-    width: min(42%, 264px);
     height: min(92%, 520px);
+    aspect-ratio: 1320 / 2868;
     place-items: center;
     border-radius: 14px;
+    overflow: hidden;
   }
 
   .v2-phone-device > img {
     width: 100%;
     height: 100%;
-    object-fit: contain;
+    object-fit: cover;
+    object-position: top center;
   }
 
   .v2-device-store-link {
@@ -926,16 +896,22 @@ const endorsementRows = [
   .v2-connect-grid {
     display: grid;
     width: min(100% - 48px, 1240px);
-    grid-template-columns: minmax(300px, 0.74fr) minmax(0, 1.26fr);
+    grid-template-columns: minmax(380px, 0.84fr) minmax(0, 1.16fr);
     align-items: center;
-    gap: 64px;
+    gap: 52px;
+  }
+
+  .v2-connect-grid > header,
+  .v2-connect-visual {
+    min-width: 0;
   }
 
   .v2-connect h2 {
     display: flex;
     align-items: baseline;
     gap: 0.08em;
-    font-size: clamp(62px, 8vw, 124px);
+    font-size: clamp(58px, 6vw, 94px);
+    white-space: nowrap;
   }
 
   .v2-connect h2 svg {
@@ -978,6 +954,7 @@ const endorsementRows = [
 
   .v2-connect-visual {
     min-width: 0;
+    overflow: hidden;
   }
 
   .v2-connect-status {
@@ -1006,7 +983,7 @@ const endorsementRows = [
   .v2-connect-screens {
     position: relative;
     display: flex;
-    min-height: 410px;
+    aspect-ratio: 1.42;
     align-items: flex-start;
   }
 
@@ -1035,103 +1012,6 @@ const endorsementRows = [
 
   .v2-connect-phone img {
     border-radius: 20px;
-  }
-
-  .v2-open-source {
-    padding: 90px 0 110px;
-  }
-
-  .v2-open-source-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 0.8fr) minmax(420px, 1.2fr);
-    align-items: center;
-    gap: 86px;
-  }
-
-  .v2-open-source h2 {
-    font-size: clamp(46px, 5vw, 72px);
-    font-weight: 500;
-    letter-spacing: -0.055em;
-    line-height: 0.98;
-  }
-
-  .v2-open-source header > p {
-    max-width: 470px;
-    margin-top: 24px;
-    color: #85858e;
-    font-size: 16px;
-    line-height: 1.6;
-  }
-
-  .v2-open-source-actions {
-    display: flex;
-    align-items: center;
-    gap: 22px;
-    margin-top: 28px;
-  }
-
-  .v2-open-source-actions .btn {
-    min-height: 48px;
-    padding-inline: 18px;
-  }
-
-  .v2-open-source-actions > a:last-child {
-    color: #8b8b94;
-    font-size: 14px;
-  }
-
-  .v2-open-source-actions > a:last-child:hover {
-    color: #fff;
-  }
-
-  .v2-fork-flow {
-    padding: 30px;
-    border: 1px solid var(--border-strong);
-    border-radius: 16px;
-    background: linear-gradient(145deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.012));
-  }
-
-  .v2-fork-flow > code {
-    display: block;
-    overflow: hidden;
-    padding: 15px 17px;
-    border-radius: 9px;
-    color: #d9d9de;
-    background: #08080a;
-    font-family: var(--font-mono);
-    font-size: 13px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .v2-fork-flow > code span {
-    color: #4ba5ff;
-  }
-
-  .v2-fork-flow > div {
-    display: grid;
-    margin-top: 20px;
-  }
-
-  .v2-fork-flow > div > span {
-    display: flex;
-    align-items: center;
-    gap: 15px;
-    padding: 14px 4px;
-    border-bottom: 1px solid var(--border);
-    color: #d6d6db;
-    font-size: 15px;
-  }
-
-  .v2-fork-flow > div > span:last-child {
-    border-bottom: 0;
-  }
-
-  .v2-fork-flow i {
-    color: #5f5f68;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-style: normal;
   }
 
   .v2-endorsements {
@@ -1307,8 +1187,7 @@ const endorsementRows = [
 
     .v2-section-heading,
     .v2-system-grid,
-    .v2-connect-grid,
-    .v2-open-source-grid {
+    .v2-connect-grid {
       grid-template-columns: 1fr;
     }
 
@@ -1319,10 +1198,6 @@ const endorsementRows = [
 
     .v2-connect {
       padding: 56px 0 48px;
-    }
-
-    .v2-open-source {
-      padding: 72px 0 92px;
     }
 
     .v2-endorsements {
@@ -1354,9 +1229,6 @@ const endorsementRows = [
       gap: 48px;
     }
 
-    .v2-open-source-grid {
-      gap: 46px;
-    }
   }
 
   @media (max-width: 560px) {
@@ -1422,24 +1294,10 @@ const endorsementRows = [
       gap: 8px;
     }
 
-    .v2-phone-device {
-      width: 48%;
-    }
-
     .v2-device-store-link {
       bottom: 12px;
       padding: 8px 10px;
       font-size: 10px;
-    }
-
-    .v2-fork-flow {
-      padding: 20px;
-    }
-
-    .v2-open-source-actions {
-      align-items: flex-start;
-      flex-direction: column;
-      gap: 14px;
     }
 
     .v2-endorsements-heading {
