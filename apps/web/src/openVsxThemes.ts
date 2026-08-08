@@ -88,6 +88,7 @@ export type OpenVsxThemeExtension = {
   publisher: string;
   description: string;
   downloadCount: number;
+  iconUrl: string | null;
   manifestUrl: string;
   sha256Url: string;
   vsixUrl: string;
@@ -166,6 +167,7 @@ function extensionFromDetail(value: unknown): OpenVsxThemeExtension | null {
       typeof value.downloadCount === "number" && Number.isFinite(value.downloadCount)
         ? value.downloadCount
         : 0,
+    iconUrl: trustedOpenVsxUrl(value.files.icon),
     manifestUrl,
     sha256Url,
     vsixUrl,

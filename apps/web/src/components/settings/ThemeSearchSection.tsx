@@ -37,6 +37,27 @@ const DOWNLOAD_FORMAT = new Intl.NumberFormat(undefined, {
 });
 const SUGGESTED_SEARCHES = ["Dracula", "Catppuccin", "Nord", "Tokyo Night"];
 
+function ThemeExtensionIcon({ extension }: { extension: OpenVsxThemeExtension }) {
+  const [failed, setFailed] = useState(false);
+
+  return (
+    <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted text-muted-foreground">
+      {extension.iconUrl && !failed ? (
+        <img
+          alt=""
+          className="size-full object-cover"
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          src={extension.iconUrl}
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <PaletteIcon className="size-4" />
+      )}
+    </div>
+  );
+}
+
 export function ThemeSearchSection({
   open,
   onInstalled,
@@ -228,9 +249,7 @@ export function ThemeSearchSection({
                   key={extension.id}
                 >
                   <div className="flex min-w-0 gap-3">
-                    <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                      <PaletteIcon className="size-4" />
-                    </div>
+                    <ThemeExtensionIcon key={extension.iconUrl} extension={extension} />
                     <div className="min-w-0 flex-1">
                       <h4 className="truncate text-sm font-medium">{extension.name}</h4>
                       <p className="truncate text-muted-foreground text-xs">
