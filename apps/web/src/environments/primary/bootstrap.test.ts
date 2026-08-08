@@ -60,6 +60,9 @@ describe("environmentBootstrap", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
+    vi.stubEnv("VITE_HTTP_URL", "");
+    vi.stubEnv("VITE_WS_URL", "");
+    vi.stubEnv("VITE_DEV_SERVER_URL", "");
     installTestBrowser("http://localhost/");
   });
 
@@ -165,8 +168,45 @@ describe("environmentBootstrap", () => {
     );
   });
 
+  it("uses the LAN dev proxy for HTTP and preserves the configured websocket port", async () => {
+    vi.stubEnv("VITE_DEV_SERVER_URL", "http://127.0.0.1:5733");
+    vi.stubEnv("VITE_HTTP_URL", "http://127.0.0.1:3773");
+    vi.stubEnv("VITE_WS_URL", "ws://127.0.0.1:3774");
+    installTestBrowser("http://192.168.1.20:5733/");
+    await installDescriptorApi();
+
+    await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
+    expect(resolvePrimaryEnvironmentHttpUrl("/.well-known/t3/environment")).toBe(
+      "http://192.168.1.20:5733/.well-known/t3/environment",
+    );
+    expect(readPrimaryEnvironmentTarget()).toEqual({
+      source: "configured",
+      target: {
+        httpBaseUrl: "http://192.168.1.20:5733/",
+        wsBaseUrl: "ws://192.168.1.20:3774/",
+      },
+    });
+  });
+
+  it("preserves an explicitly configured non-loopback interface", () => {
+    vi.stubEnv("VITE_DEV_SERVER_URL", "http://127.0.0.1:5733");
+    vi.stubEnv("VITE_HTTP_URL", "http://10.0.0.12:3773");
+    vi.stubEnv("VITE_WS_URL", "ws://10.0.0.12:3774");
+    installTestBrowser("http://192.168.1.20:5733/");
+
+    expect(readPrimaryEnvironmentTarget()).toEqual({
+      source: "configured",
+      target: {
+        httpBaseUrl: "http://10.0.0.12:3773/",
+        wsBaseUrl: "ws://10.0.0.12:3774/",
+      },
+    });
+  });
+
   it("uses the vite proxy for desktop-managed loopback descriptor requests during local dev", async () => {
     vi.stubEnv("VITE_DEV_SERVER_URL", "http://127.0.0.1:5733");
+    vi.stubEnv("VITE_HTTP_URL", "http://127.0.0.1:4773");
+    vi.stubEnv("VITE_WS_URL", "ws://127.0.0.1:4773");
     vi.stubGlobal("window", {
       location: new URL("http://127.0.0.1:5733/"),
       history: {
@@ -190,6 +230,13 @@ describe("environmentBootstrap", () => {
     expect(resolvePrimaryEnvironmentHttpUrl("/.well-known/t3/environment")).toBe(
       "http://127.0.0.1:5733/.well-known/t3/environment",
     );
+    expect(readPrimaryEnvironmentTarget()).toEqual({
+      source: "desktop-managed",
+      target: {
+        httpBaseUrl: "http://127.0.0.1:3773/",
+        wsBaseUrl: "ws://127.0.0.1:3773/",
+      },
+    });
   });
 
   it("retains the URL parser cause without exposing the configured URL in its message", () => {
@@ -212,7 +259,7 @@ describe("environmentBootstrap", () => {
 
   it("describes which desktop bootstrap endpoint is missing", () => {
     vi.stubGlobal("window", {
-      location: new URL("http://127.0.0.1:5733/"),
+      location: new URL("t3code-dev://app/"),
       history: { replaceState: vi.fn() },
       desktopBridge: {
         getLocalEnvironmentBootstraps: () => [
