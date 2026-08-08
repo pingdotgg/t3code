@@ -133,6 +133,66 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
       }),
     );
 
+    it.effect("resolves an icon from a monorepo workspace package", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "apps/frontend/app/favicon.ico", "icon");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("apps/frontend/app/favicon.ico");
+      }),
+    );
+
+    it.effect("resolves icon hrefs from a workspace package source file", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "apps/web/index.html",
+          '<link rel="icon" href="/brand/logo.svg">',
+        );
+        yield* writeTextFile(cwd, "apps/web/public/brand/logo.svg", "<svg>brand</svg>");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("apps/web/public/brand/logo.svg");
+      }),
+    );
+
+    it.effect("prefers a root icon over a workspace package icon", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "apps/web/public/favicon.svg", "<svg>web</svg>");
+        yield* writeTextFile(cwd, "favicon.svg", "<svg>root</svg>");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("favicon.svg");
+        expect(resolved).not.toContain("apps");
+      }),
+    );
+
+    it.effect("prefers apps over packages", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "packages/ui/public/favicon.svg", "<svg>ui</svg>");
+        yield* writeTextFile(cwd, "apps/web/public/favicon.svg", "<svg>web</svg>");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("apps/web/public/favicon.svg");
+      }),
+    );
+
     it.effect("returns null when no icon is present", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
@@ -189,6 +249,42 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
           workspaceRoot: cwd,
           relativePath: "favicon.svg",
           absolutePath: faviconPath,
+        });
+        expect(error.cause).toBe(cause);
+      }),
+    );
+
+    it.effect("preserves non-missing workspace package listing failures", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const appsPath = path.join(cwd, "apps");
+        yield* writeTextFile(cwd, "apps/web/public/favicon.svg", "<svg>web</svg>");
+        const cause = PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: "readDirectory",
+          pathOrDescriptor: appsPath,
+        });
+        const resolver = yield* makeResolverWithFileSystem(
+          FileSystem.FileSystem.of({
+            ...fileSystem,
+            readDirectory: (directoryPath, options) =>
+              directoryPath === appsPath
+                ? Effect.fail(cause)
+                : fileSystem.readDirectory(directoryPath, options),
+          }),
+        );
+
+        const error = yield* resolver.resolvePath(cwd).pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          _tag: "ProjectFaviconResolutionError",
+          operation: "list-packages",
+          workspaceRoot: cwd,
+          relativePath: "apps",
+          absolutePath: appsPath,
         });
         expect(error.cause).toBe(cause);
       }),

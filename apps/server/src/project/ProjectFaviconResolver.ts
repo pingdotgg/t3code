@@ -2,7 +2,9 @@
  * ProjectFaviconResolver - Effect service contract for project icon discovery.
  *
  * Resolves a representative favicon or app icon file for a workspace by
- * checking common file locations and project source metadata.
+ * checking common file locations and project source metadata. Monorepo roots
+ * (Turborepo and friends) keep their icons inside a workspace package, so the
+ * same locations are checked again in each `apps/*` and `packages/*` directory.
  *
  * @module ProjectFaviconResolver
  */
@@ -54,6 +56,9 @@ const ICON_SOURCE_FILES = [
   "src/index.html",
 ] as const;
 
+// Directories holding workspace packages in a conventional monorepo layout.
+const MONOREPO_PACKAGE_DIRECTORIES = ["apps", "packages"] as const;
+
 // Matches <link ...> tags or object-like icon metadata where rel/href can appear in any order.
 const LINK_ICON_HTML_RE =
   /<link\b(?=[^>]*\brel=["'](?:icon|shortcut icon)["'])(?=[^>]*\bhref=["']([^"'?]+))[^>]*>/i;
@@ -68,6 +73,7 @@ export class ProjectFaviconResolutionError extends Schema.TaggedErrorClass<Proje
       "resolve-path",
       "stat-candidate",
       "read-source",
+      "list-packages",
     ]),
     workspaceRoot: Schema.String,
     relativePath: Schema.optional(Schema.String),
@@ -120,9 +126,15 @@ export const make = Effect.gen(function* () {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const projectFileLoader = yield* T3ProjectFileLoader.T3ProjectFileLoader;
 
-  const resolveIconHref = (href: string): ReadonlyArray<string> => {
+  const withinPackage = (packageDir: string, relativePath: string) =>
+    packageDir ? `${packageDir}/${relativePath}` : relativePath;
+
+  const resolveIconHref = (packageDir: string, href: string): ReadonlyArray<string> => {
     const clean = href.replace(/^\//, "");
-    return [path.join("public", clean), clean];
+    return [
+      withinPackage(packageDir, path.join("public", clean)),
+      withinPackage(packageDir, clean),
+    ];
   };
 
   const findExistingFile = Effect.fn("ProjectFaviconResolver.findExistingFile")(function* (
@@ -166,6 +178,120 @@ export const make = Effect.gen(function* () {
     return null;
   });
 
+  /**
+   * Check the well-known icon locations inside one directory of the project.
+   * `packageDir` is `""` for the project root, or a workspace-relative package
+   * directory such as `apps/web`.
+   */
+  const findIconWithin = Effect.fn("ProjectFaviconResolver.findIconWithin")(function* (
+    projectCwd: string,
+    packageDir: string,
+  ): Effect.fn.Return<string | null, ProjectFaviconResolutionError> {
+    for (const candidate of FAVICON_CANDIDATES) {
+      const existing = yield* findExistingFile(projectCwd, [withinPackage(packageDir, candidate)]);
+      if (existing) {
+        return existing;
+      }
+    }
+
+    for (const sourceFile of ICON_SOURCE_FILES) {
+      const relativePath = withinPackage(packageDir, sourceFile);
+      const sourcePath = yield* workspacePaths
+        .resolveRelativePathWithinRoot({
+          workspaceRoot: projectCwd,
+          relativePath,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProjectFaviconResolutionError({
+                operation: "resolve-path",
+                workspaceRoot: projectCwd,
+                relativePath,
+                cause,
+              }),
+          ),
+        );
+      const source = yield* optionOnNotFound(
+        fileSystem.readFileString(sourcePath.absolutePath),
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectFaviconResolutionError({
+              operation: "read-source",
+              workspaceRoot: projectCwd,
+              relativePath,
+              absolutePath: sourcePath.absolutePath,
+              cause,
+            }),
+        ),
+      );
+      if (Option.isNone(source)) {
+        continue;
+      }
+      const href = extractIconHref(source.value);
+      if (!href) {
+        continue;
+      }
+      const existing = yield* findExistingFile(projectCwd, resolveIconHref(packageDir, href));
+      if (existing) {
+        return existing;
+      }
+    }
+
+    return null;
+  });
+
+  /**
+   * List the workspace package directories of a conventional monorepo, sorted
+   * within each parent. Parents that do not exist are skipped; other failures
+   * surface, matching how the well-known candidates are checked.
+   */
+  const findPackageDirectories = Effect.fn("ProjectFaviconResolver.findPackageDirectories")(
+    function* (
+      projectCwd: string,
+    ): Effect.fn.Return<ReadonlyArray<string>, ProjectFaviconResolutionError> {
+      const directories: Array<string> = [];
+      for (const parent of MONOREPO_PACKAGE_DIRECTORIES) {
+        const parentPath = path.join(projectCwd, parent);
+        const entries = yield* optionOnNotFound(fileSystem.readDirectory(parentPath)).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProjectFaviconResolutionError({
+                operation: "list-packages",
+                workspaceRoot: projectCwd,
+                relativePath: parent,
+                absolutePath: parentPath,
+                cause,
+              }),
+          ),
+        );
+        if (Option.isNone(entries)) {
+          continue;
+        }
+        for (const entry of [...entries.value].sort()) {
+          const absolutePath = path.join(parentPath, entry);
+          const stats = yield* optionOnNotFound(fileSystem.stat(absolutePath)).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProjectFaviconResolutionError({
+                  operation: "list-packages",
+                  workspaceRoot: projectCwd,
+                  relativePath: `${parent}/${entry}`,
+                  absolutePath,
+                  cause,
+                }),
+            ),
+          );
+          if (Option.isSome(stats) && stats.value.type === "Directory") {
+            directories.push(`${parent}/${entry}`);
+          }
+        }
+      }
+      return directories;
+    },
+  );
+
   const resolvePath: ProjectFaviconResolver["Service"]["resolvePath"] = Effect.fn(
     "ProjectFaviconResolver.resolvePath",
   )(function* (cwd) {
@@ -188,54 +314,17 @@ export const make = Effect.gen(function* () {
       }
     }
 
-    for (const candidate of FAVICON_CANDIDATES) {
-      const existing = yield* findExistingFile(projectCwd, [candidate]);
-      if (existing) {
-        return existing;
-      }
+    const rootIcon = yield* findIconWithin(projectCwd, "");
+    if (rootIcon) {
+      return rootIcon;
     }
 
-    for (const sourceFile of ICON_SOURCE_FILES) {
-      const sourcePath = yield* workspacePaths
-        .resolveRelativePathWithinRoot({
-          workspaceRoot: projectCwd,
-          relativePath: sourceFile,
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProjectFaviconResolutionError({
-                operation: "resolve-path",
-                workspaceRoot: projectCwd,
-                relativePath: sourceFile,
-                cause,
-              }),
-          ),
-        );
-      const source = yield* optionOnNotFound(
-        fileSystem.readFileString(sourcePath.absolutePath),
-      ).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProjectFaviconResolutionError({
-              operation: "read-source",
-              workspaceRoot: projectCwd,
-              relativePath: sourceFile,
-              absolutePath: sourcePath.absolutePath,
-              cause,
-            }),
-        ),
-      );
-      if (Option.isNone(source)) {
-        continue;
-      }
-      const href = extractIconHref(source.value);
-      if (!href) {
-        continue;
-      }
-      const existing = yield* findExistingFile(projectCwd, resolveIconHref(href));
-      if (existing) {
-        return existing;
+    // Monorepo roots rarely carry an icon of their own; fall back to the
+    // workspace packages, apps before packages.
+    for (const packageDir of yield* findPackageDirectories(projectCwd)) {
+      const packageIcon = yield* findIconWithin(projectCwd, packageDir);
+      if (packageIcon) {
+        return packageIcon;
       }
     }
 
