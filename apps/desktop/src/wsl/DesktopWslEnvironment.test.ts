@@ -10,10 +10,12 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  buildPackagedRuntimeStageScript,
   buildWslNodeEnvPreamble,
   DesktopWslDistroListError,
   formatMissingToolsReason,
   formatNodePtyProbeFailureReason,
+  formatPackagedRuntimeStageFailure,
   formatWslShellTransportFailureReason,
   parseNodePath,
   parseNodeVersion,
@@ -122,6 +124,70 @@ describe("buildWslNodeEnvPreamble", () => {
 
   it("keeps the shared resolver permissive when no Node engine range is provided", () => {
     expect(buildWslNodeEnvPreamble()).toContain("T3_NODE_ENGINE_RANGE=''");
+  });
+});
+
+describe("buildPackagedRuntimeStageScript", () => {
+  it("checks the Linux-native cache before converting or reading the mounted source", () => {
+    const script = buildPackagedRuntimeStageScript(
+      "C:\\Program Files\\T3 Code\\resources\\app.asar.unpacked",
+      "1.2.3-x64",
+    );
+    const cacheHit = script.indexOf('if [ "$(cat "$manifest_path"');
+    const sourceConversion = script.indexOf("wslpath -u");
+
+    expect(cacheHit).toBeGreaterThanOrEqual(0);
+    expect(sourceConversion).toBeGreaterThan(cacheHit);
+    expect(script.slice(cacheHit, sourceConversion)).toContain(
+      'runtimeRoot:%s\\n\' "$current_dir"',
+    );
+    expect(script.slice(cacheHit, sourceConversion)).toContain("exit 0");
+  });
+
+  it("falls back from an XDG cache on a Windows-mounted filesystem", () => {
+    const script = buildPackagedRuntimeStageScript(
+      "C:\\Program Files\\T3 Code\\resources\\app.asar.unpacked",
+      "1.2.3-x64",
+    );
+    const xdgSelection = script.indexOf('cache_home="$XDG_CACHE_HOME"');
+    const filesystemProbe = script.indexOf('findmnt -T "$cache_home"');
+    const windowsMountFallback = script.indexOf("9p|drvfs|plan9|virtio-plan9|virtiofs");
+    const runtimeBase = script.indexOf('runtime_base="$cache_home/t3code/desktop-wsl-runtime"');
+
+    expect(filesystemProbe).toBeGreaterThan(xdgSelection);
+    expect(windowsMountFallback).toBeGreaterThan(filesystemProbe);
+    expect(runtimeBase).toBeGreaterThan(windowsMountFallback);
+    expect(script.slice(filesystemProbe, runtimeBase)).toContain(
+      'cache_home="${HOME:?WSL home directory is unavailable}/.cache"',
+    );
+  });
+
+  it("serializes cache misses and rechecks the cache before reading the mounted source", () => {
+    const script = buildPackagedRuntimeStageScript(
+      "C:\\Program Files\\T3 Code\\resources\\app.asar.unpacked",
+      "1.2.3-x64",
+    );
+    const firstCacheCheck = script.indexOf('if [ "$(cat "$manifest_path"');
+    const lock = script.indexOf("flock -x 9");
+    const secondCacheCheck = script.indexOf('if [ "$(cat "$manifest_path"', firstCacheCheck + 1);
+    const sourceConversion = script.indexOf("wslpath -u");
+
+    expect(lock).toBeGreaterThan(firstCacheCheck);
+    expect(secondCacheCheck).toBeGreaterThan(lock);
+    expect(sourceConversion).toBeGreaterThan(secondCacheCheck);
+    expect(script).toContain('if ! source_root=$(wslpath -u "$windows_repo_root"); then');
+    expect(script.slice(sourceConversion)).toContain("exit 5");
+  });
+});
+
+describe("formatPackagedRuntimeStageFailure", () => {
+  it("keeps a packaged wslpath failure retryable while WSL starts", () => {
+    expect(formatPackagedRuntimeStageFailure(5, "wslpath conversion failed")).toEqual({
+      ok: false,
+      reason: "wslpath conversion failed",
+      fatal: false,
+      retryLimit: 12,
+    });
   });
 });
 
