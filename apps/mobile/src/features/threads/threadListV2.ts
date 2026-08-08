@@ -103,23 +103,23 @@ export const THREAD_LIST_V2_SETTLED_INITIAL_COUNT = 10;
 export const THREAD_LIST_V2_SETTLED_PAGE_COUNT = 25;
 
 /**
- * Thread List v2 is on by default on every app variant; the Settings → Beta
- * toggle is an opt-out. Preferences persist as sparse patches, so `undefined`
- * genuinely means "never chosen".
+ * The flat Thread List v2 is the default on every app variant; the Settings →
+ * Legacy toggle opts a device back into the grouped legacy list. Preferences
+ * persist as sparse patches, so `undefined` genuinely means "never chosen".
  *
  * `preferencesLoaded` guards the startup window: preferences load
  * asynchronously, and rendering one list before the stored choice arrives would
  * remount the whole thing a tick later. While loading, hold the default — that
- * is where every device without an explicit opt-out lands anyway.
+ * is where every device without an explicit legacy opt-in lands anyway.
  */
 export function resolveThreadListV2Enabled(input: {
-  readonly preference: boolean | undefined;
+  readonly legacyPreference: boolean | undefined;
   readonly preferencesLoaded: boolean;
 }): boolean {
   if (!input.preferencesLoaded) {
     return true;
   }
-  return input.preference ?? true;
+  return input.legacyPreference !== true;
 }
 
 export function resolveThreadListV2Status(

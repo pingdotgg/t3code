@@ -17,7 +17,7 @@ import {
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
-  resolveSidebarV2Status,
+  resolveSidebarThreadStatus,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreadsByTitle,
@@ -25,11 +25,11 @@ import {
   shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
   sortLogicalProjectsForSidebar,
-  sortSettledThreadsForSidebarV2,
+  sortSettledThreadsForSidebar,
   pinOrderKeyBetween,
   planPinnedReorder,
-  sortPinnedThreadsForSidebarV2,
-  sortThreadsForSidebarV2,
+  sortPinnedThreadsForSidebar,
+  sortThreadsForSidebar,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
@@ -627,7 +627,7 @@ describe("isContextMenuPointerDown", () => {
   });
 });
 
-describe("resolveSidebarV2Status", () => {
+describe("resolveSidebarThreadStatus", () => {
   const session = {
     threadId: ThreadId.make("thread-1"),
     status: "running" as const,
@@ -642,15 +642,17 @@ describe("resolveSidebarV2Status", () => {
   const idle = { hasPendingApprovals: false, hasPendingUserInput: false };
 
   it("prioritizes approval over a running session", () => {
-    expect(resolveSidebarV2Status({ ...idle, hasPendingApprovals: true, session })).toBe(
+    expect(resolveSidebarThreadStatus({ ...idle, hasPendingApprovals: true, session })).toBe(
       "approval",
     );
   });
 
   it("prioritizes awaiting input over a running session, below approval", () => {
-    expect(resolveSidebarV2Status({ ...idle, hasPendingUserInput: true, session })).toBe("input");
+    expect(resolveSidebarThreadStatus({ ...idle, hasPendingUserInput: true, session })).toBe(
+      "input",
+    );
     expect(
-      resolveSidebarV2Status({
+      resolveSidebarThreadStatus({
         ...idle,
         hasPendingApprovals: true,
         hasPendingUserInput: true,
@@ -660,9 +662,9 @@ describe("resolveSidebarV2Status", () => {
   });
 
   it("reports working for running and starting sessions", () => {
-    expect(resolveSidebarV2Status({ ...idle, session })).toBe("working");
+    expect(resolveSidebarThreadStatus({ ...idle, session })).toBe("working");
     expect(
-      resolveSidebarV2Status({
+      resolveSidebarThreadStatus({
         ...idle,
         session: { ...session, status: "starting" as const },
       }),
@@ -671,19 +673,19 @@ describe("resolveSidebarV2Status", () => {
 
   it("reports failed only while the session status is error", () => {
     expect(
-      resolveSidebarV2Status({
+      resolveSidebarThreadStatus({
         ...idle,
         session: { ...session, status: "error" as const, lastError: "boom" },
       }),
     ).toBe("failed");
     expect(
-      resolveSidebarV2Status({
+      resolveSidebarThreadStatus({
         ...idle,
         session: { ...session, status: "stopped" as const, lastError: "persisted" },
       }),
     ).toBe("ready");
     expect(
-      resolveSidebarV2Status({
+      resolveSidebarThreadStatus({
         ...idle,
         session: { ...session, status: "ready" as const, lastError: "persisted" },
       }),
@@ -691,7 +693,7 @@ describe("resolveSidebarV2Status", () => {
   });
 
   it("defaults to ready with no session", () => {
-    expect(resolveSidebarV2Status({ ...idle, session: null })).toBe("ready");
+    expect(resolveSidebarThreadStatus({ ...idle, session: null })).toBe("ready");
   });
 });
 
@@ -715,14 +717,14 @@ describe("searchSidebarThreadsByTitle", () => {
   });
 });
 
-describe("sortThreadsForSidebarV2", () => {
+describe("sortThreadsForSidebar", () => {
   const sortable = (input: { id: string; createdAt: string }) => ({
     id: input.id,
     createdAt: input.createdAt,
   });
 
   it("orders by creation time, newest first, ignoring activity", () => {
-    const sorted = sortThreadsForSidebarV2([
+    const sorted = sortThreadsForSidebar([
       sortable({ id: "oldest", createdAt: "2026-03-09T08:00:00.000Z" }),
       sortable({ id: "newest", createdAt: "2026-03-09T12:00:00.000Z" }),
       sortable({ id: "middle", createdAt: "2026-03-09T10:00:00.000Z" }),
@@ -732,7 +734,7 @@ describe("sortThreadsForSidebarV2", () => {
   });
 
   it("breaks creation-time ties by id so the order is stable", () => {
-    const sorted = sortThreadsForSidebarV2([
+    const sorted = sortThreadsForSidebar([
       sortable({ id: "b", createdAt: "2026-03-09T10:00:00.000Z" }),
       sortable({ id: "a", createdAt: "2026-03-09T10:00:00.000Z" }),
     ]);
@@ -838,7 +840,7 @@ describe("planPinnedReorder", () => {
   });
 });
 
-describe("sortPinnedThreadsForSidebarV2", () => {
+describe("sortPinnedThreadsForSidebar", () => {
   const pinnable = (input: { id: string; createdAt: string; pinOrderKey?: string | null }) => ({
     id: input.id,
     createdAt: input.createdAt,
@@ -846,7 +848,7 @@ describe("sortPinnedThreadsForSidebarV2", () => {
   });
 
   it("sorts keyed threads by key ahead of keyless threads in creation order", () => {
-    const sorted = sortPinnedThreadsForSidebarV2([
+    const sorted = sortPinnedThreadsForSidebar([
       pinnable({ id: "keyless-old", createdAt: "2026-03-09T08:00:00.000Z" }),
       pinnable({ id: "second", createdAt: "2026-03-09T09:00:00.000Z", pinOrderKey: "t" }),
       pinnable({ id: "keyless-new", createdAt: "2026-03-09T12:00:00.000Z" }),
@@ -862,7 +864,7 @@ describe("sortPinnedThreadsForSidebarV2", () => {
   });
 
   it("breaks equal keys by id so raced writes render identically everywhere", () => {
-    const sorted = sortPinnedThreadsForSidebarV2([
+    const sorted = sortPinnedThreadsForSidebar([
       pinnable({ id: "b", createdAt: "2026-03-09T10:00:00.000Z", pinOrderKey: "m" }),
       pinnable({ id: "a", createdAt: "2026-03-09T11:00:00.000Z", pinOrderKey: "m" }),
     ]);
@@ -871,7 +873,7 @@ describe("sortPinnedThreadsForSidebarV2", () => {
   });
 });
 
-describe("sortSettledThreadsForSidebarV2", () => {
+describe("sortSettledThreadsForSidebar", () => {
   const settled = (input: {
     id: string;
     settledAt?: string | null;
@@ -887,7 +889,7 @@ describe("sortSettledThreadsForSidebarV2", () => {
   });
 
   it("orders by settle time, most recently settled first", () => {
-    const sorted = sortSettledThreadsForSidebarV2([
+    const sorted = sortSettledThreadsForSidebar([
       settled({
         id: "settled-first",
         settledAt: "2026-03-09T10:00:00.000Z",
@@ -905,7 +907,7 @@ describe("sortSettledThreadsForSidebarV2", () => {
   });
 
   it("falls back to last activity for auto-settled threads without a settledAt stamp", () => {
-    const sorted = sortSettledThreadsForSidebarV2([
+    const sorted = sortSettledThreadsForSidebar([
       settled({ id: "auto-old", latestUserMessageAt: "2026-03-09T08:00:00.000Z" }),
       settled({ id: "explicit", settledAt: "2026-03-09T10:00:00.000Z" }),
       settled({ id: "auto-recent", latestUserMessageAt: "2026-03-09T11:00:00.000Z" }),
@@ -917,7 +919,7 @@ describe("sortSettledThreadsForSidebarV2", () => {
   it("counts a turn completion as activity for auto-settled threads", () => {
     // The message came in before the other thread's, but its turn finished
     // after: completion time is the real "work ended" moment.
-    const sorted = sortSettledThreadsForSidebarV2([
+    const sorted = sortSettledThreadsForSidebar([
       settled({ id: "message-only", latestUserMessageAt: "2026-03-09T10:04:00.000Z" }),
       settled({
         id: "completed-later",
@@ -930,7 +932,7 @@ describe("sortSettledThreadsForSidebarV2", () => {
   });
 
   it("breaks timestamp ties by id so the order is stable", () => {
-    const sorted = sortSettledThreadsForSidebarV2([
+    const sorted = sortSettledThreadsForSidebar([
       settled({ id: "b", settledAt: "2026-03-09T10:00:00.000Z" }),
       settled({ id: "a", settledAt: "2026-03-09T10:00:00.000Z" }),
     ]);
