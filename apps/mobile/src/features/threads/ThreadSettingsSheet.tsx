@@ -11,8 +11,16 @@ import {
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import * as Haptics from "expo-haptics";
-import { useEffect, useState } from "react";
-import { Modal, Pressable, ScrollView, Switch, useWindowDimensions, View } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  Switch,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/AppSymbol";
@@ -22,6 +30,8 @@ import { cn } from "../../lib/cn";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import { applyProviderOptionSelection, providerOptionValueLabels } from "../../lib/providerOptions";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { pendingModelAfterPress } from "./thread-settings-sheet-state";
+import type { ThreadSettingsSheetCloseReason } from "./use-thread-settings-sheet-presentation";
 
 /**
  * The everyday harnesses stay expanded; every other provider (OpenRouter
@@ -293,7 +303,8 @@ export function ThreadSettingsSheet(props: {
    * "dismiss" = backdrop, grabber, or system back. Hosts only restore the
    * keyboard for "save" so a stray tap outside a control never pops it.
    */
-  readonly onClose: (reason: "save" | "dismiss") => void;
+  readonly onClose: (reason: ThreadSettingsSheetCloseReason) => void;
+  readonly onDismissed: () => void;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly selectedModel: ModelSelection | null;
   readonly onSelectModel: (option: ModelOption) => void;
@@ -308,18 +319,31 @@ export function ThreadSettingsSheet(props: {
   const [expandedProviders, setExpandedProviders] = useState<ReadonlySet<string>>(() => new Set());
   const [pendingModel, setPendingModel] = useState<ModelOption | null>(null);
   const [submenu, setSubmenu] = useState<SubmenuPage | null>(null);
+  const wasPresentedRef = useRef(false);
+  const notifyDismissed = useCallback(() => {
+    if (!wasPresentedRef.current) {
+      return;
+    }
+    wasPresentedRef.current = false;
+    props.onDismissed();
+  }, [props.onDismissed]);
 
   // Every open starts fresh: no staged model, no submenu, legacy hidden,
   // secondary providers folded. The sheet stays mounted between opens, so
   // state would otherwise stick around.
   useEffect(() => {
     if (props.visible) {
+      wasPresentedRef.current = true;
       setShowLegacyToggle(false);
       setExpandedProviders(new Set());
       setPendingModel(null);
       setSubmenu(null);
+    } else if (Platform.OS === "android" && wasPresentedRef.current) {
+      // React Native only emits Modal.onDismiss on iOS. Android uses no exit
+      // animation below, so the post-commit effect is its dismissal boundary.
+      notifyDismissed();
     }
-  }, [props.visible]);
+  }, [notifyDismissed, props.visible]);
 
   const isApplied = (option: ModelOption) =>
     option.selection.instanceId === props.selectedModel?.instanceId &&
@@ -455,8 +479,9 @@ export function ThreadSettingsSheet(props: {
       transparent
       statusBarTranslucent
       navigationBarTranslucent
-      animationType="fade"
+      animationType={Platform.OS === "ios" ? "fade" : "none"}
       visible={props.visible}
+      onDismiss={notifyDismissed}
       onRequestClose={submenuContent ? () => setSubmenu(null) : () => props.onClose("dismiss")}
     >
       <View className="flex-1 justify-end">
@@ -538,7 +563,13 @@ export function ThreadSettingsSheet(props: {
                           onPress={() => {
                             void Haptics.selectionAsync();
                             // Re-tapping the applied model cancels staging.
-                            setPendingModel(isApplied(option) ? null : option);
+                            setPendingModel((current) =>
+                              pendingModelAfterPress({
+                                current,
+                                pressed: option,
+                                pressedIsApplied: isApplied(option),
+                              }),
+                            );
                           }}
                         />
                       ))}

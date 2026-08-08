@@ -1,7 +1,7 @@
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, usePreventRemove } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, InteractionManager, Keyboard, Platform, View, useColorScheme } from "react-native";
+import { Alert, InteractionManager, Platform, View, useColorScheme } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
@@ -26,6 +26,7 @@ import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ComposerSurface } from "./ThreadComposer";
 import { ThreadSettingsSheet, threadSettingsSummaryLabel } from "./ThreadSettingsSheet";
+import { useThreadSettingsSheetPresentation } from "./use-thread-settings-sheet-presentation";
 
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
@@ -99,9 +100,10 @@ export function NewTaskDraftScreen(props: {
   const promptInputRef = useRef<ComposerEditorHandle>(null);
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
-  const [isSettingsSheetVisible, setIsSettingsSheetVisible] = useState(false);
-  const isSettingsSheetVisibleRef = useRef(false);
-  isSettingsSheetVisibleRef.current = isSettingsSheetVisible;
+  const settingsSheetPresentation = useThreadSettingsSheetPresentation({
+    editorRef: promptInputRef,
+    isEditorFocused: isComposerFocused,
+  });
   const [importingShareKey, setImportingShareKey] = useState<string | null>(null);
   const [isCancellingShareImport, setIsCancellingShareImport] = useState(false);
   const [cancelledIncomingShareId, setCancelledIncomingShareId] = useState<string | null>(null);
@@ -523,8 +525,10 @@ export function NewTaskDraftScreen(props: {
       focusFrame = requestAnimationFrame(() => {
         // The delayed focus can land after the settings sheet opened, which
         // would pop the keyboard underneath its modal.
-        if (!isSettingsSheetVisibleRef.current) {
+        if (!settingsSheetPresentation.isActiveRef.current) {
           promptInputRef.current?.focus();
+        } else {
+          settingsSheetPresentation.restoreFocusAfterSave();
         }
       });
     });
@@ -535,7 +539,11 @@ export function NewTaskDraftScreen(props: {
         cancelAnimationFrame(focusFrame);
       }
     };
-  }, [selectedProject]);
+  }, [
+    selectedProject,
+    settingsSheetPresentation.isActiveRef,
+    settingsSheetPresentation.restoreFocusAfterSave,
+  ]);
 
   const environmentMenuActions = useMemo(
     () =>
@@ -643,24 +651,6 @@ export function NewTaskDraftScreen(props: {
       }),
     [currentBranchName, flow.selectedBranchName, flow.workspaceMode],
   );
-  // Order matters: mark the sheet open before dismissing the keyboard so the
-  // Android draft layout (expanded only while focused) doesn't collapse.
-  // The keyboard only comes back on close if it was up when the sheet opened.
-  const wasFocusedBeforeSheetRef = useRef(false);
-  const openSettingsSheet = useCallback(() => {
-    wasFocusedBeforeSheetRef.current = isComposerFocused;
-    setIsSettingsSheetVisible(true);
-    Keyboard.dismiss();
-  }, [isComposerFocused]);
-  const closeSettingsSheet = useCallback((reason: "save" | "dismiss") => {
-    setIsSettingsSheetVisible(false);
-    // Only Save/Done restores the keyboard: a dismissal (backdrop or
-    // grabber, including stray taps near the sheet's edge) closes quietly.
-    if (reason === "save" && wasFocusedBeforeSheetRef.current) {
-      promptInputRef.current?.focus();
-    }
-  }, []);
-
   function handleEnvironmentMenuAction(event: string) {
     if (isIncomingShareTransferPending || !event.startsWith("environment:")) {
       return;
@@ -876,7 +866,7 @@ export function NewTaskDraftScreen(props: {
   // the touch gesture that opens the keyboard.
   // The settings sheet dismisses the keyboard, so its flag keeps the Android
   // draft composer expanded through the blur (mirrors ThreadComposer).
-  const isExpanded = !isAndroid || isComposerFocused || isSettingsSheetVisible;
+  const isExpanded = !isAndroid || isComposerFocused || settingsSheetPresentation.isActive;
   const canStart =
     Boolean(flow.selectedProject) &&
     Boolean(flow.selectedModel) &&
@@ -936,7 +926,7 @@ export function NewTaskDraftScreen(props: {
         iconNode={<ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />}
         label={settingsSummaryLabel}
         maxWidth={320}
-        onPress={openSettingsSheet}
+        onPress={settingsSheetPresentation.open}
       />
       <ControlPillMenu
         actions={environmentMenuActions}
@@ -965,8 +955,9 @@ export function NewTaskDraftScreen(props: {
 
   const settingsSheet = (
     <ThreadSettingsSheet
-      visible={isSettingsSheetVisible}
-      onClose={closeSettingsSheet}
+      visible={settingsSheetPresentation.isVisible}
+      onClose={settingsSheetPresentation.close}
+      onDismissed={settingsSheetPresentation.onDismissed}
       providerGroups={flow.providerGroups}
       selectedModel={flow.selectedModel}
       onSelectModel={(option) => flow.setSelectedModelKey(option.key, option.selection.options)}

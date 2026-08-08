@@ -19,7 +19,6 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject
 import {
   ActivityIndicator,
   Image,
-  Keyboard,
   Platform,
   Pressable,
   StyleSheet,
@@ -67,6 +66,7 @@ import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
 import { ThreadSettingsSheet, threadSettingsSummaryLabel } from "./ThreadSettingsSheet";
+import { useThreadSettingsSheetPresentation } from "./use-thread-settings-sheet-presentation";
 
 /**
  * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
@@ -270,16 +270,19 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
+  const settingsSheetPresentation = useThreadSettingsSheetPresentation({
+    editorRef: inputRef,
+    isEditorFocused: isFocused,
+  });
   const wasExpandedBeforePreviewRef = useRef(false);
   const inFlightThreadIdsRef = useRef(new Set<string>());
   const { onExpandedChange } = props;
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
-  const [isSettingsSheetVisible, setIsSettingsSheetVisible] = useState(false);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
-  // The settings sheet dismisses the keyboard (it would cover the sheet), so
-  // the sheet flag keeps the composer expanded through that blur.
-  const isExpanded = isFocused || isSettingsSheetVisible;
+  // Opening and closing count as active so the composer stays expanded while
+  // focus moves between its native editor and the settings modal.
+  const isExpanded = isFocused || settingsSheetPresentation.isActive;
   const canSend = hasContent;
 
   // Notify the parent from the derived value, not focus events: the parent
@@ -620,27 +623,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     interactionMode: currentInteractionMode,
   });
 
-  // Order matters: mark the sheet open before dismissing the keyboard so
-  // isExpanded stays true through the blur and the composer doesn't collapse.
-  // The keyboard only comes back on close if it was up when the sheet opened.
-  const wasFocusedBeforeSheetRef = useRef(false);
-  const openSettingsSheet = useCallback(() => {
-    wasFocusedBeforeSheetRef.current = isFocused;
-    setIsSettingsSheetVisible(true);
-    Keyboard.dismiss();
-  }, [isFocused]);
-  const closeSettingsSheet = useCallback(
-    (reason: "save" | "dismiss") => {
-      setIsSettingsSheetVisible(false);
-      // Only Save/Done restores the keyboard: a dismissal (backdrop or
-      // grabber, including stray taps near the sheet's edge) closes quietly.
-      if (reason === "save" && wasFocusedBeforeSheetRef.current) {
-        inputRef.current?.focus();
-      }
-    },
-    [inputRef],
-  );
-
   return (
     <Animated.View
       className="px-4"
@@ -817,7 +799,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   }
                   label={settingsSummaryLabel}
                   maxWidth={320}
-                  onPress={openSettingsSheet}
+                  onPress={settingsSheetPresentation.open}
                 />
                 {showStopAction ? (
                   <ComposerToolbarButton
@@ -853,8 +835,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       </Animated.View>
 
       <ThreadSettingsSheet
-        visible={isSettingsSheetVisible}
-        onClose={closeSettingsSheet}
+        visible={settingsSheetPresentation.isVisible}
+        onClose={settingsSheetPresentation.close}
+        onDismissed={settingsSheetPresentation.onDismissed}
         providerGroups={threadProviderGroups}
         selectedModel={currentModelSelection}
         onSelectModel={(option) => props.onUpdateModelSelection(option.selection)}
