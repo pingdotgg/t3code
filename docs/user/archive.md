@@ -4,9 +4,9 @@ Archiving removes a thread from active thread lists without deleting its convers
 can browse archived threads, restore them with **Unarchive**, or permanently remove them with
 **Delete**.
 
-Settling is different from archiving. A settled thread remains in the sidebar's **Settled** section
-and can return to the active list when you un-settle it or new work begins. Archiving removes the
-thread from the sidebar and moves it to Archive instead.
+Settling is different from archiving. A settled thread remains live in the thread list's **Settled**
+section and can return to the active list when you un-settle it or new work begins. Archiving removes
+the thread from the live thread list and moves it to Archive instead.
 
 To open the archive:
 

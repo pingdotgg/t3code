@@ -49,16 +49,16 @@ A user-visible log item attached to a thread. In [the contracts][1], activities 
 
 A live thread that no longer needs attention in the active sidebar list. A thread can settle
 manually or automatically, remains available in the sidebar's **Settled** section, and returns to
-the active list when it is un-settled or new work begins. Settling does not archive the thread or
-remove its history. See [threadSettled.ts][26].
+the active list when it is un-settled or new work begins. Unlike [Archive](#archive), settling keeps
+the thread in the live thread list and preserves its history. See [threadSettled.ts][26].
 
 #### Archive
 
-A reversible action that removes a thread from active thread lists without deleting its conversation
-history. An archived thread has an archive timestamp in [the orchestration contracts][1] and remains
-available from the Archive screen until it is unarchived or deleted. Unarchiving restores it to the
-active thread list; deleting it permanently clears the thread and its history. See the
-[Archive user guide][25].
+A reversible action that moves a thread out of the live thread list without deleting its conversation
+history. Unlike a [settled](#settled) thread, an archived thread is available only from the Archive
+screen until it is unarchived or deleted. It has an archive timestamp in
+[the orchestration contracts][1]. Unarchiving restores it to the active thread list; deleting it
+permanently clears the thread and its history. See the [Archive user guide][25].
 
 ### Orchestration
 
@@ -165,8 +165,8 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 - If you see `receipt`, think "async milestone signal, for tests".
 - If you see `checkpoint`, think "workspace snapshot for diff/restore".
 - If you see `quiesced`, think "all relevant follow-up work has gone idle".
-- If you see `settled`, think "live sidebar history that no longer needs active attention".
-- If you see `archive`, think "hide a thread from active lists without deleting its history".
+- If you see `settled`, think "live thread that remains in the Settled section".
+- If you see `archive`, think "move a thread out of the live list without deleting its history".
 
 ## Related Docs
 
