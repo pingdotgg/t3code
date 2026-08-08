@@ -853,6 +853,8 @@ export function renderMacPasskeyEntitlements(
     <array>
 ${associatedDomains}
     </array>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
