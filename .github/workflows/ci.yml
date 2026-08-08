@@ -110,6 +110,46 @@ jobs:
       - name: Test resource monitor
         run: cargo test --locked --manifest-path native/resource-monitor/Cargo.toml
 
+  windows_claude_provider_tests:
+    name: Windows Claude/WSL Provider Tests
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3...
+              - --filter=@t3tools/desktop...
+
+      # Windows-only path resolution (npm/pnpm launcher shims, PATH/PATHEXT
+      # search) and the desktop WSL backend can't be exercised by the
+      # Ubuntu/macOS `test` job even though they're unit-tested with a mocked
+      # platform service everywhere. Running the real, Windows-specific
+      # subset here catches drift a mock can't. Scoped to Claude/WSL-owning
+      # files, not the full suite: e.g. Codex's shadow-home tests hit an
+      # unrelated Windows symlink-privilege wall on hosted runners.
+      - name: Test Claude and WSL provider code on Windows
+        run: >
+          vp test run
+          apps/server/src/provider/Drivers/ClaudeExecutable.test.ts
+          apps/server/src/provider/Layers/ClaudeAdapter.test.ts
+          apps/server/src/provider/Layers/ProviderAdapterRegistry.test.ts
+          apps/desktop/src/wsl/DesktopWslBackend.test.ts
+          apps/desktop/src/wsl/DesktopWslEnvironment.test.ts
+          apps/desktop/src/wsl/wslPathParsing.test.ts
+
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis
     runs-on: blacksmith-6vcpu-macos-26

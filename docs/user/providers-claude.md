@@ -10,6 +10,36 @@ Common reasons:
 - run Claude through a router such as Claude Code Router
 - use external providers exposed through a Claude-compatible workflow
 
+## Windows: Native Vs WSL
+
+Claude Code runs two ways on a Windows T3 Code server: natively, or inside WSL.
+
+### Native Windows
+
+T3 Code finds `claude` on Windows the same way it finds any provider binary: it searches `PATH`
+using `PATHEXT`, or uses the explicit **Binary path** you set in Settings. Node cannot spawn a
+`.cmd`/`.bat`/`.ps1` launcher script directly, so when that search lands on one of those (the
+normal result for a global `npm install -g @anthropic-ai/claude-code`, or an equivalent global
+install with pnpm, Yarn, or corepack), T3 Code reads the shim and follows it to the real
+`claude.exe` or `cli.js` next to it before handing the path to the Claude Agent SDK. This covers
+the common global-install layouts without needing WSL.
+
+If T3 Code can't work out the real target from an unusual install layout, it falls back to the
+shim path itself, which will fail to start a session. Set an explicit **Binary path** pointing at
+the real executable (for example `...\node_modules\@anthropic-ai\claude-code\bin\claude.exe`) to
+work around it, and consider filing an issue with your install layout.
+
+### WSL
+
+T3 Code Desktop can also run the whole server inside a WSL distro instead of natively on Windows
+(Settings → Connections → WSL backend, or WSL-only mode). When it does, Claude Code runs exactly
+like it does on Linux — no shim-following, no Windows-specific resolution — because the server
+process itself is a WSL process. Use this if you'd rather manage Claude Code (and other providers)
+inside your existing WSL setup, or if native resolution isn't working for your install.
+
+Either mode uses the same Claude provider configuration (config directory, environment variables,
+etc.) described below; only where the CLI itself runs changes.
+
 ## I Only Use One Claude Account
 
 Use the default provider.
