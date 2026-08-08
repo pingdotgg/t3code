@@ -219,11 +219,12 @@ describe("isTerminalCopyShortcut", () => {
     expect(isTerminalCopyShortcut(event({ metaKey: true }), "MacIntel")).toBe(true);
   });
 
-  it("uses the conventional Ctrl+Shift+C shortcut elsewhere", () => {
-    expect(isTerminalCopyShortcut(event({ ctrlKey: true }), "Linux x86_64")).toBe(false);
+  it("copies with Ctrl+C and Ctrl+Shift+C elsewhere", () => {
+    expect(isTerminalCopyShortcut(event({ ctrlKey: true }), "Linux x86_64")).toBe(true);
     expect(isTerminalCopyShortcut(event({ ctrlKey: true, shiftKey: true }), "Linux x86_64")).toBe(
       true,
     );
+    expect(isTerminalCopyShortcut(event({}), "Linux x86_64")).toBe(false);
   });
 
   it("uses the produced character instead of the physical key position", () => {
