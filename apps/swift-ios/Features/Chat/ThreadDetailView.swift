@@ -211,6 +211,15 @@ public struct ThreadDetailView: View {
         .foregroundStyle(headerStatusColor)
         .lineLimit(1)
         .accessibilityElement(children: .combine)
+        .accessibilityLabel(headerStatusAccessibilityLabel(at: now))
+    }
+
+    private func headerStatusAccessibilityLabel(at now: Date) -> String {
+        if let startedAt = currentThread.workingStartedAt,
+           currentThread.homeStatus == .working {
+            return "Agent is working for \(HomeWorkingDuration.accessibility(since: startedAt, now: now))"
+        }
+        return currentThread.homeStatusLabel ?? "Ready"
     }
 
     private var threadActionsMenu: some View {
