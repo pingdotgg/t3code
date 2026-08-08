@@ -20,6 +20,7 @@ function extensionDetail(overrides: Record<string, unknown> = {}) {
     version: "1.0.0",
     downloadCount: 123456,
     license: "MIT",
+    repository: "https://github.com/demo/theme",
     files: {
       icon: `${ASSET_ROOT}/icon.png`,
       manifest: `${ASSET_ROOT}/package.json`,
@@ -142,13 +143,30 @@ describe("Open VSX themes", () => {
         publisher: "demo",
         downloadCount: 123456,
         iconUrl: `${ASSET_ROOT}/icon.png`,
+        sourceUrl: "https://github.com/demo/theme",
         license: "MIT",
       }),
     ]);
     const searchUrl = new URL(String(fetchMock.mock.calls[0]![0]));
     expect(searchUrl.searchParams.get("query")).toBe("dracula");
     expect(searchUrl.searchParams.get("category")).toBe("Themes");
+    expect(searchUrl.searchParams.get("sortBy")).toBe("downloadCount");
+    expect(searchUrl.searchParams.get("sortOrder")).toBe("desc");
     expect(searchUrl.searchParams.get("size")).toBe("16");
+  });
+
+  it("supports sorting theme searches", async () => {
+    const fetchMock = vi.fn(
+      async (..._args: unknown[]) =>
+        new Response(JSON.stringify({ extensions: [] }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await searchOpenVsxThemes("nord", { sortBy: "rating" });
+
+    const searchUrl = new URL(String(fetchMock.mock.calls[0]![0]));
+    expect(searchUrl.searchParams.get("sortBy")).toBe("rating");
+    expect(searchUrl.searchParams.get("sortOrder")).toBe("desc");
   });
 
   it("reports an unavailable search when every detail request fails", async () => {
@@ -288,6 +306,7 @@ describe("Open VSX themes", () => {
       description: "",
       downloadCount: 1,
       iconUrl: null,
+      sourceUrl: null,
       license: "MIT",
       manifestUrl: `${ASSET_ROOT}/package.json`,
       sha256Url: `${ASSET_ROOT}/demo.theme-1.0.0.sha256`,
@@ -366,6 +385,7 @@ describe("Open VSX themes", () => {
       description: "",
       downloadCount: 1,
       iconUrl: null,
+      sourceUrl: null,
       license: "MIT",
       manifestUrl: `${ASSET_ROOT}/package.json`,
       sha256Url: `${ASSET_ROOT}/demo.theme-1.0.0.sha256`,
@@ -403,6 +423,7 @@ describe("Open VSX themes", () => {
       description: "",
       downloadCount: 1,
       iconUrl: null,
+      sourceUrl: null,
       license: "MIT",
       manifestUrl: `${ASSET_ROOT}/package.json`,
       sha256Url: `${ASSET_ROOT}/demo.theme-1.0.0.sha256`,

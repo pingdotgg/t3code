@@ -81,6 +81,8 @@ const USED_WORKBENCH_COLORS = new Set([
   "textLink.foreground",
 ]);
 
+export type OpenVsxThemeSort = "downloadCount" | "rating" | "timestamp" | "relevance";
+
 export type OpenVsxThemeExtension = {
   id: string;
   collectionId: string;
@@ -89,11 +91,17 @@ export type OpenVsxThemeExtension = {
   description: string;
   downloadCount: number;
   iconUrl: string | null;
+  sourceUrl: string | null;
   manifestUrl: string;
   sha256Url: string;
   vsixUrl: string;
   version: string;
   license: string;
+};
+
+export type OpenVsxThemeSearchOptions = {
+  signal?: AbortSignal;
+  sortBy?: OpenVsxThemeSort;
 };
 
 type ThemeContribution = { label?: unknown; uiTheme?: unknown; path?: unknown };
@@ -127,6 +135,22 @@ function trustedOpenVsxUrl(value: unknown): string | null {
     return url.protocol === "https:" && url.hostname.toLowerCase() === "open-vsx.org"
       ? url.toString()
       : null;
+  } catch {
+    return null;
+  }
+}
+
+function publicSourceUrl(value: unknown): string | null {
+  const rawValue =
+    typeof value === "string"
+      ? value
+      : isRecord(value) && typeof value.url === "string"
+        ? value.url
+        : null;
+  if (!rawValue) return null;
+  try {
+    const url = new URL(rawValue);
+    return url.protocol === "https:" && !url.username && !url.password ? url.toString() : null;
   } catch {
     return null;
   }
@@ -175,6 +199,10 @@ function extensionFromDetail(value: unknown): OpenVsxThemeExtension | null {
         ? value.downloadCount
         : 0,
     iconUrl: trustedOpenVsxUrl(value.files.icon),
+    sourceUrl:
+      publicSourceUrl(value.repository) ??
+      publicSourceUrl(value.homepage) ??
+      publicSourceUrl(value.url),
     manifestUrl,
     sha256Url,
     vsixUrl,
@@ -207,13 +235,15 @@ async function withSearchTimeout<T>(
 
 export async function searchOpenVsxThemes(
   query: string,
-  signal?: AbortSignal,
+  { signal, sortBy = "downloadCount" }: OpenVsxThemeSearchOptions = {},
 ): Promise<OpenVsxThemeExtension[]> {
   const searchText = query.trim();
   if (!searchText) return [];
   const url = new URL(OPEN_VSX_SEARCH_URL);
   url.searchParams.set("query", searchText);
   url.searchParams.set("category", "Themes");
+  url.searchParams.set("sortBy", sortBy);
+  url.searchParams.set("sortOrder", "desc");
   // Ask for a few extras because results without a supported SPDX license
   // are intentionally omitted.
   url.searchParams.set("size", "16");
