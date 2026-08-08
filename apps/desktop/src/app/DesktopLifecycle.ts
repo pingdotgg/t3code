@@ -179,7 +179,7 @@ export const make = DesktopLifecycle.of({
     let updaterQuitAllowed = false;
     yield* electronTheme.onUpdated(() => {
       void runEffect(
-        desktopWindow.syncAppearance.pipe(Effect.withSpan("desktop.lifecycle.themeUpdated")),
+        desktopWindow.syncAppearance().pipe(Effect.withSpan("desktop.lifecycle.themeUpdated")),
       );
     });
     yield* electronApp.onBeforeQuitForUpdate(() => {

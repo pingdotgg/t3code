@@ -1,3 +1,4 @@
+import { DesktopThemePaletteSchema, DesktopThemeSchema } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -34,6 +35,13 @@ const DesktopSettingsPatch = Schema.Struct({
   wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
   wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
   wslOnly: Schema.optionalKey(Schema.Boolean),
+  themeSource: Schema.optionalKey(DesktopThemeSchema),
+  themePalettes: Schema.optionalKey(
+    Schema.Struct({
+      light: Schema.optionalKey(DesktopThemePaletteSchema),
+      dark: Schema.optionalKey(DesktopThemePaletteSchema),
+    }),
+  ),
 });
 
 const decodeDesktopSettingsPatch = Schema.decodeEffect(Schema.fromJsonString(DesktopSettingsPatch));
@@ -97,6 +105,29 @@ describe("DesktopSettings", () => {
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
         assert.deepEqual(yield* settings.load, DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS);
         assert.deepEqual(yield* settings.get, DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS);
+      }),
+    ),
+  );
+
+  it.effect("persists the theme source used to restore native chrome on launch", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+
+        const change = yield* settings.setThemeSource("dark");
+        assert.isTrue(change.changed);
+        assert.equal(change.settings.themeSource, "dark");
+        assert.deepEqual(
+          yield* decodeDesktopSettingsPatch(
+            yield* fileSystem.readFileString(environment.desktopSettingsPath),
+          ),
+          { themeSource: "dark" },
+        );
+
+        const reloaded = yield* settings.load;
+        assert.equal(reloaded.themeSource, "dark");
       }),
     ),
   );
@@ -331,6 +362,52 @@ describe("DesktopSettings", () => {
           mainWindowMaximized: true,
           serverExposureMode: "network-accessible",
         } satisfies typeof DesktopSettingsPatch.Type);
+      }),
+    ),
+  );
+
+  it.effect("persists light and dark theme palettes independently", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const lightPalette = {
+          appearance: "light" as const,
+          background: "#fdf7fd",
+          foreground: "#501854",
+          accent: "#e33f86",
+          titlebarSymbol: "#501854",
+        };
+        const darkPalette = {
+          appearance: "dark" as const,
+          background: "#1f1a24",
+          foreground: "#f9f8fb",
+          accent: "#a3004c",
+          titlebarSymbol: "#f9f8fb",
+        };
+
+        const lightChange = yield* settings.setThemePalette(lightPalette);
+        assert.isTrue(lightChange.changed);
+        const darkChange = yield* settings.setThemePalette(darkPalette);
+        assert.isTrue(darkChange.changed);
+        const noOp = yield* settings.setThemePalette(lightPalette);
+        assert.isFalse(noOp.changed);
+
+        assert.deepEqual((yield* settings.get).themePalettes, {
+          light: lightPalette,
+          dark: darkPalette,
+        });
+        assert.deepEqual(
+          yield* decodeDesktopSettingsPatch(
+            yield* fileSystem.readFileString(environment.desktopSettingsPath),
+          ),
+          { themePalettes: { light: lightPalette, dark: darkPalette } },
+        );
+        assert.deepEqual((yield* settings.load).themePalettes, {
+          light: lightPalette,
+          dark: darkPalette,
+        });
       }),
     ),
   );

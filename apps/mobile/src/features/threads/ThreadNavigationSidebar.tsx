@@ -14,7 +14,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from "react-native";
-import { Platform, Pressable, StyleSheet, TextInput, View, useColorScheme } from "react-native";
+import { Platform, Pressable, StyleSheet, TextInput, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -28,6 +28,8 @@ import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { useAppearanceColorScheme } from "../../lib/useAppearanceColorScheme";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
 import { useThreadListV2Enabled } from "./use-thread-list-v2-enabled";
@@ -100,6 +102,14 @@ function SidebarHeaderButtonGroup(props: {
   readonly children: ReactNode;
   readonly colorScheme: "light" | "dark";
 }) {
+  const { themeColors } = useAppearancePreferences();
+  const backgroundColor =
+    themeColors?.sidebarControlSurface ??
+    (props.colorScheme === "dark" ? "rgba(118,118,128,0.24)" : "rgba(255,255,255,0.72)");
+  const borderColor =
+    themeColors?.sidebarBorder ??
+    (props.colorScheme === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)");
+
   if (isLiquidGlassSupported) {
     return (
       <LiquidGlassView
@@ -117,9 +127,7 @@ function SidebarHeaderButtonGroup(props: {
     <View
       style={[
         styles.headerButtonGroup,
-        props.colorScheme === "dark"
-          ? { backgroundColor: "rgba(118,118,128,0.24)", borderColor: "rgba(255,255,255,0.08)" }
-          : { backgroundColor: "rgba(255,255,255,0.72)", borderColor: "rgba(0,0,0,0.08)" },
+        { backgroundColor, borderColor },
         { borderWidth: StyleSheet.hairlineWidth },
       ]}
     >
@@ -165,8 +173,11 @@ export function ThreadNavigationSidebar(props: ThreadNavigationSidebarProps) {
 }
 
 function NativeSidebarContainer(props: ThreadNavigationSidebarProps) {
-  const backgroundColor = useThemeColor("--color-drawer");
-  const borderColor = useThemeColor("--color-border");
+  const drawerFallback = useThemeColor("--color-drawer");
+  const borderFallback = useThemeColor("--color-border");
+  const { themeColors } = useAppearancePreferences();
+  const backgroundColor = themeColors?.sidebar ?? drawerFallback;
+  const borderColor = themeColors?.sidebarBorder ?? borderFallback;
 
   return (
     <View
@@ -190,7 +201,7 @@ function ThreadNavigationSidebarPane(
   props: ThreadNavigationSidebarProps & { readonly nativeChrome: boolean },
 ) {
   const insets = useSafeAreaInsets();
-  const colorScheme = useColorScheme() === "dark" ? "dark" : "light";
+  const colorScheme = useAppearanceColorScheme() === "dark" ? "dark" : "light";
   const projects = useProjects();
   const threads = useThreadShells();
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
@@ -746,10 +757,19 @@ function ThreadNavigationSidebarPane(
     ],
   );
 
-  const backgroundColor = useThemeColor("--color-drawer");
-  const borderColor = useThemeColor("--color-border");
-  const mutedColor = useThemeColor("--color-foreground-muted");
-  const placeholderColor = useThemeColor("--color-placeholder");
+  const drawerFallback = useThemeColor("--color-drawer");
+  const borderFallback = useThemeColor("--color-border");
+  const mutedFallback = useThemeColor("--color-foreground-muted");
+  const foregroundFallback = useThemeColor("--color-foreground");
+  const placeholderFallback = useThemeColor("--color-placeholder");
+  const sidebarSearchFallback = useThemeColor("--color-sidebar-search");
+  const { themeColors } = useAppearancePreferences();
+  const backgroundColor = themeColors?.sidebar ?? drawerFallback;
+  const borderColor = themeColors?.sidebarBorder ?? borderFallback;
+  const foregroundColor = themeColors?.sidebarForeground ?? foregroundFallback;
+  const mutedColor = themeColors?.sidebarMutedForeground ?? mutedFallback;
+  const placeholderColor = themeColors?.sidebarMutedForeground ?? placeholderFallback;
+  const sidebarSearchColor = themeColors?.sidebarControlSurface ?? sidebarSearchFallback;
   const headerFadeColor = String(backgroundColor);
   const headerWashOpacity = SIDEBAR_HEADER_WASH_OPACITY[colorScheme];
   const [measuredHeaderHeight, setMeasuredHeaderHeight] = useState<number | null>(null);
@@ -1001,9 +1021,15 @@ function ThreadNavigationSidebarPane(
               accessibilityLabel={`Show ${Math.min(item.hiddenCount, THREAD_LIST_V2_SETTLED_PAGE_COUNT)} more settled threads`}
               onPress={showMoreSettled}
               className="mx-4 mt-2 items-center rounded-lg border border-dashed border-border py-2.5"
-              style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+              style={({ pressed }) => ({
+                borderColor,
+                opacity: pressed ? 0.6 : 1,
+              })}
             >
-              <Text className="text-xs font-t3-medium text-foreground-muted">
+              <Text
+                className="text-xs font-t3-medium text-foreground-muted"
+                style={{ color: mutedColor }}
+              >
                 Show more ({item.hiddenCount} settled hidden)
               </Text>
             </Pressable>
@@ -1171,7 +1197,7 @@ function ThreadNavigationSidebarPane(
   // Snoozed threads need no special case: the shelf header is a list row
   // even while collapsed.
   const listEmpty = (
-    <Text className="px-2 py-4 text-sm text-foreground-muted">
+    <Text className="px-2 py-4 text-sm text-foreground-muted" style={{ color: mutedColor }}>
       {catalogState.isLoadingConnections
         ? "Loading threads…"
         : props.searchQuery.trim().length > 0
@@ -1345,7 +1371,11 @@ function ThreadNavigationSidebarPane(
             onPress={props.onOpenEnvironmentSettings}
             size="pageTitle"
             brand={
-              <Text className="flex-1 text-[34px] font-t3-bold text-foreground" numberOfLines={1}>
+              <Text
+                className="flex-1 text-[34px] font-t3-bold text-foreground"
+                numberOfLines={1}
+                style={{ color: foregroundColor }}
+              >
                 Threads
               </Text>
             }
@@ -1362,7 +1392,10 @@ function ThreadNavigationSidebarPane(
           </SidebarHeaderButtonGroup>
         </View>
 
-        <View className="mx-4 mt-[9px] h-[38px] flex-row items-center gap-1.5 rounded-xl bg-sidebar-search pr-2.5 pl-[11px]">
+        <View
+          className="mx-4 mt-[9px] h-[38px] flex-row items-center gap-1.5 rounded-xl bg-sidebar-search pr-2.5 pl-[11px]"
+          style={{ backgroundColor: sidebarSearchColor }}
+        >
           <SymbolView name="magnifyingglass" size={15} tintColor={mutedColor} type="monochrome" />
           <TextInput
             ref={searchInputRef}
@@ -1375,6 +1408,7 @@ function ThreadNavigationSidebarPane(
             placeholderTextColor={placeholderColor}
             returnKeyType="search"
             className="h-[34px] flex-1 px-0 py-0 font-sans text-base text-foreground"
+            style={{ color: foregroundColor }}
             value={props.searchQuery}
           />
         </View>

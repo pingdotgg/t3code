@@ -54,6 +54,16 @@
       --color-sidebar-search: rgba(118, 118, 128, 0.12);
       --color-placeholder: #a3a3a3;
 
+      /* Canonical sidebar roles (kept separate from screen-wide tokens). */
+      --color-sidebar-background: rgba(255, 255, 255, 0.99);
+      --color-sidebar-foreground: #262626;
+      --color-sidebar-muted-foreground: #737373;
+      --color-sidebar-control: rgba(118, 118, 128, 0.12);
+      --color-sidebar-row-hover: rgba(0, 0, 0, 0.04);
+      --color-sidebar-row-active: rgba(0, 0, 0, 0.08);
+      --color-sidebar-row-selected: #007aff;
+      --color-sidebar-border: rgba(0, 0, 0, 0.08);
+
       /* Icons */
       --color-icon: #262626;
       --color-icon-muted: #525252;
@@ -147,6 +157,16 @@
       --color-input-border: rgba(255, 255, 255, 0.08);
       --color-sidebar-search: rgba(118, 118, 128, 0.24);
       --color-placeholder: #8e8e93;
+
+      /* Canonical sidebar roles (kept separate from screen-wide tokens). */
+      --color-sidebar-background: rgba(14, 14, 14, 0.99);
+      --color-sidebar-foreground: #f5f5f5;
+      --color-sidebar-muted-foreground: #8e8e93;
+      --color-sidebar-control: rgba(118, 118, 128, 0.24);
+      --color-sidebar-row-hover: rgba(255, 255, 255, 0.04);
+      --color-sidebar-row-active: rgba(255, 255, 255, 0.08);
+      --color-sidebar-row-selected: #0a84ff;
+      --color-sidebar-border: rgba(255, 255, 255, 0.06);
 
       /* Icons */
       --color-icon: #f5f5f5;

@@ -203,4 +203,89 @@ describe("theme failure handling", () => {
       expect(JSON.stringify(attributes)).not.toContain(cause.message);
     }
   });
+
+  it("sends the resolved palette and resends it for mode and system changes", async () => {
+    const setTheme = vi.fn().mockResolvedValue(undefined);
+    let systemDark = false;
+    vi.stubGlobal("window", {
+      desktopBridge: { setTheme },
+      matchMedia: () => ({ matches: systemDark }),
+    });
+
+    const { syncDesktopTheme } = await import("./useTheme");
+
+    syncDesktopTheme("t3-chat", true, "system");
+    expect(setTheme).toHaveBeenLastCalledWith(
+      "system",
+      expect.objectContaining({
+        appearance: "light",
+        background: "#fdf7fd",
+        foreground: "#501854",
+        accent: "#e33f86",
+      }),
+    );
+
+    syncDesktopTheme("t3-chat", false, "dark", false);
+    expect(setTheme).toHaveBeenLastCalledWith(
+      "dark",
+      expect.objectContaining({
+        appearance: "dark",
+        background: "#1f1a24",
+        foreground: "#f9f8fb",
+        accent: "#a3004c",
+      }),
+    );
+
+    systemDark = true;
+    syncDesktopTheme("t3-chat", true, "system");
+    expect(setTheme).toHaveBeenLastCalledWith(
+      "system",
+      expect.objectContaining({
+        appearance: "dark",
+        background: "#1f1a24",
+        foreground: "#f9f8fb",
+        accent: "#a3004c",
+      }),
+    );
+    expect(setTheme).toHaveBeenCalledTimes(3);
+  });
+
+  it("uses the theme chrome role for the native shell background", async () => {
+    const setTheme = vi.fn().mockResolvedValue(undefined);
+    const customTheme = {
+      version: 1,
+      id: "split-shell",
+      label: "Split Shell",
+      appearance: "light",
+      colors: {
+        canvas: "#101010",
+        chrome: "#202020",
+        text: "#303030",
+        accent: "#404040",
+        toolbarForeground: "#505050",
+      },
+    };
+    vi.stubGlobal("window", {
+      desktopBridge: { setTheme },
+      localStorage: createStorage({
+        getItem: (key) =>
+          key === "t3code:themes:v1" ? JSON.stringify([customTheme]) : null,
+      }),
+      matchMedia: () => ({ matches: false }),
+    });
+
+    const { syncDesktopTheme } = await import("./useTheme");
+
+    syncDesktopTheme("split-shell", false, "light", false);
+
+    expect(setTheme).toHaveBeenCalledWith(
+      "light",
+      expect.objectContaining({
+        background: "#202020",
+        foreground: "#303030",
+        accent: "#404040",
+        titlebarSymbol: "#505050",
+      }),
+    );
+  });
 });

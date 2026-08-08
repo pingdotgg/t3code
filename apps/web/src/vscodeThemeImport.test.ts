@@ -188,14 +188,19 @@ describe("VS Code theme import", () => {
     ]);
 
     const labels = themes.map((theme) => theme.label);
-    expect(labels).toEqual(["Github", "Github Colorblind", "Github Dark Dimmed"]);
-    const github = themes[0]!;
+    expect(labels).toEqual([
+      "Github Light",
+      "Github Dark",
+      "Github Colorblind",
+      "Github Dark Dimmed",
+    ]);
+    const github = themes[2]!;
     expect(github.appearance).toBe("light");
     expect(getThemeColorsForMode(github, "dark")).not.toBeNull();
     expect(getThemeColorsForMode(github, "dark")!.canvas).toBe("#101014");
     expect(github.colors.canvas).toBe("#fdfdfd");
     // The unpaired dimmed variant stays a single dark theme.
-    expect(getThemeColorsForMode(themes[2]!, "light")).toBeNull();
+    expect(getThemeColorsForMode(themes[3]!, "light")).toBeNull();
   });
 
   it("does not guess when a family is ambiguous", () => {

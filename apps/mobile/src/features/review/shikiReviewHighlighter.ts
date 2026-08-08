@@ -11,6 +11,7 @@ import githubDarkDefault from "@shikijs/themes/github-dark-default";
 import githubLightDefault from "@shikijs/themes/github-light-default";
 import { getFiletypeFromFileName } from "@pierre/diffs/utils/getFiletypeFromFileName";
 import * as Schema from "effect/Schema";
+import type { ThemeColors } from "@t3tools/themes";
 
 import {
   resolveReviewHighlighterEngine,
@@ -22,6 +23,19 @@ import { applyDiffRangesToTokens, computeWordAltDiffRanges } from "./reviewWordD
 
 export type ReviewDiffTheme = "light" | "dark";
 export type { ReviewHighlighterEngine };
+type ShikiTheme =
+  | string
+  | {
+      readonly name: string;
+      readonly displayName?: string;
+      readonly type: ReviewDiffTheme;
+      readonly fg: string;
+      readonly bg: string;
+      readonly settings: Array<{
+        readonly scope: string | Array<string>;
+        readonly settings: { readonly foreground?: string };
+      }>;
+    };
 
 export class ReviewHighlighterEngineInitializationError extends Schema.TaggedErrorClass<ReviewHighlighterEngineInitializationError>()(
   "ReviewHighlighterEngineInitializationError",
@@ -58,6 +72,58 @@ const SHIKI_THEME_NAME_BY_SCHEME = {
   light: "github-light-default",
   dark: "github-dark-default",
 } as const;
+
+function getShikiThemeCacheKey(theme: ReviewDiffTheme, colors?: ThemeColors | null): string {
+  if (!colors) {
+    return SHIKI_THEME_NAME_BY_SCHEME[theme];
+  }
+
+  return [
+    `t3-${theme}`,
+    colors.codeBackground,
+    colors.codeForeground,
+    colors.textMuted,
+    colors.accent,
+    colors.accentForeground,
+    colors.messageAction,
+    colors.update,
+    colors.focus,
+    colors.error,
+  ].join(":");
+}
+
+function getShikiTheme(theme: ReviewDiffTheme, colors?: ThemeColors | null): ShikiTheme {
+  if (!colors) {
+    return SHIKI_THEME_NAME_BY_SCHEME[theme];
+  }
+
+  return {
+    name: getShikiThemeCacheKey(theme, colors),
+    displayName: "T3 Code mobile theme",
+    type: theme,
+    fg: colors.codeForeground,
+    bg: colors.codeBackground,
+    settings: [
+      {
+        scope: ["comment", "punctuation.definition.comment"],
+        settings: { foreground: colors.textMuted },
+      },
+      { scope: ["keyword", "storage", "storage.type"], settings: { foreground: colors.accent } },
+      {
+        scope: ["entity.name.function", "support.function"],
+        settings: { foreground: colors.accent },
+      },
+      {
+        scope: ["entity.name.type", "support.type", "support.class"],
+        settings: { foreground: colors.messageAction },
+      },
+      { scope: ["string", "constant.other.symbol"], settings: { foreground: colors.update } },
+      { scope: ["constant.numeric", "constant.language"], settings: { foreground: colors.focus } },
+      { scope: ["variable", "variable.other"], settings: { foreground: colors.accentForeground } },
+      { scope: ["invalid", "invalid.illegal"], settings: { foreground: colors.error } },
+    ],
+  };
+}
 const REVIEW_HIGHLIGHTER_ENGINE_ENV_VALUE =
   process.env.EXPO_PUBLIC_REVIEW_HIGHLIGHTER_ENGINE ??
   (process.env.NODE_ENV === "test" ? "javascript" : "native");
@@ -662,7 +728,7 @@ function applyWordAltDiffHighlightsToSelectedLines(input: {
 async function highlightLines(
   code: string,
   language: string,
-  theme: string,
+  theme: ShikiTheme,
 ): Promise<ReadonlyArray<ReadonlyArray<ReviewHighlightedToken>>> {
   if (code.length === 0) {
     return [];
@@ -718,25 +784,27 @@ export async function highlightCodeSnippet(input: {
   readonly code: string;
   readonly language?: string | null;
   readonly theme: ReviewDiffTheme;
+  readonly themeColors?: ThemeColors | null;
 }): Promise<ReadonlyArray<ReadonlyArray<ReviewHighlightedToken>>> {
   const languageHint = input.language?.trim() || "text";
   const language = await resolveLanguageFromPath(`snippet.${languageHint}`, languageHint);
-  return highlightLines(input.code, language, SHIKI_THEME_NAME_BY_SCHEME[input.theme]);
+  return highlightLines(input.code, language, getShikiTheme(input.theme, input.themeColors));
 }
 
 export async function highlightSourceFile(input: {
   readonly path: string;
   readonly contents: string;
   readonly theme: ReviewDiffTheme;
+  readonly themeColors?: ThemeColors | null;
 }): Promise<ReadonlyArray<ReadonlyArray<ReviewHighlightedToken>>> {
   const language = await resolveLanguageFromPath(input.path);
-  return highlightLines(input.contents, language, SHIKI_THEME_NAME_BY_SCHEME[input.theme]);
+  return highlightLines(input.contents, language, getShikiTheme(input.theme, input.themeColors));
 }
 
 async function highlightPatchLinesInChunks(input: {
   readonly lines: ReadonlyArray<string>;
   readonly language: string;
-  readonly theme: string;
+  readonly theme: ShikiTheme;
   readonly onChunk: (
     startIndex: number,
     tokens: ReadonlyArray<ReadonlyArray<ReviewHighlightedToken>>,
@@ -794,8 +862,12 @@ async function highlightPatchLinesInChunks(input: {
   return highlightedLines;
 }
 
-function getHighlightCacheKey(file: ReviewRenderableFile, theme: ReviewDiffTheme): string {
-  return `${SHIKI_THEME_NAME_BY_SCHEME[theme]}:${file.cacheKey}`;
+function getHighlightCacheKey(
+  file: ReviewRenderableFile,
+  theme: ReviewDiffTheme,
+  colors?: ThemeColors | null,
+): string {
+  return `${getShikiThemeCacheKey(theme, colors)}:${file.cacheKey}`;
 }
 
 function storeResolvedHighlightedFile(cacheKey: string, highlighted: ReviewHighlightedFile): void {
@@ -822,20 +894,22 @@ export function clearReviewHighlightFileCache(): void {
 export function getCachedHighlightedReviewFile(
   file: ReviewRenderableFile,
   theme: ReviewDiffTheme,
+  themeColors?: ThemeColors | null,
 ): ReviewHighlightedFile | null {
   if (REVIEW_HIGHLIGHTER_DISABLE_RESULT_CACHE) {
     return null;
   }
 
-  return resolvedHighlightCache.get(getHighlightCacheKey(file, theme)) ?? null;
+  return resolvedHighlightCache.get(getHighlightCacheKey(file, theme, themeColors)) ?? null;
 }
 
 export async function highlightReviewFile(
   file: ReviewRenderableFile,
   theme: ReviewDiffTheme,
+  themeColors?: ThemeColors | null,
 ): Promise<ReviewHighlightedFile> {
-  const shikiTheme = SHIKI_THEME_NAME_BY_SCHEME[theme];
-  const cacheKey = getHighlightCacheKey(file, theme);
+  const shikiTheme = getShikiTheme(theme, themeColors);
+  const cacheKey = getHighlightCacheKey(file, theme, themeColors);
   if (!REVIEW_HIGHLIGHTER_DISABLE_RESULT_CACHE) {
     const resolved = resolvedHighlightCache.get(cacheKey);
     if (resolved) {
@@ -932,9 +1006,10 @@ export async function streamHighlightReviewFile(
   file: ReviewRenderableFile,
   theme: ReviewDiffTheme,
   onProgress: (progress: ReviewHighlightFileProgress) => void,
+  themeColors?: ThemeColors | null,
 ): Promise<ReviewHighlightedFile> {
-  const shikiTheme = SHIKI_THEME_NAME_BY_SCHEME[theme];
-  const cacheKey = getHighlightCacheKey(file, theme);
+  const shikiTheme = getShikiTheme(theme, themeColors);
+  const cacheKey = getHighlightCacheKey(file, theme, themeColors);
   if (!REVIEW_HIGHLIGHTER_DISABLE_RESULT_CACHE) {
     const resolved = resolvedHighlightCache.get(cacheKey);
     if (resolved) {
@@ -1040,6 +1115,7 @@ export async function highlightReviewSelectedLines(input: {
   readonly lines: ReadonlyArray<ReviewRenderableLineRow>;
   readonly theme: ReviewDiffTheme;
   readonly languageHint?: string | null;
+  readonly themeColors?: ThemeColors | null;
 }): Promise<Record<string, ReadonlyArray<ReviewHighlightedToken>>> {
   if (input.lines.length === 0) {
     return {};
@@ -1048,7 +1124,7 @@ export async function highlightReviewSelectedLines(input: {
   const loadedLanguage = resolveLoadedLanguageFromPath(input.filePath, input.languageHint ?? null);
   const language =
     loadedLanguage ?? (await resolveLanguageFromPath(input.filePath, input.languageHint ?? null));
-  const shikiTheme = SHIKI_THEME_NAME_BY_SCHEME[input.theme];
+  const shikiTheme = getShikiTheme(input.theme, input.themeColors);
   const additionLikeLines: string[] = [];
   const deletionLines: string[] = [];
   for (const line of input.lines) {

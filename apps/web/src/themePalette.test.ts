@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyThemeColorPreview,
   applyThemePalette,
+  BUILT_IN_THEME_DEFINITIONS,
   getThemeColorsForMode,
   getThemeDefinition,
   getThemeModes,
@@ -32,6 +33,7 @@ import {
   getDefaultThemeColors,
   THEME_FILE_VERSION,
 } from "./themePalette";
+import { pairVsCodeThemes, parseVsCodeThemeFile } from "./vscodeThemeImport";
 
 function contrastRatio(first: string, second: string): number {
   const toRgb = (value: string) => {
@@ -250,7 +252,7 @@ describe("theme files", () => {
   it("keeps optional light and dark palettes under one theme id", () => {
     const theme = parseThemeFile({
       version: THEME_FILE_VERSION,
-      id: "aurora",
+      id: "custom-aurora",
       name: "Aurora",
       appearance: "light",
       colors: { canvas: "#f8fbff", text: "#10243d" },
@@ -273,6 +275,37 @@ describe("theme files", () => {
       canvas: "#101827",
       text: "#eef5ff",
     });
+  });
+
+  it("keeps a VS Code pair separate when its stripped id is reserved", () => {
+    const make = (name: string, type: "light" | "dark") =>
+      parseVsCodeThemeFile({
+        name,
+        type,
+        colors: {
+          "editor.background": type === "dark" ? "#282a36" : "#f8f8f2",
+          "editor.foreground": type === "dark" ? "#f8f8f2" : "#282a36",
+        },
+      });
+    const paired = pairVsCodeThemes([make("Dracula Light", "light"), make("Dracula Dark", "dark")]);
+
+    expect(paired.map((theme) => theme.id)).toEqual(["dracula-light", "dracula-dark"]);
+
+    const stored = new Map<string, string>();
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => stored.get(key) ?? null,
+        setItem: (key: string, value: string) => stored.set(key, value),
+      },
+    });
+    invalidateCustomThemes();
+    try {
+      for (const theme of paired) installCustomTheme(theme);
+      expect(getCustomThemes().map((theme) => theme.id)).toEqual(["dracula-light", "dracula-dark"]);
+    } finally {
+      vi.unstubAllGlobals();
+      invalidateCustomThemes();
+    }
   });
 
   it("keeps the T3 Chat palette faithful and readable", () => {
@@ -322,7 +355,7 @@ describe("theme files", () => {
   });
 
   it("includes the dual-mode maintainer themes", () => {
-    for (const theme of [T3_CHAT_THEME, GROVE_THEME, OCEAN_THEME, EMBER_THEME, IRIS_THEME]) {
+    for (const theme of BUILT_IN_THEME_DEFINITIONS) {
       expect(getThemeDefinition(theme.id)).toBe(theme);
       expect(getThemeModes(theme)).toEqual(["light", "dark"]);
       expect(theme.colors.accent).toMatch(/^#[0-9a-f]{6}$/i);
@@ -430,7 +463,7 @@ describe("theme files", () => {
     const createdTheme = installCustomTheme(
       parseThemeFile({
         version: THEME_FILE_VERSION,
-        id: "aurora",
+        id: "custom-aurora",
         name: "Aurora",
         appearance: "light",
         colors: { canvas: "#f8fbff", accent: "#5b6cff" },
@@ -444,14 +477,14 @@ describe("theme files", () => {
     });
 
     expect(updatedTheme).toMatchObject({
-      id: "aurora",
+      id: "custom-aurora",
       label: "Aurora Night",
       sidebarArtwork: true,
     });
     invalidateCustomThemes();
     expect(getCustomThemes()).toEqual([updatedTheme]);
     expect(JSON.parse(stored.get(CUSTOM_THEMES_STORAGE_KEY) ?? "[]")[0]).toMatchObject({
-      id: "aurora",
+      id: "custom-aurora",
       label: "Aurora Night",
       sidebarArtwork: true,
     });
@@ -533,14 +566,14 @@ describe("stored theme preferences", () => {
           key === CUSTOM_THEMES_STORAGE_KEY
             ? JSON.stringify([
                 {
-                  id: "aurora",
+                  id: "custom-aurora",
                   label: "Aurora",
                   appearance: "light",
                   colors: { canvas: "#f8fbff", futureRole: "#123456", accent: "not-a-color" },
                   variants: { light: { canvas: "#101827" } },
                 },
                 { id: "light", label: "Reserved", appearance: "light", colors: {} },
-                { id: "aurora", label: "Duplicate", appearance: "dark", colors: {} },
+                { id: "custom-aurora", label: "Duplicate", appearance: "dark", colors: {} },
               ])
             : null,
       },
@@ -550,7 +583,7 @@ describe("stored theme preferences", () => {
     const themes = getCustomThemes();
     expect(themes).toHaveLength(1);
     expect(themes[0]).toMatchObject({
-      id: "aurora",
+      id: "custom-aurora",
       colors: { canvas: "#f8fbff", accent: getDefaultThemeColors("light").accent },
     });
     // The variant shadowing the base appearance is dropped so the theme

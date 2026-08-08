@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import indexHtml from "../index.html?raw";
 import {
+  BUILT_IN_THEME_DEFINITIONS,
   CUSTOM_THEMES_STORAGE_KEY,
   getDefaultThemeColors,
   getThemeColorsForMode,
@@ -129,7 +130,7 @@ function runtimeResolvedAppearance(
 }
 
 const AURORA_DUAL = {
-  id: "aurora",
+  id: "custom-aurora",
   label: "Aurora",
   appearance: "light",
   colors: { canvas: "#f8fbff", text: "#10243d", accent: "#5b6cff" },
@@ -196,7 +197,7 @@ describe("index.html boot script", () => {
     {
       name: "a dual-mode custom theme follows the OS",
       storage: {
-        [THEME_STORAGE_KEY]: "aurora",
+        [THEME_STORAGE_KEY]: "custom-aurora",
         [THEME_FOLLOW_SYSTEM_STORAGE_KEY]: "true",
         [CUSTOM_THEMES_STORAGE_KEY]: JSON.stringify([AURORA_DUAL]),
       },
@@ -214,7 +215,7 @@ describe("index.html boot script", () => {
     {
       name: "a legacy mode-suffixed preference is treated as unknown",
       storage: {
-        [THEME_STORAGE_KEY]: "aurora:dark",
+        [THEME_STORAGE_KEY]: "custom-aurora:dark",
         [CUSTOM_THEMES_STORAGE_KEY]: JSON.stringify([AURORA_DUAL]),
       },
       prefersDark: true,
@@ -262,13 +263,13 @@ describe("index.html boot script", () => {
 
     const aurora = runBootScript({
       storage: {
-        [THEME_STORAGE_KEY]: "aurora",
+        [THEME_STORAGE_KEY]: "custom-aurora",
         [THEME_FOLLOW_SYSTEM_STORAGE_KEY]: "true",
         [CUSTOM_THEMES_STORAGE_KEY]: JSON.stringify([AURORA_DUAL]),
       },
       prefersDark: true,
     });
-    expect(aurora.themeId).toBe("aurora");
+    expect(aurora.themeId).toBe("custom-aurora");
     expect(aurora.isDark).toBe(true);
     expect(aurora.backgroundColor).toBe(DEFAULT_DARK_CHROME);
     expect(aurora.bootVariables["--boot-background"]).toBe(AURORA_DUAL.variants.dark.canvas);
@@ -279,7 +280,7 @@ describe("index.html boot script", () => {
   // boot script's hand-maintained copy into a CI-enforced contract: any
   // palette change breaks this test until the copy in index.html is updated.
   it("keeps every built-in boot splash in sync with the real palettes", () => {
-    for (const theme of [T3_CHAT_THEME, GROVE_THEME, OCEAN_THEME, EMBER_THEME, IRIS_THEME]) {
+    for (const theme of BUILT_IN_THEME_DEFINITIONS) {
       // The boot script resolves every built-in from a light base appearance.
       expect(theme.appearance).toBe("light");
       for (const mode of ["light", "dark"] as const) {

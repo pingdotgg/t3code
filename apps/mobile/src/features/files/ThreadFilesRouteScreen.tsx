@@ -1,7 +1,7 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Platform, useColorScheme, View } from "react-native";
+import { ActivityIndicator, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import {
@@ -20,6 +20,8 @@ import { resolveFileSelectionNavigationAction } from "../../lib/adaptive-navigat
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { useAppearanceColorScheme } from "../../lib/useAppearanceColorScheme";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useEnvironmentQuery } from "../../state/query";
@@ -94,6 +96,7 @@ function FileContent(props: {
   readonly truncated: boolean;
   readonly onRefresh?: () => Promise<void> | void;
 }) {
+  const { themeColors } = useAppearancePreferences();
   const isMarkdown = isMarkdownPreviewFile(props.relativePath);
   const isBrowserFile = isBrowserPreviewFile(props.relativePath);
   const isImageFile = isImagePreviewFile(props.relativePath);
@@ -134,11 +137,27 @@ function FileContent(props: {
   return (
     <View className="flex-1 bg-sheet">
       {props.truncated ? (
-        <View className="border-b border-amber-200 bg-amber-50 px-4 py-2 dark:border-amber-900/60 dark:bg-amber-950/40">
-          <Text className="text-2xs font-t3-bold uppercase text-amber-700 dark:text-amber-300">
+        <View
+          className="border-b border-amber-200 bg-amber-50 px-4 py-2 dark:border-amber-900/60 dark:bg-amber-950/40"
+          style={
+            themeColors
+              ? {
+                  backgroundColor: themeColors.warningSurface,
+                  borderBottomColor: themeColors.warning,
+                }
+              : undefined
+          }
+        >
+          <Text
+            className="text-2xs font-t3-bold uppercase text-amber-700 dark:text-amber-300"
+            style={themeColors ? { color: themeColors.warningForeground } : undefined}
+          >
             Partial file
           </Text>
-          <Text className="text-xs leading-snug text-amber-800 dark:text-amber-200">
+          <Text
+            className="text-xs leading-snug text-amber-800 dark:text-amber-200"
+            style={themeColors ? { color: themeColors.warningForeground } : undefined}
+          >
             Preview limited to the first 1 MB of a truncated file.
           </Text>
         </View>
@@ -242,7 +261,8 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const { fileInspector, layout, panes, showAuxiliaryPane, togglePrimarySidebar } =
     useAdaptiveWorkspaceLayout();
   const [searchQuery, setSearchQuery] = useState("");
-  const colorScheme = useColorScheme();
+  const colorScheme = useAppearanceColorScheme();
+  const { themeColors } = useAppearancePreferences();
   const isAndroid = Platform.OS === "android";
   const highlightTheme = colorScheme === "dark" ? "dark" : "light";
   const iconColor = String(useThemeColor("--color-icon-muted"));
@@ -319,9 +339,10 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
         environmentId,
         relativePath,
         theme: highlightTheme,
+        themeColors,
       });
     },
-    [cwd, environmentId, highlightTheme],
+    [cwd, environmentId, highlightTheme, themeColors],
   );
   useEffect(() => {
     if (fileInspector.supported && cwd !== null && !revealedInspectorRef.current) {
@@ -465,6 +486,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const navigation = useNavigation();
   const { fileInspector, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const iconColor = useThemeColor("--color-icon");
+  const headerBackground = useThemeColor("--color-sheet");
   const params = props.route.params;
   const relativePath = normalizeRoutePath(params.path);
   const targetLine = normalizeRouteLine(firstRouteParam(params.line));
@@ -575,6 +597,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             // sheet-colored header — this route's content scrolls internally, so
             // there is nothing for glass to sample). Only dynamic values here.
             headerTintColor: iconColor,
+            headerStyle: { backgroundColor: headerBackground as string },
             headerTitle: basename(relativePath),
             title: basename(relativePath),
             unstable_headerSubtitle:

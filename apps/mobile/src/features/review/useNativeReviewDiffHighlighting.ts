@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ThemeColors } from "@t3tools/themes";
 
 import {
   highlightNativeReviewDiffVisibleRows,
@@ -38,10 +39,11 @@ export function useNativeReviewDiffHighlighting(input: {
   readonly files: ReadonlyArray<NativeReviewDiffFile>;
   readonly rows: ReadonlyArray<NativeReviewDiffRow>;
   readonly scheme: NativeReviewDiffHighlightScheme;
+  readonly themeColors?: ThemeColors | null;
   readonly resetKey: string;
   readonly enabled: boolean;
 }) {
-  const { enabled, files, resetKey, rows, scheme } = input;
+  const { enabled, files, resetKey, rows, scheme, themeColors } = input;
   const highlightedRowIdsRef = useRef<Set<string>>(new Set());
   const visibleRangeRef = useRef<NativeReviewVisibleRange>({
     firstRowIndex: 0,
@@ -76,6 +78,7 @@ export function useNativeReviewDiffHighlighting(input: {
           files,
           rows,
           scheme,
+          themeColors,
           engine,
           firstRowIndex: requestRange.firstRowIndex,
           lastRowIndex: requestRange.lastRowIndex,
@@ -119,7 +122,7 @@ export function useNativeReviewDiffHighlighting(input: {
     })();
 
     return () => abortController.abort();
-  }, [enabled, files, resetKey, rows, scheme, visibleHighlightRequest]);
+  }, [enabled, files, resetKey, rows, scheme, themeColors, visibleHighlightRequest]);
 
   const updateVisibleRange = useCallback((nextRange: NativeReviewVisibleRange) => {
     const previousRange = visibleRangeRef.current;

@@ -21,6 +21,10 @@ export interface Preferences {
   readonly markdownFontSize?: number;
   readonly codeFontSize?: number | null;
   readonly codeWordBreak?: boolean;
+  /** Device-local built-in theme id. Undefined keeps the stock CSS palette. */
+  readonly themeId?: string | null;
+  /** Device-local appearance override; undefined follows the OS. */
+  readonly appearanceMode?: "system" | "light" | "dark";
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   readonly collapsedProjectGroups?: readonly string[];
   /** @deprecated Kept temporarily so older OTA bundles retain the selected mode. */
@@ -81,6 +85,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     markdownFontSize?: number;
     codeFontSize?: number | null;
     codeWordBreak?: boolean;
+    themeId?: string | null;
+    appearanceMode?: "system" | "light" | "dark";
     connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
     collapsedProjectGroups?: readonly string[];
     projectGroupingEnabled?: boolean;
@@ -102,6 +108,16 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.codeFontSize = parsed.codeFontSize;
   }
   if (typeof parsed.codeWordBreak === "boolean") preferences.codeWordBreak = parsed.codeWordBreak;
+  if (typeof parsed.themeId === "string" || parsed.themeId === null) {
+    preferences.themeId = parsed.themeId;
+  }
+  if (
+    parsed.appearanceMode === "system" ||
+    parsed.appearanceMode === "light" ||
+    parsed.appearanceMode === "dark"
+  ) {
+    preferences.appearanceMode = parsed.appearanceMode;
+  }
   if (Array.isArray(parsed.connectOnboardingOptOutAccounts)) {
     preferences.connectOnboardingOptOutAccounts = parsed.connectOnboardingOptOutAccounts.filter(
       (account): account is string => typeof account === "string",

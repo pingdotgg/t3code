@@ -3,6 +3,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
+import type { ThemeColors } from "@t3tools/themes";
 
 import {
   highlightCodeSnippet,
@@ -19,6 +20,7 @@ export interface MarkdownCodeHighlightInput {
   readonly enabled: boolean;
   readonly language: string;
   readonly theme: ReviewDiffTheme;
+  readonly themeColors?: ThemeColors | null;
 }
 
 type MarkdownCodeHighlighter = (
@@ -43,6 +45,7 @@ export function createMarkdownCodeHighlightAtomFamily(options?: {
             code: input.code,
             language: input.language,
             theme: input.theme,
+            themeColors: input.themeColors,
           })
         : Promise.resolve(null));
   const idleTtlMs = options?.idleTtlMs ?? MARKDOWN_CODE_HIGHLIGHT_IDLE_TTL_MS;
@@ -68,6 +71,7 @@ export function useMarkdownCodeHighlight(input: {
   readonly enabled: boolean;
   readonly language: string | null | undefined;
   readonly theme: ReviewDiffTheme;
+  readonly themeColors?: ThemeColors | null;
 }): MarkdownHighlightedCode | null {
   const normalizedLanguage = input.language?.trim() || "text";
   const enabled = input.enabled && Boolean(input.language?.trim());
@@ -79,8 +83,9 @@ export function useMarkdownCodeHighlight(input: {
         enabled,
         language: atomLanguage,
         theme: input.theme,
+        themeColors: input.themeColors,
       }),
-    [atomLanguage, enabled, input.code, input.theme],
+    [atomLanguage, enabled, input.code, input.theme, input.themeColors],
   );
   const result = useAtomValue(highlightAtom);
   return AsyncResult.isSuccess(result) ? result.value : null;

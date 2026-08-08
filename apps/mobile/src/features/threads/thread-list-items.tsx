@@ -5,9 +5,10 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import type { MenuAction } from "@react-native-menu/menu";
+import type { ThemeColors } from "@t3tools/themes";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useMemo, type ComponentProps } from "react";
-import { Pressable, useColorScheme, useWindowDimensions, View } from "react-native";
+import { Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import Svg, { Circle, Path } from "react-native-svg";
 
@@ -18,11 +19,14 @@ import { cn } from "../../lib/cn";
 import { HOME_HORIZONTAL_INSET } from "../../lib/layoutMetrics";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { useAppearanceColorScheme } from "../../lib/useAppearanceColorScheme";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr, type ThreadPr } from "../../state/use-thread-pr";
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { resolveThreadStatus } from "./threadPresentation";
+import { getSidebarRowTextColor } from "./thread-list-theme";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 
 /**
@@ -39,16 +43,17 @@ const SIDEBAR_ROW_RADIUS = 12;
 
 function pullRequestTintColor(
   state: ThreadPr["state"],
-  colorScheme: ReturnType<typeof useColorScheme>,
+  colorScheme: ReturnType<typeof useAppearanceColorScheme>,
+  themeColors?: ThemeColors | null,
 ) {
   const dark = colorScheme === "dark";
   switch (state) {
     case "open":
-      return dark ? "#34d399" : "#059669";
+      return themeColors?.update ?? (dark ? "#34d399" : "#059669");
     case "merged":
-      return dark ? "#a78bfa" : "#7c3aed";
+      return themeColors?.accent ?? (dark ? "#a78bfa" : "#7c3aed");
     case "closed":
-      return dark ? "#a1a1aa" : "#71717a";
+      return themeColors?.mutedForeground ?? (dark ? "#a1a1aa" : "#71717a");
   }
 }
 
@@ -88,9 +93,13 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
   readonly onNewThread?: (project: EnvironmentProject) => void;
 }) {
   const iconMutedColor = useThemeColor("--color-icon-muted");
+  const { themeColors } = useAppearancePreferences();
   const { groupKey, onGroupAction, onNewThread } = props;
   const newThreadTarget = props.newThreadTarget ?? null;
   const compact = props.variant === "compact";
+  const sidebar = !compact;
+  const sidebarForeground = sidebar ? themeColors?.sidebarForeground : undefined;
+  const sidebarMutedForeground = sidebar ? themeColors?.sidebarMutedForeground : undefined;
   const handleToggle = useCallback(
     () => onGroupAction(groupKey, "toggle-collapsed"),
     [groupKey, onGroupAction],
@@ -112,6 +121,7 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
     <View
       className={compact ? "flex-row items-center bg-screen" : "flex-row items-center"}
       style={{
+        backgroundColor: sidebar ? themeColors?.sidebar : undefined,
         minHeight: compact ? 44 : 36,
         paddingLeft: compact ? 20 : 12,
         // Compact right padding centers the 20pt plus glyph on the thread
@@ -146,6 +156,7 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
               : "flex-shrink text-sm font-t3-bold tracking-[0.2px] text-foreground-muted"
           }
           numberOfLines={1}
+          style={sidebarForeground ? { color: sidebarForeground } : undefined}
         >
           {props.title}
         </Text>
@@ -155,6 +166,7 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
               ? "flex-1 text-sm font-t3-medium text-foreground-tertiary"
               : "flex-1 text-xs font-t3-medium text-foreground-tertiary"
           }
+          style={sidebarMutedForeground ? { color: sidebarMutedForeground } : undefined}
         >
           {props.threadCount}
         </Text>
@@ -170,7 +182,7 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
           <SymbolView
             name="plus"
             size={compact ? 20 : 16}
-            tintColor={iconMutedColor}
+            tintColor={sidebarMutedForeground ?? iconMutedColor}
             type="monochrome"
             weight="medium"
           />
@@ -190,8 +202,11 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
   readonly onGroupAction: (key: string, action: HomeGroupDisplayAction) => void;
 }) {
   const iconSubtleColor = useThemeColor("--color-icon-subtle");
+  const { themeColors } = useAppearancePreferences();
   const showsMore = props.hiddenCount > 0;
   const compact = props.variant === "compact";
+  const sidebar = !compact;
+  const sidebarMutedForeground = sidebar ? themeColors?.sidebarMutedForeground : undefined;
   const { groupKey, onGroupAction } = props;
   const handleShowMore = useCallback(
     () => onGroupAction(groupKey, "show-more"),
@@ -210,6 +225,7 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
       hitSlop={6}
       onPress={onPress}
       style={({ pressed }) => ({
+        backgroundColor: sidebar ? themeColors?.sidebarControlSurface : undefined,
         opacity: pressed ? 0.6 : 1,
         paddingHorizontal: compact ? 14 : 12,
         paddingVertical: compact ? 7 : 6,
@@ -220,7 +236,7 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
         <SymbolView
           name={icon}
           size={10}
-          tintColor={iconSubtleColor}
+          tintColor={sidebarMutedForeground ?? iconSubtleColor}
           type="monochrome"
           weight="semibold"
         />
@@ -230,6 +246,7 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
               ? "text-sm font-t3-medium text-foreground-muted"
               : "text-xs font-t3-medium text-foreground-muted"
           }
+          style={sidebarMutedForeground ? { color: sidebarMutedForeground } : undefined}
         >
           {label}
         </Text>
@@ -243,6 +260,7 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
         compact ? "flex-row items-center gap-2.5 bg-screen" : "flex-row items-center gap-2"
       }
       style={{
+        backgroundColor: sidebar ? themeColors?.sidebar : undefined,
         paddingLeft: compact ? THREAD_LIST_COMPACT_INSET : 12,
         paddingRight: compact ? 18 : 12,
         paddingVertical: compact ? 12 : 8,
@@ -274,10 +292,15 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
 }) {
   const compact = props.variant === "compact";
+  const sidebar = !compact;
+  const { themeColors } = useAppearancePreferences();
   const separatorColor = useThemeColor("--color-separator");
   const iconSubtleColor = useThemeColor("--color-icon-subtle");
   const mutedColor = useThemeColor("--color-foreground-muted");
   const pressedBackgroundColor = useThemeColor("--color-subtle");
+  const sidebarBorderColor = themeColors?.sidebarBorder ?? separatorColor;
+  const sidebarMutedForeground = themeColors?.sidebarMutedForeground ?? mutedColor;
+  const sidebarForeground = themeColors?.sidebarForeground;
 
   const { pendingTask, onSelectPendingTask, onDeletePendingTask } = props;
   const timestamp = relativeTime(pendingTask.message.createdAt);
@@ -304,7 +327,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
         <SymbolView
           name="tray.and.arrow.up"
           size={10}
-          tintColor={compact ? iconSubtleColor : mutedColor}
+          tintColor={compact ? iconSubtleColor : sidebarMutedForeground}
           type="monochrome"
         />
         <Text
@@ -314,6 +337,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
               : "shrink text-xs text-foreground-muted"
           }
           numberOfLines={1}
+          style={sidebar ? { color: sidebarMutedForeground } : undefined}
         >
           {subtitleParts.join(" · ")}
         </Text>
@@ -340,7 +364,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
           style={{
             gap: 3,
             borderBottomWidth: props.isLast ? 0 : 1,
-            borderBottomColor: separatorColor,
+            borderBottomColor: sidebar ? sidebarBorderColor : separatorColor,
             paddingBottom: 10,
           }}
         >
@@ -370,7 +394,13 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
       accessibilityRole="button"
       onPress={() => onSelectPendingTask(pendingTask)}
       style={({ pressed }) => ({
-        backgroundColor: pressed ? pressedBackgroundColor : "transparent",
+        backgroundColor: sidebar
+          ? pressed
+            ? (themeColors?.sidebarRowHover ?? pressedBackgroundColor)
+            : (themeColors?.sidebar ?? "transparent")
+          : pressed
+            ? pressedBackgroundColor
+            : "transparent",
         borderRadius: SIDEBAR_ROW_RADIUS,
         cursor: "pointer",
         minHeight: 64,
@@ -381,12 +411,20 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
     >
       <View className="gap-[3px]">
         <View className="flex-row items-center justify-between gap-2">
-          <Text className="flex-1 text-base font-t3-medium text-foreground" numberOfLines={1}>
+          <Text
+            className="flex-1 text-base font-t3-medium text-foreground"
+            numberOfLines={1}
+            style={sidebarForeground ? { color: sidebarForeground } : undefined}
+          >
             {pendingTask.title}
           </Text>
           <View className="flex-row items-center gap-2">
             {statusPill}
-            <Text className="text-xs tabular-nums text-foreground-muted" numberOfLines={1}>
+            <Text
+              className="text-xs tabular-nums text-foreground-muted"
+              numberOfLines={1}
+              style={sidebarMutedForeground ? { color: sidebarMutedForeground } : undefined}
+            >
               {timestamp}
             </Text>
           </View>
@@ -436,7 +474,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   >["simultaneousWithExternalGesture"];
 }) {
   const { width: windowWidth } = useWindowDimensions();
-  const colorScheme = useColorScheme();
+  const colorScheme = useAppearanceColorScheme();
+  const { themeColors } = useAppearancePreferences();
   const compact = props.variant === "compact";
   const selected = props.selected === true;
   // Recycling-safe: resets when the list container is reused for another
@@ -448,7 +487,13 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const screenColor = useThemeColor("--color-screen");
   const drawerColor = useThemeColor("--color-drawer");
   const pressedBackgroundColor = useThemeColor("--color-subtle");
-  const selectedBackgroundColor = useThemeColor("--color-user-bubble");
+  const selectedBackgroundFallback = useThemeColor("--color-user-bubble");
+  const selectedForegroundFallback = useThemeColor("--color-user-bubble-foreground");
+  const selectedBackgroundColor = themeColors?.messageAction ?? selectedBackgroundFallback;
+  const selectedForegroundColor =
+    themeColors?.messageActionForeground ?? selectedForegroundFallback;
+  const sidebarForeground = compact ? undefined : getSidebarRowTextColor(themeColors, "foreground");
+  const sidebarMutedForeground = compact ? undefined : getSidebarRowTextColor(themeColors, "muted");
 
   const { thread, onSelectThread, onArchiveThread, onDeleteThread } = props;
   const status = resolveThreadStatus(thread);
@@ -461,11 +506,18 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     Boolean(part),
   );
 
-  const backgroundColor = compact ? screenColor : drawerColor;
-  const effectivePressedBackground = selected ? "rgba(255,255,255,0.16)" : pressedBackgroundColor;
+  const backgroundColor = compact ? screenColor : (themeColors?.sidebar ?? drawerColor);
+  const effectivePressedBackground = selected
+    ? (themeColors?.messageAction ??
+      (themeColors ? selectedBackgroundColor : "rgba(255,255,255,0.16)"))
+    : (themeColors?.sidebarRowHover ?? pressedBackgroundColor);
   const effectiveStatus =
     selected && status
-      ? { ...status, pillClassName: "bg-white/20", textClassName: "text-white" }
+      ? {
+          ...status,
+          pillClassName: "bg-user-bubble-foreground/20",
+          textClassName: "text-user-bubble-foreground",
+        }
       : status;
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
@@ -504,10 +556,14 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               className={cn(
                 "shrink",
                 compact ? "text-sm text-foreground-muted" : "text-xs",
-                !compact &&
-                  (selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted"),
+                !compact && (selected ? "text-user-bubble-foreground" : "text-foreground-muted"),
               )}
               numberOfLines={1}
+              style={
+                !compact && !selected && sidebarMutedForeground
+                  ? { color: sidebarMutedForeground }
+                  : undefined
+              }
             >
               {subtitleParts.join(" · ")}
             </Text>
@@ -517,11 +573,15 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
           <View className="flex-row items-center gap-0.5">
             <PullRequestIcon
               size={compact ? 13 : 11}
-              color={selected ? "#ffffff" : pullRequestTintColor(pr.state, colorScheme)}
+              color={
+                selected
+                  ? String(selectedForegroundColor)
+                  : pullRequestTintColor(pr.state, colorScheme, themeColors)
+              }
             />
             <Text
               className={`${compact ? "text-sm" : "text-xs"} font-t3-medium ${
-                selected ? "text-white" : pr.textClassName
+                selected ? "text-user-bubble-foreground" : pr.textClassName
               }`}
             >
               {pr.label}
@@ -579,6 +639,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                 compact
                 match={props.searchMatch}
                 query={props.searchQuery ?? ""}
+                sidebarForeground={sidebarForeground}
+                sidebarMutedForeground={sidebarMutedForeground}
               />
             ) : null}
             {subtitleRow}
@@ -619,6 +681,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                 selected ? "text-user-bubble-foreground" : "text-foreground",
               )}
               numberOfLines={1}
+              style={!selected && sidebarForeground ? { color: sidebarForeground } : undefined}
             >
               {thread.title}
             </Text>
@@ -627,9 +690,14 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               <Text
                 className={cn(
                   "text-xs tabular-nums",
-                  selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
+                  selected ? "text-user-bubble-foreground" : "text-foreground-muted",
                 )}
                 numberOfLines={1}
+                style={
+                  !selected && sidebarMutedForeground
+                    ? { color: sidebarMutedForeground }
+                    : undefined
+                }
               >
                 {timestamp}
               </Text>
@@ -640,6 +708,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               match={props.searchMatch}
               query={props.searchQuery ?? ""}
               selected={selected}
+              sidebarForeground={sidebarForeground}
+              sidebarMutedForeground={sidebarMutedForeground}
             />
           ) : null}
           {subtitleRow}
