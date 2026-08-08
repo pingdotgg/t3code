@@ -1,11 +1,34 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  extractMarkdownLinkHrefs,
+  normalizeMarkdownLinkDestination,
+  normalizeMarkdownLinkHrefKey,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
 } from "./markdown-links";
+
+describe("extractMarkdownLinkHrefs", () => {
+  it("extracts angle-bracketed destinations containing spaces", () => {
+    const [href] = extractMarkdownLinkHrefs('[file](<src/file name.ts> "source")');
+
+    expect(href).toBe("<src/file name.ts>");
+    expect(normalizeMarkdownLinkHrefKey(href ?? "")).toBe(
+      normalizeMarkdownLinkHrefKey("src/file%20name.ts"),
+    );
+    expect(
+      resolveMarkdownFileLinkMeta(normalizeMarkdownLinkDestination(href ?? ""), "/repo/project"),
+    ).toMatchObject({
+      filePath: "/repo/project/src/file name.ts",
+    });
+  });
+
+  it("continues to extract regular markdown destinations", () => {
+    expect(extractMarkdownLinkHrefs("[file](src/file%20name.ts)")).toEqual(["src/file%20name.ts"]);
+  });
+});
 
 describe("rewriteMarkdownFileUriHref", () => {
   it("rewrites file uri hrefs into direct path hrefs", () => {
@@ -105,6 +128,27 @@ describe("resolveMarkdownFileLinkTarget", () => {
   it("does not create a preview path for files outside the workspace", () => {
     expect(resolveMarkdownFileLinkMeta("/tmp/report.ts", "/repo/project")).toMatchObject({
       workspaceRelativePath: null,
+    });
+  });
+
+  it("resolves the exact file path used by open in folder", () => {
+    expect(resolveMarkdownFileLinkMeta("src/file%20name.ts:12:4", "/repo/project")).toMatchObject({
+      filePath: "/repo/project/src/file name.ts",
+      targetPath: "/repo/project/src/file name.ts:12:4",
+      line: 12,
+      column: 4,
+    });
+    expect(resolveMarkdownFileLinkMeta("/tmp/report.ts:9", "/repo/project")).toMatchObject({
+      filePath: "/tmp/report.ts",
+      targetPath: "/tmp/report.ts:9",
+      line: 9,
+    });
+  });
+
+  it("resolves missing paths without requiring browser-side file access", () => {
+    expect(resolveMarkdownFileLinkMeta("src/not-created-yet.ts", "/repo/project")).toMatchObject({
+      filePath: "/repo/project/src/not-created-yet.ts",
+      workspaceRelativePath: "src/not-created-yet.ts",
     });
   });
 

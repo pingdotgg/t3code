@@ -5089,6 +5089,33 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes websocket rpc shell.revealInFileManager", () =>
+    Effect.gen(function* () {
+      let revealedInput: { path: string } | null = null;
+      yield* buildAppUnderTest({
+        layers: {
+          externalLauncher: {
+            revealInFileManager: (input) =>
+              Effect.sync(() => {
+                revealedInput = input;
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.shellRevealInFileManager]({
+            path: "/tmp/project/src/index.ts",
+          }),
+        ),
+      );
+
+      assert.deepEqual(revealedInput, { path: "/tmp/project/src/index.ts" });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc shell.openInEditor errors", () =>
     Effect.gen(function* () {
       const externalLauncherError = new ExternalLauncherCommandNotFoundError({
