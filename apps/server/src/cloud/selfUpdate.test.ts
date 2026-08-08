@@ -9,15 +9,21 @@ import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ServerConfig from "../config.ts";
+import {
+  ProjectionSnapshotQuery,
+  type ProjectionSnapshotQueryShape,
+} from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
+import { PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL } from "./servicePreflight.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 import * as ServerSelfUpdate from "./selfUpdate.ts";
 
 interface HarnessOptions {
   readonly mode?: "web" | "desktop";
   readonly managed?: boolean;
-  readonly preflight?: "ready" | "blocked";
+  readonly preflight?: "ready" | "blocked" | "unsafe";
+  readonly activeWorkByCheck?: ReadonlyArray<number>;
   readonly requestUpdate?: ServiceLauncherClient.ServiceLauncherClient["Service"]["requestUpdate"];
 }
 
@@ -48,14 +54,18 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
           };
         }
         order.push("preflight");
+        const readyResult = {
+          status: "ready",
+          version: "1.1.0",
+          launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+          ...(options.preflight === "unsafe"
+            ? {}
+            : { providerLifecycleRecoveryProtocol: PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL }),
+        };
         const result =
           options.preflight === "blocked"
             ? { status: "blocked", version: "1.1.0", reason: "local update required" }
-            : {
-                status: "ready",
-                version: "1.1.0",
-                launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
-              };
+            : readyResult;
         return {
           // @effect-diagnostics-next-line preferSchemaOverJson:off - fake child-process stdout.
           stdout: JSON.stringify(result),
@@ -81,9 +91,25 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
   const config = yield* ServerConfig.ServerConfig.pipe(
     Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
   );
+  let activeWorkCheck = 0;
+  const projectionSnapshotQuery = {
+    getShellSnapshot: () => {
+      const configured = options.activeWorkByCheck ?? [0];
+      const activeWorkCount = configured[Math.min(activeWorkCheck, configured.length - 1)] ?? 0;
+      activeWorkCheck += 1;
+      return Effect.succeed({
+        threads: Array.from({ length: activeWorkCount }, (_, index) => ({
+          id: `thread-${index}`,
+          session: { status: "running" },
+          backgroundLiveness: null,
+        })),
+      });
+    },
+  } as unknown as ProjectionSnapshotQueryShape;
   const selfUpdate = yield* ServerSelfUpdate.make().pipe(
     Effect.provideService(ProcessRunner.ProcessRunner, runner),
     Effect.provideService(ServiceLauncherClient.ServiceLauncherClient, launcher),
+    Effect.provideService(ProjectionSnapshotQuery, projectionSnapshotQuery),
     Effect.provideService(HostProcessExecutablePath, "/usr/bin/node"),
     Effect.provide(ServerConfig.layer({ ...config, mode: options.mode ?? "web" })),
   );
@@ -123,6 +149,36 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
         "local update required",
       );
+    }),
+  );
+
+  it.effect("refuses to restart the server while a thread is active", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order } = yield* makeHarness({ activeWorkByCheck: [1] });
+      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
+        "T3 Code cannot update while 1 thread is still working. Let the work finish or stop it, then retry.",
+      );
+      expect(order).toEqual([]);
+    }),
+  );
+
+  it.effect("rechecks for work that starts while the update is staging", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order } = yield* makeHarness({ activeWorkByCheck: [0, 1] });
+      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
+        "T3 Code cannot update while 1 thread is still working. Let the work finish or stop it, then retry.",
+      );
+      expect(order).toEqual(["install", "preflight"]);
+    }),
+  );
+
+  it.effect("refuses an update that would remove provider lifecycle recovery", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order } = yield* makeHarness({ preflight: "unsafe" });
+      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
+        "This T3 Code release does not include the required automatic provider lifecycle recovery. The current server was kept running.",
+      );
+      expect(order).toEqual(["install", "preflight"]);
     }),
   );
 

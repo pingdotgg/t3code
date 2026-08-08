@@ -17,15 +17,18 @@ import {
   type OrchestrationProposedPlan,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
+  type OrchestrationThreadShell,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
@@ -46,6 +49,12 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
+const RESTART_INTERRUPTION_DETAIL =
+  "The provider process ended while T3 Code was restarting. Send the message again to resume.";
+const RUNTIME_INTERRUPTION_DETAIL =
+  "The provider process ended without reporting turn completion. T3 Code recovered the thread automatically; send the message again to resume.";
+const PROVIDER_LIVENESS_SWEEP_INTERVAL = Duration.seconds(5);
+const PROVIDER_LIVENESS_CONFIRMATION_DELAY = Duration.seconds(2);
 
 // Fallback when the in-memory description cache no longer has the task name
 // (server restart, session-exit sweep, TTL/capacity eviction): earlier
@@ -2042,6 +2051,109 @@ const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(processInputSafely);
 
+  const readMissingActiveSessions = Effect.fn("readMissingActiveProviderSessions")(function* (
+    includeStarting: boolean,
+  ) {
+    const [snapshot, providerSessions] = yield* Effect.all([
+      projectionSnapshotQuery.getShellSnapshot(),
+      providerService.listSessions(),
+    ]);
+    const liveThreadIds = new Set(
+      providerSessions
+        .filter(
+          (session) =>
+            session.status === "connecting" ||
+            session.status === "ready" ||
+            session.status === "running",
+        )
+        .map((session) => session.threadId),
+    );
+    return snapshot.threads.filter((thread) => {
+      const status = thread.session?.status;
+      const hasProjectedWork =
+        (status === "running" && thread.session?.activeTurnId != null) ||
+        (includeStarting && status === "starting") ||
+        thread.backgroundLiveness != null;
+      return hasProjectedWork && !liveThreadIds.has(thread.id);
+    });
+  });
+
+  const interruptMissingActiveSessions = Effect.fn("interruptMissingActiveProviderSessions")(
+    function* (
+      interruptedThreads: ReadonlyArray<OrchestrationThreadShell>,
+      detail: string,
+      commandTag: "restart-recovery" | "runtime-recovery",
+    ) {
+      if (interruptedThreads.length === 0) {
+        return;
+      }
+
+      const updatedAt = DateTime.formatIso(yield* DateTime.now);
+      yield* Effect.forEach(
+        interruptedThreads,
+        (thread) =>
+          Effect.gen(function* () {
+            const session = thread.session;
+            threadBackgroundLiveness.clearThreadLiveness(thread.id);
+            if (session === null) {
+              return;
+            }
+            const commandUuid = yield* crypto.randomUUIDv4;
+            yield* orchestrationEngine.dispatch({
+              type: "thread.session.set",
+              commandId: CommandId.make(`provider:${commandTag}:${commandUuid}`),
+              threadId: thread.id,
+              session: {
+                ...session,
+                status: "interrupted",
+                activeTurnId: null,
+                lastError: detail,
+                updatedAt,
+              },
+              createdAt: updatedAt,
+            });
+          }),
+        { concurrency: 1 },
+      );
+      yield* Effect.logWarning("provider.runtime.reconciled-interrupted-sessions", {
+        recovery: commandTag,
+        threadCount: interruptedThreads.length,
+        threadIds: interruptedThreads.map((thread) => thread.id),
+      });
+    },
+  );
+
+  const reconcileInterruptedSessionsAfterRestart = readMissingActiveSessions(true).pipe(
+    Effect.flatMap((threads) =>
+      interruptMissingActiveSessions(threads, RESTART_INTERRUPTION_DETAIL, "restart-recovery"),
+    ),
+  );
+
+  const reconcileInterruptedSessionsDuringRuntime = Effect.gen(function* () {
+    const firstObservation = yield* readMissingActiveSessions(false);
+    if (firstObservation.length === 0) {
+      return;
+    }
+
+    yield* Effect.sleep(PROVIDER_LIVENESS_CONFIRMATION_DELAY);
+    const secondObservation = yield* readMissingActiveSessions(false);
+    const firstByThreadId = new Map(firstObservation.map((thread) => [thread.id, thread]));
+    const confirmedMissing = secondObservation.filter((thread) => {
+      const first = firstByThreadId.get(thread.id);
+      return (
+        first?.session?.status === thread.session?.status &&
+        first?.session?.activeTurnId === thread.session?.activeTurnId &&
+        first?.session?.updatedAt === thread.session?.updatedAt &&
+        first?.backgroundLiveness === thread.backgroundLiveness
+      );
+    });
+    yield* interruptMissingActiveSessions(
+      confirmedMissing,
+      RUNTIME_INTERRUPTION_DETAIL,
+      "runtime-recovery",
+    );
+  });
+
   const start: ProviderRuntimeIngestionShape["start"] = () =>
     Effect.gen(function* () {
       yield* forkParked(
@@ -2056,6 +2168,24 @@ const make = Effect.gen(function* () {
           }
           return worker.enqueue({ source: "domain", event });
         }),
+      );
+      // Provider subprocesses do not survive a server restart. Reconcile the
+      // persisted read model after subscriptions are parked so a dead turn can
+      // never remain "running" forever, while adapters that did retain a live
+      // session stay untouched.
+      yield* reconcileInterruptedSessionsAfterRestart.pipe(Effect.orDie);
+      yield* forkParked(
+        reconcileInterruptedSessionsDuringRuntime.pipe(
+          Effect.catchCause((cause) => {
+            if (Cause.hasInterruptsOnly(cause)) {
+              return Effect.failCause(cause);
+            }
+            return Effect.logWarning("provider runtime liveness reconciliation failed", {
+              cause: Cause.pretty(cause),
+            });
+          }),
+          Effect.repeat(Schedule.spaced(PROVIDER_LIVENESS_SWEEP_INTERVAL)),
+        ),
       );
     });
 
