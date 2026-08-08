@@ -141,8 +141,17 @@ function selectProviderContext(
     }
   }
 
+  const origin = candidates.find((candidate) => candidate.remoteName === "origin");
+  const conventionalGitHubUpstream = candidates.find(
+    (candidate) =>
+      candidate.remoteName === "upstream" &&
+      candidate.provider.kind === "github" &&
+      origin?.provider.kind === "github",
+  );
+
   return (
-    candidates.find((candidate) => candidate.remoteName === "origin") ??
+    conventionalGitHubUpstream ??
+    origin ??
     candidates.find((candidate) => candidate.provider.kind !== "unknown") ??
     candidates[0] ??
     null
