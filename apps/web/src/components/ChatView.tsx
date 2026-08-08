@@ -1158,11 +1158,17 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
 const RIGHT_PANEL_EXIT_FALLBACK_MS = 250;
 
 /** Keep the heavy panel mounted only until its CSS exit finishes. */
-function InlineRightPanelPresence(props: {
+function InlineRightPanelPresence<Snapshot>(props: {
   open: boolean;
-  children: (onExitComplete: () => void) => ReactNode;
+  snapshot: Snapshot;
+  children: (snapshot: Snapshot, onExitComplete: () => void) => ReactNode;
 }) {
   const [present, setPresent] = useState(props.open);
+  const lastOpenSnapshotRef = useRef(props.snapshot);
+
+  useLayoutEffect(() => {
+    if (props.open) lastOpenSnapshotRef.current = props.snapshot;
+  }, [props.open, props.snapshot]);
 
   useEffect(() => {
     if (props.open) {
@@ -1182,7 +1188,8 @@ function InlineRightPanelPresence(props: {
     if (!props.open) setPresent(false);
   }, [props.open]);
 
-  return present ? props.children(handleExitComplete) : null;
+  const snapshot = props.open ? props.snapshot : lastOpenSnapshotRef.current;
+  return present ? props.children(snapshot, handleExitComplete) : null;
 }
 
 // Errors surface through two maps (draft-keyed and thread-keyed) whose entries
@@ -1589,7 +1596,6 @@ function ChatViewContent(props: ChatViewProps) {
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, activeThreadRef),
   );
-  // Closing clears the active selector immediately, but the exit keeps rendering this surface.
   const selectedRightPanelSurface = useMemo(
     () =>
       rightPanelState.surfaces.find((surface) => surface.id === rightPanelState.activeSurfaceId) ??
@@ -6446,15 +6452,20 @@ function ChatViewContent(props: ChatViewProps) {
         <InlineRightPanelPresence
           key={`${activeThreadKey}:${shouldUseRightPanelSheet ? "sheet" : "inline"}`}
           open={!shouldUseRightPanelSheet && rightPanelOpen}
+          snapshot={{
+            surfaces: rightPanelState.surfaces,
+            activeSurfaceId: selectedRightPanelSurface?.id ?? null,
+            content: rightPanelContent,
+          }}
         >
-          {(onExitComplete) => (
+          {(snapshot, onExitComplete) => (
             <RightPanelTabs
               mode="inline"
               maximized={rightPanelMaximized}
               open={rightPanelOpen}
               onExitComplete={onExitComplete}
-              surfaces={rightPanelState.surfaces}
-              activeSurfaceId={selectedRightPanelSurface?.id ?? null}
+              surfaces={snapshot.surfaces}
+              activeSurfaceId={snapshot.activeSurfaceId}
               pendingSurfaceIds={pendingFileSurfaceIds}
               previewSessions={activePreviewState.sessions}
               terminalLabelsById={activeTerminalLabelsById}
@@ -6474,7 +6485,7 @@ function ChatViewContent(props: ChatViewProps) {
               filesAvailable={activeProject !== null}
               liveAgentCount={agentPanelModel.liveCount}
             >
-              {rightPanelContent}
+              {snapshot.content}
             </RightPanelTabs>
           )}
         </InlineRightPanelPresence>

@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
+import { Fragment, type CSSProperties, type ReactNode, useEffect, useState } from "react";
 
 import { isElectron } from "~/env";
 import { useResizableWidth } from "~/hooks/useResizableWidth";
@@ -32,6 +32,7 @@ export function PreviewPanelShell(props: {
 }) {
   const useDragRegion = isElectron && props.mode !== "sheet" && props.mode !== "embedded";
   const isInline = props.mode === "inline";
+  const maximized = props.maximized === true;
   const open = props.open ?? true;
   const maxWidth = useViewportClampedMaxWidth();
   const { width, isResizing, handlers } = useResizableWidth({
@@ -44,21 +45,28 @@ export function PreviewPanelShell(props: {
 
   const panelContents = (
     <>
-      {isInline && !props.maximized ? <RightPanelResizeHandle handlers={handlers} /> : null}
-      {useDragRegion ? <div className="electron-drag-region h-0 w-full" aria-hidden /> : null}
-      {props.children}
+      {isInline && !maximized ? (
+        <RightPanelResizeHandle key="resize-handle" handlers={handlers} />
+      ) : null}
+      {useDragRegion ? (
+        <div key="drag-region" className="electron-drag-region h-0 w-full" aria-hidden />
+      ) : null}
+      <Fragment key="panel-contents">{props.children}</Fragment>
     </>
   );
 
-  if (isInline && !props.maximized) {
+  if (isInline) {
     return (
       <div
-        className="right-panel-inline-gap relative h-full min-h-0 shrink-0"
-        style={{ "--right-panel-width": `${width}px` } as CSSProperties}
+        className={cn(
+          "right-panel-inline-frame relative h-full min-h-0 min-w-0 self-stretch",
+          maximized ? "flex-1" : "right-panel-inline-gap shrink-0",
+        )}
+        style={maximized ? undefined : ({ "--right-panel-width": `${width}px` } as CSSProperties)}
         data-preview-panel-mode={props.mode}
-        data-preview-panel-maximized="false"
+        data-preview-panel-maximized={maximized ? "true" : "false"}
         data-right-panel-open={open ? "true" : "false"}
-        data-right-panel-resizing={isResizing ? "true" : undefined}
+        data-right-panel-resizing={!maximized && isResizing ? "true" : undefined}
         aria-hidden={open ? undefined : true}
         inert={open ? undefined : true}
         onTransitionEnd={(event) => {
@@ -68,7 +76,14 @@ export function PreviewPanelShell(props: {
           props.onExitComplete?.();
         }}
       >
-        <div className="right-panel-inline-surface absolute inset-y-0 right-0 flex w-(--right-panel-width) min-h-0 min-w-0 flex-col border-l border-border bg-background">
+        <div
+          className={cn(
+            "right-panel-inline-body flex h-full min-h-0 min-w-0 flex-col border-l border-border bg-background",
+            maximized
+              ? "relative w-full"
+              : "right-panel-inline-surface absolute inset-y-0 right-0 w-(--right-panel-width)",
+          )}
+        >
           {panelContents}
         </div>
       </div>
@@ -79,14 +94,10 @@ export function PreviewPanelShell(props: {
     <div
       className={cn(
         "relative flex h-full min-h-0 min-w-0 flex-col self-stretch bg-background",
-        isInline
-          ? props.maximized
-            ? "flex-1 border-l border-border"
-            : "shrink-0 border-l border-border"
-          : "w-full",
+        "w-full",
       )}
       data-preview-panel-mode={props.mode}
-      data-preview-panel-maximized={props.maximized ? "true" : "false"}
+      data-preview-panel-maximized={maximized ? "true" : "false"}
     >
       {panelContents}
     </div>

@@ -6,11 +6,12 @@ import { getPreviewPanelMaxWidth, PreviewPanelShell } from "./PreviewPanelShell"
 
 function renderPreviewPanelShell(
   mode: ComponentProps<typeof PreviewPanelShell>["mode"],
-  open?: boolean,
+  options?: { open?: boolean; maximized?: boolean },
 ): string {
   const props: ComponentProps<typeof PreviewPanelShell> = {
     mode,
-    ...(open !== undefined ? { open } : {}),
+    ...(options?.open !== undefined ? { open: options.open } : {}),
+    ...(options?.maximized !== undefined ? { maximized: options.maximized } : {}),
     children: createElement("div", null, "Panel content"),
   };
   return renderToStaticMarkup(createElement(PreviewPanelShell, props));
@@ -38,12 +39,26 @@ describe("PreviewPanelShell", () => {
   });
 
   it("exposes the closed state while the inline panel exits", () => {
-    const html = renderPreviewPanelShell("inline", false);
+    const html = renderPreviewPanelShell("inline", { open: false });
 
     expect(html).toContain('data-right-panel-open="false"');
     expect(html).toContain('aria-hidden="true"');
     expect(html).toContain('inert=""');
     expect(html).toContain("right-panel-inline-surface");
+  });
+
+  it("keeps stable inline wrappers when maximized state changes", () => {
+    const inlineHtml = renderPreviewPanelShell("inline");
+    const maximizedHtml = renderPreviewPanelShell("inline", { maximized: true });
+
+    for (const html of [inlineHtml, maximizedHtml]) {
+      expect(html).toContain("right-panel-inline-frame");
+      expect(html).toContain("right-panel-inline-body");
+      expect(html).toContain("Panel content");
+    }
+    expect(maximizedHtml).toContain('data-preview-panel-maximized="true"');
+    expect(maximizedHtml).not.toContain("right-panel-inline-gap");
+    expect(maximizedHtml).not.toContain("right-panel-inline-surface");
   });
 
   it("does not apply the inline opening layout to sheet panels", () => {
