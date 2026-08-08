@@ -45,6 +45,25 @@ function makeFakeClaudeBinary(dir: string) {
         "    exit 3",
         "  fi",
         "fi",
+        'if [ -n "$T3_FAKE_CLAUDE_REQUIRE_EMPTY_TOOLS" ]; then',
+        '  previous_arg=""',
+        '  empty_tools_found=""',
+        '  for arg in "$@"; do',
+        '    if [ "$previous_arg" = "--tools" ]; then',
+        '      [ -z "$arg" ] || {',
+        '        printf "%s\\n" "--tools was not followed by an empty argument" >&2',
+        "        exit 6",
+        "      }",
+        '      empty_tools_found="yes"',
+        "      break",
+        "    fi",
+        '    previous_arg="$arg"',
+        "  done",
+        '  [ "$empty_tools_found" = "yes" ] || {',
+        '    printf "%s\\n" "missing --tools empty argument" >&2',
+        "    exit 7",
+        "  }",
+        "fi",
         'if [ -n "$T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN" ]; then',
         '  printf "%s" "$stdin_content" | grep -F -- "$T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN" >/dev/null || {',
         '    printf "%s\\n" "stdin missing expected content" >&2',
@@ -75,6 +94,7 @@ function withFakeClaudeEnv<A, E, R>(
     stderr?: string;
     argsMustContain?: string;
     argsMustNotContain?: string;
+    requireEmptyTools?: boolean;
     stdinMustContain?: string;
     configDirMustBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
@@ -91,6 +111,7 @@ function withFakeClaudeEnv<A, E, R>(
     const previousStderr = process.env.T3_FAKE_CLAUDE_STDERR;
     const previousArgsMustContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN;
     const previousArgsMustNotContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
+    const previousRequireEmptyTools = process.env.T3_FAKE_CLAUDE_REQUIRE_EMPTY_TOOLS;
     const previousStdinMustContain = process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
     const previousConfigDirMustBe = process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
 
@@ -121,6 +142,12 @@ function withFakeClaudeEnv<A, E, R>(
           process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN = input.argsMustNotContain;
         } else {
           delete process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
+        }
+
+        if (input.requireEmptyTools === true) {
+          process.env.T3_FAKE_CLAUDE_REQUIRE_EMPTY_TOOLS = "1";
+        } else {
+          delete process.env.T3_FAKE_CLAUDE_REQUIRE_EMPTY_TOOLS;
         }
 
         if (input.stdinMustContain !== undefined) {
@@ -169,6 +196,12 @@ function withFakeClaudeEnv<A, E, R>(
             process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN = previousArgsMustNotContain;
           }
 
+          if (previousRequireEmptyTools === undefined) {
+            delete process.env.T3_FAKE_CLAUDE_REQUIRE_EMPTY_TOOLS;
+          } else {
+            process.env.T3_FAKE_CLAUDE_REQUIRE_EMPTY_TOOLS = previousRequireEmptyTools;
+          }
+
           if (previousStdinMustContain === undefined) {
             delete process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
           } else {
@@ -190,6 +223,35 @@ function withFakeClaudeEnv<A, E, R>(
 }
 
 it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
+  it.effect("disables all Claude tools for headless text generation", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            title: "No tools available",
+          },
+        }),
+        argsMustContain:
+          "--permission-mode dontAsk --disallowedTools Agent,Artifact,AskUserQuestion,Bash,CronCreate,CronDelete,CronList,Edit,EndConversation,EnterPlanMode,EnterWorktree,ExitPlanMode,ExitWorktree,Glob,Grep,ListMcpResources,ListMcpResourcesTool,LSP,Monitor,NotebookEdit,PowerShell,PushNotification,Read,ReadMcpResource,ReadMcpResourceTool,RemoteTrigger,REPL,ReportFindings,ScheduleWakeup,SendMessage,SendUserFile,ShareOnboardingGuide,Skill,Task,TaskCreate,TaskGet,TaskList,TaskOutput,TaskStop,TaskUpdate,TodoWrite,ToolSearch,WaitForMcpServers,WebFetch,WebSearch,Workflow,Write --strict-mcp-config --tools",
+        argsMustNotContain: "--dangerously-skip-permissions",
+        requireEmptyTools: true,
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Name this thread without using tools.",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: "claude-haiku-4-5",
+            },
+          });
+
+          expect(generated.title).toBe("No tools available");
+        }),
+    ),
+  );
+
   it.effect("forwards Claude thinking settings for Haiku without passing effort", () =>
     withFakeClaudeEnv(
       {
