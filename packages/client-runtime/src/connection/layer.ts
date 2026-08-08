@@ -19,9 +19,13 @@ const driverLayer = ConnectionDriver.layer.pipe(
   Layer.provide(Layer.mergeAll(resolverLayer, RpcSession.layer)),
 );
 
-const registryLayer = EnvironmentRegistry.layer.pipe(Layer.provide(driverLayer));
+const registryLayer = EnvironmentRegistry.layer.pipe(
+  Layer.provide(driverLayer),
+);
 
-const onboardingLayer = ConnectionOnboarding.layer.pipe(Layer.provide(registryLayer));
+const onboardingLayer = ConnectionOnboarding.layer.pipe(
+  Layer.provide(registryLayer),
+);
 
 const connectionServicesLayer = Layer.mergeAll(
   registryLayer,
@@ -32,13 +36,19 @@ const connectionServicesLayer = Layer.mergeAll(
 const connectionStartupLayer = Layer.effectDiscard(
   Effect.gen(function* () {
     const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-    const platformSource = yield* PlatformConnectionSource.PlatformConnectionSource;
-    yield* registry.start;
-    yield* platformSource.registrations.pipe(
-      Stream.runForEach(registry.reconcilePlatform),
+    const platformSource =
+      yield* PlatformConnectionSource.PlatformConnectionSource;
+    yield* registry.start.pipe(
+      Effect.andThen(
+        platformSource.registrations.pipe(
+          Stream.runForEach(registry.reconcilePlatform),
+        ),
+      ),
       Effect.forkScoped,
     );
   }).pipe(Effect.withSpan("clientRuntime.connection.application.start")),
 );
 
-export const layer = connectionStartupLayer.pipe(Layer.provideMerge(connectionServicesLayer));
+export const layer = connectionStartupLayer.pipe(
+  Layer.provideMerge(connectionServicesLayer),
+);

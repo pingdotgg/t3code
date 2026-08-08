@@ -135,17 +135,29 @@ export const updateBearerConnection = Effect.fn(
 )(function* (input: BearerConnectionUpdateInput) {
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
-  const entry = (yield* SubscriptionRef.get(registry.entries)).get(input.environmentId);
-  const credential =
-    entry?.target._tag === "BearerConnectionTarget"
-      ? yield* credentials.get(entry.target.connectionId)
-      : Option.none();
-  const registration = yield* prepareBearerConnectionUpdate({
-    input,
-    entry: Option.fromUndefinedOr(entry),
-    credential,
+  const prepare = Effect.gen(function* () {
+    const entry = (yield* SubscriptionRef.get(registry.entries)).get(input.environmentId);
+    const credential =
+      entry?.target._tag === "BearerConnectionTarget"
+        ? yield* credentials.get(entry.target.connectionId)
+        : Option.none();
+    return yield* prepareBearerConnectionUpdate({
+      input,
+      entry: Option.fromUndefinedOr(entry),
+      credential,
+    });
   });
-  yield* registry.register(registration);
+  yield* registry.updateRegistration(input.environmentId, prepare).pipe(
+    Effect.catchTags({
+      EnvironmentNotRegisteredError: () =>
+        Effect.fail(
+          new ConnectionBlockedError({
+            reason: "configuration",
+            detail: "The saved environment is no longer registered.",
+          }),
+        ),
+    }),
+  );
 });
 
 export const prepareBearerConnectionUpdate = Effect.fn(

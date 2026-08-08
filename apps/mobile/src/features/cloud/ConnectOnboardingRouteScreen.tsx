@@ -2,10 +2,19 @@ import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useAuth } from "@clerk/expo";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useState } from "react";
-import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
+import {
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { reportAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";
+import {
+  reportAtomCommandResult,
+  settlePromise,
+} from "@t3tools/client-runtime/state/runtime";
 import { AndroidSheetHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -38,14 +47,20 @@ export function ConnectOnboardingRouteScreen() {
     }
   }, [navigation]);
 
-  return hasCloudPublicConfig() ? <ConfiguredConnectOnboardingRouteScreen /> : null;
+  return hasCloudPublicConfig() ? (
+    <ConfiguredConnectOnboardingRouteScreen />
+  ) : null;
 }
 
 function ConfiguredConnectOnboardingRouteScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
-  const { connectedEnvironments, onReconnectEnvironment } = useRemoteConnections();
+  const {
+    connectedEnvironments,
+    onReconnectEnvironment,
+    onSetEnvironmentEnabled,
+  } = useRemoteConnections();
   const { refreshRelayEnvironments } = useConnectionController();
   const { connectedCloudEnvironments } = splitEnvironmentSections({
     connectedEnvironments,
@@ -73,8 +88,12 @@ function ConfiguredConnectOnboardingRouteScreen() {
   const handleDontShowAgain = useCallback(() => {
     void (async () => {
       if (userId) {
-        const result = await settlePromise(() => optOutOfConnectOnboarding(userId));
-        reportAtomCommandResult(result, { label: "connect onboarding opt-out" });
+        const result = await settlePromise(() =>
+          optOutOfConnectOnboarding(userId),
+        );
+        reportAtomCommandResult(result, {
+          label: "connect onboarding opt-out",
+        });
       }
       navigation.goBack();
     })();
@@ -85,11 +104,21 @@ function ConfiguredConnectOnboardingRouteScreen() {
       {Platform.OS === "android" ? (
         <AndroidSheetHeader
           title="Set up T3 Connect"
-          actions={[{ accessibilityLabel: "Close", icon: "xmark", onPress: handleClose }]}
+          actions={[
+            {
+              accessibilityLabel: "Close",
+              icon: "xmark",
+              onPress: handleClose,
+            },
+          ]}
         />
       ) : (
         <NativeHeaderToolbar placement="right">
-          <NativeHeaderToolbar.Button icon="xmark" onPress={handleClose} separateBackground />
+          <NativeHeaderToolbar.Button
+            icon="xmark"
+            onPress={handleClose}
+            separateBackground
+          />
         </NativeHeaderToolbar>
       )}
       <ScrollView
@@ -104,13 +133,17 @@ function ConfiguredConnectOnboardingRouteScreen() {
           paddingTop: 16,
         }}
         refreshControl={
-          <RefreshControl refreshing={isPullRefreshing} onRefresh={handlePullRefresh} />
+          <RefreshControl
+            refreshing={isPullRefreshing}
+            onRefresh={handlePullRefresh}
+          />
         }
       >
         {isSignedIn ? (
           <CloudEnvironmentRows
             connectedCloudEnvironments={connectedCloudEnvironments}
             onReconnectEnvironment={onReconnectEnvironment}
+            onSetEnvironmentEnabled={onSetEnvironmentEnabled}
             showHeader={false}
           />
         ) : (
@@ -128,7 +161,9 @@ function ConfiguredConnectOnboardingRouteScreen() {
             onPress={handleDontShowAgain}
             className="items-center py-1 active:opacity-70"
           >
-            <Text className="text-xs text-foreground-muted">{"Don't show this again"}</Text>
+            <Text className="text-xs text-foreground-muted">
+              {"Don't show this again"}
+            </Text>
           </Pressable>
         ) : null}
       </ScrollView>

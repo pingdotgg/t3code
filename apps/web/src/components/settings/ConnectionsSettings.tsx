@@ -53,6 +53,7 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { Input } from "../ui/input";
+import { Field, FieldDescription, FieldLabel } from "../ui/field";
 import { Checkbox } from "../ui/checkbox";
 import {
   Dialog,
@@ -111,6 +112,7 @@ import { environmentCatalog } from "~/connection/catalog";
 import {
   connectPairing as connectPairingAtom,
   connectSshEnvironment as connectSshEnvironmentAtom,
+  updateBearerConnection as updateBearerConnectionAtom,
 } from "~/connection/onboarding";
 import { useEnvironmentQuery } from "~/state/query";
 import {
@@ -1335,6 +1337,11 @@ type SavedBackendListRowProps = {
   environment: EnvironmentPresentation;
   removingEnvironmentId: EnvironmentId | null;
   onConnect: (environmentId: EnvironmentId) => void;
+  onSetEnabled: (environmentId: EnvironmentId, enabled: boolean) => Promise<boolean>;
+  onUpdate: (
+    environmentId: EnvironmentId,
+    updates: { readonly label: string; readonly displayUrl: string },
+  ) => Promise<boolean>;
   onRemove: (environmentId: EnvironmentId) => void;
 };
 
@@ -1342,21 +1349,33 @@ function SavedBackendListRow({
   environment,
   removingEnvironmentId,
   onConnect,
+  onSetEnabled,
+  onUpdate,
   onRemove,
 }: SavedBackendListRowProps) {
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [label, setLabel] = useState(environment.label);
+  const [displayUrl, setDisplayUrl] = useState(environment.displayUrl ?? "");
+  const [editEnabled, setEditEnabled] = useState(environment.enabled);
+  const [isActivationSaving, setIsActivationSaving] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const labelInputId = useId();
+  const urlInputId = useId();
   const environmentId = environment.environmentId;
   const connectionState = environment.connection.phase;
   const isConnected = connectionState === "connected";
   const isConnecting = connectionState === "connecting" || connectionState === "reconnecting";
-  const stateDotClassName =
-    connectionState === "connected"
+  const enabled = environment.enabled;
+  const stateDotClassName = !enabled
+    ? "bg-muted-foreground/40"
+    : connectionState === "connected"
       ? "bg-success"
       : connectionState === "connecting" || connectionState === "reconnecting"
         ? "bg-warning"
         : connectionState === "error"
           ? "bg-destructive"
           : "bg-muted-foreground/40";
-  const statusTooltip = connectionStatusText(environment.connection);
+  const statusTooltip = enabled ? connectionStatusText(environment.connection) : "Disabled";
   const errorTraceId = environment.connection.traceId;
   const { copyToClipboard: copyTraceIdToClipboard } = useCopyToClipboard<{ traceId: string }>({
     target: "trace ID",
@@ -1403,6 +1422,30 @@ function SavedBackendListRow({
   // environment you connect to or remove here — its lifecycle is driven by the
   // WSL on/off + distro picker on this page.
   const isWslEnvironment = isDesktopLocalConnectionTarget(environment.entry.target);
+  const isEditableBearer = environment.entry.target._tag === "BearerConnectionTarget";
+
+  const handleEditDialogOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open && isSaving) return;
+      setEditDialogOpen(open);
+      if (open) {
+        setLabel(environment.label);
+        setDisplayUrl(environment.displayUrl ?? "");
+        setEditEnabled(environment.enabled);
+      }
+    },
+    [environment.displayUrl, environment.enabled, environment.label, isSaving],
+  );
+
+  const handleSave = useCallback(async () => {
+    setIsSaving(true);
+    try {
+      const updated = await onUpdate(environmentId, { label, displayUrl });
+      if (updated) setEditDialogOpen(false);
+    } finally {
+      setIsSaving(false);
+    }
+  }, [displayUrl, environmentId, label, onUpdate]);
 
   return (
     <div className={ITEM_ROW_CLASSNAME}>
@@ -1445,7 +1488,7 @@ function SavedBackendListRow({
               </TooltipPopup>
             </Tooltip>
           ) : null}
-          {environment.connection.error && !resumingServerUpdate ? (
+          {enabled && environment.connection.error && !resumingServerUpdate ? (
             <p className="flex min-w-0 items-center gap-2 text-destructive text-xs">
               <span className="truncate">{connectionStatusText(environment.connection)}</span>
               {errorTraceId ? (
@@ -1461,7 +1504,8 @@ function SavedBackendListRow({
           ) : null}
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-          {versionMismatch &&
+          {enabled &&
+          versionMismatch &&
           (serverUpdateState.status === "idle" || serverUpdateState.status === "failed") ? (
             <ServerUpdateAction
               environmentId={environmentId}
@@ -1486,6 +1530,96 @@ function SavedBackendListRow({
             </Tooltip>
           ) : (
             <>
+              <Dialog open={editDialogOpen} onOpenChange={handleEditDialogOpenChange}>
+                <DialogTrigger render={<Button size="xs" variant="outline" />}>Edit</DialogTrigger>
+                <DialogPopup className="sm:max-w-lg">
+                  <DialogHeader>
+                    <DialogTitle>Edit Environment</DialogTitle>
+                    <DialogDescription>
+                      Update how this device connects to {environment.label}.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <DialogPanel>
+                    <div className="flex flex-col gap-4">
+                      <div className="flex items-center justify-between gap-4 rounded-md bg-muted/30 px-3 py-2">
+                        <div className="flex flex-col gap-0.5">
+                          <p className="text-sm font-medium text-foreground">Enabled</p>
+                          <p className="text-xs text-muted-foreground">
+                            Connect to this environment from this device.
+                          </p>
+                        </div>
+                        <Switch
+                          aria-label={`${environment.label} enabled`}
+                          checked={editEnabled}
+                          disabled={isSaving || isActivationSaving}
+                          onCheckedChange={(nextEnabled) => {
+                            setEditEnabled(nextEnabled);
+                            setIsActivationSaving(true);
+                            void onSetEnabled(environmentId, nextEnabled).then((updated) => {
+                              if (!updated) {
+                                setEditEnabled(environment.enabled);
+                              }
+                              setIsActivationSaving(false);
+                            });
+                          }}
+                        />
+                      </div>
+                      {environment.relayManaged ? (
+                        <p className="text-sm text-muted-foreground">
+                          Managed by T3 Connect. Tunnel details update automatically.
+                        </p>
+                      ) : isEditableBearer ? (
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <Field>
+                            <FieldLabel htmlFor={labelInputId}>Label</FieldLabel>
+                            <Input
+                              id={labelInputId}
+                              value={label}
+                              disabled={isSaving}
+                              onChange={(event) => setLabel(event.target.value)}
+                            />
+                          </Field>
+                          <Field>
+                            <FieldLabel htmlFor={urlInputId}>URL</FieldLabel>
+                            <Input
+                              id={urlInputId}
+                              value={displayUrl}
+                              disabled={isSaving}
+                              onChange={(event) => setDisplayUrl(event.target.value)}
+                            />
+                            <FieldDescription>
+                              The HTTP address for this environment.
+                            </FieldDescription>
+                          </Field>
+                        </div>
+                      ) : null}
+                    </div>
+                  </DialogPanel>
+                  <DialogFooter>
+                    <DialogClose
+                      disabled={isSaving}
+                      render={<Button variant="outline" disabled={isSaving} />}
+                    >
+                      Cancel
+                    </DialogClose>
+                    {isEditableBearer && !environment.relayManaged ? (
+                      <Button
+                        disabled={isSaving || isActivationSaving}
+                        onClick={() => void handleSave()}
+                      >
+                        {isSaving ? (
+                          <>
+                            <Spinner />
+                            Saving…
+                          </>
+                        ) : (
+                          "Save"
+                        )}
+                      </Button>
+                    ) : null}
+                  </DialogFooter>
+                </DialogPopup>
+              </Dialog>
               {!isConnected ? (
                 <Button
                   size="xs"
@@ -1500,17 +1634,23 @@ function SavedBackendListRow({
                 size="xs"
                 variant="outline"
                 disabled={isConnecting || removingEnvironmentId === environmentId}
-                onClick={() =>
-                  void (isConnected ? onRemove(environmentId) : onConnect(environmentId))
-                }
+                onClick={() => {
+                  if (!enabled) {
+                    onSetEnabled(environmentId, true);
+                    return;
+                  }
+                  void (isConnected ? onRemove(environmentId) : onConnect(environmentId));
+                }}
               >
-                {isConnected
-                  ? removingEnvironmentId === environmentId
-                    ? "Disconnecting…"
-                    : "Disconnect"
-                  : isConnecting
-                    ? "Connecting…"
-                    : "Connect"}
+                {!enabled
+                  ? "Enable"
+                  : isConnected
+                    ? removingEnvironmentId === environmentId
+                      ? "Disconnecting…"
+                      : "Disconnect"
+                    : isConnecting
+                      ? "Connecting…"
+                      : "Connect"}
               </Button>
             </>
           )}
@@ -1732,8 +1872,14 @@ export function ConnectionsSettings() {
   const connectSshEnvironment = useAtomCommand(connectSshEnvironmentAtom, {
     reportFailure: false,
   });
+  const updateBearerConnection = useAtomCommand(updateBearerConnectionAtom, {
+    reportFailure: false,
+  });
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
+  const setEnvironmentEnabled = useAtomCommand(environmentCatalog.setEnabled, {
+    reportFailure: false,
+  });
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   const primarySessionState = usePrimarySessionState();
   const currentSessionScopes = desktopBridge
@@ -2244,6 +2390,52 @@ export function ConnectionsSettings() {
       }
     },
     [retryEnvironment],
+  );
+
+  const handleSetSavedBackendEnabled = useCallback(
+    async (environmentId: EnvironmentId, enabled: boolean): Promise<boolean> => {
+      const result = await setEnvironmentEnabled({ environmentId, enabled });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not update environment",
+            description:
+              error instanceof Error ? error.message : "The environment could not be updated.",
+          }),
+        );
+      }
+      return result._tag === "Success";
+    },
+    [setEnvironmentEnabled],
+  );
+
+  const handleUpdateSavedBackend = useCallback(
+    async (
+      environmentId: EnvironmentId,
+      updates: { readonly label: string; readonly displayUrl: string },
+    ): Promise<boolean> => {
+      const result = await updateBearerConnection({
+        environmentId,
+        label: updates.label,
+        httpBaseUrl: updates.displayUrl,
+      });
+      if (result._tag === "Success") return true;
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not update environment",
+            description:
+              error instanceof Error ? error.message : "The environment could not be updated.",
+          }),
+        );
+      }
+      return false;
+    },
+    [updateBearerConnection],
   );
 
   const handleRemoveSavedBackend = useCallback(
@@ -3423,6 +3615,8 @@ export function ConnectionsSettings() {
             environment={environment}
             removingEnvironmentId={removingSavedEnvironmentId}
             onConnect={handleConnectSavedBackend}
+            onSetEnabled={handleSetSavedBackendEnabled}
+            onUpdate={handleUpdateSavedBackend}
             onRemove={handleRemoveSavedBackend}
           />
         ))}

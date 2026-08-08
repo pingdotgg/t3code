@@ -20,6 +20,7 @@ function environment(
     connectionState: "connected",
     connectionError: null,
     connectionErrorTraceId: null,
+    enabled: true,
   };
 }
 
