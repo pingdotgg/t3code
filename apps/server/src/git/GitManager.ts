@@ -110,8 +110,25 @@ const TOAST_DESCRIPTION_MAX = 72;
 const STATUS_RESULT_CACHE_TTL = Duration.seconds(1);
 const STATUS_RESULT_CACHE_CAPACITY = 2_048;
 const PR_LOOKUP_CACHE_TTL = Duration.minutes(2);
-const PR_LOOKUP_FAILURE_TTL = Duration.seconds(20);
+const PR_LOOKUP_FAILURE_BASE_TTL = Duration.seconds(20);
+const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
+
+/**
+ * How long a failed PR lookup is cached, given the number of consecutive
+ * failures for that branch.
+ *
+ * A hosting provider rejects a throttled request immediately, so caching every
+ * failure for a flat 20s made a rate-limited poller re-ask *faster* than a
+ * healthy one does (which waits PR_LOOKUP_CACHE_TTL), turning a transient 429
+ * into sustained pressure. Backing off per branch keeps the retry rate below
+ * the healthy rate once a branch has failed more than a couple of times.
+ */
+export function prLookupFailureTtl(consecutiveFailures: number): Duration.Duration {
+  const exponent = Math.max(0, consecutiveFailures - 1);
+  const backoffMs = Duration.toMillis(PR_LOOKUP_FAILURE_BASE_TTL) * Math.pow(2, exponent);
+  return Duration.min(Duration.millis(backoffMs), PR_LOOKUP_FAILURE_MAX_TTL);
+}
 type StripProgressContext<T> = T extends any ? Omit<T, "actionId" | "cwd" | "action"> : never;
 type GitActionProgressPayload = StripProgressContext<GitActionProgressEvent>;
 type GitActionProgressEmitter = (event: GitActionProgressPayload) => Effect.Effect<void, never>;
@@ -889,6 +906,23 @@ export const make = Effect.gen(function* () {
   // back to a null upstreamRef.
   const prLookupCacheKey = (cwd: string, details: { branch: string; upstreamRef: string | null }) =>
     [cwd, details.branch, details.upstreamRef ?? "", String(prLookupEpoch(cwd))].join("\u0000");
+  // Consecutive failures per cache key, so a branch that keeps failing waits
+  // longer before the next attempt. Cleared as soon as a lookup succeeds.
+  const prLookupFailureStreakByKey = new Map<string, number>();
+  const nextPrLookupFailureTtl = (key: string) => {
+    if (
+      !prLookupFailureStreakByKey.has(key) &&
+      prLookupFailureStreakByKey.size >= PR_LOOKUP_CACHE_CAPACITY
+    ) {
+      const oldestKey = prLookupFailureStreakByKey.keys().next().value;
+      if (oldestKey !== undefined) {
+        prLookupFailureStreakByKey.delete(oldestKey);
+      }
+    }
+    const streak = (prLookupFailureStreakByKey.get(key) ?? 0) + 1;
+    prLookupFailureStreakByKey.set(key, streak);
+    return prLookupFailureTtl(streak);
+  };
   const prLookupCache = yield* Cache.makeWith(
     (key: string) => {
       const [cwd = "", branch = "", upstreamRef = ""] = key.split("\u0000");
@@ -896,17 +930,26 @@ export const make = Effect.gen(function* () {
         branch,
         upstreamRef: upstreamRef.length > 0 ? upstreamRef : null,
       };
-      return resolveBranchHeadContext(cwd, details).pipe(
-        Effect.flatMap((headContext) =>
-          findLatestPrForHeadContext(cwd, headContext).pipe(
-            Effect.map((latest) => ({ latest, headContext })),
-          ),
-        ),
-      );
+      return Effect.gen(function* () {
+        const headContext = yield* resolveBranchHeadContext(cwd, details);
+        // Only skip when the branch is untracked as well: anything carrying an
+        // upstream keeps the old behaviour.
+        if (details.upstreamRef === null && (yield* isUnpublishedBranch(cwd, headContext))) {
+          return { latest: null, headContext };
+        }
+        const latest = yield* findLatestPrForHeadContext(cwd, headContext);
+        return { latest, headContext };
+      });
     },
     {
       capacity: PR_LOOKUP_CACHE_CAPACITY,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? PR_LOOKUP_CACHE_TTL : PR_LOOKUP_FAILURE_TTL),
+      timeToLive: (exit, key) => {
+        if (Exit.isSuccess(exit)) {
+          prLookupFailureStreakByKey.delete(key);
+          return PR_LOOKUP_CACHE_TTL;
+        }
+        return nextPrLookupFailureTtl(key);
+      },
     },
   );
   // A transient lookup failure (rate limit, network blip) must not clear an
@@ -1167,6 +1210,43 @@ export const make = Effect.gen(function* () {
       headRepositoryOwnerLogin: remoteRepository.ownerLogin,
       isCrossRepository,
     } satisfies BranchHeadContext;
+  });
+
+  /**
+   * Whether git has no record of this branch on any remote, so a change request
+   * cannot exist for it and asking the provider is a guaranteed-empty API call.
+   *
+   * `git push` writes the remote-tracking ref even without `-u` (how most
+   * terminal and agent pushes land), which makes this a safer "did it ever
+   * reach the host" test than looking for upstream config, and the glob spans
+   * every remote so a fork branch still counts. A repository that tracks no
+   * remotes at all cannot answer the question, because then every branch looks
+   * unpublished; it, and any failed probe, keeps the lookup.
+   */
+  const isUnpublishedBranch = Effect.fn("isUnpublishedBranch")(function* (
+    cwd: string,
+    headContext: Pick<BranchHeadContext, "headBranch">,
+  ) {
+    if (headContext.headBranch.length === 0) {
+      return false;
+    }
+    const matchesRef = (pattern: string) =>
+      gitCore
+        .execute({
+          operation: "GitManager.isUnpublishedBranch",
+          cwd,
+          args: ["for-each-ref", "--count=1", "--format=%(refname)", pattern],
+          timeoutMs: 5_000,
+        })
+        .pipe(Effect.map((result) => result.stdout.trim().length > 0));
+
+    return yield* Effect.all(
+      [matchesRef("refs/remotes"), matchesRef(`refs/remotes/*/${headContext.headBranch}`)],
+      { concurrency: "unbounded" },
+    ).pipe(
+      Effect.map(([tracksAnyRemote, tracksThisBranch]) => tracksAnyRemote && !tracksThisBranch),
+      Effect.orElseSucceed(() => false),
+    );
   });
 
   const findOpenPr = Effect.fn("findOpenPr")(function* (

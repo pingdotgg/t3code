@@ -25,8 +25,6 @@ import {
   type UnifiedSettings,
 } from "@t3tools/contracts/settings";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import { APP_STAGE_LABEL } from "~/branding";
-import { resolveSidebarV2Enabled } from "~/branding.logic";
 import { ensureLocalApi } from "~/localApi";
 import {
   getThemeDefinition,
@@ -266,29 +264,18 @@ export function useEnvironmentIdentificationMode(): EnvironmentIdentificationMod
 }
 
 /**
- * Resolved sidebar v2 state: an explicit choice in Settings → Beta if the user
- * has made one, otherwise the default for this build stage (on for nightly and
- * dev, off for production). Every consumer must read through this rather than
- * `settings.sidebarV2Enabled`, which is only meaningful alongside
- * `sidebarV2ConfiguredByUser`.
+ * Whether the legacy sidebar (Settings → General → Legacy features) replaces
+ * the default one.
  *
- * Held at v1 until client settings hydrate. The pre-hydration snapshot is just
- * the schema defaults, so resolving against it would mount one sidebar and then
- * swap it out once persisted settings land — remounting the whole tree.
+ * Held at the default sidebar until client settings hydrate: the pre-hydration
+ * snapshot is just the schema defaults, so resolving against it could mount one
+ * sidebar and then swap it out once persisted settings land — remounting the
+ * whole tree for everyone instead of only for legacy opt-ins.
  */
-export function useSidebarV2Enabled(): boolean {
+export function useLegacySidebarEnabled(): boolean {
   const settingsHydrated = useClientSettingsHydrated();
-  const settings = useClientSettingsValue();
-  return useMemo(
-    () =>
-      resolveSidebarV2Enabled({
-        enabled: settings.sidebarV2Enabled,
-        configuredByUser: settings.sidebarV2ConfiguredByUser,
-        settingsHydrated,
-        stageLabel: APP_STAGE_LABEL,
-      }),
-    [settings.sidebarV2Enabled, settings.sidebarV2ConfiguredByUser, settingsHydrated],
-  );
+  const legacySidebarEnabled = useClientSettingsValue().legacySidebarEnabled;
+  return settingsHydrated && legacySidebarEnabled;
 }
 
 /** Read current settings for one environment, merged with client-local preferences. */
