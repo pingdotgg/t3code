@@ -46,6 +46,7 @@ describe("Open VSX themes", () => {
               { namespace: "demo", name: "theme" },
               { namespace: "icons", name: "theme" },
               { namespace: "oversized", name: "theme" },
+              { namespace: "unlicensed", name: "theme" },
               { namespace: "closed", name: "theme" },
               { namespace: "huge", name: "theme" },
             ],
@@ -81,6 +82,20 @@ describe("Open VSX themes", () => {
           { status: 200 },
         );
       }
+      if (url.endsWith("/unlicensed/theme")) {
+        return new Response(
+          JSON.stringify(
+            extensionDetail({
+              namespace: "unlicensed",
+              files: {
+                ...extensionDetail().files,
+                manifest: `${ASSET_ROOT.replace("demo/theme", "unlicensed/theme")}/package.json`,
+              },
+            }),
+          ),
+          { status: 200 },
+        );
+      }
       if (url.endsWith("/closed/theme")) {
         return new Response(
           JSON.stringify(extensionDetail({ namespace: "closed", license: "All Rights Reserved" })),
@@ -102,9 +117,15 @@ describe("Open VSX themes", () => {
       if (url.endsWith("/icons/theme/1.0.0/file/package.json")) {
         return new Response(JSON.stringify({ contributes: { iconThemes: [{}] } }), { status: 200 });
       }
-      if (url.endsWith("/demo/theme/1.0.0/file/package.json")) {
+      if (url.endsWith("/unlicensed/theme/1.0.0/file/package.json")) {
         return new Response(
           JSON.stringify({ contributes: { themes: [{ path: "./theme.json" }] } }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/demo/theme/1.0.0/file/package.json")) {
+        return new Response(
+          JSON.stringify({ license: "MIT", contributes: { themes: [{ path: "./theme.json" }] } }),
           { status: 200 },
         );
       }

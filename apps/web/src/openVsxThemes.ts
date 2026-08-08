@@ -139,6 +139,13 @@ function themeContributions(manifest: Record<string, unknown>): ThemeContributio
     : [];
 }
 
+function manifestLicenseMatches(manifest: Record<string, unknown>, license: string): boolean {
+  return (
+    typeof manifest.license === "string" &&
+    manifest.license.trim().toLowerCase() === license.toLowerCase()
+  );
+}
+
 function extensionFromDetail(value: unknown): OpenVsxThemeExtension | null {
   if (!isRecord(value) || !isRecord(value.files)) {
     throw new Error("Open VSX returned malformed theme details.");
@@ -267,7 +274,10 @@ export async function searchOpenVsxThemes(
             new TextDecoder().decode(manifestBytes),
             "Extension manifest",
           );
-          return themeContributions(manifest).length > 0 ? extension : null;
+          return themeContributions(manifest).length > 0 &&
+            manifestLicenseMatches(manifest, extension.license)
+            ? extension
+            : null;
         } catch {
           throw new Error("Open VSX returned unreadable theme details.");
         }
@@ -655,10 +665,7 @@ export async function importOpenVsxThemeExtension(
   ) {
     throw new Error("That extension package does not match the selected Open VSX theme.");
   }
-  if (
-    typeof packagedManifest.license !== "string" ||
-    packagedManifest.license.trim().toLowerCase() !== extension.license.toLowerCase()
-  ) {
+  if (!manifestLicenseMatches(packagedManifest, extension.license)) {
     throw new Error("That extension package does not match its advertised license.");
   }
   const contributions = themeContributions(packagedManifest);
