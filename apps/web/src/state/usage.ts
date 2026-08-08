@@ -6,7 +6,7 @@
  *
  * @module state/usage
  */
-import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import {
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
@@ -15,9 +15,10 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "../usage/usageMerge";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
 
@@ -61,7 +62,11 @@ export interface UsageView {
   readonly environments: readonly EnvironmentUsageStatus[];
   /** True until at least one environment has answered. */
   readonly isPending: boolean;
-  /** True while some environments are still answering but others have. */
+  /**
+   * True while environments that have not failed are still answering. Failed
+   * environments are reported through their own error rows: totals will not
+   * improve by waiting on them, so they must not read as "still reporting".
+   */
   readonly isPartial: boolean;
   readonly refresh: () => void;
 }
@@ -78,7 +83,18 @@ export function useUsage(input: UsageSummaryInput): UsageView {
   );
   const atom = usageByWindowAtom(windowKey);
   const environments = useAtomValue(atom);
-  const refresh = useAtomRefresh(atom);
+
+  // Refreshing only the derived atom would re-read the per-environment SWR
+  // queries within their stale window and change nothing. Refresh each
+  // environment's query so the button always rescans.
+  const refresh = useCallback(() => {
+    const input = JSON.parse(windowKey) as UsageSummaryInput;
+    for (const environment of environments) {
+      appAtomRegistry.refresh(
+        serverEnvironment.usageSummary({ environmentId: environment.environmentId, input }),
+      );
+    }
+  }, [environments, windowKey]);
 
   const merged = useMemo(() => {
     const answered: EnvironmentUsage[] = environments.flatMap((environment) =>
@@ -96,12 +112,15 @@ export function useUsage(input: UsageSummaryInput): UsageView {
   }, [environments]);
 
   const answeredCount = environments.filter((environment) => environment.summary !== null).length;
+  const stillReporting = environments.filter(
+    (environment) => environment.summary === null && environment.error === null,
+  ).length;
 
   return {
     merged,
     environments,
-    isPending: answeredCount === 0 && environments.some((environment) => environment.isPending),
-    isPartial: answeredCount > 0 && answeredCount < environments.length,
+    isPending: answeredCount === 0 && stillReporting > 0,
+    isPartial: answeredCount > 0 && stillReporting > 0,
     refresh,
   };
 }

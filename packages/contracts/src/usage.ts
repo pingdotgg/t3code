@@ -21,7 +21,7 @@ import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 2 as const;
+export const USAGE_CONTRACT_VERSION = 3 as const;
 
 export const UsageProviderKind = Schema.Literals(["claude", "codex"]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
@@ -32,7 +32,11 @@ export type UsageProviderKind = typeof UsageProviderKind.Type;
  * Days are bucketed server-side so that a turn always lands on the day the user
  * experienced it, not the UTC day.
  */
-export const UsageDay = TrimmedNonEmptyString.pipe(Schema.brand("UsageDay"));
+const USAGE_DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+export const UsageDay = TrimmedNonEmptyString.check(Schema.isPattern(USAGE_DAY_PATTERN)).pipe(
+  Schema.brand("UsageDay"),
+);
 export type UsageDay = typeof UsageDay.Type;
 
 /**
@@ -126,6 +130,12 @@ export const UsageSource = Schema.Struct({
   skippedFiles: NonNegativeInt,
   /** Records that parsed but carried no recognisable usage payload. */
   malformedRecords: NonNegativeInt,
+  /**
+   * Distinct transcript sessions seen under this directory. Buckets also carry
+   * per-bucket session counts, but a session spans days and models, so summing
+   * those overcounts; this is the figure clients should total.
+   */
+  distinctSessions: NonNegativeInt,
   message: Schema.NullOr(TrimmedNonEmptyString),
 });
 export type UsageSource = typeof UsageSource.Type;

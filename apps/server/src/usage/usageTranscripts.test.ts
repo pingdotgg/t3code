@@ -125,6 +125,15 @@ describe("parseCodexLine", () => {
     const state = initialCodexScanState();
     expect(parseCodexLine(tokenCount(100, 0, 10, 0), state)).toBeNull();
   });
+
+  it("does not let a pre-model event poison the duplicate signature", () => {
+    // A token_count before its turn_context is dropped; the identical event
+    // re-emitted once the model is known must still be counted.
+    const state = initialCodexScanState();
+    expect(parseCodexLine(tokenCount(100, 0, 10, 0), state)).toBeNull();
+    parseCodexLine(turnContext, state);
+    expect(parseCodexLine(tokenCount(100, 0, 10, 0), state)).not.toBeNull();
+  });
 });
 
 describe("totalTokens", () => {

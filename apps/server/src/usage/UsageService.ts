@@ -89,33 +89,33 @@ export class UsageService extends Context.Service<
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
   }
->()("t3/usage/UsageService") {
-  /** Empty summary, for suites that only need the RPC surface to resolve. */
-  static readonly layerTest = Layer.succeed(
-    UsageService,
-    UsageService.of({
-      readSummary: (input) =>
-        Effect.succeed({
-          contractVersion: USAGE_CONTRACT_VERSION,
-          readAt: "1970-01-01T00:00:00.000Z",
-          timeZone: input.timeZone,
-          sinceDay: input.sinceDay,
-          untilDay: input.untilDay,
-          buckets: [],
-          sources: [],
-          pricing: {
-            status: "unavailable",
-            source: LITELLM_RATES_URL,
-            fetchedAt: null,
-            knownModels: 0,
-          },
-          scanDurationMs: 0,
-        }),
-    }),
-  );
-}
+>()("t3/usage/UsageService") {}
 
-const make = Effect.gen(function* () {
+/** Empty summary, for suites that only need the RPC surface to resolve. */
+export const layerTest = Layer.succeed(
+  UsageService,
+  UsageService.of({
+    readSummary: (input) =>
+      Effect.succeed({
+        contractVersion: USAGE_CONTRACT_VERSION,
+        readAt: "1970-01-01T00:00:00.000Z",
+        timeZone: input.timeZone,
+        sinceDay: input.sinceDay,
+        untilDay: input.untilDay,
+        buckets: [],
+        sources: [],
+        pricing: {
+          status: "unavailable",
+          source: LITELLM_RATES_URL,
+          fetchedAt: null,
+          knownModels: 0,
+        },
+        scanDurationMs: 0,
+      }),
+  }),
+);
+
+export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const config = yield* ServerConfig;
@@ -123,7 +123,6 @@ const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
 
   const fileCache: ScanCache = new Map();
-  let cacheLoaded = false;
   let cacheDirty = false;
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
@@ -163,7 +162,12 @@ const make = Effect.gen(function* () {
       Effect.timeout(10_000),
       Effect.catchCause(() => Effect.succeed(null)),
     );
-    if (fetched === null) return;
+    if (fetched === null) {
+      // The refresh failed; whatever we are serving is now past its TTL and
+      // must not keep claiming to be fresh.
+      if (rates.size > 0) ratesStatus = "cached";
+      return;
+    }
 
     const parsed = parseRateTable(fetched);
     if (parsed.size === 0) return;
@@ -193,12 +197,17 @@ const make = Effect.gen(function* () {
 
   /** Resolves the transcript directory for each provider. */
   const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* () {
+    // A settings failure must surface as an error: swallowing it here would
+    // present "zero usage from every provider" as a valid answer.
     const settings = yield* settingsService.getSettings.pipe(
-      Effect.catchCause(() => Effect.succeed(null)),
+      Effect.catchCause(
+        (cause) =>
+          new UsageReadError({
+            reason: "scanFailed",
+            detail: `Server settings could not be read: ${String(cause)}`,
+          }),
+      ),
     );
-    if (settings === null) {
-      return [] as readonly { provider: UsageProviderKind; dir: string }[];
-    }
 
     const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
     const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
@@ -210,25 +219,33 @@ const make = Effect.gen(function* () {
     ];
   });
 
-  /** Loads the persisted scan cache once per process. */
-  const ensureScanCacheLoaded = Effect.fn("UsageService.ensureScanCacheLoaded")(function* () {
-    if (cacheLoaded) return;
-    cacheLoaded = true;
-
-    const document = yield* fileSystem.readFileString(scanCachePath).pipe(
-      Effect.flatMap((raw) => decodeScanCacheFile(raw)),
-      Effect.catchCause(() => Effect.succeed(null)),
-    );
-    if (document === null) return;
-
-    for (const [path, entry] of decodeScanCache(document)) fileCache.set(path, entry);
-  });
+  /**
+   * Loads the persisted scan cache exactly once per process.
+   *
+   * `Effect.cached` makes concurrent first readers await the same load rather
+   * than each seeing a "loaded" flag set before the read finished and cold
+   * scanning against an empty cache.
+   */
+  const ensureScanCacheLoaded = yield* Effect.cached(
+    Effect.gen(function* () {
+      const document = yield* fileSystem.readFileString(scanCachePath).pipe(
+        Effect.flatMap((raw) => decodeScanCacheFile(raw)),
+        Effect.catchCause(() => Effect.succeed(null)),
+      );
+      if (document === null) return;
+      for (const [path, entry] of decodeScanCache(document)) fileCache.set(path, entry);
+    }),
+  );
 
   const persistScanCache = Effect.fn("UsageService.persistScanCache")(function* () {
     if (!cacheDirty) return;
-    cacheDirty = false;
+    // Cleared only after the write lands, so a failed persist is retried on
+    // the next scan instead of leaving disk permanently stale.
     yield* encodeScanCacheFile(encodeScanCache(fileCache)).pipe(
       Effect.flatMap((serialized) => fileSystem.writeFileString(scanCachePath, serialized)),
+      Effect.map(() => {
+        cacheDirty = false;
+      }),
       // A cache we cannot write is a slower next start, not a failed read.
       Effect.catchCause(() => Effect.void),
     );
@@ -246,6 +263,9 @@ const make = Effect.gen(function* () {
       if (cached && cached.size === size && cached.mtimeMs === mtimeMs) return cached.records;
 
       const parsed = yield* Effect.promise(() => readTranscriptRecords(filePath, provider));
+      // A read failure is not an empty transcript: caching it under this
+      // (size, mtime) would silently drop the file's usage until it changes.
+      if (parsed === null) return [];
       // Stored already de-duplicated within the file, which is 99% of all
       // duplicates. The aggregator still runs the cross-file dedupe pass.
       const records = dedupeWithinFile(parsed);
@@ -265,7 +285,7 @@ const make = Effect.gen(function* () {
 
     const startedAtMs = yield* Clock.currentTimeMillis;
     yield* ensureRates();
-    yield* ensureScanCacheLoaded();
+    yield* ensureScanCacheLoaded;
 
     const hostId = NodeOS.hostname();
     // The home resolvers ask for `Path` themselves; satisfy them from the
@@ -289,6 +309,7 @@ const make = Effect.gen(function* () {
 
     const sources: UsageSource[] = [];
     const livePaths = new Set<string>();
+    const walkedRoots: string[] = [];
 
     for (const { provider, dir } of dirs) {
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
@@ -303,14 +324,19 @@ const make = Effect.gen(function* () {
           scannedFiles: 0,
           skippedFiles: 0,
           malformedRecords: 0,
+          distinctSessions: 0,
           message: "No transcript directory on this environment.",
         });
         continue;
       }
 
+      walkedRoots.push(dir);
       const files = yield* Effect.promise(() => listTranscriptFiles(dir, windowStartMs));
       let scannedFiles = 0;
       let skippedFiles = 0;
+      // Distinct per directory. Buckets carry per-cell session counts, but a
+      // session spans days and models, so clients total this figure instead.
+      const sessionIds = new Set<string>();
 
       for (const file of files) {
         livePaths.add(file.path);
@@ -320,7 +346,10 @@ const make = Effect.gen(function* () {
           continue;
         }
         scannedFiles += 1;
-        for (const record of records) aggregator.add(record);
+        for (const record of records) {
+          aggregator.add(record);
+          if (record.sessionId.length > 0) sessionIds.add(record.sessionId);
+        }
       }
 
       sources.push({
@@ -329,12 +358,14 @@ const make = Effect.gen(function* () {
         scannedFiles,
         skippedFiles,
         malformedRecords: 0,
+        distinctSessions: sessionIds.size,
         message: null,
       });
     }
 
     const pruned = pruneScanCache(fileCache, {
       livePaths,
+      walkedRoots,
       windowStartMs,
       retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
     });

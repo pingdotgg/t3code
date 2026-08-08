@@ -199,15 +199,19 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
   if (typeof last !== "object" || last === null) return null;
   const lastRecord = last as Record<string, unknown>;
 
+  // Only an event that is otherwise eligible may consume the duplicate
+  // signature. A token_count arriving before its turn_context (no model yet)
+  // must not poison it, or the re-emitted copy after the model is known would
+  // be skipped as a duplicate and those tokens never counted.
+  const timestampMs = parseTimestampMs(record["timestamp"]);
+  if (timestampMs === null) return null;
+  if (state.model.length === 0) return null;
+
   // Codex re-emits an unchanged token_count on some stream boundaries. Summing
   // those would double count, so identical consecutive payloads are skipped.
   const signature = JSON.stringify(lastRecord);
   if (signature === state.lastUsageSignature) return null;
   state.lastUsageSignature = signature;
-
-  const timestampMs = parseTimestampMs(record["timestamp"]);
-  if (timestampMs === null) return null;
-  if (state.model.length === 0) return null;
 
   const inputTokens = int(lastRecord["input_tokens"]);
   const cachedInputTokens = int(lastRecord["cached_input_tokens"]);

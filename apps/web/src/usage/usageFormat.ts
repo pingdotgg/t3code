@@ -91,9 +91,17 @@ export function makeWindow(days: number, now = new Date()): UsageSummaryInput {
     month: "2-digit",
     day: "2-digit",
   });
+  const untilDay = format.format(now);
+  // Subtracting fixed milliseconds from `now` lands on the wrong calendar day
+  // around a DST transition. Only "today" needs the zone; the window start is
+  // pure calendar arithmetic on that day, done in UTC where days are uniform.
+  const [year = 0, month = 1, dayOfMonth = 1] = untilDay
+    .split("-")
+    .map((part) => Number.parseInt(part, 10));
+  const start = new Date(Date.UTC(year, month - 1, dayOfMonth - (days - 1)));
   return {
-    sinceDay: UsageDay.make(format.format(new Date(now.getTime() - (days - 1) * 86_400_000))),
-    untilDay: UsageDay.make(format.format(now)),
+    sinceDay: UsageDay.make(start.toISOString().slice(0, 10)),
+    untilDay: UsageDay.make(untilDay),
     timeZone,
   };
 }

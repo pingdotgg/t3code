@@ -86,6 +86,7 @@ describe("pruneScanCache", () => {
 
     const removed = pruneScanCache(cache, {
       livePaths: new Set(),
+      walkedRoots: ["/"],
       windowStartMs: 400,
       retentionCutoffMs,
     });
@@ -97,7 +98,12 @@ describe("pruneScanCache", () => {
   it("drops in-window entries whose file has disappeared", () => {
     const cache = cacheWith([["/gone.jsonl", 5000, [record()]]]);
 
-    pruneScanCache(cache, { livePaths: new Set(), windowStartMs: 4000, retentionCutoffMs });
+    pruneScanCache(cache, {
+      livePaths: new Set(),
+      walkedRoots: ["/"],
+      windowStartMs: 4000,
+      retentionCutoffMs,
+    });
 
     expect(cache.size).toBe(0);
   });
@@ -109,6 +115,7 @@ describe("pruneScanCache", () => {
 
     const removed = pruneScanCache(cache, {
       livePaths: new Set(),
+      walkedRoots: ["/"],
       windowStartMs: 4000,
       retentionCutoffMs,
     });
@@ -122,11 +129,49 @@ describe("pruneScanCache", () => {
 
     pruneScanCache(cache, {
       livePaths: new Set(["/live.jsonl"]),
+      walkedRoots: ["/"],
       windowStartMs: 4000,
       retentionCutoffMs,
     });
 
     expect(cache.size).toBe(1);
+  });
+});
+
+describe("pruneScanCache with an unwalked root", () => {
+  it("keeps in-window entries for a provider whose directory was not walked", () => {
+    // A missing provider root or failed settings read leaves livePaths without
+    // that provider's files. Its warm entries must survive the pass.
+    const cache = cacheWith([["/codex/sessions/a.jsonl", 5000, [record()]]]);
+
+    const removed = pruneScanCache(cache, {
+      livePaths: new Set(),
+      walkedRoots: ["/claude/projects"],
+      windowStartMs: 4000,
+      retentionCutoffMs: 1000,
+    });
+
+    expect(removed).toBe(0);
+    expect(cache.size).toBe(1);
+  });
+});
+
+describe("decodeScanCache numeric validation", () => {
+  it("rejects rows whose token fields are not numbers", () => {
+    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
+    const rows = encoded.files["/a.jsonl"]!.r;
+    const poisoned = {
+      ...encoded,
+      files: {
+        "/a.jsonl": {
+          ...encoded.files["/a.jsonl"]!,
+          r: [[...rows[0]!.slice(0, 3), "not-a-number", ...rows[0]!.slice(4)]],
+        },
+      },
+    };
+
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(poisoned)));
+    expect(restored.get("/a.jsonl")?.records).toHaveLength(0);
   });
 });
 

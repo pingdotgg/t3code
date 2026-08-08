@@ -39,6 +39,7 @@ function summary(
     hostId: string;
     homePath: string;
     volumeId?: string;
+    distinctSessions?: number;
   }[],
   contractVersion: number = USAGE_CONTRACT_VERSION,
 ): UsageSummary {
@@ -60,6 +61,7 @@ function summary(
       scannedFiles: 1,
       skippedFiles: 0,
       malformedRecords: 0,
+      distinctSessions: source.distinctSessions ?? 1,
       message: null,
     })),
     pricing: { status: "fresh", source: "litellm", fetchedAt: null, knownModels: 10 },
@@ -105,6 +107,7 @@ describe("mergeUsage", () => {
 
     expect(merged.costUsd).toBe(10);
     expect(merged.records).toBe(5);
+    expect(merged.sessions).toBe(1);
     expect(merged.duplicateSources).toHaveLength(1);
     expect(merged.contributingEnvironments).toEqual(["env-a"]);
   });
@@ -219,6 +222,32 @@ describe("mergeUsage", () => {
 
     expect(merged.costUsd).toBe(10);
     expect(merged.duplicateSources).toHaveLength(1);
+  });
+
+  it("totals sessions from per-directory distinct counts, not per-bucket sums", () => {
+    // One session that spans two days appears in two buckets. Summing bucket
+    // sessions would say 2; the source's distinct count says 1.
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket({ day: "2026-08-06" as UsageDay }), bucket({ day: "2026-08-07" as UsageDay })],
+            [
+              {
+                provider: "claude",
+                hostId: "mac",
+                homePath: "/a/.claude",
+                distinctSessions: 1,
+              },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.sessions).toBe(1);
   });
 
   it("returns empty totals with no environments", () => {

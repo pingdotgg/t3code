@@ -95,6 +95,7 @@ export function UsagePage() {
         <UsageCoverageNotice
           environments={environments}
           duplicateSources={merged.duplicateSources}
+          staleEnvironments={merged.staleEnvironments}
           isPartial={isPartial}
         />
 
@@ -193,7 +194,7 @@ export function UsagePage() {
               <Metric
                 label="Processed tokens"
                 value={formatTokens(merged.totalTokens)}
-                detail={`${formatTokens(dailyAverage)} daily average`}
+                detail={`${formatTokens(dailyAverage)} per active day`}
               />
               <Metric
                 label="Cached input"
@@ -406,20 +407,37 @@ function QualityRow({ label, value }: { readonly label: string; readonly value: 
 function UsageCoverageNotice({
   environments,
   duplicateSources,
+  staleEnvironments,
   isPartial,
 }: {
-  readonly environments: readonly { label: string; error: string | null; isPending: boolean }[];
+  readonly environments: readonly {
+    environmentId: string;
+    label: string;
+    error: string | null;
+    isPending: boolean;
+  }[];
   readonly duplicateSources: readonly string[];
+  readonly staleEnvironments: readonly string[];
   readonly isPartial: boolean;
 }) {
   const failed = environments.filter((environment) => environment.error !== null);
-  if (failed.length === 0 && duplicateSources.length === 0 && !isPartial) return null;
+  const stale = environments.filter((environment) =>
+    staleEnvironments.includes(environment.environmentId),
+  );
+  if (failed.length === 0 && stale.length === 0 && duplicateSources.length === 0 && !isPartial) {
+    return null;
+  }
 
   return (
     <div className="flex flex-col gap-1 border border-border px-3 py-2 text-xs text-muted-foreground">
       {isPartial ? <span>Some environments are still reporting. Totals are partial.</span> : null}
       {failed.map((environment) => (
         <span key={environment.label}>{environment.label} could not report usage.</span>
+      ))}
+      {stale.map((environment) => (
+        <span key={environment.label}>
+          {environment.label} runs an older server version and is excluded from totals.
+        </span>
       ))}
       {duplicateSources.length > 0 ? (
         <span>

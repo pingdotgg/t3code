@@ -91,28 +91,64 @@ function monotoneTangents(points: readonly Point[]): readonly number[] {
   return tangents;
 }
 
-/** Smoothed polyline through `points`, as a sequence of cubic segments. */
-function smoothSegments(points: readonly Point[], startCommand: "M" | "L"): string {
-  if (points.length === 0) return "";
-  const first = points[0];
-  if (first === undefined) return "";
-  if (points.length === 1) return `${startCommand}${first.x.toFixed(2)},${first.y.toFixed(2)}`;
+/** One cubic segment of a smoothed boundary. */
+interface CurveSegment {
+  readonly from: Point;
+  readonly c1: Point;
+  readonly c2: Point;
+  readonly to: Point;
+}
 
+/** Smoothed polyline through `points`, as explicit cubic control points. */
+function smoothCurve(points: readonly Point[]): readonly CurveSegment[] {
+  if (points.length < 2) return [];
   const tangents = monotoneTangents(points);
-  let path = `${startCommand}${first.x.toFixed(2)},${first.y.toFixed(2)}`;
+  const segments: CurveSegment[] = [];
 
   for (let index = 0; index < points.length - 1; index += 1) {
     const from = points[index];
     const to = points[index + 1];
     if (from === undefined || to === undefined) continue;
     const dx = to.x - from.x;
-    const c1x = from.x + dx / 3;
-    const c1y = from.y + ((tangents[index] ?? 0) * dx) / 3;
-    const c2x = to.x - dx / 3;
-    const c2y = to.y - ((tangents[index + 1] ?? 0) * dx) / 3;
-    path += ` C${c1x.toFixed(2)},${c1y.toFixed(2)} ${c2x.toFixed(2)},${c2y.toFixed(2)} ${to.x.toFixed(2)},${to.y.toFixed(2)}`;
+    segments.push({
+      from,
+      c1: { x: from.x + dx / 3, y: from.y + ((tangents[index] ?? 0) * dx) / 3 },
+      c2: { x: to.x - dx / 3, y: to.y - ((tangents[index + 1] ?? 0) * dx) / 3 },
+      to,
+    });
   }
+  return segments;
+}
 
+function curvePath(segments: readonly CurveSegment[], startCommand: "M" | "L"): string {
+  const first = segments[0];
+  if (first === undefined) return "";
+  let path = `${startCommand}${first.from.x.toFixed(2)},${first.from.y.toFixed(2)}`;
+  for (const segment of segments) {
+    path += ` C${segment.c1.x.toFixed(2)},${segment.c1.y.toFixed(2)} ${segment.c2.x.toFixed(2)},${segment.c2.y.toFixed(2)} ${segment.to.x.toFixed(2)},${segment.to.y.toFixed(2)}`;
+  }
+  return path;
+}
+
+/**
+ * The same curve walked end to start. A cubic reverses exactly by swapping its
+ * control points, so this traces the identical geometry.
+ *
+ * Bands must use this rather than re-smoothing their base points in reverse:
+ * the tangent clamp in `monotoneTangents` runs left to right, so smoothing is
+ * not perfectly symmetric under reversal, and independently smoothed edges of
+ * adjacent bands could hairline-gap or overlap. Sharing one curve per stack
+ * boundary makes that geometrically impossible.
+ */
+function reversedCurvePath(segments: readonly CurveSegment[], startCommand: "M" | "L"): string {
+  const last = segments[segments.length - 1];
+  if (last === undefined) return "";
+  let path = `${startCommand}${last.to.x.toFixed(2)},${last.to.y.toFixed(2)}`;
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    const segment = segments[index];
+    if (segment === undefined) continue;
+    path += ` C${segment.c2.x.toFixed(2)},${segment.c2.y.toFixed(2)} ${segment.c1.x.toFixed(2)},${segment.c1.y.toFixed(2)} ${segment.from.x.toFixed(2)},${segment.from.y.toFixed(2)}`;
+  }
   return path;
 }
 
@@ -189,22 +225,26 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
     const toY = (value: number) =>
       max === 0 ? VIEW_HEIGHT : VIEW_HEIGHT - (value / max) * (VIEW_HEIGHT - PLOT_TOP);
 
-    const built = PROVIDER_ORDER.map((provider, providerIndex) => {
-      const top: Point[] = stacked.map((column, dayIndex) => ({
-        x: dayIndex * step,
-        y: toY(column.bands[providerIndex]?.top ?? 0),
-      }));
-      const bottom: Point[] = stacked
-        .map((column, dayIndex) => ({
+    // One smoothed curve per stack boundary (baseline, then each provider's
+    // cumulative top). Band k is the region between boundary k and k+1, both
+    // drawn from these shared control points.
+    const boundaries = [
+      stacked.map((_, dayIndex) => ({ x: dayIndex * step, y: toY(0) })),
+      ...PROVIDER_ORDER.map((_, providerIndex) =>
+        stacked.map((column, dayIndex) => ({
           x: dayIndex * step,
-          y: toY(column.bands[providerIndex]?.base ?? 0),
-        }))
-        .toReversed();
+          y: toY(column.bands[providerIndex]?.top ?? 0),
+        })),
+      ),
+    ].map(smoothCurve);
 
+    const built = PROVIDER_ORDER.map((provider, providerIndex) => {
+      const top = boundaries[providerIndex + 1] ?? [];
+      const base = boundaries[providerIndex] ?? [];
       return {
         provider,
-        area: `${smoothSegments(top, "M")} ${smoothSegments(bottom, "L")} Z`,
-        line: smoothSegments(top, "M"),
+        area: `${curvePath(top, "M")} ${reversedCurvePath(base, "L")} Z`,
+        line: curvePath(top, "M"),
       };
     });
 

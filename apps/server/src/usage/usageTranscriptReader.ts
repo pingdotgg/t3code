@@ -90,7 +90,13 @@ export async function readDirectoryVolumeId(path: string): Promise<string> {
 }
 
 /**
- * Streams one transcript and returns the usage records it contains.
+ * Streams one transcript and returns the usage records it contains, or `null`
+ * when the file could not be read.
+ *
+ * The distinction matters to the caller's cache: a genuinely empty transcript
+ * is a stable fact worth memoising, while a transient read failure memoised
+ * under the same `(size, mtime)` key would silently drop that file's usage
+ * until the file next changes.
  *
  * Codex carries the active model on `turn_context` lines that hold no usage of
  * their own, so those still have to pass through the reducer to keep model
@@ -99,7 +105,7 @@ export async function readDirectoryVolumeId(path: string): Promise<string> {
 export async function readTranscriptRecords(
   filePath: string,
   provider: UsageProviderKind,
-): Promise<readonly UsageRecord[]> {
+): Promise<readonly UsageRecord[] | null> {
   const records: UsageRecord[] = [];
   const codexState = initialCodexScanState();
 
@@ -128,7 +134,7 @@ export async function readTranscriptRecords(
       if (record !== null) records.push(record);
     }
   } catch {
-    return [];
+    return null;
   }
 
   return records;

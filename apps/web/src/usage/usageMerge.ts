@@ -122,20 +122,27 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
   return { ownerByFingerprint, duplicates };
 }
 
-/** Buckets this environment is allowed to contribute, after fingerprint claims. */
-function ownedBuckets(
+/** Sources this environment owns after fingerprint claims, plus their buckets. */
+function ownedContribution(
   environment: EnvironmentUsage,
   ownerByFingerprint: ReadonlyMap<string, EnvironmentId>,
-): readonly UsageBucket[] {
+): { readonly buckets: readonly UsageBucket[]; readonly sessions: number } {
   const ownedProviders = new Set<UsageProviderKind>();
+  let sessions = 0;
   for (const source of environment.summary.sources) {
     if (source.status === "missing") continue;
     const key = fingerprintKey(source.fingerprint);
     if (ownerByFingerprint.get(key) === environment.environmentId) {
       ownedProviders.add(source.fingerprint.provider);
+      // Distinct within a directory. Summing per-bucket session counts instead
+      // would count a session once per day and model it spans.
+      sessions += source.distinctSessions;
     }
   }
-  return environment.summary.buckets.filter((bucket) => ownedProviders.has(bucket.provider));
+  return {
+    buckets: environment.summary.buckets.filter((bucket) => ownedProviders.has(bucket.provider)),
+    sessions,
+  };
 }
 
 function bucketTokens(bucket: UsageBucket): number {
@@ -228,8 +235,12 @@ export function mergeUsage(
   const contributingEnvironments: EnvironmentId[] = [];
 
   for (const environment of current) {
-    const buckets = ownedBuckets(environment, ownerByFingerprint);
+    const { buckets, sessions: environmentSessions } = ownedContribution(
+      environment,
+      ownerByFingerprint,
+    );
     if (buckets.length > 0) contributingEnvironments.push(environment.environmentId);
+    sessions += environmentSessions;
 
     for (const bucket of buckets) {
       const tokens = bucketTokens(bucket);
@@ -242,7 +253,6 @@ export function mergeUsage(
       outputTokens += bucket.totals.outputTokens;
       reasoningTokens += bucket.totals.reasoningTokens;
       records += bucket.records;
-      sessions += bucket.sessions;
       unpricedRecords += bucket.unpricedRecords;
       if (bucket.costSource === "providerReported") providerReportedRecords += bucket.records;
 

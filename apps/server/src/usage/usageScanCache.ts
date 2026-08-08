@@ -147,14 +147,26 @@ export function decodeScanCache(document: unknown): ScanCache {
         reportedCostUsd,
       ] = row as SerializedRecord;
 
-      const model = models[modelIndex];
-      if (typeof timestampMs !== "number" || model === undefined) continue;
+      const model = typeof modelIndex === "number" ? models[modelIndex] : undefined;
+      if (typeof timestampMs !== "number" || !Number.isFinite(timestampMs)) continue;
+      if (model === undefined) continue;
+      // Token fields must be real numbers: a corrupt row must cost a cold
+      // re-parse of its file, never flow into the aggregate as NaN or a string.
+      if (
+        !Number.isFinite(uncached) ||
+        !Number.isFinite(cached) ||
+        !Number.isFinite(cacheCreation) ||
+        !Number.isFinite(output) ||
+        !Number.isFinite(reasoning)
+      ) {
+        continue;
+      }
 
       records.push({
         provider,
         timestampMs,
         model,
-        sessionId: sessions[sessionIndex] ?? "",
+        sessionId: (typeof sessionIndex === "number" ? sessions[sessionIndex] : undefined) ?? "",
         totals: {
           uncachedInputTokens: uncached,
           cachedInputTokens: cached,
@@ -176,6 +188,12 @@ export function decodeScanCache(document: unknown): ScanCache {
 export interface PruneOptions {
   /** Files the walk just saw. Only meaningful inside the walked window. */
   readonly livePaths: ReadonlySet<string>;
+  /**
+   * Roots the walk actually completed. Absence from `livePaths` only proves a
+   * file is gone when its root was walked: a provider whose directory failed to
+   * resolve this pass must not have its warm entries purged.
+   */
+  readonly walkedRoots: readonly string[];
   /** Start of the walked window; entries older than this were not looked for. */
   readonly windowStartMs: number;
   /** Entries older than this are dropped regardless. */
@@ -196,7 +214,9 @@ export function pruneScanCache(cache: ScanCache, options: PruneOptions): number 
   let removed = 0;
   for (const [path, entry] of cache) {
     const agedOut = entry.mtimeMs < options.retentionCutoffMs;
-    const deleted = entry.mtimeMs >= options.windowStartMs && !options.livePaths.has(path);
+    const underWalkedRoot = options.walkedRoots.some((root) => path.startsWith(root));
+    const deleted =
+      underWalkedRoot && entry.mtimeMs >= options.windowStartMs && !options.livePaths.has(path);
     if (agedOut || deleted) {
       cache.delete(path);
       removed += 1;
