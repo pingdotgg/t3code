@@ -8,7 +8,7 @@ import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useMemo, type ComponentProps } from "react";
-import { Platform, Pressable, useWindowDimensions, View } from "react-native";
+import { Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import Svg, { Circle, Path } from "react-native-svg";
@@ -26,7 +26,7 @@ import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr, type ThreadPrPresentation } from "../../state/use-thread-pr";
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
-import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
+import { buildThreadListMenuActions } from "./thread-list-menu";
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { resolveThreadStatus } from "./threadPresentation";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
@@ -431,11 +431,6 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
 
 /* ─── Thread row ─────────────────────────────────────────────────────── */
 
-const THREAD_ROW_MENU_ACTIONS: MenuAction[] = [
-  { id: "archive", title: "Archive", image: "archivebox" },
-  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
-];
-
 export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly variant: ThreadListVariant;
   readonly thread: EnvironmentThreadShell;
@@ -454,6 +449,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly onNewThreadOnBranch: (thread: EnvironmentThreadShell) => void;
+  readonly onRenameThread: (thread: EnvironmentThreadShell) => void;
   readonly onRegenerateThreadTitle: (thread: EnvironmentThreadShell) => void;
   readonly titleRegenerationSupported: boolean;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
@@ -484,6 +480,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     onDeleteThread,
     onRegenerateThreadTitle,
     onNewThreadOnBranch,
+    onRenameThread,
   } = props;
   const status = resolveThreadStatus(thread);
   const pr = useThreadPr(thread);
@@ -520,26 +517,15 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     () => onRegenerateThreadTitle(thread),
     [onRegenerateThreadTitle, thread],
   );
+  const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
   const menuActions = useMemo<MenuAction[]>(
-    () => [
-      ...(thread.branch
-        ? [
-            {
-              id: "new-thread-on-branch",
-              title:
-                Platform.OS === "ios" ? "New thread on branch" : `New thread on ${thread.branch}`,
-              image: "square.and.pencil",
-            },
-          ]
-        : []),
-      THREAD_ROW_MENU_ACTIONS[0]!,
-      ...buildThreadTitleRegenerationMenuItems({
-        supported: props.titleRegenerationSupported,
-        isRegenerating: thread.titleRegeneration != null,
+    () =>
+      buildThreadListMenuActions({
+        thread,
+        lifecycleActions: [{ id: "archive", title: "Archive", image: "archivebox" }],
+        titleRegenerationSupported: props.titleRegenerationSupported,
       }),
-      THREAD_ROW_MENU_ACTIONS[1]!,
-    ],
-    [props.titleRegenerationSupported, thread.branch, thread.titleRegeneration],
+    [props.titleRegenerationSupported, thread],
   );
   const primaryAction = useMemo(
     () => ({
@@ -554,10 +540,18 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
       if (nativeEvent.event === "archive") handleArchive();
+      if (nativeEvent.event === "rename") handleRename();
       if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
       if (nativeEvent.event === "delete") handleDelete();
     },
-    [handleArchive, handleDelete, handleRegenerateTitle, onNewThreadOnBranch, thread],
+    [
+      handleArchive,
+      handleDelete,
+      handleRegenerateTitle,
+      handleRename,
+      onNewThreadOnBranch,
+      thread,
+    ],
   );
 
   const statusPill = effectiveStatus ? (

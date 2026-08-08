@@ -6,7 +6,7 @@ import { useCallback, useRef } from "react";
 import { Alert } from "react-native";
 
 import { withThreadDismissal } from "./thread-dismissal";
-import { showConfirmDialog } from "../../components/ConfirmDialogHost";
+import { showConfirmDialog, showTextInputDialog } from "../../components/ConfirmDialogHost";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
 import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
@@ -231,6 +231,7 @@ export function useThreadListActions(): {
     thread: EnvironmentThreadShell,
     direction: "up" | "down",
   ) => Promise<boolean>;
+  readonly renameThread: (thread: EnvironmentThreadShell) => void;
   readonly regenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
 } {
   const executeAction = useThreadActionExecutor();
@@ -465,6 +466,35 @@ export function useThreadListActions(): {
     },
     [updateThreadMetadata],
   );
+  const renameThread = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      showTextInputDialog({
+        title: "Rename thread",
+        defaultValue: thread.title,
+        confirmText: "Rename",
+        onSubmit: (value) => {
+          const title = value.trim();
+          if (title.length === 0 || title === thread.title) return;
+          void (async () => {
+            const result = await updateThreadMetadata({
+              environmentId: thread.environmentId,
+              input: { threadId: thread.id, title },
+            });
+            if (result._tag === "Failure") {
+              const error = Cause.squash(result.cause);
+              Alert.alert(
+                "Could not rename thread",
+                error instanceof Error && error.message.trim().length > 0
+                  ? error.message
+                  : "The thread could not be renamed.",
+              );
+            }
+          })();
+        },
+      });
+    },
+    [updateThreadMetadata],
+  );
 
   // Plan against the complete section so filtering does not change a move.
   const reorderPinnedMutation = useAtomCommand(threadEnvironment.reorderPin, {
@@ -573,6 +603,7 @@ export function useThreadListActions(): {
     pinThread,
     unpinThread,
     moveThread,
+    renameThread,
     regenerateThreadTitle,
   };
 }

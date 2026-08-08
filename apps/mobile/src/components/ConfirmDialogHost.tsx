@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { Modal, Pressable, View } from "react-native";
+import { KeyboardAvoidingView, Modal, Platform, Pressable, View } from "react-native";
 
 import { cn } from "../lib/cn";
-import { AppText } from "./AppText";
+import { AppText, AppTextInput } from "./AppText";
 
 export type ConfirmDialogRequest = {
   readonly title: string;
@@ -14,7 +14,20 @@ export type ConfirmDialogRequest = {
   readonly onCancel?: () => void;
 };
 
-let presentRequest: ((request: ConfirmDialogRequest) => void) | null = null;
+export type TextInputDialogRequest = {
+  readonly title: string;
+  readonly defaultValue: string;
+  readonly cancelText?: string;
+  readonly confirmText: string;
+  readonly onSubmit: (value: string) => void;
+  readonly onCancel?: () => void;
+};
+
+type DialogRequest =
+  | ({ readonly kind: "confirm" } & ConfirmDialogRequest)
+  | ({ readonly kind: "text-input" } & TextInputDialogRequest);
+
+let presentRequest: ((request: DialogRequest) => void) | null = null;
 
 /**
  * Imperative confirm dialog, Alert.alert-shaped. Native iOS alerts already
@@ -23,7 +36,11 @@ let presentRequest: ((request: ConfirmDialogRequest) => void) | null = null;
  * once. Requires ConfirmDialogHost to be mounted at the app root.
  */
 export function showConfirmDialog(request: ConfirmDialogRequest): void {
-  presentRequest?.(request);
+  presentRequest?.({ kind: "confirm", ...request });
+}
+
+export function showTextInputDialog(request: TextInputDialogRequest): void {
+  presentRequest?.({ kind: "text-input", ...request });
 }
 
 /**
@@ -33,7 +50,8 @@ export function showConfirmDialog(request: ConfirmDialogRequest): void {
  * button color and a dimmer message than the title.
  */
 export function ConfirmDialogHost() {
-  const [request, setRequest] = useState<ConfirmDialogRequest | null>(null);
+  const [request, setRequest] = useState<DialogRequest | null>(null);
+  const [inputValue, setInputValue] = useState("");
   useEffect(() => {
     presentRequest = setRequest;
     return () => {
@@ -41,15 +59,27 @@ export function ConfirmDialogHost() {
     };
   }, []);
 
+  useEffect(() => {
+    if (request?.kind === "text-input") {
+      setInputValue(request.defaultValue);
+    }
+  }, [request]);
+
   const handleCancel = useCallback(() => {
     request?.onCancel?.();
     setRequest(null);
   }, [request]);
 
   const handleConfirm = useCallback(() => {
-    request?.onConfirm();
+    if (request?.kind === "confirm") {
+      request.onConfirm();
+    } else if (request?.kind === "text-input") {
+      request.onSubmit(inputValue);
+    }
     setRequest(null);
-  }, [request]);
+  }, [inputValue, request]);
+
+  const inputIsEmpty = request?.kind === "text-input" && inputValue.trim().length === 0;
 
   return (
     <Modal
@@ -61,14 +91,29 @@ export function ConfirmDialogHost() {
       onRequestClose={handleCancel}
     >
       {request === null ? null : (
-        <View className="flex-1 items-center justify-center bg-backdrop px-8">
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          className="flex-1 items-center justify-center bg-backdrop px-8"
+        >
           <View className="w-full rounded-[24px] bg-card px-6 pb-4 pt-5">
             <AppText className="text-lg font-t3-medium">{request.title}</AppText>
-            {request.message === undefined ? null : (
+            {request.kind !== "confirm" || request.message === undefined ? null : (
               <AppText className="mt-2 text-sm text-foreground-secondary">
                 {request.message}
               </AppText>
             )}
+            {request.kind === "text-input" ? (
+              <AppTextInput
+                accessibilityLabel={request.title}
+                autoFocus
+                className="mt-4 min-h-12 rounded-xl px-3 py-2 text-base"
+                onChangeText={setInputValue}
+                onSubmitEditing={inputIsEmpty ? undefined : handleConfirm}
+                returnKeyType="done"
+                selectTextOnFocus
+                value={inputValue}
+              />
+            ) : null}
             <View className="mt-5 flex-row justify-end gap-1">
               <View className="overflow-hidden rounded-full">
                 <Pressable
@@ -85,12 +130,14 @@ export function ConfirmDialogHost() {
                 <Pressable
                   accessibilityRole="button"
                   className="min-h-10 items-center justify-center px-4 active:bg-subtle"
+                  disabled={inputIsEmpty}
                   onPress={handleConfirm}
                 >
                   <AppText
                     className={cn(
                       "text-base font-t3-medium",
-                      request.destructive && "text-danger-foreground",
+                      request.kind === "confirm" && request.destructive && "text-danger-foreground",
+                      inputIsEmpty && "text-foreground-muted",
                     )}
                   >
                     {request.confirmText}
@@ -99,7 +146,7 @@ export function ConfirmDialogHost() {
               </View>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       )}
     </Modal>
   );
