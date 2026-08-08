@@ -148,6 +148,50 @@ export function decideEmptyDraftRetarget(
   return "retarget";
 }
 
+export function emptyDraftRetargetCommands(input: {
+  readonly repository: string;
+  readonly releaseId: number;
+  readonly tag: string;
+  readonly sourceCommit: string;
+}): {
+  readonly patch: readonly string[];
+  readonly read: readonly string[];
+} {
+  const endpoint = `repos/${input.repository}/releases/${input.releaseId}`;
+  return {
+    patch: [
+      "api",
+      "--method",
+      "PATCH",
+      endpoint,
+      "-f",
+      `tag_name=${input.tag}`,
+      "-f",
+      `target_commitish=${input.sourceCommit}`,
+    ],
+    read: ["api", endpoint],
+  };
+}
+
+export function assertRetargetedEmptyDraft(
+  release: ReleaseResponse,
+  expected: {
+    readonly releaseId: number;
+    readonly tag: string;
+    readonly sourceCommit: string;
+  },
+): void {
+  if (
+    release.id !== expected.releaseId ||
+    !release.draft ||
+    release.assets.length > 0 ||
+    release.tagName !== expected.tag ||
+    release.targetCommitish !== expected.sourceCommit
+  ) {
+    throw new Error(`Could not safely retarget empty draft ${expected.tag}.`);
+  }
+}
+
 function getRelease(config: TwoCodeReleaseConfig): ReleaseResponse | undefined {
   const tag = `${config.githubTagPrefix}${config.version}`;
   const result = run(
@@ -255,24 +299,19 @@ async function prepareDraft(
   }
   if (!tagCommit && decideEmptyDraftRetarget(release, plan.sourceCommit) === "retarget") {
     const releaseId = release.id;
-    run("gh", [
-      "api",
-      "--method",
-      "PATCH",
-      `repos/${config.githubRepository}/releases/${releaseId}`,
-      "-f",
-      `target_commitish=${plan.sourceCommit}`,
-    ]);
-    release = getRelease(config);
-    if (
-      !release ||
-      release.id !== releaseId ||
-      !release.draft ||
-      release.assets.length > 0 ||
-      release.targetCommitish !== plan.sourceCommit
-    ) {
-      throw new Error(`Could not safely retarget empty draft ${plan.tag}.`);
-    }
+    const commands = emptyDraftRetargetCommands({
+      repository: config.githubRepository,
+      releaseId,
+      tag: plan.tag,
+      sourceCommit: plan.sourceCommit,
+    });
+    run("gh", commands.patch);
+    release = parseReleaseResponse(run("gh", commands.read).stdout);
+    assertRetargetedEmptyDraft(release, {
+      releaseId,
+      tag: plan.tag,
+      sourceCommit: plan.sourceCommit,
+    });
   }
   const alreadyPublished = !release.draft;
 

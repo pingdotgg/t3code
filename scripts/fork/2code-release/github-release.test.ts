@@ -1,7 +1,9 @@
 import { assert, describe, it } from "@effect/vitest";
 
 import {
+  assertRetargetedEmptyDraft,
   decideEmptyDraftRetarget,
+  emptyDraftRetargetCommands,
   findReleaseInPaginatedListing,
   githubReleaseAssetNames,
 } from "./github-release.ts";
@@ -140,5 +142,61 @@ describe("2code GitHub release", () => {
         ),
       /Published release .* refusing retarget/,
     );
+  });
+
+  it("retargets the tag and commit, then re-reads the immutable release ID", () => {
+    assert.deepStrictEqual(
+      emptyDraftRetargetCommands({
+        repository: "hafencity-dev/t3code",
+        releaseId: 367259234,
+        tag: "2code-v1.0.108",
+        sourceCommit: "new-commit",
+      }),
+      {
+        patch: [
+          "api",
+          "--method",
+          "PATCH",
+          "repos/hafencity-dev/t3code/releases/367259234",
+          "-f",
+          "tag_name=2code-v1.0.108",
+          "-f",
+          "target_commitish=new-commit",
+        ],
+        read: ["api", "repos/hafencity-dev/t3code/releases/367259234"],
+      },
+    );
+  });
+
+  it("accepts only the exact empty draft returned by the release ID endpoint", () => {
+    const expected = {
+      releaseId: 367259234,
+      tag: "2code-v1.0.108",
+      sourceCommit: "new-commit",
+    };
+    const release = {
+      id: 367259234,
+      draft: true,
+      tagName: "2code-v1.0.108",
+      targetCommitish: "new-commit",
+      assets: [],
+    };
+    assert.doesNotThrow(() => assertRetargetedEmptyDraft(release, expected));
+
+    for (const invalid of [
+      { ...release, id: 1 },
+      { ...release, draft: false },
+      {
+        ...release,
+        assets: [{ name: "candidate.zip", url: "https://api.github.test/assets/1" }],
+      },
+      { ...release, tagName: "untagged-draft" },
+      { ...release, targetCommitish: "old-commit" },
+    ]) {
+      assert.throws(
+        () => assertRetargetedEmptyDraft(invalid, expected),
+        /Could not safely retarget empty draft 2code-v1\.0\.108/,
+      );
+    }
   });
 });
