@@ -120,6 +120,11 @@ const TURN_FOLD_HEIGHT = 56; // min-h-11 (44) + mb-3 (12)
 // The working row has no min-height clamp — its height follows the scaled
 // text-xs line height (see workingRowHeight in ThreadFeed).
 const WORKING_ROW_VERTICAL_EXTRAS = 24; // py-1 (8) + mb-4 (16)
+const THREAD_HISTORY_CONTROL_HEIGHT = 36;
+const THREAD_FEED_CONTENT_TOP_PADDING = 12;
+const ANDROID_THREAD_DRAW_DISTANCE = 250;
+const DEFAULT_THREAD_DRAW_DISTANCE = 500;
+const ANDROID_THREAD_ALWAYS_RENDER = { top: 1, bottom: 1 } as const;
 
 // Entering animations must only play for rows born just now — LegendList
 // remounts rows when they scroll back into view, and replaying an entrance for
@@ -150,8 +155,9 @@ export interface ThreadFeedProps {
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
-  /** Non-null when older turns exist beyond the loaded window. */
+  /** Non-null for a windowed thread, including once its oldest page is loaded. */
   readonly loadEarlier?: {
+    readonly hasMore: boolean;
     readonly loading: boolean;
     readonly onLoadEarlier: () => void;
   } | null;
@@ -1565,6 +1571,28 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
   }, [listMountKey, props.contentInsetEndAdjustment, props.listRef]);
 
+  const handleThreadListLoad = useCallback(() => {
+    if (Platform.OS !== "android") {
+      return;
+    }
+
+    const list = props.listRef.current;
+    const state = list?.getState();
+    if (!list || !state || state.data.length === 0 || state.scroll <= 1) {
+      return;
+    }
+
+    // Under memory pressure, LegendList can finish its initial end-scroll
+    // without Android attaching the visible recycled rows. A one-pixel scroll
+    // wakes the native path; immediately restoring the intended end position
+    // keeps this invisible and isolated from later prepends/user scrolling.
+    void list.scrollToOffset({ offset: state.scroll - 1, animated: false }).then(() => {
+      if (props.listRef.current === list) {
+        void list.scrollToEnd({ animated: false });
+      }
+    });
+  }, [props.listRef]);
+
   const anchoredEndSpace = useMemo(
     () =>
       resolveChatListAnchoredEndSpace(
@@ -1886,6 +1914,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             }
             maintainVisibleContentPosition={maintainVisibleContentPosition}
             data={presentedFeed}
+            dataKey={props.threadId}
+            // LegendList can settle Android at either edge before its recycled
+            // containers are attached. Keeping one row at each edge mounted
+            // gives native scrolling a real target, so opening a history or
+            // flinging to its start cannot stay blank until another gesture.
+            alwaysRender={Platform.OS === "android" ? ANDROID_THREAD_ALWAYS_RENDER : undefined}
             recycleItems={Platform.OS === "android"}
             extraData={listAppearanceData}
             renderItem={renderItem}
@@ -1896,7 +1930,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             getFixedItemSize={getFixedItemSize}
             // Measure rows well before they scroll into view so estimate→actual
             // corrections land offscreen instead of under the user's finger.
-            drawDistance={500}
+            drawDistance={
+              Platform.OS === "android"
+                ? ANDROID_THREAD_DRAW_DISTANCE
+                : DEFAULT_THREAD_DRAW_DISTANCE
+            }
             keyboardShouldPersistTaps="always"
             keyboardDismissMode="none"
             keyboardLiftBehavior="whenAtEnd"
@@ -1916,12 +1954,17 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             // user overscroll back to the adjusted rest position.
             scrollToOverflowEnabled
             estimatedItemSize={180}
+            estimatedHeaderSize={
+              (usesNativeAutomaticInsets ? 0 : topContentInset) +
+              (props.loadEarlier == null ? 0 : THREAD_HISTORY_CONTROL_HEIGHT)
+            }
             // Chat-style bottom alignment: when a thread is shorter than the
             // viewport, pad above the content so messages rest just above the
             // composer instead of under the header. No effect on threads that
             // overflow the viewport (the padding clamps to zero).
             alignItemsAtEnd
             initialScrollAtEnd
+            onLoad={handleThreadListLoad}
             onScroll={handleScroll}
             onScrollBeginDrag={handleScrollBeginDrag}
             onScrollEndDrag={handleScrollEndDrag}
@@ -1933,18 +1976,28 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
                 {props.loadEarlier != null ? (
                   <Pressable
                     onPress={props.loadEarlier.onLoadEarlier}
-                    disabled={props.loadEarlier.loading}
-                    className="items-center py-2"
+                    disabled={props.loadEarlier.loading || !props.loadEarlier.hasMore}
+                    accessibilityRole="button"
+                    accessibilityState={{
+                      busy: props.loadEarlier.loading,
+                      disabled: props.loadEarlier.loading || !props.loadEarlier.hasMore,
+                    }}
+                    className="items-center justify-center"
+                    style={{ height: THREAD_HISTORY_CONTROL_HEIGHT }}
                   >
                     <Text className="text-xs text-foreground-secondary">
-                      {props.loadEarlier.loading ? "Loading earlier turns…" : "Load earlier turns"}
+                      {props.loadEarlier.loading
+                        ? "Loading earlier turns…"
+                        : props.loadEarlier.hasMore
+                          ? "Load earlier turns"
+                          : "Beginning of thread"}
                     </Text>
                   </Pressable>
                 ) : null}
               </>
             }
             contentContainerStyle={{
-              paddingTop: 12,
+              paddingTop: THREAD_FEED_CONTENT_TOP_PADDING,
               paddingHorizontal: contentHorizontalPadding,
             }}
           />
