@@ -23,6 +23,7 @@ export function SourceControlPanelShell(props: {
     >
       <div
         className="flex min-h-0 flex-1 flex-col bg-sidebar surface-grain text-sidebar-foreground"
+        data-app-sidebar=""
         data-sidebar-version="v2"
         data-source-control-panel-surface
       >

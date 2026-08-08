@@ -90,6 +90,7 @@ describe("SourceControlPanelShell", () => {
       </SourceControlPanelShell>,
     );
 
+    expect(markup).toContain('data-app-sidebar=""');
     expect(markup).toContain('data-sidebar-version="v2"');
     expect(markup).toContain("bg-sidebar surface-grain text-sidebar-foreground");
     expect(markup).toContain("flex h-full min-w-0 flex-col w-full bg-transparent");
