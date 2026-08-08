@@ -119,7 +119,7 @@ function persistenceError(
   });
 }
 
-const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* () {
+export const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* () {
   return yield* Effect.callback<IDBDatabase, ConnectionTransientError>((resume) => {
     if (typeof indexedDB === "undefined") {
       resume(
@@ -127,6 +127,7 @@ const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* (
       );
       return;
     }
+    let settled = false;
     const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
     request.addEventListener("upgradeneeded", () => {
       if (!request.result.objectStoreNames.contains(CATALOG_STORE_NAME)) {
@@ -145,10 +146,37 @@ const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* (
         request.result.createObjectStore(VCS_REFS_STORE_NAME);
       }
     });
+    // `blocked` fires *instead of* `success`/`error` when another tab holds the
+    // database open and this open needs a version change. Without resuming here
+    // the request never settles, so the boot hangs on the splash screen with no
+    // error and no retry until every other tab is closed.
+    request.addEventListener("blocked", () => {
+      settled = true;
+      resume(
+        Effect.fail(
+          catalogError(
+            "open",
+            "another tab is using an older version of the local database — close the other T3 Code tabs and reload",
+          ),
+        ),
+      );
+    });
     request.addEventListener("error", () => {
+      settled = true;
       resume(Effect.fail(catalogError("open", request.error ?? "Unknown IndexedDB error")));
     });
     request.addEventListener("success", () => {
+      // `blocked` does not cancel the request — it still completes once the
+      // other connection closes. Resuming again is a no-op on a settled
+      // callback, so nothing would ever hand this database to `acquireRelease`
+      // and close it. Left open it holds the connection for the lifetime of the
+      // page and blocks every later version change, which is the deadlock this
+      // whole handler exists to avoid.
+      if (settled) {
+        request.result.close();
+        return;
+      }
+      settled = true;
       resume(Effect.succeed(request.result));
     });
   });
