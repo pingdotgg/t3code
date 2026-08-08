@@ -15,8 +15,7 @@ function createBrowserLocalApi(): LocalApi {
         return window.desktopBridge.pickFolder(options);
       },
       confirm: async (message) => {
-        const themedConfirmation = requestConfirmDialog(message);
-        return themedConfirmation ?? false;
+        return requestConfirmDialog(message) ?? false;
       },
     },
     shell: {

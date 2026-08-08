@@ -905,6 +905,10 @@ export function DiagnosticsSettingsPanel() {
       if (signalingPidRef.current !== null) return;
       signalingPidRef.current = pid;
       setSignalingPid(pid);
+      const clearSignaling = () => {
+        signalingPidRef.current = null;
+        setSignalingPid(null);
+      };
       if (signal === "SIGKILL") {
         let confirmed = false;
         try {
@@ -912,8 +916,7 @@ export function DiagnosticsSettingsPanel() {
             `Send SIGKILL to process ${pid}? This cannot be handled by the process.`,
           );
         } catch (error) {
-          signalingPidRef.current = null;
-          setSignalingPid(null);
+          clearSignaling();
           toastManager.add({
             type: "error",
             title: "Could not confirm signal",
@@ -922,31 +925,26 @@ export function DiagnosticsSettingsPanel() {
           return;
         }
         if (!confirmed) {
-          signalingPidRef.current = null;
-          setSignalingPid(null);
+          clearSignaling();
           return;
         }
       }
       const currentEnvironmentId = environmentIdRef.current;
       if (currentEnvironmentId === null) {
-        signalingPidRef.current = null;
-        setSignalingPid(null);
+        clearSignaling();
         return;
       }
       const process = processDataRef.current?.processes.find((entry) => entry.pid === pid);
       if (process === undefined) {
-        signalingPidRef.current = null;
-        setSignalingPid(null);
+        clearSignaling();
         return;
       }
 
-      void (async () => {
+      try {
         const result = await signalServerProcess({
           environmentId: currentEnvironmentId,
           input: { pid, startTimeMs: process.startTimeMs, signal },
         });
-        signalingPidRef.current = null;
-        setSignalingPid(null);
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {
             const error = squashAtomCommandFailure(result);
@@ -979,9 +977,11 @@ export function DiagnosticsSettingsPanel() {
           return;
         }
         refreshProcesses();
-      })();
+      } finally {
+        clearSignaling();
+      }
     },
-    [environmentId, processData?.processes, refreshProcesses, signalServerProcess],
+    [refreshProcesses, signalServerProcess],
   );
 
   const processDiagnosticsError = processData ? Option.getOrNull(processData.error) : null;

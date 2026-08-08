@@ -20,7 +20,7 @@ import { Button } from "./ui/button";
 
 type ConfirmationCopy = {
   readonly title: string;
-  readonly description: string;
+  readonly description: string | null;
 };
 
 export function resolveConfirmDialogCopy(message: string): ConfirmationCopy {
@@ -34,14 +34,14 @@ export function resolveConfirmDialogCopy(message: string): ConfirmationCopy {
       .filter((_, index) => index !== questionLineIndex)
       .join("\n")
       .trim();
-    return { title, description };
+    return { title, description: description || null };
   }
 
   const questionMarkIndex = normalizedMessage.indexOf("?");
   if (questionMarkIndex >= 0) {
     return {
       title: normalizedMessage.slice(0, questionMarkIndex + 1).trim(),
-      description: normalizedMessage.slice(questionMarkIndex + 1).trim(),
+      description: normalizedMessage.slice(questionMarkIndex + 1).trim() || null,
     };
   }
 
@@ -77,9 +77,11 @@ export function ConfirmDialogHost() {
       <AlertDialogPopup className="max-w-lg">
         <AlertDialogHeader>
           <AlertDialogTitle>{copy.title}</AlertDialogTitle>
-          <AlertDialogDescription className="whitespace-pre-line">
-            {copy.description}
-          </AlertDialogDescription>
+          {copy.description ? (
+            <AlertDialogDescription className="whitespace-pre-line">
+              {copy.description}
+            </AlertDialogDescription>
+          ) : null}
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>

@@ -848,6 +848,8 @@ export function ResourceTelemetryDiagnostics() {
   const [signalingKeys, setSignalingKeys] = useState<ReadonlySet<string>>(() => new Set());
   const signalingKeysRef = useRef<ReadonlySet<string>>(new Set());
   signalingKeysRef.current = signalingKeys;
+  const primaryEnvironmentIdRef = useRef(primaryEnvironment?.environmentId);
+  primaryEnvironmentIdRef.current = primaryEnvironment?.environmentId;
   const [isRetrying, setIsRetrying] = useState(false);
   const snapshot = telemetry.data;
   const allT3 = snapshot?.groups.allT3;
@@ -859,6 +861,12 @@ export function ResourceTelemetryDiagnostics() {
       const nextSignalingKeys = new Set(signalingKeysRef.current).add(identityKey);
       signalingKeysRef.current = nextSignalingKeys;
       setSignalingKeys(nextSignalingKeys);
+      const clearSignaling = () => {
+        const next = new Set(signalingKeysRef.current);
+        next.delete(identityKey);
+        signalingKeysRef.current = next;
+        setSignalingKeys(next);
+      };
 
       if (signal === "SIGKILL") {
         let confirmed = false;
@@ -867,26 +875,22 @@ export function ResourceTelemetryDiagnostics() {
             `Send SIGKILL to process ${process.identity.pid}? This cannot be handled by the process.`,
           );
         } catch (error) {
-          signalingKeysRef.current = new Set(
-            [...signalingKeysRef.current].filter((key) => key !== identityKey),
-          );
-          setSignalingKeys(signalingKeysRef.current);
-          throw error;
+          clearSignaling();
+          toastManager.add({
+            type: "error",
+            title: "Could not confirm signal",
+            description: error instanceof Error ? error.message : `Failed to send ${signal}.`,
+          });
+          return;
         }
         if (!confirmed) {
-          signalingKeysRef.current = new Set(
-            [...signalingKeysRef.current].filter((key) => key !== identityKey),
-          );
-          setSignalingKeys(signalingKeysRef.current);
+          clearSignaling();
           return;
         }
       }
-      const environmentId = primaryEnvironment?.environmentId;
+      const environmentId = primaryEnvironmentIdRef.current;
       if (environmentId === undefined) {
-        signalingKeysRef.current = new Set(
-          [...signalingKeysRef.current].filter((key) => key !== identityKey),
-        );
-        setSignalingKeys(signalingKeysRef.current);
+        clearSignaling();
         return;
       }
       void signalServerProcess({
@@ -920,13 +924,10 @@ export function ResourceTelemetryDiagnostics() {
           });
         })
         .finally(() => {
-          signalingKeysRef.current = new Set(
-            [...signalingKeysRef.current].filter((key) => key !== identityKey),
-          );
-          setSignalingKeys(signalingKeysRef.current);
+          clearSignaling();
         });
     },
-    [primaryEnvironment?.environmentId, signalServerProcess],
+    [signalServerProcess],
   );
 
   const retryCollector = useCallback(() => {

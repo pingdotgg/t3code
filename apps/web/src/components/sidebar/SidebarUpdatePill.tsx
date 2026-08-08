@@ -128,7 +128,14 @@ export function SidebarUpdatePill() {
         );
       } catch (error) {
         setIsActionPending(false);
-        throw error;
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not confirm update",
+            description: error instanceof Error ? error.message : "Update confirmation failed.",
+          }),
+        );
+        return;
       }
       if (!confirmed) {
         setIsActionPending(false);

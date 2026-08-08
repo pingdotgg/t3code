@@ -104,7 +104,7 @@ import {
 } from "../keybindings";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { useShortcutModifierState } from "../shortcutModifierState";
-import { readLocalApi } from "../localApi";
+import { ensureLocalApi, readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
@@ -2726,6 +2726,7 @@ interface SidebarProjectsContentProps {
   arm64IntelBuildWarningDescription: string | null;
   desktopUpdateButtonAction: "download" | "install" | "none";
   desktopUpdateButtonDisabled: boolean;
+  desktopUpdateActionPending: boolean;
   handleDesktopUpdateButtonClick: () => void;
   projectSortOrder: SidebarProjectSortOrder;
   threadSortOrder: SidebarThreadSortOrder;
@@ -2766,6 +2767,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     arm64IntelBuildWarningDescription,
     desktopUpdateButtonAction,
     desktopUpdateButtonDisabled,
+    desktopUpdateActionPending,
     handleDesktopUpdateButtonClick,
     projectSortOrder,
     threadSortOrder,
@@ -2858,7 +2860,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 <Button
                   size="xs"
                   variant="outline"
-                  disabled={desktopUpdateButtonDisabled}
+                  disabled={desktopUpdateButtonDisabled || desktopUpdateActionPending}
                   onClick={handleDesktopUpdateButtonClick}
                 >
                   {desktopUpdateButtonAction === "download"
@@ -3028,6 +3030,7 @@ export default function LegacySidebar() {
   const suppressProjectClickAfterDragRef = useRef(false);
   const suppressProjectClickForContextMenuRef = useRef(false);
   const desktopUpdateState = useDesktopUpdateState();
+  const [desktopUpdateActionPending, setDesktopUpdateActionPending] = useState(false);
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
   const platform = navigator.platform;
@@ -3494,10 +3497,18 @@ export default function LegacySidebar() {
     "commandPalette.toggle",
     newThreadShortcutLabelOptions,
   );
-  const handleDesktopUpdateButtonClick = useCallback(() => {
+  const handleDesktopUpdateButtonClick = useCallback(async () => {
     const bridge = window.desktopBridge;
     if (!bridge || !desktopUpdateState) return;
-    if (desktopUpdateButtonDisabled || desktopUpdateButtonAction === "none") return;
+    if (
+      desktopUpdateButtonDisabled ||
+      desktopUpdateButtonAction === "none" ||
+      desktopUpdateActionPending
+    ) {
+      return;
+    }
+
+    setDesktopUpdateActionPending(true);
 
     if (desktopUpdateButtonAction === "download") {
       void bridge
@@ -3525,15 +3536,32 @@ export default function LegacySidebar() {
               description: error instanceof Error ? error.message : "An unexpected error occurred.",
             }),
           );
-        });
+        })
+        .finally(() => setDesktopUpdateActionPending(false));
       return;
     }
 
     if (desktopUpdateButtonAction === "install") {
-      const confirmed = window.confirm(
-        getDesktopUpdateInstallConfirmationMessage(desktopUpdateState, navigator.platform),
-      );
-      if (!confirmed) return;
+      let confirmed = false;
+      try {
+        confirmed = await ensureLocalApi().dialogs.confirm(
+          getDesktopUpdateInstallConfirmationMessage(desktopUpdateState, navigator.platform),
+        );
+      } catch (error) {
+        setDesktopUpdateActionPending(false);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not confirm update",
+            description: error instanceof Error ? error.message : "Update confirmation failed.",
+          }),
+        );
+        return;
+      }
+      if (!confirmed) {
+        setDesktopUpdateActionPending(false);
+        return;
+      }
       void bridge
         .installUpdate()
         .then((result) => {
@@ -3556,9 +3584,15 @@ export default function LegacySidebar() {
               description: error instanceof Error ? error.message : "An unexpected error occurred.",
             }),
           );
-        });
+        })
+        .finally(() => setDesktopUpdateActionPending(false));
     }
-  }, [desktopUpdateButtonAction, desktopUpdateButtonDisabled, desktopUpdateState]);
+  }, [
+    desktopUpdateActionPending,
+    desktopUpdateButtonAction,
+    desktopUpdateButtonDisabled,
+    desktopUpdateState,
+  ]);
 
   const expandThreadListForProject = useCallback((projectKey: string) => {
     setExpandedThreadListsByProject((current) => {
@@ -3590,6 +3624,7 @@ export default function LegacySidebar() {
         arm64IntelBuildWarningDescription={arm64IntelBuildWarningDescription}
         desktopUpdateButtonAction={desktopUpdateButtonAction}
         desktopUpdateButtonDisabled={desktopUpdateButtonDisabled}
+        desktopUpdateActionPending={desktopUpdateActionPending}
         handleDesktopUpdateButtonClick={handleDesktopUpdateButtonClick}
         projectSortOrder={sidebarProjectSortOrder}
         threadSortOrder={sidebarThreadSortOrder}

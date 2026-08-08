@@ -288,7 +288,14 @@ function AboutVersionSection() {
         );
       } catch (error) {
         setIsUpdateActionPending(false);
-        throw error;
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not confirm update",
+            description: error instanceof Error ? error.message : "Update confirmation failed.",
+          }),
+        );
+        return;
       }
       if (!confirmed) {
         setIsUpdateActionPending(false);
