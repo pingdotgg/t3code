@@ -210,6 +210,10 @@
     "./claudeCodexRouting": {
       "types": "./src/claudeCodexRouting.ts",
       "import": "./src/claudeCodexRouting.ts"
+    },
+    "./fork/legacy2codeImport": {
+      "types": "./src/fork/legacy2codeImport.ts",
+      "import": "./src/fork/legacy2codeImport.ts"
     }
   },
   "scripts": {

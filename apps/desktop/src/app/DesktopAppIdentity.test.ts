@@ -155,6 +155,24 @@ describe("DesktopAppIdentity", () => {
     ),
   );
 
+  it.effect("never adopts the legacy 2code userData directory in the production takeover", () =>
+    withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        const userDataPath = yield* identity.resolveUserDataPath;
+
+        assert.equal(userDataPath, "/Users/alice/Library/Application Support/2code-t3");
+      }),
+      {
+        environment: {
+          distributionId: "2code-production",
+          runtimeVersion: "0.0.32",
+        },
+        legacyPathExists: true,
+      },
+    ),
+  );
+
   it.effect("preserves failures while inspecting the legacy userData path", () => {
     const legacyPath = "/Users/alice/Library/Application Support/T3 Code (Alpha)";
     const cause = PlatformError.systemError({

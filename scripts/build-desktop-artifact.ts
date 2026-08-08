@@ -15,6 +15,15 @@ import { resolveWebAssetBrandForChannel, type WebAssetBrand } from "./lib/brand-
 import { getDefaultBuildArch } from "./lib/build-target-arch.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
+// fork: keep the legacy 2code release identity isolated from upstream desktop defaults.
+import {
+  DESKTOP_DISTRIBUTIONS,
+  renderTwoCodeLegacyMacEntitlements,
+  resolveDesktopDistributionStageMetadata,
+  resolveDesktopDistributionProfile,
+  type DesktopDistribution as DesktopDistributionId,
+  type DesktopDistributionProfile,
+} from "./fork/2code-desktop-distribution.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -36,6 +45,7 @@ const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
 const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
+const DesktopDistribution = Schema.Literals(DESKTOP_DISTRIBUTIONS);
 
 const WorkspaceConfig = Schema.Struct({
   catalog: Schema.optional(Schema.Record(Schema.String, Schema.String)),
@@ -129,6 +139,7 @@ const PLATFORM_CONFIG: Record<typeof BuildPlatform.Type, PlatformConfig> = {
 };
 
 interface BuildCliInput {
+  readonly distribution?: Option.Option<DesktopDistributionId>;
   readonly platform: Option.Option<typeof BuildPlatform.Type>;
   readonly target: Option.Option<string>;
   readonly arch: Option.Option<typeof BuildArch.Type>;
@@ -590,6 +601,7 @@ const resolvePythonForNodeGyp = Effect.fn("resolvePythonForNodeGyp")(function* (
 });
 
 interface ResolvedBuildOptions {
+  readonly distribution: DesktopDistributionId | undefined;
   readonly platform: typeof BuildPlatform.Type;
   readonly target: string;
   readonly arch: typeof BuildArch.Type;
@@ -609,6 +621,8 @@ interface StagePackageJson {
   readonly version: string;
   readonly buildVersion: string;
   readonly t3codeCommitHash: string;
+  readonly t3codeDistribution?: DesktopDistributionId;
+  readonly t3codeRuntimeVersion?: string;
   readonly private: true;
   readonly packageManager: string;
   readonly description: string;
@@ -1020,6 +1034,9 @@ const AzureTrustedSigningOptionsConfig = Config.all({
 });
 
 const BuildEnvConfig = Config.all({
+  distribution: Config.schema(DesktopDistribution, "T3CODE_DESKTOP_DISTRIBUTION").pipe(
+    Config.option,
+  ),
   platform: Config.schema(BuildPlatform, "T3CODE_DESKTOP_PLATFORM").pipe(Config.option),
   target: Config.string("T3CODE_DESKTOP_TARGET").pipe(Config.option),
   arch: Config.schema(BuildArch, "T3CODE_DESKTOP_ARCH").pipe(Config.option),
@@ -1080,6 +1097,12 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
   const env = yield* BuildEnvConfig;
   const hostPlatform = yield* HostProcessPlatform;
 
+  const distribution = mergeOptions(
+    input.distribution ?? Option.none(),
+    env.distribution,
+    undefined,
+  );
+
   const platform = mergeOptions(
     input.platform,
     env.platform,
@@ -1131,6 +1154,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     Option.getOrUndefined(input.wslPrebuild) ?? Option.getOrUndefined(env.wslPrebuild);
 
   return {
+    distribution,
     platform,
     target,
     arch,
@@ -1509,6 +1533,14 @@ export function resolveDesktopProductName(version: string): string {
     : (desktopPackageJson.productName ?? "2code");
 }
 
+export function shouldResolveMacPasskeySigningConfiguration(
+  platform: typeof BuildPlatform.Type,
+  signed: boolean,
+  distributionProfile: DesktopDistributionProfile | undefined,
+): boolean {
+  return platform === "mac" && signed && distributionProfile?.macSigning !== "legacy-entitlements";
+}
+
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -1519,14 +1551,24 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   macPasskeySigning:
     | {
         readonly entitlementsPath: string;
-        readonly provisioningProfilePath: string;
+        readonly entitlementsInheritPath?: string;
+        readonly provisioningProfilePath?: string;
       }
     | undefined,
+  // fork: selected only by the dedicated 2code production release workflow.
+  distributionProfile?: DesktopDistributionProfile,
 ) {
+  const appId = distributionProfile?.appId ?? DESKTOP_APP_ID;
+  const productName = distributionProfile?.productName ?? resolveDesktopProductName(version);
+  const executableName = distributionProfile?.executableName;
+  const protocol = distributionProfile?.protocols ?? {
+    name: "2code",
+    schemes: ["t3code", "t3code-dev"],
+  };
   const buildConfig: Record<string, unknown> = {
-    appId: DESKTOP_APP_ID,
-    productName: resolveDesktopProductName(version),
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
+    appId,
+    productName,
+    artifactName: distributionProfile?.artifactNames.default ?? "T3-Code-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [...DESKTOP_FILE_EXCLUSIONS],
     directories: {
@@ -1539,8 +1581,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     extraResources: DESKTOP_EXTRA_RESOURCES,
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
-  const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
-  if (publishConfig) {
+  const publishConfig = distributionProfile
+    ? undefined
+    : yield* resolveGitHubPublishConfig(updateChannel);
+  if (distributionProfile) {
+    buildConfig.publish = [{ ...distributionProfile.updates }];
+  } else if (publishConfig) {
     buildConfig.publish = [publishConfig];
   } else if (mockUpdates) {
     buildConfig.publish = [
@@ -1554,27 +1600,44 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "mac") {
     buildConfig.mac = {
       target: target === "dmg" ? [target, "zip"] : [target],
+      ...(distributionProfile ? { artifactName: distributionProfile.artifactNames.mac } : {}),
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      ...(executableName ? { executableName } : {}),
+      ...(distributionProfile
+        ? {
+            hardenedRuntime: true,
+            gatekeeperAssess: false,
+            ...(signed ? { forceCodeSigning: true } : {}),
+          }
+        : {}),
       protocols: [
         {
-          name: "2code",
-          schemes: ["t3code", "t3code-dev"],
+          name: protocol.name,
+          schemes: [...protocol.schemes],
         },
       ],
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
-            provisioningProfile: macPasskeySigning.provisioningProfilePath,
+            ...(macPasskeySigning.entitlementsInheritPath
+              ? { entitlementsInherit: macPasskeySigning.entitlementsInheritPath }
+              : {}),
+            ...(macPasskeySigning.provisioningProfilePath
+              ? { provisioningProfile: macPasskeySigning.provisioningProfilePath }
+              : {}),
           }
         : {}),
     };
+    if (distributionProfile && target === "dmg") {
+      buildConfig.dmg = { artifactName: distributionProfile.artifactNames.dmg };
+    }
   }
 
   if (platform === "linux") {
     buildConfig.linux = {
       target: [target],
-      executableName: "t3code",
+      executableName: executableName ?? "t3code",
       icon: "icons",
       category: "Development",
       // electron-builder turns these into MimeType=x-scheme-handler/<scheme>;
@@ -1582,8 +1645,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // t3code:// OAuth callbacks to the app.
       protocols: [
         {
-          name: "2code",
-          schemes: ["t3code", "t3code-dev"],
+          name: protocol.name,
+          schemes: [...protocol.schemes],
         },
       ],
       desktop: {
@@ -1599,6 +1662,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     const winConfig: Record<string, unknown> = {
       target: [target],
       icon: "icon.ico",
+      ...(executableName ? { executableName } : {}),
       // Resource editing applies the product metadata and icon independently
       // of code signing. Disabling it for local unsigned builds leaves the
       // packaged executable with Electron's stock icon.
@@ -1763,6 +1827,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   });
 
   const appVersion = options.version ?? serverPackageJson.version;
+  // fork: a distribution profile changes packaging identity only; the embedded server stays upstream-versioned.
+  const distributionProfile = resolveDesktopDistributionProfile(options.distribution);
   const iconAssets = resolveDesktopBuildIconAssets(appVersion);
   const commitHash = yield* resolveGitCommitHash(repoRoot);
   const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
@@ -1847,13 +1913,17 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
   yield* fs.copy(stageResourcesDir, path.join(stageAppDir, "apps/desktop/prod-resources"));
 
-  const configuredMacPasskeySigning =
-    options.platform === "mac" && options.signed
-      ? yield* Effect.try({
-          try: () => resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
-          catch: MacPasskeySigningConfigurationResolutionError.fromCause,
-        })
-      : undefined;
+  const usesLegacyMacSigning = distributionProfile?.macSigning === "legacy-entitlements";
+  const configuredMacPasskeySigning = shouldResolveMacPasskeySigningConfiguration(
+    options.platform,
+    options.signed,
+    distributionProfile,
+  )
+    ? yield* Effect.try({
+        try: () => resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
+        catch: MacPasskeySigningConfigurationResolutionError.fromCause,
+      })
+    : undefined;
   const macPasskeySigning = configuredMacPasskeySigning
     ? {
         ...configuredMacPasskeySigning,
@@ -1873,6 +1943,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       });
     }
     yield* fs.writeFileString(macEntitlementsPath, renderMacPasskeyEntitlements(macPasskeySigning));
+  }
+  const legacyMacEntitlementsPath =
+    options.platform === "mac" && options.signed && usesLegacyMacSigning
+      ? path.join(stageAppDir, "entitlements.2code.mac.plist")
+      : undefined;
+  if (legacyMacEntitlementsPath) {
+    yield* fs.writeFileString(legacyMacEntitlementsPath, renderTwoCodeLegacyMacEntitlements());
   }
 
   const stageDependencies = {
@@ -1904,9 +1981,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
+    ...resolveDesktopDistributionStageMetadata(distributionProfile, serverPackageJson.version),
     private: true,
     packageManager: rootPackageJson.packageManager,
-    description: "2code desktop build",
+    description: distributionProfile?.description ?? "2code desktop build",
     author: "T3 Tools",
     main: "apps/desktop/dist-electron/main.cjs",
     build: yield* createBuildConfig(
@@ -1921,7 +1999,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
             entitlementsPath: macEntitlementsPath,
             provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
           }
-        : undefined,
+        : legacyMacEntitlementsPath
+          ? {
+              entitlementsPath: legacyMacEntitlementsPath,
+              entitlementsInheritPath: legacyMacEntitlementsPath,
+            }
+          : undefined,
+      distributionProfile,
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -2072,6 +2156,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 });
 
 const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
+  // fork: opt-in legacy identity; omitted builds retain upstream desktop behavior.
+  distribution: Flag.choice("distribution", DESKTOP_DISTRIBUTIONS).pipe(
+    Flag.withDescription("Desktop distribution profile (env: T3CODE_DESKTOP_DISTRIBUTION)."),
+    Flag.optional,
+  ),
   platform: Flag.choice("platform", BuildPlatform.literals).pipe(
     Flag.withDescription("Build platform (env: T3CODE_DESKTOP_PLATFORM)."),
     Flag.optional,

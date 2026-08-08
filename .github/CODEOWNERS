@@ -1,0 +1,9 @@
+# fork: production 2code updater and compatibility boundary
+/.github/workflows/hafencity-2code-release.yml @Dryec
+/distributions/2code/ @Dryec
+/scripts/fork/2code-desktop-distribution.ts @Dryec
+/scripts/fork/2code-release/ @Dryec
+/apps/desktop/src/app/DesktopDistribution.ts @Dryec
+/apps/desktop/src/migrations/ @Dryec
+/apps/server/src/fork/ @Dryec
+/packages/shared/src/fork/ @Dryec

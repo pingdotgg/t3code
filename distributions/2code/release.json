@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "version": "1.0.107",
+  "distribution": "2code-production",
+  "releaseBranch": "main-2code",
+  "githubRepository": "hafencity-dev/t3code",
+  "githubTagPrefix": "2code-v",
+  "appId": "dev.hafencity.dev.agents",
+  "productName": "2code",
+  "executableName": "2code",
+  "architecture": "arm64",
+  "teamId": "D78YC33UVC",
+  "feedUrl": "https://pub-cb9e18e7e55d46cf9c297e4b612881f7.r2.dev/releases/desktop",
+  "r2Bucket": "2code",
+  "r2Prefix": "releases/desktop",
+  "manifestName": "latest-mac.yml",
+  "betaManifestName": "beta-mac.yml",
+  "updaterCacheDirName": "2code-updater",
+  "protocolSchemes": ["twentyfirst-agents"],
+  "stagingPercentage": 100,
+  "minimumLegacyVersion": "1.0.107"
+}

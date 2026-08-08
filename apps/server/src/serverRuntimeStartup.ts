@@ -36,6 +36,7 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
 import { forkParked } from "./serverActivation.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
+import * as Legacy2CodeImport from "./fork/Legacy2codeImport.ts"; // fork: legacy 2code desktop migration
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,
@@ -442,6 +443,10 @@ export const make = (options?: StartupOptions) =>
         }),
       );
       yield* options?.activate ?? Effect.void;
+      yield* runStartupPhase(
+        "legacy-2code.import",
+        Legacy2CodeImport.runLegacy2CodeImportOnStartup,
+      ); // fork: legacy 2code desktop migration
 
       yield* Effect.logDebug("Accepting commands");
       yield* commandGate.signalCommandReady;

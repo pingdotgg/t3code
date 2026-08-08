@@ -111,6 +111,27 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
+  it.effect("fully isolates the 2code production distribution from ambient T3 state", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment(
+        {
+          appVersion: "1.0.108",
+          distributionId: "2code-production",
+          runtimeVersion: "0.0.32",
+          isPackaged: true,
+        },
+        { T3CODE_HOME: "/Users/alice/.t3-live" },
+      );
+
+      assert.equal(environment.baseDir, "/Users/alice/.2code-t3");
+      assert.equal(environment.stateDir, "/Users/alice/.2code-t3/userdata");
+      assert.equal(environment.userDataDirName, "2code-t3");
+      assert.equal(environment.displayName, "2code");
+      assert.equal(environment.appVersion, "1.0.108");
+      assert.equal(environment.runtimeVersion, "0.0.32");
+    }),
+  );
+
   it.effect("uses a configured app user model id override", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(

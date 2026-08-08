@@ -1,0 +1,423 @@
+name: 2code Release
+
+on:
+  pull_request:
+    branches:
+      - main-2code
+  push:
+    branches:
+      - main-2code
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Release operation
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - publish
+          - promote
+          - recovery
+      staging_percentage:
+        description: Target rollout percentage for promote (1-100)
+        required: false
+        type: string
+      recovery_version:
+        description: Live version whose rollout should be undone
+        required: false
+        type: string
+
+concurrency:
+  group: 2code-production-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  id-token: none
+
+jobs:
+  validate:
+    name: Validate 2code release
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+
+      - name: Validate frozen release contract
+        run: node scripts/fork/2code-release/release-cli.ts validate-config
+
+      - name: Test release tooling
+        run: vp test run scripts/fork/2code-release/*.test.ts scripts/fork/2code-desktop-distribution.test.ts
+
+      - name: Typecheck release tooling
+        run: vp run --filter @t3tools/scripts typecheck
+
+      - name: Lint GitHub workflow
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -color .github/workflows/hafencity-2code-release.yml
+
+  preflight:
+    name: Resolve 2code release
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      desired_version: ${{ steps.release.outputs.desired_version }}
+      live_version: ${{ steps.release.outputs.live_version }}
+      live_beta_version: ${{ steps.release.outputs.live_beta_version }}
+      decision: ${{ steps.release.outputs.decision }}
+      should_build: ${{ steps.release.outputs.should_build }}
+      should_publish: ${{ steps.release.outputs.should_publish }}
+      tag: ${{ steps.release.outputs.tag }}
+      staging_percentage: ${{ steps.release.outputs.staging_percentage }}
+      recovery_version: ${{ steps.release.outputs.recovery_version }}
+      ref: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: package.json
+
+      - id: release
+        name: Compare desired version with both live channels
+        env:
+          RELEASE_ACTION: ${{ github.event_name == 'workflow_dispatch' && inputs.action || 'publish' }}
+          STAGING_PERCENTAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.staging_percentage || '' }}
+          RECOVERY_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_version || '' }}
+          FINALIZE_IF_LIVE: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'publish' && 'true' || 'false' }}
+        run: |
+          node scripts/fork/2code-release/release-cli.ts preflight \
+            --action "$RELEASE_ACTION" \
+            --staging-percentage "$STAGING_PERCENTAGE" \
+            --recovery-version "$RECOVERY_VERSION" \
+            --finalize-if-live "$FINALIZE_IF_LIVE"
+
+      - name: Summarize decision
+        env:
+          DESIRED_VERSION: ${{ steps.release.outputs.desired_version }}
+          LIVE_VERSION: ${{ steps.release.outputs.live_version }}
+          LIVE_BETA_VERSION: ${{ steps.release.outputs.live_beta_version }}
+          RELEASE_DECISION: ${{ steps.release.outputs.decision }}
+        run: |
+          {
+            echo "### 2code release preflight"
+            echo "- Desired: $DESIRED_VERSION"
+            echo "- Live latest: $LIVE_VERSION"
+            echo "- Live beta: $LIVE_BETA_VERSION"
+            echo "- Decision: $RELEASE_DECISION"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Build signed 2code macOS arm64
+    needs: preflight
+    if: needs.preflight.outputs.should_build == 'true'
+    runs-on: macos-15
+    timeout-minutes: 60
+    environment:
+      name: 2code-production
+    permissions:
+      contents: read
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/desktop...
+              - --filter=t3...
+              - --filter=@t3tools/scripts...
+
+      - name: Require legacy signing and notarization credentials
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required 2code production secret: $name" >&2
+              exit 1
+            fi
+          done
+          expected_team_id="$(node -p "JSON.parse(require('fs').readFileSync('distributions/2code/release.json','utf8')).teamId")"
+          if [[ "$APPLE_TEAM_ID" != "$expected_team_id" ]]; then
+            echo "APPLE_TEAM_ID does not match the frozen 2code identity." >&2
+            exit 1
+          fi
+
+      - name: Build, sign, and notarize legacy-compatible app
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          node scripts/build-desktop-artifact.ts \
+            --distribution 2code-production \
+            --platform mac \
+            --target dmg \
+            --arch arm64 \
+            --build-version "${{ needs.preflight.outputs.desired_version }}" \
+            --output-dir release-2code \
+            --signed \
+            --verbose
+
+      - name: Prepare content-addressed updater payloads
+        run: |
+          node scripts/fork/2code-release/release-cli.ts prepare \
+            --artifact-dir release-2code \
+            --source-commit "${{ needs.preflight.outputs.ref }}"
+
+      - name: Verify identity, notarization, updater contract, and hashes
+        run: node scripts/fork/2code-release/verify-macos.ts --artifact-dir release-2code
+
+      - name: Upload verified release candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: 2code-${{ needs.preflight.outputs.desired_version }}-${{ needs.preflight.outputs.ref }}
+          path: |
+            release-2code/*.dmg
+            release-2code/*.zip
+            release-2code/*.blockmap
+            release-2code/latest-mac.yml
+            release-2code/2code-release-plan.json
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish 2code production update
+    needs: [preflight, build]
+    if: needs.preflight.outputs.should_publish == 'true' && needs.preflight.outputs.decision == 'build' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: 2code-production
+    permissions:
+      contents: write
+      actions: read
+      id-token: none
+    env:
+      GH_TOKEN: ${{ github.token }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_ENDPOINT_URL: https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      T3CODE_2CODE_ALLOW_GITHUB_RELEASE: I_UNDERSTAND_THIS_PUBLISHES_2CODE
+      T3CODE_2CODE_ALLOW_R2_PUBLISH: I_UNDERSTAND_THIS_UPDATES_2CODE
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: package.json
+
+      - name: Download verified release candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: 2code-${{ needs.preflight.outputs.desired_version }}-${{ needs.preflight.outputs.ref }}
+          path: release-2code
+
+      - name: Reverify candidate after artifact transfer
+        run: node scripts/fork/2code-release/release-cli.ts verify --artifact-dir release-2code
+
+      - name: Prepare retry-safe draft GitHub release
+        run: node scripts/fork/2code-release/github-release.ts prepare --artifact-dir release-2code
+
+      - name: Upload immutable payloads and activate beta then latest
+        run: node scripts/fork/2code-release/r2-publish.ts publish --artifact-dir release-2code
+
+      - name: Publish GitHub release after R2 activation
+        run: node scripts/fork/2code-release/github-release.ts finalize
+
+  resume:
+    name: Resume interrupted 2code activation
+    needs: preflight
+    if: needs.preflight.outputs.decision == 'resume'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: 2code-production
+    permissions:
+      contents: write
+      id-token: none
+    env:
+      GH_TOKEN: ${{ github.token }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_ENDPOINT_URL: https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      T3CODE_2CODE_ALLOW_GITHUB_RELEASE: I_UNDERSTAND_THIS_PUBLISHES_2CODE
+      T3CODE_2CODE_ALLOW_R2_PUBLISH: I_UNDERSTAND_THIS_UPDATES_2CODE
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: package.json
+
+      - name: Verify and align both live channels to the existing candidate
+        run: node scripts/fork/2code-release/r2-publish.ts resume
+
+      - name: Verify and publish the matching GitHub draft
+        run: node scripts/fork/2code-release/github-release.ts finalize
+
+  finalize:
+    name: Finalize live 2code GitHub release
+    needs: preflight
+    if: needs.preflight.outputs.decision == 'finalize'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: 2code-production
+    permissions:
+      contents: write
+      id-token: none
+    env:
+      GH_TOKEN: ${{ github.token }}
+      T3CODE_2CODE_ALLOW_GITHUB_RELEASE: I_UNDERSTAND_THIS_PUBLISHES_2CODE
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: package.json
+
+      - name: Finalize existing draft
+        run: node scripts/fork/2code-release/github-release.ts finalize
+
+  promote:
+    name: Promote staged 2code rollout
+    needs: preflight
+    if: needs.preflight.outputs.decision == 'promote'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: 2code-production
+    permissions:
+      contents: read
+      id-token: none
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_ENDPOINT_URL: https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      T3CODE_2CODE_ALLOW_R2_PUBLISH: I_UNDERSTAND_THIS_UPDATES_2CODE
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: package.json
+
+      - name: Promote latest and beta manifests
+        run: |
+          node scripts/fork/2code-release/r2-publish.ts promote \
+            --staging-percentage "${{ needs.preflight.outputs.staging_percentage }}"
+
+  recovery:
+    name: Recover previous 2code manifests
+    needs: preflight
+    if: needs.preflight.outputs.decision == 'recover'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: 2code-production
+    permissions:
+      contents: read
+      id-token: none
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_ENDPOINT_URL: https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      T3CODE_2CODE_ALLOW_R2_PUBLISH: I_UNDERSTAND_THIS_UPDATES_2CODE
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: package.json
+
+      - name: Restore independently archived latest and beta manifests
+        run: |
+          node scripts/fork/2code-release/r2-publish.ts recover \
+            --recovery-version "${{ needs.preflight.outputs.recovery_version }}"

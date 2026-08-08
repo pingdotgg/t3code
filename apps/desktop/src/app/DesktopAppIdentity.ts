@@ -48,6 +48,11 @@ const normalizeCommitHash = (value: string): Option.Option<string> => {
 export const resolveUserDataPath = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
+  // fork: the compatibility app reads the old 2code directory only through
+  // its copy-first migrator; Electron itself must never adopt or mutate it.
+  if (environment.distributionId === "2code-production") {
+    return environment.path.join(environment.appDataDirectory, environment.userDataDirName);
+  }
   const legacyPath = environment.path.join(
     environment.appDataDirectory,
     environment.legacyUserDataDirName,
