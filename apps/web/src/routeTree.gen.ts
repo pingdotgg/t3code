@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as UsageRouteImport } from './routes/usage'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PairRouteImport } from './routes/pair'
 import { Route as ConnectRouteImport } from './routes/connect'
@@ -29,6 +30,11 @@ import { Route as ChatGridRouteImport } from './routes/_chat.grid'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
+const UsageRoute = UsageRouteImport.update({
+  id: '/usage',
+  path: '/usage',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -130,6 +136,7 @@ export interface FileRoutesByFullPath {
   '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/usage': typeof UsageRoute
   '/grid': typeof ChatGridRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -149,6 +156,7 @@ export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/usage': typeof UsageRoute
   '/grid': typeof ChatGridRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -171,6 +179,7 @@ export interface FileRoutesById {
   '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/usage': typeof UsageRoute
   '/_chat/grid': typeof ChatGridRoute
   '/connect_/callback': typeof ConnectCallbackRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -194,6 +203,7 @@ export interface FileRouteTypes {
     | '/connect'
     | '/pair'
     | '/settings'
+    | '/usage'
     | '/grid'
     | '/connect/callback'
     | '/settings/appearance'
@@ -213,6 +223,7 @@ export interface FileRouteTypes {
     | '/connect'
     | '/pair'
     | '/settings'
+    | '/usage'
     | '/grid'
     | '/connect/callback'
     | '/settings/appearance'
@@ -234,6 +245,7 @@ export interface FileRouteTypes {
     | '/connect'
     | '/pair'
     | '/settings'
+    | '/usage'
     | '/_chat/grid'
     | '/connect_/callback'
     | '/settings/appearance'
@@ -256,11 +268,19 @@ export interface RootRouteChildren {
   ConnectRoute: typeof ConnectRoute
   PairRoute: typeof PairRoute
   SettingsRoute: typeof SettingsRouteWithChildren
+  UsageRoute: typeof UsageRoute
   ConnectCallbackRoute: typeof ConnectCallbackRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/usage': {
+      id: '/usage'
+      path: '/usage'
+      fullPath: '/usage'
+      preLoaderRoute: typeof UsageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings': {
       id: '/settings'
       path: '/settings'
@@ -448,6 +468,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConnectRoute: ConnectRoute,
   PairRoute: PairRoute,
   SettingsRoute: SettingsRouteWithChildren,
+  UsageRoute: UsageRoute,
   ConnectCallbackRoute: ConnectCallbackRoute,
 }
 export const routeTree = rootRouteImport
