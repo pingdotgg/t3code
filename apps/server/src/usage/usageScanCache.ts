@@ -16,9 +16,15 @@
  */
 import type { UsageProviderKind } from "@t3tools/contracts";
 
-import type { UsageRecord } from "./usageTranscripts.ts";
+import { totalTokens, type UsageRecord } from "./usageTranscripts.ts";
 
-export const USAGE_SCAN_CACHE_VERSION = 1 as const;
+/**
+ * Version 2: within-file de-duplication now keeps the *richest* copy of a
+ * dedupe key instead of the first. Entries written by version 1 hold the
+ * first-seen copies — partial streaming snapshots with undercounted output —
+ * so they must be re-parsed, not reused.
+ */
+export const USAGE_SCAN_CACHE_VERSION = 2 as const;
 
 export interface CachedFile {
   readonly size: number;
@@ -238,16 +244,33 @@ export function pruneScanCache(cache: ScanCache, options: PruneOptions): number 
   return removed;
 }
 
-/** Within-file de-duplication, applied before an entry is cached. */
+/**
+ * Within-file de-duplication, applied before an entry is cached.
+ *
+ * Copies sharing a dedupe key are not always identical: Claude Code streams a
+ * message and writes intermediate snapshots of it, so earlier copies carry a
+ * partial `output_tokens`. The copy with the most tokens is the finished one;
+ * keeping the first instead loses the difference — about half of all output
+ * tokens on a streaming-heavy day. Identical copies keep the first, as before.
+ */
 export function dedupeWithinFile(records: readonly UsageRecord[]): readonly UsageRecord[] {
-  const seen = new Set<string>();
+  const keptAt = new Map<string, number>();
   const kept: UsageRecord[] = [];
   for (const record of records) {
-    if (record.dedupeKey !== null) {
-      if (seen.has(record.dedupeKey)) continue;
-      seen.add(record.dedupeKey);
+    if (record.dedupeKey === null) {
+      kept.push(record);
+      continue;
     }
-    kept.push(record);
+    const at = keptAt.get(record.dedupeKey);
+    if (at === undefined) {
+      keptAt.set(record.dedupeKey, kept.length);
+      kept.push(record);
+      continue;
+    }
+    const held = kept[at];
+    if (held !== undefined && totalTokens(record.totals) > totalTokens(held.totals)) {
+      kept[at] = record;
+    }
   }
   return kept;
 }
