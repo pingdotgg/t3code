@@ -169,6 +169,17 @@ describe("Open VSX themes", () => {
     expect(searchUrl.searchParams.get("sortOrder")).toBe("desc");
   });
 
+  it("rejects malformed search responses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "unavailable" }), { status: 200 })),
+    );
+
+    await expect(searchOpenVsxThemes("nord")).rejects.toThrow(
+      "Open VSX returned an unreadable search response.",
+    );
+  });
+
   it("reports an unavailable search when every detail request fails", async () => {
     vi.stubGlobal(
       "fetch",

@@ -261,8 +261,10 @@ export async function searchOpenVsxThemes(
       throw new Error("Open VSX returned an unreadable response.");
     }
   }, signal);
-  const candidates = isRecord(value) && Array.isArray(value.extensions) ? value.extensions : [];
-  const identities = candidates.flatMap((candidate): Array<[string, string]> => {
+  if (!isRecord(value) || !Array.isArray(value.extensions)) {
+    throw new Error("Open VSX returned an unreadable search response.");
+  }
+  const identities = value.extensions.flatMap((candidate): Array<[string, string]> => {
     if (!isRecord(candidate)) return [];
     const namespace = typeof candidate.namespace === "string" ? candidate.namespace : "";
     const name = typeof candidate.name === "string" ? candidate.name : "";
