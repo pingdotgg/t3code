@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 import type { CheckpointStoreError } from "./Errors.ts";
 import type { VcsCheckpointOps } from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import { CHECKPOINT_REFS_PREFIX } from "./Utils.ts";
 
 export interface CaptureCheckpointInput {
   readonly cwd: string;
@@ -44,6 +45,10 @@ export interface DiffCheckpointsInput {
 export interface DeleteCheckpointRefsInput {
   readonly cwd: string;
   readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
+}
+
+export interface PruneSnapshotsResult {
+  readonly deleted: number;
 }
 
 /** Service tag for checkpoint persistence and restore operations. */
@@ -93,6 +98,16 @@ export class CheckpointStore extends Context.Service<
     readonly deleteCheckpointRefs: (
       input: DeleteCheckpointRefsInput,
     ) => Effect.Effect<void, CheckpointStoreError>;
+
+    /**
+     * Prune checkpoint snapshots, keeping only the 3 most recent per session.
+     *
+     * Lists all checkpoint refs, groups by session, and deletes snapshots
+     * beyond the 3 most recent per session. Returns the count of deleted snapshots.
+     */
+    readonly pruneSnapshots: (
+      cwd: string,
+    ) => Effect.Effect<PruneSnapshotsResult, CheckpointStoreError>;
   }
 >()("t3/checkpointing/CheckpointStore") {}
 
@@ -157,6 +172,56 @@ export const make = Effect.gen(function* () {
     return yield* checkpoints.deleteCheckpointRefs(input);
   });
 
+  const pruneSnapshots: CheckpointStore["Service"]["pruneSnapshots"] = Effect.fn(
+    "pruneSnapshots",
+  )(function* (cwd) {
+    const checkpoints = yield* resolveCheckpoints("CheckpointStore.pruneSnapshots", cwd);
+    const allRefs = yield* checkpoints.listCheckpointRefs({ cwd });
+
+    if (allRefs.length === 0) {
+      return { deleted: 0 };
+    }
+
+    // Parse each ref: refs/t3/checkpoints/{threadId}/turn/{turnCount}
+    const parsed = allRefs
+      .map((ref) => {
+        const refStr = String(ref);
+        const prefix = `${CHECKPOINT_REFS_PREFIX}/`;
+        const afterPrefix = refStr.slice(refStr.indexOf(prefix) + prefix.length);
+        const parts = afterPrefix.split("/turn/");
+        if (parts.length !== 2) return null;
+        const sessionKey = parts[0];
+        const turnCount = parseInt(parts[1], 10);
+        if (isNaN(turnCount)) return null;
+        return { ref, sessionKey, turnCount };
+      })
+      .filter((p): p is NonNullable<typeof p> => p !== null);
+
+    // Group by session, keep top 3 per session
+    const bySession = new Map<string, Array<{ ref: CheckpointRef; turnCount: number }>>();
+    for (const p of parsed) {
+      const existing = bySession.get(p.sessionKey) ?? [];
+      existing.push({ ref: p.ref, turnCount: p.turnCount });
+      bySession.set(p.sessionKey, existing);
+    }
+
+    const toPrune: CheckpointRef[] = [];
+    for (const [, entries] of bySession) {
+      entries.sort((a, b) => b.turnCount - a.turnCount);
+      const exceed = entries.slice(3);
+      for (const e of exceed) {
+        toPrune.push(e.ref);
+      }
+    }
+
+    if (toPrune.length === 0) {
+      return { deleted: 0 };
+    }
+
+    yield* checkpoints.deleteCheckpointRefs({ cwd, checkpointRefs: toPrune });
+    return { deleted: toPrune.length };
+  });
+
   return CheckpointStore.of({
     isGitRepository,
     captureCheckpoint,
@@ -164,6 +229,7 @@ export const make = Effect.gen(function* () {
     restoreCheckpoint,
     diffCheckpoints,
     deleteCheckpointRefs,
+    pruneSnapshots,
   });
 });
 
