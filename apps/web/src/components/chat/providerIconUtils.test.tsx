@@ -9,17 +9,16 @@ describe("getCustomProviderLogoSrc", () => {
   const grok = ProviderDriverKind.make("grok");
 
   it("uses the Hermes logo for the Hermes ACP provider", () => {
-    expect(getCustomProviderLogoSrc(grok, "Hermes")).toBe("/hermes-agent.png");
-    expect(getCustomProviderLogoSrc(grok, "  HERMES  ")).toBe("/hermes-agent.png");
+    expect(getCustomProviderLogoSrc(grok, "hermes")).toBe("/hermes-agent.png");
   });
 
   it("does not replace the Grok logo for other Grok instances", () => {
-    expect(getCustomProviderLogoSrc(grok, "Grok")).toBeUndefined();
-    expect(getCustomProviderLogoSrc(grok, "Hermes helper")).toBeUndefined();
+    expect(getCustomProviderLogoSrc(grok, "grok")).toBeUndefined();
+    expect(getCustomProviderLogoSrc(grok, "grok_custom")).toBeUndefined();
   });
 
   it("does not brand a non-Grok provider as Hermes", () => {
-    expect(getCustomProviderLogoSrc(ProviderDriverKind.make("codex"), "Hermes")).toBeUndefined();
+    expect(getCustomProviderLogoSrc(ProviderDriverKind.make("codex"), "hermes")).toBeUndefined();
   });
 });
 
@@ -29,8 +28,9 @@ describe("ProviderInstanceIcon", () => {
   it("renders the Hermes mark without the generic initials badge", () => {
     const markup = renderToStaticMarkup(
       <ProviderInstanceIcon
+        instanceId="hermes"
         driverKind={grok}
-        displayName="Hermes"
+        displayName="My Hermes agent"
         accentColor="#8B5CF6"
         showBadge
       />,
@@ -43,6 +43,7 @@ describe("ProviderInstanceIcon", () => {
   it("renders the Hermes mark at the compact model-row size", () => {
     const markup = renderToStaticMarkup(
       <ProviderInstanceIcon
+        instanceId="hermes"
         driverKind={grok}
         displayName="Hermes"
         className="size-3"
@@ -55,17 +56,18 @@ describe("ProviderInstanceIcon", () => {
     expect(markup).not.toContain("<svg");
   });
 
-  it("retains the normal Grok icon and instance badge", () => {
+  it("does not identify Hermes from an editable display name", () => {
     const markup = renderToStaticMarkup(
       <ProviderInstanceIcon
+        instanceId="grok_custom"
         driverKind={grok}
-        displayName="Grok custom"
+        displayName="Hermes"
         accentColor="#8B5CF6"
         showBadge
       />,
     );
 
     expect(markup).not.toContain("hermes-agent.png");
-    expect(markup).toContain(">GC</span>");
+    expect(markup).toContain(">HE</span>");
   });
 });

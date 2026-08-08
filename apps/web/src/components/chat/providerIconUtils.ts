@@ -10,16 +10,16 @@ export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>
   [ProviderDriverKind.make("grok")]: GrokIcon,
 };
 
-const CUSTOM_PROVIDER_LOGO_BY_DRIVER_AND_NAME = new Map<string, string>([
+// Display names are editable; instance IDs are the stable provider identity.
+const CUSTOM_PROVIDER_LOGO_BY_DRIVER_AND_INSTANCE = new Map<string, string>([
   ["grok:hermes", "/hermes-agent.png"],
 ]);
 
 export function getCustomProviderLogoSrc(
   driverKind: ProviderDriverKind,
-  displayName: string,
+  instanceId: string,
 ): string | undefined {
-  const key = `${driverKind}:${displayName.trim().toLowerCase()}`;
-  return CUSTOM_PROVIDER_LOGO_BY_DRIVER_AND_NAME.get(key);
+  return CUSTOM_PROVIDER_LOGO_BY_DRIVER_AND_INSTANCE.get(`${driverKind}:${instanceId}`);
 }
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {

@@ -78,6 +78,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
         {props.showProvider && (
           <div className="mt-1 flex items-center gap-1.5">
             <ProviderInstanceIcon
+              instanceId={props.instanceId}
               driverKind={props.driverKind}
               displayName={props.providerDisplayName}
               className="size-3"

@@ -162,6 +162,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         <span className="flex min-w-0 flex-1 items-center gap-1.5">
           {activeEntry ? (
             <ProviderInstanceIcon
+              instanceId={activeEntry.instanceId}
               driverKind={activeEntry.driverKind}
               displayName={activeEntry.displayName}
               accentColor={activeEntry.accentColor}

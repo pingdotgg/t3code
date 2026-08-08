@@ -15,6 +15,7 @@ export function providerInstanceInitials(label: string): string {
 }
 
 export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
+  instanceId: string;
   driverKind: ProviderDriverKind;
   displayName: string;
   accentColor?: string | undefined;
@@ -27,7 +28,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   indicatorBackground?: string;
 }) {
   const Icon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
-  const customLogoSrc = getCustomProviderLogoSrc(props.driverKind, props.displayName);
+  const customLogoSrc = getCustomProviderLogoSrc(props.driverKind, props.instanceId);
   const indicatorBackground = props.indicatorBackground ?? "var(--card)";
   const accentStyle = props.accentColor
     ? ({ "--provider-accent": props.accentColor } as CSSProperties)
