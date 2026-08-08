@@ -28,7 +28,7 @@ import {
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
 } from "@t3tools/shared/model";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import {
   buildBooleanOptionDescriptor,
@@ -579,6 +579,12 @@ export function getCursorFallbackModels(
 
 /** Timeout for `agent about` — it's slower than a simple `--version` probe. */
 const ABOUT_TIMEOUT_MS = 8_000;
+const CURSOR_FORWARDER_INSPECTION_MAX_BYTES = 64n * 1024n;
+const CURSOR_DESKTOP_FORWARDER_MESSAGE = [
+  "The configured Cursor Agent command forwards to the Cursor desktop launcher, which cannot provide ACP and may open editor windows.",
+  "Install the standalone Cursor CLI and set the binary path to `cursor-agent`.",
+  `See ${CURSOR_CLI_INSTALLATION_DOCS_URL}.`,
+].join(" ");
 
 /** Strip ANSI escape sequences so we can parse plain key-value lines. */
 function stripAnsi(text: string): string {
@@ -621,6 +627,40 @@ function buildCursorCliCommandMissingMessage(binaryPath: string): string {
     `See ${CURSOR_CLI_INSTALLATION_DOCS_URL}.`,
   ].join(" ");
 }
+
+export function isCursorDesktopAgentForwarderScript(script: string): boolean {
+  return /^[^\S\r\n]*(?!(?:#|::|rem(?:[^\S\r\n]|$)))(?:(?:exec|@?call|&)[^\S\r\n]+)?@?(?:"[^"\r\n]*[\\/]cursor(?:\.exe|\.cmd|\.bat)?"|(?:[^\s"'&|<>]+[\\/])?cursor(?:\.exe|\.cmd|\.bat)?)[^\S\r\n]+agent(?:[^\S\r\n]|$)/im.test(
+    script,
+  );
+}
+
+const isCursorDesktopAgentForwarder = Effect.fn("isCursorDesktopAgentForwarder")(function* (
+  binaryPath: string,
+  environment?: NodeJS.ProcessEnv,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const resolvedPath = yield* resolveCommandPath(
+    binaryPath,
+    environment ? { env: environment } : {},
+  ).pipe(Effect.option);
+  if (Option.isNone(resolvedPath)) {
+    return false;
+  }
+
+  const info = yield* fileSystem.stat(resolvedPath.value).pipe(Effect.option);
+  if (
+    Option.isNone(info) ||
+    info.value.type !== "File" ||
+    info.value.size > CURSOR_FORWARDER_INSPECTION_MAX_BYTES
+  ) {
+    return false;
+  }
+
+  const script = yield* fileSystem
+    .readFileString(resolvedPath.value)
+    .pipe(Effect.orElseSucceed(() => ""));
+  return isCursorDesktopAgentForwarderScript(script);
+});
 
 export function buildCursorProviderSnapshot(input: {
   readonly checkedAt: string;
@@ -1007,6 +1047,22 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
         status: "warning",
         auth: { status: "unknown" },
         message: "Cursor is disabled in T3 Code settings.",
+      },
+    });
+  }
+
+  if (yield* isCursorDesktopAgentForwarder(cursorSettings.binaryPath, environment)) {
+    return buildServerProvider({
+      presentation: CURSOR_PRESENTATION,
+      enabled: cursorSettings.enabled,
+      checkedAt,
+      models: fallbackModels,
+      probe: {
+        installed: false,
+        version: null,
+        status: "error",
+        auth: { status: "unknown" },
+        message: CURSOR_DESKTOP_FORWARDER_MESSAGE,
       },
     });
   }
