@@ -229,10 +229,10 @@ describe("demo settings", () => {
     if (!environment) throw new Error("Missing Mac Studio demo environment");
 
     const store = new DemoSettingsStore(environment.serverConfig.settings);
-    const next = store.update({ enableAssistantStreaming: true });
+    const next = store.update({ enableLegacyTokenStreaming: true });
 
-    expect(next.enableAssistantStreaming).toBe(true);
-    expect(store.snapshot().enableAssistantStreaming).toBe(true);
+    expect(next.enableLegacyTokenStreaming).toBe(true);
+    expect(store.snapshot().enableLegacyTokenStreaming).toBe(true);
   });
 });
 

@@ -82,12 +82,8 @@ function ModelPickerDemo() {
               showInteractionModeToggle
               interactionMode="default"
               runtimeMode={runtimeMode}
-              showPlanToggle={false}
-              planSidebarLabel="Plan"
-              planSidebarOpen={false}
               onToggleInteractionMode={() => undefined}
               onRuntimeModeChange={setRuntimeMode}
-              onTogglePlanSidebar={() => undefined}
             />
           </div>
         </div>

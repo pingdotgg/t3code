@@ -1,5 +1,5 @@
 /**
- * Seeds first-visit client state for the demo: Sidebar V2 on, the fake remote
+ * Seeds first-visit client state for the demo: the fake remote
  * machines registered in the connection catalog (so T3 Connect environments
  * show up and connect through the demo transport), and the browser panel open
  * on a couple of showcase threads. Existing state is never overwritten, so a
@@ -363,11 +363,10 @@ function seedVersionMismatchDismissals(): void {
 }
 
 export async function seedDemoClientState(): Promise<void> {
-  // The demo showcases the Sidebar v2 beta by default; visitors can still
-  // toggle it in Settings, and their choice persists.
+  // Initialize current client defaults without overwriting returning visitors.
   if (readBrowserClientSettings() === null) {
     try {
-      writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, sidebarV2Enabled: true });
+      writeBrowserClientSettings(DEFAULT_CLIENT_SETTINGS);
     } catch {
       // The demo remains usable when browser storage is blocked or full.
     }

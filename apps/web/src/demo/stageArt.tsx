@@ -4,7 +4,7 @@ import ReactDOM from "react-dom/client";
 import "../index.css";
 
 import {
-  StageBackdropButtonArt,
+  StageBackdropArt,
   type SidebarStageBackdropVariant,
 } from "../components/SidebarStageBackdrop";
 
@@ -19,7 +19,7 @@ function resolveVariant(): SidebarStageBackdropVariant {
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <div className="h-full w-full">
-      <StageBackdropButtonArt variant={resolveVariant()} />
+      <StageBackdropArt variant={resolveVariant()} />
     </div>
   </React.StrictMode>,
 );
