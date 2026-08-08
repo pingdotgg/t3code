@@ -49,9 +49,10 @@ const PROBE_TIMEOUT_MS = 10_000;
  * onboarding_completed/created_at/updated_at and deliberately no billing
  * fields; only `email` feeds the probe message.
  */
-const AetherProfileResponse = Schema.Struct({
+export const AetherProfileResponse = Schema.Struct({
   email: Schema.optional(Schema.String),
 });
+export type AetherProfileResponse = typeof AetherProfileResponse.Type;
 const decodeAetherProfile = Schema.decodeUnknownEffect(AetherProfileResponse);
 
 function titleCaseEffort(value: string): string {

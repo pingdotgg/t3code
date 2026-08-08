@@ -376,7 +376,12 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
-  Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+  // `AetherDriver.create()` yields `GitVcsDriver` for its session preflight
+  // (clean-tree/pushed-branch checks + origin-remote resolution). The Git/Vcs
+  // layers above sit EARLIER in this chain, so they never feed the instance
+  // registry — provide the (memoized) driver layer directly so hydration's
+  // `BuiltInDriversEnv` is satisfied.
+  Layer.provideMerge(ProviderInstanceRegistryHydrationLive.pipe(Layer.provide(GitVcsDriver.layer))),
   // Shared native/canonical NDJSON writers used by both the per-instance
   // drivers (native stream, written from inside each `<X>Adapter`) and
   // `ProviderService` (canonical stream, written after event normalization).

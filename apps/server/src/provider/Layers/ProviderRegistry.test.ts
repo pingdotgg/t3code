@@ -44,6 +44,7 @@ import {
   ProviderRegistryLive,
   selectProvidersByKind,
 } from "./ProviderRegistry.ts";
+import * as GitVcsDriverModule from "../../vcs/GitVcsDriver.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettingsModule from "../../serverSettings.ts";
 import { readProviderStatusCache, resolveProviderStatusCachePath } from "../providerStatusCache.ts";
@@ -1470,6 +1471,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+            // AetherDriver.create() yields GitVcsDriver for its session
+            // preflight; its own inputs come from ServerConfig below plus
+            // the outer NodeServices layer.
+            Layer.provideMerge(GitVcsDriverModule.layer),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
@@ -1563,6 +1568,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+            // AetherDriver.create() yields GitVcsDriver for its session
+            // preflight; its own inputs come from ServerConfig below plus
+            // the outer NodeServices layer.
+            Layer.provideMerge(GitVcsDriverModule.layer),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
@@ -1685,6 +1694,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+            // AetherDriver.create() yields GitVcsDriver for its session
+            // preflight; its own inputs come from ServerConfig below plus
+            // the outer NodeServices layer.
+            Layer.provideMerge(GitVcsDriverModule.layer),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
@@ -1747,6 +1760,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
             const providerRegistryLayer = ProviderRegistryLive.pipe(
               Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+              // AetherDriver.create() yields GitVcsDriver for its session
+              // preflight; its own inputs come from ServerConfig below plus
+              // the outer NodeServices layer.
+              Layer.provideMerge(GitVcsDriverModule.layer),
               Layer.provideMerge(
                 Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
               ),

@@ -1,25 +1,34 @@
 /**
  * AetherDriver — `ProviderDriver` for Aether cloud tasks.
  *
- * T1 skeleton: a real snapshot (probe = authenticated `GET /profile`, models
- * from the vendored platform catalog) over a not-yet-implemented adapter and
- * deterministic text-generation stubs. There is no local binary — the driver
- * talks to the Aether REST API, authenticated by the sensitive
- * `AETHER_API_KEY` instance environment variable.
+ * A real snapshot (probe = authenticated `GET /profile`, models from the
+ * vendored platform catalog) over the session-core adapter (REST task client
+ * + git preflight; turn streaming still pending) and deterministic
+ * text-generation stubs. There is no local binary — the driver talks to the
+ * Aether REST API, authenticated by the sensitive `AETHER_API_KEY` instance
+ * environment variable.
  *
  * @module provider/Drivers/AetherDriver
  */
 import { AetherSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeAetherTextGeneration } from "../../textGeneration/AetherTextGeneration.ts";
+import { GitVcsDriver } from "../../vcs/GitVcsDriver.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeAetherAdapter } from "../Layers/AetherAdapter.ts";
-import { checkAetherProviderStatus, makePendingAetherProvider } from "../Layers/AetherProvider.ts";
+import { makeAetherRestClient } from "../Layers/aether/restClient.ts";
+import {
+  checkAetherProviderStatus,
+  makePendingAetherProvider,
+  readAetherApiKey,
+} from "../Layers/AetherProvider.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -47,7 +56,10 @@ const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
 
 export type AetherDriverEnv =
   | BackgroundPolicy.BackgroundPolicy
+  | Crypto.Crypto
+  | GitVcsDriver
   | HttpClient.HttpClient
+  | ServerConfig
   | ServerSettingsService;
 
 const withInstanceIdentity =
@@ -78,6 +90,8 @@ export const AetherDriver: ProviderDriver<AetherSettings, AetherDriverEnv> = {
     Effect.gen(function* () {
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
+      const gitVcsDriver = yield* GitVcsDriver;
+      const serverConfig = yield* ServerConfig;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -91,7 +105,24 @@ export const AetherDriver: ProviderDriver<AetherSettings, AetherDriverEnv> = {
       });
       const effectiveConfig = { ...config, enabled } satisfies AetherSettings;
 
-      const adapter = yield* makeAetherAdapter({ instanceId });
+      // Missing key is NOT a create() failure: the probe reports it and
+      // startSession fails loudly with the remediation — a keyless instance
+      // still shows a useful settings card instead of an "unavailable" shadow.
+      const apiKey = readAetherApiKey(processEnv);
+      const restClient =
+        apiKey === undefined
+          ? undefined
+          : makeAetherRestClient({
+              apiBaseUrl: effectiveConfig.apiBaseUrl,
+              apiKey,
+              httpClient,
+            });
+      const adapter = yield* makeAetherAdapter({
+        instanceId,
+        defaultCwd: serverConfig.cwd,
+        git: gitVcsDriver,
+        restClient,
+      });
       const textGeneration = makeAetherTextGeneration();
 
       const checkProvider = checkAetherProviderStatus(effectiveConfig, processEnv).pipe(
