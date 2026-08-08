@@ -1,0 +1,116 @@
+{
+  "generatedFrom": {
+    "contracts": "packages/contracts/src/orchestration.ts",
+    "serialization": "effect/unstable/rpc/RpcSerialization.json"
+  },
+  "client": {
+    "request": {
+      "_tag": "Request",
+      "id": 1,
+      "tag": "orchestration.dispatchCommand",
+      "payload": {
+        "type": "thread.turn.start",
+        "commandId": "command-1",
+        "threadId": "thread-1",
+        "message": {
+          "messageId": "message-1",
+          "role": "user",
+          "text": "Hello from Kotlin",
+          "attachments": []
+        },
+        "modelSelection": {
+          "instanceId": "codex",
+          "model": "gpt-5.6-sol"
+        },
+        "titleSeed": "Hello from Kotlin",
+        "runtimeMode": "full-access",
+        "interactionMode": "default",
+        "bootstrap": {
+          "createThread": {
+            "projectId": "project-1",
+            "title": "Hello from Kotlin",
+            "modelSelection": {
+              "instanceId": "codex",
+              "model": "gpt-5.6-sol"
+            },
+            "runtimeMode": "full-access",
+            "interactionMode": "default",
+            "branch": null,
+            "worktreePath": null,
+            "createdAt": "2026-08-08T00:00:00.000Z"
+          }
+        },
+        "createdAt": "2026-08-08T00:00:00.000Z"
+      },
+      "headers": []
+    },
+    "interrupt": {
+      "_tag": "Interrupt",
+      "requestId": 1
+    },
+    "ack": {
+      "_tag": "Ack",
+      "requestId": 1
+    },
+    "ping": {
+      "_tag": "Ping"
+    },
+    "eof": {
+      "_tag": "Eof"
+    }
+  },
+  "server": {
+    "chunk": {
+      "_tag": "Chunk",
+      "requestId": 2,
+      "values": [
+        {
+          "kind": "synchronized"
+        }
+      ]
+    },
+    "success": {
+      "_tag": "Exit",
+      "requestId": 1,
+      "exit": {
+        "_tag": "Success",
+        "value": {
+          "sequence": 42
+        }
+      }
+    },
+    "failure": {
+      "_tag": "Exit",
+      "requestId": 1,
+      "exit": {
+        "_tag": "Failure",
+        "cause": [
+          {
+            "_tag": "Fail",
+            "error": {
+              "_tag": "OrchestrationDispatchCommandError",
+              "message": "Rejected fixture command."
+            }
+          }
+        ]
+      }
+    },
+    "defect": {
+      "_tag": "Defect",
+      "defect": {
+        "message": "Fixture defect."
+      }
+    },
+    "pong": {
+      "_tag": "Pong"
+    },
+    "protocolError": {
+      "_tag": "ClientProtocolError",
+      "error": {
+        "_tag": "RpcClientError",
+        "reason": "Protocol",
+        "message": "Fixture protocol error."
+      }
+    }
+  }
+}

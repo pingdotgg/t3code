@@ -1,0 +1,9 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.INTERNET" />
+
+  <application
+    android:allowBackup="false"
+    android:label="T3 Code Native (Phase 0)"
+    android:usesCleartextTraffic="true"
+    android:supportsRtl="true" />
+</manifest>

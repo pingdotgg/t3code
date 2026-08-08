@@ -1,0 +1,14 @@
+{
+  "name": "@t3tools/android-native",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "fixtures": "jiti scripts/generate-effect-rpc-fixtures.ts",
+    "fixtures:check": "jiti scripts/generate-effect-rpc-fixtures.ts --check",
+    "test": "jiti scripts/generate-effect-rpc-fixtures.ts --check && ./gradlew :protocol:test"
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "effect": "catalog:"
+  }
+}
