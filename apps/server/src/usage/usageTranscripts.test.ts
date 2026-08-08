@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 
+import type { UsageRecord } from "./usageTranscripts.ts";
 import {
+  dropReplayedRolloutHead,
   initialCodexScanState,
   parseClaudeLine,
   parseCodexLine,
@@ -133,6 +135,59 @@ describe("parseCodexLine", () => {
     expect(parseCodexLine(tokenCount(100, 0, 10, 0), state)).toBeNull();
     parseCodexLine(turnContext, state);
     expect(parseCodexLine(tokenCount(100, 0, 10, 0), state)).not.toBeNull();
+  });
+});
+
+describe("dropReplayedRolloutHead", () => {
+  const base = Date.parse("2026-08-05T09:00:00.000Z");
+
+  const eventAt = (offsetMs: number, outputTokens: number): UsageRecord => ({
+    provider: "codex",
+    timestampMs: base + offsetMs,
+    model: "gpt-5.6-sol",
+    sessionId: "session-a",
+    totals: {
+      uncachedInputTokens: 100,
+      cachedInputTokens: 0,
+      cacheCreationTokens: 0,
+      outputTokens,
+      reasoningTokens: 0,
+    },
+    reportedCostUsd: null,
+    dedupeKey: null,
+  });
+
+  it("drops a sub-second head burst and keeps the work after the pause", () => {
+    // A resumed session replays its history in one burst, then the user's own
+    // turns follow at human pace.
+    const kept = dropReplayedRolloutHead([
+      eventAt(0, 10),
+      eventAt(200, 20),
+      eventAt(400, 30),
+      eventAt(30_000, 40),
+      eventAt(95_000, 50),
+    ]);
+
+    expect(kept.map((record) => record.totals.outputTokens)).toEqual([40, 50]);
+  });
+
+  it("keeps a file whose head opens at working pace", () => {
+    const records = [eventAt(0, 10), eventAt(20_000, 20), eventAt(65_000, 30)];
+
+    expect(dropReplayedRolloutHead(records)).toEqual(records);
+  });
+
+  it("never drops a lone leading event", () => {
+    const records = [eventAt(0, 10)];
+
+    expect(dropReplayedRolloutHead(records)).toEqual(records);
+  });
+
+  it("drops everything when the whole file is a replay", () => {
+    // A fork that has done no work of its own yet is nothing but the copy.
+    const kept = dropReplayedRolloutHead([eventAt(0, 10), eventAt(150, 20), eventAt(300, 30)]);
+
+    expect(kept).toHaveLength(0);
   });
 });
 
