@@ -94,6 +94,8 @@ export interface AcpSessionRuntimeStartResult {
     | EffectAcpSchema.NewSessionResponse
     | EffectAcpSchema.ResumeSessionResponse;
   readonly modelConfigId: string | undefined;
+  /** Authenticate response payload when the agent returned one (process-observed). */
+  readonly authenticateResult?: EffectAcpSchema.AuthenticateResponse;
 }
 
 export class AcpSessionRuntime extends Context.Service<
@@ -222,10 +224,14 @@ export class AcpSessionRuntime extends Context.Service<
     readonly setModel: (model: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
     /**
      * Selects the active model through the unstable ACP `session/set_model` capability.
+     * Optional `_meta` is passed through for agent extensions (e.g. Grok `reasoningEffort`).
      * @see https://agentclientprotocol.com/protocol/schema#session/set_model
      */
     readonly setSessionModel: (
       modelId: string,
+      options?: {
+        readonly _meta?: { readonly [x: string]: unknown } | null;
+      },
     ) => Effect.Effect<EffectAcpSchema.SetSessionModelResponse, EffectAcpErrors.AcpError>;
     /**
      * Sends a generic ACP extension request and records it through the request logger.
@@ -396,6 +402,7 @@ export const make = (
         yield* handleSessionUpdate({
           queue: eventQueue,
           modeStateRef,
+          configOptionsRef,
           toolCallsRef,
           assistantSegmentRef,
           assistantItemRuntimeId,
@@ -545,7 +552,7 @@ export const make = (
         methodId: options.authMethodId,
       } satisfies EffectAcpSchema.AuthenticateRequest;
 
-      yield* runLoggedRequest(
+      const authenticateResult = yield* runLoggedRequest(
         "authenticate",
         authenticatePayload,
         acp.agent.authenticate(authenticatePayload),
@@ -652,6 +659,7 @@ export const make = (
         initializeResult,
         sessionSetupResult,
         modelConfigId: extractModelConfigId(sessionSetupResult),
+        authenticateResult,
       } satisfies AcpStartedState;
       return nextState;
     });
@@ -789,12 +797,13 @@ export const make = (
           Effect.flatMap((started) => setConfigOption(started.modelConfigId ?? "model", model)),
           Effect.asVoid,
         ),
-      setSessionModel: (modelId) =>
+      setSessionModel: (modelId, options) =>
         getStartedState.pipe(
           Effect.flatMap((started) => {
             const requestPayload = {
               sessionId: started.sessionId,
               modelId,
+              ...(options?._meta !== undefined ? { _meta: options._meta } : {}),
             } satisfies EffectAcpSchema.SetSessionModelRequest;
             return runLoggedRequest(
               "session/set_model",
@@ -844,6 +853,7 @@ function configOptionCurrentValueMatches(
 const handleSessionUpdate = ({
   queue,
   modeStateRef,
+  configOptionsRef,
   toolCallsRef,
   assistantSegmentRef,
   assistantItemRuntimeId,
@@ -851,6 +861,7 @@ const handleSessionUpdate = ({
 }: {
   readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
   readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
+  readonly configOptionsRef: Ref.Ref<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
   readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallState>>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
   readonly assistantItemRuntimeId: string;
@@ -908,6 +919,11 @@ const handleSessionUpdate = ({
           itemId,
         });
         continue;
+      }
+      // Keep getConfigOptions / validateConfigOptionValue / setMode / setModel
+      // in sync with live config_option_update notifications (not only setup).
+      if (event._tag === "ConfigOptionsUpdated") {
+        yield* Ref.set(configOptionsRef, event.configOptions);
       }
       yield* Queue.offer(queue, event);
     }

@@ -6,7 +6,15 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { GrokSettings } from "@t3tools/contracts";
 
-import { buildInitialGrokProviderSnapshot, checkGrokProviderStatus } from "./GrokProvider.ts";
+import {
+  buildInitialGrokProviderSnapshot,
+  capabilitiesFromGrokModelMeta,
+  checkGrokProviderStatus,
+  ensureGrokStaticSlashCommands,
+  GROK_STATIC_SLASH_COMMANDS,
+  isGrokSessionModelState,
+  mapAcpCommandsToCatalog,
+} from "./GrokProvider.ts";
 
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
@@ -31,7 +39,9 @@ describe("buildInitialGrokProviderSnapshot", () => {
       expect(snapshot.status).toBe("warning");
       expect(snapshot.version).toBeNull();
       expect(snapshot.message).toContain("Checking Grok");
-      expect(snapshot.requiresNewThreadForModelChange).toBe(true);
+      expect(snapshot.requiresNewThreadForModelChange).toBe(false);
+      expect(snapshot.showInteractionModeToggle).toBe(true);
+      expect(snapshot.slashCommands).toEqual(GROK_STATIC_SLASH_COMMANDS);
     }),
   );
 });
@@ -107,4 +117,78 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       expect(snapshot.message).toContain("ACP startup failed");
     }),
   );
+});
+
+describe("Grok capability and command helpers", () => {
+  it("maps reasoningEfforts meta into optionDescriptors", () => {
+    const caps = capabilitiesFromGrokModelMeta({
+      reasoningEfforts: [
+        { id: "high", value: "high", label: "High Effort", default: true },
+        { id: "low", value: "low", label: "Low Effort", default: false },
+      ],
+    });
+    expect(caps.optionDescriptors?.[0]).toMatchObject({
+      id: "reasoningEffort",
+      type: "select",
+    });
+    expect(
+      caps.optionDescriptors?.[0]?.type === "select" && caps.optionDescriptors[0].options,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "high", label: "High Effort", isDefault: true }),
+        expect.objectContaining({ id: "low", label: "Low Effort" }),
+      ]),
+    );
+  });
+
+  it("maps ACP commands into slash and skills catalogs", () => {
+    const catalog = mapAcpCommandsToCatalog([
+      { name: "review", description: "Review code", inputHint: "path" },
+      { name: "skip-me" },
+    ]);
+    expect(catalog.slashCommands).toHaveLength(2);
+    expect(catalog.skills).toEqual([expect.objectContaining({ name: "review", enabled: true })]);
+  });
+
+  it("re-adds compact when live catalog omits it", () => {
+    expect(ensureGrokStaticSlashCommands([])).toEqual(GROK_STATIC_SLASH_COMMANDS);
+    expect(
+      ensureGrokStaticSlashCommands([{ name: "review", description: "Review" }]).map(
+        (command) => command.name,
+      ),
+    ).toEqual(["review", "compact"]);
+    expect(
+      ensureGrokStaticSlashCommands([
+        { name: "compact", description: "Live compact" },
+        { name: "review" },
+      ]).map((command) => command.name),
+    ).toEqual(["compact", "review"]);
+  });
+
+  it("rejects malformed modelState so discovery falls back instead of throwing", () => {
+    expect(isGrokSessionModelState(null)).toBe(false);
+    expect(isGrokSessionModelState(undefined)).toBe(false);
+    expect(isGrokSessionModelState({ availableModels: [null] })).toBe(false);
+    expect(
+      isGrokSessionModelState({
+        availableModels: [{ modelId: "grok-4", name: 123 }],
+      }),
+    ).toBe(false);
+    expect(
+      isGrokSessionModelState({
+        availableModels: [{ name: "Grok" }],
+      }),
+    ).toBe(false);
+    expect(
+      isGrokSessionModelState({
+        availableModels: [{ modelId: "grok-4", name: "Grok 4" }],
+      }),
+    ).toBe(true);
+    expect(
+      isGrokSessionModelState({
+        currentModelId: "grok-4",
+        availableModels: [{ modelId: "grok-4", name: "Grok 4" }],
+      }),
+    ).toBe(true);
+  });
 });
