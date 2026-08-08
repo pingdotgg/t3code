@@ -1,4 +1,4 @@
-import type { EnvironmentId, UsageProviderKind } from "@t3tools/contracts";
+import type { EnvironmentId, UsageProviderKind, UsageSource } from "@t3tools/contracts";
 import { RefreshCwIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -478,11 +478,7 @@ function UsageCoverageNotice({
     error: string | null;
     isPending: boolean;
     summary: {
-      sources: readonly {
-        status: string;
-        message: string | null;
-        fingerprint?: { provider: string };
-      }[];
+      sources: readonly UsageSource[];
     } | null;
   }[];
   readonly duplicateSources: readonly string[];
@@ -505,7 +501,8 @@ function UsageCoverageNotice({
           (environment.summary?.sources ?? [])
             .filter(
               (source) =>
-                providerFilter === "all" || source.fingerprint?.provider === providerFilter,
+                (source.status === "partial" || source.status === "failed") &&
+                (providerFilter === "all" || source.fingerprint.provider === providerFilter),
             )
             .map((source) => source.message)
             .filter((message): message is string => message !== null),
