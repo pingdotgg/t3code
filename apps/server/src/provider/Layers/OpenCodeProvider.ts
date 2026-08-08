@@ -22,6 +22,11 @@ import {
   openCodeRuntimeErrorDetail,
   type OpenCodeInventory,
 } from "../opencodeRuntime.ts";
+import {
+  EMPTY_PROVIDER_COMMAND_CATALOG,
+  mapOpenCodeSdkCatalogToProviderCatalog,
+  providerCommandCatalogIsEmpty,
+} from "../providerCommandCatalog.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
 
 const OPENCODE_PRESENTATION = {
@@ -424,17 +429,45 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     return fallback(Cause.squash(inventoryExit.cause), version);
   }
 
+  const inventory = inventoryExit.value;
   const models = providerModelsFromSettings(
-    flattenOpenCodeModels(inventoryExit.value),
+    flattenOpenCodeModels(inventory),
     customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
-  const connectedCount = inventoryExit.value.providerList.connected.length;
+  const connectedCount = inventory.providerList.connected.length;
+
+  // SDK catalog only (option B). Local CLI inventory leaves commands/skills
+  // empty — enrich once via a short-lived serve + the same SDK endpoints.
+  let catalog = mapOpenCodeSdkCatalogToProviderCatalog({
+    commands: inventory.commands,
+    skills: inventory.skills,
+  });
+  if (providerCommandCatalogIsEmpty(catalog)) {
+    catalog = yield* openCodeRuntime
+      .loadProviderCommandCatalog({
+        binaryPath: openCodeSettings.binaryPath,
+        directory: cwd,
+        environment: resolvedEnvironment,
+        ...(isExternalServer
+          ? {
+              serverUrl: openCodeSettings.serverUrl,
+              ...(openCodeSettings.serverPassword
+                ? { serverPassword: openCodeSettings.serverPassword }
+                : {}),
+            }
+          : {}),
+      })
+      .pipe(Effect.orElseSucceed(() => EMPTY_PROVIDER_COMMAND_CATALOG));
+  }
+
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,
     enabled: true,
     checkedAt,
     models,
+    slashCommands: catalog.slashCommands,
+    skills: catalog.skills,
     probe: {
       installed: true,
       version,
