@@ -303,6 +303,7 @@ import {
   revokeUserMessagePreviewUrls,
   shouldWriteThreadErrorToCurrentServerThread,
   startNewThreadForProject,
+  threadHasStarted,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 import type { ThreadSyncPhase } from "../threadSync";
@@ -4939,7 +4940,11 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     const threadIdForSend = activeThread.id;
-    const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
+    // Imported provider threads can have no locally projected messages while
+    // still carrying a durable stopped session. Treat those as established
+    // conversations so a follow-up resumes them instead of re-bootstraping or
+    // replacing their imported title.
+    const isFirstMessage = !isServerThread || !threadHasStarted(activeThread);
     const baseBranchForWorktree =
       isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
         ? activeThreadBranch
