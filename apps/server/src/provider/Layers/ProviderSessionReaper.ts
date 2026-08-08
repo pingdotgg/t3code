@@ -16,10 +16,19 @@ import { ProviderService } from "../Services/ProviderService.ts";
 
 const DEFAULT_INACTIVITY_THRESHOLD_MS = 30 * 60 * 1000;
 const DEFAULT_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+/**
+ * Ceiling on the reprieve live background work can buy, as a multiple of the
+ * inactivity threshold: 48 x 30min = 24h by default. A wedged-but-chatty agent
+ * (one still emitting task_progress while making no progress) would otherwise
+ * pin its session open forever, which is exactly the leak this reaper exists
+ * to prevent.
+ */
+const DEFAULT_BACKGROUND_EXTENSION_LIMIT_MULTIPLIER = 48;
 
 export interface ProviderSessionReaperLiveOptions {
   readonly inactivityThresholdMs?: number;
   readonly sweepIntervalMs?: number;
+  readonly backgroundExtensionLimitMultiplier?: number;
 }
 
 const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =>
@@ -33,6 +42,11 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
       options?.inactivityThresholdMs ?? DEFAULT_INACTIVITY_THRESHOLD_MS,
     );
     const sweepIntervalMs = Math.max(1, options?.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS);
+    const backgroundExtensionLimitMultiplier = Math.max(
+      1,
+      options?.backgroundExtensionLimitMultiplier ?? DEFAULT_BACKGROUND_EXTENSION_LIMIT_MULTIPLIER,
+    );
+    const backgroundExtensionLimitMs = inactivityThresholdMs * backgroundExtensionLimitMultiplier;
 
     const sweep = Effect.gen(function* () {
       const bindings = yield* directory.listBindings();
@@ -67,6 +81,36 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
             threadId: binding.threadId,
             activeTurnId: thread.session.activeTurnId,
             idleDurationMs,
+          });
+          continue;
+        }
+
+        // `lastSeenAt` only advances on turns (ProviderService.sendTurn), but a
+        // session keeps working between turns: subagent fleets and workflow
+        // runs outlive the turn that spawned them. Reaping one of those killed
+        // 30+ minutes of in-flight work. `backgroundLiveness` is the projection's
+        // existing answer to "is native background work still alive", fed by the
+        // same task lifecycle stream for every provider and cleared on
+        // session.exited.
+        //
+        // Only "working" earns a reprieve. "monitoring" is watch loops (monitor
+        // tasks, background shells) that tick forever by design — honouring it
+        // would make those sessions immortal, and the sweep would stop being a
+        // leak backstop. Losing a watch loop to the reaper is recoverable;
+        // losing a running agent is not.
+        //
+        // The reprieve is bounded: past `backgroundExtensionLimitMs` the session
+        // is reaped anyway, so an agent that is wedged yet still emitting
+        // progress cannot pin its session open indefinitely.
+        if (
+          thread?.backgroundLiveness === "working" &&
+          idleDurationMs < backgroundExtensionLimitMs
+        ) {
+          yield* Effect.logDebug("provider.session.reaper.skipped-background-work", {
+            threadId: binding.threadId,
+            provider: binding.provider,
+            idleDurationMs,
+            backgroundExtensionLimitMs,
           });
           continue;
         }
