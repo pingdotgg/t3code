@@ -88,6 +88,25 @@ it.effect("expires credentials once their session stops showing signs of life", 
   }),
 );
 
+it.effect("does not let MCP traffic keep an abandoned credential alive", () =>
+  Effect.gen(function* () {
+    let timestamp = 1_000;
+    const registry = yield* makeRegistry(() => timestamp);
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("thread-abandoned"),
+      providerInstanceId: ProviderInstanceId.make("claude"),
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+    timestamp += 99;
+    expect(yield* registry.resolve(token)).toBeDefined();
+    timestamp += 1;
+    expect(yield* registry.resolve(token)).toBeDefined();
+    timestamp += 1;
+    expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
 it.effect("keeps a credential alive across turns that never touch an MCP tool", () =>
   Effect.gen(function* () {
     let timestamp = 1_000;

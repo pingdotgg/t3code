@@ -44,7 +44,7 @@ export class McpSessionRegistry extends Context.Service<
 interface CredentialRecord {
   readonly tokenHash: string;
   readonly scope: McpInvocationContext.McpInvocationScope;
-  readonly lastAliveAt: number;
+  readonly lastProviderAliveAt: number;
 }
 
 interface RegistryState {
@@ -60,11 +60,12 @@ export interface McpSessionRegistryOptions {
  * How long a credential outlives the last sign of life from its provider
  * session.
  *
- * Liveness is refreshed both by MCP traffic and by `touch` on every provider
- * turn, so a session that is still doing work never expires no matter how long
- * it goes between browser tool calls. This window therefore only bounds
- * credentials whose session died without a clean stop — the normal paths
- * (`stopSession`, `stopAll`) revoke eagerly and do not wait for it.
+ * Liveness is refreshed by `touch` on every provider turn, so a session that is
+ * still receiving work never expires just because it goes a long time between
+ * browser tool calls. MCP traffic does not refresh this timestamp: a bearer
+ * credential cannot prove that its provider session is still alive. This window
+ * therefore bounds credentials whose session died without a clean stop — the
+ * normal paths (`stopSession`, `stopAll`) revoke eagerly and do not wait for it.
  *
  * The bound matters because `/mcp` is mounted outside the environment auth
  * stack and is reachable on whatever host the server binds to, so this token is
@@ -111,7 +112,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const pruneDead = (records: ReadonlyMap<string, CredentialRecord>, timestamp: number) => {
     const next = new Map(
       Array.from(records).filter(
-        ([, record]) => timestamp - record.lastAliveAt <= livenessWindowMs,
+        ([, record]) => timestamp - record.lastProviderAliveAt <= livenessWindowMs,
       ),
     );
     return next.size === records.size ? records : next;
@@ -133,7 +134,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
         const next = new Map(pruneDead(records, issuedAt));
-        next.set(tokenHash, { tokenHash, scope, lastAliveAt: issuedAt });
+        next.set(tokenHash, { tokenHash, scope, lastProviderAliveAt: issuedAt });
         return { records: next };
       });
       return {
@@ -158,9 +159,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         const current = pruneDead(records, timestamp);
         const record = current.get(tokenHash);
         if (!record) return [undefined, { records: current }] as const;
-        const next = new Map(current);
-        next.set(tokenHash, { ...record, lastAliveAt: timestamp });
-        return [record.scope, { records: next }] as const;
+        return [record.scope, { records: current }] as const;
       });
     },
   );
@@ -173,7 +172,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         const next = new Map(current);
         for (const [tokenHash, record] of current) {
           if (record.scope.threadId === threadId) {
-            next.set(tokenHash, { ...record, lastAliveAt: timestamp });
+            next.set(tokenHash, { ...record, lastProviderAliveAt: timestamp });
           }
         }
         return { records: next };
