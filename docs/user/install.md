@@ -41,6 +41,13 @@ Arch Linux:
 yay -S t3code-bin
 ```
 
+### Linux window frame
+
+The desktop app uses Wayland directly by default when it is launched from a Wayland session. To let your
+window manager draw the title bar and minimize, maximize, and close controls, turn on **Use native
+window frame** in **Settings** → **Appearance**, then fully restart T3 Code. The setting is available
+only in the Linux desktop app and is off by default.
+
 ## Providers
 
 T3 Code drives provider CLIs; it does not ship them. Install the CLI for each provider you want

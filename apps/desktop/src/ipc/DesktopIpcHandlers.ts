@@ -35,11 +35,13 @@ import {
   getAppBranding,
   getLocalEnvironmentBootstraps,
   getLocalEnvironmentBearerToken,
+  getLinuxNativeWindowFrame,
   getWindowFullscreenState,
   openExternal,
   pickFolder,
   pickThemeFiles,
   setTheme,
+  setLinuxNativeWindowFrame,
   showContextMenu,
 } from "./methods/window.ts";
 import * as PreviewIpc from "./methods/preview.ts";
@@ -53,6 +55,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handleSync(getWindowFullscreenState);
   yield* ipc.handleSync(getLocalEnvironmentBootstraps);
   yield* ipc.handle(getLocalEnvironmentBearerToken);
+  yield* ipc.handle(getLinuxNativeWindowFrame);
+  yield* ipc.handle(setLinuxNativeWindowFrame);
 
   yield* ipc.handle(getClientSettings);
   yield* ipc.handle(setClientSettings);

@@ -70,6 +70,34 @@ export const getWindowFullscreenState = DesktopIpc.makeSyncIpcMethod({
   }),
 });
 
+export const getLinuxNativeWindowFrame = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.GET_LINUX_NATIVE_WINDOW_FRAME_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.NullOr(Schema.Boolean),
+  handler: Effect.fn("desktop.ipc.window.getLinuxNativeWindowFrame")(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    if (environment.platform !== "linux") {
+      return null;
+    }
+    const settings = yield* DesktopAppSettings.DesktopAppSettings;
+    return (yield* settings.get).linuxNativeWindowFrame;
+  }),
+});
+
+export const setLinuxNativeWindowFrame = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SET_LINUX_NATIVE_WINDOW_FRAME_CHANNEL,
+  payload: Schema.Boolean,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.setLinuxNativeWindowFrame")(function* (enabled) {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    if (environment.platform !== "linux") {
+      return false;
+    }
+    const settings = yield* DesktopAppSettings.DesktopAppSettings;
+    return (yield* settings.setLinuxNativeWindowFrame(enabled)).settings.linuxNativeWindowFrame;
+  }),
+});
+
 export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL,
   result: Schema.Array(DesktopEnvironmentBootstrapSchema),
