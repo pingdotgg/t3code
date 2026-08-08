@@ -19,28 +19,43 @@ const DRIVER_BY_PROVIDER = {
   codex: "codex",
 } as const satisfies Record<UsageProviderKind, keyof ServerSettings["providers"]>;
 
+export interface UsageHomeCandidate {
+  /** Raw (undecoded) driver config blob for one configured instance. */
+  readonly config: unknown;
+  /**
+   * Display name for buckets read from this instance's home: the configured
+   * `displayName`, falling back to the instance id for non-default instances.
+   * `null` for the default slot and the legacy blob, whose usage should render
+   * under the plain provider name.
+   */
+  readonly label: string | null;
+}
+
 /**
- * Raw (undecoded) driver config blobs for every configured instance of the
- * given provider. Callers decode each through the driver's settings schema;
- * blobs that fail to decode belong to instances the registry already surfaces
- * as unavailable and are simply skipped by the scan.
+ * Candidate configs for every configured instance of the given provider.
+ * Callers decode each through the driver's settings schema; blobs that fail to
+ * decode belong to instances the registry already surfaces as unavailable and
+ * are simply skipped by the scan.
  */
 export function listProviderHomeCandidates(
   settings: ServerSettings,
   provider: UsageProviderKind,
-): ReadonlyArray<unknown> {
+): ReadonlyArray<UsageHomeCandidate> {
   const driver = DRIVER_BY_PROVIDER[provider];
-  const candidates: unknown[] = [];
+  const candidates: UsageHomeCandidate[] = [];
   let defaultSlotClaimed = false;
 
   for (const [instanceId, envelope] of Object.entries(settings.providerInstances)) {
     if (envelope.driver !== driver) continue;
     if (instanceId === driver) defaultSlotClaimed = true;
-    // An envelope without a config payload is an instance running on driver
-    // defaults; the settings schemas fill those in when the blob decodes.
-    candidates.push(envelope.config ?? {});
+    candidates.push({
+      // An envelope without a config payload is an instance running on driver
+      // defaults; the settings schemas fill those in when the blob decodes.
+      config: envelope.config ?? {},
+      label: envelope.displayName ?? (instanceId === driver ? null : instanceId),
+    });
   }
 
-  if (!defaultSlotClaimed) candidates.push(settings.providers[driver]);
+  if (!defaultSlotClaimed) candidates.push({ config: settings.providers[driver], label: null });
   return candidates;
 }

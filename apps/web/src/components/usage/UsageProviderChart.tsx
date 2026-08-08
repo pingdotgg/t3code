@@ -1,9 +1,8 @@
-import type { UsageProviderKind } from "@t3tools/contracts";
 import { useCallback, useMemo, useRef, useState } from "react";
 
 import type { DailyTotals } from "../../usage/usageMerge";
 import { formatDayShort, formatTokens, formatUsd } from "../../usage/usageFormat";
-import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_MARK, PROVIDER_ORDER } from "./usageProviders";
+import { PROVIDER_MARK, type UsageSeries } from "./usageProviders";
 
 const VIEW_WIDTH = 960;
 const VIEW_HEIGHT = 260;
@@ -15,13 +14,14 @@ export type UsageChartMetric = "tokens" | "cost";
 interface UsageProviderChartProps {
   readonly days: readonly string[];
   readonly daily: readonly DailyTotals[];
+  readonly series: readonly UsageSeries[];
   readonly metric: UsageChartMetric;
 }
 
-/** One day's per-provider values, shared by the paths and the hover readout. */
+/** One day's per-series values, shared by the paths and the hover readout. */
 export interface DayColumn {
   readonly bands: readonly {
-    readonly provider: UsageProviderKind;
+    readonly seriesKey: string;
     readonly value: number;
   }[];
   readonly total: number;
@@ -34,10 +34,10 @@ interface Point {
 
 function valueFor(
   daily: DailyTotals | undefined,
-  provider: UsageProviderKind,
+  seriesKey: string,
   metric: UsageChartMetric,
 ): number {
-  const entry = daily?.byProvider.get(provider);
+  const entry = daily?.bySeries.get(seriesKey);
   if (entry === undefined) return 0;
   return metric === "tokens" ? entry.totalTokens : entry.costUsd;
 }
@@ -154,8 +154,8 @@ export function niceScale(peak: number, count: number): { max: number; ticks: re
  * Turns the merged daily totals into one column per day.
  *
  * Values are absolute, not cumulative: the series are layered from a shared
- * zero baseline rather than stacked. A stacked chart puts whichever provider is
- * drawn last permanently above the other, which reads as "that one is bigger"
+ * zero baseline rather than stacked. A stacked chart puts whichever series is
+ * drawn last permanently above the others, which reads as "that one is bigger"
  * even on days where it is not.
  *
  * The chart paths and the hover readout both consume this, so the number under
@@ -165,40 +165,46 @@ export function niceScale(peak: number, count: number): { max: number; ticks: re
 export function buildDayColumns(
   days: readonly string[],
   byDay: ReadonlyMap<string, DailyTotals>,
+  seriesKeys: readonly string[],
   metric: UsageChartMetric,
 ): readonly DayColumn[] {
   return days.map((day) => {
     const entry = byDay.get(day);
-    const bands = PROVIDER_ORDER.map((provider) => ({
-      provider,
-      value: valueFor(entry, provider, metric),
+    const bands = seriesKeys.map((seriesKey) => ({
+      seriesKey,
+      value: valueFor(entry, seriesKey, metric),
     }));
     return { bands, total: bands.reduce((sum, band) => sum + band.value, 0) };
   });
 }
 
-export function UsageProviderChart({ days, daily, metric }: UsageProviderChartProps) {
+export function UsageProviderChart({ days, daily, series, metric }: UsageProviderChartProps) {
   const byDay = useMemo(() => new Map(daily.map((entry) => [entry.day, entry])), [daily]);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const plotRef = useRef<HTMLDivElement | null>(null);
 
-  const { paths, ticks, stepX, toY, series } = useMemo(() => {
+  const { paths, ticks, stepX, toY, columns } = useMemo(() => {
     if (days.length === 0) {
       return {
         paths: [],
         ticks: [0] as readonly number[],
         stepX: 0,
         toY: () => VIEW_HEIGHT,
-        series: [] as readonly DayColumn[],
+        columns: [] as readonly DayColumn[],
       };
     }
 
-    const columns = buildDayColumns(days, byDay, metric);
+    const built = buildDayColumns(
+      days,
+      byDay,
+      series.map((entry) => entry.key),
+      metric,
+    );
 
-    // The scale tops out at the largest single provider-day, not the largest
+    // The scale tops out at the largest single series-day, not the largest
     // sum: layered series each measure from zero, so a combined peak would
     // leave the plot permanently half empty.
-    const peak = columns.reduce(
+    const peak = built.reduce(
       (max, column) => column.bands.reduce((inner, band) => Math.max(inner, band.value), max),
       0,
     );
@@ -209,29 +215,29 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
     const toY = (value: number) =>
       max === 0 ? VIEW_HEIGHT : VIEW_HEIGHT - (value / max) * (VIEW_HEIGHT - PLOT_TOP);
 
-    const built = PROVIDER_ORDER.map((provider, providerIndex) => {
+    const seriesPaths = series.map((entry, seriesIndex) => {
       const curve = smoothCurve(
-        columns.map((column, dayIndex) => ({
+        built.map((column, dayIndex) => ({
           x: dayIndex * step,
-          y: toY(column.bands[providerIndex]?.value ?? 0),
+          y: toY(column.bands[seriesIndex]?.value ?? 0),
         })),
       );
       const line = curvePath(curve, "M");
       return {
-        provider,
-        total: columns.reduce((sum, column) => sum + (column.bands[providerIndex]?.value ?? 0), 0),
+        series: entry,
+        total: built.reduce((sum, column) => sum + (column.bands[seriesIndex]?.value ?? 0), 0),
         area: line === "" ? "" : `${line} L${VIEW_WIDTH},${VIEW_HEIGHT} L0,${VIEW_HEIGHT} Z`,
         line,
       };
     });
 
-    // Paint the heavier series first so the lighter one is never buried under
-    // it. The fills are faint enough that the order barely shows, but the
-    // strokes are drawn in a second pass regardless, so neither can be hidden.
-    const ordered = [...built].sort((a, b) => b.total - a.total);
+    // Paint the heavier series first so the lighter ones are never buried
+    // under them. The fills are faint enough that the order barely shows, but
+    // the strokes are drawn in a second pass regardless, so none can be hidden.
+    const ordered = [...seriesPaths].sort((a, b) => b.total - a.total);
 
-    return { paths: ordered, ticks: tickValues, stepX: step, toY, series: columns };
-  }, [byDay, days, metric]);
+    return { paths: ordered, ticks: tickValues, stepX: step, toY, columns: built };
+  }, [byDay, days, metric, series]);
 
   const format = metric === "tokens" ? formatTokens : formatUsd;
 
@@ -247,7 +253,7 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
   );
 
   const hoveredDay = hoverIndex === null ? undefined : days[hoverIndex];
-  const hoveredColumn = hoverIndex === null ? undefined : series[hoverIndex];
+  const hoveredColumn = hoverIndex === null ? undefined : columns[hoverIndex];
   const hoverLeft = days.length <= 1 ? 0 : ((hoverIndex ?? 0) / (days.length - 1)) * 100;
 
   return (
@@ -297,15 +303,15 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
             })}
 
             {/* Fills first, then every stroke, so no series covers another's line. */}
-            {paths.map(({ provider, area }) => (
-              <path key={provider} d={area} fill={PROVIDER_COLOR[provider]} fillOpacity={0.12} />
+            {paths.map(({ series: entry, area }) => (
+              <path key={entry.key} d={area} fill={entry.color} fillOpacity={0.12} />
             ))}
-            {paths.map(({ provider, line }) => (
+            {paths.map(({ series: entry, line }) => (
               <path
-                key={provider}
+                key={entry.key}
                 d={line}
                 fill="none"
-                stroke={PROVIDER_COLOR[provider]}
+                stroke={entry.color}
                 strokeWidth={2}
                 vectorEffect="non-scaling-stroke"
               />
@@ -334,22 +340,19 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
               }}
             >
               <div className="mb-1 text-muted-foreground">{formatDayShort(hoveredDay)}</div>
-              {PROVIDER_ORDER.map((provider) => {
-                const Mark = PROVIDER_MARK[provider];
-                return (
-                  <div key={provider} className="flex items-center justify-between gap-3">
-                    <span className="flex items-center gap-1.5 text-muted-foreground">
-                      <Mark className="size-3 shrink-0" aria-hidden />
-                      {PROVIDER_LABEL[provider]}
-                    </span>
-                    <span className="text-foreground tabular-nums">
-                      {format(
-                        hoveredColumn?.bands.find((band) => band.provider === provider)?.value ?? 0,
-                      )}
-                    </span>
-                  </div>
-                );
-              })}
+              {series.map((entry) => (
+                <div key={entry.key} className="flex items-center justify-between gap-3">
+                  <span className="flex items-center gap-1.5 text-muted-foreground">
+                    <SeriesSwatch series={entry} />
+                    {entry.label}
+                  </span>
+                  <span className="text-foreground tabular-nums">
+                    {format(
+                      hoveredColumn?.bands.find((band) => band.seriesKey === entry.key)?.value ?? 0,
+                    )}
+                  </span>
+                </div>
+              ))}
               <div className="mt-1 flex items-center justify-between gap-3 border-t border-border pt-1">
                 <span className="text-muted-foreground">Total</span>
                 <span className="text-foreground tabular-nums">
@@ -376,20 +379,34 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
   );
 }
 
-export function UsageChartLegend() {
+/**
+ * Series marker: the brand mark alone when the provider has one home (its fill
+ * matches the band colour), a colour dot in the series shade when several homes
+ * share the mark and the mark alone could not tell them apart.
+ */
+export function SeriesSwatch({ series }: { readonly series: UsageSeries }) {
+  if (series.homeLabel === null) {
+    const Mark = PROVIDER_MARK[series.provider];
+    return <Mark className="size-3 shrink-0" aria-hidden />;
+  }
   return (
-    <div className="flex items-center gap-4">
-      {PROVIDER_ORDER.map((provider) => {
-        // The marks carry the same fills as the bands, so they key the chart
-        // just as a colour swatch would.
-        const Mark = PROVIDER_MARK[provider];
-        return (
-          <span key={provider} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Mark className="size-3.5 shrink-0" aria-hidden />
-            {PROVIDER_LABEL[provider]}
-          </span>
-        );
-      })}
+    <span
+      className="size-2 shrink-0 rounded-full"
+      style={{ backgroundColor: series.color }}
+      aria-hidden
+    />
+  );
+}
+
+export function UsageChartLegend({ series }: { readonly series: readonly UsageSeries[] }) {
+  return (
+    <div className="flex flex-wrap items-center gap-4">
+      {series.map((entry) => (
+        <span key={entry.key} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <SeriesSwatch series={entry} />
+          {entry.label}
+        </span>
+      ))}
     </div>
   );
 }

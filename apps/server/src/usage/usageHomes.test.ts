@@ -14,33 +14,36 @@ describe("listProviderHomeCandidates", () => {
 
     const codex = listProviderHomeCandidates(settings, "codex");
     expect(codex).toHaveLength(1);
-    expect(codex[0]).toMatchObject({ homePath: "~/.codex-legacy" });
+    expect(codex[0]?.config).toMatchObject({ homePath: "~/.codex-legacy" });
+    expect(codex[0]?.label).toBeNull();
 
     const claude = listProviderHomeCandidates(settings, "claude");
     expect(claude).toHaveLength(1);
-    expect(claude[0]).toMatchObject({ homePath: "" });
+    expect(claude[0]?.config).toMatchObject({ homePath: "" });
   });
 
   it("prefers an explicit default-slot instance over the legacy blob", () => {
     const settings = decodeServerSettings({
       providers: { codex: { homePath: "~/.codex-legacy" } },
       providerInstances: {
-        codex: { driver: "codex", config: { homePath: "~/.codex-t3/work" } },
+        codex: { driver: "codex", displayName: "Work", config: { homePath: "~/.codex-t3/work" } },
       },
     });
 
     const codex = listProviderHomeCandidates(settings, "codex");
     expect(codex).toHaveLength(1);
-    expect(codex[0]).toMatchObject({ homePath: "~/.codex-t3/work" });
+    expect(codex[0]?.config).toMatchObject({ homePath: "~/.codex-t3/work" });
+    expect(codex[0]?.label).toBe("Work");
   });
 
   it("returns every instance of the driver and ignores other drivers", () => {
     const settings = decodeServerSettings({
       providerInstances: {
-        codex: { driver: "codex", config: { homePath: "~/.codex-t3/work" } },
+        codex: { driver: "codex", displayName: "Work", config: { homePath: "~/.codex-t3/work" } },
         codex_personal: { driver: "codex", config: { homePath: "~/.codex-t3/personal" } },
         codex_work_overlay: {
           driver: "codex",
+          displayName: "Work Overlay",
           config: { homePath: "~/.codex-t3/work", shadowHomePath: "~/.codex-t3/overlay" },
         },
         cursor: { driver: "cursor", config: { binaryPath: "cursor-agent" } },
@@ -49,10 +52,16 @@ describe("listProviderHomeCandidates", () => {
 
     const codex = listProviderHomeCandidates(settings, "codex");
     expect(codex).toHaveLength(3);
-    expect(codex.map((config) => (config as { homePath?: string }).homePath)).toEqual([
+    expect(codex.map((candidate) => (candidate.config as { homePath?: string }).homePath)).toEqual([
       "~/.codex-t3/work",
       "~/.codex-t3/personal",
       "~/.codex-t3/work",
+    ]);
+    // displayName when set, instance id for named extra instances without one.
+    expect(codex.map((candidate) => candidate.label)).toEqual([
+      "Work",
+      "codex_personal",
+      "Work Overlay",
     ]);
 
     // No explicit claudeAgent instance: the legacy default still applies.
@@ -69,6 +78,6 @@ describe("listProviderHomeCandidates", () => {
     const codex = listProviderHomeCandidates(settings, "codex");
     // The config-less instance plus the legacy default slot.
     expect(codex).toHaveLength(2);
-    expect(codex[0]).toEqual({});
+    expect(codex[0]).toEqual({ config: {}, label: "codex_extra" });
   });
 });

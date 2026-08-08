@@ -224,33 +224,60 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-    const dirs: { provider: UsageProviderKind; dir: string }[] = [];
-    const seen = new Set<string>();
-    const push = (provider: UsageProviderKind, dir: string) => {
+    interface TranscriptDir {
+      provider: UsageProviderKind;
+      dir: string;
+      label: string | null;
+      /** A non-overlay instance's label beats a shadow overlay's for the dir. */
+      labelIsDirect: boolean;
+    }
+    const dirs: TranscriptDir[] = [];
+    const byKey = new Map<string, TranscriptDir>();
+    const push = (
+      provider: UsageProviderKind,
+      dir: string,
+      label: string | null,
+      isDirect: boolean,
+    ) => {
       const key = `${provider}\0${dir}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      dirs.push({ provider, dir });
+      const existing = byKey.get(key);
+      if (existing === undefined) {
+        const entry: TranscriptDir = { provider, dir, label, labelIsDirect: isDirect };
+        byKey.set(key, entry);
+        dirs.push(entry);
+        return;
+      }
+      // Shadow homes share the shared home's `sessions`; the directory is
+      // scanned once, named after the instance that owns it directly.
+      if (isDirect && !existing.labelIsDirect) {
+        existing.label = label;
+        existing.labelIsDirect = true;
+      }
     };
 
     for (const candidate of listProviderHomeCandidates(settings, "claude")) {
       // A blob that fails to decode belongs to an instance the registry
       // already reports as unavailable; the scan skips it.
-      const config = yield* decodeClaudeSettings(candidate).pipe(
+      const config = yield* decodeClaudeSettings(candidate.config).pipe(
         Effect.catchCause(() => Effect.succeed(null)),
       );
       if (config === null) continue;
       const claudeHome = yield* resolveClaudeHomePath(config);
-      push("claude", yield* resolveClaudeTranscriptDir(claudeHome));
+      push("claude", yield* resolveClaudeTranscriptDir(claudeHome), candidate.label, true);
     }
 
     for (const candidate of listProviderHomeCandidates(settings, "codex")) {
-      const config = yield* decodeCodexSettings(candidate).pipe(
+      const config = yield* decodeCodexSettings(candidate.config).pipe(
         Effect.catchCause(() => Effect.succeed(null)),
       );
       if (config === null) continue;
       const layout = yield* resolveCodexHomeLayout(config);
-      push("codex", path.join(layout.sharedHomePath, "sessions"));
+      push(
+        "codex",
+        path.join(layout.sharedHomePath, "sessions"),
+        candidate.label,
+        layout.mode === "direct",
+      );
     }
 
     return dirs;
@@ -357,7 +384,7 @@ export const make = Effect.gen(function* () {
     const livePaths = new Set<string>();
     const walkedRoots: string[] = [];
 
-    for (const { provider, dir } of dirs) {
+    for (const { provider, dir, label } of dirs) {
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
       const exists = yield* fileSystem
         .exists(dir)
@@ -366,6 +393,7 @@ export const make = Effect.gen(function* () {
       if (!exists) {
         sources.push({
           fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
+          label,
           status: "missing",
           scannedFiles: 0,
           skippedFiles: 0,
@@ -378,6 +406,7 @@ export const make = Effect.gen(function* () {
 
       walkedRoots.push(dir);
       const files = yield* Effect.promise(() => listTranscriptFiles(dir, windowStartMs));
+      const home = { path: dir, label };
       let scannedFiles = 0;
       let skippedFiles = 0;
       // Distinct per directory. Buckets carry per-cell session counts, but a
@@ -395,7 +424,7 @@ export const make = Effect.gen(function* () {
         for (const record of records) {
           // Only sessions that contributed in-window count: the mtime slack
           // admits boundary files whose records fall outside the range.
-          if (aggregator.add(record) && record.sessionId.length > 0) {
+          if (aggregator.add(record, home) && record.sessionId.length > 0) {
             sessionIds.add(record.sessionId);
           }
         }
@@ -403,6 +432,7 @@ export const make = Effect.gen(function* () {
 
       sources.push({
         fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
+        label,
         status: "ok",
         scannedFiles,
         skippedFiles,
