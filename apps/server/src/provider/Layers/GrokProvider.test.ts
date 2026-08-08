@@ -32,6 +32,13 @@ describe("buildInitialGrokProviderSnapshot", () => {
       expect(snapshot.version).toBeNull();
       expect(snapshot.message).toContain("Checking Grok");
       expect(snapshot.requiresNewThreadForModelChange).toBe(true);
+      expect(snapshot.slashCommands).toEqual([
+        {
+          name: "compact",
+          description: "Compress conversation history to reclaim context window",
+          input: { hint: "optional context about what to preserve" },
+        },
+      ]);
     }),
   );
 });

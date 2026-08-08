@@ -68,6 +68,25 @@ function promptIdFromRequestMeta(
   return typeof promptId === "string" && promptId.length > 0 ? promptId : undefined;
 }
 
+function promptTextFromRequest(request: AcpSchema.PromptRequest): string {
+  const blocks = request.prompt;
+  if (!Array.isArray(blocks)) {
+    return "";
+  }
+  return blocks
+    .flatMap((block) =>
+      typeof block === "object" &&
+      block !== null &&
+      "type" in block &&
+      block.type === "text" &&
+      "text" in block &&
+      typeof block.text === "string"
+        ? [block.text]
+        : [],
+    )
+    .join("");
+}
+
 function logExit(reason: string): void {
   if (!exitLogPath) {
     return;
@@ -520,6 +539,21 @@ const program = Effect.gen(function* () {
 
       if (hangPromptForever || (hangFirstPromptForever && promptCount === 1)) {
         return yield* Effect.never;
+      }
+
+      // Mirror real Grok: `/compact` is handled as a prompt and emits auto_compact_completed.
+      const promptText = promptTextFromRequest(request).trim();
+      if (/^\/compact(?:\s|$)/i.test(promptText)) {
+        writeJsonRpcNotification("_x.ai/session_notification", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "auto_compact_completed",
+            tokens_before: 12_000,
+            tokens_after: 4_000,
+            summary_preview: null,
+          },
+        });
+        return { stopReason: "end_turn" };
       }
 
       if (emitXAiPromptCompleteThenHang) {
