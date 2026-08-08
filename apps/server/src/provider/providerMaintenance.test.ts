@@ -356,9 +356,9 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           provider: driver("nativePackageTool"),
           packageName: "@example/native-package-tool",
           update: {
-            command: "native-package-tool update",
+            command: `${nativePackageToolPath} update`,
 
-            executable: "native-package-tool",
+            executable: nativePackageToolPath,
 
             args: ["update"],
 
@@ -393,9 +393,9 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           provider: driver("scopedPackageTool"),
           packageName: "@example/scoped-package-tool",
           update: {
-            command: "scoped-package-tool upgrade",
+            command: `${scopedPackageToolPath} upgrade`,
 
-            executable: "scoped-package-tool",
+            executable: scopedPackageToolPath,
 
             args: ["upgrade"],
 
@@ -538,6 +538,106 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           lockKey: "pnpm-global",
         },
       });
+    }),
+  );
+
+  it.effect(
+    "selects native updates when only a symlink's real path matches the native install layout",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-native-realpath-capabilities");
+        const localBinDir = NodePath.join(tempDir, ".local", "bin");
+        const releaseBinDir = NodePath.join(tempDir, ".scoped-package-tool", "bin");
+        NodeFS.mkdirSync(localBinDir, { recursive: true });
+        NodeFS.mkdirSync(releaseBinDir, { recursive: true });
+        const releaseBinPath = NodePath.join(releaseBinDir, "scoped-package-tool");
+        const symlinkPath = NodePath.join(localBinDir, "scoped-package-tool");
+        NodeFS.writeFileSync(releaseBinPath, "#!/bin/sh\n");
+        NodeFS.chmodSync(releaseBinPath, 0o755);
+        NodeFS.symlinkSync(releaseBinPath, symlinkPath);
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          scopedPackageToolUpdate,
+          {
+            binaryPath: "scoped-package-tool",
+            env: {
+              PATH: localBinDir,
+            },
+          },
+        ).pipe(Effect.provideService(HostProcessPlatform, "darwin"));
+
+        expect(capabilities).toEqual({
+          provider: driver("scopedPackageTool"),
+          packageName: "@example/scoped-package-tool",
+          update: {
+            // The symlink is what was classified, so it is what gets updated —
+            // not the bare command name, which may resolve elsewhere on PATH.
+            command: `${symlinkPath} upgrade`,
+
+            executable: symlinkPath,
+
+            args: ["upgrade"],
+
+            lockKey: "scoped-package-tool-native",
+          },
+        });
+      }),
+  );
+
+  it.effect(
+    "runs native updates against the configured binary rather than a different one on PATH",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-native-configured-binary-capabilities");
+        const nativeBinDir = NodePath.join(tempDir, ".scoped-package-tool", "bin");
+        const otherBinDir = NodePath.join(tempDir, "other", "bin");
+        NodeFS.mkdirSync(nativeBinDir, { recursive: true });
+        NodeFS.mkdirSync(otherBinDir, { recursive: true });
+        const configuredPath = NodePath.join(nativeBinDir, "scoped-package-tool");
+        const otherPath = NodePath.join(otherBinDir, "scoped-package-tool");
+        for (const binaryPath of [configuredPath, otherPath]) {
+          NodeFS.writeFileSync(binaryPath, "#!/bin/sh\n");
+          NodeFS.chmodSync(binaryPath, 0o755);
+        }
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          scopedPackageToolUpdate,
+          {
+            binaryPath: configuredPath,
+            env: {
+              PATH: otherBinDir,
+            },
+          },
+        ).pipe(Effect.provideService(HostProcessPlatform, "darwin"));
+
+        expect(capabilities.update?.executable).toBe(configuredPath);
+        expect(capabilities.update?.executable).not.toBe(otherPath);
+      }),
+  );
+
+  it.effect("keeps the displayed update command copyable when the install path has spaces", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-native-spaced-path-capabilities");
+      const nativeBinDir = NodePath.join(tempDir, "Alice Smith", ".scoped-package-tool", "bin");
+      NodeFS.mkdirSync(nativeBinDir, { recursive: true });
+      const configuredPath = NodePath.join(nativeBinDir, "scoped-package-tool");
+      NodeFS.writeFileSync(configuredPath, "#!/bin/sh\n");
+      NodeFS.chmodSync(configuredPath, 0o755);
+
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+        scopedPackageToolUpdate,
+        {
+          binaryPath: configuredPath,
+          env: {
+            PATH: "",
+          },
+        },
+      ).pipe(Effect.provideService(HostProcessPlatform, "darwin"));
+
+      // The spawned executable stays unquoted - it is passed as a list entry,
+      // never through a shell - while the copyable string quotes it.
+      expect(capabilities.update?.executable).toBe(configuredPath);
+      expect(capabilities.update?.command).toBe(`"${configuredPath}" upgrade`);
     }),
   );
 
