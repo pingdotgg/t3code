@@ -34,7 +34,9 @@ export function buildPairingUrl(host: string, code: string): string {
   if (!c) return h;
 
   try {
-    const url = new URL(h.includes("://") ? h : `${isIpLiteral(h) ? "http" : "https"}://${h}`);
+    const url = new URL(
+      h.includes("://") ? h : `${isIpLiteral(h) ? "http" : "https"}://${h}`,
+    );
     url.hash = new URLSearchParams([["token", c]]).toString();
     return url.toString();
   } catch {
@@ -47,7 +49,12 @@ export function parsePairingUrl(url: string): { host: string; code: string } {
   if (!trimmed) return { host: "", code: "" };
 
   try {
-    const parsed = new URL(trimmed);
+    const authority = trimmed.split(/[/?#]/, 1)[0] ?? trimmed;
+    const parsed = new URL(
+      trimmed.includes("://")
+        ? trimmed
+        : `${isIpLiteral(authority) ? "http" : "https"}://${trimmed}`,
+    );
     const hostedPairingRequest = readHostedPairingRequest(parsed);
     if (hostedPairingRequest) {
       return {
@@ -70,6 +77,14 @@ export function parsePairingUrl(url: string): { host: string; code: string } {
   }
 }
 
+export function parsePairingFields(
+  host: string,
+  code: string,
+): { host: string; code: string } {
+  const parsed = parsePairingUrl(host);
+  return parsed.code.length > 0 ? parsed : { host, code };
+}
+
 export function extractPairingUrlFromQrPayload(payload: string): string {
   const trimmed = payload.trim();
   if (!trimmed) {
@@ -79,7 +94,8 @@ export function extractPairingUrlFromQrPayload(payload: string): string {
   try {
     const url = new URL(trimmed);
     if (url.protocol === "t3code:") {
-      const pairingUrl = url.searchParams.get(MOBILE_PAIRING_URL_PARAM)?.trim() ?? "";
+      const pairingUrl =
+        url.searchParams.get(MOBILE_PAIRING_URL_PARAM)?.trim() ?? "";
       if (pairingUrl.length > 0) {
         return pairingUrl;
       }
