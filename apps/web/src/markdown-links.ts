@@ -359,8 +359,12 @@ export function resolveInlineCodeFileLinkMeta(
 }
 
 function basenameOfPath(path: string): string {
-  const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
+  // A trailing separator is a valid way to write a directory, so trim it before
+  // taking the final segment. Without this the segment reads as empty and the
+  // chip renders with no label at all.
+  const trimmed = path.replace(/[/\\]+$/, "") || path;
+  const separatorIndex = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  return separatorIndex >= 0 ? trimmed.slice(separatorIndex + 1) : trimmed;
 }
 
 function workspaceRelativePath(path: string, workspaceRoot: string | undefined): string | null {
