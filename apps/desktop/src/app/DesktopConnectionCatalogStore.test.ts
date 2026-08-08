@@ -84,13 +84,14 @@ function makeLayer(
 const withStore = <A, E, R>(
   effect: Effect.Effect<A, E, R | DesktopConnectionCatalogStore.DesktopConnectionCatalogStore>,
   encryptionAvailable = true,
+  failDecrypt: Ref.Ref<boolean> | null = null,
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const baseDir = yield* fileSystem.makeTempDirectoryScoped({
       prefix: "t3-desktop-connection-catalog-test-",
     });
-    return yield* effect.pipe(Effect.provide(makeLayer(baseDir, encryptionAvailable)));
+    return yield* effect.pipe(Effect.provide(makeLayer(baseDir, encryptionAvailable, failDecrypt)));
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopConnectionCatalogStore", () => {
@@ -221,6 +222,63 @@ describe("DesktopConnectionCatalogStore", () => {
         assert.deepEqual(yield* store.get, migrated);
       }),
     ),
+  );
+
+  it.effect("migrates legacy connection metadata when its credential is unreadable", () =>
+    Effect.gen(function* () {
+      const failDecrypt = yield* Ref.make(false);
+      return yield* withStore(
+        Effect.gen(function* () {
+          const environment = yield* DesktopEnvironment.DesktopEnvironment;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+          const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+          const record: PersistedSavedEnvironmentRecord = {
+            environmentId: EnvironmentId.make("unreadable-credential-environment"),
+            label: "Unreadable credential",
+            httpBaseUrl: "https://unreadable.example.com/",
+            wsBaseUrl: "wss://unreadable.example.com/",
+            createdAt: "2026-06-04T00:00:00.000Z",
+            lastConnectedAt: null,
+          };
+          yield* savedEnvironments.setRegistry([record]);
+          assert.isTrue(
+            yield* savedEnvironments.setSecret({
+              environmentId: record.environmentId,
+              secret: "legacy-token",
+            }),
+          );
+
+          yield* Ref.set(failDecrypt, true);
+          const migrated = yield* store.get;
+          assert.isTrue(Option.isSome(migrated));
+          if (Option.isNone(migrated)) {
+            return;
+          }
+          const catalog = yield* decodeConnectionCatalog(migrated.value);
+          assert.deepInclude(catalog.targets[0], {
+            _tag: "BearerConnectionTarget",
+            environmentId: record.environmentId,
+            connectionId: `bearer:${record.environmentId}`,
+          });
+          assert.equal(catalog.profiles.length, 1);
+          assert.equal(catalog.credentials.length, 0);
+          assert.isTrue(
+            yield* fileSystem.exists(`${environment.stateDir}/connection-catalog.json`),
+          );
+
+          yield* Ref.set(failDecrypt, false);
+          assert.deepEqual(
+            yield* savedEnvironments.getSecret(record.environmentId),
+            Option.some("legacy-token"),
+          );
+          yield* savedEnvironments.setRegistry([]);
+          assert.deepEqual(yield* store.get, migrated);
+        }),
+        true,
+        failDecrypt,
+      );
+    }),
   );
 
   it.effect("surfaces malformed catalog documents without deleting them", () =>

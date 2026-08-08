@@ -347,7 +347,22 @@ const migrateSavedEnvironmentRecords = Effect.fn(
         wsBaseUrl: record.wsBaseUrl,
       }),
     );
+    // A legacy token that safe storage cannot read is unusable. Keep its
+    // connection metadata so the user can authenticate it again without
+    // blocking migration of the rest of the catalog.
     const token = yield* savedEnvironments.getSecret(record.environmentId).pipe(
+      Effect.catchTags({
+        DesktopSavedEnvironmentSecretDecodeError: (error) =>
+          Effect.logWarning("Skipping an unreadable legacy desktop connection credential.", {
+            environmentId: record.environmentId,
+            error: error.message,
+          }).pipe(Effect.as(Option.none<string>())),
+        DesktopSavedEnvironmentSecretProtectionError: (error) =>
+          Effect.logWarning("Skipping an unreadable legacy desktop connection credential.", {
+            environmentId: record.environmentId,
+            error: error.message,
+          }).pipe(Effect.as(Option.none<string>())),
+      }),
       Effect.mapError(
         (cause) =>
           new DesktopConnectionCatalogStoreMigrationError({
