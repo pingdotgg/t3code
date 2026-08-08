@@ -2,6 +2,7 @@
 import stableAppIcon from "../assets/t3-latest-384.webp?url";
 import Layout from "../layouts/Layout.astro";
 import {
+  GITHUB_REPOSITORY_URL,
   GOOGLE_PLAY_STORE_URL,
   IOS_APP_STORE_URL,
   MARKETING_STATS,
@@ -161,12 +162,36 @@ const endorsementRows = [
                 <>
                   {surface.id === "phone" ? (
                     <div class="v2-phone-pair">
-                      <img src={surface.image} alt="T3 Code on iPhone" loading="lazy" />
-                      <img
-                        src="/mobile-states/android-thread.png"
-                        alt="T3 Code on Android"
-                        loading="lazy"
-                      />
+                      <a
+                        class="v2-phone-device"
+                        href={IOS_APP_STORE_URL}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label="Open T3 Code in the App Store"
+                      >
+                        <img src={surface.image} alt="T3 Code on iPhone" loading="lazy" />
+                        <span class="v2-device-store-link">
+                          <img src="/store-logos/appstore.svg" alt="" width="18" height="18" />
+                          Open in App Store <span aria-hidden="true">↗</span>
+                        </span>
+                      </a>
+                      <a
+                        class="v2-phone-device"
+                        href={GOOGLE_PLAY_STORE_URL}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label="Open T3 Code in Google Play"
+                      >
+                        <img
+                          src="/mobile-states/android-thread.png"
+                          alt="T3 Code on Android"
+                          loading="lazy"
+                        />
+                        <span class="v2-device-store-link">
+                          <img src="/store-logos/googleplay.svg" alt="" width="18" height="18" />
+                          Open in Google Play <span aria-hidden="true">↗</span>
+                        </span>
+                      </a>
                     </div>
                   ) : (
                     <img
@@ -175,15 +200,16 @@ const endorsementRows = [
                       loading="lazy"
                     />
                   )}
-                  <a
-                    class="v2-surface-store-link"
-                    href={IOS_APP_STORE_URL}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    {surface.id === "tablet" ? "Open iPad app" : "Open in App Store"}
-                    <span aria-hidden="true">↗</span>
-                  </a>
+                  {surface.id === "tablet" && (
+                    <a
+                      class="v2-surface-store-link"
+                      href={IOS_APP_STORE_URL}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open iPad app <span aria-hidden="true">↗</span>
+                    </a>
+                  )}
                 </>
               )}
             </div>
@@ -206,14 +232,50 @@ const endorsementRows = [
         <code>npx t3 pair</code>
       </header>
       <div class="v2-connect-visual" aria-hidden="true">
-        <div class="v2-connect-desktop">
-          <img src="/demo-states/review-diff-crop.png" alt="" loading="lazy" />
+        <div class="v2-connect-status">
+          <i></i>
+          <span>One live thread</span>
+          <strong>on both screens</strong>
         </div>
-        <div class="v2-connect-phone">
-          <img src="/mobile-states/ios-review.png" alt="" loading="lazy" />
+        <div class="v2-connect-screens">
+          <div class="v2-connect-desktop">
+            <img src="/demo-states/review-diff-crop.png" alt="" loading="lazy" />
+          </div>
+          <div class="v2-connect-phone">
+            <img src="/mobile-states/ios-review.png" alt="" loading="lazy" />
+          </div>
         </div>
-        <span class="v2-connect-line"></span>
-        <span class="v2-connect-badge">connected</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="v2-open-source" aria-labelledby="v2-open-source-title">
+    <div class="v2-shell v2-open-source-grid">
+      <header>
+        <h2 id="v2-open-source-title">Don't like it?<br />Make it yours.</h2>
+        <p>
+          Change the interface, wire in another agent, or ship your own build. T3 Code is open
+          source from top to bottom.
+        </p>
+        <div class="v2-open-source-actions">
+          <a
+            class="btn btn-primary"
+            href={`${GITHUB_REPOSITORY_URL}/fork`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Fork T3 Code
+          </a>
+          <a href={GITHUB_REPOSITORY_URL} target="_blank" rel="noreferrer">Browse source ↗</a>
+        </div>
+      </header>
+      <div class="v2-fork-flow">
+        <code><span>$</span> gh repo fork pingdotgg/t3code --clone</code>
+        <div>
+          <span><i>01</i> Change the UI</span>
+          <span><i>02</i> Add an agent</span>
+          <span><i>03</i> Ship your build</span>
+        </div>
       </div>
     </div>
   </section>
@@ -636,13 +698,12 @@ const endorsementRows = [
     transform: none;
   }
 
-  .v2-system,
-  .v2-connect {
+  .v2-system {
     padding: 150px 0;
   }
 
   .v2-connect {
-    padding-bottom: 44px;
+    padding: 52px 0 48px;
   }
 
   .v2-section-heading {
@@ -749,17 +810,13 @@ const endorsementRows = [
     box-shadow: 0 35px 90px rgba(0, 0, 0, 0.6);
   }
 
-  .v2-surface-panel img {
+  .v2-surface-panel > img,
+  .v2-phone-device > img {
     max-width: 100%;
     max-height: 530px;
     border: 1px solid var(--border-strong);
     border-radius: 14px;
     box-shadow: 0 35px 90px rgba(0, 0, 0, 0.6);
-  }
-
-  .v2-surface-panel[data-v2-panel="phone"] img {
-    max-width: 285px;
-    max-height: 530px;
   }
 
   .v2-phone-pair {
@@ -771,10 +828,56 @@ const endorsementRows = [
     gap: 18px;
   }
 
-  .v2-surface-panel[data-v2-panel="phone"] .v2-phone-pair img {
-    width: auto;
-    max-width: 43%;
-    max-height: 510px;
+  .v2-phone-device {
+    position: relative;
+    display: grid;
+    width: min(42%, 264px);
+    height: min(92%, 520px);
+    place-items: center;
+    border-radius: 14px;
+  }
+
+  .v2-phone-device > img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  .v2-device-store-link {
+    position: absolute;
+    left: 50%;
+    bottom: 22px;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    width: max-content;
+    padding: 10px 13px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 999px;
+    color: #fff;
+    background: rgba(7, 7, 9, 0.82);
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.44);
+    font-size: 12px;
+    font-weight: 600;
+    opacity: 0;
+    transform: translate(-50%, 8px);
+    backdrop-filter: blur(18px);
+    transition: opacity 0.18s ease, transform 0.18s ease, background 0.18s ease;
+  }
+
+  .v2-device-store-link > img {
+    width: 18px;
+    height: 18px;
+  }
+
+  .v2-phone-device:hover .v2-device-store-link,
+  .v2-phone-device:focus-visible .v2-device-store-link {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+
+  .v2-phone-device:hover .v2-device-store-link {
+    background: rgba(24, 24, 28, 0.92);
   }
 
   .v2-surface-panel[data-v2-panel="tablet"] img {
@@ -815,18 +918,6 @@ const endorsementRows = [
     background: rgba(24, 24, 28, 0.88);
   }
 
-  .v2-surface-panel[data-v2-panel="phone"] .v2-surface-store-link {
-    right: auto;
-    left: 50%;
-    bottom: 34px;
-    transform: translate(-50%, 8px);
-  }
-
-  .v2-surface-panel[data-v2-panel="phone"]:hover .v2-surface-store-link,
-  .v2-surface-panel[data-v2-panel="phone"] .v2-surface-store-link:focus-visible {
-    transform: translate(-50%, 0);
-  }
-
   .v2-surface-panel[data-v2-panel="tablet"] .v2-surface-store-link {
     right: 10%;
     bottom: 42px;
@@ -835,14 +926,9 @@ const endorsementRows = [
   .v2-connect-grid {
     display: grid;
     width: min(100% - 48px, 1240px);
-    grid-template-columns: 0.72fr 1.28fr;
+    grid-template-columns: minmax(300px, 0.74fr) minmax(0, 1.26fr);
     align-items: center;
-    gap: 80px;
-    min-height: 650px;
-  }
-
-  .v2-connect-grid > header {
-    transform: translateY(-32px);
+    gap: 64px;
   }
 
   .v2-connect h2 {
@@ -891,14 +977,40 @@ const endorsementRows = [
   }
 
   .v2-connect-visual {
+    min-width: 0;
+  }
+
+  .v2-connect-status {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: fit-content;
+    margin: 0 0 14px auto;
+    color: #74747d;
+    font-size: 12px;
+  }
+
+  .v2-connect-status i {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #73d58b;
+    box-shadow: 0 0 14px rgba(115, 213, 139, 0.5);
+  }
+
+  .v2-connect-status strong {
+    color: #d5d5da;
+    font-weight: 550;
+  }
+
+  .v2-connect-screens {
     position: relative;
-    min-height: 590px;
+    display: flex;
+    min-height: 410px;
+    align-items: flex-start;
   }
 
   .v2-connect-desktop {
-    position: absolute;
-    top: 0;
-    right: 0;
     width: 88%;
     border: 1px solid var(--border-strong);
     border-radius: 18px;
@@ -907,14 +1019,13 @@ const endorsementRows = [
 
   .v2-connect-phone {
     position: absolute;
-    right: 4%;
-    bottom: 0;
-    width: 25%;
+    right: 0;
+    bottom: 2px;
+    width: 24%;
     padding: 8px;
     border: 1px solid var(--border-strong);
     border-radius: 28px;
     background: #08080a;
-    transform: rotate(3deg);
   }
 
   .v2-connect-desktop img,
@@ -926,32 +1037,105 @@ const endorsementRows = [
     border-radius: 20px;
   }
 
-  .v2-connect-line {
-    position: absolute;
-    right: 25%;
-    bottom: 21%;
-    width: 20%;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, #7f6cff);
-    transform: rotate(-13deg);
-    transform-origin: right;
+  .v2-open-source {
+    padding: 90px 0 110px;
   }
 
-  .v2-connect-badge {
-    position: absolute;
-    right: 27%;
-    bottom: 25%;
-    padding: 7px 10px;
-    border: 1px solid rgba(126, 111, 255, 0.35);
-    border-radius: 999px;
-    color: #a89cff;
-    background: #0b0a10;
+  .v2-open-source-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.8fr) minmax(420px, 1.2fr);
+    align-items: center;
+    gap: 86px;
+  }
+
+  .v2-open-source h2 {
+    font-size: clamp(46px, 5vw, 72px);
+    font-weight: 500;
+    letter-spacing: -0.055em;
+    line-height: 0.98;
+  }
+
+  .v2-open-source header > p {
+    max-width: 470px;
+    margin-top: 24px;
+    color: #85858e;
+    font-size: 16px;
+    line-height: 1.6;
+  }
+
+  .v2-open-source-actions {
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    margin-top: 28px;
+  }
+
+  .v2-open-source-actions .btn {
+    min-height: 48px;
+    padding-inline: 18px;
+  }
+
+  .v2-open-source-actions > a:last-child {
+    color: #8b8b94;
+    font-size: 14px;
+  }
+
+  .v2-open-source-actions > a:last-child:hover {
+    color: #fff;
+  }
+
+  .v2-fork-flow {
+    padding: 30px;
+    border: 1px solid var(--border-strong);
+    border-radius: 16px;
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.012));
+  }
+
+  .v2-fork-flow > code {
+    display: block;
+    overflow: hidden;
+    padding: 15px 17px;
+    border-radius: 9px;
+    color: #d9d9de;
+    background: #08080a;
     font-family: var(--font-mono);
-    font-size: 9px;
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .v2-fork-flow > code span {
+    color: #4ba5ff;
+  }
+
+  .v2-fork-flow > div {
+    display: grid;
+    margin-top: 20px;
+  }
+
+  .v2-fork-flow > div > span {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 14px 4px;
+    border-bottom: 1px solid var(--border);
+    color: #d6d6db;
+    font-size: 15px;
+  }
+
+  .v2-fork-flow > div > span:last-child {
+    border-bottom: 0;
+  }
+
+  .v2-fork-flow i {
+    color: #5f5f68;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-style: normal;
   }
 
   .v2-endorsements {
-    padding: 52px 0 150px;
+    padding: 36px 0 150px;
     overflow: hidden;
   }
 
@@ -1123,18 +1307,22 @@ const endorsementRows = [
 
     .v2-section-heading,
     .v2-system-grid,
-    .v2-connect-grid {
+    .v2-connect-grid,
+    .v2-open-source-grid {
       grid-template-columns: 1fr;
     }
 
     .v2-system,
-    .v2-connect,
     .v2-endorsements {
       padding: 100px 0;
     }
 
     .v2-connect {
-      padding-bottom: 32px;
+      padding: 56px 0 48px;
+    }
+
+    .v2-open-source {
+      padding: 72px 0 92px;
     }
 
     .v2-endorsements {
@@ -1163,11 +1351,11 @@ const endorsementRows = [
     }
 
     .v2-connect-grid {
-      gap: 70px;
+      gap: 48px;
     }
 
-    .v2-connect-grid > header {
-      transform: none;
+    .v2-open-source-grid {
+      gap: 46px;
     }
   }
 
@@ -1222,12 +1410,36 @@ const endorsementRows = [
       min-height: 340px;
     }
 
-    .v2-connect-visual {
-      min-height: 430px;
+    .v2-connect-screens {
+      min-height: 380px;
     }
 
     .v2-connect h2 {
       font-size: 68px;
+    }
+
+    .v2-phone-pair {
+      gap: 8px;
+    }
+
+    .v2-phone-device {
+      width: 48%;
+    }
+
+    .v2-device-store-link {
+      bottom: 12px;
+      padding: 8px 10px;
+      font-size: 10px;
+    }
+
+    .v2-fork-flow {
+      padding: 20px;
+    }
+
+    .v2-open-source-actions {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 14px;
     }
 
     .v2-endorsements-heading {
