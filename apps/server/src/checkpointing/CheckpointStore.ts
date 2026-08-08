@@ -14,10 +14,12 @@
  * @module CheckpointStore
  */
 import { VcsUnsupportedOperationError, type CheckpointRef } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { makeCaptureBackoff } from "./CaptureBackoff.ts";
 import type { CheckpointStoreError } from "./Errors.ts";
 import type { VcsCheckpointOps } from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -98,6 +100,7 @@ export class CheckpointStore extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
+  const captureBackoff = makeCaptureBackoff<CheckpointStoreError>();
 
   const resolveCheckpoints = Effect.fn("CheckpointStore.resolveCheckpoints")(function* (
     operation: string,
@@ -122,8 +125,40 @@ export const make = Effect.gen(function* () {
   const captureCheckpoint: CheckpointStore["Service"]["captureCheckpoint"] = Effect.fn(
     "captureCheckpoint",
   )(function* (input) {
-    const checkpoints = yield* resolveCheckpoints("CheckpointStore.captureCheckpoint", input.cwd);
-    return yield* checkpoints.captureCheckpoint(input);
+    const startedAt = yield* Clock.currentTimeMillis;
+    const decision = captureBackoff.beginAttempt(input.cwd, startedAt);
+    if (decision.skip && decision.lastError) {
+      // Spawning git here would repeat a capture that cannot succeed, so
+      // replay the failure the caller already handles instead of burning a
+      // CPU core and leaving another orphaned tmp_pack behind.
+      yield* Effect.logDebug("Skipping checkpoint capture during failure cooldown", {
+        cwdLength: input.cwd.length,
+        remainingMs: decision.remainingMs,
+      });
+      return yield* Effect.fail(decision.lastError);
+    }
+
+    // Resolving the driver sits inside the reported scope so that a failure
+    // before the capture runs still replaces this caller's reservation with a
+    // real outcome, rather than leaving the workspace held until it lapses.
+    return yield* Effect.gen(function* () {
+      const checkpoints = yield* resolveCheckpoints("CheckpointStore.captureCheckpoint", input.cwd);
+      return yield* checkpoints.captureCheckpoint(input);
+    }).pipe(
+      Effect.tap(() => Effect.sync(() => captureBackoff.recordSuccess(input.cwd))),
+      Effect.tapError((error) =>
+        Effect.gen(function* () {
+          const failedAt = yield* Clock.currentTimeMillis;
+          const outcome = captureBackoff.recordFailure(input.cwd, failedAt, error);
+          yield* Effect.logWarning("Checkpoint capture failed", {
+            cwdLength: input.cwd.length,
+            consecutiveFailures: outcome.consecutiveFailures,
+            cooldownMs: outcome.cooldownMs,
+            error,
+          });
+        }),
+      ),
+    );
   });
 
   const hasCheckpointRef: CheckpointStore["Service"]["hasCheckpointRef"] = Effect.fn(
