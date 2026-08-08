@@ -46,6 +46,7 @@ it("isolates Claude capability probes without dropping workspace setting sources
   assert.equal(options.strictMcpConfig, true);
   assert.equal(options.cwd, "/workspace/project");
   assert.deepEqual(options.settingSources, [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES]);
+  assert.deepEqual(options.settings, { disableAllHooks: true });
   assert.deepEqual(options.allowedTools, []);
   assert.equal(options.persistSession, false);
   assert.equal(options.pathToClaudeCodeExecutable, "/usr/bin/claude");
@@ -149,6 +150,14 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       assert.equal(invocation.mcpConfig, undefined);
 
       assert.equal(invocation.args.includes("--setting-sources=user,project,local"), true);
+
+      const settingsFlagIndex = invocation.args.indexOf("--settings");
+      assert.notEqual(settingsFlagIndex, -1);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const flagSettings = JSON.parse(invocation.args[settingsFlagIndex + 1] ?? "{}") as {
+        readonly disableAllHooks?: boolean;
+      };
+      assert.equal(flagSettings.disableAllHooks, true);
     }).pipe(Effect.scoped),
   );
 });
