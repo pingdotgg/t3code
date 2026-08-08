@@ -28,6 +28,7 @@ import {
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
+import { pollUntil } from "../testUtils/pollUntil.ts";
 import { makeCursorAdapter } from "./CursorAdapter.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
@@ -97,36 +98,34 @@ async function readJsonLines(filePath: string) {
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
+    .flatMap((line) => {
+      // The mock agent appends lines from a separate process, so a poll may
+      // observe a partially written trailing line. Skip it; the next poll
+      // sees the complete line.
+      try {
+        return [JSON.parse(line) as Record<string, unknown>];
+      } catch {
+        return [];
+      }
+    });
 }
 
-async function waitForFileContent(filePath: string, attempts = 40) {
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      const raw = await NodeFSP.readFile(filePath, "utf8");
-      if (raw.trim().length > 0) {
-        return raw;
-      }
-    } catch {}
-    await Effect.runPromise(Effect.yieldNow);
-  }
-  throw new Error(`Timed out waiting for file content at ${filePath}`);
+function waitForFileContent(filePath: string) {
+  return pollUntil({
+    poll: Effect.promise(() => NodeFSP.readFile(filePath, "utf8").catch(() => "")),
+    until: (raw) => raw.trim().length > 0,
+    description: `file content at ${filePath}`,
+  });
 }
 
 function waitForJsonLogMatch(
   filePath: string,
   predicate: (entry: Record<string, unknown>) => boolean,
-  attempts = 40,
 ) {
-  return Effect.gen(function* () {
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-      const requests = yield* Effect.promise(() => readJsonLines(filePath));
-      if (requests.some(predicate)) {
-        return requests;
-      }
-      yield* Effect.yieldNow;
-    }
-    return yield* Effect.promise(() => readJsonLines(filePath));
+  return pollUntil({
+    poll: Effect.promise(() => readJsonLines(filePath)),
+    until: (entries) => entries.some(predicate),
+    description: `a matching json log entry in ${filePath}`,
   });
 }
 
@@ -353,7 +352,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
 
       yield* adapter.stopSession(threadId);
 
-      const exitLog = yield* Effect.promise(() => waitForFileContent(exitLogPath));
+      const exitLog = yield* waitForFileContent(exitLogPath);
       assert.include(exitLog, "SIGTERM");
     }),
   );
@@ -405,7 +404,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
 
         yield* adapter.stopSession(threadId);
 
-        const exitLog = yield* Effect.promise(() => waitForFileContent(exitLogPath));
+        const exitLog = yield* waitForFileContent(exitLogPath);
         assert.equal(exitLog.match(/SIGTERM/g)?.length ?? 0, 2);
       }),
   );
@@ -516,7 +515,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
           modelSelection,
         });
 
-        yield* Effect.promise(() => waitForFileContent(requestLogPath));
+        yield* waitForFileContent(requestLogPath);
 
         const requestsAfterStart = yield* Effect.promise(() => readJsonLines(requestLogPath));
         const configIdsAfterStart = requestsAfterStart.flatMap((entry) =>
