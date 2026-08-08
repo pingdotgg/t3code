@@ -1,7 +1,8 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { RefreshCwIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
+import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
 import { useUsage } from "../../state/usage";
 import {
@@ -14,6 +15,7 @@ import {
   makeWindow,
 } from "../../usage/usageFormat";
 import { ScrollArea } from "../ui/scroll-area";
+import { SidebarInset } from "../ui/sidebar";
 import { UsageChartLegend, UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_MARK, PROVIDER_ORDER } from "./usageProviders";
 
@@ -53,8 +55,8 @@ export function UsagePage() {
   const observedInput = merged.uncachedInputTokens + merged.cachedInputTokens;
   const cachedShare = observedInput === 0 ? 0 : merged.cachedInputTokens / observedInput;
 
-  return (
-    <ScrollArea className="h-full">
+  const content = (
+    <ScrollArea className="min-h-0 flex-1">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-6">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex flex-col gap-1">
@@ -361,6 +363,22 @@ export function UsagePage() {
         )}
       </div>
     </ScrollArea>
+  );
+
+  return <UsagePageFrame>{content}</UsagePageFrame>;
+}
+
+function UsagePageFrame({ children }: { readonly children: ReactNode }) {
+  return (
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none text-foreground">
+      {isElectron ? (
+        <div
+          className="drag-region h-[52px] shrink-0 w-full wco:h-[env(titlebar-area-height)]"
+          aria-hidden
+        />
+      ) : null}
+      {children}
+    </SidebarInset>
   );
 }
 
