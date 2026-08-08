@@ -8,10 +8,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
-import {
-  requestOlderThreadTurns,
-  threadHasOlderTurns,
-} from "@t3tools/client-runtime/state/threads";
+import { requestOlderThreadTurns } from "@t3tools/client-runtime/state/threads";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -253,20 +250,35 @@ function ThreadRouteContent(
     useThreadSelection();
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
-  // "Load earlier turns" header state for windowed (paginated) thread loads.
+  const selectedThreadPage = Option.getOrNull(selectedThreadDetailState.page);
+  const isWindowedThread = selectedThreadPage !== null;
+  const selectedThreadEnvironmentId = selectedThread?.environmentId ?? null;
+  const selectedThreadId = selectedThread?.id ?? null;
+  const canLoadEarlierTurns =
+    selectedThreadPage?.hasMore === true && selectedThreadPage.beforeCursor !== null;
+  const loadingEarlierTurns = selectedThreadPage?.loadingOlder === true;
+  // Keep the history control mounted after the final page. Removing it in the
+  // same commit as a prepend changes the list header height while Android's
+  // native MVCP is restoring the old first row, which can leave every recycled
+  // container outside the viewport until the next gesture.
   const loadEarlierTurns = useMemo(() => {
-    if (selectedThread === null || !threadHasOlderTurns(selectedThreadDetailState)) {
+    if (!isWindowedThread || selectedThreadEnvironmentId === null || selectedThreadId === null) {
       return null;
     }
     return {
-      loading:
-        selectedThreadDetailState.page._tag === "Some" &&
-        selectedThreadDetailState.page.value.loadingOlder,
+      hasMore: canLoadEarlierTurns,
+      loading: loadingEarlierTurns,
       onLoadEarlier: () => {
-        requestOlderThreadTurns(selectedThread.environmentId, selectedThread.id);
+        requestOlderThreadTurns(selectedThreadEnvironmentId, selectedThreadId);
       },
     };
-  }, [selectedThread, selectedThreadDetailState]);
+  }, [
+    canLoadEarlierTurns,
+    isWindowedThread,
+    loadingEarlierTurns,
+    selectedThreadEnvironmentId,
+    selectedThreadId,
+  ]);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const composer = useThreadComposerState();
   const gitState = useSelectedThreadGitState();
