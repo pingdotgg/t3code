@@ -31,7 +31,6 @@ import {
 import type { ScopedThreadRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
-  ArchiveIcon,
   AlarmClockIcon,
   AlarmClockOffIcon,
   CheckIcon,
@@ -53,7 +52,6 @@ import {
   SquarePenIcon,
   TerminalIcon,
   Trash2Icon,
-  Undo2Icon,
   XIcon,
 } from "lucide-react";
 import {
@@ -110,7 +108,7 @@ import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { readThreadShell, useProjects, useThreadShells } from "../state/entities";
+import { useProjects, useThreadShells } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
@@ -127,21 +125,16 @@ import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
 import {
-  archiveSelectedThreadEntries,
   buildBulkTitleRegenerationContextMenuItem,
-  canArchiveSettledSidebarThread,
   filterArchivableSidebarThreads,
-  formatArchiveSkippedDescription,
   formatWorkingDurationLabel,
   firstValidTimestampMs,
-  getCompletedArchiveThreadKeys,
   hasUnseenCompletion,
   isThreadArchiveBlocked,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   planPinnedReorder,
   resolveAdjacentThreadId,
-  shouldRenderSidebarArchiveAll,
   resolveSettledTimestamp,
   resolveSidebarThreadStatus,
   searchSidebarThreadsByTitle,
@@ -151,8 +144,8 @@ import {
   sortPinnedThreadsForSidebar,
   sortSettledThreadsForSidebar,
   sortThreadsForSidebar,
-  withCoordinatedThreadArchiveEntries,
 } from "./Sidebar.logic";
+import { SidebarSettledDivider, SidebarSettledLifecycleControls } from "./SidebarArchiveControls";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
   prStatusIndicator,
@@ -192,6 +185,7 @@ import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrom
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { useSidebarArchiveActions } from "../hooks/useSidebarArchiveActions";
 
 // Settled-tail paging: recent history is the common lookup; the deep tail
 // stays behind an explicit Show more.
@@ -205,10 +199,6 @@ const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> =
 
 const SIDEBAR_LIFECYCLE_BUTTON_SURFACE_CLASS_NAME =
   "cursor-pointer rounded-md bg-transparent text-muted-foreground hover:text-foreground";
-const SIDEBAR_ICON_LIFECYCLE_BUTTON_CLASS_NAME = cn(
-  "inline-flex size-6 items-center justify-center",
-  SIDEBAR_LIFECYCLE_BUTTON_SURFACE_CLASS_NAME,
-);
 const SIDEBAR_ROW_LIFECYCLE_BUTTON_CLASS_NAME = cn(
   "-mr-1 inline-flex h-full items-center gap-1 px-1.5 text-xs",
   SIDEBAR_LIFECYCLE_BUTTON_SURFACE_CLASS_NAME,
@@ -369,114 +359,6 @@ function SidebarThreadTooltip({
         </div>
       </div>
     </TooltipPopup>
-  );
-}
-
-function SidebarSettledLifecycleControls({
-  settlementSupported,
-  archiveDisabled,
-  preserveWokeStatus,
-  onUnsettle,
-  onArchive,
-}: {
-  settlementSupported: boolean;
-  archiveDisabled: boolean;
-  preserveWokeStatus: boolean;
-  onUnsettle: (event: ReactMouseEvent) => void;
-  onArchive: (event: ReactMouseEvent) => void;
-}) {
-  return (
-    <span
-      className={cn(
-        "pointer-events-none absolute inset-y-0 right-0 -mr-1 inline-flex items-center opacity-0 transition-opacity has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100",
-        preserveWokeStatus && "has-[:focus-visible]:static group-hover/sidebar-row:static",
-      )}
-    >
-      {settlementSupported ? (
-        <button
-          type="button"
-          aria-label="Un-settle thread"
-          onClick={onUnsettle}
-          className={SIDEBAR_ICON_LIFECYCLE_BUTTON_CLASS_NAME}
-        >
-          <Undo2Icon aria-hidden className="mb-px size-3.5" />
-        </button>
-      ) : null}
-      <button
-        type="button"
-        aria-label={
-          archiveDisabled ? "Archive unavailable while work is still active" : "Archive thread"
-        }
-        title={archiveDisabled ? "Cannot archive while work is still active" : undefined}
-        disabled={archiveDisabled}
-        onClick={onArchive}
-        className={cn(SIDEBAR_ICON_LIFECYCLE_BUTTON_CLASS_NAME, "disabled:opacity-50")}
-      >
-        <ArchiveIcon aria-hidden className="size-3.5" />
-      </button>
-    </span>
-  );
-}
-
-function SidebarSettledDivider({
-  archivableCount,
-  settledCount,
-  expanded,
-  isArchiving,
-  onToggle,
-  onArchiveAll,
-}: {
-  archivableCount: number;
-  settledCount: number;
-  expanded: boolean;
-  isArchiving: boolean;
-  onToggle: () => void;
-  onArchiveAll: () => void;
-}) {
-  return (
-    <li data-thread-selection-safe className="list-none">
-      <div className="mb-1 mt-3 flex items-center gap-2 px-2.5">
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={expanded}
-          data-testid="sidebar-settled-shelf-toggle"
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
-        >
-          <span className="text-xs font-medium text-muted-foreground/50">
-            {expanded ? "Settled" : `Settled (${settledCount})`}
-          </span>
-          <span className="h-px flex-1 bg-sidebar-border/60" />
-          <ChevronDownIcon
-            aria-hidden
-            className={cn(
-              "size-3 text-muted-foreground/50 transition-transform",
-              expanded && "rotate-180",
-            )}
-          />
-        </button>
-        {shouldRenderSidebarArchiveAll({ archivableCount, isArchiving }) ? (
-          <button
-            type="button"
-            aria-label={
-              isArchiving && archivableCount === 0
-                ? "Archiving settled threads"
-                : `Archive all ${archivableCount} settled thread${archivableCount === 1 ? "" : "s"}`
-            }
-            disabled={isArchiving}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              onArchiveAll();
-            }}
-            className="inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 font-mono text-[10px] text-sidebar-muted-foreground/70 transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground disabled:opacity-50"
-          >
-            <ArchiveIcon aria-hidden className="size-3" />
-            Archive all
-          </button>
-        ) : null}
-      </div>
-    </li>
   );
 }
 
@@ -2643,159 +2525,15 @@ export default function Sidebar() {
   );
 
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
-
-  const confirmArchive = useCallback(
-    async (message: string) => {
-      if (!confirmThreadArchive) return true;
-      const api = readLocalApi();
-      if (!api) return false;
-      const result = await settlePromise(() => api.dialogs.confirm(message));
-      return result._tag === "Success" && result.value;
-    },
-    [confirmThreadArchive],
-  );
-  const archiveThreadEntries = useCallback(
-    async (
-      entries: readonly { threadKey: string; threadRef: ScopedThreadRef }[],
-      options: {
-        onCompleted?: (threadKey: string) => void;
-        recheckLiveEligibility?: boolean;
-        requireStillSettled?: boolean;
-      } = {},
-    ) => {
-      const outcome = await archiveSelectedThreadEntries({
-        entries,
-        archive: ({ threadRef }, onArchived) => archiveThread(threadRef, { onArchived }),
-        ...(options.recheckLiveEligibility
-          ? {
-              canArchive: ({
-                threadKey,
-                threadRef,
-              }: {
-                threadKey: string;
-                threadRef: ScopedThreadRef;
-              }) => {
-                const thread = readThreadShell(threadRef);
-                if (!options.requireStillSettled) {
-                  return !isThreadArchiveBlocked(thread);
-                }
-                return canArchiveSettledSidebarThread({
-                  threadKey,
-                  settledThreadKeys: settledThreadKeysRef.current,
-                  session: thread?.session,
-                  backgroundLiveness: thread?.backgroundLiveness,
-                });
-              },
-            }
-          : {}),
-        onArchived: ({ threadKey }) => options.onCompleted?.(threadKey),
-        onSkipped: ({ threadKey }) => options.onCompleted?.(threadKey),
-      });
-      for (const failure of outcome.followupFailures) {
-        if (isAtomCommandInterrupted(failure)) continue;
-        const error = squashAtomCommandFailure(failure);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Thread archived, but navigation failed",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      }
-      if (outcome.mutationFailure && !isAtomCommandInterrupted(outcome.mutationFailure)) {
-        const error = squashAtomCommandFailure(outcome.mutationFailure);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: entries.length === 1 ? "Failed to archive thread" : "Failed to archive threads",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      }
-      if (outcome.skippedThreadKeys.length > 0) {
-        const skippedCount = outcome.skippedThreadKeys.length;
-        toastManager.add(
-          stackedThreadToast({
-            type: "warning",
-            title:
-              outcome.archivedThreadKeys.length === 0
-                ? "No threads archived"
-                : "Some threads were not archived",
-            description: formatArchiveSkippedDescription(skippedCount),
-          }),
-        );
-      }
-      return outcome;
-    },
-    [archiveThread],
-  );
-  // One archive per thread at a time across row, selection, and settled
-  // partition flows. Later flows wait for owners, then retry only entries that
-  // were neither archived nor intentionally skipped by the earlier flow.
-  const archivingThreadReservationsRef = useRef(new Map<string, Promise<ReadonlySet<string>>>());
-  const attemptArchive = useCallback(
-    (threadRef: ScopedThreadRef) => {
-      void (async () => {
-        const threadKey = scopedThreadKey(threadRef);
-        await withCoordinatedThreadArchiveEntries({
-          entries: [{ threadKey, threadRef }],
-          reservations: archivingThreadReservationsRef.current,
-          run: async (entries, onCompleted) => {
-            const thread = threadByKeyRef.current.get(threadKey);
-            if (
-              !(await confirmArchive(
-                thread ? `Archive thread "${thread.title}"?` : "Archive this thread?",
-              ))
-            ) {
-              return [];
-            }
-            const outcome = await archiveThreadEntries(entries, { onCompleted });
-            removeFromSelection(outcome.archivedThreadKeys);
-            return getCompletedArchiveThreadKeys(outcome);
-          },
-        });
-      })();
-    },
-    [archiveThreadEntries, confirmArchive, removeFromSelection],
-  );
-  const [isArchivingAllSettled, setIsArchivingAllSettled] = useState(false);
-  const archivingAllSettledRef = useRef(false);
-  const archiveAllSettled = useCallback(() => {
-    void (async () => {
-      if (archivingAllSettledRef.current || archivableSettledThreads.length === 0) return;
-      archivingAllSettledRef.current = true;
-      setIsArchivingAllSettled(true);
-      try {
-        await withCoordinatedThreadArchiveEntries({
-          entries: archivableSettledThreads.map((thread) => {
-            const threadRef = scopeThreadRef(thread.environmentId, thread.id);
-            return { threadKey: scopedThreadKey(threadRef), threadRef };
-          }),
-          reservations: archivingThreadReservationsRef.current,
-          run: async (entries, onCompleted) => {
-            const count = entries.length;
-            if (
-              !(await confirmArchive(
-                `Archive all ${count} settled thread${count === 1 ? "" : "s"}?`,
-              ))
-            ) {
-              return [];
-            }
-            const outcome = await archiveThreadEntries(entries, {
-              onCompleted,
-              recheckLiveEligibility: true,
-              requireStillSettled: true,
-            });
-            removeFromSelection(outcome.archivedThreadKeys);
-            return getCompletedArchiveThreadKeys(outcome);
-          },
-        });
-      } finally {
-        archivingAllSettledRef.current = false;
-        setIsArchivingAllSettled(false);
-      }
-    })();
-  }, [archivableSettledThreads, archiveThreadEntries, confirmArchive, removeFromSelection]);
+  const { archiveAllSettled, archiveSelectedEntries, attemptArchive, isArchivingAllSettled } =
+    useSidebarArchiveActions({
+      archiveThread,
+      archivableSettledThreads,
+      confirmThreadArchive,
+      removeFromSelection,
+      settledThreadKeysRef,
+      threadByKeyRef,
+    });
 
   const handleMultiSelectContextMenu = useCallback(
     async (position: { x: number; y: number }) => {
@@ -2965,8 +2703,8 @@ export default function Sidebar() {
         return;
       }
       if (clicked.value === "archive") {
-        await withCoordinatedThreadArchiveEntries({
-          entries: threadKeys.flatMap((threadKey) => {
+        await archiveSelectedEntries(
+          threadKeys.flatMap((threadKey) => {
             const thread = threadByKeyRef.current.get(threadKey);
             if (!thread) return [];
             return [
@@ -2976,24 +2714,7 @@ export default function Sidebar() {
               },
             ];
           }),
-          reservations: archivingThreadReservationsRef.current,
-          run: async (entries, onCompleted) => {
-            const archiveCount = entries.length;
-            if (
-              !(await confirmArchive(
-                `Archive ${archiveCount} thread${archiveCount === 1 ? "" : "s"}?`,
-              ))
-            ) {
-              return [];
-            }
-            const outcome = await archiveThreadEntries(entries, {
-              onCompleted,
-              recheckLiveEligibility: true,
-            });
-            removeFromSelection(outcome.archivedThreadKeys);
-            return getCompletedArchiveThreadKeys(outcome);
-          },
-        });
+        );
         return;
       }
       if (clicked.value === "mark-unread") {
@@ -3045,11 +2766,10 @@ export default function Sidebar() {
       removeFromSelection(threadKeys);
     },
     [
-      archiveThreadEntries,
+      archiveSelectedEntries,
       attemptSettle,
       attemptSnooze,
       clearSelection,
-      confirmArchive,
       confirmThreadDelete,
       deleteThread,
       markThreadUnread,
