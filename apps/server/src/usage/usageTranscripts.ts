@@ -68,8 +68,14 @@ export function totalTokens(totals: UsageTokenTotals): number {
  * an order of magnitude.
  */
 export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
-  return provider === "claude" ? line.includes('"usage"') : line.includes('"token_count"');
+  if (provider === "claude") return line.includes('"usage"');
+  if (provider === "codex") return line.includes('"token_count"');
+  // Grok turn usage lives on `turn_completed` ACP updates.
+  return line.includes('"turn_completed"');
 }
+
+/** Grok reports cost as integer nanodollars (`costUsdTicks`). */
+const GROK_USD_TICKS_PER_DOLLAR = 1_000_000_000;
 
 /* -------------------------------------------------------------------------- */
 /* Claude Code                                                                */
@@ -295,6 +301,132 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
     // rollout, so they need no global dedup.
     dedupeKey: null,
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Grok                                                                       */
+/* -------------------------------------------------------------------------- */
+
+function grokTimestampMs(value: unknown, meta: Record<string, unknown>): number | null {
+  if (typeof meta["agentTimestampMs"] === "number" && Number.isFinite(meta["agentTimestampMs"])) {
+    return Math.trunc(meta["agentTimestampMs"]);
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    // ACP updates use unix seconds; values past year 2100 would already be ms.
+    return value > 1e12 ? Math.trunc(value) : Math.trunc(value * 1000);
+  }
+  return parseTimestampMs(value);
+}
+
+function grokReportedCostUsd(usage: Record<string, unknown>): number | null {
+  const ticks = usage["costUsdTicks"];
+  if (typeof ticks !== "number" || !Number.isFinite(ticks) || ticks < 0) return null;
+  return ticks / GROK_USD_TICKS_PER_DOLLAR;
+}
+
+function grokTotals(usage: Record<string, unknown>): UsageTokenTotals | null {
+  const inputTokens = int(usage["inputTokens"]);
+  const cachedInputTokens = int(usage["cachedReadTokens"]);
+  const cacheCreationTokens = int(usage["cacheCreationTokens"]);
+  const outputTokens = int(usage["outputTokens"]);
+  const totals: UsageTokenTotals = {
+    // Like Codex, Grok's inputTokens includes the cached portion.
+    uncachedInputTokens: Math.max(0, inputTokens - cachedInputTokens - cacheCreationTokens),
+    cachedInputTokens,
+    cacheCreationTokens,
+    outputTokens,
+    reasoningTokens: Math.min(outputTokens, int(usage["reasoningTokens"])),
+  };
+  return totalTokens(totals) === 0 ? null : totals;
+}
+
+/**
+ * Parses one line of a Grok `updates.jsonl` transcript.
+ *
+ * Billable usage is on `turn_completed` updates. When `modelUsage` breaks the
+ * turn down by model, one record is emitted per model so the page can split
+ * cost the same way Claude and Codex do. Interactive TUI sessions often never
+ * write `updates.jsonl`, so this parser only covers sessions that persist ACP
+ * updates.
+ */
+export function parseGrokLine(line: string): readonly UsageRecord[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return [];
+  }
+  if (typeof parsed !== "object" || parsed === null) return [];
+
+  const record = parsed as Record<string, unknown>;
+  const params = record["params"];
+  if (typeof params !== "object" || params === null) return [];
+  const paramsRecord = params as Record<string, unknown>;
+  const update = paramsRecord["update"];
+  if (typeof update !== "object" || update === null) return [];
+  const updateRecord = update as Record<string, unknown>;
+  if (updateRecord["sessionUpdate"] !== "turn_completed") return [];
+
+  const usage = updateRecord["usage"];
+  if (typeof usage !== "object" || usage === null) return [];
+  const usageRecord = usage as Record<string, unknown>;
+
+  const meta =
+    typeof paramsRecord["_meta"] === "object" && paramsRecord["_meta"] !== null
+      ? (paramsRecord["_meta"] as Record<string, unknown>)
+      : typeof record["_meta"] === "object" && record["_meta"] !== null
+        ? (record["_meta"] as Record<string, unknown>)
+        : {};
+
+  const timestampMs = grokTimestampMs(record["timestamp"], meta);
+  if (timestampMs === null) return [];
+
+  const sessionId = typeof paramsRecord["sessionId"] === "string" ? paramsRecord["sessionId"] : "";
+  const promptId = typeof updateRecord["prompt_id"] === "string" ? updateRecord["prompt_id"] : null;
+  const topLevelCost = grokReportedCostUsd(usageRecord);
+
+  const modelUsage = usageRecord["modelUsage"];
+  const perModel: Array<{ model: string; usage: Record<string, unknown> }> = [];
+  if (typeof modelUsage === "object" && modelUsage !== null) {
+    for (const [model, raw] of Object.entries(modelUsage as Record<string, unknown>)) {
+      if (model.length === 0) continue;
+      if (typeof raw !== "object" || raw === null) continue;
+      perModel.push({ model, usage: raw as Record<string, unknown> });
+    }
+  }
+
+  if (perModel.length === 0) {
+    const totals = grokTotals(usageRecord);
+    if (totals === null) return [];
+    return [
+      {
+        provider: "grok",
+        timestampMs,
+        model: "grok",
+        sessionId,
+        totals,
+        reportedCostUsd: topLevelCost,
+        dedupeKey: promptId === null ? null : `grok:${promptId}`,
+      },
+    ];
+  }
+
+  const records: UsageRecord[] = [];
+  for (const entry of perModel) {
+    const totals = grokTotals(entry.usage);
+    if (totals === null) continue;
+    const modelCost = grokReportedCostUsd(entry.usage);
+    records.push({
+      provider: "grok",
+      timestampMs,
+      model: entry.model,
+      sessionId,
+      totals,
+      reportedCostUsd: modelCost ?? (perModel.length === 1 ? topLevelCost : null),
+      dedupeKey: promptId === null ? null : `grok:${promptId}:${entry.model}`,
+    });
+  }
+  return records;
 }
 
 export { EMPTY_TOTALS };

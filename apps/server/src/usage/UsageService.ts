@@ -45,6 +45,11 @@ import {
   readTranscriptRecords,
 } from "./usageTranscriptReader.ts";
 import {
+  listOpenCodeDatabaseFiles,
+  readOpenCodeDatabaseRecords,
+  resolveOpenCodeDataDir,
+} from "./usageOpenCode.ts";
+import {
   decodeScanCache,
   dedupeWithinFile,
   encodeScanCache,
@@ -197,6 +202,19 @@ export const make = Effect.gen(function* () {
       return nestedExists ? nested : path.join(homePath, "projects");
     });
 
+  /**
+   * Grok defaults to ~/.grok; GROK_HOME relocates the whole config tree.
+   * Turn usage only appears in per-session updates.jsonl files under sessions/.
+   */
+  const resolveGrokSessionsDir = () => {
+    const override = process.env.GROK_HOME?.trim();
+    const home =
+      override && override.length > 0
+        ? path.resolve(override)
+        : path.join(NodeOS.homedir(), ".grok");
+    return path.join(home, "sessions");
+  };
+
   /** Resolves the transcript directory for each provider. */
   const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* () {
     // A settings failure must surface as an error: swallowing it here would
@@ -222,6 +240,8 @@ export const make = Effect.gen(function* () {
     return [
       { provider: "claude" as const, dir: claudeDir },
       { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
+      { provider: "grok" as const, dir: resolveGrokSessionsDir() },
+      { provider: "opencode" as const, dir: resolveOpenCodeDataDir() },
     ];
   });
 
@@ -277,7 +297,14 @@ export const make = Effect.gen(function* () {
         return cached.records;
       }
 
-      const parsed = yield* Effect.promise(() => readTranscriptRecords(filePath, provider));
+      const parsed = yield* Effect.promise(() =>
+        provider === "opencode"
+          ? // Cache the whole DB (like a full JSONL file parse). Day filtering
+            // stays in the aggregator so changing the UI window does not require
+            // a re-read while the file's (size, mtime) is unchanged.
+            readOpenCodeDatabaseRecords(filePath, 0)
+          : readTranscriptRecords(filePath, provider),
+      );
       // A read failure is not an empty transcript: caching it under this
       // (size, mtime) would silently drop the file's usage until it changes.
       if (parsed === null) return [];
@@ -373,7 +400,15 @@ export const make = Effect.gen(function* () {
       }
 
       walkedRoots.push(dir);
-      const files = yield* Effect.promise(() => listTranscriptFiles(dir, windowStartMs));
+      const files = yield* Effect.promise(() =>
+        provider === "opencode"
+          ? listOpenCodeDatabaseFiles(dir)
+          : listTranscriptFiles(
+              dir,
+              windowStartMs,
+              provider === "grok" ? { fileName: "updates.jsonl" } : {},
+            ),
+      );
       let scannedFiles = 0;
       let skippedFiles = 0;
       // Distinct per directory. Buckets carry per-cell session counts, but a
@@ -399,12 +434,17 @@ export const make = Effect.gen(function* () {
 
       sources.push({
         fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-        status: "ok",
+        // Grok's TUI often omits updates.jsonl, so even a clean scan is only
+        // the ACP/agent subset of real usage.
+        status: provider === "grok" ? "partial" : "ok",
         scannedFiles,
         skippedFiles,
         malformedRecords: 0,
         distinctSessions: sessionIds.size,
-        message: null,
+        message:
+          provider === "grok"
+            ? "Grok usage covers sessions that wrote updates.jsonl (typically agent/ACP)."
+            : null,
       });
     }
 

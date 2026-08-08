@@ -1,4 +1,4 @@
-import type { UsageProviderKind } from "@t3tools/contracts";
+import type { EnvironmentId, UsageProviderKind } from "@t3tools/contracts";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -42,7 +42,17 @@ export function UsagePage() {
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
-  const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
+  const {
+    merged,
+    environments,
+    environmentFilter,
+    setEnvironmentFilter,
+    providerFilter,
+    setProviderFilter,
+    isPending,
+    isPartial,
+    refresh,
+  } = useUsage(window);
 
   // Hold the content until every environment is terminal. Rendering merged
   // totals while devices are still answering makes every number on the page
@@ -80,6 +90,12 @@ export function UsagePage() {
   const periodAverage = activePeriods === 0 ? 0 : merged.totalTokens / activePeriods;
   const observedInput = merged.uncachedInputTokens + merged.cachedInputTokens;
   const cachedShare = observedInput === 0 ? 0 : merged.cachedInputTokens / observedInput;
+  const showEnvironmentFilter = environments.length > 1;
+  const focusedProvider = providerFilter === "all" ? null : providerFilter;
+  const breakdownProviders = focusedProvider === null ? PROVIDER_ORDER : [focusedProvider];
+  const selectProvider = (provider: UsageProviderKind | null) => {
+    setProviderFilter(provider === null ? "all" : provider);
+  };
   const selectWindow = (days: number) => {
     setWindowSelection({
       days,
@@ -137,7 +153,27 @@ export function UsagePage() {
                   ? `${formatDateTimeShort(window.sinceTime, window.timeZone)} to ${formatDateTimeShort(window.untilTime, window.timeZone)}`
                   : `${formatDayShort(window.sinceDay)} to ${formatDayShort(window.untilDay)}`}
               </p>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {showEnvironmentFilter ? (
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <span className="sr-only">Environment</span>
+                    <select
+                      value={environmentFilter}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setEnvironmentFilter(value === "all" ? "all" : (value as EnvironmentId));
+                      }}
+                      className="max-w-56 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground"
+                    >
+                      <option value="all">All environments</option>
+                      {environments.map((environment) => (
+                        <option key={environment.environmentId} value={environment.environmentId}>
+                          {environment.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
                 <div className="flex rounded-md border border-border">
                   {WINDOW_OPTIONS.map((option) => (
                     <button
@@ -175,9 +211,18 @@ export function UsagePage() {
             ) : (
               <>
                 <UsageCoverageNotice
-                  environments={environments}
+                  environments={
+                    environmentFilter === "all"
+                      ? environments
+                      : environments.filter(
+                          (environment) => environment.environmentId === environmentFilter,
+                        )
+                  }
                   duplicateSources={merged.duplicateSources}
                   staleEnvironments={merged.staleEnvironments}
+                  isPartial={isPartial}
+                  environmentFilter={environmentFilter}
+                  providerFilter={providerFilter}
                 />
 
                 {/* Cost first: the financial answer, then the provider split. */}
@@ -259,7 +304,10 @@ export function UsagePage() {
                             </button>
                           ))}
                         </div>
-                        <UsageChartLegend />
+                        <UsageChartLegend
+                          focusedProvider={focusedProvider}
+                          onSelectProvider={selectProvider}
+                        />
                       </div>
                     </div>
                     <UsageProviderChart
@@ -271,6 +319,7 @@ export function UsagePage() {
                       referenceTime={window.untilTime}
                       resolution={isPast24Hours ? "hour" : "day"}
                       timeZone={window.timeZone}
+                      focusedProvider={focusedProvider}
                     />
                   </div>
                 </section>
@@ -382,7 +431,7 @@ export function UsagePage() {
                       <thead>
                         <tr className="border-b border-border text-left text-xs text-muted-foreground">
                           <th className="py-2 font-normal">{isPast24Hours ? "Hour" : "Day"}</th>
-                          {PROVIDER_ORDER.map((provider) => (
+                          {breakdownProviders.map((provider) => (
                             <th key={provider} className="py-2 text-right font-normal">
                               {PROVIDER_LABEL[provider]}
                             </th>
@@ -394,7 +443,10 @@ export function UsagePage() {
                       <tbody>
                         {recentPeriods.length === 0 ? (
                           <tr>
-                            <td colSpan={5} className="py-6 text-center text-muted-foreground">
+                            <td
+                              colSpan={breakdownProviders.length + 3}
+                              className="py-6 text-center text-muted-foreground"
+                            >
                               No activity in this window.
                             </td>
                           </tr>
@@ -409,7 +461,7 @@ export function UsagePage() {
                                   ? formatHourShort(period.hourStart, window.timeZone)
                                   : formatDayShort(period.day)}
                               </td>
-                              {PROVIDER_ORDER.map((provider) => (
+                              {breakdownProviders.map((provider) => (
                                 <td
                                   key={provider}
                                   className="py-2 text-right text-muted-foreground tabular-nums"
@@ -479,27 +531,65 @@ function UsageCoverageNotice({
   environments,
   duplicateSources,
   staleEnvironments,
+  isPartial,
+  environmentFilter,
+  providerFilter,
 }: {
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly duplicateSources: readonly string[];
   readonly staleEnvironments: readonly string[];
+  readonly isPartial: boolean;
+  readonly environmentFilter: string;
+  readonly providerFilter: string;
 }) {
   const failed = environments.filter((environment) => environment.error !== null);
   const stale = environments.filter((environment) =>
     staleEnvironments.includes(environment.environmentId),
   );
-  if (failed.length === 0 && stale.length === 0 && duplicateSources.length === 0) {
+  // Skip notes from environments the merge already dropped, and from
+  // providers the page is not currently focused on.
+  const sourceNotes = [
+    ...new Set(
+      environments
+        .filter((environment) => !staleEnvironments.includes(environment.environmentId))
+        .flatMap((environment) =>
+          (environment.summary?.sources ?? [])
+            .filter(
+              (source) =>
+                providerFilter === "all" || source.fingerprint.provider === providerFilter,
+            )
+            .map((source) => source.message)
+            .filter((message): message is string => message !== null),
+        ),
+    ),
+  ];
+  if (
+    failed.length === 0 &&
+    stale.length === 0 &&
+    duplicateSources.length === 0 &&
+    !isPartial &&
+    sourceNotes.length === 0 &&
+    environmentFilter === "all" &&
+    providerFilter === "all"
+  ) {
     return null;
   }
 
   return (
     <div className="flex flex-col gap-1 border border-border px-3 py-2 text-xs text-muted-foreground">
+      {environmentFilter !== "all" ? <span>Showing usage for one environment only.</span> : null}
+      {providerFilter !== "all" ? (
+        <span>Showing {PROVIDER_LABEL[providerFilter as UsageProviderKind]} usage only.</span>
+      ) : null}
+      {isPartial ? <span>Some environments are still reporting. Totals are partial.</span> : null}
       {failed.map((environment) => (
         <span key={environment.label}>{environment.label} could not report usage.</span>
       ))}
       {stale.map((environment) => (
         <span key={environment.label}>
-          {environment.label} runs an older server version and is excluded from totals.
+          {environmentFilter === "all"
+            ? `${environment.label} reports an incompatible usage contract and is excluded from totals.`
+            : `${environment.label} reports an incompatible usage contract and its data cannot be shown.`}
         </span>
       ))}
       {duplicateSources.length > 0 ? (
@@ -508,6 +598,9 @@ function UsageCoverageNotice({
           {duplicateSources.join(", ")}
         </span>
       ) : null}
+      {sourceNotes.map((note) => (
+        <span key={note}>{note}</span>
+      ))}
     </div>
   );
 }

@@ -2,10 +2,22 @@
  * Usage reporting contract.
  *
  * Each environment scans the provider CLIs' own on-disk session transcripts
- * (`~/.claude/projects/**\/*.jsonl`, `~/.codex/sessions/**\/*.jsonl`) rather than
- * relying on T3 Code's own orchestration projections, so usage stays complete
- * even for turns that were never driven through T3 Code. This mirrors the
- * approach `ccusage` takes.
+ * rather than relying on T3 Code's own orchestration projections, so usage
+ * stays complete even for turns that were never driven through T3 Code. This
+ * mirrors the approach `ccusage` takes.
+ *
+ * Supported transcript sources:
+ * - Claude Code: `~/.claude/projects/**\/*.jsonl`
+ * - Codex: `~/.codex/sessions/**\/*.jsonl`
+ * - Grok: `~/.grok/sessions/**\/updates.jsonl` (`turn_completed.usage`). Coverage
+ *   is partial: interactive TUI sessions often omit `updates.jsonl`, so only
+ *   sessions that persist ACP-style updates contribute.
+ * - OpenCode: `~/.local/share/opencode/opencode{,-next}.db` assistant message
+ *   rows (`tokens` / `cost`). Scans both the legacy and next-schema databases.
+ *
+ * Not supported (no durable on-disk token/cost transcripts we can scan):
+ * - Cursor (`cursor-agent` ACP sessions store conversation blobs without
+ *   per-turn usage; IDE tracking DBs are not token ledgers)
  *
  * Environments return pre-aggregated `(day, hourStart?, provider, model)`
  * buckets. Raw transcript records never cross the wire.
@@ -20,10 +32,15 @@ import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
  * Bumped whenever the shape of {@link UsageSummary} changes incompatibly. The
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
+ *
+ * Cross-environment ("All") merge accepts older versions in a documented
+ * window — see `USAGE_MERGE_COMPATIBLE_SINCE` in the web usage merge helper —
+ * so nightlies that still report Claude/Codex (v3) contribute alongside a
+ * newer local client (v5+) without inventing providers they never scanned.
  */
-export const USAGE_CONTRACT_VERSION = 4 as const;
+export const USAGE_CONTRACT_VERSION = 5 as const;
 
-export const UsageProviderKind = Schema.Literals(["claude", "codex"]);
+export const UsageProviderKind = Schema.Literals(["claude", "codex", "grok", "opencode"]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
 
 /**
