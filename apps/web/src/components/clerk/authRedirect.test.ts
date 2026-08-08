@@ -8,11 +8,17 @@ describe("resolveClerkSignInProps", () => {
     expect(resolveClerkSignInProps(href, false)).toEqual({ forceRedirectUrl: href });
   });
 
-  it("omits the redirect override on packaged desktop", () => {
-    expect(resolveClerkSignInProps("t3code://app/#/settings/general", true)).toEqual({});
+  it("returns packaged desktop auth flows to the renderer root", () => {
+    expect(resolveClerkSignInProps("t3code://app/#/settings/archived", true)).toEqual({
+      forceRedirectUrl: "t3code://app/",
+      signUpForceRedirectUrl: "t3code://app/",
+    });
   });
 
-  it("omits the redirect override on development desktop", () => {
-    expect(resolveClerkSignInProps("t3code-dev://app/#/settings/general", true)).toEqual({});
+  it("returns development desktop auth flows to the renderer root", () => {
+    expect(resolveClerkSignInProps("t3code-dev://app/#/settings/general", true)).toEqual({
+      forceRedirectUrl: "t3code-dev://app/",
+      signUpForceRedirectUrl: "t3code-dev://app/",
+    });
   });
 });
