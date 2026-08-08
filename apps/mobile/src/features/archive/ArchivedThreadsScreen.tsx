@@ -267,6 +267,7 @@ function ArchivedThreadsHeader(props: {
                   onSearchTextChange: props.onSearchQueryChange,
                   placeholder: "Search",
                   searchTextChangeId: "archived-search-text",
+                  value: props.searchQuery,
                 }),
               ]
             : undefined,

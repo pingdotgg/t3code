@@ -213,7 +213,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..073a72a68688369f39e54b61d1381b8d
  
  // appearance does not apply to the tvOS so we need to use lagacy customization
  #if TARGET_OS_TV
-@@ -637,10 +667,286 @@ + (void)updateViewController:(UIViewController *)vc
+@@ -637,10 +667,294 @@ + (void)updateViewController:(UIViewController *)vc
    // This assignment should be done after `navitem.titleView = ...` assignment (iOS 16.0 bug).
    // See: https://github.com/software-mansion/react-native-screens/issues/1570 (comments)
    navitem.title = config.title;
@@ -395,6 +395,10 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..073a72a68688369f39e54b61d1381b8d
 +      UISearchBar *searchBar =
 +          !useFallbackSearchField && navitem.searchController != nil ? navitem.searchController.searchBar : nil;
 +      NSString *placeholder = mailSearchToolbarConfig[@"placeholder"];
++      NSString *searchText = mailSearchToolbarConfig[@"searchText"];
++      if (![searchText isKindOfClass:NSString.class]) {
++        searchText = @"";
++      }
 +      if (searchBar != nil) {
 +        if (placeholder != nil) {
 +          searchBar.placeholder = placeholder;
@@ -411,6 +415,8 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..073a72a68688369f39e54b61d1381b8d
 +        searchBar.searchTextField.adjustsFontForContentSizeCategory = YES;
 +        searchBar.searchTextField.textColor = UIColor.labelColor;
 +        searchBar.searchTextField.tintColor = UIColor.labelColor;
++        searchBar.searchTextField.clearButtonMode = UITextFieldViewModeAlways;
++        searchBar.text = searchText;
 +        if (placeholder != nil) {
 +          searchBar.searchTextField.attributedPlaceholder =
 +              [[NSAttributedString alloc] initWithString:placeholder attributes:placeholderAttributes];
@@ -425,6 +431,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..073a72a68688369f39e54b61d1381b8d
 +        ]];
 +      } else {
 +        UISearchTextField *searchField = [UISearchTextField new];
++        searchField.text = searchText;
 +        if (placeholder != nil) {
 +          searchField.placeholder = placeholder;
 +          searchField.attributedPlaceholder =
@@ -439,6 +446,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..073a72a68688369f39e54b61d1381b8d
 +              forControlEvents:UIControlEventEditingChanged];
 +        }
 +        searchField.borderStyle = UITextBorderStyleNone;
++        searchField.clearButtonMode = UITextFieldViewModeAlways;
 +        searchField.font = searchFont;
 +        searchField.adjustsFontForContentSizeCategory = YES;
 +        searchField.textColor = UIColor.labelColor;
@@ -1192,7 +1200,7 @@ index 3b384e03891e38e936f370372a682d73440e7ec2..861ffed850e90f27916c427853b503db
      /**
       * The tint color to apply to the item.
       *
-@@ -1145,8 +1193,37 @@ export interface HeaderBarButtonItemWithMenu extends SharedHeaderBarButtonItem {
+@@ -1145,8 +1193,38 @@ export interface HeaderBarButtonItemWithMenu extends SharedHeaderBarButtonItem {
  export interface HeaderBarButtonItemSpacing {
      type: 'spacing';
      spacing: number;
@@ -1222,6 +1230,7 @@ index 3b384e03891e38e936f370372a682d73440e7ec2..861ffed850e90f27916c427853b503db
 +    onFilterPress?: (() => void) | undefined;
 +    onSearchTextChange?: ((text: string) => void) | undefined;
 +    placeholder?: string | undefined;
++    searchText?: string | undefined;
 +    searchTextChangeId?: string | undefined;
 +    useFallbackSearchField?: boolean | undefined;
 +    width?: number | undefined;
@@ -1532,7 +1541,7 @@ index 76a83f3acb6fd3f0af7f027798848b7124100286..9e4499f076f9988e3266df4be7201e13
    /**
     * The tint color to apply to the item.
     *
-@@ -1279,11 +1327,46 @@ export interface HeaderBarButtonItemWithMenu extends SharedHeaderBarButtonItem {
+@@ -1279,11 +1327,47 @@ export interface HeaderBarButtonItemWithMenu extends SharedHeaderBarButtonItem {
  export interface HeaderBarButtonItemSpacing {
    type: 'spacing';
    spacing: number;
@@ -1565,6 +1574,7 @@ index 76a83f3acb6fd3f0af7f027798848b7124100286..9e4499f076f9988e3266df4be7201e13
 +  onFilterPress?: (() => void) | undefined;
 +  onSearchTextChange?: ((text: string) => void) | undefined;
 +  placeholder?: string | undefined;
++  searchText?: string | undefined;
 +  searchTextChangeId?: string | undefined;
 +  useFallbackSearchField?: boolean | undefined;
 +  width?: number | undefined;
