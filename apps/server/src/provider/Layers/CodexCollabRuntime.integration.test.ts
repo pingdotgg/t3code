@@ -34,6 +34,36 @@ const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
  */
 function buildScript() {
   const captured = wireFixture.notifications;
+  // Re-address the capture's schema-valid tool lifecycle pair to child A.
+  // Hand-written item shapes can drift from the generated Codex schema.
+  const childToolLifecycle = captured
+    .filter(
+      (entry) =>
+        (entry.method === "item/started" || entry.method === "item/completed") &&
+        (entry.params as { item?: { type?: string } }).item?.type === "collabAgentToolCall",
+    )
+    .map((entry) => {
+      const params = entry.params as {
+        readonly threadId: string;
+        readonly turnId: string;
+        readonly item: Record<string, unknown>;
+      };
+      return {
+        ...entry,
+        params: {
+          ...params,
+          threadId: CHILD_A,
+          turnId: `${CHILD_A}-turn-1`,
+          item: {
+            ...params.item,
+            id: "call_fixture_child_tool",
+            senderThreadId: CHILD_A,
+          },
+        },
+      };
+    });
+  const childCompletionOnly = childToolLifecycle.find((entry) => entry.method === "item/completed");
+  assert.isDefined(childCompletionOnly);
   const extras = [
     {
       method: "item/completed",
@@ -46,6 +76,19 @@ function buildScript() {
           status: "completed",
           senderThreadId: ROOT,
           receiverThreadIds: [CHILD_A, CHILD_B],
+        },
+      },
+    },
+    // Codex emits started + completed for one child item. They are one
+    // logical activity and must not become two synthetic agent updates.
+    ...childToolLifecycle,
+    {
+      ...childCompletionOnly,
+      params: {
+        ...childCompletionOnly.params,
+        item: {
+          ...childCompletionOnly.params.item,
+          id: "call_fixture_child_completion_only",
         },
       },
     },
@@ -122,6 +165,29 @@ describe("CodexSessionRuntime collab integration", () => {
           (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_B,
       );
       assert.isDefined(childClosed, "child B's close becomes an agent event");
+
+      const childToolItems = events.filter(
+        (event) =>
+          event.method === "collabAgent/item" &&
+          (event.payload as { item?: { id?: string } }).item?.id === "call_fixture_child_tool",
+      );
+      assert.lengthOf(childToolItems, 1, "one child item must emit one agent activity");
+      assert.equal(childToolItems[0]?.itemId, "call_fixture_child_tool");
+      assert.equal(
+        (childToolItems[0]?.payload as { itemLifecycle?: string }).itemLifecycle,
+        "started",
+      );
+
+      const completionOnly = events.find(
+        (event) =>
+          event.method === "collabAgent/item" &&
+          (event.payload as { item?: { id?: string } }).item?.id ===
+            "call_fixture_child_completion_only",
+      );
+      assert.equal(
+        (completionOnly?.payload as { itemLifecycle?: string }).itemLifecycle,
+        "completed",
+      );
 
       // Parent-owned resolution passes through — not swallowed, not
       // re-labelled as an agent event.

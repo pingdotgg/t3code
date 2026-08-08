@@ -855,6 +855,8 @@ export const makeCodexSessionRuntime = (
     const pendingUserInputsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingUserInput>());
     const collabReceiverTurnsRef = yield* Ref.make(new Map<string, TurnId>());
     const collabChildAgentsRef = yield* Ref.make(new Map<string, CollabChildAgentState>());
+    /** Child provider-thread id → item ids already emitted during its lifetime. */
+    const collabChildSeenItemsRef = yield* Ref.make(new Map<string, ReadonlySet<string>>());
     /** Child provider-thread id → its currently running provider turn id. */
     const collabChildLiveTurnsRef = yield* Ref.make(new Map<string, string>());
     const closedRef = yield* Ref.make(false);
@@ -1179,23 +1181,48 @@ export const makeCodexSessionRuntime = (
             });
             return true;
           case "item/started":
-          case "item/completed":
+          case "item/completed": {
+            const item = notification.params.item;
+            const shouldEmit = yield* Ref.modify(collabChildSeenItemsRef, (current) => {
+              const seen = current.get(child.agentThreadId);
+              if (seen?.has(item.id) === true) {
+                return [false, current];
+              }
+              const next = new Map(current);
+              next.set(child.agentThreadId, new Set([...(seen ?? []), item.id]));
+              return [true, next];
+            });
+            // Codex emits both lifecycle notifications for the same child
+            // tool item. The adapter turns each synthetic event into agent
+            // activity, so only the first one is useful; completion-only
+            // items still pass through when no start was observed.
+            if (!shouldEmit) {
+              return true;
+            }
             yield* emitEvent({
               kind: "notification",
               threadId: options.threadId,
+              itemId: ProviderItemId.make(item.id),
               ...(child.spawnTurnId ? { turnId: child.spawnTurnId } : {}),
               method: "collabAgent/item",
               payload: {
                 ...childIdentity,
-                item: notification.params.item,
+                itemLifecycle: notification.method === "item/started" ? "started" : "completed",
+                item,
               },
             });
             return true;
+          }
           case "thread/closed":
             // The child is gone: drop its live-turn entry so a later Stop
             // doesn't waste a turn/interrupt RPC on a closed thread before
             // reaching the parent (review finding).
             yield* Ref.update(collabChildLiveTurnsRef, (current) => {
+              const next = new Map(current);
+              next.delete(child.agentThreadId);
+              return next;
+            });
+            yield* Ref.update(collabChildSeenItemsRef, (current) => {
               const next = new Map(current);
               next.delete(child.agentThreadId);
               return next;
