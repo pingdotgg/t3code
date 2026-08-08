@@ -72,7 +72,7 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect("rejects workspace files outside the authorized root", () =>
+  it.effect("rejects relative workspace paths outside the authorized root", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -80,16 +80,18 @@ describe("AssetAccess", () => {
         prefix: "t3-asset-root-",
       });
       const outside = yield* fileSystem.makeTempDirectoryScoped({
+        directory: process.cwd(),
         prefix: "t3-asset-outside-",
       });
       const htmlPath = path.join(outside, "report.html");
       yield* fileSystem.writeFileString(htmlPath, "<p>outside</p>");
+      const relativePath = path.relative(root, htmlPath);
 
       const error = yield* issueAssetUrl({
         resource: {
           _tag: "workspace-file",
           threadId: ThreadId.make("thread-1"),
-          path: htmlPath,
+          path: relativePath,
         },
         workspaceRoot: root,
       }).pipe(Effect.flip);
@@ -99,10 +101,47 @@ describe("AssetAccess", () => {
         resource: {
           _tag: "workspace-file",
           threadId: "thread-1",
-          path: htmlPath,
+          path: relativePath,
         },
       });
       expect(error.cause).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("issues exact URLs for absolute files outside the workspace", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-root-",
+      });
+      const delivery = yield* fileSystem.makeTempDirectoryScoped({
+        directory: process.cwd(),
+        prefix: "t3-asset-delivery-",
+      });
+      const htmlPath = path.join(delivery, "report.html");
+      const siblingPath = path.join(delivery, "other.html");
+      yield* fileSystem.writeFileString(htmlPath, "<p>report</p>");
+      yield* fileSystem.writeFileString(siblingPath, "<p>other</p>");
+      const canonicalHtmlPath = yield* fileSystem.realPath(htmlPath);
+
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: htmlPath,
+        },
+        workspaceRoot: root,
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const token = suffix.slice(0, separatorIndex);
+
+      expect(yield* resolveAsset(token, "report.html")).toEqual({
+        kind: "file",
+        path: canonicalHtmlPath,
+      });
+      expect(yield* resolveAsset(token, "other.html")).toBeNull();
     }).pipe(Effect.provide(testLayer)),
   );
 

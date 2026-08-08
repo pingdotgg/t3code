@@ -97,6 +97,16 @@ const encodeAssetClaims = Schema.encodeSync(AssetClaimsJson);
 
 export type ResolvedAsset = { readonly kind: "file"; readonly path: string };
 
+function isWithinRoot(path: Path.Path, root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return (
+    relative !== "" &&
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  );
+}
+
 function decodeClaims(encodedPayload: string): AssetClaims | null {
   try {
     return Option.getOrNull(decodeAssetClaims(base64UrlDecodeUtf8(encodedPayload)));
@@ -193,11 +203,15 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
             }),
         ),
       );
+      const isExternalFile =
+        path.isAbsolute(input.resource.path) &&
+        !isWithinRoot(path, workspaceRoot, input.resource.path);
+      const assetRoot = isExternalFile ? path.dirname(input.resource.path) : workspaceRoot;
       const relativePath = path.isAbsolute(input.resource.path)
-        ? path.relative(workspaceRoot, input.resource.path)
+        ? path.relative(assetRoot, input.resource.path)
         : input.resource.path;
       const resolved = yield* workspacePaths
-        .resolveRelativePathWithinRoot({ workspaceRoot, relativePath })
+        .resolveRelativePathWithinRoot({ workspaceRoot: assetRoot, relativePath })
         .pipe(
           Effect.mapError(
             (cause) =>
@@ -213,7 +227,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         });
       }
       const canonicalFile = yield* resolveCanonicalWorkspaceFile({
-        workspaceRoot,
+        workspaceRoot: assetRoot,
         relativePath: resolved.relativePath,
       }).pipe(
         Effect.mapError(
@@ -229,7 +243,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           resource: input.resource,
         });
       }
-      const canonicalWorkspaceRoot = yield* fileSystem.realPath(workspaceRoot).pipe(
+      const canonicalWorkspaceRoot = yield* fileSystem.realPath(assetRoot).pipe(
         Effect.mapError(
           (cause) =>
             new AssetWorkspaceResolutionError({
@@ -238,7 +252,8 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
             }),
         ),
       );
-      claims = isWorkspaceImagePreviewPath(resolved.relativePath)
+      const isExactAsset = isExternalFile || isWorkspaceImagePreviewPath(resolved.relativePath);
+      claims = isExactAsset
         ? {
             version: 1,
             kind: "workspace-file-exact",
