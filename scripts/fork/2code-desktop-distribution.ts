@@ -5,6 +5,7 @@ export type DesktopDistribution = (typeof DESKTOP_DISTRIBUTIONS)[number];
 
 export interface DesktopDistributionProfile {
   readonly id: DesktopDistribution;
+  readonly packageName: string;
   readonly appId: string;
   readonly productName: string;
   readonly executableName: string;
@@ -28,6 +29,9 @@ export interface DesktopDistributionProfile {
 
 export const TWO_CODE_PRODUCTION_PROFILE: DesktopDistributionProfile = {
   id: TWO_CODE_PRODUCTION_DISTRIBUTION,
+  // electron-builder derives app-update.yml#updaterCacheDirName from the staged
+  // package name, so this must retain the legacy package identity too.
+  packageName: "2code",
   appId: "dev.hafencity.dev.agents",
   productName: "2code",
   executableName: "2code",

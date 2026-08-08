@@ -14,6 +14,7 @@ it("defines the legacy-compatible 2code production identity", () => {
   assert.deepStrictEqual(DESKTOP_DISTRIBUTIONS, ["2code-production"]);
   assert.deepStrictEqual(profile, {
     id: "2code-production",
+    packageName: "2code",
     appId: "dev.hafencity.dev.agents",
     productName: "2code",
     executableName: "2code",
@@ -34,6 +35,7 @@ it("defines the legacy-compatible 2code production identity", () => {
     },
     macSigning: "legacy-entitlements",
   });
+  assert.equal(`${profile?.packageName}-updater`, profile?.updates.updaterCacheDirName);
 });
 
 it("keeps the default desktop build free of a fork distribution profile", () => {
