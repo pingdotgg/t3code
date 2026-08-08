@@ -131,6 +131,19 @@ export interface AetherEventMapper {
   /** The wire turn id currently tracked as in flight, if any. */
   readonly activeWireTurnId: () => string | undefined;
   /**
+   * Does this RAW live wire turn id belong to a turn the DURABLE side already
+   * grounded here — i.e. is the frame carrying it this driver's own output
+   * rather than evidence of a turn injected from the Aether app (build item
+   * 13)? The live transport stamps a fresh per-dispatch id on every frame, so
+   * the caller cannot answer this by comparing against durable ids itself.
+   *
+   * PURE, unlike `resolveLiveWireTurnId`: it binds no alias, because the
+   * caller asks BEFORE the frame is mapped and a genuinely remote id must
+   * stay free to bind to the durable turn the caller's reconcile is about to
+   * ground.
+   */
+  readonly isOwnLiveTurnId: (rawTurnId: string) => boolean;
+  /**
    * Register a driver-initiated turn (sendTurn minted it from the 202 /
    * harvested user row) as the active wire turn, so a settle observed ONLY
    * through the REST backstop (durable rows carry no turn ids) still finds
@@ -396,6 +409,47 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
   /** The wire turn id currently in flight, for settles observed via REST. */
   let activeWireTurnId: string | undefined;
   /**
+   * The last durable turn that was in flight, RETAINED past its settle. A
+   * settle clears `activeWireTurnId`, and the REST backstop can settle a turn
+   * before the live stream's first frame for that dispatch ever bound its
+   * random id (`reconcileTask` observing awaiting_input/processing on a poll
+   * beat) — the settle-before-bind race. A late live `turn.completed` /
+   * `turn.failed` then carries an id nothing grounded; resolving it to the last
+   * durable turn keeps it inside `durableTurns`, so the durable-authoritative
+   * gate suppresses its live settle instead of letting it fall through to the
+   * cold path and open a phantom `aether-turn-<random>`. Its content tail
+   * attributes to that same settled turn.
+   */
+  let lastDurableWireTurnId: string | undefined;
+  /**
+   * Turn ids the DURABLE side established — the ONLY source of turn identity
+   * (an opening user row, `activeProcessingTurn`, or the driver's own
+   * `noteTurnStarted`). The live WS transport stamps every frame with a FRESH
+   * per-dispatch `turnId` (a `crypto.randomUUID` minted per prompt in aether
+   * agent-handlers.ts), which is NEVER the durable user-row id the rest of the
+   * driver keys turns by. A single user turn therefore arrives under two id
+   * namespaces.
+   *
+   * Settlement is DURABLE-AUTHORITATIVE: once a turn is grounded here, the
+   * live random-id `turn.completed`/`turn.failed`/`turn.awaiting_input` frames
+   * do NOT settle it (mapWsEvent returns tracking only); the durable reconcile
+   * observing the task-status flip owns the single settle. This makes an
+   * ambiguous live id unable to settle any turn (right, wrong, or phantom).
+   * Live frames still ATTRIBUTE content to the grounded turn (ownership is
+   * safe). A live id is authoritative for turn identity — and still settles —
+   * only in the cold mapper-only path where nothing durable grounds it (unit
+   * tests / a degenerate resume).
+   */
+  const durableTurns = new Set<string>();
+  /**
+   * Live per-dispatch wire turn id → the durable turn it belongs to. Bound the
+   * first time a live frame is seen while a durable turn is in flight, so the
+   * whole live stream attributes CONTENT to the ONE durable turn (and
+   * `isOwnLiveTurnId` can classify the frame as this driver's own output).
+   * Settlement no longer rides this alias — it is durable-authoritative.
+   */
+  const liveTurnAlias = new Map<string, string>();
+  /**
    * The single pending interaction, mirroring Aether's one-slot domain
    * (`tasks.pending_question_payload`). Set when the input surfaces, cleared
    * by the driver's own answer (`noteInputResolved`) or by an out-of-band
@@ -482,8 +536,67 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
       events.push(...resolveOpenInput({}, createdAt));
     }
     activeWireTurnId = wireTurnId;
+    if (durableTurns.has(wireTurnId)) {
+      lastDurableWireTurnId = wireTurnId;
+    }
     return events;
   };
+
+  /** Record a turn id the DURABLE side established (see `durableTurns`). */
+  const noteDurableTurn = (wireTurnId: string | undefined): void => {
+    if (wireTurnId !== undefined) {
+      durableTurns.add(wireTurnId);
+    }
+  };
+
+  /**
+   * Attribute a live frame's per-dispatch wire turn id to the durable turn it
+   * belongs to (see `durableTurns` / `liveTurnAlias`). A live id never opens or
+   * transitions a turn: while a durable turn is active, EVERY live id resolves
+   * to it (bound once so the whole live stream attributes to the one durable
+   * turn); after it settled, an id nothing ever bound resolves to that same
+   * last durable turn (see `lastDurableWireTurnId`); with no durable turn EVER
+   * grounded — the cold mapper-only path — the live id stands in as its own
+   * turn unchanged.
+   */
+  function resolveLiveWireTurnId(rawTurnId: string): string;
+  function resolveLiveWireTurnId(rawTurnId: string | undefined): string | undefined;
+  function resolveLiveWireTurnId(rawTurnId: string | undefined): string | undefined {
+    if (rawTurnId === undefined) {
+      return undefined;
+    }
+    const aliased = liveTurnAlias.get(rawTurnId);
+    if (aliased !== undefined) {
+      return aliased;
+    }
+    if (activeWireTurnId !== undefined && durableTurns.has(activeWireTurnId)) {
+      liveTurnAlias.set(rawTurnId, activeWireTurnId);
+      return activeWireTurnId;
+    }
+    // Settled-before-bind: no durable turn is in flight, so this frame is the
+    // tail of the one that just settled. Deliberately NOT bound — the binding
+    // above keeps a turn's whole live stream together, while this is a
+    // best-effort attribution for a turn already over; leaving the id unbound
+    // lets the very next frame re-resolve onto a NEW durable turn as soon as
+    // one is grounded (the eager reconcile of a remote injection). Resolving to
+    // the last durable turn keeps the id inside `durableTurns` so the
+    // durable-authoritative gate suppresses its settle (no phantom).
+    if (lastDurableWireTurnId !== undefined) {
+      return lastDurableWireTurnId;
+    }
+    return rawTurnId;
+  }
+
+  /** See `AetherEventMapper.isOwnLiveTurnId` — pure, binds nothing. */
+  const isOwnLiveTurnId = (rawTurnId: string): boolean =>
+    liveTurnAlias.has(rawTurnId) ||
+    durableTurns.has(rawTurnId) ||
+    // A durable turn in flight owns every live frame that arrives while it
+    // runs — that is exactly the binding rule above. `lastDurableWireTurnId`
+    // deliberately does NOT count: between turns a live frame is the first
+    // evidence of a turn injected from the Aether app, and claiming it as our
+    // own would suppress the remote-originated warning (build item 13).
+    (activeWireTurnId !== undefined && durableTurns.has(activeWireTurnId));
 
   /**
    * The status projection (spec §2.1 working-indicator row): queued→starting,
@@ -774,8 +887,11 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
     readonly errorMessage?: string | undefined;
     readonly createdAt: string;
   }): ReadonlyArray<ProviderRuntimeEvent> => {
-    // Exactly one terminal settle per turn, no matter how many transports
-    // observe it (live turn.* + REST status projection).
+    // Exactly one terminal settle per turn. For a grounded turn this is
+    // DURABLE-AUTHORITATIVE — only the durable reconcile paths (reconcileTask
+    // awaiting_input/errored, trackTurn's displaced-predecessor transition,
+    // noteTurnStarted) reach here; the live turn.* frames are suppressed
+    // upstream. The cold mapper-only path still settles from the live frame.
     if (settledTurns.has(input.wireTurnId)) {
       return [];
     }
@@ -954,7 +1070,12 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
       case "tool_call.completed":
       case "tool_call.failed":
         return mapToolUpdate(
-          toolUpdateFromWs(event.toolCallId, event.payload, event.turnId, createdAt),
+          toolUpdateFromWs(
+            event.toolCallId,
+            event.payload,
+            resolveLiveWireTurnId(event.turnId),
+            createdAt,
+          ),
           "live",
         );
 
@@ -969,7 +1090,8 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
         if (completedItems.has(canonicalId)) {
           return [];
         }
-        const turnEvents = trackTurn(event.turnId, createdAt);
+        const wireTurnId = resolveLiveWireTurnId(event.turnId);
+        const turnEvents = trackTurn(wireTurnId, createdAt);
         const counter = (deltaCounters.get(canonicalId) ?? 0) + 1;
         deltaCounters.set(canonicalId, counter);
         return [
@@ -978,7 +1100,7 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
             ...base({
               eventId: `aether:${taskId}:stream:${canonicalId}:${counter}`,
               createdAt,
-              wireTurnId: event.turnId,
+              wireTurnId,
               itemId: canonicalId,
             }),
             type: "content.delta",
@@ -993,7 +1115,8 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
         if (completedItems.has(canonicalId)) {
           return [];
         }
-        const turnEvents = trackTurn(event.turnId, createdAt);
+        const wireTurnId = resolveLiveWireTurnId(event.turnId);
+        const turnEvents = trackTurn(wireTurnId, createdAt);
         const counter = (deltaCounters.get(canonicalId) ?? 0) + 1;
         deltaCounters.set(canonicalId, counter);
         return [
@@ -1002,7 +1125,7 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
             ...base({
               eventId: `aether:${taskId}:stream:${canonicalId}:${counter}`,
               createdAt,
-              wireTurnId: event.turnId,
+              wireTurnId,
               itemId: canonicalId,
             }),
             // NEVER assistant_text: remapping thinking into the assistant
@@ -1017,49 +1140,71 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
       case "stream.complete":
         return [];
 
-      case "assistant_message.completed":
+      case "assistant_message.completed": {
+        const wireTurnId = resolveLiveWireTurnId(event.turnId);
         return [
-          ...trackTurn(event.turnId, createdAt),
+          ...trackTurn(wireTurnId, createdAt),
           ...messageItemCompleted({
             canonicalId: canonicalMessageItemId(event.messageId),
             itemType: "assistant_message",
             content: event.payload.content,
-            wireTurnId: event.turnId,
+            wireTurnId,
             createdAt,
           }),
         ];
+      }
 
-      case "thinking.completed":
+      case "thinking.completed": {
+        const wireTurnId = resolveLiveWireTurnId(event.turnId);
         return [
-          ...trackTurn(event.turnId, createdAt),
+          ...trackTurn(wireTurnId, createdAt),
           ...messageItemCompleted({
             canonicalId: canonicalThinkingItemId(event.messageId),
             itemType: "reasoning",
             content: event.payload.content,
-            wireTurnId: event.turnId,
+            wireTurnId,
             createdAt,
           }),
         ];
+      }
 
-      case "turn.completed":
+      case "turn.completed": {
+        const wireTurnId = resolveLiveWireTurnId(event.turnId);
+        // Durable-authoritative settlement: a grounded turn is settled ONLY by
+        // the durable reconcile observing the task-status flip. The live
+        // random-id frame just attributes ownership here; the adapter uses it
+        // as a trigger to fire the durable reconcile immediately (low latency).
+        if (durableTurns.has(wireTurnId)) {
+          return trackTurn(wireTurnId, createdAt);
+        }
+        // Cold mapper-only path (no durable turn ever grounded): the live
+        // settle is the only terminator, so keep it.
         return [
-          ...trackTurn(event.turnId, createdAt),
-          ...settleTurn({ wireTurnId: event.turnId, state: "completed", createdAt }),
+          ...trackTurn(wireTurnId, createdAt),
+          ...settleTurn({ wireTurnId, state: "completed", createdAt }),
         ];
+      }
 
       case "turn.failed": {
-        if (interruptedTurns.has(event.turnId)) {
+        const wireTurnId = resolveLiveWireTurnId(event.turnId);
+        // Grounded: the durable reconcileTask "errored" path owns both the
+        // failed settle AND the runtime.error card. A live turn.failed that
+        // does not actually error the task must not fabricate an error card.
+        if (durableTurns.has(wireTurnId)) {
+          return trackTurn(wireTurnId, createdAt);
+        }
+        if (interruptedTurns.has(wireTurnId)) {
           // A stop often surfaces remotely as a failed turn; the user asked
           // for it, so no error card — just the interrupted settle.
           return [
-            ...trackTurn(event.turnId, createdAt),
-            ...settleTurn({ wireTurnId: event.turnId, state: "failed", createdAt }),
+            ...trackTurn(wireTurnId, createdAt),
+            ...settleTurn({ wireTurnId, state: "failed", createdAt }),
           ];
         }
         return [
-          ...trackTurn(event.turnId, createdAt),
+          ...trackTurn(wireTurnId, createdAt),
           ...settleTurn({
-            wireTurnId: event.turnId,
+            wireTurnId,
             state: "failed",
             errorMessage: event.payload.errorMessage,
             createdAt,
@@ -1071,7 +1216,7 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
             // cleared it, which would wedge the session on a settled turn and
             // make the conflict guard drop every later turn.completed.
             ...base({
-              eventId: `aether:${taskId}:turn:${event.turnId}:error`,
+              eventId: `aether:${taskId}:turn:${wireTurnId}:error`,
               createdAt,
             }),
             type: "runtime.error",
@@ -1084,9 +1229,17 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
         // An awaiting_input IS a settle: the remote turn ended and parked on
         // a pending input. Dispatch on payload.toolName (the live shape has
         // no `kind` — spec resolved note 12).
+        const wireTurnId = resolveLiveWireTurnId(event.turnId);
+        // Grounded: the durable reconcileTask "awaiting_input" branch owns
+        // both the settle AND re-surfacing the pending input (deduped by
+        // settledTurns/requestedInputs). The adapter's immediate reconcile
+        // trigger keeps the question/plan prompt latency low.
+        if (durableTurns.has(wireTurnId)) {
+          return trackTurn(wireTurnId, createdAt);
+        }
         const settle = [
-          ...trackTurn(event.turnId, createdAt),
-          ...settleTurn({ wireTurnId: event.turnId, state: "completed", createdAt }),
+          ...trackTurn(wireTurnId, createdAt),
+          ...settleTurn({ wireTurnId, state: "completed", createdAt }),
         ];
         switch (event.payload.toolName) {
           case "ask_user":
@@ -1096,7 +1249,7 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
                 pendingId: event.pendingInputId,
                 toolName: "ask_user",
                 payload: event.payload.input,
-                wireTurnId: event.turnId,
+                wireTurnId,
                 createdAt,
               }),
             ];
@@ -1107,7 +1260,7 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
                 pendingId: event.pendingInputId,
                 toolName: "propose_plan",
                 payload: event.payload.input,
-                wireTurnId: event.turnId,
+                wireTurnId,
                 createdAt,
               }),
             ];
@@ -1330,6 +1483,9 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
     // delta). A cold mapper with none of the three leaves rows unowned —
     // attribution would be a guess.
     const activeWireTurnIdForRows = delta.activeProcessingTurn?.messageId;
+    // Both durable turn-identity sources — an opening user row and
+    // activeProcessingTurn — ground the live→durable alias resolver.
+    noteDurableTurn(activeWireTurnIdForRows);
     const isTurnOpener = (row: (typeof rows)[number]): boolean =>
       row.role === "user" && row.deliveryStatus !== "queued" && row.deliveryStatus !== "cancelled";
     let runningWireTurnId = activeWireTurnId;
@@ -1352,6 +1508,7 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
         // resume to an already-awaiting task.
         if (isTurnOpener(row)) {
           runningWireTurnId = row.id;
+          noteDurableTurn(runningWireTurnId);
           events.push(...trackTurn(runningWireTurnId, createdAt));
         }
         continue;
@@ -1428,7 +1585,13 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
     reconcileTask,
     latestSequence: () => lastSequence,
     activeWireTurnId: () => activeWireTurnId,
-    noteTurnStarted: (wireTurnId, nowIso) => trackTurn(wireTurnId, stamp(undefined, nowIso)),
+    isOwnLiveTurnId,
+    noteTurnStarted: (wireTurnId, nowIso) => {
+      // A driver-initiated turn: the durable turn identity every subsequent
+      // live frame's random per-dispatch id must resolve to.
+      noteDurableTurn(wireTurnId);
+      return trackTurn(wireTurnId, stamp(undefined, nowIso));
+    },
     markInterrupted: (wireTurnId) => {
       interruptedTurns.add(wireTurnId);
     },

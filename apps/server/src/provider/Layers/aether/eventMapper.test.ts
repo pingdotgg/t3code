@@ -758,6 +758,211 @@ describe("AetherEventMapper — durable reconciliation", () => {
   });
 });
 
+describe("AetherEventMapper — live per-dispatch turn ids (turn fragmentation)", () => {
+  // Aether stamps a FRESH random `turnId` on every live agent frame
+  // (agent-handlers.ts mints `messageId: crypto.randomUUID()` per dispatch),
+  // which is NEVER the durable user-row id the rest of the driver keys turns
+  // by. A single user turn therefore arrives under two id namespaces; the
+  // mapper must attribute every live frame to the ONE durable turn, or the one
+  // turn settles multiple times (an empty pre-write checkpoint, then the
+  // post-write one) — the demo-blocking turn-fragmentation bug.
+  const M1 = "aaaaaaaa-1111-4aaa-8bbb-cccccccccccc";
+  const M2 = "bbbbbbbb-2222-4aaa-8bbb-cccccccccccc";
+  const M3 = "cccccccc-3333-4aaa-8bbb-cccccccccccc";
+
+  it("attributes live frames under a random per-dispatch turnId to the durable turn", () => {
+    const mapper = makeMapper();
+    // The durable side grounds turn u1 (sendTurn's noteTurnStarted / adoption).
+    mapper.noteTurnStarted("u1", NOW);
+    const delta = mapper.mapWsEvent(parseFrame({ ...wsAssistantDelta, turnId: M1 }), NOW);
+    // No premature settle of u1; the delta is owned by u1, not by M1.
+    expect(delta.map((event) => event.type)).toEqual(["content.delta"]);
+    expect(delta[0]).toMatchObject({ turnId: "aether-turn-u1" });
+    expect(mapper.activeWireTurnId()).toBe("u1");
+
+    // Durable-authoritative settlement: the live turn.completed for a grounded
+    // turn does NOT settle — it only attributes ownership.
+    const completed = mapper.mapWsEvent(parseFrame({ ...wsTurnCompleted, turnId: M1 }), NOW);
+    expect(completed).toHaveLength(0);
+
+    // The single settle comes from the durable reconcile observing the flip.
+    const settle = mapper.reconcileTask(taskAwaitingMessage, NOW);
+    const settleCompleted = settle.filter((event) => event.type === "turn.completed");
+    expect(settleCompleted).toHaveLength(1);
+    expect(settleCompleted[0]).toMatchObject({
+      type: "turn.completed",
+      eventId: "aether:task-1:turn:u1:settled",
+      turnId: "aether-turn-u1",
+      payload: { state: "completed" },
+    });
+    // No phantom aether-turn-<random> turn was ever created.
+    expect([...delta, ...completed, ...settle].map((event) => event.turnId)).not.toContain(
+      `aether-turn-${M1}`,
+    );
+  });
+
+  it("coalesces multiple distinct live ids within one durable turn to a single settle", () => {
+    const mapper = makeMapper();
+    mapper.noteTurnStarted("u1", NOW);
+    // A message frame under M1 and a tool frame under a DIFFERENT per-tool id
+    // M2 (handler.ts stamps tool events with `event.turnId ?? turnId`).
+    mapper.mapWsEvent(parseFrame({ ...wsAssistantDelta, turnId: M1 }), NOW);
+    const tool = mapper.mapWsEvent(parseFrame({ ...wsCodexFileChange, turnId: M2 }), NOW);
+    // The second distinct live id does NOT settle u1 as a "displaced" turn.
+    expect(tool.every((event) => event.type !== "turn.completed")).toBe(true);
+    expect(tool.find((event) => event.type === "item.completed")).toMatchObject({
+      turnId: "aether-turn-u1",
+    });
+    // No live id settles the grounded turn (durable-authoritative) …
+    expect(mapper.mapWsEvent(parseFrame({ ...wsTurnCompleted, turnId: M2 }), NOW)).toHaveLength(0);
+    // … the single settle is on u1, from the durable reconcile.
+    const completed = mapper
+      .reconcileTask(taskAwaitingMessage, NOW)
+      .filter((event) => event.type === "turn.completed");
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toMatchObject({
+      turnId: "aether-turn-u1",
+      payload: { state: "completed" },
+    });
+  });
+
+  it("settles a grounded turn from the REST backstop, never the live frame", () => {
+    const mapper = makeMapper();
+    mapper.noteTurnStarted("u1", NOW);
+    // Live streaming binds the random id to u1, then the live terminal frame
+    // lands — but for a grounded turn it emits NO settle.
+    mapper.mapWsEvent(parseFrame({ ...wsAssistantDelta, turnId: M1 }), NOW);
+    const live = mapper.mapWsEvent(parseFrame({ ...wsTurnCompleted, turnId: M1 }), NOW);
+    expect(live.filter((event) => event.type === "turn.completed")).toHaveLength(0);
+    // The REST backstop observing the turn parked at message-idle emits the
+    // single settle — exactly one turn.completed across both transports.
+    const rest = mapper.reconcileDelta(makeDelta({ task: taskAwaitingMessage, messages: [] }), NOW);
+    expect(rest.filter((event) => event.type === "turn.completed")).toHaveLength(1);
+  });
+
+  it("dedupes a late live settle arriving after the REST backstop settled the same turn", () => {
+    const mapper = makeMapper();
+    mapper.noteTurnStarted("u1", NOW);
+    // The live frames stream first (binding the random id → u1) …
+    mapper.mapWsEvent(parseFrame({ ...wsAssistantDelta, turnId: M1 }), NOW);
+    // … the REST backstop settles u1 first (awaiting_input flip on a poll) …
+    const rest = mapper.reconcileDelta(makeDelta({ task: taskAwaitingMessage, messages: [] }), NOW);
+    expect(rest.filter((event) => event.type === "turn.completed")).toHaveLength(1);
+    // … then the buffered live turn.completed flushes under its random id: it
+    // resolves through the alias to the already-settled u1 and dedupes.
+    expect(mapper.mapWsEvent(parseFrame({ ...wsTurnCompleted, turnId: M1 }), NOW)).toHaveLength(0);
+  });
+
+  it("dedupes a late live settle whose random id NOTHING bound before the REST settle", () => {
+    const mapper = makeMapper();
+    mapper.noteTurnStarted("u1", NOW);
+    // The settle-before-bind race: the REST backstop settles u1 while the
+    // live stream for this dispatch is still buffered, so NO frame ever bound
+    // the random id — and settleTurn cleared activeWireTurnId, so the
+    // bind-to-the-turn-in-flight rule no longer applies either.
+    const rest = mapper.reconcileDelta(makeDelta({ task: taskAwaitingMessage, messages: [] }), NOW);
+    expect(rest.filter((event) => event.type === "turn.completed")).toHaveLength(1);
+    expect(mapper.activeWireTurnId()).toBeUndefined();
+    // The buffered settle then flushes under an id the mapper has NEVER seen.
+    // It must land on the last durable turn — already settled, so the
+    // exactly-one-settle-per-wire-turn guard drops it — instead of opening
+    // aether-turn-<random> and settling the ONE user turn a second time.
+    expect(mapper.mapWsEvent(parseFrame({ ...wsTurnCompleted, turnId: M3 }), NOW)).toHaveLength(0);
+    // A late tail frame under the same unseen id is owned by u1 too.
+    const tail = mapper.mapWsEvent(
+      parseFrame({ ...wsAssistantDelta, turnId: M3, messageId: "m-late" }),
+      NOW,
+    );
+    expect(tail).toHaveLength(1);
+    expect(tail[0]).toMatchObject({ type: "content.delta", turnId: "aether-turn-u1" });
+  });
+
+  it("drops a late live turn.failed for a settled grounded turn (no phantom, no error card)", () => {
+    const mapper = makeMapper();
+    mapper.noteTurnStarted("u1", NOW);
+    mapper.reconcileDelta(makeDelta({ task: taskAwaitingMessage, messages: [] }), NOW);
+    // Durable-authoritative: a live turn.failed for a grounded turn neither
+    // settles a second time NOR fabricates a runtime.error — the durable
+    // reconcile owns both. A phantom `aether:task-1:turn:<random>:*` would
+    // replay as a distinct activity on every reconnect.
+    const late = mapper.mapWsEvent(parseFrame({ ...wsTurnFailed, turnId: M3 }), NOW);
+    expect(late).toHaveLength(0);
+  });
+
+  it("a stale live settle for turn A cannot settle the newly started turn B (round-2 race)", () => {
+    // The bug the durable-authoritative redesign closes: a buffered live
+    // turn.completed from a settled turn A, arriving AFTER the user starts
+    // turn B, must not bind to and settle B (or open a phantom).
+    const mapper = makeMapper();
+    // Turn A grounded, streaming under a bound live id, then REST-settled.
+    mapper.noteTurnStarted("uA", NOW);
+    mapper.mapWsEvent(parseFrame({ ...wsAssistantDelta, turnId: M1, messageId: "mA" }), NOW);
+    const settleA = mapper
+      .reconcileDelta(makeDelta({ task: taskAwaitingMessage, messages: [] }), NOW)
+      .filter((event) => event.type === "turn.completed");
+    expect(settleA).toHaveLength(1);
+    expect(settleA[0]).toMatchObject({ turnId: "aether-turn-uA" });
+
+    // The user starts turn B; that must not re-settle the already-settled A.
+    const startB = mapper.noteTurnStarted("uB", NOW);
+    expect(startB.some((event) => event.type === "turn.completed")).toBe(false);
+    expect(mapper.activeWireTurnId()).toBe("uB");
+
+    // A's stale/buffered live settle now flushes — both the id A's stream bound
+    // (M1) and an id nothing ever bound (M2). Neither settles B, neither opens
+    // a phantom aether-turn-<random>.
+    expect(mapper.mapWsEvent(parseFrame({ ...wsTurnCompleted, turnId: M1 }), NOW)).toHaveLength(0);
+    expect(mapper.mapWsEvent(parseFrame({ ...wsTurnCompleted, turnId: M2 }), NOW)).toHaveLength(0);
+    expect(mapper.activeWireTurnId()).toBe("uB");
+
+    // B settles exactly once, from its own durable observation.
+    const settleB = mapper
+      .reconcileTask(taskAwaitingMessage, NOW)
+      .filter((event) => event.type === "turn.completed");
+    expect(settleB).toHaveLength(1);
+    expect(settleB[0]).toMatchObject({
+      turnId: "aether-turn-uB",
+      payload: { state: "completed" },
+    });
+  });
+
+  it("keeps a raw live id as its own turn when NOTHING durable was ever grounded", () => {
+    const mapper = makeMapper();
+    // The cold mapper-only path (unit tests / a degenerate resume): with no
+    // durable turn to attribute to, the live id is the only turn identity
+    // there is — the settle must still land under it.
+    const settled = mapper.mapWsEvent(parseFrame({ ...wsTurnCompleted, turnId: M3 }), NOW);
+    expect(settled).toHaveLength(1);
+    expect(settled[0]).toMatchObject({
+      type: "turn.completed",
+      turnId: `aether-turn-${M3}`,
+    });
+  });
+
+  it("classifies a live id as own only while a durable turn grounds it, binding nothing", () => {
+    // The adapter asks this BEFORE mapping a frame, to tell its own output
+    // from a turn injected from the Aether app (build item 13) — the raw live
+    // id can never be compared against durable ids directly.
+    const mapper = makeMapper();
+    // Cold: no durable turn, so a live id is evidence of nothing.
+    expect(mapper.isOwnLiveTurnId(M1)).toBe(false);
+    mapper.noteTurnStarted("u1", NOW);
+    // A durable turn in flight owns EVERY live id arriving while it runs.
+    expect(mapper.isOwnLiveTurnId(M1)).toBe(true);
+    expect(mapper.isOwnLiveTurnId(M2)).toBe(true);
+    // Only M1 actually carries a frame; M2 stays a bare query.
+    mapper.mapWsEvent(parseFrame({ ...wsAssistantDelta, turnId: M1, messageId: "m5" }), NOW);
+    mapper.reconcileDelta(makeDelta({ task: taskAwaitingMessage, messages: [] }), NOW);
+    expect(mapper.activeWireTurnId()).toBeUndefined();
+    // The id the live stream bound stays own …
+    expect(mapper.isOwnLiveTurnId(M1)).toBe(true);
+    // … the merely-queried one does not: the query memoized nothing, so a
+    // first live frame between turns stays free to be read as a remote
+    // injection and reconciled BEFORE it is mapped.
+    expect(mapper.isOwnLiveTurnId(M2)).toBe(false);
+  });
+});
+
 describe("parseAetherQuestions", () => {
   it("reports malformed questions as issues instead of dropping silently", () => {
     const { questions, issues } = parseAetherQuestions({
@@ -779,14 +984,20 @@ describe("parseAetherQuestions", () => {
 });
 
 describe("AetherEventMapper — interrupted turns (T6)", () => {
-  it("settles an interrupt-flagged turn as interrupted, whichever transport observes it", () => {
+  it("settles an interrupt-flagged turn as interrupted through the durable path", () => {
     const mapper = makeMapper();
     mapper.noteTurnStarted("u1", NOW);
     expect(mapper.activeWireTurnId()).toBe("u1");
     mapper.markInterrupted("u1");
-    const events = mapper.mapWsEvent(parseFrame(wsTurnCompleted), NOW);
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
+    // Durable-authoritative: the live turn.completed for the grounded turn does
+    // not settle …
+    expect(mapper.mapWsEvent(parseFrame(wsTurnCompleted), NOW)).toHaveLength(0);
+    // … the durable reconcile emits the single settle, and the interrupt flag
+    // makes it read `interrupted` whichever transport observes the flip.
+    const events = mapper.reconcileTask(taskAwaitingMessage, NOW);
+    const completed = events.filter((event) => event.type === "turn.completed");
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toMatchObject({
       type: "turn.completed",
       turnId: "aether-turn-u1",
       payload: { state: "interrupted" },
@@ -794,15 +1005,19 @@ describe("AetherEventMapper — interrupted turns (T6)", () => {
     expect(mapper.activeWireTurnId()).toBeUndefined();
   });
 
-  it("suppresses the error card when turn.failed lands after a user stop", () => {
+  it("suppresses the error card when a live turn.failed lands after a user stop", () => {
     const mapper = makeMapper();
     mapper.noteTurnStarted("u1", NOW);
     mapper.markInterrupted("u1");
-    const events = mapper.mapWsEvent(parseFrame(wsTurnFailed), NOW);
-    // A stop often surfaces remotely as a failed turn: the settle reads
-    // interrupted and NO runtime.error follows — the user asked for it.
-    expect(events.map((event) => event.type)).toEqual(["turn.completed"]);
-    expect(events[0]).toMatchObject({ payload: { state: "interrupted" } });
+    // A stop often surfaces remotely as a failed turn. For a grounded turn the
+    // live frame neither settles nor fabricates a runtime.error.
+    expect(mapper.mapWsEvent(parseFrame(wsTurnFailed), NOW)).toHaveLength(0);
+    // The durable reconcile emits the single interrupted settle, no error card.
+    const events = mapper.reconcileTask(taskAwaitingMessage, NOW);
+    expect(events.some((event) => event.type === "runtime.error")).toBe(false);
+    const completed = events.filter((event) => event.type === "turn.completed");
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toMatchObject({ payload: { state: "interrupted" } });
   });
 
   it("noteTurnStarted settles a displaced predecessor exactly like an observed transition", () => {

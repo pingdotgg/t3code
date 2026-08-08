@@ -190,6 +190,7 @@ const withAdapter = <A, E>(
     readonly hasRestClient?: boolean;
     readonly socket?: AetherAdapterSocketOptions;
     readonly mirrorRegistry?: AetherMirrorRegistration;
+    readonly turnTiming?: Partial<AetherTurnTiming>;
   },
   use: (adapter: ProviderAdapterShape<ProviderAdapterError>) => Effect.Effect<A, E, Scope.Scope>,
 ) =>
@@ -203,7 +204,7 @@ const withAdapter = <A, E>(
       restClient:
         options.hasRestClient === false ? undefined : (options.restClient ?? unusedRestClient),
       socket: options.socket,
-      turnTiming: zeroTurnTiming,
+      turnTiming: options.turnTiming ?? zeroTurnTiming,
     });
     return yield* use(adapter);
   }).pipe(
@@ -1463,6 +1464,256 @@ describe("AetherAdapter event pipeline", () => {
               expect(events[1]).toMatchObject({ eventId: "aether:task-1:remote:u9" });
               expect(events[2]).toMatchObject({ eventId: "aether:task-1:item:m9" });
               expect(events[4]).toMatchObject({ turnId: "aether-turn-u9" });
+            }),
+        );
+      }),
+  );
+
+  it.effect(
+    "one user turn under a random live turnId settles exactly once across BOTH transports",
+    () =>
+      Effect.gen(function* () {
+        // The turn-fragmentation regression: Aether stamps a FRESH random
+        // `turnId` on the live agent frames (agent-handlers.ts mints
+        // `messageId: crypto.randomUUID()` per dispatch), which is NEVER the
+        // durable user-row id (u1) the driver keys the turn by. Both the LIVE
+        // settle and the REST-backstop reconcile report the SAME wire turn —
+        // exactly one turn.started and one turn.completed must reach the
+        // stream, with the mirror diff on that single durable turn.
+        const sockets: Array<FakeAdapterSocket> = [];
+        let deltaCalls = 0;
+        let taskIdle = false;
+        const liveWireTurnId = "9d1f0e2a-7777-4abc-8def-0123456789ab";
+        const restClient: AetherRestClient = {
+          ...unusedRestClient,
+          listProjects: () => Effect.succeed([project()]),
+          getTask: () => Effect.succeed(processingTask),
+          getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
+          connectWorkspace: () =>
+            Effect.succeed({
+              state: "running",
+              transport: { websocket_path: "/workspaces/ws-1/ws", preview_token: "t".repeat(32) },
+            } as const),
+          getConversationDelta: (_taskId, after) =>
+            Effect.sync(() => {
+              deltaCalls++;
+              // The durable side grounds the turn as u1 via activeProcessingTurn,
+              // then flips to message-idle — the REST backstop settle of the
+              // same wire turn the live settle also reports.
+              return {
+                task: taskIdle ? idleMessageTask : processingTask,
+                messages: [],
+                activity: [],
+                activeProcessingTurn: taskIdle
+                  ? null
+                  : { messageId: "u1", startedAt: "2026-08-08T10:02:00Z" },
+                latestSequence: after,
+                removedMessageIds: [],
+                truncated: false,
+              } satisfies AetherConversationDelta;
+            }),
+        };
+        yield* withAdapter(
+          {
+            restClient,
+            socket: {
+              apiBaseUrl: "https://api.runaether.dev",
+              apiKey: "aether_test_key",
+              timing: { ...zeroSocketTiming, requestTimeoutMs: 60_000 },
+              webSocketFactory: () => {
+                const socket = diffAnsweringSocket();
+                sockets.push(socket);
+                return socket;
+              },
+            },
+          },
+          (adapter) =>
+            Effect.gen(function* () {
+              const collector = yield* adapter.streamEvents.pipe(
+                Stream.take(6),
+                Stream.runCollect,
+                Effect.forkScoped,
+              );
+              yield* adapter.startSession(
+                startInput({
+                  resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 7 },
+                }),
+              );
+              yield* settleAdapterPump;
+              // Adoption reconstructed the durable turn as u1.
+              expect((yield* adapter.listSessions())[0]!.activeTurnId).toBe("aether-turn-u1");
+
+              // Live output streams under the RANDOM per-dispatch id while the
+              // task is still processing — the alias binds it to u1.
+              sockets[0]!.message({ ...wsAssistantDelta, turnId: liveWireTurnId, messageId: "m1" });
+              yield* settleAdapterPump;
+
+              // The turn completes: the live settle AND the REST-backstop
+              // idle flip both report the same wire turn.
+              taskIdle = true;
+              sockets[0]!.message({ ...wsTurnCompleted, turnId: liveWireTurnId });
+              yield* settleAdapterPump;
+
+              const events = yield* Fiber.join(collector);
+              const types = events.map((event) => event.type);
+              // EXACTLY ONE turn.started and ONE turn.completed — never the
+              // FOUR fragmented cycles the two id namespaces used to produce.
+              expect(types.filter((type) => type === "turn.started")).toHaveLength(1);
+              expect(types.filter((type) => type === "turn.completed")).toHaveLength(1);
+              expect(types).toEqual([
+                "session.started",
+                "turn.started",
+                "session.state.changed",
+                "content.delta",
+                "turn.diff.updated",
+                "turn.completed",
+              ]);
+              // The started, the mirror diff and the settle all name the ONE
+              // durable turn u1 — never the random live id. The mirror-applied
+              // change therefore lands in the single segment the checkpoint
+              // reactor pairs against its pre-turn baseline.
+              expect(events.find((event) => event.type === "turn.started")).toMatchObject({
+                turnId: "aether-turn-u1",
+              });
+              expect(events.find((event) => event.type === "turn.diff.updated")).toMatchObject({
+                eventId: "aether:task-1:turn:u1:diff",
+                turnId: "aether-turn-u1",
+              });
+              expect(events.find((event) => event.type === "turn.completed")).toMatchObject({
+                turnId: "aether-turn-u1",
+                payload: { state: "completed" },
+              });
+              expect(types).not.toContain("runtime.error");
+              // The REST backstop actually ran (more than the attach reconcile).
+              expect(deltaCalls).toBeGreaterThan(1);
+            }),
+        );
+      }),
+  );
+
+  it.effect(
+    "an OWN live frame under a random turnId is not read as a remote turn (no early settle)",
+    () =>
+      Effect.gen(function* () {
+        // The own-vs-remote classification used to compare the frame's RAW
+        // live turnId — a fresh randomUUID per prompt dispatch — against the
+        // DURABLE ids the driver keys turns by, which can never match: every
+        // own frame read as a turn injected from the Aether app and fired an
+        // eager durable reconcile. This asserts an own CONTENT frame is NOT
+        // misclassified (no eager reconcile on it), while settlement is now
+        // DURABLE-AUTHORITATIVE: the live turn.completed does not settle the
+        // grounded turn itself — it TRIGGERS one immediate reconcile whose
+        // durable observation emits the single settle (mirror sync first).
+        //
+        // The settle poll is parked (a 60s cadence no TestClock beat reaches),
+        // so `deltaCalls` counts the attach reconcile (1) plus the terminal
+        // frame's triggered reconcile (2). The content frame adding NONE is the
+        // proof it was not misclassified as remote.
+        const sockets: Array<FakeAdapterSocket> = [];
+        let deltaCalls = 0;
+        const liveWireTurnId = "3f7c1b90-4444-4def-8abc-fedcba987654";
+        const restClient: AetherRestClient = {
+          ...unusedRestClient,
+          listProjects: () => Effect.succeed([project()]),
+          getTask: () => Effect.succeed(processingTask),
+          getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
+          connectWorkspace: () =>
+            Effect.succeed({
+              state: "running",
+              transport: { websocket_path: "/workspaces/ws-1/ws", preview_token: "t".repeat(32) },
+            } as const),
+          getConversationDelta: (_taskId, after) =>
+            Effect.sync(() => {
+              deltaCalls++;
+              // The attach reconcile grounds the durable turn u1. EVERY later
+              // read reports the task already parked at message-idle — so a
+              // spurious eager reconcile would immediately settle u1 and its
+              // turn.completed would precede the turn's own live output.
+              return deltaCalls === 1
+                ? ({
+                    task: processingTask,
+                    messages: [],
+                    activity: [],
+                    activeProcessingTurn: { messageId: "u1", startedAt: "2026-08-08T10:02:00Z" },
+                    latestSequence: after,
+                    removedMessageIds: [],
+                    truncated: false,
+                  } satisfies AetherConversationDelta)
+                : emptyDelta(idleMessageTask, after);
+            }),
+        };
+        yield* withAdapter(
+          {
+            restClient,
+            turnTiming: { ...zeroTurnTiming, settlePollMs: 60_000 },
+            socket: {
+              apiBaseUrl: "https://api.runaether.dev",
+              apiKey: "aether_test_key",
+              timing: { ...zeroSocketTiming, requestTimeoutMs: 60_000 },
+              webSocketFactory: () => {
+                const socket = diffAnsweringSocket();
+                sockets.push(socket);
+                return socket;
+              },
+            },
+          },
+          (adapter) =>
+            Effect.gen(function* () {
+              const collector = yield* adapter.streamEvents.pipe(
+                Stream.take(6),
+                Stream.runCollect,
+                Effect.forkScoped,
+              );
+              yield* adapter.startSession(
+                startInput({
+                  resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 7 },
+                }),
+              );
+              yield* settleAdapterPump;
+              expect((yield* adapter.listSessions())[0]!.activeTurnId).toBe("aether-turn-u1");
+              expect(deltaCalls).toBe(1);
+
+              // An OWN live frame under the random per-dispatch id.
+              sockets[0]!.message({ ...wsAssistantDelta, turnId: liveWireTurnId, messageId: "m1" });
+              yield* settleAdapterPump;
+              // Not remote: no extra reconcile, so no early REST settle …
+              expect(deltaCalls).toBe(1);
+              // … and the turn is still the one the driver started.
+              expect((yield* adapter.listSessions())[0]!.activeTurnId).toBe("aether-turn-u1");
+
+              // The live terminal frame (also under the random id) does not
+              // settle the grounded turn itself — it triggers ONE durable
+              // reconcile whose observation of the message-idle flip settles u1.
+              sockets[0]!.message({ ...wsTurnCompleted, turnId: liveWireTurnId });
+              yield* settleAdapterPump;
+
+              const events = yield* Fiber.join(collector);
+              const types = events.map((event) => event.type);
+              expect(types).toEqual([
+                "session.started",
+                "turn.started",
+                "session.state.changed",
+                "content.delta",
+                "turn.diff.updated",
+                "turn.completed",
+              ]);
+              // No remote-originated warning was raised for our own frames.
+              expect(types).not.toContain("runtime.warning");
+              // The settle is DURABLE-sourced on the durable turn, emitted after
+              // mirror sync — the terminal frame triggered exactly one extra
+              // reconcile (the content frame triggered none).
+              expect(events.find((event) => event.type === "turn.completed")).toMatchObject({
+                turnId: "aether-turn-u1",
+                payload: { state: "completed" },
+              });
+              // Mirror-sync-then-forward: the applied diff lands in the SAME
+              // settled segment (turn.diff.updated keyed to the settled turn,
+              // emitted before its turn.completed).
+              const diffIndex = types.indexOf("turn.diff.updated");
+              expect(diffIndex).toBeGreaterThanOrEqual(0);
+              expect(diffIndex).toBeLessThan(types.indexOf("turn.completed"));
+              expect(events[diffIndex]).toMatchObject({ turnId: "aether-turn-u1" });
+              expect(deltaCalls).toBe(2);
             }),
         );
       }),

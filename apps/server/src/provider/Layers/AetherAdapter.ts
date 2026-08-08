@@ -1014,9 +1014,20 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
    * processMapperEvents cannot re-enter; a transiently failed reconcile warns
    * loudly through the reconcile's own catch, and the warning then lands on a
    * later reconcile beat.
+   *
+   * The id on the frame is the LIVE per-dispatch id (a fresh randomUUID per
+   * prompt — never the durable user-row id), so the durable-id comparisons
+   * below can never match it on their own: every own frame would read as a
+   * remote injection and fire a reconcile whose REST backstop can settle the
+   * in-flight durable turn (an awaiting_input/processing read) before the live
+   * id ever binds to it. The mapper owns the live→durable attribution, so it
+   * answers own-vs-remote here; the durable comparisons stay for the ids that
+   * ARE durable (a live frame stamped with a durable turn id, the ledger, a
+   * deferred steer).
    */
   const eagerRemoteTurnReconcile = (
     context: AetherSessionContext,
+    mapper: AetherEventMapper,
     wireTurnId: string | undefined,
   ) =>
     Effect.gen(function* () {
@@ -1026,6 +1037,7 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
         // not to a remote injection — its opening row predates the resume
         // snapshot, so no warning is owed for it.
         context.adoptActiveTurn ||
+        mapper.isOwnLiveTurnId(wireTurnId) ||
         context.activeTurn?.wireTurnId === wireTurnId ||
         context.deferredTurns.some((candidate) => candidate.wireTurnId === wireTurnId) ||
         context.turnLedger.some((entry) => entry.messageId === wireTurnId) ||
@@ -1235,10 +1247,31 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
             yield* Effect.logInfo("aether.slash-commands.ignored", { taskId });
           }
           // STRICTLY before the frame is mapped — see eagerRemoteTurnReconcile.
-          yield* eagerRemoteTurnReconcile(context, "turnId" in event ? event.turnId : undefined);
+          yield* eagerRemoteTurnReconcile(
+            context,
+            mapper,
+            "turnId" in event ? event.turnId : undefined,
+          );
           const events = mapper.mapWsEvent(event, yield* nowIso);
           context.latestSequence = mapper.latestSequence();
           yield* processMapperEvents(context, events);
+          // Durable-authoritative settlement: for a grounded turn the mapper
+          // suppresses the live terminal frame's settle (no turn.completed in
+          // `events`). Use the frame as a TRIGGER to fire the durable reconcile
+          // NOW, so the durable settle (and its mirror sync via
+          // processMapperEvents) emits promptly instead of waiting for the ~3s
+          // settle poll. In the cold path the live settle already produced a
+          // turn.completed, so this no-ops. reconcile is idempotent
+          // (settledTurns/latestSequence guards), so firing before the task row
+          // has flipped is harmless — the settle poll backstop still catches it.
+          if (
+            (event.kind === "turn.completed" ||
+              event.kind === "turn.failed" ||
+              event.kind === "turn.awaiting_input") &&
+            !events.some((mapped) => mapped.type === "turn.completed")
+          ) {
+            yield* reconcile;
+          }
         }),
       onFrameDropped: (problem) =>
         Effect.gen(function* () {
