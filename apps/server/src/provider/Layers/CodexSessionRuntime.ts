@@ -402,11 +402,20 @@ export function resolveCodexSteeringTurnId(
   return session.status === "running" ? session.activeTurnId : undefined;
 }
 
-export function shouldReaffirmCodexSteer(
+export function resolveCodexSteerReconciliation(
   session: Pick<ProviderSession, "status" | "activeTurnId">,
   steeringTurnId: TurnId,
-): boolean {
-  return resolveCodexSteeringTurnId(session) === steeringTurnId;
+): "running" | "ready" | "error" | "ignore" {
+  if (resolveCodexSteeringTurnId(session) === steeringTurnId) {
+    return "running";
+  }
+  if (
+    session.activeTurnId === undefined &&
+    (session.status === "ready" || session.status === "error")
+  ) {
+    return session.status;
+  }
+  return "ignore";
 }
 
 export function buildTurnStartParams(input: {
@@ -1826,13 +1835,15 @@ export const makeCodexSessionRuntime = (
               if (steerResult._tag === "Steered") {
                 const turnId = TurnId.make(steerResult.value.turnId);
                 const sessionAfterSteer = yield* Ref.get(sessionRef);
-                if (shouldReaffirmCodexSteer(sessionAfterSteer, steeringTurnId)) {
+                const reconciliation = resolveCodexSteerReconciliation(
+                  sessionAfterSteer,
+                  steeringTurnId,
+                );
+                if (reconciliation !== "ignore") {
                   // Codex does not emit a second turn/started notification when
                   // turn/steer keeps the existing turn alive. Reaffirm the active
                   // turn so orchestration can reconcile the steer request with the
-                  // running turn instead of leaving a stale pending-turn row.
-                  // If the turn completed while the RPC was in flight, its
-                  // notification already settled the lifecycle and must win.
+                  // provider turn instead of leaving a stale pending-turn row.
                   yield* emitEvent({
                     kind: "notification",
                     threadId: options.threadId,
@@ -1840,6 +1851,21 @@ export const makeCodexSessionRuntime = (
                     turnId,
                     message: "Codex turn steered.",
                   });
+                  if (reconciliation === "ready") {
+                    // The completion notification won the race with the steer
+                    // acknowledgement. Restore its settled lifecycle after the
+                    // reaffirmation clears the pending message projection.
+                    yield* emitSessionEvent(
+                      "session/ready",
+                      "Codex turn completed while steer was acknowledged.",
+                    );
+                  } else if (reconciliation === "error") {
+                    yield* emitSessionEvent(
+                      "session/error",
+                      sessionAfterSteer.lastError ??
+                        "Codex turn failed while steer was acknowledged.",
+                    );
+                  }
                 }
                 const resumedProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
                 return {

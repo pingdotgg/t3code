@@ -20,8 +20,8 @@ import {
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
   openCodexThread,
+  resolveCodexSteerReconciliation,
   resolveCodexSteeringTurnId,
-  shouldReaffirmCodexSteer,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
 
@@ -289,23 +289,27 @@ describe("buildTurnSteerParams", () => {
     );
   });
 
-  it("only reaffirms a steer while its original turn is still active", () => {
+  it("reconciles a steer without reviving a turn that settled during the request", () => {
     const activeTurnId = TurnId.make("provider-turn-active");
 
     NodeAssert.equal(
-      shouldReaffirmCodexSteer({ status: "running", activeTurnId }, activeTurnId),
-      true,
+      resolveCodexSteerReconciliation({ status: "running", activeTurnId }, activeTurnId),
+      "running",
     );
     NodeAssert.equal(
-      shouldReaffirmCodexSteer({ status: "ready", activeTurnId: undefined }, activeTurnId),
-      false,
+      resolveCodexSteerReconciliation({ status: "ready", activeTurnId: undefined }, activeTurnId),
+      "ready",
     );
     NodeAssert.equal(
-      shouldReaffirmCodexSteer(
+      resolveCodexSteerReconciliation({ status: "error", activeTurnId: undefined }, activeTurnId),
+      "error",
+    );
+    NodeAssert.equal(
+      resolveCodexSteerReconciliation(
         { status: "running", activeTurnId: TurnId.make("provider-turn-new") },
         activeTurnId,
       ),
-      false,
+      "ignore",
     );
   });
 });
