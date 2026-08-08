@@ -7,6 +7,8 @@ import {
 } from "react-native-nitro-markdown";
 import { RefreshControl, ScrollView, Text as NativeText, View } from "react-native";
 
+import { autolinkMarkdownUrls } from "@t3tools/mobile-markdown-text/autolink";
+
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useFontFamily } from "../../lib/useFontFamily";
 import {
@@ -213,6 +215,7 @@ export function FileMarkdownPreview(props: {
           />
         ) : (
           <Markdown
+            astTransform={autolinkMarkdownUrls}
             options={{ gfm: true }}
             renderers={styles.renderers}
             styles={styles.styles}
