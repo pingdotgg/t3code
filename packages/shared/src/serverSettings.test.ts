@@ -512,4 +512,45 @@ describe("serverSettings helpers", () => {
 
     expect(resolved.pauseWhenOnBattery).toBe(false);
   });
+
+  it("does not persist the redacted SuperCompress API key sentinel", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      supercompress: {
+        enabled: true,
+        apiKey: "sc_live_real",
+        minChars: 800,
+      },
+    };
+    const next = applyServerSettingsPatch(current, {
+      supercompress: {
+        enabled: true,
+        apiKey: "sc_configured",
+        minChars: 1000,
+      },
+    });
+    expect(next.supercompress.apiKey).toBe("sc_live_real");
+    expect(next.supercompress.minChars).toBe(1000);
+  });
+
+  it("allows replacing or clearing a SuperCompress API key", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      supercompress: {
+        enabled: true,
+        apiKey: "sc_live_old",
+        minChars: 800,
+      },
+    };
+    expect(
+      applyServerSettingsPatch(current, {
+        supercompress: { apiKey: "sc_live_new" },
+      }).supercompress.apiKey,
+    ).toBe("sc_live_new");
+    expect(
+      applyServerSettingsPatch(current, {
+        supercompress: { apiKey: "" },
+      }).supercompress.apiKey,
+    ).toBe("");
+  });
 });
