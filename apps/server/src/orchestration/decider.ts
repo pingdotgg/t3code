@@ -379,11 +379,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.delete": {
-      yield* requireThread({
-        readModel,
-        command,
-        threadId: command.threadId,
-      });
+      // Keep deletion idempotent for clients holding a stale shell entry. The
+      // tombstone advances the stream and lets every client remove that ghost.
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
