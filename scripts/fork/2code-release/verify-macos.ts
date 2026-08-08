@@ -118,6 +118,12 @@ export function verifyEntitlements(raw: string): void {
   }
 }
 
+export function verifyDesignatedRequirement(config: TwoCodeReleaseConfig, raw: string): void {
+  if (!raw.includes(`identifier "${config.appId}"`) || !raw.includes(config.teamId)) {
+    throw new Error("Signed app designated requirement does not retain the legacy identity.");
+  }
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const artifactIndex = args.indexOf("--artifact-dir");
@@ -151,13 +157,8 @@ async function main(): Promise<void> {
     if (!signature.split(/\r?\n/).includes(expectedAuthority)) {
       throw new Error("Signed app does not use the expected hafencity.dev Developer ID identity.");
     }
-    const requirement = run("codesign", ["-d", "-r-", appPath]).stderr;
-    if (
-      !requirement.includes(`identifier "${config.appId}"`) ||
-      !requirement.includes(config.teamId)
-    ) {
-      throw new Error("Signed app designated requirement does not retain the legacy identity.");
-    }
+    const requirementResult = run("codesign", ["-d", "-r-", appPath]);
+    verifyDesignatedRequirement(config, `${requirementResult.stdout}\n${requirementResult.stderr}`);
     const entitlements = run("codesign", ["-d", "--entitlements", ":-", appPath]);
     verifyEntitlements(`${entitlements.stdout}\n${entitlements.stderr}`);
 

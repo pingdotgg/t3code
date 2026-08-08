@@ -4,6 +4,7 @@ import { parseReleaseConfig } from "./release-core.ts";
 import {
   verifyAppUpdateConfiguration,
   verifyBundlePlist,
+  verifyDesignatedRequirement,
   verifyEntitlements,
 } from "./verify-macos.ts";
 
@@ -95,6 +96,21 @@ updaterCacheDirName: 2code-updater
           entitlementXml.replace("com.apple.security.device.audio-input", "missing"),
         ),
       /audio-input/,
+    );
+  });
+
+  it("accepts the designated requirement emitted on codesign stdout", () => {
+    verifyDesignatedRequirement(
+      config,
+      `designated => identifier "${config.appId}" and anchor apple generic and certificate leaf[subject.OU] = ${config.teamId}`,
+    );
+    assert.throws(
+      () =>
+        verifyDesignatedRequirement(
+          config,
+          `designated => identifier "${config.appId}" and anchor apple generic`,
+        ),
+      /legacy identity/,
     );
   });
 });
