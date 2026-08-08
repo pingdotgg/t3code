@@ -269,14 +269,16 @@ export function dropReplayedRolloutHead(records: readonly UsageRecord[]): readon
   const first = records[0];
   const second = records[1];
   if (first === undefined || second === undefined) return records;
-  if (second.timestampMs - first.timestampMs > REPLAYED_HEAD_GAP_MS) return records;
+  // Inclusive boundary: a gap of a full second is a pause, not part of the
+  // burst — matching the "under a second apart" the constant documents.
+  if (second.timestampMs - first.timestampMs >= REPLAYED_HEAD_GAP_MS) return records;
 
   let index = 1;
   while (index < records.length) {
     const previous = records[index - 1];
     const current = records[index];
     if (previous === undefined || current === undefined) break;
-    if (current.timestampMs - previous.timestampMs > REPLAYED_HEAD_GAP_MS) break;
+    if (current.timestampMs - previous.timestampMs >= REPLAYED_HEAD_GAP_MS) break;
     index += 1;
   }
 

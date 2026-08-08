@@ -177,6 +177,12 @@ describe("dropReplayedRolloutHead", () => {
     expect(dropReplayedRolloutHead(records)).toEqual(records);
   });
 
+  it("treats a gap of exactly one second as a pause, not part of the burst", () => {
+    const records = [eventAt(0, 10), eventAt(1_000, 20), eventAt(2_000, 30)];
+
+    expect(dropReplayedRolloutHead(records)).toEqual(records);
+  });
+
   it("never drops a lone leading event", () => {
     const records = [eventAt(0, 10)];
 
