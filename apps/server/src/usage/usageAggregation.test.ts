@@ -48,7 +48,7 @@ function aggregate(records: readonly UsageRecord[], timeZone = "UTC") {
 }
 
 describe("UsageAggregator", () => {
-  it("keeps only the first record for a repeated dedupe key", () => {
+  it("keeps only one record for a repeated dedupe key", () => {
     const result = aggregate([
       record({ dedupeKey: "msg_1:" }),
       record({ dedupeKey: "msg_1:" }),
@@ -59,6 +59,45 @@ describe("UsageAggregator", () => {
     expect(result.buckets).toHaveLength(1);
     expect(result.buckets[0]?.records).toBe(1);
     expect(result.buckets[0]?.totals.outputTokens).toBe(50);
+  });
+
+  it("lets a richer copy supersede a partial one already folded in", () => {
+    // Streaming writes intermediate snapshots of one message under the same
+    // dedupe key; the finished copy carries the full output count.
+    const partial = record({
+      dedupeKey: "msg_1:",
+      totals: { ...record().totals, outputTokens: 5 },
+    });
+    const finished = record({
+      dedupeKey: "msg_1:",
+      totals: { ...record().totals, outputTokens: 500 },
+    });
+
+    const result = aggregate([partial, finished]);
+
+    expect(result.duplicatesDropped).toBe(1);
+    expect(result.buckets).toHaveLength(1);
+    expect(result.buckets[0]?.records).toBe(1);
+    expect(result.buckets[0]?.totals.outputTokens).toBe(500);
+    // The partial copy's dollars must leave with it.
+    // 100*1e-5 + 1000*1e-6 + 10*1.25e-5 + 500*5e-5
+    expect(result.buckets[0]?.costUsd).toBeCloseTo(0.027125, 9);
+  });
+
+  it("drops a poorer copy arriving after the richer one", () => {
+    const finished = record({
+      dedupeKey: "msg_1:",
+      totals: { ...record().totals, outputTokens: 500 },
+    });
+    const partial = record({
+      dedupeKey: "msg_1:",
+      totals: { ...record().totals, outputTokens: 5 },
+    });
+
+    const result = aggregate([finished, partial]);
+
+    expect(result.duplicatesDropped).toBe(1);
+    expect(result.buckets[0]?.totals.outputTokens).toBe(500);
   });
 
   it("still sums records that carry no dedupe key", () => {
