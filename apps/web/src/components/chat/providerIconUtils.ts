@@ -10,6 +10,18 @@ export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>
   [ProviderDriverKind.make("grok")]: GrokIcon,
 };
 
+const CUSTOM_PROVIDER_LOGO_BY_DRIVER_AND_NAME = new Map<string, string>([
+  ["grok:hermes", "/hermes-agent.png"],
+]);
+
+export function getCustomProviderLogoSrc(
+  driverKind: ProviderDriverKind,
+  displayName: string,
+): string | undefined {
+  const key = `${driverKind}:${displayName.trim().toLowerCase()}`;
+  return CUSTOM_PROVIDER_LOGO_BY_DRIVER_AND_NAME.get(key);
+}
+
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
   value: ProviderDriverKind;
   label: string;

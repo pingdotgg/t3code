@@ -1,7 +1,7 @@
 import { type CSSProperties, memo } from "react";
 import { type ProviderDriverKind } from "@t3tools/contracts";
 
-import { PROVIDER_ICON_BY_PROVIDER } from "./providerIconUtils";
+import { getCustomProviderLogoSrc, PROVIDER_ICON_BY_PROVIDER } from "./providerIconUtils";
 import { cn } from "~/lib/utils";
 
 export function providerInstanceInitials(label: string): string {
@@ -27,6 +27,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   indicatorBackground?: string;
 }) {
   const Icon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
+  const customLogoSrc = getCustomProviderLogoSrc(props.driverKind, props.displayName);
   const indicatorBackground = props.indicatorBackground ?? "var(--card)";
   const accentStyle = props.accentColor
     ? ({ "--provider-accent": props.accentColor } as CSSProperties)
@@ -42,7 +43,14 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       style={accentStyle}
       data-provider-accent-color={props.accentColor}
     >
-      {Icon ? (
+      {customLogoSrc ? (
+        <img
+          alt=""
+          aria-hidden
+          className={cn("size-5 shrink-0 rounded-[22%] object-contain", props.iconClassName)}
+          src={customLogoSrc}
+        />
+      ) : Icon ? (
         <Icon className={cn("size-5 shrink-0", props.iconClassName)} aria-hidden />
       ) : (
         <span className={cn("text-[10px] font-semibold leading-none", props.iconClassName)}>
@@ -59,7 +67,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
           aria-hidden
         />
       ) : null}
-      {props.showBadge ? (
+      {props.showBadge && !customLogoSrc ? (
         <span
           className={cn(
             "pointer-events-none absolute right-0 bottom-0 z-10 flex h-3.5 min-w-3.5 items-center justify-center rounded-full border px-0.5 text-[8px] font-semibold leading-none shadow-sm",
