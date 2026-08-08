@@ -42,7 +42,11 @@ import {
   shouldInterruptRunningThreadFromKeybinding,
   shouldSubmitComposerOnEnter,
 } from "../../composer-logic";
-import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
+import {
+  deriveComposerSendState,
+  OPEN_FLOATING_LAYER_SELECTOR,
+  readFileAsDataUrl,
+} from "../ChatView.logic";
 import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
@@ -2305,10 +2309,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ) {
         return;
       }
-      // Belt and suspenders for overlays whose dismiss handlers do not mark
-      // the event consumed; the model picker is excluded via the default
-      // binding's when clause.
-      if (isCommandPaletteOpen() || isStashMenuOpen) {
+      // An open floating layer owns the keyboard even when its dismiss
+      // handler has not run yet — window bubble listeners fire in
+      // registration order, so a later-mounted overlay (the expanded image
+      // viewer) marks the event only after this handler has already seen it.
+      // Checking the DOM instead of the event answers "is an overlay open"
+      // regardless of listener ordering; the model picker is excluded via
+      // the default binding's when clause.
+      if (isCommandPaletteOpen() || document.querySelector(OPEN_FLOATING_LAYER_SELECTOR) !== null) {
         return;
       }
       event.preventDefault();
@@ -2316,7 +2324,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [isComposerModelPickerOpen, isStashMenuOpen, keybindings, onInterrupt, phase, terminalOpen]);
+  }, [isComposerModelPickerOpen, keybindings, onInterrupt, phase, terminalOpen]);
 
   // ------------------------------------------------------------------
   // Callbacks: images

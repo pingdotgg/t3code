@@ -293,6 +293,7 @@ import {
   PullRequestDialogState,
   cloneComposerImageForRetry,
   deriveLockedProvider,
+  OPEN_FLOATING_LAYER_SELECTOR,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
@@ -436,14 +437,7 @@ const TYPE_TO_FOCUS_INTERACTIVE_SELECTOR = [
   '[role="switch"]',
   '[role="tab"]',
 ].join(",");
-const TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR = [
-  '[data-slot="dialog"]',
-  '[data-slot="menu-popup"]',
-  '[data-slot="select-popup"]',
-  '[data-slot="popover-popup"]',
-  '[data-slot="combobox-popup"]',
-  '[data-slot="autocomplete-popup"]',
-].join(",");
+const TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR = OPEN_FLOATING_LAYER_SELECTOR;
 
 type EnvironmentUnavailableState = {
   readonly environmentId: EnvironmentId;
