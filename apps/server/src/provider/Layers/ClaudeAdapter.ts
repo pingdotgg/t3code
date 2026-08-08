@@ -245,6 +245,7 @@ interface ClaudeSessionContext {
   lastKnownTotalProcessedTokens: number | undefined;
   lastAssistantUuid: string | undefined;
   lastThreadStartedId: string | undefined;
+  lastTurnHadStopRequest: boolean;
   stopped: boolean;
   readonly interruptedTurnIds: Set<TurnId>;
 }
@@ -2172,6 +2173,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     errorMessage?: string,
     result?: SDKResultMessage,
   ) {
+    const completedTurnId = context.turnState?.turnId ?? context.session.activeTurnId;
+    context.lastTurnHadStopRequest =
+      status === "interrupted" ||
+      (completedTurnId !== undefined && context.interruptedTurnIds.has(completedTurnId));
+
     const resultContextWindow = maxClaudeContextWindowFromModelUsage(result?.modelUsage);
     if (resultContextWindow !== undefined) {
       context.lastKnownContextWindow = resultContextWindow;
@@ -2244,6 +2250,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     const turnState = context.turnState;
     if (!turnState) {
+      const pendingTurnId = context.session.activeTurnId;
       yield* emitThreadTokenUsage(context, usageSnapshot, {
         rawMethod: "claude/result",
         rawPayload: result ?? { status },
@@ -2256,6 +2263,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         provider: PROVIDER,
         createdAt: stamp.createdAt,
         threadId: context.session.threadId,
+        ...(pendingTurnId !== undefined ? { turnId: pendingTurnId } : {}),
         payload: {
           state: status,
           ...(result?.stop_reason !== undefined ? { stopReason: result.stop_reason } : {}),
@@ -2268,6 +2276,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         },
         providerRefs: {},
       });
+      if (pendingTurnId !== undefined) {
+        context.interruptedTurnIds.delete(pendingTurnId);
+        context.session = {
+          ...context.session,
+          status: "ready",
+          activeTurnId: undefined,
+          updatedAt: yield* nowIso,
+          ...(status === "failed" && errorMessage ? { lastError: errorMessage } : {}),
+        };
+        yield* updateResumeCursor(context);
+      }
       return;
     }
 
@@ -2860,6 +2879,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     if (!context.turnState) {
       const turnId = TurnId.make(yield* randomUUIDv4);
       const startedAt = yield* nowIso;
+      context.lastTurnHadStopRequest = false;
       context.turnState = {
         turnId,
         startedAt,
@@ -2943,8 +2963,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
-    const interrupted =
-      context.turnState !== undefined && context.interruptedTurnIds.has(context.turnState.turnId);
+    const activeTurnId = context.turnState?.turnId ?? context.session.activeTurnId;
+    const interrupted = activeTurnId !== undefined && context.interruptedTurnIds.has(activeTurnId);
     const status =
       interrupted && message.subtype !== "success" ? "interrupted" : turnStatusFromResult(message);
     const errorMessage = resultUserFacingError(message);
@@ -3572,12 +3592,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
+    const activeTurnId = context.turnState?.turnId ?? context.session.activeTurnId;
     const interrupted =
-      context.turnState !== undefined && context.interruptedTurnIds.has(context.turnState.turnId);
+      context.lastTurnHadStopRequest ||
+      (activeTurnId !== undefined && context.interruptedTurnIds.has(activeTurnId));
 
     if (Exit.isFailure(exit)) {
       if (interrupted || isClaudeInterruptedCause(exit.cause)) {
-        if (context.turnState) {
+        if (activeTurnId !== undefined) {
           yield* completeTurn(context, "interrupted", "Claude runtime interrupted.");
         }
       } else {
@@ -4221,6 +4243,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastKnownTotalProcessedTokens: undefined,
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
+        lastTurnHadStopRequest: false,
         stopped: false,
         interruptedTurnIds: new Set(),
       };
@@ -4303,6 +4326,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
   const sendTurn: ClaudeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
     const context = yield* requireSession(input.threadId);
+    if (context.turnState === undefined && context.session.activeTurnId !== undefined) {
+      return yield* new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "turn/start",
+        detail: "Claude is still finishing the previous turn.",
+      });
+    }
     const modelSelection =
       input.modelSelection !== undefined && input.modelSelection.instanceId === boundInstanceId
         ? input.modelSelection
@@ -4319,45 +4349,96 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       yield* completeTurn(context, "completed");
     }
 
-    if (modelSelection?.model) {
-      const apiModelId = resolveClaudeApiModelId(modelSelection);
-      if (context.currentApiModelId !== apiModelId) {
-        yield* Effect.tryPromise({
-          try: () => context.query.setModel(apiModelId),
-          catch: (cause) => toRequestError(input.threadId, "turn/setModel", cause),
-        });
-        context.currentApiModelId = apiModelId;
-      }
+    const turnId = steeringTurnState?.turnId ?? TurnId.make(yield* randomUUIDv4);
+    if (steeringTurnState === null) {
+      context.lastTurnHadStopRequest = false;
       context.session = {
         ...context.session,
-        model: modelSelection.model,
+        status: "running",
+        activeTurnId: turnId,
+        updatedAt: yield* nowIso,
       };
-      const turnCaps = getClaudeModelCapabilities(modelSelection.model);
-      const turnEffort = resolveClaudeEffort(
-        turnCaps,
-        getModelSelectionStringOptionValue(modelSelection, "effort"),
-      );
-      context.currentEffort =
-        getEffectiveClaudeAgentEffort(turnEffort ?? null, modelSelection.model) ?? undefined;
     }
 
-    // Apply interaction mode by switching the SDK's permission mode.
-    // "plan" maps directly to the SDK's "plan" permission mode;
-    // "default" restores the session's original permission mode.
-    // When interactionMode is absent we leave the current mode unchanged.
-    if (input.interactionMode === "plan") {
-      yield* Effect.tryPromise({
-        try: () => context.query.setPermissionMode("plan"),
-        catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
+    const message = yield* Effect.gen(function* () {
+      if (modelSelection?.model) {
+        const apiModelId = resolveClaudeApiModelId(modelSelection);
+        if (context.currentApiModelId !== apiModelId) {
+          yield* Effect.tryPromise({
+            try: () => context.query.setModel(apiModelId),
+            catch: (cause) => toRequestError(input.threadId, "turn/setModel", cause),
+          });
+          context.currentApiModelId = apiModelId;
+        }
+        context.session = {
+          ...context.session,
+          model: modelSelection.model,
+        };
+        const turnCaps = getClaudeModelCapabilities(modelSelection.model);
+        const turnEffort = resolveClaudeEffort(
+          turnCaps,
+          getModelSelectionStringOptionValue(modelSelection, "effort"),
+        );
+        context.currentEffort =
+          getEffectiveClaudeAgentEffort(turnEffort ?? null, modelSelection.model) ?? undefined;
+      }
+
+      // Apply interaction mode by switching the SDK's permission mode.
+      // "plan" maps directly to the SDK's "plan" permission mode;
+      // "default" restores the session's original permission mode.
+      // When interactionMode is absent we leave the current mode unchanged.
+      if (input.interactionMode === "plan") {
+        yield* Effect.tryPromise({
+          try: () => context.query.setPermissionMode("plan"),
+          catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
+        });
+      } else if (input.interactionMode === "default") {
+        yield* Effect.tryPromise({
+          try: () => context.query.setPermissionMode(context.basePermissionMode ?? "default"),
+          catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
+        });
+      }
+
+      return yield* buildUserMessageEffect(input, {
+        fileSystem,
+        attachmentsDir: serverConfig.attachmentsDir,
+        boundInstanceId,
       });
-    } else if (input.interactionMode === "default") {
-      yield* Effect.tryPromise({
-        try: () => context.query.setPermissionMode(context.basePermissionMode ?? "default"),
-        catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
-      });
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          const activeTurnId = context.turnState?.turnId ?? context.session.activeTurnId;
+          if (activeTurnId !== turnId || context.interruptedTurnIds.has(turnId)) {
+            return yield* Effect.interrupt;
+          }
+          if (
+            steeringTurnState === null &&
+            context.turnState === undefined &&
+            context.session.activeTurnId === turnId
+          ) {
+            context.interruptedTurnIds.delete(turnId);
+            context.session = {
+              ...context.session,
+              status: "ready",
+              activeTurnId: undefined,
+              updatedAt: yield* nowIso,
+            };
+          }
+          return yield* error;
+        }),
+      ),
+    );
+
+    const preparedTurnId = context.turnState?.turnId ?? context.session.activeTurnId;
+    if (preparedTurnId !== turnId || context.interruptedTurnIds.has(turnId)) {
+      // A concurrent Stop is cancellation, not a provider start failure. Keep
+      // its turn binding and stop intent until the SDK's terminal result (or
+      // stream exit) arrives so that delayed failures cannot leak into a later
+      // turn. Interrupting this fiber also lets orchestration ignore the
+      // canceled start without recording provider.turn.start.failed.
+      return yield* Effect.interrupt;
     }
 
-    const turnId = steeringTurnState?.turnId ?? TurnId.make(yield* randomUUIDv4);
     if (steeringTurnState === null) {
       const turnState: ClaudeTurnState = {
         turnId,
@@ -4391,11 +4472,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     }
 
-    const message = yield* buildUserMessageEffect(input, {
-      fileSystem,
-      attachmentsDir: serverConfig.attachmentsDir,
-      boundInstanceId,
-    });
+    if (context.turnState?.turnId !== turnId || context.interruptedTurnIds.has(turnId)) {
+      return yield* Effect.interrupt;
+    }
 
     yield* Queue.offer(context.promptQueue, {
       type: "message",
@@ -4414,8 +4493,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const interruptTurn: ClaudeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
     function* (threadId, turnId) {
       const context = yield* requireSession(threadId);
-      const targetTurnId = turnId ?? context.turnState?.turnId;
+      const targetTurnId = turnId ?? context.turnState?.turnId ?? context.session.activeTurnId;
+
       if (targetTurnId !== undefined) {
+        // Record intent before stopping child tasks: a terminal result can race
+        // any awaited stopTask call and must already be classified as stopped.
         context.interruptedTurnIds.add(targetTurnId);
       }
 
@@ -4457,9 +4539,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
                 provider: PROVIDER,
                 createdAt: stamp.createdAt,
                 threadId: context.session.threadId,
-                ...(context.turnState
-                  ? { turnId: asCanonicalTurnId(context.turnState.turnId) }
-                  : {}),
+                ...(targetTurnId !== undefined ? { turnId: asCanonicalTurnId(targetTurnId) } : {}),
                 payload: {
                   taskId: RuntimeTaskId.make(taskId),
                   status: "stopped",
@@ -4471,10 +4551,34 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           { concurrency: 8, discard: true },
         ).pipe(Effect.timeoutOption("10 seconds"), Effect.ignore);
       }
+
+      // stopTask can take several seconds. Do not let a completed target turn
+      // hand its delayed interrupt to a follow-up turn that started meanwhile.
+      const activeTurnId = context.turnState?.turnId ?? context.session.activeTurnId;
+      if (activeTurnId !== targetTurnId) {
+        if (targetTurnId !== undefined) {
+          context.interruptedTurnIds.delete(targetTurnId);
+        }
+        return;
+      }
+
       yield* Effect.tryPromise({
         try: () => context.query.interrupt(),
         catch: (cause) => toRequestError(threadId, "turn/interrupt", cause),
-      });
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.gen(function* () {
+            const activeTurnId = context.turnState?.turnId ?? context.session.activeTurnId;
+            if (activeTurnId !== targetTurnId) {
+              return;
+            }
+            if (targetTurnId !== undefined) {
+              context.interruptedTurnIds.delete(targetTurnId);
+            }
+            return yield* error;
+          }),
+        ),
+      );
     },
   );
 

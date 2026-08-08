@@ -23,6 +23,7 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -59,6 +60,9 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   public readonly setModelCalls: Array<string | undefined> = [];
   public readonly setPermissionModeCalls: Array<string> = [];
   public readonly setMaxThinkingTokensCalls: Array<number | null> = [];
+  public interruptFailure: unknown | undefined;
+  public setModelImplementation: (model?: string) => Promise<void> = async () => {};
+  public stopTaskImplementation: (taskId: string) => Promise<void> = async () => {};
   public closeCalls = 0;
 
   emit(message: SDKMessage): void {
@@ -97,14 +101,19 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
 
   readonly interrupt = async (): Promise<void> => {
     this.interruptCalls.push(undefined);
+    if (this.interruptFailure !== undefined) {
+      throw this.interruptFailure;
+    }
   };
 
   readonly stopTask = async (taskId: string): Promise<void> => {
     this.stopTaskCalls.push(taskId);
+    await this.stopTaskImplementation(taskId);
   };
 
   readonly setModel = async (model?: string): Promise<void> => {
     this.setModelCalls.push(model);
+    await this.setModelImplementation(model);
   };
 
   readonly setPermissionMode = async (mode: PermissionMode): Promise<void> => {
@@ -1561,6 +1570,333 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("keeps stop intent while a turn model is being prepared", () => {
+    const harness = makeHarness();
+    const setModelStarted = Promise.withResolvers<void>();
+    const releaseSetModel = Promise.withResolvers<void>();
+    harness.query.setModelImplementation = async () => {
+      setModelStarted.resolve();
+      await releaseSetModel.promise;
+    };
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+      const sendTurnFiber = yield* adapter
+        .sendTurn({
+          threadId: THREAD_ID,
+          input: "hello",
+          attachments: [],
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("claudeAgent"),
+            "claude-opus-4-6",
+          ),
+        })
+        .pipe(Effect.forkChild);
+
+      yield* Effect.promise(() => setModelStarted.promise);
+      yield* adapter.interruptTurn(THREAD_ID);
+      assert.equal(harness.query.interruptCalls.length, 1);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["Unrecognized failure after stop"],
+        session_id: "sdk-session-preparing-stop",
+        uuid: "result-preparing-stop",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.equal(
+        runtimeEvents.find((event) => event.type === "runtime.error"),
+        undefined,
+      );
+      const turnCompleted = runtimeEvents.find((event) => event.type === "turn.completed");
+      assert.equal(turnCompleted?.type, "turn.completed");
+      if (turnCompleted?.type === "turn.completed") {
+        assert.equal(turnCompleted.payload.state, "interrupted");
+        assert.notEqual(turnCompleted.turnId, undefined);
+      }
+
+      releaseSetModel.resolve();
+      const sendTurnExit = yield* Fiber.await(sendTurnFiber);
+      assert.equal(sendTurnExit._tag, "Failure");
+      if (sendTurnExit._tag === "Failure") {
+        assert.isTrue(Cause.hasInterruptsOnly(sendTurnExit.cause));
+      }
+      yield* adapter.stopSession(THREAD_ID);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("treats a preparation rejection after Stop as cancellation", () => {
+    const harness = makeHarness();
+    const setModelStarted = Promise.withResolvers<void>();
+    const releaseSetModel = Promise.withResolvers<void>();
+    harness.query.setModelImplementation = async () => {
+      setModelStarted.resolve();
+      await releaseSetModel.promise;
+      throw new Error("setModel canceled");
+    };
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const sendTurnFiber = yield* adapter
+        .sendTurn({
+          threadId: THREAD_ID,
+          input: "hello",
+          attachments: [],
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("claudeAgent"),
+            "claude-opus-4-6",
+          ),
+        })
+        .pipe(Effect.forkChild);
+
+      yield* Effect.promise(() => setModelStarted.promise);
+      yield* adapter.interruptTurn(THREAD_ID);
+      releaseSetModel.resolve();
+
+      const sendTurnExit = yield* Fiber.await(sendTurnFiber);
+      assert.equal(sendTurnExit._tag, "Failure");
+      if (sendTurnExit._tag === "Failure") {
+        assert.isTrue(Cause.hasInterruptsOnly(sendTurnExit.cause));
+      }
+
+      const preparingSessions = yield* adapter.listSessions();
+      assert.equal(preparingSessions[0]?.status, "running");
+      const interruptedTurnId = preparingSessions[0]?.activeTurnId;
+      assert.notEqual(interruptedTurnId, undefined);
+
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["Delayed failure after canceled preparation"],
+        session_id: "sdk-session-preparation-rejection",
+        uuid: "result-preparation-rejection",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.equal(
+        runtimeEvents.find((event) => event.type === "runtime.error"),
+        undefined,
+      );
+      const turnCompleted = runtimeEvents.find((event) => event.type === "turn.completed");
+      assert.equal(turnCompleted?.type, "turn.completed");
+      if (turnCompleted?.type === "turn.completed") {
+        assert.equal(String(turnCompleted.turnId), String(interruptedTurnId));
+        assert.equal(turnCompleted.payload.state, "interrupted");
+      }
+      yield* adapter.stopSession(THREAD_ID);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("keeps a prepared turn bound until its delayed interrupt result", () => {
+    const harness = makeHarness();
+    const setModelStarted = Promise.withResolvers<void>();
+    const releaseSetModel = Promise.withResolvers<void>();
+    harness.query.setModelImplementation = async () => {
+      setModelStarted.resolve();
+      await releaseSetModel.promise;
+    };
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const sendTurnFiber = yield* adapter
+        .sendTurn({
+          threadId: THREAD_ID,
+          input: "hello",
+          attachments: [],
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("claudeAgent"),
+            "claude-opus-4-6",
+          ),
+        })
+        .pipe(Effect.forkChild);
+
+      yield* Effect.promise(() => setModelStarted.promise);
+      yield* adapter.interruptTurn(THREAD_ID);
+      releaseSetModel.resolve();
+      const sendTurnExit = yield* Fiber.await(sendTurnFiber);
+      assert.equal(sendTurnExit._tag, "Failure");
+      if (sendTurnExit._tag === "Failure") {
+        assert.isTrue(Cause.hasInterruptsOnly(sendTurnExit.cause));
+      }
+
+      const preparingSessions = yield* adapter.listSessions();
+      assert.equal(preparingSessions[0]?.status, "running");
+      const interruptedTurnId = preparingSessions[0]?.activeTurnId;
+      assert.notEqual(interruptedTurnId, undefined);
+
+      const prematureFollowUp = yield* adapter
+        .sendTurn({
+          threadId: THREAD_ID,
+          input: "too early",
+          attachments: [],
+        })
+        .pipe(Effect.result);
+      assert.equal(prematureFollowUp._tag, "Failure");
+      if (prematureFollowUp._tag === "Failure") {
+        assert.equal(prematureFollowUp.failure._tag, "ProviderAdapterRequestError");
+      }
+      const stillPreparingSessions = yield* adapter.listSessions();
+      assert.equal(String(stillPreparingSessions[0]?.activeTurnId), String(interruptedTurnId));
+
+      const interruptedEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["Delayed failure after stop"],
+        session_id: "sdk-session-delayed-stop",
+        uuid: "result-delayed-stop",
+      } as unknown as SDKMessage);
+
+      const interruptedEvents = Array.from(yield* Fiber.join(interruptedEventsFiber));
+      assert.equal(
+        interruptedEvents.find((event) => event.type === "runtime.error"),
+        undefined,
+      );
+      const interruptedCompletion = interruptedEvents.find(
+        (event) => event.type === "turn.completed",
+      );
+      assert.equal(interruptedCompletion?.type, "turn.completed");
+      if (interruptedCompletion?.type === "turn.completed") {
+        assert.equal(String(interruptedCompletion.turnId), String(interruptedTurnId));
+        assert.equal(interruptedCompletion.payload.state, "interrupted");
+      }
+
+      const readySessions = yield* adapter.listSessions();
+      assert.equal(readySessions[0]?.status, "ready");
+      assert.equal(readySessions[0]?.activeTurnId, undefined);
+
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+      const followUpTurn = yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "follow up",
+        attachments: [],
+      });
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["Real follow-up failure"],
+        session_id: "sdk-session-follow-up-failure",
+        uuid: "result-follow-up-failure",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const runtimeError = runtimeEvents.find((event) => event.type === "runtime.error");
+      assert.equal(runtimeError?.type, "runtime.error");
+      if (runtimeError?.type === "runtime.error") {
+        assert.equal(runtimeError.payload.message, "Real follow-up failure");
+      }
+      const turnCompleted = runtimeEvents.find((event) => event.type === "turn.completed");
+      assert.equal(turnCompleted?.type, "turn.completed");
+      if (turnCompleted?.type === "turn.completed") {
+        assert.equal(String(turnCompleted.turnId), String(followUpTurn.turnId));
+        assert.equal(turnCompleted.payload.state, "failed");
+      }
+
+      yield* adapter.stopSession(THREAD_ID);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("keeps real failures when the interrupt request is rejected", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      harness.query.interruptFailure = new Error("interrupt rejected");
+      const interruptExit = yield* Effect.exit(adapter.interruptTurn(THREAD_ID, turn.turnId));
+      assert.equal(interruptExit._tag, "Failure");
+
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["Real Claude failure"],
+        session_id: "sdk-session-real-failure",
+        uuid: "result-real-failure",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const runtimeError = runtimeEvents.find((event) => event.type === "runtime.error");
+      assert.equal(runtimeError?.type, "runtime.error");
+      if (runtimeError?.type === "runtime.error") {
+        assert.equal(runtimeError.payload.message, "Real Claude failure");
+      }
+
+      const turnCompleted = runtimeEvents.find((event) => event.type === "turn.completed");
+      assert.equal(turnCompleted?.type, "turn.completed");
+      if (turnCompleted?.type === "turn.completed") {
+        assert.equal(String(turnCompleted.turnId), String(turn.turnId));
+        assert.equal(turnCompleted.payload.state, "failed");
+        assert.equal(turnCompleted.payload.errorMessage, "Real Claude failure");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("interruptTurn settles every acknowledged live task before interrupting", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -1640,6 +1976,93 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(stoppedTaskEvent.payload.taskType, "local_agent");
         assert.equal(stoppedTaskEvent.payload.title, "Agent A");
       }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("does not interrupt a follow-up turn after stopTask delays", () => {
+    const harness = makeHarness();
+    const stopTaskStarted = Promise.withResolvers<void>();
+    const releaseStopTask = Promise.withResolvers<void>();
+    harness.query.stopTaskImplementation = async () => {
+      stopTaskStarted.resolve();
+      await releaseStopTask.promise;
+    };
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const taskStartedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "task.started"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const firstTurn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn an agent",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-delayed-stop",
+        description: "Agent A",
+        task_type: "local_agent",
+        uuid: "task-delayed-stop-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      yield* Fiber.join(taskStartedFiber);
+
+      const interruptFiber = yield* adapter
+        .interruptTurn(session.threadId, firstTurn.turnId)
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => stopTaskStarted.promise);
+
+      const firstTurnEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["Failure while child tasks are stopping"],
+        session_id: "sdk-session-first-complete",
+        uuid: "result-first-complete",
+      } as unknown as SDKMessage);
+      const firstTurnEvents = Array.from(yield* Fiber.join(firstTurnEventsFiber));
+      assert.equal(
+        firstTurnEvents.find((event) => event.type === "runtime.error"),
+        undefined,
+      );
+      const firstTurnCompleted = firstTurnEvents.find((event) => event.type === "turn.completed");
+      assert.equal(firstTurnCompleted?.type, "turn.completed");
+      if (firstTurnCompleted?.type === "turn.completed") {
+        assert.equal(firstTurnCompleted.payload.state, "interrupted");
+      }
+
+      const followUpTurn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "follow up",
+        attachments: [],
+      });
+      assert.notEqual(String(followUpTurn.turnId), String(firstTurn.turnId));
+
+      releaseStopTask.resolve();
+      yield* Fiber.join(interruptFiber);
+
+      assert.deepEqual(harness.query.stopTaskCalls, ["task-delayed-stop"]);
+      assert.equal(harness.query.interruptCalls.length, 0);
+      yield* adapter.stopSession(session.threadId);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -1918,6 +2341,64 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(turnCompleted.payload.errorMessage, "Claude runtime interrupted.");
       }
 
+      assert.equal(yield* adapter.hasSession(THREAD_ID), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("suppresses a stream failure after an interrupted result", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.tap((event) =>
+          event.type === "turn.completed"
+            ? Effect.sync(() => {
+                harness.query.fail(new Error("Claude Code process exited with code 143"));
+              })
+            : Effect.void,
+        ),
+        Stream.takeUntil((event) => event.type === "session.exited"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "hello",
+        attachments: [],
+      });
+      yield* adapter.interruptTurn(THREAD_ID, turn.turnId);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["Failure after stop"],
+        session_id: "sdk-session-result-before-exit",
+        uuid: "result-before-exit",
+      } as unknown as SDKMessage);
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+
+      assert.equal(
+        runtimeEvents.find((event) => event.type === "runtime.error"),
+        undefined,
+      );
+      const turnCompletions = runtimeEvents.filter((event) => event.type === "turn.completed");
+      assert.equal(turnCompletions.length, 1);
+      const turnCompleted = turnCompletions[0];
+      assert.equal(turnCompleted?.type, "turn.completed");
+      if (turnCompleted?.type === "turn.completed") {
+        assert.equal(String(turnCompleted.turnId), String(turn.turnId));
+        assert.equal(turnCompleted.payload.state, "interrupted");
+      }
       assert.equal(yield* adapter.hasSession(THREAD_ID), false);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
