@@ -6,6 +6,7 @@ on:
       - "apps/swift-ios/**"
       - "packages/contracts/**"
       - "scripts/generate-swift-wire-fixtures.ts"
+      - "scripts/package.json"
       - ".github/workflows/swift-ios.yml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -17,6 +18,7 @@ on:
       - "apps/swift-ios/**"
       - "packages/contracts/**"
       - "scripts/generate-swift-wire-fixtures.ts"
+      - "scripts/package.json"
       - ".github/workflows/swift-ios.yml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -47,7 +49,7 @@ jobs:
           cache: true
           run-install: |
             args:
-              - --filter=@t3tools/contracts...
+              - --filter=@t3tools/scripts...
 
       - name: Verify generated wire fixtures
         run: node scripts/generate-swift-wire-fixtures.ts --check

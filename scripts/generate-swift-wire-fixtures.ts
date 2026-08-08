@@ -1,15 +1,16 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import {
   OrchestrationShellSnapshot,
   OrchestrationShellStreamItem,
   OrchestrationThreadDetailSnapshot,
   OrchestrationThreadStreamItem,
-} from "../packages/contracts/src/orchestration.ts";
+} from "@t3tools/contracts";
 
-const root = resolve(import.meta.dirname, "..");
-const outputDirectory = resolve(root, "apps/swift-ios/Tests/Fixtures/Wire");
 const check = process.argv.includes("--check");
 const timestamp = "2026-08-07T12:00:00.000Z";
 
@@ -104,37 +105,63 @@ const encodeThreadStreamItem = Schema.encodeSync(OrchestrationThreadStreamItem);
 
 const shellSnapshot = encodeShellSnapshot(decodeShellSnapshot(shellSnapshotInput));
 const threadDetail = encodeThreadDetail(decodeThreadDetail(threadDetailInput));
-const fixtures = new Map<string, unknown>([
-  ["shell-snapshot.json", shellSnapshot],
-  ["thread-detail-snapshot.json", threadDetail],
+const serializeFixture = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
+const fixtures = new Map<string, string>([
+  ["shell-snapshot.json", serializeFixture(shellSnapshot)],
+  ["thread-detail-snapshot.json", serializeFixture(threadDetail)],
   [
     "shell-stream-snapshot.json",
-    encodeShellStreamItem(decodeShellStreamItem({ kind: "snapshot", snapshot: shellSnapshot })),
+    serializeFixture(
+      encodeShellStreamItem(decodeShellStreamItem({ kind: "snapshot", snapshot: shellSnapshot })),
+    ),
   ],
   [
     "thread-stream-snapshot.json",
-    encodeThreadStreamItem(decodeThreadStreamItem({ kind: "snapshot", snapshot: threadDetail })),
+    serializeFixture(
+      encodeThreadStreamItem(decodeThreadStreamItem({ kind: "snapshot", snapshot: threadDetail })),
+    ),
   ],
 ]);
 
-let stale = false;
-for (const [name, value] of fixtures) {
-  const path = resolve(outputDirectory, name);
-  const contents = `${JSON.stringify(value, null, 2)}\n`;
-  if (check) {
-    const current = await readFile(path, "utf8").catch(() => undefined);
-    if (current !== contents) {
-      console.error(`[swift-wire-fixtures] stale: ${name}`);
-      stale = true;
-    }
-  } else {
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, contents);
-    console.log(`[swift-wire-fixtures] wrote ${name}`);
+class StaleWireFixturesError extends Schema.TaggedErrorClass<StaleWireFixturesError>()(
+  "StaleWireFixturesError",
+  {
+    staleFixtures: Schema.Array(Schema.String),
+  },
+) {
+  override get message(): string {
+    return "Run `node scripts/generate-swift-wire-fixtures.ts` and commit the result.";
   }
 }
 
-if (stale) {
-  console.error("Run `node scripts/generate-swift-wire-fixtures.ts` and commit the result.");
-  process.exitCode = 1;
-}
+const generateSwiftWireFixtures = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  const root = path.resolve(import.meta.dirname, "..");
+  const outputDirectory = path.resolve(root, "apps/swift-ios/Tests/Fixtures/Wire");
+
+  const staleFixtures: string[] = [];
+  for (const [name, contents] of fixtures) {
+    const filePath = path.resolve(outputDirectory, name);
+    if (check) {
+      const current = yield* fs
+        .readFileString(filePath)
+        .pipe(Effect.orElseSucceed(() => undefined));
+      if (current !== contents) {
+        yield* Effect.logError(`[swift-wire-fixtures] stale: ${name}`);
+        staleFixtures.push(name);
+      }
+    } else {
+      yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+      yield* fs.writeFileString(filePath, contents);
+      yield* Effect.log(`[swift-wire-fixtures] wrote ${name}`);
+    }
+  }
+
+  if (staleFixtures.length > 0) {
+    return yield* new StaleWireFixturesError({ staleFixtures });
+  }
+});
+
+generateSwiftWireFixtures.pipe(Effect.provide(NodeServices.layer), NodeRuntime.runMain);
