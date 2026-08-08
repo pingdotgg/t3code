@@ -41,6 +41,15 @@ export function resolveTerminalFontPreference(input: {
   return input.code;
 }
 
+export function resolveTerminalFontSizePreference(input: {
+  readonly advanced: boolean;
+  readonly code: number;
+  readonly terminal: number;
+}): number {
+  if (input.advanced) return input.terminal;
+  return input.code;
+}
+
 function quoteFontFamilyName(name: string): string {
   const bare = name.trim();
   if (bare.length === 0) return "";
