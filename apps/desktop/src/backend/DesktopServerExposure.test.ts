@@ -38,6 +38,16 @@ const tailnetNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {
   ],
 };
 
+const multiNicNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {
+  wg0: [{ address: "10.8.0.5", family: "IPv4", internal: false }],
+  en0: [
+    { address: "192.168.1.20", family: "IPv4", internal: false },
+    { address: "fe80::1", family: "IPv6", internal: false },
+  ],
+  en1: [{ address: "169.254.10.10", family: "IPv4", internal: false }],
+  lo0: [{ address: "127.0.0.1", family: "IPv4", internal: true }],
+};
+
 function mockSpawnerLayer(statusJson = "{}") {
   return Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
@@ -468,4 +478,153 @@ describe("DesktopServerExposure", () => {
       },
     ),
   );
+
+  it.effect("advertises one LAN endpoint per usable interface", () =>
+    withHarness(
+      multiNicNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        const change = yield* serverExposure.setMode("network-accessible");
+        assert.equal(change.state.advertisedHost, "10.8.0.5");
+        assert.equal(change.state.endpointUrl, "http://10.8.0.5:4173");
+
+        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        assert.deepEqual(
+          endpoints.map((endpoint) => endpoint.httpBaseUrl),
+          ["http://127.0.0.1:4173/", "http://10.8.0.5:4173/", "http://192.168.1.20:4173/"],
+        );
+
+        const wgEndpoint = endpoints.find(
+          (endpoint) => endpoint.httpBaseUrl === "http://10.8.0.5:4173/",
+        );
+        const enEndpoint = endpoints.find(
+          (endpoint) => endpoint.httpBaseUrl === "http://192.168.1.20:4173/",
+        );
+        assert.equal(wgEndpoint?.label, "Local network (wg0)");
+        assert.equal(enEndpoint?.label, "Local network (en0)");
+        assert.equal(wgEndpoint?.isDefault, true);
+        assert.isTrue(enEndpoint !== undefined && !("isDefault" in enEndpoint));
+      }),
+    ),
+  );
+
+  it.effect("accepts numeric IPv4 family values", () =>
+    withHarness(
+      { eth0: [{ address: "192.168.7.7", family: 4, internal: false }] },
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        const change = yield* serverExposure.setMode("network-accessible");
+        assert.equal(change.state.advertisedHost, "192.168.7.7");
+
+        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        assert.deepEqual(
+          endpoints.map((endpoint) => endpoint.httpBaseUrl),
+          ["http://127.0.0.1:4173/", "http://192.168.7.7:4173/"],
+        );
+      }),
+    ),
+  );
+
+  it.effect("stays network-accessible on tailnet-only machines without duplicate endpoints", () =>
+    withHarness(
+      tailnetNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        const change = yield* serverExposure.setMode("network-accessible");
+        assert.equal(change.state.advertisedHost, "100.90.1.2");
+
+        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        const matches = endpoints.filter(
+          (endpoint) => endpoint.httpBaseUrl === "http://100.90.1.2:4173/",
+        );
+        assert.equal(matches.length, 1);
+        assert.isTrue(matches[0]!.id.startsWith("tailscale-ip:"));
+        // The dropped LAN duplicate carried the default marker; it must move
+        // to the surviving Tailscale entry instead of disappearing.
+        assert.equal(matches[0]!.isDefault, true);
+      }),
+    ),
+  );
+
+  it.effect("dedupes tailnet addresses reported with numeric family values", () =>
+    withHarness(
+      { tailscale0: [{ address: "100.90.1.2", family: 4, internal: false }] },
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+        yield* serverExposure.setMode("network-accessible");
+
+        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        const matches = endpoints.filter(
+          (endpoint) => endpoint.httpBaseUrl === "http://100.90.1.2:4173/",
+        );
+        assert.equal(matches.length, 1);
+        assert.isTrue(matches[0]!.id.startsWith("tailscale-ip:"));
+        assert.equal(matches[0]!.isDefault, true);
+      }),
+    ),
+  );
+
+  it.effect("dedupes an address reported by multiple interfaces", () =>
+    withHarness(
+      {
+        en0: [{ address: "192.168.1.20", family: "IPv4", internal: false }],
+        en1: [{ address: "192.168.1.20", family: "IPv4", internal: false }],
+      },
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+        yield* serverExposure.setMode("network-accessible");
+
+        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        assert.deepEqual(
+          endpoints.map((endpoint) => endpoint.httpBaseUrl),
+          ["http://127.0.0.1:4173/", "http://192.168.1.20:4173/"],
+        );
+        assert.equal(endpoints[1]!.label, "Local network");
+      }),
+    ),
+  );
+
+  it.effect("reflects interface changes without reconfiguring", () => {
+    const mutableInterfaces: {
+      [name: string]: readonly DesktopNetworkInterfaces.DesktopNetworkInterfaceInfo[];
+    } = {
+      en0: [{ address: "192.168.1.20", family: "IPv4", internal: false }],
+    };
+    return withHarness(
+      mutableInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+        yield* serverExposure.setMode("network-accessible");
+
+        const initial = yield* serverExposure.getAdvertisedEndpoints;
+        assert.deepEqual(
+          initial.map((endpoint) => endpoint.httpBaseUrl),
+          ["http://127.0.0.1:4173/", "http://192.168.1.20:4173/"],
+        );
+
+        mutableInterfaces["wg0"] = [{ address: "10.8.0.5", family: "IPv4", internal: false }];
+        const afterConnect = yield* serverExposure.getAdvertisedEndpoints;
+        assert.deepEqual(
+          afterConnect.map((endpoint) => endpoint.httpBaseUrl),
+          ["http://127.0.0.1:4173/", "http://192.168.1.20:4173/", "http://10.8.0.5:4173/"],
+        );
+
+        delete mutableInterfaces["wg0"];
+        const afterDisconnect = yield* serverExposure.getAdvertisedEndpoints;
+        assert.deepEqual(
+          afterDisconnect.map((endpoint) => endpoint.httpBaseUrl),
+          ["http://127.0.0.1:4173/", "http://192.168.1.20:4173/"],
+        );
+      }),
+    );
+  });
 });
