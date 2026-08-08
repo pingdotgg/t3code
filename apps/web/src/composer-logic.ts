@@ -18,6 +18,16 @@ export function shouldSubmitComposerOnEnter(input: {
   return !input.isMobileViewport && !input.shiftKey;
 }
 
+// The interrupt shortcut is only ours while a turn is actually running. When
+// the thread is idle the key stays free for whatever else claims it, so the
+// default Escape binding does not swallow dismiss behavior.
+export function shouldInterruptRunningThreadFromKeybinding(input: {
+  command: string | null;
+  isRunning: boolean;
+}): boolean {
+  return input.command === "thread.interrupt" && input.isRunning;
+}
+
 const isInlineTokenSegment = (
   segment:
     | { type: "text"; text: string }

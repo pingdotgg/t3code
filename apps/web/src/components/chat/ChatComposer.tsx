@@ -39,6 +39,7 @@ import {
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   replaceTextRange,
+  shouldInterruptRunningThreadFromKeybinding,
   shouldSubmitComposerOnEnter,
 } from "../../composer-logic";
 import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
@@ -2274,6 +2275,31 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     stashCurrentPrompt,
     terminalOpen,
   ]);
+
+  // Interrupting the running turn is a keybinding rather than a hard-coded key
+  // so it shows up in Settings and can be rebound. It only claims the shortcut
+  // while a turn is running; otherwise the key falls through untouched.
+  useEffect(() => {
+    const handler = (event: globalThis.KeyboardEvent) => {
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: getTerminalFocusOwner() !== null,
+          terminalOpen,
+          modelPickerOpen: isComposerModelPickerOpen,
+        },
+      });
+      if (
+        !shouldInterruptRunningThreadFromKeybinding({ command, isRunning: phase === "running" })
+      ) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      onInterrupt();
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [isComposerModelPickerOpen, keybindings, onInterrupt, phase, terminalOpen]);
 
   // ------------------------------------------------------------------
   // Callbacks: images
