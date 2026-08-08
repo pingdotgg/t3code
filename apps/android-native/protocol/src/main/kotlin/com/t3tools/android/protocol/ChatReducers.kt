@@ -92,13 +92,26 @@ private fun ThreadState.reduceThreadEvent(event: JsonObject): ThreadState {
     )
     "thread.unarchived" -> current.copy(summary = current.summary.copy(archivedAt = null))
     "thread.settled" -> current.copy(
-      summary = current.summary.copy(settledAt = payload.text("settledAt")),
+      summary = current.summary.copy(
+        settledOverride = "settled",
+        settledAt = payload.text("settledAt"),
+      ),
     )
-    "thread.unsettled" -> current.copy(summary = current.summary.copy(settledAt = null))
+    "thread.unsettled" -> current.copy(
+      summary = current.summary.copy(
+        settledOverride = if (payload.text("reason") == "user") "active" else null,
+        settledAt = null,
+      ),
+    )
     "thread.snoozed" -> current.copy(
-      summary = current.summary.copy(snoozedUntil = payload.text("snoozedUntil")),
+      summary = current.summary.copy(
+        snoozedUntil = payload.text("snoozedUntil"),
+        snoozedAt = payload.text("snoozedAt"),
+      ),
     )
-    "thread.unsnoozed" -> current.copy(summary = current.summary.copy(snoozedUntil = null))
+    "thread.unsnoozed" -> current.copy(
+      summary = current.summary.copy(snoozedUntil = null, snoozedAt = null),
+    )
     "thread.pinned" -> current.copy(
       summary = current.summary.copy(
         pinnedAt = payload.text("pinnedAt"),
@@ -187,13 +200,19 @@ private fun JsonObject.toThreadSummary(): ThreadSummary? {
     worktreePath = nullableText("worktreePath"),
     latestTurn = obj("latestTurn")?.let { turn ->
       val turnId = turn.text("turnId") ?: return@let null
-      LatestTurn(turnId, turn.text("state") ?: "completed")
+      LatestTurn(
+        id = turnId,
+        state = turn.text("state") ?: "completed",
+        completedAt = turn.nullableText("completedAt"),
+      )
     },
     session = obj("session")?.toThreadSession(),
     updatedAt = text("updatedAt") ?: "",
     archivedAt = nullableText("archivedAt"),
+    settledOverride = nullableText("settledOverride"),
     settledAt = nullableText("settledAt"),
     snoozedUntil = nullableText("snoozedUntil"),
+    snoozedAt = nullableText("snoozedAt"),
     pinnedAt = nullableText("pinnedAt"),
     pinOrderKey = nullableText("pinOrderKey"),
     hasPendingApprovals = bool("hasPendingApprovals") == true,
@@ -246,6 +265,7 @@ private fun JsonObject.toThreadSession() = ThreadSession(
   status = text("status") ?: "idle",
   activeTurnId = nullableText("activeTurnId"),
   lastError = nullableText("lastError"),
+  updatedAt = nullableText("updatedAt"),
 )
 
 private fun ThreadDetail.upsertMessage(payload: JsonObject): ThreadDetail {

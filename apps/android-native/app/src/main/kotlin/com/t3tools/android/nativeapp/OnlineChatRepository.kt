@@ -13,6 +13,7 @@ import com.t3tools.android.protocol.ShellState
 import com.t3tools.android.protocol.StartCommand
 import com.t3tools.android.protocol.T3ProtocolClient
 import com.t3tools.android.protocol.ThreadState
+import com.t3tools.android.protocol.awaitingSynchronization
 import com.t3tools.android.protocol.editStartCommand
 import com.t3tools.android.protocol.parseProviderModels
 import com.t3tools.android.protocol.reduce
@@ -31,6 +32,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -73,9 +76,11 @@ data class OnlineChatState(
   val shellSyncPhase: SyncPhase = SyncPhase.Idle,
   val threadSyncPhase: SyncPhase = SyncPhase.Idle,
   val shell: ShellState = ShellState(),
+  val environmentShells: Map<String, ShellState> = emptyMap(),
   val selectedThreadId: String? = null,
   val thread: ThreadState = ThreadState(),
   val providerModels: List<com.t3tools.android.protocol.ProviderModel> = emptyList(),
+  val projectFavicons: Map<String, String> = emptyMap(),
   val pendingTasks: List<PendingTask> = emptyList(),
   val threadCapabilities: ThreadCapabilities = ThreadCapabilities(),
   val settings: AppSettings = AppSettings(),
@@ -98,6 +103,7 @@ class OnlineChatRepository(
   private val supervisors = mutableMapOf<String, Job>()
   private val signals = mutableMapOf<String, Channel<SupervisorSignal>>()
   private val drainJobs = ConcurrentHashMap<String, Job>()
+  private val outboxMutex = Mutex()
   private val pending = linkedMapOf<String, PendingTask>()
   private var appSettings = database.appSettings()
   private var cloud = CloudAuthState()
@@ -167,15 +173,7 @@ class OnlineChatRepository(
       httpBaseUrl = pairingUrl.substringBefore("/pair").substringBefore('#'),
     )
     environmentStore.save(saved)
-    synchronized(lock) {
-      activeThreadJob?.cancel()
-      activeThreadJob = null
-      activeEnvironmentId = saved.environmentId
-      runtimes[saved.environmentId]?.connection?.session?.close()
-      runtimes[saved.environmentId] = EnvironmentRuntime(saved)
-      publishLocked()
-    }
-    ensureSupervisor(saved, connected)
+    activateConnectedEnvironment(saved, connected)
   }
 
   /**
@@ -311,15 +309,7 @@ class OnlineChatRepository(
       desired = true,
     )
     environmentStore.save(saved)
-    synchronized(lock) {
-      activeThreadJob?.cancel()
-      activeThreadJob = null
-      activeEnvironmentId = saved.environmentId
-      runtimes[saved.environmentId]?.connection?.session?.close()
-      runtimes[saved.environmentId] = EnvironmentRuntime(saved)
-      publishLocked()
-    }
-    ensureSupervisor(saved, connected)
+    activateConnectedEnvironment(saved, connected)
   }
 
   suspend fun retry() {
@@ -367,22 +357,24 @@ class OnlineChatRepository(
       supervisors.remove(environmentId)
     }
     supervisor?.cancel()
-    synchronized(lock) {
-      runtimes.remove(environmentId)?.connection?.session?.close()
-      pending.values.filter { it.environmentId == environmentId }.forEach {
-        pending.remove(it.messageId)
+    outboxMutex.withLock {
+      synchronized(lock) {
+        runtimes.remove(environmentId)?.connection?.session?.close()
+        pending.values.filter { it.environmentId == environmentId }.forEach {
+          pending.remove(it.messageId)
+        }
+        if (activeEnvironmentId == environmentId) {
+          activeThreadJob?.cancel()
+          activeThreadJob = null
+          activeEnvironmentId = environmentStore.loadAll()
+            .firstOrNull { it.environmentId != environmentId }
+            ?.environmentId
+        }
       }
-      if (activeEnvironmentId == environmentId) {
-        activeThreadJob?.cancel()
-        activeThreadJob = null
-        activeEnvironmentId = environmentStore.loadAll()
-          .firstOrNull { it.environmentId != environmentId }
-          ?.environmentId
-      }
+      environmentStore.remove(environmentId)
     }
     credentialStore.clear(environmentId)
     draftStore.clearEnvironment(environmentId)
-    environmentStore.remove(environmentId)
     activeEnvironmentId?.let(environmentStore::select)
     synchronized(lock) { publishLocked() }
   }
@@ -419,6 +411,11 @@ class OnlineChatRepository(
     client.dispatch(requireNotNull(runtime.connection).session, command)
   }
 
+  suspend fun dispatch(environmentId: String, command: JsonObject): Long = withContext(Dispatchers.IO) {
+    val runtime = connectedRuntime(environmentId)
+    client.dispatch(requireNotNull(runtime.connection).session, command)
+  }
+
   suspend fun dispatchAtomicStart(start: StartCommand): AtomicStartResult = withContext(Dispatchers.IO) {
     val runtime = connectedActiveRuntime()
     client.dispatchAtomicStart(requireNotNull(runtime.connection).session, start)
@@ -447,54 +444,64 @@ class OnlineChatRepository(
       createsThread = createsThread,
       text = text,
     )
-    database.savePending(task)
-    synchronized(lock) {
-      pending[task.messageId] = task
-      publishLocked()
+    outboxMutex.withLock {
+      database.savePending(task)
+      synchronized(lock) {
+        pending[task.messageId] = task
+        publishLocked()
+      }
     }
     scheduleDrain(task.environmentId, task.threadId)
   }
 
   suspend fun editPending(messageId: String, text: String) = withContext(Dispatchers.IO) {
-    val updated = synchronized(lock) {
-      val current = requireNotNull(pending[messageId]) { "Pending task no longer exists." }
-      require(current.status != PendingTaskStatus.Sending) { "Wait for the current send attempt." }
-      current.copy(
-        command = editStartCommand(current.command, text),
-        text = text.trim(),
-        status = PendingTaskStatus.Queued,
-        attempt = 0,
-        nextAttemptAt = 0,
-        error = null,
-      )
-    }
-    database.savePending(updated)
-    synchronized(lock) {
-      if (pending.containsKey(messageId)) pending[messageId] = updated
-      publishLocked()
+    val updated = outboxMutex.withLock {
+      val updated = synchronized(lock) {
+        val current = requireNotNull(pending[messageId]) { "Pending task no longer exists." }
+        require(current.status != PendingTaskStatus.Sending) { "Wait for the current send attempt." }
+        current.copy(
+          command = editStartCommand(current.command, text),
+          text = text.trim(),
+          status = PendingTaskStatus.Queued,
+          attempt = 0,
+          nextAttemptAt = 0,
+          error = null,
+        )
+      }
+      database.savePending(updated)
+      synchronized(lock) {
+        pending[messageId] = updated
+        publishLocked()
+      }
+      updated
     }
     scheduleDrain(updated.environmentId, updated.threadId)
   }
 
   suspend fun removePending(messageId: String) = withContext(Dispatchers.IO) {
-    val task = synchronized(lock) { pending[messageId] } ?: return@withContext
-    require(task.status != PendingTaskStatus.Sending) { "Wait for the current send attempt." }
-    database.removePending(messageId)
-    synchronized(lock) {
-      pending.remove(messageId)
-      publishLocked()
+    outboxMutex.withLock {
+      val task = synchronized(lock) { pending[messageId] } ?: return@withLock
+      require(task.status != PendingTaskStatus.Sending) { "Wait for the current send attempt." }
+      database.removePending(messageId)
+      synchronized(lock) {
+        pending.remove(messageId)
+        publishLocked()
+      }
     }
   }
 
   suspend fun retryPending(messageId: String) = withContext(Dispatchers.IO) {
-    val updated = synchronized(lock) {
-      val task = requireNotNull(pending[messageId]) { "Pending task no longer exists." }
-      task.copy(status = PendingTaskStatus.Queued, nextAttemptAt = 0, error = null)
-    }
-    database.savePending(updated)
-    synchronized(lock) {
-      pending[messageId] = updated
-      publishLocked()
+    val updated = outboxMutex.withLock {
+      val updated = synchronized(lock) {
+        val task = requireNotNull(pending[messageId]) { "Pending task no longer exists." }
+        task.copy(status = PendingTaskStatus.Queued, nextAttemptAt = 0, error = null)
+      }
+      database.savePending(updated)
+      synchronized(lock) {
+        pending[messageId] = updated
+        publishLocked()
+      }
+      updated
     }
     scheduleDrain(updated.environmentId, updated.threadId)
   }
@@ -539,6 +546,44 @@ class OnlineChatRepository(
     }
   }
 
+  private suspend fun activateConnectedEnvironment(
+    environment: SavedEnvironment,
+    connected: ConnectedEnvironment,
+  ) {
+    val supervisor = synchronized(lock) {
+      activeThreadJob?.cancel()
+      activeThreadJob = null
+      activeEnvironmentId = environment.environmentId
+      signals.remove(environment.environmentId)?.trySend(SupervisorSignal.Stop)
+      supervisors.remove(environment.environmentId)
+    }
+    try {
+      supervisor?.join()
+      synchronized(lock) {
+        val runtime = runtimes.getOrPut(environment.environmentId) {
+          EnvironmentRuntime(
+            environment = environment,
+            shell = database.loadShell(environment.environmentId) ?: ShellState(),
+          ).apply {
+            if (shell.sequence >= 0) shellSyncPhase = SyncPhase.Cached
+            database.loadServerConfig(environment.environmentId)?.let { cached ->
+              providerModels = parseProviderModels(cached.config)
+              capabilities = cached.capabilities.toThreadCapabilities()
+            }
+          }
+        }
+        runtime.connection?.session?.close()
+        runtime.connection = null
+        runtime.environment = environment
+        publishLocked()
+      }
+      ensureSupervisor(environment, connected)
+    } catch (error: Throwable) {
+      connected.session.close()
+      throw error
+    }
+  }
+
   private suspend fun supervise(
     environmentId: String,
     signal: Channel<SupervisorSignal>,
@@ -580,6 +625,7 @@ class OnlineChatRepository(
 
       runtime.connection = connected
       runtime.generation += 1
+      runtime.shell = runtime.shell.awaitingSynchronization()
       runtime.providerModels = parseProviderModels(connected.config)
       runtime.capabilities = connected.descriptor.capabilities.toThreadCapabilities()
       database.saveServerConfig(
@@ -605,8 +651,11 @@ class OnlineChatRepository(
               }
               database.saveShell(environmentId, runtime.shell)
               publishLocked()
+              if (runtime.shell.synchronized) {
+                resolveProjectFavicons(environmentId, runtime, connected.session)
+                scheduleEnvironmentDrains(environmentId)
+              }
             }
-            if (runtime.shell.synchronized) scheduleEnvironmentDrains(environmentId)
           }
           signal.trySend(SupervisorSignal.Lost(null))
         }.onFailure { error ->
@@ -679,7 +728,11 @@ class OnlineChatRepository(
     val connected = runtime.connection ?: return
     activeThreadJob?.cancel()
     val generation = runtime.generation
-    runtime.threadSyncPhase = SyncPhase.Synchronizing
+    synchronized(lock) {
+      runtime.thread = runtime.thread.awaitingSynchronization()
+      runtime.threadSyncPhase = SyncPhase.Synchronizing
+      publishLocked()
+    }
     activeThreadJob = scope.launch {
       runCatching {
         client.thread(
@@ -754,12 +807,21 @@ class OnlineChatRepository(
         runtime.shellSyncPhase != SyncPhase.Synchronized) return
       val wait = task.nextAttemptAt - System.currentTimeMillis()
       if (wait > 0) delay(wait)
-      val sending = task.copy(status = PendingTaskStatus.Sending, error = null)
-      database.savePending(sending)
-      synchronized(lock) {
-        if (pending.containsKey(task.messageId)) pending[task.messageId] = sending
-        publishLocked()
-      }
+      val sending = outboxMutex.withLock {
+        val current = synchronized(lock) { pending[task.messageId] }
+        val claimed = OutboxPolicy.claimForSend(
+          current = current,
+          environmentId = environmentId,
+          threadId = threadId,
+          nowMs = System.currentTimeMillis(),
+        ) ?: return@withLock null
+        database.savePending(claimed)
+        synchronized(lock) {
+          pending[claimed.messageId] = claimed
+          publishLocked()
+        }
+        claimed
+      } ?: continue
       val result = runCatching {
         val session = requireNotNull(runtime.connection).session
         sending.settings.forEach { client.dispatch(session, it as JsonObject) }
@@ -768,10 +830,12 @@ class OnlineChatRepository(
         else client.dispatch(session, sending.command)
       }
       if (result.isSuccess) {
-        database.removePending(task.messageId)
-        synchronized(lock) {
-          pending.remove(task.messageId)
-          publishLocked()
+        outboxMutex.withLock {
+          database.removePending(sending.messageId)
+          synchronized(lock) {
+            pending.remove(sending.messageId)
+            publishLocked()
+          }
         }
         continue
       }
@@ -788,11 +852,17 @@ class OnlineChatRepository(
       } else {
         sending.copy(status = PendingTaskStatus.Failed, error = error.safeMessage())
       }
-      database.savePending(failed)
-      synchronized(lock) {
-        if (pending.containsKey(task.messageId)) pending[task.messageId] = failed
-        publishLocked()
+      val retained = outboxMutex.withLock {
+        val current = synchronized(lock) { pending[sending.messageId] }
+        if (current?.status != PendingTaskStatus.Sending) return@withLock false
+        database.savePending(failed)
+        synchronized(lock) {
+          pending[failed.messageId] = failed
+          publishLocked()
+        }
+        true
       }
+      if (!retained) return
       if (failed.status == PendingTaskStatus.Failed) return
     }
   }
@@ -861,6 +931,14 @@ class OnlineChatRepository(
     return runtime
   }
 
+  private fun connectedRuntime(environmentId: String): EnvironmentRuntime {
+    val runtime = synchronized(lock) { runtimes[environmentId] }
+      ?: error("Unknown environment: $environmentId")
+    check(runtime.connectionPhase == ConnectionPhase.Connected) { "Environment is disconnected." }
+    check(runtime.shellSyncPhase == SyncPhase.Synchronized) { "Shell is not synchronized." }
+    return runtime
+  }
+
   private fun updateConnection(
     runtime: EnvironmentRuntime,
     phase: ConnectionPhase,
@@ -895,15 +973,38 @@ class OnlineChatRepository(
       shellSyncPhase = active?.shellSyncPhase ?: SyncPhase.Idle,
       threadSyncPhase = active?.threadSyncPhase ?: SyncPhase.Idle,
       shell = active?.shell ?: ShellState(),
+      environmentShells = runtimes.mapValues { (_, runtime) -> runtime.shell },
       selectedThreadId = active?.selectedThreadId,
       thread = active?.thread ?: ThreadState(),
       providerModels = active?.providerModels.orEmpty(),
+      projectFavicons = active?.projectFavicons?.toMap().orEmpty(),
       pendingTasks = pending.values.filter { it.environmentId == activeEnvironmentId },
       threadCapabilities = active?.capabilities ?: ThreadCapabilities(),
       settings = appSettings,
       cloud = cloud,
       error = active?.error,
     )
+  }
+
+  private fun resolveProjectFavicons(
+    environmentId: String,
+    runtime: EnvironmentRuntime,
+    session: com.t3tools.android.protocol.EffectRpcSession,
+  ) {
+    val unresolve = runtime.shell.projects.values.filter { it.id !in runtime.projectFavicons }
+    if (unresolve.isEmpty()) return
+    scope.launch {
+      for (project in unresolve) {
+        val rel = client.createAssetToken(session, "project-favicon", project.workspaceRoot)
+        if (rel != null && !rel.endsWith("project-favicon-missing")) {
+          val fullUrl = runtime.environment.httpBaseUrl.removeSuffix("/") + rel
+          synchronized(lock) {
+            runtime.projectFavicons[project.id] = fullUrl
+            publishLocked()
+          }
+        }
+      }
+    }
   }
 
   override fun close() {
@@ -928,6 +1029,7 @@ class OnlineChatRepository(
     var selectedThreadId: String? = null,
     var thread: ThreadState = ThreadState(),
     var providerModels: List<com.t3tools.android.protocol.ProviderModel> = emptyList(),
+    val projectFavicons: MutableMap<String, String> = mutableMapOf(),
     var capabilities: ThreadCapabilities = ThreadCapabilities(),
     var error: String? = null,
     var connection: ConnectedEnvironment? = null,

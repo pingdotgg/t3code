@@ -142,6 +142,23 @@ class T3ProtocolClient(
     session.unary("server.probe")
   }
 
+  suspend fun createAssetToken(
+    session: EffectRpcSession,
+    resourceTag: String,
+    cwd: String,
+  ): String? = runCatching {
+    val res = session.unary(
+      "assets.createUrl",
+      buildJsonObject(
+        "resource" to buildJsonObject(
+          "_tag" to JsonPrimitive(resourceTag),
+          "cwd" to JsonPrimitive(cwd),
+        ),
+      ),
+    ).jsonObject
+    res["relativeUrl"]?.jsonPrimitive?.content
+  }.getOrNull()
+
   private suspend fun connect(
     descriptor: EnvironmentDescriptor,
     credential: SavedCredential,

@@ -2,6 +2,7 @@ package com.t3tools.android.nativeapp
 
 import com.t3tools.android.protocol.RpcTransportException
 import java.io.IOException
+import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -34,6 +35,25 @@ class OutboxPolicyTest {
   fun requeues_in_flight_work_after_process_death() {
     assertEquals(PendingTaskStatus.Queued, OutboxPolicy.normalizeRestoredStatus(PendingTaskStatus.Sending))
     assertEquals(PendingTaskStatus.Failed, OutboxPolicy.normalizeRestoredStatus(PendingTaskStatus.Failed))
+  }
+
+  @Test
+  fun claims_the_latest_task_after_backoff_without_resurrecting_deletions() {
+    val edited = PendingTask(
+      messageId = "message",
+      environmentId = "environment",
+      threadId = "thread",
+      draftKey = "draft",
+      command = JsonObject(emptyMap()),
+      createsThread = false,
+      text = "edited",
+    )
+
+    assertEquals(
+      "edited",
+      OutboxPolicy.claimForSend(edited, "environment", "thread", nowMs = 0)?.text,
+    )
+    assertEquals(null, OutboxPolicy.claimForSend(null, "environment", "thread", nowMs = 0))
   }
 
   @Test

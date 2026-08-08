@@ -355,4 +355,4 @@ private data class DpopPayload(
   val ath: String? = null,
 )
 
-private fun encodePath(value: String) = java.net.URLEncoder.encode(value, Charsets.UTF_8)
+private fun encodePath(value: String) = java.net.URLEncoder.encode(value, Charsets.UTF_8.name())

@@ -2,10 +2,13 @@
 
 package com.t3tools.android.nativeapp
 
+import android.os.Build
 import android.text.method.LinkMovementMethod
 import android.widget.TextView
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.BlurEffect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,16 +19,40 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.Send
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Archive
+import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Clear
+import androidx.compose.material.icons.rounded.EditNote
+import androidx.compose.material.icons.rounded.FilterAlt
+import androidx.compose.material.icons.rounded.FilterList
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.Unarchive
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -34,21 +61,29 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,6 +94,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.navigation.NavType
@@ -75,7 +111,6 @@ import com.t3tools.android.protocol.ProviderModel
 import com.t3tools.android.protocol.ThreadDetail
 import com.t3tools.android.protocol.ThreadSummary
 import io.noties.markwon.Markwon
-import java.time.Instant
 import kotlinx.coroutines.flow.collectLatest
 
 private const val ONBOARDING = "onboarding"
@@ -83,6 +118,7 @@ private const val CONNECT = "connect"
 private const val HOME = "home"
 private const val NEW_TASK = "new-task"
 private const val SETTINGS = "settings"
+private const val ARCHIVED_THREADS = "settings/archived"
 private const val THREAD = "thread/{threadId}"
 
 @Composable
@@ -152,6 +188,16 @@ fun T3NativeApp(viewModel: AppViewModel) {
         viewModel = viewModel,
         onBack = { navController.popBackStack() },
         onOpenConnect = { navController.navigate(CONNECT) },
+        onAddEnvironment = { navController.navigate(ONBOARDING) },
+        onOpenArchivedThreads = { navController.navigate(ARCHIVED_THREADS) },
+      )
+    }
+    composable(ARCHIVED_THREADS) {
+      ArchivedThreadsScreen(
+        runtime = runtime,
+        dispatchState = dispatchState,
+        viewModel = viewModel,
+        onBack = { navController.popBackStack() },
       )
     }
     composable(
@@ -464,33 +510,80 @@ private fun HomeScreen(
   onSettings: () -> Unit,
 ) {
   var search by remember { mutableStateOf("") }
-  var showEnvironment by remember { mutableStateOf(false) }
-  var showArchived by remember { mutableStateOf(false) }
-  val visibleThreads = runtime.shell.threads.values
-    .filter { (it.archivedAt != null) == showArchived && it.title.contains(search, ignoreCase = true) }
-    .sortedWith(
-      compareByDescending<ThreadSummary> { it.pinnedAt != null }
-        .thenBy { it.pinOrderKey ?: "~" }
-        .thenByDescending(ThreadSummary::updatedAt),
-    )
-  val groups = if (runtime.settings.groupThreadsByProject) {
-    visibleThreads.groupBy(ThreadSummary::projectId)
-  } else {
-    mapOf("all" to visibleThreads)
+  var filterStatus by remember { mutableStateOf(ThreadFilterStatus.All) }
+  var filterProjectId by remember { mutableStateOf<String?>(null) }
+  var showFilterSheet by remember { mutableStateOf(false) }
+  var snoozedExpanded by remember { mutableStateOf(false) }
+  var settledExpanded by remember { mutableStateOf(true) }
+  var settledLimit by remember { mutableIntStateOf(THREAD_LIST_V2_SETTLED_INITIAL) }
+  val caps = runtime.threadCapabilities
+
+  val rawThreads = remember(runtime.shell.threads, filterProjectId) {
+    if (filterProjectId == null) {
+      runtime.shell.threads.values
+    } else {
+      runtime.shell.threads.values.filter { it.projectId == filterProjectId }
+    }
   }
+
+  val layout = remember(
+    rawThreads,
+    search,
+    snoozedExpanded,
+    settledExpanded,
+    settledLimit,
+    filterStatus,
+    caps.settlement,
+    caps.snooze,
+  ) {
+    buildThreadListV2Layout(
+      threads = rawThreads,
+      settlementSupported = caps.settlement,
+      snoozeSupported = caps.snooze,
+      search = search,
+      snoozedShelfExpanded = snoozedExpanded || filterStatus == ThreadFilterStatus.Snoozed,
+      settledShelfExpanded = settledExpanded || filterStatus == ThreadFilterStatus.Settled,
+      settledLimit = settledLimit,
+    )
+  }
+
+  val displayItems = remember(layout.items, filterStatus) {
+    filterThreadListV2Items(layout.items, filterStatus)
+  }
+  val activeItems = displayItems.filter { it.variant == ThreadListV2Variant.Card }
+  val snoozedItems = displayItems.filter(ThreadListV2Item::snoozed)
+  val settledItems = displayItems.filter { !it.snoozed && it.variant == ThreadListV2Variant.Slim }
+  val showSnoozedSection = filterStatus in listOf(ThreadFilterStatus.All, ThreadFilterStatus.Snoozed) &&
+    layout.snoozedCount > 0
+  val showSettledSection = filterStatus in listOf(ThreadFilterStatus.All, ThreadFilterStatus.Settled) &&
+    layout.settledCount > 0
+
+  val isFiltered = filterStatus != ThreadFilterStatus.All || filterProjectId != null
 
   Scaffold(
     topBar = {
       TopAppBar(
         title = {
           Column {
-            Text("T3 Code Native", fontWeight = FontWeight.Bold)
+            Text("T3 Code", fontWeight = FontWeight.Bold)
             Text(runtime.statusLabel(), style = MaterialTheme.typography.labelSmall)
           }
         },
         actions = {
-          TextButton(onClick = { showEnvironment = true }) { Text("Environments") }
-          TextButton(onClick = onSettings) { Text("Settings") }
+          IconButton(onClick = { showFilterSheet = true }) {
+            Icon(
+              imageVector = if (isFiltered) Icons.Rounded.FilterAlt else Icons.Rounded.FilterList,
+              contentDescription = "Filter threads",
+              tint = if (isFiltered) MaterialTheme.colorScheme.primary else Color.White,
+            )
+          }
+          IconButton(onClick = onSettings) {
+            Icon(
+              imageVector = Icons.Rounded.Settings,
+              contentDescription = "Settings",
+              tint = Color.White,
+            )
+          }
         },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Black),
       )
@@ -509,14 +602,39 @@ private fun HomeScreen(
         onValueChange = { search = it },
         label = { Text("Search threads") },
         singleLine = true,
-        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
       )
-      Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-      ) {
-        OutlinedButton(onClick = { showArchived = false }) { Text("Active") }
-        OutlinedButton(onClick = { showArchived = true }) { Text("Archived") }
+
+      if (isFiltered) {
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 2.dp),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          if (filterStatus != ThreadFilterStatus.All) {
+            FilterChip(
+              selected = true,
+              onClick = { filterStatus = ThreadFilterStatus.All },
+              label = { Text("Status: ${filterStatus.label}") },
+              trailingIcon = {
+                Icon(Icons.Rounded.Clear, contentDescription = "Clear filter", modifier = Modifier.size(16.dp))
+              },
+            )
+          }
+          if (filterProjectId != null) {
+            val pTitle = runtime.shell.projects[filterProjectId]?.title ?: filterProjectId
+            FilterChip(
+              selected = true,
+              onClick = { filterProjectId = null },
+              label = { Text("Project: $pTitle") },
+              trailingIcon = {
+                Icon(Icons.Rounded.Clear, contentDescription = "Clear filter", modifier = Modifier.size(16.dp))
+              },
+            )
+          }
+        }
       }
       RuntimeError(runtime.error, dispatchState) {
         OutlinedButton(onClick = viewModel::retryConnection) { Text("Retry connection") }
@@ -524,12 +642,24 @@ private fun HomeScreen(
       LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
       ) {
+        // Active / pinned cards first, then pending, then shelves (RN v2 order).
+        threadListRows(
+          rows = activeItems,
+          keyPrefix = "active",
+          runtime = runtime,
+          viewModel = viewModel,
+          capabilities = caps,
+          compact = runtime.settings.compactThreadRows,
+          groupByProject = runtime.settings.groupThreadsByProject,
+          onOpenThread = onOpenThread,
+        )
+
         if (runtime.pendingTasks.isNotEmpty()) {
           item(key = "pending-title") {
             Text(
-              "Pending tasks",
+              "Pending",
               modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
               style = MaterialTheme.typography.labelLarge,
               color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -539,54 +669,309 @@ private fun HomeScreen(
             PendingTaskRow(task, viewModel)
           }
         }
-        groups.forEach { (projectId, threads) ->
-          val project = runtime.shell.projects[projectId]
-          if (runtime.settings.groupThreadsByProject) item(key = "project:$projectId") {
-            Text(
-              project?.title ?: "Project",
-              modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
-              style = MaterialTheme.typography.labelLarge,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
+
+        if (showSnoozedSection) {
+          item(key = "snoozed-shelf") {
+            ThreadListV2ShelfHeader(
+              label = "Snoozed",
+              count = layout.snoozedCount,
+              expanded = snoozedExpanded,
+              accent = Color(0xFF60A5FA),
+              onToggle = { snoozedExpanded = !snoozedExpanded },
             )
           }
-          items(threads, key = ThreadSummary::id) { thread ->
-            ThreadRow(thread, runtime.settings.compactThreadRows) { onOpenThread(thread.id) }
+          if (snoozedExpanded || filterStatus == ThreadFilterStatus.Snoozed) {
+            threadListRows(
+              rows = snoozedItems,
+              keyPrefix = "snoozed",
+              runtime = runtime,
+              viewModel = viewModel,
+              capabilities = caps,
+              compact = true,
+              groupByProject = runtime.settings.groupThreadsByProject,
+              onOpenThread = onOpenThread,
+            )
           }
         }
-        if (visibleThreads.isEmpty() && runtime.pendingTasks.isEmpty()) {
-          item { Text("No matching threads.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+
+        if (showSettledSection) {
+          item(key = "settled-shelf") {
+            ThreadListV2ShelfHeader(
+              label = "Settled",
+              count = layout.settledCount,
+              expanded = settledExpanded,
+              onToggle = { settledExpanded = !settledExpanded },
+            )
+          }
+          if (settledExpanded || filterStatus == ThreadFilterStatus.Settled) {
+            threadListRows(
+              rows = settledItems,
+              keyPrefix = "settled",
+              runtime = runtime,
+              viewModel = viewModel,
+              capabilities = caps,
+              compact = true,
+              groupByProject = runtime.settings.groupThreadsByProject,
+              onOpenThread = onOpenThread,
+            )
+            if (layout.hiddenSettledCount > 0) {
+              item(key = "settled-more") {
+                TextButton(
+                  onClick = { settledLimit += THREAD_LIST_V2_SETTLED_PAGE },
+                  modifier = Modifier.fillMaxWidth(),
+                ) {
+                  Text("Show more (${layout.hiddenSettledCount})")
+                }
+              }
+            }
+          }
+        }
+
+        if (displayItems.isEmpty() && runtime.pendingTasks.isEmpty()) {
+          item {
+            Text(
+              "No threads yet. Start a new task.",
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              modifier = Modifier.padding(top = 24.dp),
+            )
+          }
         }
       }
     }
   }
 
-  if (showEnvironment) {
-    EnvironmentDialog(
-      runtime = runtime,
-      viewModel = viewModel,
-      onAdd = {
-        showEnvironment = false
-        onAddEnvironment()
-      },
-      dismiss = { showEnvironment = false },
+  if (showFilterSheet) {
+    ThreadFilterBottomSheet(
+      filterStatus = filterStatus,
+      filterProjectId = filterProjectId,
+      projects = runtime.shell.projects.values.sortedBy(Project::title),
+      environments = runtime.environments,
+      selectedEnvironmentId = runtime.environment?.environmentId,
+      onSelectStatus = { filterStatus = it },
+      onSelectProject = { filterProjectId = it },
+      onSelectEnvironment = { viewModel.selectEnvironment(it) },
+      onDismiss = { showFilterSheet = false },
     )
   }
 }
 
-@Composable
-private fun ThreadRow(thread: ThreadSummary, compact: Boolean, onClick: () -> Unit) {
-  Card(
-    modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-  ) {
-    Column(Modifier.padding(if (compact) 10.dp else 16.dp)) {
-      Text((if (thread.pinnedAt != null) "Pinned · " else "") + thread.title, fontWeight = FontWeight.SemiBold)
-      if (!compact) Spacer(Modifier.height(4.dp))
-      Text(
-        thread.threadStatus(),
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+private fun LazyListScope.threadListRows(
+  rows: List<ThreadListV2Item>,
+  keyPrefix: String,
+  runtime: OnlineChatState,
+  viewModel: AppViewModel,
+  capabilities: ThreadCapabilities,
+  compact: Boolean,
+  groupByProject: Boolean,
+  onOpenThread: (String) -> Unit,
+) {
+  val orderedPinned = sortPinnedThreads(
+    runtime.shell.threads.values.filter { it.pinnedAt != null && it.archivedAt == null },
+  )
+  val firstPinKey = orderedPinned.firstOrNull()?.pinOrderKey
+  val groups = groupThreadListV2Items(rows, groupByProject)
+  groups.forEach { (projectId, projectRows) ->
+    if (projectId != null) {
+      item(key = "$keyPrefix:project:$projectId") {
+        Text(
+          runtime.shell.projects[projectId]?.title ?: "Project",
+          modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
+          style = MaterialTheme.typography.labelLarge,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+    }
+    items(projectRows, key = { "$keyPrefix:${it.thread.id}" }) { item ->
+      val project = runtime.shell.projects[item.thread.projectId]
+      val pinnedIndex = orderedPinned.indexOfFirst { it.id == item.thread.id }
+      ThreadListV2Row(
+        item = item,
+        capabilities = capabilities,
+        compact = compact,
+        projectTitle = project?.title,
+        providerDriver = resolveProviderDriver(
+          item.thread.modelSelection.instanceId,
+          runtime.providerModels,
+        ),
+        faviconUrl = project?.let { runtime.projectFavicons[it.id] },
+        newPinOrderKey = pinOrderKeyBetween(null, firstPinKey),
+        canMovePinnedUp = capabilities.pinReorder && pinnedIndex > 0,
+        canMovePinnedDown = capabilities.pinReorder && pinnedIndex in 0 until orderedPinned.lastIndex,
+        onOpen = { onOpenThread(item.thread.id) },
+        onAction = { command, value ->
+          viewModel.threadAction(command, item.thread.id, value)
+        },
+        onMovePinned = { direction ->
+          viewModel.reorderPinned(planPinnedMove(orderedPinned, item.thread.id, direction))
+        },
       )
+    }
+  }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ThreadFilterBottomSheet(
+  filterStatus: ThreadFilterStatus,
+  filterProjectId: String?,
+  projects: List<Project>,
+  environments: List<SavedEnvironment>,
+  selectedEnvironmentId: String?,
+  onSelectStatus: (ThreadFilterStatus) -> Unit,
+  onSelectProject: (String?) -> Unit,
+  onSelectEnvironment: (String) -> Unit,
+  onDismiss: () -> Unit,
+) {
+  val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+  ModalBottomSheet(
+    onDismissRequest = onDismiss,
+    sheetState = sheetState,
+    containerColor = Color(0xFF141417),
+    contentColor = Color.White,
+    shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+    scrimColor = Color.Black.copy(alpha = 0.6f),
+  ) {
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 20.dp, vertical = 12.dp)
+        .verticalScroll(rememberScrollState()),
+      verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Text(
+          text = "Filter Threads",
+          style = MaterialTheme.typography.titleLarge,
+          fontWeight = FontWeight.Bold,
+          color = Color.White,
+        )
+        if (filterStatus != ThreadFilterStatus.All || filterProjectId != null) {
+          TextButton(onClick = {
+            onSelectStatus(ThreadFilterStatus.All)
+            onSelectProject(null)
+            onDismiss()
+          }) {
+            Text("Reset all", color = MaterialTheme.colorScheme.primary)
+          }
+        }
+      }
+
+      HorizontalDivider(color = Color(0xFF27272A))
+
+      Text("Status", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        ThreadFilterStatus.entries.forEach { st ->
+          val selected = filterStatus == st
+          FilterChip(
+            selected = selected,
+            onClick = {
+              onSelectStatus(st)
+              onDismiss()
+            },
+            label = { Text(st.label) },
+            leadingIcon = if (selected) {
+              { Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+            } else null,
+          )
+        }
+      }
+
+      if (projects.isNotEmpty()) {
+        Text("Project", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          Surface(
+            onClick = {
+              onSelectProject(null)
+              onDismiss()
+            },
+            color = if (filterProjectId == null) Color(0xFF1E293B) else Color(0xFF18181B),
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Row(
+              modifier = Modifier.padding(12.dp),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Text("All Projects", fontWeight = FontWeight.Medium, color = Color.White)
+              if (filterProjectId == null) {
+                Icon(Icons.Rounded.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+              }
+            }
+          }
+          projects.forEach { proj ->
+            val isSel = filterProjectId == proj.id
+            Surface(
+              onClick = {
+                onSelectProject(proj.id)
+                onDismiss()
+              },
+              color = if (isSel) Color(0xFF1E293B) else Color(0xFF18181B),
+              shape = RoundedCornerShape(10.dp),
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Row(
+                modifier = Modifier.padding(12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Text(proj.title, fontWeight = FontWeight.Medium, color = Color.White)
+                if (isSel) {
+                  Icon(Icons.Rounded.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                }
+              }
+            }
+          }
+        }
+      }
+
+      if (environments.isNotEmpty()) {
+        Text("Environment", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          environments.forEach { env ->
+            val isSel = env.environmentId == selectedEnvironmentId
+            Surface(
+              onClick = {
+                onSelectEnvironment(env.environmentId)
+                onDismiss()
+              },
+              color = if (isSel) Color(0xFF1E293B) else Color(0xFF18181B),
+              shape = RoundedCornerShape(10.dp),
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Row(
+                modifier = Modifier.padding(12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Column {
+                  Text(env.label, fontWeight = FontWeight.Medium, color = Color.White)
+                  if (env.httpBaseUrl.isNotBlank()) {
+                    Text(
+                      env.httpBaseUrl,
+                      style = MaterialTheme.typography.labelSmall,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                  }
+                }
+                if (isSel) {
+                  Icon(Icons.Rounded.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                }
+              }
+            }
+          }
+        }
+      }
+
+      Spacer(Modifier.height(16.dp))
     }
   }
 }
@@ -702,13 +1087,77 @@ private fun SettingsScreen(
   viewModel: AppViewModel,
   onBack: () -> Unit,
   onOpenConnect: () -> Unit,
+  onAddEnvironment: () -> Unit,
+  onOpenArchivedThreads: () -> Unit,
 ) {
+  var showEditEnv by remember { mutableStateOf(false) }
   BackHandler(onBack = onBack)
   Scaffold(topBar = { BackTopBar("Settings", onBack) }) { padding ->
     Column(
       Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
       verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+      Text("Environments", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+      if (runtime.environments.isEmpty()) {
+        Text("No saved environments", color = MaterialTheme.colorScheme.onSurfaceVariant)
+      } else {
+        runtime.environments.forEach { item ->
+          val isSelected = item.environmentId == runtime.environment?.environmentId
+          val status = runtime.environmentStatuses[item.environmentId]
+          Card(
+            onClick = { viewModel.selectEnvironment(item.environmentId) },
+            colors = CardDefaults.cardColors(
+              containerColor = if (isSelected) Color(0xFF1E293B) else Color(0xFF111827),
+            ),
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Row(
+              modifier = Modifier.padding(14.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+              Column(modifier = Modifier.weight(1f)) {
+                Text(
+                  text = item.label,
+                  fontWeight = FontWeight.Bold,
+                  color = Color.White,
+                )
+                Text(
+                  text = status?.connectionPhase?.name ?: if (isSelected) "Selected" else "Saved",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+              }
+              if (isSelected) {
+                Icon(
+                  imageVector = Icons.Rounded.Check,
+                  contentDescription = "Selected",
+                  tint = MaterialTheme.colorScheme.primary,
+                )
+              }
+            }
+          }
+        }
+      }
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        Button(
+          onClick = onAddEnvironment,
+          modifier = Modifier.weight(1f),
+        ) {
+          Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+          Spacer(Modifier.width(6.dp))
+          Text("Add environment")
+        }
+        if (runtime.environment != null) {
+          OutlinedButton(onClick = { showEditEnv = true }) {
+            Text("Edit current")
+          }
+        }
+      }
+      HorizontalDivider()
       Text("Appearance", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
       Text("AMOLED dark", color = MaterialTheme.colorScheme.onSurfaceVariant)
       ToggleRow("Compact thread rows", runtime.settings.compactThreadRows) {
@@ -718,6 +1167,13 @@ private fun SettingsScreen(
       Text("Grouping", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
       ToggleRow("Group threads by project", runtime.settings.groupThreadsByProject) {
         viewModel.updateSettings(runtime.settings.copy(groupThreadsByProject = it))
+      }
+      HorizontalDivider()
+      Text("Threads", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+      OutlinedButton(onClick = onOpenArchivedThreads, modifier = Modifier.fillMaxWidth()) {
+        Icon(Icons.Rounded.Archive, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("Archived Threads")
       }
       HorizontalDivider()
       Text("Storage", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -754,6 +1210,124 @@ private fun SettingsScreen(
       RuntimeError(runtime.error, dispatchState)
     }
   }
+
+  if (showEditEnv) {
+    EnvironmentDialog(
+      runtime = runtime,
+      viewModel = viewModel,
+      onAdd = {
+        showEditEnv = false
+        onAddEnvironment()
+      },
+      dismiss = { showEditEnv = false },
+    )
+  }
+}
+
+private data class ArchivedThreadEntry(
+  val environment: SavedEnvironment,
+  val project: Project?,
+  val thread: ThreadSummary,
+)
+
+@Composable
+private fun ArchivedThreadsScreen(
+  runtime: OnlineChatState,
+  dispatchState: DispatchState,
+  viewModel: AppViewModel,
+  onBack: () -> Unit,
+) {
+  var search by remember { mutableStateOf("") }
+  var deleteTarget by remember { mutableStateOf<ArchivedThreadEntry?>(null) }
+  val entries = remember(runtime.environmentShells, runtime.environments, search) {
+    val environments = runtime.environments.associateBy(SavedEnvironment::environmentId)
+    runtime.environmentShells.flatMap { (environmentId, shell) ->
+      val environment = environments[environmentId] ?: return@flatMap emptyList()
+      shell.threads.values.mapNotNull { thread ->
+        thread.takeIf { it.archivedAt != null }?.let {
+          ArchivedThreadEntry(environment, shell.projects[thread.projectId], thread)
+        }
+      }
+    }.filter { entry ->
+      search.isBlank() || entry.thread.title.contains(search.trim(), ignoreCase = true)
+    }.sortedByDescending { it.thread.updatedAt }
+  }
+
+  BackHandler(onBack = onBack)
+  Scaffold(topBar = { BackTopBar("Archived Threads", onBack) }) { padding ->
+    Column(Modifier.fillMaxSize().padding(padding)) {
+      OutlinedTextField(
+        value = search,
+        onValueChange = { search = it },
+        label = { Text("Search archived threads") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth().padding(16.dp),
+      )
+      RuntimeError(runtime.error, dispatchState)
+      if (entries.isEmpty()) {
+        Text(
+          if (search.isBlank()) "No archived threads" else "No matching archived threads",
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(horizontal = 16.dp, vertical = 24.dp),
+        )
+      } else {
+        LazyColumn(
+          modifier = Modifier.fillMaxSize(),
+          contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+          verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          items(entries, key = { "${it.environment.environmentId}:${it.thread.id}" }) { entry ->
+            Card(modifier = Modifier.fillMaxWidth()) {
+              Column(
+                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+              ) {
+                Text(entry.thread.title, fontWeight = FontWeight.SemiBold)
+                Text(
+                  listOfNotNull(entry.environment.label, entry.project?.title).joinToString(" · "),
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                  Button(onClick = {
+                    viewModel.threadAction(
+                      entry.environment.environmentId,
+                      "thread.unarchive",
+                      entry.thread.id,
+                    )
+                  }) {
+                    Icon(Icons.Rounded.Unarchive, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Restore")
+                  }
+                  TextButton(onClick = { deleteTarget = entry }) { Text("Delete") }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  deleteTarget?.let { entry ->
+    AlertDialog(
+      onDismissRequest = { deleteTarget = null },
+      title = { Text("Delete thread?") },
+      text = { Text("This permanently deletes the thread from ${entry.environment.label}.") },
+      confirmButton = {
+        Button(onClick = {
+          viewModel.threadAction(
+            entry.environment.environmentId,
+            "thread.delete",
+            entry.thread.id,
+          )
+          deleteTarget = null
+        }) { Text("Delete") }
+      },
+      dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } },
+    )
+  }
 }
 
 @Composable
@@ -787,8 +1361,40 @@ private fun NewTaskScreen(
         options = projects.map { it.id to it.title },
         onSelect = { projectId = it },
       )
-      DraftSelectors(runtime.providerModels, draft) {
-        draft = it.also { next -> viewModel.saveDraft(draftKey, next) }
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        val selectedModel = runtime.providerModels.firstOrNull {
+          it.instanceId == draft.modelInstanceId && it.model == draft.model
+        } ?: runtime.providerModels.firstOrNull { it.isDefault } ?: runtime.providerModels.firstOrNull()
+        SelectionField(
+          label = "Model",
+          selected = selectedModel?.modelLabel ?: "Default",
+          options = runtime.providerModels.map { "${it.instanceId}:${it.model}" to it.modelLabel },
+          onSelect = { key ->
+            val m = runtime.providerModels.first { "${it.instanceId}:${it.model}" == key }
+            draft = draft.copy(modelInstanceId = m.instanceId, model = m.model).also { viewModel.saveDraft(draftKey, it) }
+          },
+          modifier = Modifier.weight(1f),
+        )
+        SelectionField(
+          label = "Access",
+          selected = when (draft.runtimeMode) {
+            "approval-required" -> "Ask"
+            "auto-accept-edits" -> "Auto edits"
+            "auto" -> "Auto"
+            else -> "Full"
+          },
+          options = listOf(
+            "approval-required" to "Ask",
+            "auto-accept-edits" to "Auto edits",
+            "auto" to "Auto",
+            "full-access" to "Full",
+          ),
+          onSelect = { draft = draft.copy(runtimeMode = it).also { next -> viewModel.saveDraft(draftKey, next) } },
+          modifier = Modifier.weight(1f),
+        )
       }
       ToggleRow("Create worktree", worktree) { worktree = it }
       if (worktree) {
@@ -849,118 +1455,54 @@ private fun ThreadScreen(
   LaunchedEffect(draftRevision, draftKey) { draft = viewModel.loadDraft(draftKey) }
 
   Scaffold(topBar = { BackTopBar(detail?.summary?.title ?: "Thread", onBack) }) { padding ->
-    Column(Modifier.fillMaxSize().padding(padding)) {
+    Box(Modifier.fillMaxSize().padding(padding).imePadding()) {
       if (runtime.threadSyncPhase == SyncPhase.Synchronizing) {
-        LinearProgressIndicator(Modifier.fillMaxWidth())
+        LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
       }
       if (detail == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
           Text(runtime.error ?: "Opening thread…")
         }
       } else {
-        ThreadActionBar(detail.summary, runtime.threadCapabilities, viewModel)
         ThreadFeed(
           detail = detail,
-          modifier = Modifier.weight(1f),
+          modifier = Modifier.fillMaxSize(),
+          contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 140.dp),
         )
-        ThreadRequests(detail, viewModel)
-        DispatchFailure(dispatchState, viewModel::retryDispatch)
-        DraftSelectors(runtime.providerModels, draft) {
-          draft = it.also { next -> viewModel.saveDraft(draftKey, next) }
+        Column(
+          modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .fillMaxWidth(),
+        ) {
+          ThreadRequests(detail, viewModel)
+          DispatchFailure(dispatchState, viewModel::retryDispatch)
+          ChatComposerArea(
+            detail = detail,
+            draft = draft,
+            models = runtime.providerModels,
+            enabled = runtime.shell.sequence >= 0,
+            sending = dispatchState is DispatchState.Sending,
+            onDraftUpdate = { next ->
+              draft = next
+              viewModel.saveDraft(draftKey, next)
+            },
+            onSend = { viewModel.sendThreadTurn(threadId, draftKey, draft) },
+            onInterrupt = { viewModel.interrupt(threadId) },
+            onStop = { viewModel.stop(threadId) },
+          )
         }
-        Composer(
-          detail = detail,
-          draft = draft,
-          enabled = runtime.shell.sequence >= 0,
-          sending = dispatchState is DispatchState.Sending,
-          onDraft = {
-            draft = draft.copy(text = it)
-            viewModel.saveDraft(draftKey, draft)
-          },
-          onSend = { viewModel.sendThreadTurn(threadId, draftKey, draft) },
-          onInterrupt = { viewModel.interrupt(threadId) },
-          onStop = { viewModel.stop(threadId) },
-        )
       }
     }
   }
 }
 
 @Composable
-private fun ThreadActionBar(
-  thread: ThreadSummary,
-  capabilities: ThreadCapabilities,
-  viewModel: AppViewModel,
+private fun ThreadFeed(
+  detail: ThreadDetail,
+  modifier: Modifier = Modifier,
+  state: LazyListState = rememberLazyListState(),
+  contentPadding: PaddingValues = PaddingValues(16.dp),
 ) {
-  var confirmDelete by remember(thread.id) { mutableStateOf(false) }
-  LazyRow(
-    modifier = Modifier.fillMaxWidth(),
-    contentPadding = PaddingValues(horizontal = 10.dp),
-    horizontalArrangement = Arrangement.spacedBy(4.dp),
-  ) {
-    item {
-      TextButton(
-        onClick = {
-          viewModel.threadAction(
-            if (thread.archivedAt == null) "thread.archive" else "thread.unarchive",
-            thread.id,
-          )
-        },
-      ) { Text(if (thread.archivedAt == null) "Archive" else "Restore") }
-    }
-    if (capabilities.pinning) item {
-      TextButton(
-        onClick = {
-          viewModel.threadAction(
-            if (thread.pinnedAt == null) "thread.pin" else "thread.unpin",
-            thread.id,
-            if (thread.pinnedAt == null && capabilities.pinReorder) System.currentTimeMillis().toString() else null,
-          )
-        },
-      ) { Text(if (thread.pinnedAt == null) "Pin" else "Unpin") }
-    }
-    if (capabilities.settlement) item {
-      TextButton(
-        onClick = {
-          viewModel.threadAction(
-            if (thread.settledAt == null) "thread.settle" else "thread.unsettle",
-            thread.id,
-          )
-        },
-      ) { Text(if (thread.settledAt == null) "Settle" else "Activate") }
-    }
-    if (capabilities.snooze) item {
-      TextButton(
-        onClick = {
-          viewModel.threadAction(
-            if (thread.snoozedUntil == null) "thread.snooze" else "thread.unsnooze",
-            thread.id,
-            if (thread.snoozedUntil == null) Instant.now().plusSeconds(3_600).toString() else null,
-          )
-        },
-      ) { Text(if (thread.snoozedUntil == null) "Snooze 1h" else "Unsnooze") }
-    }
-    item { TextButton(onClick = { confirmDelete = true }) { Text("Delete") } }
-  }
-  if (confirmDelete) {
-    AlertDialog(
-      onDismissRequest = { confirmDelete = false },
-      title = { Text("Delete thread?") },
-      text = { Text("This permanently deletes the thread from the environment.") },
-      confirmButton = {
-        Button(onClick = {
-          viewModel.threadAction("thread.delete", thread.id)
-          confirmDelete = false
-        }) { Text("Delete") }
-      },
-      dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
-    )
-  }
-}
-
-@Composable
-private fun ThreadFeed(detail: ThreadDetail, modifier: Modifier = Modifier) {
-  val state = rememberLazyListState()
   val entries = detail.messages
   LaunchedEffect(entries.size, entries.lastOrNull()?.text?.length) {
     val lastVisible = state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
@@ -971,7 +1513,7 @@ private fun ThreadFeed(detail: ThreadDetail, modifier: Modifier = Modifier) {
   LazyColumn(
     state = state,
     modifier = modifier.fillMaxWidth(),
-    contentPadding = PaddingValues(16.dp),
+    contentPadding = contentPadding,
     verticalArrangement = Arrangement.spacedBy(10.dp),
   ) {
     items(entries, key = { it.id }) { message ->
@@ -1076,121 +1618,300 @@ private fun UserInputCard(threadId: String, input: PendingUserInput, viewModel: 
     }
   }
 }
+private fun resolveThreadProviderModels(
+  threadInstanceId: String,
+  allModels: List<ProviderModel>,
+): List<ProviderModel> {
+  val exactMatches = allModels.filter { it.instanceId == threadInstanceId }
+  if (exactMatches.isNotEmpty()) return exactMatches
+
+  val threadDriver = resolveProviderDriver(threadInstanceId, allModels)
+  val driverMatches = allModels.filter {
+    resolveProviderDriver(it.instanceId, allModels) == threadDriver
+  }
+  return if (driverMatches.isNotEmpty()) driverMatches else allModels
+}
 
 @Composable
-private fun Composer(
+private fun ChatComposerArea(
   detail: ThreadDetail,
   draft: ComposerDraft,
+  models: List<ProviderModel>,
   enabled: Boolean,
   sending: Boolean,
-  onDraft: (String) -> Unit,
+  onDraftUpdate: (ComposerDraft) -> Unit,
   onSend: () -> Unit,
   onInterrupt: () -> Unit,
   onStop: () -> Unit,
 ) {
-  Column(
-    Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(12.dp),
-    verticalArrangement = Arrangement.spacedBy(8.dp),
-  ) {
-    OutlinedTextField(
-      value = draft.text,
-      onValueChange = onDraft,
-      label = { Text(if (enabled) "Message" else "Waiting for synchronization") },
-      minLines = 2,
-      maxLines = 6,
-      modifier = Modifier.fillMaxWidth(),
-    )
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-      val session = detail.summary.session
-      val active = session?.status in setOf("starting", "running")
-      Button(
-        onClick = onSend,
-        enabled = enabled && draft.text.isNotBlank() && !sending,
-        modifier = Modifier.weight(1f),
-      ) { Text(if (sending) "Sending…" else "Send") }
-      if (active) OutlinedButton(onClick = onInterrupt) { Text("Interrupt") }
-      if (session != null && session.status != "stopped") {
-        OutlinedButton(onClick = onStop) { Text("Stop") }
-      }
-    }
-  }
-}
+  var showModelMenu by remember { mutableStateOf(false) }
+  var showAccessMenu by remember { mutableStateOf(false) }
 
-@Composable
-private fun DraftSelectors(
-  models: List<ProviderModel>,
-  draft: ComposerDraft,
-  onDraft: (ComposerDraft) -> Unit,
-) {
-  val selectedModel = models.firstOrNull {
+  val threadInstanceId = detail.summary.modelSelection.instanceId
+  val availableModels = remember(threadInstanceId, models) {
+    resolveThreadProviderModels(threadInstanceId, models)
+  }
+
+  val selectedModel = availableModels.firstOrNull {
     it.instanceId == draft.modelInstanceId && it.model == draft.model
-  } ?: models.firstOrNull { it.isDefault } ?: models.firstOrNull()
-  Row(
-    Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-    horizontalArrangement = Arrangement.spacedBy(8.dp),
-  ) {
-    SelectionField(
-      label = "Model",
-      selected = selectedModel?.modelLabel ?: "Server default",
-      options = models.map { "${it.instanceId}:${it.model}" to it.modelLabel },
-      onSelect = { key ->
-        val model = models.first { "${it.instanceId}:${it.model}" == key }
-        onDraft(draft.copy(modelInstanceId = model.instanceId, model = model.model))
-      },
-      modifier = Modifier.weight(1f),
-    )
-    SelectionField(
-      label = "Access",
-      selected = when (draft.runtimeMode) {
-        "approval-required" -> "Ask"
-        "auto-accept-edits" -> "Auto edits"
-        "auto" -> "Auto"
-        else -> "Full"
-      },
-      options = listOf(
-        "approval-required" to "Ask",
-        "auto-accept-edits" to "Auto edits",
-        "auto" to "Auto",
-        "full-access" to "Full",
-      ),
-      onSelect = { onDraft(draft.copy(runtimeMode = it)) },
-      modifier = Modifier.weight(1f),
-    )
-    SelectionField(
-      label = "Mode",
-      selected = if (draft.interactionMode == "plan") "Plan" else "Default",
-      options = listOf("default" to "Default", "plan" to "Plan"),
-      onSelect = { onDraft(draft.copy(interactionMode = it)) },
-      modifier = Modifier.weight(1f),
-    )
-  }
-}
+  } ?: availableModels.firstOrNull {
+    it.instanceId == threadInstanceId && it.model == detail.summary.modelSelection.model
+  } ?: availableModels.firstOrNull { it.isDefault } ?: availableModels.firstOrNull()
 
-@Composable
-private fun SelectionField(
-  label: String,
-  selected: String,
-  options: List<Pair<String, String>>,
-  onSelect: (String) -> Unit,
-  modifier: Modifier = Modifier,
-) {
-  var expanded by remember { mutableStateOf(false) }
-  Box(modifier) {
-    OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-      Column(horizontalAlignment = Alignment.Start, modifier = Modifier.fillMaxWidth()) {
-        Text(label, style = MaterialTheme.typography.labelSmall)
-        Text(selected, maxLines = 1)
-      }
-    }
-    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-      options.forEach { (key, title) ->
-        DropdownMenuItem(
-          text = { Text(title) },
-          onClick = {
-            expanded = false
-            onSelect(key)
+  val session = detail.summary.session
+  val active = session?.status in setOf("starting", "running")
+
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .padding(horizontal = 12.dp, vertical = 8.dp),
+  ) {
+    val composerShape = RoundedCornerShape(20.dp)
+    Surface(
+      shape = composerShape,
+      color = Color(0xFF141417),
+      border = BorderStroke(1.dp, Color(0xFF27272A)),
+      modifier = Modifier.fillMaxWidth(),
+    ) {
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+      ) {
+        // Message input text field with minimal internal margins on all sides
+        BasicTextField(
+          value = draft.text,
+          onValueChange = { onDraftUpdate(draft.copy(text = it)) },
+          minLines = 2,
+          maxLines = 6,
+          textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
+          cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+          decorationBox = { innerTextField ->
+            Box(
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 4.dp),
+            ) {
+              if (draft.text.isEmpty()) {
+                Text(
+                  if (enabled) "Send a message…" else "Waiting for sync…",
+                  color = Color(0xFF71717A),
+                  style = MaterialTheme.typography.bodyMedium,
+                )
+              }
+              innerTextField()
+            }
           },
+          modifier = Modifier.fillMaxWidth(),
         )
+
+        // Bottom Action Bar housing the 3 Option Pills + Send/Stop Button
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          // Left side: Option Pills (Model, Access, Mode)
+          Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f, fill = false),
+          ) {
+            // 1. Model Selector Pill
+            Box {
+              Surface(
+                onClick = { showModelMenu = true },
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFF27272A),
+                modifier = Modifier.height(30.dp),
+              ) {
+                Row(
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                  Text(
+                    text = selectedModel?.modelLabel ?: "Default Model",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White,
+                    maxLines = 1,
+                  )
+                  Icon(
+                    imageVector = Icons.Rounded.KeyboardArrowDown,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                  )
+                }
+              }
+
+              DropdownMenu(
+                expanded = showModelMenu,
+                onDismissRequest = { showModelMenu = false },
+              ) {
+                availableModels.forEach { model ->
+                  val isSelected = model.instanceId == draft.modelInstanceId && model.model == draft.model
+                  DropdownMenuItem(
+                    text = {
+                      Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                      ) {
+                        Text(
+                          model.modelLabel,
+                          fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                        )
+                        if (isSelected) {
+                          Icon(
+                            Icons.Rounded.Check,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp),
+                          )
+                        }
+                      }
+                    },
+                    onClick = {
+                      showModelMenu = false
+                      onDraftUpdate(draft.copy(modelInstanceId = model.instanceId, model = model.model))
+                    },
+                  )
+                }
+              }
+            }
+
+            // 2. Access Mode Pill
+            val accessLabel = when (draft.runtimeMode) {
+              "approval-required" -> "Ask"
+              "auto-accept-edits" -> "Auto edits"
+              "auto" -> "Auto"
+              else -> "Full"
+            }
+            Box {
+              Surface(
+                onClick = { showAccessMenu = true },
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFF27272A),
+                modifier = Modifier.height(30.dp),
+              ) {
+                Row(
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                  Icon(
+                    imageVector = if (draft.runtimeMode == "approval-required") Icons.Rounded.Shield else Icons.Rounded.Bolt,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = if (draft.runtimeMode == "approval-required") UnsnoozeColor else SettleColor,
+                  )
+                  Text(
+                    text = accessLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White,
+                  )
+                }
+              }
+
+              DropdownMenu(
+                expanded = showAccessMenu,
+                onDismissRequest = { showAccessMenu = false },
+              ) {
+                listOf(
+                  "approval-required" to "Ask (Approval Required)",
+                  "auto-accept-edits" to "Auto Edits",
+                  "auto" to "Auto Mode",
+                  "full-access" to "Full Access",
+                ).forEach { (key, label) ->
+                  val isSel = draft.runtimeMode == key
+                  DropdownMenuItem(
+                    text = {
+                      Text(label, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
+                    },
+                    onClick = {
+                      showAccessMenu = false
+                      onDraftUpdate(draft.copy(runtimeMode = key))
+                    },
+                  )
+                }
+              }
+            }
+
+            // 3. Plan Mode Toggle Pill
+            val isPlan = draft.interactionMode == "plan"
+            Surface(
+              onClick = {
+                onDraftUpdate(draft.copy(interactionMode = if (isPlan) "default" else "plan"))
+              },
+              shape = RoundedCornerShape(12.dp),
+              color = if (isPlan) MaterialTheme.colorScheme.primaryContainer else Color(0xFF27272A),
+              modifier = Modifier.height(30.dp),
+            ) {
+              Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+              ) {
+                Icon(
+                  imageVector = Icons.Rounded.EditNote,
+                  contentDescription = null,
+                  modifier = Modifier.size(14.dp),
+                  tint = if (isPlan) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                  text = if (isPlan) "Plan" else "Chat",
+                  style = MaterialTheme.typography.labelMedium,
+                  fontWeight = FontWeight.SemiBold,
+                  color = if (isPlan) MaterialTheme.colorScheme.primary else Color.White,
+                )
+              }
+            }
+          }
+
+          // Right side: Send / Interrupt Button
+          Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            if (active) {
+              IconButton(
+                onClick = onInterrupt,
+                modifier = Modifier
+                  .size(38.dp)
+                  .background(Color(0xFFEF4444), CircleShape),
+              ) {
+                Icon(
+                  imageVector = Icons.Rounded.Stop,
+                  contentDescription = "Interrupt",
+                  tint = Color.White,
+                  modifier = Modifier.size(20.dp),
+                )
+              }
+            } else {
+              val canSend = enabled && draft.text.isNotBlank() && !sending
+              IconButton(
+                onClick = onSend,
+                enabled = canSend,
+                modifier = Modifier
+                  .size(38.dp)
+                  .background(
+                    if (canSend) MaterialTheme.colorScheme.primary else Color(0xFF27272A),
+                    CircleShape,
+                  ),
+              ) {
+                Icon(
+                  imageVector = Icons.AutoMirrored.Rounded.Send,
+                  contentDescription = "Send message",
+                  tint = if (canSend) Color.White else Color(0xFF71717A),
+                  modifier = Modifier.size(18.dp),
+                )
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -1267,8 +1988,24 @@ private fun T3TopBar(title: String) {
 @Composable
 private fun BackTopBar(title: String, onBack: () -> Unit) {
   TopAppBar(
-    title = { Text(title, maxLines = 1, fontWeight = FontWeight.Bold) },
-    navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
+    title = {
+      Text(
+        text = title,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.SemiBold,
+      )
+    },
+    navigationIcon = {
+      IconButton(onClick = onBack) {
+        Icon(
+          imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+          contentDescription = "Back",
+          tint = Color.White,
+        )
+      }
+    },
     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Black),
   )
 }
@@ -1285,10 +2022,32 @@ private fun OnlineChatState.statusLabel() = when {
   else -> "Offline"
 }
 
-private fun ThreadSummary.threadStatus() = when {
-  hasPendingApprovals -> "Approval required"
-  hasPendingUserInput -> "Input required"
-  session?.status == "running" -> "Working"
-  latestTurn?.state == "error" -> "Failed"
-  else -> branch ?: "Ready"
+@Composable
+private fun SelectionField(
+  label: String,
+  selected: String,
+  options: List<Pair<String, String>>,
+  onSelect: (String) -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  var expanded by remember { mutableStateOf(false) }
+  Box(modifier) {
+    OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+      Column(horizontalAlignment = Alignment.Start, modifier = Modifier.fillMaxWidth()) {
+        Text(label, style = MaterialTheme.typography.labelSmall)
+        Text(selected, maxLines = 1)
+      }
+    }
+    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+      options.forEach { (key, title) ->
+        DropdownMenuItem(
+          text = { Text(title) },
+          onClick = {
+            expanded = false
+            onSelect(key)
+          },
+        )
+      }
+    }
+  }
 }

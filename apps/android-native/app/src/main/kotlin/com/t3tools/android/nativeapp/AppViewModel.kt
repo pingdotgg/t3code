@@ -202,7 +202,7 @@ class AppViewModel(
         pending.draft,
       )
       is RetryableDispatch.NewTask -> recoverNew(pending.start, pending.draftKey)
-      is RetryableDispatch.Action -> dispatchAction(pending.command)
+      is RetryableDispatch.Action -> dispatchAction(pending.command, pending.environmentId)
       null -> Unit
     }
   }
@@ -221,6 +221,26 @@ class AppViewModel(
 
   fun threadAction(type: String, threadId: String, value: String? = null) =
     dispatchAction(threadActionCommand(type, threadId, value))
+
+  fun threadAction(
+    environmentId: String,
+    type: String,
+    threadId: String,
+    value: String? = null,
+  ) = dispatchAction(threadActionCommand(type, threadId, value), environmentId)
+
+  fun reorderPinned(assignments: List<PinOrderAssignment>) {
+    if (assignments.isEmpty()) return
+    viewModelScope.launch {
+      runCatching {
+        assignments.forEach { assignment ->
+          repository.dispatch(
+            threadActionCommand("thread.pin.reorder", assignment.threadId, assignment.orderKey),
+          )
+        }
+      }.onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
+  }
 
   fun editPending(messageId: String, text: String) {
     viewModelScope.launch {
@@ -386,10 +406,16 @@ class AppViewModel(
     mutableEvents.tryEmit(AppEvent.OpenThread(start.threadId))
   }
 
-  private fun dispatchAction(command: kotlinx.serialization.json.JsonObject) {
-    retryable = RetryableDispatch.Action(command)
+  private fun dispatchAction(
+    command: kotlinx.serialization.json.JsonObject,
+    environmentId: String? = null,
+  ) {
+    retryable = RetryableDispatch.Action(command, environmentId)
     viewModelScope.launch {
-      runCatching { repository.dispatch(command) }
+      runCatching {
+        if (environmentId == null) repository.dispatch(command)
+        else repository.dispatch(environmentId, command)
+      }
         .onSuccess {
           retryable = null
           mutableDispatchState.value = DispatchState.Idle
@@ -414,7 +440,10 @@ class AppViewModel(
       val draft: ComposerDraft,
     ) : RetryableDispatch
     data class NewTask(val start: StartCommand, val draftKey: String) : RetryableDispatch
-    data class Action(val command: kotlinx.serialization.json.JsonObject) : RetryableDispatch
+    data class Action(
+      val command: kotlinx.serialization.json.JsonObject,
+      val environmentId: String?,
+    ) : RetryableDispatch
   }
 
   class Factory(private val graph: AppGraph) : ViewModelProvider.Factory {
@@ -434,7 +463,7 @@ internal fun buildPairingUrl(host: String, code: String): String {
     "$scheme://$trimmedHost"
   }
   val base = withScheme.trimEnd('/').substringBefore("/pair")
-  val token = URLEncoder.encode(code.trim(), StandardCharsets.UTF_8)
+  val token = URLEncoder.encode(code.trim(), StandardCharsets.UTF_8.name())
   return "$base/pair#token=$token"
 }
 
@@ -447,7 +476,7 @@ internal fun extractPairingUrl(payload: String): String {
     .firstOrNull { it[0] == "pairingUrl" }
     ?.get(1)
     ?: error("QR code does not contain a pairing URL.")
-  return URLDecoder.decode(encoded, StandardCharsets.UTF_8)
+  return URLDecoder.decode(encoded, StandardCharsets.UTF_8.name())
 }
 
 private fun ComposerDraft.modelSelectionOr(fallback: ModelSelection) =

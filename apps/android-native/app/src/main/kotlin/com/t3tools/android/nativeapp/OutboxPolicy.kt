@@ -25,6 +25,18 @@ internal object OutboxPolicy {
   fun normalizeRestoredStatus(status: PendingTaskStatus) =
     if (status == PendingTaskStatus.Sending) PendingTaskStatus.Queued else status
 
+  fun claimForSend(
+    current: PendingTask?,
+    environmentId: String,
+    threadId: String,
+    nowMs: Long,
+  ): PendingTask? {
+    if (current == null || current.status != PendingTaskStatus.Queued) return null
+    if (current.environmentId != environmentId || current.threadId != threadId) return null
+    if (current.nextAttemptAt > nowMs) return null
+    return current.copy(status = PendingTaskStatus.Sending, error = null)
+  }
+
   fun canDrain(
     connectionPhase: ConnectionPhase,
     shellSyncPhase: SyncPhase,

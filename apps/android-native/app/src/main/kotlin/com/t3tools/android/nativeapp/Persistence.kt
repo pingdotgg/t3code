@@ -169,19 +169,21 @@ class NativeDatabase(
 
   @Synchronized
   fun saveEnvironment(environment: SavedEnvironment) {
-    writableDatabase.insertWithOnConflict(
+    val values = ContentValues().apply {
+      put("environment_id", environment.environmentId)
+      put("label", environment.label)
+      put("http_base_url", environment.httpBaseUrl)
+      put("environment_kind", environment.kind.name)
+      put("desired", if (environment.desired) 1 else 0)
+      put("updated_at", System.currentTimeMillis())
+    }
+    val updated = writableDatabase.update(
       "environments",
-      null,
-      ContentValues().apply {
-        put("environment_id", environment.environmentId)
-        put("label", environment.label)
-        put("http_base_url", environment.httpBaseUrl)
-        put("environment_kind", environment.kind.name)
-        put("desired", if (environment.desired) 1 else 0)
-        put("updated_at", System.currentTimeMillis())
-      },
-      SQLiteDatabase.CONFLICT_REPLACE,
+      values,
+      "environment_id = ?",
+      arrayOf(environment.environmentId),
     )
+    if (updated == 0) writableDatabase.insertOrThrow("environments", null, values)
   }
 
   @Synchronized

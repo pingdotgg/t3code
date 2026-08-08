@@ -71,6 +71,30 @@ class NativeDatabaseTest {
   }
 
   @Test
+  fun updating_environment_preserves_scoped_state() {
+    val environment = SavedEnvironment("env-update", "Before", "http://before.local")
+    database.saveEnvironment(environment)
+    database.saveShell(environment.environmentId, ShellState(sequence = 3, synchronized = true))
+    database.savePending(
+      PendingTask(
+        messageId = "msg-update",
+        environmentId = environment.environmentId,
+        threadId = "thread-update",
+        draftKey = "draft-update",
+        command = JsonObject(mapOf("text" to JsonPrimitive("queued"))),
+        createsThread = false,
+        text = "queued",
+      ),
+    )
+
+    database.saveEnvironment(environment.copy(label = "After", httpBaseUrl = "http://after.local"))
+
+    assertEquals("After", database.environment(environment.environmentId)?.label)
+    assertEquals(3L, database.loadShell(environment.environmentId)?.sequence)
+    assertEquals(listOf("msg-update"), database.pending(environment.environmentId).map(PendingTask::messageId))
+  }
+
+  @Test
   fun outbox_preserves_order_edit_delete_and_retry_fields() {
     val env = SavedEnvironment("env-outbox", "Outbox", "http://outbox.local")
     database.saveEnvironment(env)

@@ -52,6 +52,7 @@ dependencies {
   implementation("androidx.activity:activity-compose:1.10.0")
   implementation("androidx.compose.foundation:foundation")
   implementation("androidx.compose.material3:material3")
+  implementation("androidx.compose.material:material-icons-extended")
   implementation("androidx.compose.ui:ui")
   implementation("androidx.compose.ui:ui-tooling-preview")
   implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
@@ -62,6 +63,8 @@ dependencies {
   implementation("com.clerk:clerk-android-api:1.0.10")
   // UI package pulls navigation3 (compileSdk 36 / AGP 8.9). Use API + Custom Tabs for sign-in.
   implementation("com.squareup.okhttp3:okhttp:4.12.0")
+  implementation("io.coil-kt:coil-compose:2.7.0")
+  implementation("io.coil-kt:coil-svg:2.7.0")
   implementation("io.noties.markwon:core:4.6.2")
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
   implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")

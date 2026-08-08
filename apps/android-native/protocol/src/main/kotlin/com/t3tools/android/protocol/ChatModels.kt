@@ -37,6 +37,7 @@ data class ProjectScript(
 data class LatestTurn(
   val id: String,
   val state: String,
+  val completedAt: String? = null,
 )
 
 @Serializable
@@ -44,6 +45,7 @@ data class ThreadSession(
   val status: String,
   val activeTurnId: String?,
   val lastError: String?,
+  val updatedAt: String? = null,
 )
 
 @Serializable
@@ -60,8 +62,10 @@ data class ThreadSummary(
   val session: ThreadSession?,
   val updatedAt: String,
   val archivedAt: String?,
+  val settledOverride: String? = null,
   val settledAt: String? = null,
   val snoozedUntil: String? = null,
+  val snoozedAt: String? = null,
   val pinnedAt: String? = null,
   val pinOrderKey: String? = null,
   val hasPendingApprovals: Boolean,
@@ -144,6 +148,10 @@ data class ThreadState(
   val detail: ThreadDetail? = null,
   val synchronized: Boolean = false,
 )
+
+fun ShellState.awaitingSynchronization() = copy(synchronized = false)
+
+fun ThreadState.awaitingSynchronization() = copy(synchronized = false)
 
 @Serializable
 data class ProviderModel(

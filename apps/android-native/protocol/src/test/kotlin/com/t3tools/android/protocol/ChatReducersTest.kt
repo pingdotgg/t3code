@@ -69,6 +69,17 @@ class ChatReducersTest {
   }
 
   @Test
+  fun `new subscriptions retain cached data but await a fresh synchronization marker`() {
+    val shell = ShellState(sequence = 8, synchronized = true).awaitingSynchronization()
+    val thread = ThreadState(sequence = 9, synchronized = true).awaitingSynchronization()
+
+    assertEquals(8, shell.sequence)
+    assertFalse(shell.synchronized)
+    assertEquals(9, thread.sequence)
+    assertFalse(thread.synchronized)
+  }
+
+  @Test
   fun `thread reducer appends streaming deltas once`() {
     val initial = ThreadState().reduce(threadSnapshot())
     val first = initial.reduce(messageEvent(21, "Hi ", streaming = true))
@@ -94,6 +105,28 @@ class ChatReducersTest {
 
     assertEquals(21, updated.sequence)
     assertEquals(initial.detail, updated.detail)
+  }
+
+  @Test
+  fun `thread lifecycle events preserve explicit settle and snooze state`() {
+    val settled = ThreadState().reduce(threadSnapshot()).reduce(
+      threadEvent(21, "thread.settled", """{"settledAt":"2026-08-08T01:00:00Z"}"""),
+    )
+    val active = settled.reduce(
+      threadEvent(22, "thread.unsettled", """{"reason":"user"}"""),
+    )
+    val snoozed = active.reduce(
+      threadEvent(
+        23,
+        "thread.snoozed",
+        """{"snoozedAt":"2026-08-08T02:00:00Z","snoozedUntil":"2026-08-09T02:00:00Z"}""",
+      ),
+    )
+
+    assertEquals("settled", settled.detail?.summary?.settledOverride)
+    assertEquals("active", active.detail?.summary?.settledOverride)
+    assertEquals(null, active.detail?.summary?.settledAt)
+    assertEquals("2026-08-08T02:00:00Z", snoozed.detail?.summary?.snoozedAt)
   }
 
   @Test
@@ -143,6 +176,12 @@ class ChatReducersTest {
         }
       }
     }
+    """,
+  )
+
+  private fun threadEvent(sequence: Long, type: String, payload: String) = json(
+    """
+    {"kind":"event","event":{"sequence":$sequence,"type":"$type","payload":$payload}}
     """,
   )
 
