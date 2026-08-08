@@ -40,6 +40,21 @@ describe("ProviderInstanceIcon", () => {
     expect(markup).not.toContain(">HE</span>");
   });
 
+  it("renders the Hermes mark at the compact model-row size", () => {
+    const markup = renderToStaticMarkup(
+      <ProviderInstanceIcon
+        driverKind={grok}
+        displayName="Hermes"
+        className="size-3"
+        iconClassName="size-3"
+      />,
+    );
+
+    expect(markup).toContain('src="/hermes-agent.png"');
+    expect(markup).toContain("size-3");
+    expect(markup).not.toContain("<svg");
+  });
+
   it("retains the normal Grok icon and instance badge", () => {
     const markup = renderToStaticMarkup(
       <ProviderInstanceIcon
