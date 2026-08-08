@@ -3,8 +3,9 @@ import type { UsageProviderKind } from "@t3tools/contracts";
 import { ClaudeAI, type Icon, OpenAI } from "../Icons";
 
 /**
- * Stacking and table order. Codex sits under Claude Code so the larger band
- * reads as the top surface, matching the reference layout.
+ * Series and table order. The chart layers both providers from a shared zero
+ * baseline, so this only fixes the reading order of legends, tables and hover
+ * rows; it does not decide which series sits above the other.
  */
 export const PROVIDER_ORDER: readonly UsageProviderKind[] = ["codex", "claude"];
 
