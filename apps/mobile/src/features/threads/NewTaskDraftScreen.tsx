@@ -2,7 +2,11 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, usePreventRemove } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, InteractionManager, Platform, View, useColorScheme } from "react-native";
-import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
+import {
+  KeyboardAvoidingView,
+  KeyboardStickyView,
+  useKeyboardState,
+} from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useFontFamily } from "../../lib/useFontFamily";
@@ -1053,73 +1057,76 @@ export function NewTaskDraftScreen(props: {
         <NativeStackScreenOptions options={{ headerShown: false }} />
         <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
 
-        <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
-          <View className="flex-1" />
-
-          <View
-            className="px-4 pt-2"
-            style={{
-              paddingBottom: controlsBottomPadding,
-              experimental_backgroundImage: isDarkMode
-                ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.85) 40%, rgba(0,0,0,0.95) 100%)"
-                : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 40%, rgba(255,255,255,0.95) 100%)",
-            }}
+        <View className="relative min-h-0 flex-1 overflow-hidden">
+          <KeyboardStickyView
+            style={{ position: "absolute", right: 0, bottom: 0, left: 0 }}
+            offset={{ closed: 0, opened: 0 }}
           >
-            <ComposerSurface
-              isDarkMode={isDarkMode}
-              style={
-                isExpanded
-                  ? {
-                      borderRadius: 20,
-                      overflow: "hidden",
-                      paddingHorizontal: 14,
-                      paddingVertical: 12,
-                    }
-                  : {
-                      borderRadius: 999,
-                      overflow: "hidden",
-                      flexDirection: "row",
-                      alignItems: "center",
-                      paddingLeft: 18,
-                      paddingRight: 5,
-                      paddingVertical: 5,
-                    }
-              }
+            <View
+              className="px-4 pt-2"
+              style={{
+                paddingBottom: controlsBottomPadding,
+                experimental_backgroundImage: isDarkMode
+                  ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.85) 40%, rgba(0,0,0,0.95) 100%)"
+                  : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 40%, rgba(255,255,255,0.95) 100%)",
+              }}
             >
-              {isExpanded && flow.attachments.length > 0 ? (
-                <View className="pb-2.5">
-                  <ComposerAttachmentStrip
-                    attachments={flow.attachments}
-                    onRemove={
-                      isIncomingShareTransferPending ? () => undefined : flow.removeAttachment
-                    }
+              <ComposerSurface
+                isDarkMode={isDarkMode}
+                style={
+                  isExpanded
+                    ? {
+                        borderRadius: 20,
+                        overflow: "hidden",
+                        paddingHorizontal: 14,
+                        paddingVertical: 12,
+                      }
+                    : {
+                        borderRadius: 999,
+                        overflow: "hidden",
+                        flexDirection: "row",
+                        alignItems: "center",
+                        paddingLeft: 18,
+                        paddingRight: 5,
+                        paddingVertical: 5,
+                      }
+                }
+              >
+                {isExpanded && flow.attachments.length > 0 ? (
+                  <View className="pb-2.5">
+                    <ComposerAttachmentStrip
+                      attachments={flow.attachments}
+                      onRemove={
+                        isIncomingShareTransferPending ? () => undefined : flow.removeAttachment
+                      }
+                    />
+                  </View>
+                ) : null}
+                <View className={isExpanded ? undefined : "min-w-0 flex-1"}>{promptEditor}</View>
+                {!isExpanded ? (
+                  <ControlPill
+                    icon="arrow.up"
+                    variant="primary"
+                    disabled={!canStart}
+                    onPress={() => void handleStart()}
                   />
-                </View>
-              ) : null}
-              <View className={isExpanded ? undefined : "min-w-0 flex-1"}>{promptEditor}</View>
-              {!isExpanded ? (
-                <ControlPill
-                  icon="arrow.up"
-                  variant="primary"
-                  disabled={!canStart}
-                  onPress={() => void handleStart()}
-                />
-              ) : null}
-            </ComposerSurface>
+                ) : null}
+              </ComposerSurface>
 
-            {isExpanded ? (
-              <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
-                <ComposerToolbarScroller
-                  fadeOpaque={isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)"}
-                  fadeTransparent={isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)"}
-                >
-                  {toolbarPills}
-                </ComposerToolbarScroller>
-                {startButton}
-              </ComposerToolbarRow>
-            ) : null}
-          </View>
-        </KeyboardAvoidingView>
+              {isExpanded ? (
+                <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
+                  <ComposerToolbarScroller
+                    fadeOpaque={isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)"}
+                    fadeTransparent={isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)"}
+                  >
+                    {toolbarPills}
+                  </ComposerToolbarScroller>
+                  {startButton}
+                </ComposerToolbarRow>
+              ) : null}
+            </View>
+          </KeyboardStickyView>
+        </View>
       </View>
     );
   }
