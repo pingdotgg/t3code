@@ -18,19 +18,20 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
+  DEFAULT_THREAD_AUTO_SETTLE_AFTER_DAYS,
   DEFAULT_UNIFIED_SETTINGS,
   type EnvironmentIdentificationMode,
   MAX_CODE_FONT_SIZE,
   MAX_GLASS_OPACITY,
   MAX_INTERFACE_FONT_SIZE,
   MAX_PROMPT_FONT_SIZE,
-  MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MAX_THREAD_AUTO_SETTLE_AFTER_DAYS,
   MAX_TERMINAL_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
   MIN_GLASS_OPACITY,
   MIN_INTERFACE_FONT_SIZE,
   MIN_PROMPT_FONT_SIZE,
-  MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MIN_THREAD_AUTO_SETTLE_AFTER_DAYS,
   MIN_TERMINAL_FONT_SIZE,
 } from "@t3tools/contracts/settings";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -465,8 +466,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode
         ? ["Project Grouping"]
         : []),
-      ...(settings.sidebarAutoSettleAfterDays !==
-      DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
+      ...(settings.threadAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.threadAutoSettleAfterDays
         ? ["Auto-settle inactive threads"]
         : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
@@ -531,7 +531,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.glassOpacity,
       settings.enableLegacyTokenStreaming,
       settings.enableProviderUpdateChecks,
-      settings.sidebarAutoSettleAfterDays,
+      settings.threadAutoSettleAfterDays,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
@@ -610,7 +610,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
-      sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
+      threadAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.threadAutoSettleAfterDays,
       enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
@@ -1514,7 +1514,7 @@ function FontFamilySettingsRow({
   );
 }
 
-const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
+const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_THREAD_AUTO_SETTLE_AFTER_DAYS;
 
 function AutoSettleDaysInput({
   value,
@@ -1533,8 +1533,8 @@ function AutoSettleDaysInput({
   return (
     <Input
       type="number"
-      min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
-      max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
+      min={MIN_THREAD_AUTO_SETTLE_AFTER_DAYS}
+      max={MAX_THREAD_AUTO_SETTLE_AFTER_DAYS}
       className="w-full sm:w-24"
       value={draft}
       onChange={(event) => {
@@ -1545,8 +1545,8 @@ function AutoSettleDaysInput({
         const parsed = Number(event.target.value);
         if (
           Number.isInteger(parsed) &&
-          parsed >= MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS &&
-          parsed <= MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS
+          parsed >= MIN_THREAD_AUTO_SETTLE_AFTER_DAYS &&
+          parsed <= MAX_THREAD_AUTO_SETTLE_AFTER_DAYS
         ) {
           onCommit(parsed);
         }
@@ -1755,15 +1755,15 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("auto-settle-inactive-threads")}
-          description="Sidebar threads with no activity for this long settle automatically. Threads on merged or closed PRs always settle."
+          description="Threads with no activity for this long settle automatically. Merged PRs always settle."
           resetAction={
-            settings.sidebarAutoSettleAfterDays !==
-            DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ? (
+            settings.threadAutoSettleAfterDays !==
+            DEFAULT_UNIFIED_SETTINGS.threadAutoSettleAfterDays ? (
               <SettingResetButton
                 label="auto-settle"
                 onClick={() =>
                   updateSettings({
-                    sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
+                    threadAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.threadAutoSettleAfterDays,
                   })
                 }
               />
@@ -1771,24 +1771,24 @@ export function GeneralSettingsPanel() {
           }
           control={
             <Switch
-              checked={settings.sidebarAutoSettleAfterDays !== null}
+              checked={settings.threadAutoSettleAfterDays !== null}
               onCheckedChange={(checked) =>
                 updateSettings({
-                  sidebarAutoSettleAfterDays: checked ? AUTO_SETTLE_DEFAULT_DAYS : null,
+                  threadAutoSettleAfterDays: checked ? AUTO_SETTLE_DEFAULT_DAYS : null,
                 })
               }
               aria-label="Auto-settle inactive threads"
             />
           }
         />
-        {settings.sidebarAutoSettleAfterDays !== null ? (
+        {settings.threadAutoSettleAfterDays !== null ? (
           <SettingsRow
             title="Days of inactivity before auto-settle"
             description="Any new activity un-settles a thread automatically."
             control={
               <AutoSettleDaysInput
-                value={settings.sidebarAutoSettleAfterDays}
-                onCommit={(days) => updateSettings({ sidebarAutoSettleAfterDays: days })}
+                value={settings.threadAutoSettleAfterDays}
+                onCommit={(days) => updateSettings({ threadAutoSettleAfterDays: days })}
               />
             }
           />

@@ -482,9 +482,8 @@ export function useThreadActions() {
         );
       }
       const resolved = resolveThreadTarget(target);
-      // Settle may only target what effectiveSettled could classify as
-      // settled: not starting/running sessions, not threads waiting on
-      // approvals or user input. Anything else would hide live work.
+      // Mirror the server's explicit-settle guard so obviously blocked
+      // requests fail locally instead of making a round trip.
       if (resolved && !canSettle(resolved.thread, { now: new Date().toISOString() })) {
         return AsyncResult.failure(
           Cause.fail(
@@ -524,8 +523,8 @@ export function useThreadActions() {
           ),
         );
       }
-      // reason "user" pins the thread active: auto-settle (PR merged /
-      // inactivity) stays suppressed until real activity clears the pin.
+      // reason "user" holds the thread active: automation stays suppressed
+      // until real activity clears the override.
       return unsettleThreadMutation({
         environmentId: target.environmentId,
         input: { threadId: target.threadId, reason: "user" },

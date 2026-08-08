@@ -74,6 +74,7 @@ function makeTestLayer(state: {
   remoteStatusCalls: number;
   localInvalidationCalls: number;
   remoteInvalidationCalls: number;
+  fullInvalidationCalls?: number;
   remoteStatusRefreshUpstreamValues?: Array<boolean | undefined>;
 }) {
   return VcsStatusBroadcaster.layer.pipe(
@@ -104,6 +105,9 @@ function makeTestLayer(state: {
           Effect.sync(() => {
             state.localInvalidationCalls += 1;
             state.remoteInvalidationCalls += 1;
+            if (state.fullInvalidationCalls !== undefined) {
+              state.fullInvalidationCalls += 1;
+            }
           }),
       }),
     ),
@@ -164,6 +168,40 @@ describe("VcsStatusBroadcaster", () => {
       assert.equal(state.remoteStatusCalls, 1);
       assert.equal(state.localInvalidationCalls, 0);
       assert.equal(state.remoteInvalidationCalls, 0);
+    }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
+  it.effect("peeks without loading and polls without invalidating the PR cache", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+      fullInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+
+      assert.equal(yield* broadcaster.peekStatus({ cwd: "/repo" }), null);
+      assert.equal(state.localStatusCalls, 0);
+      assert.equal(state.remoteStatusCalls, 0);
+
+      yield* broadcaster.getStatus({ cwd: "/repo" });
+      assert.deepStrictEqual(yield* broadcaster.peekStatus({ cwd: "/repo" }), baseStatus);
+      assert.equal(state.localStatusCalls, 1);
+      assert.equal(state.remoteStatusCalls, 1);
+
+      state.currentRemoteStatus = { ...baseRemoteStatus, aheadCount: 2 };
+      assert.deepStrictEqual(yield* broadcaster.pollStatus("/repo"), {
+        ...baseLocalStatus,
+        ...state.currentRemoteStatus,
+      });
+      assert.equal(state.localInvalidationCalls, 1);
+      assert.equal(state.remoteInvalidationCalls, 1);
+      assert.equal(state.fullInvalidationCalls, 0);
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 

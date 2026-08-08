@@ -8,7 +8,6 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
-  TurnId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -292,7 +291,7 @@ describe("buildThreadListV2Items", () => {
     expect(layout.snoozedCount).toBe(1);
   });
 
-  it("renders pinned threads first and exempts them from auto-settle — parity with web", () => {
+  it("renders pinned threads first during a transient pin/settle projection overlap", () => {
     const layout = buildThreadListV2Items({
       threads: [
         makeThread({ id: ThreadId.make("active"), title: "Active" }),
@@ -576,13 +575,28 @@ describe("buildThreadListV2Items", () => {
           title: "Newer",
           createdAt: "2026-06-01T12:00:00.000Z",
         }),
+        makeThread({
+          id: ThreadId.make("settled-first"),
+          title: "Settled first",
+          settledAt: "2026-06-01T13:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("settled-last"),
+          title: "Settled last",
+          settledAt: "2026-06-01T14:00:00.000Z",
+        }),
       ],
       environmentId: null,
       searchQuery: "",
       now: NOW,
     });
 
-    expect(items.map((item) => item.thread.id)).toEqual(["newer-created", "older-created"]);
+    expect(items.map((item) => item.thread.id)).toEqual([
+      "newer-created",
+      "older-created",
+      "settled-last",
+      "settled-first",
+    ]);
   });
 
   it("keeps settled threads in the tail and filters by search query", () => {
@@ -682,18 +696,7 @@ describe("buildThreadListV2Items settled paging", () => {
           id: ThreadId.make(`settled-${index}`),
           title: `Settled ${index}`,
           settledOverride: "settled",
-          settledAt: NOW,
-          latestUserMessageAt: `2026-06-01T0${index}:00:00.000Z`,
-          // A turn adopted the message (same requestedAt): without it the
-          // thread reads as a queued turn start, which never settles.
-          latestTurn: {
-            turnId: TurnId.make(`turn-${index}`),
-            state: "completed",
-            requestedAt: `2026-06-01T0${index}:00:00.000Z`,
-            startedAt: `2026-06-01T0${index}:00:00.000Z`,
-            completedAt: `2026-06-01T0${index}:10:00.000Z`,
-            assistantMessageId: null,
-          },
+          settledAt: `2026-06-01T0${index}:10:00.000Z`,
         }),
       ),
     ];

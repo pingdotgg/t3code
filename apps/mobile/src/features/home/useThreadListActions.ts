@@ -109,9 +109,8 @@ function useThreadActionExecutor(
           );
           return false;
         }
-        // Settle may only target what effectiveSettled could classify as
-        // settled: not starting/running sessions, not threads waiting on
-        // approvals or user input. Anything else would hide live work.
+        // Mirror the server's explicit-settle guard so obviously blocked
+        // requests fail locally instead of making a round trip.
         if (action === "settle" && !canSettle(thread, { now: new Date().toISOString() })) {
           Alert.alert(
             actionFailureTitle(action),
@@ -134,8 +133,8 @@ function useThreadActionExecutor(
         }
         const result =
           action === "unsettle"
-            ? // reason "user" pins the thread active: auto-settle stays
-              // suppressed until real activity clears the pin server-side.
+            ? // reason "user" holds the thread active: automation stays
+              // suppressed until real activity clears the override.
               await unsettleMutation({
                 environmentId: thread.environmentId,
                 input: { threadId: thread.id, reason: "user" },

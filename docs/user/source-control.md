@@ -41,6 +41,13 @@ T3 Code works with the platforms your team already uses:
 - Open the review directly in your browser with one click
 - Check out a teammate's branch to review code locally
 
+**Let completed reviews leave the inbox**
+
+- T3 Code settles a thread after its PR or MR merges
+- Pinned threads ignore the inactivity timer and settle automatically only after a merge
+- Closing a PR or MR without merging it does not immediately settle the thread
+- The server owns this state, so web, desktop, and mobile show the same result
+
 ### Know Your Setup at a Glance
 
 The **Source Control settings** page shows you exactly what's connected:

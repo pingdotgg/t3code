@@ -68,10 +68,9 @@ describe("ClientSettings environment identification", () => {
 });
 
 describe("ClientSettings sidebar", () => {
-  it("defaults to the current sidebar with a three-day auto-settle threshold", () => {
+  it("defaults to the current sidebar", () => {
     const settings = decodeClientSettings({});
     expect(settings.legacySidebarEnabled).toBe(false);
-    expect(settings.sidebarAutoSettleAfterDays).toBe(3);
   });
 
   it("drops the retired sidebar v2 beta keys, resetting everyone to the default", () => {
@@ -91,15 +90,29 @@ describe("ClientSettings sidebar", () => {
     );
   });
 
-  it("allows auto-settle by inactivity to be disabled", () => {
+  it("drops the former client-only auto-settle setting", () => {
+    const decoded = decodeClientSettings({ sidebarAutoSettleAfterDays: null });
+    const patch = decodeClientSettingsPatch({ sidebarAutoSettleAfterDays: 14 });
+
+    expect(decoded).not.toHaveProperty("sidebarAutoSettleAfterDays");
+    expect(patch).not.toHaveProperty("sidebarAutoSettleAfterDays");
+  });
+});
+
+describe("ServerSettings thread auto-settle", () => {
+  it("defaults to three days and can be disabled", () => {
+    expect(decodeServerSettings({}).threadAutoSettleAfterDays).toBe(3);
     expect(
-      decodeClientSettings({ sidebarAutoSettleAfterDays: null }).sidebarAutoSettleAfterDays,
+      decodeServerSettings({ threadAutoSettleAfterDays: null }).threadAutoSettleAfterDays,
+    ).toBe(null);
+    expect(
+      decodeServerSettingsPatch({ threadAutoSettleAfterDays: null }).threadAutoSettleAfterDays,
     ).toBeNull();
   });
 
   it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {
-    expect(() => decodeClientSettings({ sidebarAutoSettleAfterDays: value })).toThrow();
-    expect(() => decodeClientSettingsPatch({ sidebarAutoSettleAfterDays: value })).toThrow();
+    expect(() => decodeServerSettings({ threadAutoSettleAfterDays: value })).toThrow();
+    expect(() => decodeServerSettingsPatch({ threadAutoSettleAfterDays: value })).toThrow();
   });
 });
 

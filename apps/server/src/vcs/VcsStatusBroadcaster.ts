@@ -159,6 +159,10 @@ export class VcsStatusBroadcaster extends Context.Service<
     readonly getStatus: (
       input: VcsStatusInput,
     ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
+    /** Read the merged cached status without touching git or a forge. */
+    readonly peekStatus: (input: VcsStatusInput) => Effect.Effect<VcsStatusResult | null>;
+    /** Refresh local and remote status while preserving the slower PR lookup cache. */
+    readonly pollStatus: (cwd: string) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
     readonly refreshLocalStatus: (
       cwd: string,
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
@@ -337,6 +341,31 @@ export const make = Effect.gen(function* () {
       { concurrency: "unbounded" },
     );
     return yield* updateCachedStatus(cwd, local, remote);
+  });
+
+  const peekStatus: VcsStatusBroadcaster["Service"]["peekStatus"] = Effect.fn(
+    "VcsStatusBroadcaster.peekStatus",
+  )(function* (input) {
+    const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
+    const cached = yield* getCachedStatus(cwd);
+    if (!cached?.local || !cached.remote) return null;
+    return mergeGitStatusParts(cached.local.value, cached.remote.value);
+  });
+
+  const pollStatus: VcsStatusBroadcaster["Service"]["pollStatus"] = Effect.fn(
+    "VcsStatusBroadcaster.pollStatus",
+  )(function* (rawCwd) {
+    const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+    // Automatic polling refreshes the one-second status caches but deliberately
+    // leaves GitManager's slower PR cache and failure backoff intact.
+    yield* Effect.all([workflow.invalidateLocalStatus(cwd), workflow.invalidateRemoteStatus(cwd)], {
+      concurrency: "unbounded",
+    });
+    const [local, remote] = yield* Effect.all(
+      [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd })],
+      { concurrency: "unbounded" },
+    );
+    return yield* updateCachedStatus(cwd, local, remote, { publish: true });
   });
 
   const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
@@ -587,6 +616,8 @@ export const make = Effect.gen(function* () {
 
   return VcsStatusBroadcaster.of({
     getStatus,
+    peekStatus,
+    pollStatus,
     refreshLocalStatus,
     refreshStatus,
     streamStatus,

@@ -5,12 +5,7 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import {
-  canSnooze,
-  effectiveSettled,
-  effectiveSnoozed,
-  type ChangeRequestStateLike,
-} from "@t3tools/client-runtime/state/thread-settled";
+import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useCallback } from "react";
 
@@ -60,11 +55,9 @@ export function useThreadActionMenu(input: {
   readonly threadRef: ScopedThreadRef | null;
   /** Fallback for "Copy path" when the thread has no worktree. */
   readonly projectCwd: string | null;
-  /** PR state feeding auto-settle classification, as resolved by the caller. */
-  readonly changeRequestState: ChangeRequestStateLike | null;
   readonly onStartRename: () => void;
 }) {
-  const { threadRef, projectCwd, changeRequestState, onStartRename } = input;
+  const { threadRef, projectCwd, onStartRename } = input;
   const {
     settleThread,
     unsettleThread,
@@ -79,7 +72,6 @@ export function useThreadActionMenu(input: {
   });
   const handleNewThread = useNewThreadHandler();
   const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
-  const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
@@ -118,16 +110,7 @@ export function useThreadActionMenu(input: {
         const items = buildThreadActionMenuItems({
           branch: thread.branch ?? null,
           isPinned: thread.pinnedAt != null,
-          isSettled:
-            supports.settlement &&
-            effectiveSettled(thread, {
-              // Minute-quantized like useNowMinute, so this classification
-              // can never disagree with the sidebar partition or ChatView's
-              // parked-thread banner within the same minute.
-              now: `${now.toISOString().slice(0, 16)}:00.000Z`,
-              autoSettleAfterDays,
-              changeRequestState,
-            }),
+          isSettled: supports.settlement && thread.settledAt !== null,
           isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
@@ -273,8 +256,6 @@ export function useThreadActionMenu(input: {
       })();
     },
     [
-      autoSettleAfterDays,
-      changeRequestState,
       confirmThreadDelete,
       copyBranchToClipboard,
       copyPathToClipboard,
