@@ -33,6 +33,7 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  ThreadTurnStartRequestedPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
@@ -289,6 +290,7 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            agentProfile: payload.agentProfile ?? null,
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -448,6 +450,7 @@ export function projectEvent(
               : {}),
             ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
             ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
+            ...(payload.agentProfile !== undefined ? { agentProfile: payload.agentProfile } : {}),
             updatedAt: payload.updatedAt,
           }),
         })),
@@ -540,6 +543,23 @@ export function projectEvent(
           }),
         };
       });
+
+    case "thread.turn-start-requested":
+      return decodeForEvent(
+        ThreadTurnStartRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(
+            nextBase.threads,
+            payload.threadId,
+            payload.agentProfile !== undefined ? { agentProfile: payload.agentProfile } : {},
+          ),
+        })),
+      );
 
     case "thread.session-set":
       return Effect.gen(function* () {

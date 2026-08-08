@@ -1,4 +1,6 @@
 import {
+  AgentProfileId,
+  AgentProfileRevision,
   EnvironmentId,
   MessageId,
   ProjectId,
@@ -195,6 +197,30 @@ describe("resolveThreadMetadataUpdateForNextTurn", () => {
         nextBranch: "feature/current",
       }),
     ).toBeNull();
+  });
+
+  it("persists a pinned Agent revision and supports clearing it", () => {
+    const profile = {
+      id: AgentProfileId.make("orchestrator"),
+      scope: "environment" as const,
+      revision: AgentProfileRevision.make("a".repeat(64)),
+    };
+    expect(
+      resolveThreadMetadataUpdateForNextTurn({
+        currentModelSelection: modelSelection,
+        currentBranch: "feature/current",
+        currentAgentProfile: null,
+        nextAgentProfile: profile,
+      }),
+    ).toEqual({ agentProfile: profile });
+    expect(
+      resolveThreadMetadataUpdateForNextTurn({
+        currentModelSelection: modelSelection,
+        currentBranch: "feature/current",
+        currentAgentProfile: profile,
+        nextAgentProfile: null,
+      }),
+    ).toEqual({ agentProfile: null });
   });
 });
 

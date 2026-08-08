@@ -38,6 +38,7 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { type OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
+import type { ProviderAgentRuntimeCapabilities } from "../Services/ProviderAdapter.ts";
 import {
   buildOpenCodePermissionRules,
   OpenCodeRuntime,
@@ -54,6 +55,19 @@ import {
 import * as Option from "effect/Option";
 
 const PROVIDER = ProviderDriverKind.make("opencode");
+
+/** Capabilities must describe the configured OpenCode instance, not only the local-server path. */
+export function openCodeAgentRuntimeCapabilities(
+  serverUrl: string,
+): ProviderAgentRuntimeCapabilities {
+  return {
+    mcpServerInjection: serverUrl.trim().length === 0,
+    instructionDelivery: "prompt",
+    nativeToolPolicy: "sandbox-only",
+    tokenUsage: false,
+    monetaryCost: false,
+  };
+}
 
 /**
  * Version tag stamped into the OpenCode resume cursor. Bump if the cursor
@@ -1701,6 +1715,7 @@ export function makeOpenCodeAdapter(
       provider: PROVIDER,
       capabilities: {
         sessionModelSwitch: "in-session",
+        agentRuntime: openCodeAgentRuntimeCapabilities(openCodeSettings.serverUrl),
       },
       startSession,
       sendTurn,

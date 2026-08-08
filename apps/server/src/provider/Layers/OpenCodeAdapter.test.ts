@@ -37,6 +37,7 @@ import {
   isSameOpenCodeDirectory,
   makeOpenCodeAdapter,
   mergeOpenCodeAssistantText,
+  openCodeAgentRuntimeCapabilities,
 } from "./OpenCodeAdapter.ts";
 
 // Test-local service tag so the rest of the file can keep using `yield* OpenCodeAdapter`.
@@ -279,6 +280,17 @@ beforeEach(() => {
 
 const advanceTestClock = (ms: number) =>
   TestClock.adjust(`${ms} millis`).pipe(Effect.andThen(Effect.yieldNow));
+
+it("declares Agent capabilities for the configured OpenCode server mode", () => {
+  NodeAssert.deepEqual(openCodeAgentRuntimeCapabilities("http://127.0.0.1:9999"), {
+    mcpServerInjection: false,
+    instructionDelivery: "prompt",
+    nativeToolPolicy: "sandbox-only",
+    tokenUsage: false,
+    monetaryCost: false,
+  });
+  NodeAssert.equal(openCodeAgentRuntimeCapabilities("  ").mcpServerInjection, true);
+});
 
 it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
   it.effect("reuses a configured OpenCode server URL instead of spawning a local server", () =>

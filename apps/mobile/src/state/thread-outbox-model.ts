@@ -2,6 +2,7 @@ import { isTransportConnectionErrorMessage } from "@t3tools/client-runtime/error
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import {
   CommandId,
+  AgentProfileRef,
   EnvironmentId,
   IsoDateTime,
   MessageId,
@@ -14,6 +15,7 @@ import {
   type ProjectId as ProjectIdType,
   type ProviderInteractionMode as ProviderInteractionModeType,
   type RuntimeMode as RuntimeModeType,
+  type AgentProfileRef as AgentProfileRefType,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
@@ -47,6 +49,7 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
+  agentProfile: Schema.optional(Schema.NullOr(AgentProfileRef)),
   // Present when the queued item creates a brand-new thread (pending task)
   // instead of appending a turn to an existing one.
   creation: Schema.optional(QueuedThreadCreationSchema),
@@ -76,6 +79,7 @@ export interface QueuedThreadMessage {
   readonly modelSelection?: ModelSelectionType;
   readonly runtimeMode?: RuntimeModeType;
   readonly interactionMode?: ProviderInteractionModeType;
+  readonly agentProfile?: AgentProfileRefType | null;
   readonly creation?: QueuedThreadCreation;
   readonly createdAt: string;
 }
@@ -84,16 +88,21 @@ export interface ThreadSettingsSnapshot {
   readonly modelSelection: ModelSelectionType;
   readonly runtimeMode: RuntimeModeType;
   readonly interactionMode: ProviderInteractionModeType;
+  readonly agentProfile?: AgentProfileRefType | null;
 }
 
 export function resolveQueuedThreadSettings(
   message: QueuedThreadMessage,
   thread: ThreadSettingsSnapshot,
 ): ThreadSettingsSnapshot {
+  const agentProfile = Object.prototype.hasOwnProperty.call(message, "agentProfile")
+    ? message.agentProfile
+    : thread.agentProfile;
   return {
     modelSelection: message.modelSelection ?? thread.modelSelection,
     runtimeMode: message.runtimeMode ?? thread.runtimeMode,
     interactionMode: message.interactionMode ?? thread.interactionMode,
+    ...(agentProfile === undefined ? {} : { agentProfile }),
   };
 }
 

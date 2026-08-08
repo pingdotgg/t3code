@@ -84,6 +84,18 @@ A side-effecting service that handles follow-up work after events or runtime sig
 
 A typed signal emitted when an async milestone completes, such as `checkpoint.baseline.captured`, `checkpoint.diff.finalized`, or `turn.processing.quiesced`. Receipts are a test-only mechanism: the production `RuntimeReceiptBusLive` publish is a no-op and only the test layer is PubSub-backed. Do not build production behavior on them. See [RuntimeReceiptBus.ts][13] and [CheckpointReactor.ts][6].
 
+#### Agent profile
+
+A reusable, provider-neutral orchestration policy selected for a thread or child run. Profiles are revision-pinned and contain instructions, model/workspace/tool policy, delegation limits, Rules, hooks, compatibility requirements, and budgets. See [Native Agent orchestration][25].
+
+#### AgentRun
+
+The durable coordination state for one child-agent execution. An AgentRun points to an ordinary child thread and records lineage, lifecycle, usage, and integration state without duplicating its transcript. See [Native Agent orchestration][25].
+
+#### Rule
+
+A reusable instruction document that applies always, through an explicit profile reference, or when workspace-relative file globs match the turn context. See [Native Agent orchestration][25].
+
 #### Quiesced
 
 "Quiesced" means a turn has gone quiet and stable: follow-up work such as [CheckpointReactor.ts][6] has settled. It appears in [the receipt schema][13], so in practice it is something tests wait on rather than a production signal.
@@ -154,6 +166,7 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 - [Provider architecture][16]
 - [Permission modes][18]
 - [Workspace layout][2]
+- [Native Agent orchestration][25]
 
 [1]: ../../packages/contracts/src/orchestration.ts
 [2]: ./workspace-layout.md
@@ -179,3 +192,4 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [22]: ../../apps/server/src/checkpointing/Utils.ts
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
+[25]: ./agents.md

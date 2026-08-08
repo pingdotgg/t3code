@@ -1164,7 +1164,16 @@ export function makeCursorAdapter(
 
     return {
       provider: PROVIDER,
-      capabilities: { sessionModelSwitch: "in-session" },
+      capabilities: {
+        sessionModelSwitch: "in-session",
+        agentRuntime: {
+          mcpServerInjection: true,
+          instructionDelivery: "prompt",
+          nativeToolPolicy: "sandbox-only",
+          tokenUsage: false,
+          monetaryCost: false,
+        },
+      },
       startSession,
       sendTurn,
       interruptTurn,

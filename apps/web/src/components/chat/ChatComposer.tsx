@@ -1,8 +1,10 @@
 import type {
+  AgentProfileRef,
   ApprovalRequestId,
   EnvironmentId,
   ModelSelection,
   PreviewAnnotationPayload,
+  ProjectId,
   ProviderApprovalDecision,
   ProviderInteractionMode,
   ResolvedKeybindingsConfig,
@@ -63,6 +65,7 @@ import {
 } from "../../promptStashStore";
 import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
+import { composerAgentSelectionKey } from "./ChatComposer.logic";
 import { compressImageForStash, compressImageToByteLimit } from "../../lib/imageCompression";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
@@ -85,6 +88,7 @@ import {
 } from "../composerFooterLayout";
 import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { AgentProfilePicker } from "./AgentProfilePicker";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
@@ -479,6 +483,7 @@ export interface ChatComposerHandle {
     selectedPromptEffort: string | null;
     selectedModelOptionsForDispatch: unknown;
     selectedModelSelection: ModelSelection;
+    selectedAgentProfile: AgentProfileRef | null;
     providerAvailable: boolean;
     selectedProvider: ProviderDriverKind;
     selectedModel: string;
@@ -499,6 +504,7 @@ export interface ChatComposerProps {
 
   // Thread context
   activeThreadId: ThreadId | null;
+  activeProjectId: ProjectId | null;
   activeThreadEnvironmentId: EnvironmentId | undefined;
   activeThread: Thread | undefined;
   isServerThread: boolean;
@@ -584,7 +590,11 @@ export interface ChatComposerProps {
     cursorAdjacentToMention: boolean,
   ) => void;
 
-  onProviderModelSelect: (instanceId: ProviderInstanceId, model: string) => void;
+  onProviderModelSelect: (
+    instanceId: ProviderInstanceId,
+    model: string,
+    options?: ModelSelection["options"],
+  ) => void;
   getModelDisabledReason: (instanceId: ProviderInstanceId, model: string) => string | null;
   toggleInteractionMode: () => void;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
@@ -608,7 +618,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     routeThreadRef,
     draftId,
     activeThreadId,
-    activeThreadEnvironmentId: _activeThreadEnvironmentId,
+    activeProjectId,
+    activeThreadEnvironmentId,
     activeThread,
     isServerThread: _isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
@@ -667,6 +678,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onExpandImage,
   } = props;
   const isSendDisabled = sendDisabledReason !== null;
+  const agentSelectionContextKey = composerAgentSelectionKey({
+    activeThreadId,
+    activeEnvironmentId: activeThreadEnvironmentId ?? environmentId,
+    activeProjectId,
+    draftId,
+    composerDraftTarget,
+  });
+  const [selectedAgentProfile, setSelectedAgentProfile] = useState<AgentProfileRef | null>(
+    () => activeThread?.agentProfile ?? null,
+  );
+
+  useEffect(() => {
+    setSelectedAgentProfile(activeThread?.agentProfile ?? null);
+  }, [
+    activeThreadId,
+    agentSelectionContextKey,
+    draftId,
+    activeThread?.agentProfile?.id,
+    activeThread?.agentProfile?.revision,
+    activeThread?.agentProfile?.scope,
+  ]);
 
   // ------------------------------------------------------------------
   // Store subscriptions (prompt / images / terminal contexts)
@@ -2611,6 +2643,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         selectedPromptEffort,
         selectedModelOptionsForDispatch,
         selectedModelSelection,
+        selectedAgentProfile,
         providerAvailable: !noProviderAvailable,
         selectedProvider,
         selectedModel,
@@ -2639,6 +2672,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedModel,
       selectedModelOptionsForDispatch,
       selectedModelSelection,
+      selectedAgentProfile,
       noProviderAvailable,
       selectedPromptEffort,
       selectedProvider,
@@ -3145,6 +3179,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onInstanceModelChange={onProviderModelSelect}
                   />
                 )}
+
+                <AgentProfilePicker
+                  compact={isComposerFooterCompact}
+                  environmentId={activeThreadEnvironmentId ?? environmentId}
+                  projectId={activeProjectId}
+                  value={selectedAgentProfile}
+                  disabled={isConnecting || projectSelectionRequired}
+                  onChange={(profile, defaultModel) => {
+                    setSelectedAgentProfile(profile);
+                    if (
+                      defaultModel !== null &&
+                      getModelDisabledReason(defaultModel.instanceId, defaultModel.model) === null
+                    ) {
+                      onProviderModelSelect(
+                        defaultModel.instanceId,
+                        defaultModel.model,
+                        defaultModel.options,
+                      );
+                    }
+                  }}
+                />
 
                 {isComposerFooterCompact ? (
                   <CompactComposerControlsMenu

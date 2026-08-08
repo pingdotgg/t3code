@@ -3,6 +3,7 @@ import {
   MessageId,
   ThreadId,
   type ModelSelection,
+  type AgentProfileRef,
   type ProjectId,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -32,6 +33,7 @@ export interface ProjectThreadStartTurnSpec {
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  readonly agentProfile?: AgentProfileRef | null;
   readonly workspaceMode: "local" | "worktree";
   readonly branch: string | null;
   readonly worktreePath: string | null;
@@ -61,6 +63,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
     titleSeed: title,
     runtimeMode: spec.runtimeMode,
     interactionMode: spec.interactionMode,
+    agentProfile: spec.agentProfile ?? null,
     bootstrap: {
       createThread: {
         projectId: spec.projectId,
@@ -68,6 +71,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
         modelSelection: spec.modelSelection,
         runtimeMode: spec.runtimeMode,
         interactionMode: spec.interactionMode,
+        agentProfile: spec.agentProfile ?? null,
         branch: spec.branch,
         worktreePath: isWorktree ? null : spec.worktreePath,
         createdAt: spec.createdAt,

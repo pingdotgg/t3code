@@ -123,6 +123,7 @@ function LocalSettingsRouteScreen() {
             value={`${environmentCount}`}
             target="SettingsEnvironments"
           />
+          <SettingsRow icon="person.2" label="Agents" target="SettingsAgents" />
         </SettingsSection>
 
         <GeneralSettingsSection />
@@ -477,6 +478,7 @@ function ConfiguredSettingsRouteScreen() {
             value={`${environmentCount}`}
             target="SettingsEnvironments"
           />
+          <SettingsRow icon="person.2" label="Agents" target="SettingsAgents" />
           <SettingsSwitchRow
             icon="bell.badge"
             label="Device Notifications"

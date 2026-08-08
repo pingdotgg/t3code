@@ -5,6 +5,7 @@ import {
   CommandId,
   MessageId,
   type EnvironmentId,
+  type AgentProfileRef,
   type ModelSelection,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -41,6 +42,9 @@ import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
+import { resolveAgentProfileSelection } from "./agentProfileSelection";
+
+export { resolveAgentProfileSelection } from "./agentProfileSelection";
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -103,6 +107,10 @@ export function useThreadComposerState() {
   const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
   const interactionMode = selectedDraft?.interactionMode ?? selectedThread?.interactionMode ?? null;
+  const agentProfile = resolveAgentProfileSelection(
+    selectedDraft?.agentProfile,
+    selectedThread?.agentProfile,
+  );
 
   const selectedThreadSessionActivity = useMemo(() => {
     const selectedThread = selectedThreadDetail ?? selectedThreadShell;
@@ -164,6 +172,7 @@ export function useThreadComposerState() {
       modelSelection: draft.modelSelection ?? thread.modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
       interactionMode: draft.interactionMode ?? thread.interactionMode,
+      agentProfile: resolveAgentProfileSelection(draft.agentProfile, thread.agentProfile),
       createdAt: metadata.createdAt,
     });
     clearComposerDraftContent(threadKey);
@@ -299,6 +308,14 @@ export function useThreadComposerState() {
     [selectedThreadKey],
   );
 
+  const onUpdateAgentProfile = useCallback(
+    (value: AgentProfileRef | null) => {
+      if (!selectedThreadKey) return;
+      updateComposerDraftSettings(selectedThreadKey, { agentProfile: value });
+    },
+    [selectedThreadKey],
+  );
+
   return {
     selectedThreadFeed,
     selectedThreadQueueCount,
@@ -308,6 +325,7 @@ export function useThreadComposerState() {
     modelSelection,
     runtimeMode,
     interactionMode,
+    agentProfile,
     activeThreadBusy,
     onChangeDraftMessage,
     onPickDraftImages,
@@ -318,5 +336,6 @@ export function useThreadComposerState() {
     onUpdateModelSelection,
     onUpdateRuntimeMode,
     onUpdateInteractionMode,
+    onUpdateAgentProfile,
   };
 }

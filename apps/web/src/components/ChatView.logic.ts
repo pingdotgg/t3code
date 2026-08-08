@@ -1,4 +1,5 @@
 import {
+  type AgentProfileRef,
   type EnvironmentId,
   isProviderDriverKind,
   ProjectId,
@@ -56,10 +57,13 @@ export function resolveThreadMetadataUpdateForNextTurn(input: {
   nextModelSelection?: ModelSelection;
   currentBranch: string | null;
   nextBranch?: string;
+  currentAgentProfile?: AgentProfileRef | null;
+  nextAgentProfile?: AgentProfileRef | null;
 }): {
   modelSelection?: ModelSelection;
   branch?: string;
   worktreePath?: null;
+  agentProfile?: AgentProfileRef | null;
 } | null {
   const nextModelSelection = input.nextModelSelection;
   const modelSelectionChanged =
@@ -69,12 +73,16 @@ export function resolveThreadMetadataUpdateForNextTurn(input: {
       JSON.stringify(nextModelSelection.options ?? null) !==
         JSON.stringify(input.currentModelSelection.options ?? null));
   const branchChanged = input.nextBranch !== undefined && input.nextBranch !== input.currentBranch;
-  if (!modelSelectionChanged && !branchChanged) {
+  const agentProfileChanged =
+    input.nextAgentProfile !== undefined &&
+    JSON.stringify(input.nextAgentProfile) !== JSON.stringify(input.currentAgentProfile ?? null);
+  if (!modelSelectionChanged && !branchChanged && !agentProfileChanged) {
     return null;
   }
   return {
     ...(modelSelectionChanged ? { modelSelection: nextModelSelection } : {}),
     ...(branchChanged ? { branch: input.nextBranch, worktreePath: null } : {}),
+    ...(agentProfileChanged ? { agentProfile: input.nextAgentProfile } : {}),
   };
 }
 

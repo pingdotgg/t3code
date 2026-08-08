@@ -123,6 +123,13 @@ it("requires a settlement to match the live Grok turn", () => {
 });
 
 it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
+  it.effect("does not claim token accounting that the ACP stream does not emit", () =>
+    Effect.gen(function* () {
+      const adapter = yield* makeTestAdapter("fake-grok");
+      assert.isFalse(adapter.capabilities.agentRuntime?.tokenUsage);
+    }),
+  );
+
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-mock-thread");

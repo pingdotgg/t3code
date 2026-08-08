@@ -5,6 +5,8 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  AgentProfileId,
+  AgentProfileRevision,
   ThreadId,
 } from "@t3tools/contracts";
 import { AtomRegistry } from "effect/unstable/reactivity";
@@ -124,6 +126,26 @@ describe("thread outbox", () => {
         options: [{ id: "reasoningEffort", value: "xhigh" }],
       }),
     ).toBe(false);
+  });
+
+  it("round-trips the pinned agent profile revision through the outbox", () => {
+    const message = {
+      ...queuedMessage({ messageId: "message-agent", createdAt: "2026-06-08T10:00:01.000Z" }),
+      agentProfile: {
+        id: AgentProfileId.make("reviewer"),
+        scope: "environment" as const,
+        revision: AgentProfileRevision.make("a".repeat(64)),
+      },
+    } satisfies QueuedThreadMessage;
+    expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(message))).toEqual(message);
+    expect(
+      resolveQueuedThreadSettings(message, {
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "auto",
+        interactionMode: "default",
+        agentProfile: null,
+      }).agentProfile,
+    ).toEqual(message.agentProfile);
   });
 
   it("backs off queued delivery retries and caps them at sixteen seconds", () => {

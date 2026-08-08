@@ -128,7 +128,11 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         threadId: ThreadId.make(request.threadId),
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
-        capabilities: new Set(["preview"]),
+        // These are toolkit groups exposed to provider sessions, not profile
+        // permissions. `t3McpCapabilities` declares runtime compatibility.
+        // Agent operations enforce the selected profile, delegation allowlist,
+        // run ownership, and project boundary in AgentOrchestration.
+        capabilities: new Set(["preview", "agents"]),
         issuedAt,
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
