@@ -77,15 +77,21 @@ describe("buildDayColumns", () => {
     ]);
   });
 
-  it("keeps the bands contiguous so the areas stay additive", () => {
+  it("keeps band values absolute rather than cumulative", () => {
+    // Regression: the bands were once stack offsets, which drew Claude Code
+    // permanently above Codex regardless of which provider spent more.
+    const [first] = buildDayColumns(days, byDay, "cost");
+
+    expect(first?.bands).toEqual([
+      { provider: "codex", value: 10 },
+      { provider: "claude", value: 20 },
+    ]);
+  });
+
+  it("reports the total as the sum of its bands", () => {
     for (const column of buildDayColumns(days, byDay, "cost")) {
-      let expectedBase = 0;
-      for (const band of column.bands) {
-        expect(band.base).toBeCloseTo(expectedBase, 9);
-        expect(band.top).toBeCloseTo(band.base + band.value, 9);
-        expectedBase = band.top;
-      }
-      expect(column.total).toBeCloseTo(expectedBase, 9);
+      const sum = column.bands.reduce((running, band) => running + band.value, 0);
+      expect(column.total).toBeCloseTo(sum, 9);
     }
   });
 });
