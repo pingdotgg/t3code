@@ -39,7 +39,11 @@ import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
-import { listProviderHomeCandidates } from "./usageHomes.ts";
+import {
+  dedupeUsageHomes,
+  listProviderHomeCandidates,
+  type ResolvedUsageHome,
+} from "./usageHomes.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -224,36 +228,7 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-    interface TranscriptDir {
-      provider: UsageProviderKind;
-      dir: string;
-      label: string | null;
-      /** A non-overlay instance's label beats a shadow overlay's for the dir. */
-      labelIsDirect: boolean;
-    }
-    const dirs: TranscriptDir[] = [];
-    const byKey = new Map<string, TranscriptDir>();
-    const push = (
-      provider: UsageProviderKind,
-      dir: string,
-      label: string | null,
-      isDirect: boolean,
-    ) => {
-      const key = `${provider}\0${dir}`;
-      const existing = byKey.get(key);
-      if (existing === undefined) {
-        const entry: TranscriptDir = { provider, dir, label, labelIsDirect: isDirect };
-        byKey.set(key, entry);
-        dirs.push(entry);
-        return;
-      }
-      // Shadow homes share the shared home's `sessions`; the directory is
-      // scanned once, named after the instance that owns it directly.
-      if (isDirect && !existing.labelIsDirect) {
-        existing.label = label;
-        existing.labelIsDirect = true;
-      }
-    };
+    const homes: ResolvedUsageHome[] = [];
 
     for (const candidate of listProviderHomeCandidates(settings, "claude")) {
       // A blob that fails to decode belongs to an instance the registry
@@ -263,7 +238,13 @@ export const make = Effect.gen(function* () {
       );
       if (config === null) continue;
       const claudeHome = yield* resolveClaudeHomePath(config);
-      push("claude", yield* resolveClaudeTranscriptDir(claudeHome), candidate.label, true);
+      homes.push({
+        provider: "claude",
+        dir: yield* resolveClaudeTranscriptDir(claudeHome),
+        label: candidate.label,
+        isDirect: true,
+        isDefault: candidate.isDefault,
+      });
     }
 
     for (const candidate of listProviderHomeCandidates(settings, "codex")) {
@@ -272,15 +253,16 @@ export const make = Effect.gen(function* () {
       );
       if (config === null) continue;
       const layout = yield* resolveCodexHomeLayout(config);
-      push(
-        "codex",
-        path.join(layout.sharedHomePath, "sessions"),
-        candidate.label,
-        layout.mode === "direct",
-      );
+      homes.push({
+        provider: "codex",
+        dir: path.join(layout.sharedHomePath, "sessions"),
+        label: candidate.label,
+        isDirect: layout.mode === "direct",
+        isDefault: candidate.isDefault,
+      });
     }
 
-    return dirs;
+    return dedupeUsageHomes(homes);
   });
 
   /**

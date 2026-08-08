@@ -8,7 +8,9 @@
  *
  * Precedence mirrors `deriveProviderInstanceConfigMap`: explicit
  * `providerInstances` entries always win, and the legacy blob only fills the
- * default slot (instance id === driver kind) when no explicit entry claims it.
+ * default slot (instance id === driver kind) when no explicit entry claims it
+ * — regardless of that entry's driver, so an id claimed by another driver
+ * still suppresses the legacy blob exactly as the registry does.
  *
  * @module usageHomes
  */
@@ -29,6 +31,8 @@ export interface UsageHomeCandidate {
    * under the plain provider name.
    */
   readonly label: string | null;
+  /** The default slot (instance id === driver kind) or the legacy blob. */
+  readonly isDefault: boolean;
 }
 
 /**
@@ -46,16 +50,73 @@ export function listProviderHomeCandidates(
   let defaultSlotClaimed = false;
 
   for (const [instanceId, envelope] of Object.entries(settings.providerInstances)) {
-    if (envelope.driver !== driver) continue;
+    // Any entry occupying the default slot claims it, even one for another
+    // driver: the registry suppresses the legacy blob in that case too.
     if (instanceId === driver) defaultSlotClaimed = true;
+    if (envelope.driver !== driver) continue;
     candidates.push({
       // An envelope without a config payload is an instance running on driver
       // defaults; the settings schemas fill those in when the blob decodes.
       config: envelope.config ?? {},
       label: envelope.displayName ?? (instanceId === driver ? null : instanceId),
+      isDefault: instanceId === driver,
     });
   }
 
-  if (!defaultSlotClaimed) candidates.push({ config: settings.providers[driver], label: null });
+  if (!defaultSlotClaimed) {
+    candidates.push({ config: settings.providers[driver], label: null, isDefault: true });
+  }
   return candidates;
+}
+
+/** One candidate whose home directory has been resolved on this machine. */
+export interface ResolvedUsageHome {
+  readonly provider: UsageProviderKind;
+  readonly dir: string;
+  readonly label: string | null;
+  /** False for a shadow overlay, which shares another instance's home. */
+  readonly isDirect: boolean;
+  readonly isDefault: boolean;
+}
+
+export interface UsageTranscriptDir {
+  readonly provider: UsageProviderKind;
+  readonly dir: string;
+  readonly label: string | null;
+}
+
+/**
+ * Collapses candidates that resolved to the same directory into one scan
+ * entry, keeping input order.
+ *
+ * Label precedence when several instances share a directory: a direct
+ * instance beats a shadow overlay (overlays share another instance's home),
+ * and the default slot beats named extras — a config-less extra instance
+ * resolves to the same home as the default, and that home's usage should
+ * render under the plain provider name, not the extra's.
+ */
+export function dedupeUsageHomes(
+  homes: readonly ResolvedUsageHome[],
+): readonly UsageTranscriptDir[] {
+  const rank = (home: ResolvedUsageHome) => (home.isDirect ? 2 : 0) + (home.isDefault ? 1 : 0);
+
+  const byKey = new Map<string, { entry: { label: string | null }; rank: number }>();
+  const dirs: { provider: UsageProviderKind; dir: string; label: string | null }[] = [];
+
+  for (const home of homes) {
+    const key = `${home.provider}\0${home.dir}`;
+    const existing = byKey.get(key);
+    if (existing === undefined) {
+      const entry = { provider: home.provider, dir: home.dir, label: home.label };
+      byKey.set(key, { entry, rank: rank(home) });
+      dirs.push(entry);
+      continue;
+    }
+    if (rank(home) > existing.rank) {
+      existing.entry.label = home.label;
+      existing.rank = rank(home);
+    }
+  }
+
+  return dirs;
 }

@@ -2,7 +2,11 @@ import { describe, expect, it } from "@effect/vitest";
 import { ServerSettings } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import { listProviderHomeCandidates } from "./usageHomes.ts";
+import {
+  dedupeUsageHomes,
+  listProviderHomeCandidates,
+  type ResolvedUsageHome,
+} from "./usageHomes.ts";
 
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 
@@ -78,6 +82,73 @@ describe("listProviderHomeCandidates", () => {
     const codex = listProviderHomeCandidates(settings, "codex");
     // The config-less instance plus the legacy default slot.
     expect(codex).toHaveLength(2);
-    expect(codex[0]).toEqual({ config: {}, label: "codex_extra" });
+    expect(codex[0]).toEqual({ config: {}, label: "codex_extra", isDefault: false });
+    expect(codex[1]?.isDefault).toBe(true);
+  });
+
+  it("suppresses the legacy blob when another driver claims the default slot", () => {
+    // The registry keys default-slot suppression on the instance id alone, so
+    // an id claimed by a different driver still hides the legacy blob.
+    const settings = decodeServerSettings({
+      providers: { codex: { homePath: "~/.codex-legacy" } },
+      providerInstances: {
+        codex: { driver: "claudeAgent", config: { homePath: "~/.claude-in-codex-slot" } },
+      },
+    });
+
+    expect(listProviderHomeCandidates(settings, "codex")).toHaveLength(0);
+  });
+});
+
+describe("dedupeUsageHomes", () => {
+  function home(overrides: Partial<ResolvedUsageHome> = {}): ResolvedUsageHome {
+    return {
+      provider: "codex",
+      dir: "/home/user/.codex/sessions",
+      label: null,
+      isDirect: true,
+      isDefault: false,
+      ...overrides,
+    };
+  }
+
+  it("keeps distinct directories separate and in input order", () => {
+    const dirs = dedupeUsageHomes([
+      home({ dir: "/a/sessions", label: "Work" }),
+      home({ dir: "/b/sessions", label: "Personal" }),
+    ]);
+
+    expect(dirs.map((dir) => dir.label)).toEqual(["Work", "Personal"]);
+  });
+
+  it("names a shared directory after the direct instance, not an overlay", () => {
+    const dirs = dedupeUsageHomes([
+      home({ label: "Overlay", isDirect: false }),
+      home({ label: "Work", isDirect: true }),
+    ]);
+
+    expect(dirs).toHaveLength(1);
+    expect(dirs[0]?.label).toBe("Work");
+  });
+
+  it("prefers the default slot's label over a named extra sharing its home", () => {
+    // A config-less extra instance resolves to the default home; that home's
+    // usage renders under the plain provider name, not the extra's.
+    const dirs = dedupeUsageHomes([
+      home({ label: "codex_extra", isDefault: false }),
+      home({ label: null, isDefault: true }),
+    ]);
+
+    expect(dirs).toHaveLength(1);
+    expect(dirs[0]?.label).toBeNull();
+  });
+
+  it("separates equal directories across providers", () => {
+    const dirs = dedupeUsageHomes([
+      home({ provider: "codex", dir: "/same" }),
+      home({ provider: "claude", dir: "/same" }),
+    ]);
+
+    expect(dirs).toHaveLength(2);
   });
 });
