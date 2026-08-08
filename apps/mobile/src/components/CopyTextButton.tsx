@@ -16,7 +16,8 @@ export const CopyTextButton = memo(function CopyTextButton(props: {
   readonly iconSize?: number;
   readonly buttonSize?: number;
 }) {
-  const [copied, setCopied] = useState(false);
+  const [copiedText, setCopiedText] = useState<string | null>(null);
+  const copied = copiedText === props.text;
   const resetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(
@@ -36,12 +37,12 @@ export const CopyTextButton = memo(function CopyTextButton(props: {
       hitSlop={8}
       onPress={() => {
         copyTextWithHaptic(props.text);
-        setCopied(true);
+        setCopiedText(props.text);
         if (resetTimeoutRef.current) {
           clearTimeout(resetTimeoutRef.current);
         }
         resetTimeoutRef.current = setTimeout(() => {
-          setCopied(false);
+          setCopiedText(null);
           resetTimeoutRef.current = null;
         }, COPY_FEEDBACK_DURATION_MS);
       }}

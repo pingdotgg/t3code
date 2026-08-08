@@ -8,10 +8,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
-import {
-  requestOlderThreadTurns,
-  threadHasOlderTurns,
-} from "@t3tools/client-runtime/state/threads";
+import { requestOlderThreadTurns } from "@t3tools/client-runtime/state/threads";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -100,6 +97,27 @@ function OpeningThreadLoadingScreen() {
   return <LoadingScreen message="Opening thread…" messagePlacement="above-spinner" />;
 }
 
+const ANDROID_THREAD_LOADING_ACTIONS: ReadonlyArray<AndroidHeaderAction> = [
+  {
+    accessibilityLabel: "Open files",
+    icon: "folder",
+    disabled: true,
+    onPress: () => undefined,
+  },
+  {
+    accessibilityLabel: "Open terminal",
+    icon: "terminal",
+    disabled: true,
+    onPress: () => undefined,
+  },
+  {
+    accessibilityLabel: "Open git controls",
+    icon: "point.topleft.down.curvedto.point.bottomright.up",
+    disabled: true,
+    onPress: () => undefined,
+  },
+];
+
 type ThreadRouteScreenRouteProps = StaticScreenProps<{
   readonly environmentId: string;
   readonly threadId: string;
@@ -110,27 +128,65 @@ interface ThreadRouteScreenProps extends ThreadRouteScreenRouteProps {
   readonly renderInspector?: (headerInset: number) => ReactNode;
 }
 
-function ThreadUnavailableScreen() {
+function ThreadRouteStateScreen(props: {
+  readonly children: ReactNode;
+  readonly onNavigateUp: () => void;
+  readonly title: string;
+}) {
   return (
-    <ScrollView
-      contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={{
-        flexGrow: 1,
-        justifyContent: "center",
-        paddingHorizontal: 24,
-        paddingVertical: 32,
-      }}
-      className="bg-screen flex-1"
-    >
-      <EmptyState
-        title="Thread unavailable"
-        detail="This thread is not available in the current mobile snapshot."
-      />
-    </ScrollView>
+    <>
+      {Platform.OS === "android" ? (
+        <AndroidScreenHeader
+          title={props.title}
+          reserveSubtitleSpace
+          onBack={props.onNavigateUp}
+          actions={ANDROID_THREAD_LOADING_ACTIONS}
+        />
+      ) : null}
+      {props.children}
+    </>
+  );
+}
+
+function ThreadUnavailableScreen(props: { readonly onNavigateUp: () => void }) {
+  return (
+    <ThreadRouteStateScreen title="Thread unavailable" onNavigateUp={props.onNavigateUp}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={{
+          flexGrow: 1,
+          justifyContent: "center",
+          paddingHorizontal: 24,
+          paddingVertical: 32,
+        }}
+        className="bg-screen flex-1"
+      >
+        <EmptyState
+          title="Thread unavailable"
+          detail="This thread is not available in the current mobile snapshot."
+        />
+      </ScrollView>
+    </ThreadRouteStateScreen>
+  );
+}
+
+function OpeningThreadRouteScreen(props: { readonly onNavigateUp: () => void }) {
+  return (
+    <ThreadRouteStateScreen title="Opening thread…" onNavigateUp={props.onNavigateUp}>
+      <OpeningThreadLoadingScreen />
+    </ThreadRouteStateScreen>
   );
 }
 
 export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
+  const navigation = useNavigation();
+  const handleNavigateUp = useCallback(() => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    navigation.dispatch(StackActions.replace("Home"));
+  }, [navigation]);
   const { state: workspaceState } = useWorkspaceState();
   const { connectionState } = useRemoteConnectionStatus();
   const { selectedThread } = useThreadSelection();
@@ -152,7 +208,7 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
   const selectedThreadDetailState = useSelectedThreadDetailState();
 
   if (environmentId === null || threadIdRaw === null) {
-    return <OpeningThreadLoadingScreen />;
+    return <OpeningThreadRouteScreen onNavigateUp={handleNavigateUp} />;
   }
 
   // Render the full thread chrome (header, feed, composer) as soon as the
@@ -169,10 +225,10 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
     routeConnectionState === "reconnecting";
 
   if (stillHydrating) {
-    return <OpeningThreadLoadingScreen />;
+    return <OpeningThreadRouteScreen onNavigateUp={handleNavigateUp} />;
   }
 
-  return <ThreadUnavailableScreen />;
+  return <ThreadUnavailableScreen onNavigateUp={handleNavigateUp} />;
 }
 
 function ThreadRouteContent(
@@ -194,20 +250,35 @@ function ThreadRouteContent(
     useThreadSelection();
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
-  // "Load earlier turns" header state for windowed (paginated) thread loads.
+  const selectedThreadPage = Option.getOrNull(selectedThreadDetailState.page);
+  const isWindowedThread = selectedThreadPage !== null;
+  const selectedThreadEnvironmentId = selectedThread?.environmentId ?? null;
+  const selectedThreadId = selectedThread?.id ?? null;
+  const canLoadEarlierTurns =
+    selectedThreadPage?.hasMore === true && selectedThreadPage.beforeCursor !== null;
+  const loadingEarlierTurns = selectedThreadPage?.loadingOlder === true;
+  // Keep the history control mounted after the final page. Removing it in the
+  // same commit as a prepend changes the list header height while Android's
+  // native MVCP is restoring the old first row, which can leave every recycled
+  // container outside the viewport until the next gesture.
   const loadEarlierTurns = useMemo(() => {
-    if (selectedThread === null || !threadHasOlderTurns(selectedThreadDetailState)) {
+    if (!isWindowedThread || selectedThreadEnvironmentId === null || selectedThreadId === null) {
       return null;
     }
     return {
-      loading:
-        selectedThreadDetailState.page._tag === "Some" &&
-        selectedThreadDetailState.page.value.loadingOlder,
+      hasMore: canLoadEarlierTurns,
+      loading: loadingEarlierTurns,
       onLoadEarlier: () => {
-        requestOlderThreadTurns(selectedThread.environmentId, selectedThread.id);
+        requestOlderThreadTurns(selectedThreadEnvironmentId, selectedThreadId);
       },
     };
-  }, [selectedThread, selectedThreadDetailState]);
+  }, [
+    canLoadEarlierTurns,
+    isWindowedThread,
+    loadingEarlierTurns,
+    selectedThreadEnvironmentId,
+    selectedThreadId,
+  ]);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const composer = useThreadComposerState();
   const gitState = useSelectedThreadGitState();
@@ -689,30 +760,29 @@ function ThreadRouteContent(
         onPress: props.onReturnToThread,
       });
     }
-    if (selectedThreadCwd !== null) {
-      actions.push({
-        accessibilityLabel: "Open files",
-        icon: "folder",
-        onPress: handleOpenFilesInspector,
-      });
-    }
-    if (selectedThreadProject?.workspaceRoot) {
-      actions.push({
-        accessibilityLabel: "Open terminal",
-        icon: "terminal",
-        onPress: () => handleOpenTerminal(null),
-      });
-    }
+    actions.push({
+      accessibilityLabel: "Open files",
+      icon: "folder",
+      onPress: handleOpenFilesInspector,
+      disabled: selectedThreadCwd === null,
+    });
+    actions.push({
+      accessibilityLabel: "Open terminal",
+      icon: "terminal",
+      onPress: () => handleOpenTerminal(null),
+      disabled: !selectedThreadProject?.workspaceRoot,
+    });
     actions.push({
       accessibilityLabel: "Open git controls",
       icon: "point.topleft.down.curvedto.point.bottomright.up",
       onPress: handleOpenGitInspector,
     });
-    if (fileInspector.supported && selectedThreadCwd !== null) {
+    if (fileInspector.supported) {
       actions.push({
         accessibilityLabel: "Toggle inspector",
         icon: "sidebar.right",
         onPress: handleToggleInspector,
+        disabled: selectedThreadCwd === null,
       });
     }
     return actions;
@@ -731,6 +801,13 @@ function ThreadRouteContent(
   // native back button does not render. Provide an explicit Home escape for
   // that case; when history exists the native back button is used instead.
   const canGoBack = navigation.canGoBack();
+  const handleNavigateUp = useCallback(() => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    navigation.dispatch(StackActions.replace("Home"));
+  }, [navigation]);
   const compactHomeHeaderItems = useMemo<NativeHeaderItems>(
     () => [
       withNativeGlassHeaderItem({
@@ -856,7 +933,8 @@ function ThreadRouteContent(
         <AndroidScreenHeader
           title={selectedThread.title}
           subtitle={headerSubtitle}
-          onBack={layout.usesSplitView ? undefined : () => navigation.goBack()}
+          reserveSubtitleSpace
+          onBack={layout.usesSplitView ? undefined : handleNavigateUp}
           actions={androidHeaderActions}
         />
       ) : null}

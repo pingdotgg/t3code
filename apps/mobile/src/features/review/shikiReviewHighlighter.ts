@@ -59,8 +59,7 @@ const SHIKI_THEME_NAME_BY_SCHEME = {
   dark: "github-dark-default",
 } as const;
 const REVIEW_HIGHLIGHTER_ENGINE_ENV_VALUE =
-  process.env.EXPO_PUBLIC_REVIEW_HIGHLIGHTER_ENGINE ??
-  (process.env.NODE_ENV === "test" ? "javascript" : "native");
+  process.env.EXPO_PUBLIC_REVIEW_HIGHLIGHTER_ENGINE ?? "javascript";
 const REVIEW_HIGHLIGHTER_ENGINE_PREFERENCE = resolveReviewHighlighterEnginePreference(
   REVIEW_HIGHLIGHTER_ENGINE_ENV_VALUE,
 );
