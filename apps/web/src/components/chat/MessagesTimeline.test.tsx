@@ -225,7 +225,50 @@ function buildUserTimelineEntry(text: string) {
   };
 }
 
+function buildAssistantTimelineEntry(text: string) {
+  return {
+    id: "entry-assistant",
+    kind: "message" as const,
+    createdAt: MESSAGE_CREATED_AT,
+    message: {
+      id: MessageId.make("message-assistant"),
+      role: "assistant" as const,
+      text,
+      turnId: null,
+      createdAt: MESSAGE_CREATED_AT,
+      updatedAt: MESSAGE_CREATED_AT,
+      streaming: false,
+    },
+  };
+}
+
 describe("MessagesTimeline", () => {
+  it("keeps linked Markdown images under the anchor's interaction", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildAssistantTimelineEntry(
+            [
+              "[![Linked preview](https://example.com/linked.png)](https://example.com/docs)",
+              "",
+              "![Standalone preview](https://example.com/standalone.png)",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    const linkedImageAnchor = markup.match(
+      /<a\b[^>]*href="https:\/\/example\.com\/docs"[^>]*>[\s\S]*?<\/a>/,
+    )?.[0];
+    expect(linkedImageAnchor).toBeDefined();
+    expect(linkedImageAnchor).toContain('<img src="https://example.com/linked.png"');
+    expect(linkedImageAnchor).not.toContain("<button");
+    expect(linkedImageAnchor).not.toContain('aria-label="Open Linked preview larger"');
+    expect(markup).toContain('aria-label="Open Standalone preview larger"');
+  });
+
   it("uses the larger leading inset only when the top fade is enabled", () => {
     const timelineEntries = [buildUserTimelineEntry("Hello")];
 
