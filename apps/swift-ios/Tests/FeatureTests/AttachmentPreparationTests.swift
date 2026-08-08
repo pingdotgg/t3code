@@ -53,21 +53,108 @@ struct AttachmentPreparationTests {
     @Test
     @MainActor
     func pasteQueuePreservesRequestOrder() async {
-        let queue = FeatureComposerPasteQueue()
+        let lifecycle = FeatureAttachmentLifecycle(contextID: "draft-a")
+        let queue = FeatureComposerPasteQueue(lifecycle: lifecycle)
+        let token = lifecycle.token(for: "draft-a")!
         let gate = AttachmentTestGate()
         var committed: [Int] = []
 
-        queue.enqueue {
+        queue.enqueue(token: token) {
             await gate.wait()
             committed.append(1)
         }
-        queue.enqueue {
+        queue.enqueue(token: token) {
             committed.append(2)
         }
 
         await gate.open()
         await queue.waitForAll()
         #expect(committed == [1, 2])
+    }
+
+    @Test
+    @MainActor
+    func pasteQueueCannotCommitAfterContextTransition() async {
+        let lifecycle = FeatureAttachmentLifecycle(contextID: "draft-a")
+        let queue = FeatureComposerPasteQueue(lifecycle: lifecycle)
+        let oldToken = lifecycle.token(for: "draft-a")!
+        let started = AttachmentTestGate()
+        let gate = AttachmentTestGate()
+        var didCommit = false
+
+        let task = queue.enqueue(token: oldToken) {
+            await started.open()
+            await gate.wait()
+            guard !Task.isCancelled else { return }
+            didCommit = true
+        }
+
+        await started.wait()
+        lifecycle.transition(to: "draft-b")
+        queue.cancelAll()
+        await gate.open()
+        await task?.value
+
+        #expect(!didCommit)
+        #expect(queue.enqueue(token: oldToken) {} == nil)
+    }
+
+    @Test
+    @MainActor
+    func attachmentTasksCannotCommitAfterContextTransition() async {
+        let lifecycle = FeatureAttachmentLifecycle(contextID: "draft-a")
+        let taskStore = FeatureAttachmentTaskStore(lifecycle: lifecycle)
+        let oldToken = lifecycle.token(for: "draft-a")!
+        let started = AttachmentTestGate()
+        let gate = AttachmentTestGate()
+        var didCommit = false
+
+        let task = taskStore.start(lifecycleToken: oldToken) { token in
+            await started.open()
+            await gate.wait()
+            guard taskStore.isActive(token) else { return }
+            didCommit = true
+        }
+
+        await started.wait()
+        lifecycle.transition(to: "draft-b")
+        taskStore.cancelAll()
+        await gate.open()
+        await task?.value
+
+        #expect(!didCommit)
+        #expect(taskStore.start(lifecycleToken: oldToken) { _ in } == nil)
+
+        let currentToken = lifecycle.token(for: "draft-b")!
+        let currentTask = taskStore.start(lifecycleToken: currentToken) { _ in
+            didCommit = true
+        }
+        await currentTask?.value
+        #expect(didCommit)
+    }
+
+    @Test
+    @MainActor
+    func sameContextTransitionInvalidatesCapturedCallbacks() {
+        let lifecycle = FeatureAttachmentLifecycle(contextID: "draft-a")
+        let oldToken = lifecycle.token(for: "draft-a")!
+
+        lifecycle.transition(to: "draft-a")
+
+        #expect(!lifecycle.isCurrent(oldToken))
+        #expect(lifecycle.token(for: "draft-a") != oldToken)
+    }
+
+    @Test
+    func cancellingPreparationClearsEveryReservation() {
+        var state = FeatureAttachmentPreparationState()
+        _ = state.reserve(itemCount: 3, attachments: [])
+        _ = state.reserve(itemCount: 2, attachments: [])
+
+        state.cancelAll()
+
+        #expect(!state.isPreparing)
+        #expect(state.pendingItemCount == 0)
     }
 
     @Test

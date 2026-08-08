@@ -109,6 +109,76 @@ struct FeatureAttachmentPreparationState: Equatable {
     }
 }
 
+@MainActor
+final class FeatureAttachmentLifecycle {
+    struct Token: Hashable {
+        fileprivate let id: UUID
+        fileprivate let contextID: String
+    }
+
+    private var current: Token
+
+    init(contextID: String) {
+        current = Token(id: UUID(), contextID: contextID)
+    }
+
+    func token(for contextID: String) -> Token? {
+        current.contextID == contextID ? current : nil
+    }
+
+    func isCurrent(_ token: Token) -> Bool {
+        token == current
+    }
+
+    func transition(to contextID: String) {
+        current = Token(id: UUID(), contextID: contextID)
+    }
+}
+
+@MainActor
+final class FeatureAttachmentTaskStore {
+    struct Token: Hashable {
+        fileprivate let id: UUID
+        fileprivate let lifecycleToken: FeatureAttachmentLifecycle.Token
+    }
+
+    private let lifecycle: FeatureAttachmentLifecycle
+    private var tasks: [UUID: Task<Void, Never>] = [:]
+
+    init(lifecycle: FeatureAttachmentLifecycle) {
+        self.lifecycle = lifecycle
+    }
+
+    @discardableResult
+    func start(
+        lifecycleToken: FeatureAttachmentLifecycle.Token,
+        _ work: @escaping @MainActor (Token) async -> Void
+    ) -> Task<Void, Never>? {
+        guard lifecycle.isCurrent(lifecycleToken) else { return nil }
+        let token = Token(id: UUID(), lifecycleToken: lifecycleToken)
+        let task = Task { @MainActor [weak self] in
+            guard let self, self.isActive(token) else { return }
+            await work(token)
+            self.tasks.removeValue(forKey: token.id)
+        }
+        tasks[token.id] = task
+        return task
+    }
+
+    func isActive(_ token: Token) -> Bool {
+        tasks[token.id] != nil
+            && lifecycle.isCurrent(token.lifecycleToken)
+            && !Task.isCancelled
+    }
+
+    func cancelAll() {
+        for task in tasks.values {
+            task.cancel()
+        }
+        tasks.removeAll()
+    }
+}
+
 struct FeatureImageAttachmentPicker: View {
     private enum Source {
         case photoLibrary
@@ -118,6 +188,9 @@ struct FeatureImageAttachmentPicker: View {
 
     @Binding var attachments: [FeatureDraftAttachment]
     @Binding var preparationState: FeatureAttachmentPreparationState
+    let taskStore: FeatureAttachmentTaskStore
+    let lifecycle: FeatureAttachmentLifecycle
+    let attachmentContextID: String
     let maximumCount: Int
     let isEnabled: Bool
 
@@ -126,16 +199,23 @@ struct FeatureImageAttachmentPicker: View {
     @State private var isCameraPresented = false
     @State private var isFileImporterPresented = false
     @State private var sourcePresentationTask: Task<Void, Never>?
+    @State private var presentedLifecycleToken: FeatureAttachmentLifecycle.Token?
     @State private var errorMessage: String?
 
     init(
         attachments: Binding<[FeatureDraftAttachment]>,
         preparationState: Binding<FeatureAttachmentPreparationState>,
+        taskStore: FeatureAttachmentTaskStore,
+        lifecycle: FeatureAttachmentLifecycle,
+        attachmentContextID: String,
         maximumCount: Int = FeatureImageAttachmentPolicy.maximumCount,
         isEnabled: Bool = true
     ) {
         _attachments = attachments
         _preparationState = preparationState
+        self.taskStore = taskStore
+        self.lifecycle = lifecycle
+        self.attachmentContextID = attachmentContextID
         self.maximumCount = maximumCount
         self.isEnabled = isEnabled
     }
@@ -164,32 +244,50 @@ struct FeatureImageAttachmentPicker: View {
             Button("Cancel", role: .cancel) {}
         }
         .fullScreenCover(isPresented: $isPhotoLibraryPresented) {
-            FeaturePhotoLibraryPicker(
-                maximumCount: max(1, remainingCount),
-                onSelect: { images in
-                    isPhotoLibraryPresented = false
-                    loadPhotoSelections(images)
-                },
-                onFailure: { message in
-                    isPhotoLibraryPresented = false
-                    errorMessage = message
-                },
-                onCancel: { isPhotoLibraryPresented = false }
-            )
-            .ignoresSafeArea()
+            if let token = presentedLifecycleToken {
+                FeaturePhotoLibraryPicker(
+                    maximumCount: max(1, remainingCount),
+                    onSelect: { images in
+                        guard dismissPresentedSource(token) else { return }
+                        guard lifecycle.isCurrent(token) else { return }
+                        loadPhotoSelections(images, token: token)
+                    },
+                    onFailure: { message in
+                        guard dismissPresentedSource(token) else { return }
+                        guard lifecycle.isCurrent(token) else { return }
+                        errorMessage = message
+                    },
+                    onCancel: {
+                        _ = dismissPresentedSource(token)
+                    }
+                )
+                .ignoresSafeArea()
+            }
         }
         .fullScreenCover(isPresented: $isCameraPresented) {
-            FeatureCameraPicker(
-                onCapture: loadCapturedImage,
-                onCancel: { isCameraPresented = false }
-            )
-            .ignoresSafeArea()
+            if let token = presentedLifecycleToken {
+                FeatureCameraPicker(
+                    onCapture: { image in
+                        guard dismissPresentedSource(token) else { return }
+                        guard lifecycle.isCurrent(token) else { return }
+                        loadCapturedImage(image, token: token)
+                    },
+                    onCancel: {
+                        _ = dismissPresentedSource(token)
+                    }
+                )
+                .ignoresSafeArea()
+            }
         }
         .fileImporter(
             isPresented: $isFileImporterPresented,
             allowedContentTypes: [.image],
             allowsMultipleSelection: true,
-            onCompletion: loadFiles
+            onCompletion: { result in
+                guard let token = presentedLifecycleToken else { return }
+                guard dismissPresentedSource(token) else { return }
+                loadFiles(result, token: token)
+            }
         )
         .alert(
             "Couldn’t add image",
@@ -205,6 +303,15 @@ struct FeatureImageAttachmentPicker: View {
         .onDisappear {
             sourcePresentationTask?.cancel()
         }
+        .onChange(of: attachmentContextID) {
+            sourcePresentationTask?.cancel()
+            isAttachmentSourcePresented = false
+            isPhotoLibraryPresented = false
+            isCameraPresented = false
+            isFileImporterPresented = false
+            presentedLifecycleToken = nil
+            errorMessage = nil
+        }
     }
 
     private var remainingCount: Int {
@@ -213,6 +320,17 @@ struct FeatureImageAttachmentPicker: View {
             pendingItemCount: preparationState.pendingItemCount,
             maximumCount: maximumCount
         )
+    }
+
+    private func dismissPresentedSource(
+        _ token: FeatureAttachmentLifecycle.Token
+    ) -> Bool {
+        guard presentedLifecycleToken == token else { return false }
+        isPhotoLibraryPresented = false
+        isCameraPresented = false
+        isFileImporterPresented = false
+        presentedLifecycleToken = nil
+        return true
     }
 
     private var canAdd: Bool {
@@ -232,14 +350,18 @@ struct FeatureImageAttachmentPicker: View {
     }
 
     private func present(_ source: Source) {
+        guard let token = lifecycle.token(for: attachmentContextID) else { return }
         sourcePresentationTask?.cancel()
         isAttachmentSourcePresented = false
+        presentedLifecycleToken = token
         sourcePresentationTask = Task { @MainActor in
             // A confirmation dialog is still the active presenter while its action
             // runs. Wait for its dismissal animation before presenting another
             // controller or UIKit can reject (or race) the new presentation.
             try? await Task.sleep(for: .milliseconds(300))
-            guard !Task.isCancelled, canAdd else { return }
+            guard !Task.isCancelled,
+                  lifecycle.isCurrent(token),
+                  canAdd else { return }
             switch source {
             case .photoLibrary:
                 isPhotoLibraryPresented = true
@@ -251,8 +373,13 @@ struct FeatureImageAttachmentPicker: View {
         }
     }
 
-    private func loadPhotoSelections(_ images: [Data]) {
-        guard !images.isEmpty, canAdd else { return }
+    private func loadPhotoSelections(
+        _ images: [Data],
+        token: FeatureAttachmentLifecycle.Token
+    ) {
+        guard lifecycle.isCurrent(token),
+              !images.isEmpty,
+              canAdd else { return }
         let selected = Array(images.prefix(remainingCount))
         guard let operation = preparationState.reserve(
             itemCount: selected.count,
@@ -261,36 +388,45 @@ struct FeatureImageAttachmentPicker: View {
         ) else { return }
         let reservedImages = Array(selected.prefix(operation.count))
 
-        Task { @MainActor in
+        guard taskStore.start(lifecycleToken: token, { taskToken in
             defer { preparationState.finish(operation) }
             for data in reservedImages {
                 do {
                     let prepared = try await FeatureImageAttachmentIngestion.prepare(
                         data: data
                     )
+                    guard taskStore.isActive(taskToken) else { return }
                     let accepted = FeatureImageAttachmentPolicy.attachmentsToAppend(
                         [prepared],
                         to: attachments,
                         maximumCount: maximumCount
                     )
                     attachments.append(contentsOf: accepted)
+                } catch is CancellationError {
+                    return
                 } catch {
+                    guard taskStore.isActive(taskToken) else { return }
                     errorMessage = error.localizedDescription
                 }
             }
+        }) != nil else {
+            preparationState.finish(operation)
+            return
         }
     }
 
-    private func loadCapturedImage(_ image: UIImage) {
-        isCameraPresented = false
-        guard canAdd else { return }
+    private func loadCapturedImage(
+        _ image: UIImage,
+        token: FeatureAttachmentLifecycle.Token
+    ) {
+        guard lifecycle.isCurrent(token), canAdd else { return }
         guard let operation = preparationState.reserve(
             itemCount: 1,
             attachments: attachments,
             maximumCount: maximumCount
         ) else { return }
 
-        Task { @MainActor in
+        guard taskStore.start(lifecycleToken: token, { taskToken in
             defer { preparationState.finish(operation) }
             do {
                 let data = try await Task.detached(priority: .userInitiated) {
@@ -299,22 +435,34 @@ struct FeatureImageAttachmentPicker: View {
                     }
                     return data
                 }.value
+                guard taskStore.isActive(taskToken) else { return }
                 let prepared = try await FeatureImageAttachmentIngestion.prepare(
                     data: data
                 )
+                guard taskStore.isActive(taskToken) else { return }
                 let accepted = FeatureImageAttachmentPolicy.attachmentsToAppend(
                     [prepared],
                     to: attachments,
                     maximumCount: maximumCount
                 )
                 attachments.append(contentsOf: accepted)
+            } catch is CancellationError {
+                return
             } catch {
+                guard taskStore.isActive(taskToken) else { return }
                 errorMessage = error.localizedDescription
             }
+        }) != nil else {
+            preparationState.finish(operation)
+            return
         }
     }
 
-    private func loadFiles(_ result: Result<[URL], Error>) {
+    private func loadFiles(
+        _ result: Result<[URL], Error>,
+        token: FeatureAttachmentLifecycle.Token
+    ) {
+        guard lifecycle.isCurrent(token) else { return }
         switch result {
         case .failure(let error):
             errorMessage = error.localizedDescription
@@ -327,7 +475,7 @@ struct FeatureImageAttachmentPicker: View {
             ) else { return }
             let reservedURLs = Array(urls.prefix(operation.count))
 
-            Task { @MainActor in
+            guard taskStore.start(lifecycleToken: token, { taskToken in
                 defer { preparationState.finish(operation) }
                 for url in reservedURLs {
                     do {
@@ -338,19 +486,27 @@ struct FeatureImageAttachmentPicker: View {
                             }
                             return try Data(contentsOf: url, options: .mappedIfSafe)
                         }.value
+                        guard taskStore.isActive(taskToken) else { return }
                         let prepared = try await FeatureImageAttachmentIngestion.prepare(
                             data: loadedData
                         )
+                        guard taskStore.isActive(taskToken) else { return }
                         let accepted = FeatureImageAttachmentPolicy.attachmentsToAppend(
                             [prepared],
                             to: attachments,
                             maximumCount: maximumCount
                         )
                         attachments.append(contentsOf: accepted)
+                    } catch is CancellationError {
+                        return
                     } catch {
+                        guard taskStore.isActive(taskToken) else { return }
                         errorMessage = error.localizedDescription
                     }
                 }
+            }) != nil else {
+                preparationState.finish(operation)
+                return
             }
         }
     }
@@ -476,6 +632,7 @@ private struct FeaturePhotoLibraryPicker: UIViewControllerRepresentable {
 }
 
 enum FeatureImagePasteLoader {
+    @MainActor
     static func data(from provider: NSItemProvider) async throws -> Data {
         guard let typeIdentifier = provider.registeredTypeIdentifiers.first(where: {
             UTType($0)?.conforms(to: .image) == true

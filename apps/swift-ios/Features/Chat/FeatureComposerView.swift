@@ -5,7 +5,9 @@ import UniformTypeIdentifiers
 struct FeatureComposerView: View {
     @State private var isManuallyExpanded = false
     @State private var attachmentPreparation = FeatureAttachmentPreparationState()
-    @State private var pasteQueue = FeatureComposerPasteQueue()
+    @State private var attachmentLifecycle: FeatureAttachmentLifecycle
+    @State private var attachmentTasks: FeatureAttachmentTaskStore
+    @State private var pasteQueue: FeatureComposerPasteQueue
     @State private var pathEntries: [FeatureComposerPathEntry] = []
     @State private var isPathSearchLoading = false
     @State private var pathSearchError: String?
@@ -57,6 +59,14 @@ struct FeatureComposerView: View {
         _text = text
         _selection = selection
         _attachments = attachments
+        let attachmentLifecycle = FeatureAttachmentLifecycle(contextID: attachmentContextID)
+        _attachmentLifecycle = State(initialValue: attachmentLifecycle)
+        _attachmentTasks = State(
+            initialValue: FeatureAttachmentTaskStore(lifecycle: attachmentLifecycle)
+        )
+        _pasteQueue = State(
+            initialValue: FeatureComposerPasteQueue(lifecycle: attachmentLifecycle)
+        )
         self.providers = providers
         self.threadSelection = threadSelection
         self.attachmentContextID = attachmentContextID
@@ -120,8 +130,7 @@ struct FeatureComposerView: View {
                 await updatePathSearch()
             }
             .onChange(of: attachmentContextID) {
-                pasteQueue.cancelAll()
-                attachmentPreparation.cancelAll()
+                rotateAttachmentLifecycle(to: attachmentContextID)
             }
             .alert(
                 "Couldn’t paste image",
@@ -267,7 +276,10 @@ struct FeatureComposerView: View {
     }
 
     private func loadPastedImages(_ providers: [NSItemProvider]) {
-        guard imagesAllowed else { return }
+        guard imagesAllowed,
+              let lifecycleToken = attachmentLifecycle.token(for: attachmentContextID) else {
+            return
+        }
         let imageProviders = providers.filter {
             $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
         }
@@ -282,7 +294,7 @@ struct FeatureComposerView: View {
         }
         let reservedProviders = Array(imageProviders.prefix(operation.count))
 
-        pasteQueue.enqueue { @MainActor in
+        pasteQueue.enqueue(token: lifecycleToken) { @MainActor in
             defer { self.attachmentPreparation.finish(operation) }
             var prepared: [FeatureDraftAttachment] = []
             for provider in reservedProviders {
@@ -315,6 +327,9 @@ struct FeatureComposerView: View {
             FeatureImageAttachmentPicker(
                 attachments: $attachments,
                 preparationState: $attachmentPreparation,
+                taskStore: attachmentTasks,
+                lifecycle: attachmentLifecycle,
+                attachmentContextID: attachmentContextID,
                 isEnabled: imagesAllowed
             )
 
@@ -522,8 +537,16 @@ struct FeatureComposerView: View {
             onStop()
         } else if FeatureComposerSubmissionPolicy.allowsSend(for: .explicitButton),
                   canSend {
+            rotateAttachmentLifecycle(to: attachmentContextID)
             onSend()
         }
+    }
+
+    private func rotateAttachmentLifecycle(to contextID: String) {
+        attachmentLifecycle.transition(to: contextID)
+        pasteQueue.cancelAll()
+        attachmentTasks.cancelAll()
+        attachmentPreparation.cancelAll()
     }
 
 }
@@ -532,21 +555,34 @@ struct FeatureComposerView: View {
 final class FeatureComposerPasteQueue {
     private var tail: Task<Void, Never>?
     private var tasks: [UUID: Task<Void, Never>] = [:]
+    private let lifecycle: FeatureAttachmentLifecycle
 
-    func enqueue(_ work: @escaping @MainActor () async -> Void) {
+    init(lifecycle: FeatureAttachmentLifecycle) {
+        self.lifecycle = lifecycle
+    }
+
+    @discardableResult
+    func enqueue(
+        token: FeatureAttachmentLifecycle.Token,
+        _ work: @escaping @MainActor () async -> Void
+    ) -> Task<Void, Never>? {
+        guard lifecycle.isCurrent(token) else { return nil }
         let id = UUID()
         let previous = tail
         let task = Task { @MainActor [weak self] in
             await previous?.value
-            guard !Task.isCancelled else {
+            guard let self,
+                  self.lifecycle.isCurrent(token),
+                  !Task.isCancelled else {
                 self?.tasks.removeValue(forKey: id)
                 return
             }
             await work()
-            self?.tasks.removeValue(forKey: id)
+            self.tasks.removeValue(forKey: id)
         }
         tasks[id] = task
         tail = task
+        return task
     }
 
     func cancelAll() {
