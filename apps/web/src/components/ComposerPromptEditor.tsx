@@ -868,6 +868,7 @@ export interface ComposerPromptEditorHandle {
   focus: () => void;
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
+  insertText: (text: string) => void;
   readSnapshot: () => {
     value: string;
     cursor: number;
@@ -1691,9 +1692,19 @@ function ComposerPromptEditorInner({
           ),
         );
       },
+      insertText: (text: string) => {
+        editor.update(() => {
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) {
+            selection.insertRawText(text);
+            return;
+          }
+          $getRoot().selectEnd().insertRawText(text);
+        });
+      },
       readSnapshot,
     }),
-    [focusAt, readSnapshot],
+    [editor, focusAt, readSnapshot],
   );
 
   const handleEditorChange = useCallback((editorState: EditorState) => {
