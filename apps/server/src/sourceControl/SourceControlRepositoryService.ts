@@ -7,6 +7,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import {
+  GitCommandError,
   SourceControlRepositoryError,
   type SourceControlCloneRepositoryInput,
   type SourceControlCloneRepositoryResult,
@@ -18,11 +19,39 @@ import {
   type SourceControlRepositoryInfo,
   type SourceControlRepositoryLookupInput,
 } from "@t3tools/contracts";
+import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 
 import { ServerConfig } from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
+
+function cloneFailureDetail(stderr: string): string {
+  if (/host key verification failed/iu.test(stderr)) {
+    return "SSH could not verify the source control host. Add its host key to known_hosts and try again.";
+  }
+  if (/permission denied \(publickey(?:,[^)]+)?\)/iu.test(stderr)) {
+    return "SSH authentication failed. Add an SSH key to your source control account and try again.";
+  }
+  if (
+    /authentication failed|http basic: access denied|could not read username|terminal prompts disabled/iu.test(
+      stderr,
+    )
+  ) {
+    return "HTTPS authentication failed. Configure Git credentials for the source control host and try again.";
+  }
+  if (/could not resolve (?:host|hostname)/iu.test(stderr)) {
+    return "The source control host could not be resolved. Check your network or VPN connection and try again.";
+  }
+  if (/connection (?:timed out|refused)|failed to connect/iu.test(stderr)) {
+    return "Git could not connect to the source control host. Check your network or VPN connection and try again.";
+  }
+  if (/repository not found|could not read from remote repository/iu.test(stderr)) {
+    return "The repository could not be read. Check that it exists and that your Git credentials have access.";
+  }
+
+  return "Git could not clone the repository. Verify that the remote works in a terminal and try again.";
+}
 
 export class SourceControlRepositoryService extends Context.Service<
   SourceControlRepositoryService,
@@ -183,7 +212,10 @@ export const make = Effect.gen(function* () {
     const preparedDestination = yield* prepareDestination(input.destinationPath);
     let repository: SourceControlRepositoryInfo | null = null;
     let remoteUrl = input.remoteUrl?.trim() ?? null;
-    let provider: SourceControlProviderKind = input.provider ?? "unknown";
+    let provider: SourceControlProviderKind =
+      input.provider ??
+      (remoteUrl ? detectSourceControlProviderFromRemoteUrl(remoteUrl)?.kind : null) ??
+      "unknown";
 
     if (input.provider && input.repository) {
       repository = yield* lookupRepository({
@@ -203,13 +235,33 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    yield* git.execute({
+    const cloneResult = yield* git.execute({
       operation: "SourceControlRepositoryService.cloneRepository",
       cwd: preparedDestination.parentPath,
       args: ["clone", remoteUrl, preparedDestination.directoryName],
+      allowNonZeroExit: true,
       timeoutMs: 120_000,
       maxOutputBytes: 256 * 1024,
     });
+
+    if (cloneResult.exitCode !== 0) {
+      const detail = cloneFailureDetail(cloneResult.stderr);
+      return yield* new SourceControlRepositoryError({
+        operation: "cloneRepository",
+        provider,
+        detail,
+        cause: new GitCommandError({
+          operation: "SourceControlRepositoryService.cloneRepository",
+          command: "git",
+          cwd: preparedDestination.parentPath,
+          argumentCount: 3,
+          exitCode: cloneResult.exitCode,
+          stdoutLength: cloneResult.stdout.length,
+          stderrLength: cloneResult.stderr.length,
+          detail,
+        }),
+      });
+    }
 
     return {
       cwd: preparedDestination.destinationPath,
