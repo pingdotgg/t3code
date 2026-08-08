@@ -2279,11 +2279,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Interrupting the running turn is a keybinding rather than a hard-coded key
   // so it shows up in Settings and can be rebound. It only claims the shortcut
   // while a turn is running; otherwise the key falls through untouched.
+  //
+  // Bubble phase, unlike the capture-phase composer.stash listener above:
+  // stash must beat the browser's save dialog, while interrupt must lose to
+  // any open overlay that dismisses on the same key. By the time the event
+  // bubbles to window every overlay handler has run, and a dismiss marks the
+  // event consumed via preventDefault.
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
       // Interrupt is one-shot: key auto-repeat would spray concurrent
       // interrupt requests that race each other for the same turn.
       if (event.repeat) return;
+      // An overlay (dialog, menu, select, command palette) already consumed
+      // this press to dismiss itself.
+      if (event.defaultPrevented) return;
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
           terminalFocus: getTerminalFocusOwner() !== null,
@@ -2296,17 +2305,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ) {
         return;
       }
-      // Overlays that dismiss on the same key keep their dismiss behavior;
-      // the model picker is excluded via the default binding's when clause.
+      // Belt and suspenders for overlays whose dismiss handlers do not mark
+      // the event consumed; the model picker is excluded via the default
+      // binding's when clause.
       if (isCommandPaletteOpen() || isStashMenuOpen) {
         return;
       }
       event.preventDefault();
-      event.stopPropagation();
       onInterrupt();
     };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
   }, [isComposerModelPickerOpen, isStashMenuOpen, keybindings, onInterrupt, phase, terminalOpen]);
 
   // ------------------------------------------------------------------
