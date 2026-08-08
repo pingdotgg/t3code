@@ -207,7 +207,7 @@ const knownWindowsCliDirs = (env: NodeJS.ProcessEnv): ReadonlyArray<string> => [
   ...trimNonEmpty(env.USERPROFILE).pipe(
     Option.match({
       onNone: () => [],
-      onSome: (value) => [`${value}\\.bun\\bin`, `${value}\\scoop\\shims`],
+      onSome: (value) => [`${value}\\.bun\\bin`, `${value}\\scoop\\shims`, `${value}\\.local\\bin`],
     }),
   ),
 ];
@@ -242,6 +242,17 @@ const captureWindowsEnvironmentCommand = (names: ReadonlyArray<string>) =>
   [
     "$ErrorActionPreference = 'Stop'",
     ...names.flatMap((name) => {
+      if (name.toUpperCase() === "PATH") {
+        return [
+          `Write-Output '${startMarker(name)}'`,
+          `$machineValue = [Environment]::GetEnvironmentVariable('${name}', 'Machine')`,
+          `$userValue = [Environment]::GetEnvironmentVariable('${name}', 'User')`,
+          `$processValue = [Environment]::GetEnvironmentVariable('${name}')`,
+          `$merged = ($processValue, $machineValue, $userValue | Where-Object { $null -ne $_ -and $_.Length -gt 0 }) -join ';'`,
+          "if ($null -ne $merged -and $merged.Length -gt 0) { Write-Output $merged }",
+          `Write-Output '${endMarker(name)}'`,
+        ];
+      }
       return [
         `Write-Output '${startMarker(name)}'`,
         `$value = [Environment]::GetEnvironmentVariable('${name}')`,
