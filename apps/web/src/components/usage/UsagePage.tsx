@@ -116,12 +116,12 @@ export function UsagePage() {
                   </span>
                   <span className="text-4xl font-semibold text-foreground tabular-nums">
                     {metric === "cost"
-                      ? formatUsd(merged.costUsd)
+                      ? `${formatUsd(merged.costUsd)}*`
                       : formatTokens(merged.totalTokens)}
                   </span>
                   <span className="text-xs text-muted-foreground">
                     {metric === "cost"
-                      ? "What these tokens would cost at API rates. Not what you were billed."
+                      ? "* if billed at full API rate"
                       : `Input, cache reads and output across ${formatCount(merged.sessions)} sessions.`}
                   </span>
                 </div>
