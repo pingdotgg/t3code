@@ -50,7 +50,10 @@ function extractCommandFromTitle(title: string | undefined): string | undefined 
   return backtickMatch?.[1]?.trim() || undefined;
 }
 
-function extractToolCommand(data: Record<string, unknown> | undefined, title: string | undefined) {
+function extractToolCommand(
+  data: Record<string, unknown> | undefined,
+  title: string | undefined,
+): string | undefined {
   const item = asRecord(data?.item);
   const itemInput = asRecord(item?.input);
   const itemResult = asRecord(item?.result);
