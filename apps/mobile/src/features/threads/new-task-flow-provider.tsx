@@ -25,6 +25,7 @@ import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import {
   buildModelOptions,
   groupByProvider,
+  resolveDefaultableModelSelection,
   resolveSelectableModelSelection,
 } from "../../lib/modelOptions";
 import { scopedProjectKey } from "../../lib/scopedEntities";
@@ -147,7 +148,10 @@ type NewTaskFlowContextValue = {
   readonly reset: () => void;
   readonly setProject: (project: EnvironmentProject) => void;
   readonly selectEnvironment: (environmentId: EnvironmentId) => void;
-  readonly setSelectedModelKey: (key: string | null) => void;
+  readonly setSelectedModelKey: (
+    key: string | null,
+    options?: ReadonlyArray<ProviderOptionSelection>,
+  ) => void;
   readonly setWorkspaceMode: (mode: WorkspaceMode) => void;
   readonly selectBranch: (branch: VcsRef) => void;
   readonly setStartFromOrigin: (value: boolean) => void;
@@ -359,14 +363,16 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const runtimeMode = selectedProjectDraft.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode = selectedProjectDraft.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE;
 
-  // Stored selections (draft and project default) only count while their
-  // provider is usable on the server; otherwise the server's default model
-  // wins instead of silently targeting a disabled provider.
+  // Stored selections only count while their provider is usable on the
+  // server; otherwise the server's default model wins instead of silently
+  // targeting a disabled provider. The draft selection is an explicit pick
+  // and passes through as-is; the project default (last used, possibly from
+  // desktop) is implicit and additionally never resolves to a legacy model.
   const draftModelSelection = resolveSelectableModelSelection(
     selectedEnvironmentServerConfig,
     selectedProjectDraft.modelSelection ?? null,
   );
-  const projectDefaultModelSelection = resolveSelectableModelSelection(
+  const projectDefaultModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
     selectedProject?.defaultModelSelection ?? null,
   );
@@ -404,7 +410,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     [selectedEnvironmentServerConfig, selectedModel?.instanceId],
   );
   const setSelectedModelKey = useCallback(
-    (key: string | null) => {
+    // Options ride along in the same write: a follow-up setSelectedModelOptions
+    // call would rebuild the selection from the stale pre-switch model.
+    (key: string | null, options?: ReadonlyArray<ProviderOptionSelection>) => {
       if (!key || !selectedProjectDraftKey) {
         return;
       }
@@ -413,7 +421,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         return;
       }
       updateComposerDraftSettings(selectedProjectDraftKey, {
-        modelSelection: option.selection,
+        modelSelection: options ? { ...option.selection, options } : option.selection,
       });
     },
     [modelOptions, selectedProjectDraftKey],
