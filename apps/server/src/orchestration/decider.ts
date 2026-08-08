@@ -49,7 +49,8 @@ function isStaleRequestFailureDetail(payload: Record<string, unknown> | null): b
     detail.includes("stale pending user-input request") ||
     detail.includes("unknown pending user-input request") ||
     detail.includes("unknown pending user input request") ||
-    detail.includes("unknown pending codex user input request")
+    detail.includes("unknown pending codex user input request") ||
+    detail.includes("no active provider session is bound to this thread")
   );
 }
 

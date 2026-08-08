@@ -246,6 +246,27 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
         ]),
       }).pipe(Effect.flip);
       expect(stillOpen._tag).toBe("OrchestrationCommandInvariantError");
+
+      // A respond failure after the provider session is gone (server restart)
+      // also clears the request: the thread cannot be answered, so it is no
+      // longer blocked-on-you.
+      const noSessionSettled = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.settle",
+          commandId: CommandId.make("cmd-settle-no-session"),
+          threadId: ThreadId.make("thread-1"),
+        },
+        readModel: makeReadModel(null, null, null, [
+          activity("user-input.requested", "req-4", {}),
+          activity("provider.user-input.respond.failed", "req-4", {
+            detail: "No active provider session is bound to this thread.",
+          }),
+        ]),
+      });
+      const noSessionSettledEvents = Array.isArray(noSessionSettled)
+        ? noSessionSettled
+        : [noSessionSettled];
+      expect(noSessionSettledEvents[0]?.type).toBe("thread.settled");
     }),
   );
 

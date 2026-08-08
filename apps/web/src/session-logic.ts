@@ -379,7 +379,8 @@ function isStalePendingRequestFailureDetail(detail: string | undefined): boolean
     normalized.includes("unknown pending permission request") ||
     normalized.includes("unknown pending user-input request") ||
     normalized.includes("unknown pending user input request") ||
-    normalized.includes("unknown pending codex user input request")
+    normalized.includes("unknown pending codex user input request") ||
+    normalized.includes("no active provider session is bound to this thread")
   );
 }
 

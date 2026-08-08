@@ -346,6 +346,48 @@ describe("derivePendingUserInputs", () => {
 
     expect(derivePendingUserInputs(activities)).toEqual([]);
   });
+
+  it("clears a pending user-input request when the provider session is gone", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "user-input-open-no-session",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-user-input-no-session-1",
+          questions: [
+            {
+              id: "sandbox_mode",
+              header: "Sandbox",
+              question: "Which mode should be used?",
+              options: [
+                {
+                  label: "workspace-write",
+                  description: "Allow workspace writes only",
+                },
+              ],
+              multiSelect: false,
+            },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "user-input-failed-no-session",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "provider.user-input.respond.failed",
+        summary: "Provider user input response failed",
+        tone: "error",
+        payload: {
+          requestId: "req-user-input-no-session-1",
+          detail: "No active provider session is bound to this thread.",
+        },
+      }),
+    ];
+
+    expect(derivePendingUserInputs(activities)).toEqual([]);
+  });
 });
 
 describe("deriveActivePlanState", () => {
