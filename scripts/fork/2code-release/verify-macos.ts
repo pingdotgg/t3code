@@ -6,6 +6,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
 
+import { verifyElectronBlockmap } from "./electron-blockmap.ts";
 import {
   expectedArtifactNames,
   readReleaseConfig,
@@ -124,6 +125,22 @@ export function verifyDesignatedRequirement(config: TwoCodeReleaseConfig, raw: s
   }
 }
 
+export function verifyDeveloperIdSignature(
+  config: TwoCodeReleaseConfig,
+  raw: string,
+  artifactLabel: string,
+): void {
+  if (!raw.split(/\r?\n/).includes(`TeamIdentifier=${config.teamId}`)) {
+    throw new Error(`${artifactLabel} TeamIdentifier is not ${config.teamId}.`);
+  }
+  const expectedAuthority = `Authority=Developer ID Application: hafencity.dev GmbH (${config.teamId})`;
+  if (!raw.split(/\r?\n/).includes(expectedAuthority)) {
+    throw new Error(
+      `${artifactLabel} does not use the expected hafencity.dev Developer ID identity.`,
+    );
+  }
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const artifactIndex = args.indexOf("--artifact-dir");
@@ -137,6 +154,8 @@ async function main(): Promise<void> {
   const [zipName, dmgName] = expectedArtifactNames(config);
   const zipPath = NodePath.resolve(artifactDirectory, zipName);
   const dmgPath = NodePath.resolve(artifactDirectory, dmgName);
+  await verifyElectronBlockmap(zipPath);
+  await verifyElectronBlockmap(dmgPath);
   const temporaryDirectory = await NodeFSP.mkdtemp(
     NodePath.join(NodeOS.tmpdir(), "2code-macos-verify-"),
   );
@@ -150,13 +169,7 @@ async function main(): Promise<void> {
 
     run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath]);
     const signature = run("codesign", ["-d", "--verbose=4", appPath]).stderr;
-    if (!signature.includes(`TeamIdentifier=${config.teamId}`)) {
-      throw new Error(`Signed app TeamIdentifier is not ${config.teamId}.`);
-    }
-    const expectedAuthority = `Authority=Developer ID Application: hafencity.dev GmbH (${config.teamId})`;
-    if (!signature.split(/\r?\n/).includes(expectedAuthority)) {
-      throw new Error("Signed app does not use the expected hafencity.dev Developer ID identity.");
-    }
+    verifyDeveloperIdSignature(config, signature, "Signed app");
     const requirementResult = run("codesign", ["-d", "-r-", appPath]);
     verifyDesignatedRequirement(config, `${requirementResult.stdout}\n${requirementResult.stderr}`);
     const entitlements = run("codesign", ["-d", "--entitlements", ":-", appPath]);
@@ -214,6 +227,10 @@ async function main(): Promise<void> {
     }
     run("xcrun", ["stapler", "validate", appPath]);
     run("spctl", ["--assess", "--type", "execute", "--verbose=4", appPath]);
+    run("codesign", ["--verify", "--strict", "--verbose=2", dmgPath]);
+    const dmgSignature = run("codesign", ["-d", "--verbose=4", dmgPath]).stderr;
+    verifyDeveloperIdSignature(config, dmgSignature, "Signed disk image");
+    run("xcrun", ["stapler", "validate", dmgPath]);
     run("spctl", [
       "--assess",
       "--type",

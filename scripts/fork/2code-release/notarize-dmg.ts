@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 
 import { notarize, type NotarizeOptions } from "@electron/notarize";
 
+import { regenerateElectronBlockmap } from "./electron-blockmap.ts";
 import {
   expectedArtifactNames,
   readReleaseConfig,
@@ -59,7 +60,10 @@ async function main(): Promise<void> {
   const options = resolveDmgNotarizationOptions(config, artifactDirectory, process.env);
   await NodeFSP.access(options.appPath);
   await notarize(options);
-  console.log(`Notarized and stapled ${NodePath.basename(options.appPath)}.`);
+  const blockmapPath = await regenerateElectronBlockmap(options.appPath);
+  console.log(
+    `Notarized and stapled ${NodePath.basename(options.appPath)}; regenerated ${NodePath.basename(blockmapPath)}.`,
+  );
 }
 
 if (import.meta.main) {

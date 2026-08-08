@@ -5,6 +5,7 @@ import {
   verifyAppUpdateConfiguration,
   verifyBundlePlist,
   verifyDesignatedRequirement,
+  verifyDeveloperIdSignature,
   verifyEntitlements,
 } from "./verify-macos.ts";
 
@@ -111,6 +112,30 @@ updaterCacheDirName: 2code-updater
           `designated => identifier "${config.appId}" and anchor apple generic`,
         ),
       /legacy identity/,
+    );
+  });
+
+  it("requires the frozen Developer ID team and authority for each artifact", () => {
+    const signature = `Authority=Developer ID Application: hafencity.dev GmbH (${config.teamId})
+TeamIdentifier=${config.teamId}`;
+    verifyDeveloperIdSignature(config, signature, "Signed disk image");
+    assert.throws(
+      () =>
+        verifyDeveloperIdSignature(
+          config,
+          signature.replace(config.teamId, "WRONGTEAM1"),
+          "Signed disk image",
+        ),
+      /Developer ID identity/,
+    );
+    assert.throws(
+      () =>
+        verifyDeveloperIdSignature(
+          config,
+          signature.replace(`TeamIdentifier=${config.teamId}`, "TeamIdentifier=WRONGTEAM1"),
+          "Signed disk image",
+        ),
+      /TeamIdentifier/,
     );
   });
 });

@@ -907,6 +907,9 @@ importers:
       '@t3tools/tailscale':
         specifier: workspace:*
         version: link:../packages/tailscale
+      app-builder-lib:
+        specifier: 26.15.6
+        version: 26.15.6(dmg-builder@26.15.6)(electron-builder-squirrel-windows@26.15.6)
       effect:
         specifier: 4.0.0-beta.103
         version: 4.0.0-beta.103(patch_hash=af36b7948b6f9c56623074662b51dade5699880c1a7c71245de73e13c3185fb6)

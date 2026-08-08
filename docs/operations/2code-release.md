@@ -19,10 +19,11 @@ Do not change these values without intentionally ending compatibility with insta
 - Legacy URL scheme: `twentyfirst-agents`
 - GitHub tag namespace: `2code-v*`
 
-The release verifier checks the bundle identity, exact Developer ID authority, designated
-requirement, hardened-runtime entitlements, protocol schemes, embedded distribution/runtime
-metadata, updater configuration, architecture, notarization ticket, Gatekeeper assessment, and all
-manifest hashes before publication.
+The release verifier checks the bundle identity, exact Developer ID authority for both app and DMG,
+designated requirement, hardened-runtime entitlements, protocol schemes, embedded
+distribution/runtime metadata, updater configuration, architecture, both stapled notarization
+tickets, Gatekeeper assessment, final-artifact blockmaps, and all manifest hashes before
+publication.
 
 ## GitHub setup
 
@@ -33,7 +34,8 @@ Protect `main-2code` before enabling publishing:
 2. Require pull requests and the `Validate 2code release` check.
 3. Disallow force pushes and branch deletion.
 4. Require owner review for the release workflow, `distributions/2code`, the desktop distribution
-   profile, and `scripts/fork/2code-release`.
+   profile, and `scripts/fork/2code-release`. Keep at least two eligible code owners so the author
+   of a version bump can receive an independent approval.
 5. Create a protected environment named `2code-production` restricted to `main-2code`.
 6. Require a production reviewer at least for the first takeover releases.
 
@@ -71,7 +73,9 @@ version without creating a tag or writing to R2. The verified candidate is retai
 Actions artifact for 30 days.
 
 The app bundle and the signed DMG container are submitted to Apple independently and stapled before
-the updater manifests and content hashes are generated.
+the updater manifests and content hashes are generated. Stapling changes the DMG bytes, so the
+workflow regenerates its Electron blockmap afterwards and verifies both ZIP and DMG blockmaps
+byte-for-byte against the final artifacts.
 
 The signing build and every mutation job use the protected production environment. Inspect the
 signed dry-run artifact before approving the first real version bump.
@@ -141,7 +145,10 @@ Immediately before approving the first production job from this repository:
 2. Confirm no old release job is running.
 3. Approve the new protected production job.
 4. Verify both public manifests and perform an isolated `1.0.107` to new-version update.
-5. Remove or revoke the old repository's R2 write credentials after the successful cutover.
+5. Retire the old Electron publisher's R2 authority after the successful cutover. The old native
+   macOS/Sparkle workflow also uses R2, so do not delete its repository secrets or revoke a shared
+   Cloudflare key until that workflow has a separate credential. Never revoke the credential copied
+   into the new `2code-production` environment.
 
 Do not delete the old repository or its immutable release assets. Do not modify the separate native
 macOS/Sparkle workflow as part of the Electron updater takeover.
