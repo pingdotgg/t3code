@@ -495,6 +495,8 @@ export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyle
 
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
+export const DEFAULT_PROVIDER_SESSION_INACTIVITY_THRESHOLD = Duration.minutes(30);
+export const DEFAULT_PROVIDER_SESSION_SWEEP_INTERVAL = Duration.minutes(5);
 
 export const BackgroundActivityProfile = Schema.Literals([
   "balanced",
@@ -544,6 +546,20 @@ export const ServerSettings = Schema.Struct({
   ),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   backgroundActivity: BackgroundActivitySettings,
+  // How long a provider session may sit idle before the inactivity reaper
+  // stops it (applies from the next sweep), and how often the reaper sweeps
+  // (applies after a server restart). Idle sessions resume from their
+  // persisted cursor on the next message.
+  providerSessionInactivityThreshold: Schema.DurationFromMillis.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed(Duration.toMillis(DEFAULT_PROVIDER_SESSION_INACTIVITY_THRESHOLD)),
+    ),
+  ),
+  providerSessionSweepInterval: Schema.DurationFromMillis.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed(Duration.toMillis(DEFAULT_PROVIDER_SESSION_SWEEP_INTERVAL)),
+    ),
+  ),
   // Legacy flat fields retained for old settings files and old clients. New
   // consumers should resolve `backgroundActivity` instead.
   automaticGitFetchInterval: Schema.DurationFromMillis.pipe(
@@ -716,6 +732,8 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   automaticGitFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
   providerHealthRefreshInterval: Schema.optionalKey(Schema.DurationFromMillis),
+  providerSessionInactivityThreshold: Schema.optionalKey(Schema.DurationFromMillis),
+  providerSessionSweepInterval: Schema.optionalKey(Schema.DurationFromMillis),
   backgroundActivityProfile: Schema.optionalKey(BackgroundActivityProfile),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
