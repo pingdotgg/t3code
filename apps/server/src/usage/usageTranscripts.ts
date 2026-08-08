@@ -238,9 +238,51 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
     totals,
     // Codex does not report cost in the rollout.
     reportedCostUsd: null,
-    // Rollout files are unique per session, so events need no global dedup.
+    // Codex events carry no stable id to key on; the cross-file duplicates —
+    // replayed rollout heads — are handled by `dropReplayedRolloutHead`.
     dedupeKey: null,
   };
+}
+
+/**
+ * Two usage events written less than a second apart did not happen a second
+ * apart: that is a history being rewritten into a new file, not work being
+ * done.
+ */
+const REPLAYED_HEAD_GAP_MS = 1_000;
+
+/**
+ * Drops the replayed head of a Codex rollout's records.
+ *
+ * Rollout files are not unique per session. Resuming a session, forking it,
+ * and every subagent it spawns replay the conversation so far into a fresh
+ * rollout — `token_count` events included — with fresh timestamps, so neither
+ * a dedupe key nor the clock can identify the copies. What does identify them
+ * is the write pattern: the copied history lands in one sub-second burst at
+ * the head of the file, while real work has pauses between turns.
+ *
+ * A lone leading event is never dropped, and a head that opens with a real
+ * pause is left alone — a genuine first turn does not emit two `token_count`s
+ * within a second of each other.
+ */
+export function dropReplayedRolloutHead(records: readonly UsageRecord[]): readonly UsageRecord[] {
+  const first = records[0];
+  const second = records[1];
+  if (first === undefined || second === undefined) return records;
+  // Inclusive boundary: a gap of a full second is a pause, not part of the
+  // burst — matching the "under a second apart" the constant documents.
+  if (second.timestampMs - first.timestampMs >= REPLAYED_HEAD_GAP_MS) return records;
+
+  let index = 1;
+  while (index < records.length) {
+    const previous = records[index - 1];
+    const current = records[index];
+    if (previous === undefined || current === undefined) break;
+    if (current.timestampMs - previous.timestampMs >= REPLAYED_HEAD_GAP_MS) break;
+    index += 1;
+  }
+
+  return records.slice(index);
 }
 
 export { EMPTY_TOTALS };
