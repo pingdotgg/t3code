@@ -838,7 +838,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     : "text-foreground/90",
             )
           : cn(
-              "truncate group-hover/v2-row:text-foreground",
+              "truncate group-hover/sidebar-row:text-foreground",
               props.isActive || isWoke
                 ? "text-foreground"
                 : isUnread
@@ -911,7 +911,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               className={cn(
                 "shrink-0 transition-opacity",
                 !props.isActive &&
-                  "opacity-40 grayscale group-hover/v2-row:opacity-100 group-hover/v2-row:grayscale-0",
+                  "opacity-40 grayscale group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
               )}
             >
               <ProjectFavicon
@@ -936,7 +936,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               <span
                 className={cn(
                   "inline-flex justify-end tabular-nums text-secondary-label transition-opacity",
-                  !isWoke && "group-hover/v2-row:opacity-0",
+                  !isWoke && "group-hover/sidebar-row:opacity-0",
                 )}
               >
                 {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
@@ -973,8 +973,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     aria-label="Wake thread now"
                     onClick={handleUnsnoozeClick}
                     className={cn(
-                      "pointer-events-none absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/v2-row:pointer-events-auto group-hover/v2-row:opacity-100",
-                      isWoke && "group-hover/v2-row:static",
+                      "pointer-events-none absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100",
+                      isWoke && "group-hover/sidebar-row:static",
                     )}
                   >
                     <AlarmClockOffIcon className="size-3" />
@@ -986,8 +986,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   aria-label="Un-settle thread"
                   onClick={handleUnsettleClick}
                   className={cn(
-                    "pointer-events-none absolute inset-y-0 right-0 -mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/v2-row:pointer-events-auto group-hover/v2-row:opacity-100",
-                    isWoke && "group-hover/v2-row:static",
+                    "pointer-events-none absolute inset-y-0 right-0 -mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100",
+                    isWoke && "group-hover/sidebar-row:static",
                   )}
                 >
                   <Undo2Icon className="mb-px size-3.5" />
@@ -998,8 +998,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   aria-label="Settle thread"
                   onClick={handleSettleClick}
                   className={cn(
-                    "pointer-events-none absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/v2-row:pointer-events-auto group-hover/v2-row:opacity-100",
-                    isWoke && "group-hover/v2-row:static",
+                    "pointer-events-none absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100",
+                    isWoke && "group-hover/sidebar-row:static",
                   )}
                 >
                   <CheckIcon className="size-3" />
@@ -1101,7 +1101,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   className={cn(
                     isWokeStatus
                       ? "pointer-events-auto"
-                      : "pointer-events-none group-has-[:focus-visible]/sidebar-status-slot:absolute group-has-[:focus-visible]/sidebar-status-slot:right-0 group-has-[:focus-visible]/sidebar-status-slot:opacity-0 group-hover/v2-row:absolute group-hover/v2-row:right-0 group-hover/v2-row:opacity-0",
+                      : "pointer-events-none group-has-[:focus-visible]/sidebar-status-slot:absolute group-has-[:focus-visible]/sidebar-status-slot:right-0 group-has-[:focus-visible]/sidebar-status-slot:opacity-0 group-hover/sidebar-row:absolute group-hover/sidebar-row:right-0 group-hover/sidebar-row:opacity-0",
                     "self-center justify-self-end tabular-nums text-secondary-label transition-opacity",
                     snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
                   )}
@@ -1156,7 +1156,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       // would keep the controls pinned over the status label
                       // once the pointer moves away (e.g. after a failed
                       // settle) instead of cross-fading back.
-                      "pointer-events-none absolute inset-y-0 right-0 flex items-stretch opacity-0 transition-opacity has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:static has-[:focus-visible]:opacity-100 group-hover/v2-row:pointer-events-auto group-hover/v2-row:static group-hover/v2-row:opacity-100",
+                      "pointer-events-none absolute inset-y-0 right-0 flex items-stretch opacity-0 transition-opacity has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:static has-[:focus-visible]:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:static group-hover/sidebar-row:opacity-100",
                       snoozeMenuOpen && "pointer-events-auto static opacity-100",
                     )}
                   >
