@@ -1,8 +1,14 @@
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
-import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "./worktreeCleanup";
+import {
+  formatWorktreePathForDisplay,
+  getOrphanedWorktreePathForThread,
+  scheduleThreadDeletionCleanup,
+} from "./worktreeCleanup";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 
@@ -108,5 +114,122 @@ describe("formatWorktreePathForDisplay", () => {
   it("ignores trailing slashes", () => {
     const result = formatWorktreePathForDisplay("/tmp/custom-worktrees/my-worktree/");
     expect(result).toBe("my-worktree");
+  });
+});
+
+describe("scheduleThreadDeletionCleanup", () => {
+  it("starts multiple cleanups without waiting for earlier cleanup", () => {
+    const stopSession = vi.fn(
+      () => new Promise<ReturnType<typeof AsyncResult.success<void>>>(() => undefined),
+    );
+    const removeWorktree = vi.fn(
+      () => new Promise<ReturnType<typeof AsyncResult.success<void>>>(() => undefined),
+    );
+    const onFailure = vi.fn();
+
+    scheduleThreadDeletionCleanup({
+      stopSession,
+      closeTerminals: async () => AsyncResult.success(undefined),
+      worktree: {
+        environmentId: localEnvironmentId,
+        cwd: "/tmp/repo",
+        path: "/tmp/repo/worktrees/feature-a",
+        remove: removeWorktree,
+        onFailure,
+      },
+    });
+    scheduleThreadDeletionCleanup({
+      stopSession,
+      closeTerminals: async () => AsyncResult.success(undefined),
+      worktree: {
+        environmentId: localEnvironmentId,
+        cwd: "/tmp/repo",
+        path: "/tmp/repo/worktrees/feature-b",
+        remove: removeWorktree,
+        onFailure,
+      },
+    });
+
+    expect(stopSession).toHaveBeenCalledTimes(2);
+    expect(removeWorktree).not.toHaveBeenCalled();
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+
+  it("waits for runtime cleanup before removing the worktree", async () => {
+    const calls: Array<string> = [];
+    const onFailure = vi.fn();
+
+    scheduleThreadDeletionCleanup({
+      stopSession: async () => {
+        calls.push("stop-session");
+      },
+      closeTerminals: async () => {
+        calls.push("close-terminals");
+      },
+      worktree: {
+        environmentId: localEnvironmentId,
+        cwd: "/tmp/repo",
+        path: "/tmp/repo/worktrees/feature-a",
+        remove: async (input) => {
+          calls.push("remove-worktree");
+          expect(input).toEqual({
+            environmentId: localEnvironmentId,
+            input: {
+              cwd: "/tmp/repo",
+              path: "/tmp/repo/worktrees/feature-a",
+              force: true,
+            },
+          });
+          return AsyncResult.success(undefined);
+        },
+        onFailure,
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(calls).toEqual(["stop-session", "close-terminals", "remove-worktree"]);
+    });
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+
+  it("reports a background removal failure", async () => {
+    const failure = AsyncResult.failure<void, Error>(Cause.fail(new Error("remove failed")));
+    const onFailure = vi.fn();
+
+    scheduleThreadDeletionCleanup({
+      stopSession: null,
+      closeTerminals: async () => AsyncResult.success(undefined),
+      worktree: {
+        environmentId: localEnvironmentId,
+        cwd: "/tmp/repo",
+        path: "/tmp/repo/worktrees/feature-a",
+        remove: async () => failure,
+        onFailure,
+      },
+    });
+
+    await vi.waitFor(() => expect(onFailure).toHaveBeenCalledOnce());
+    expect(onFailure).toHaveBeenCalledWith(failure);
+  });
+
+  it("does not report an interruption as a worktree removal failure", async () => {
+    const interrupted = AsyncResult.failure<void, never>(Cause.interrupt(1));
+    const onFailure = vi.fn();
+
+    scheduleThreadDeletionCleanup({
+      stopSession: null,
+      closeTerminals: async () => AsyncResult.success(undefined),
+      worktree: {
+        environmentId: localEnvironmentId,
+        cwd: "/tmp/repo",
+        path: "/tmp/repo/worktrees/feature-a",
+        remove: async () => interrupted,
+        onFailure,
+      },
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onFailure).not.toHaveBeenCalled();
   });
 });
