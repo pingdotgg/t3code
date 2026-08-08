@@ -212,6 +212,7 @@ public struct ThreadDetailView: View {
         .lineLimit(1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(headerStatusAccessibilityLabel(at: now))
+        .accessibilityAddTraits(.updatesFrequently)
     }
 
     private func headerStatusAccessibilityLabel(at now: Date) -> String {
@@ -1243,6 +1244,7 @@ private struct FeatureThreadWorkingIndicator: View {
             }
                 ?? "Agent is working. New output will appear here."
         )
+        .accessibilityAddTraits(.updatesFrequently)
     }
 }
 
