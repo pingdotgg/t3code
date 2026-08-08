@@ -206,6 +206,46 @@ export function areFontAdvancesMonospace(advances: readonly number[]): boolean {
   return advances.every((advance) => Math.abs(advance - reference) < MONOSPACE_ADVANCE_TOLERANCE);
 }
 
+type NonBlockingFilterOptions = {
+  readonly timeBudgetMs?: number;
+  readonly now?: () => number;
+  readonly yieldControl?: () => Promise<void>;
+};
+
+function currentTime(): number {
+  return typeof performance === "undefined" ? Date.now() : performance.now();
+}
+
+function yieldToMainThread(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/**
+ * Filter expensive font probes without monopolizing the browser's main
+ * thread. The time budget adapts to the cost of each family's canvas probes,
+ * unlike a fixed item count.
+ */
+export async function filterFontFamiliesWithoutBlocking(
+  families: readonly string[],
+  acceptsFamily: (family: string) => boolean,
+  options: NonBlockingFilterOptions = {},
+): Promise<readonly string[]> {
+  const now = options.now ?? currentTime;
+  const yieldControl = options.yieldControl ?? yieldToMainThread;
+  const timeBudgetMs = options.timeBudgetMs ?? 8;
+  let nextYieldAt = now() + timeBudgetMs;
+  const accepted: string[] = [];
+
+  for (const family of families) {
+    if (acceptsFamily(family)) accepted.push(family);
+    if (now() < nextYieldAt) continue;
+    await yieldControl();
+    nextYieldAt = now() + timeBudgetMs;
+  }
+
+  return accepted;
+}
+
 /**
  * Whether a family renders every character on the same advance. Cell-grid
  * surfaces (the terminal) require this: a proportional face draws its text
