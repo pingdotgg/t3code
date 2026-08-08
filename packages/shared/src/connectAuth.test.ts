@@ -9,12 +9,17 @@ import {
   readConnectAuthorizeRequest,
 } from "./connectAuth.ts";
 
+// The shapes the CLI prints: base64url over 16 random bytes and over a
+// SHA-256 digest.
+const STATE = "q7mK9xV2pL4nR8sT6wYzAQ";
+const CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+
 describe("connectAuth", () => {
   it("round-trips state and challenge through the authorize URL fragment", () => {
     const url = buildConnectAuthorizeRequestUrl({
       hostedAppUrl: "https://app.t3.codes",
-      state: "q7mK9xV2pL4nR8sT6wYzAQ",
-      challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+      state: STATE,
+      challenge: CHALLENGE,
     });
     const parsed = new URL(url);
 
@@ -22,19 +27,76 @@ describe("connectAuth", () => {
     expect(parsed.pathname).toBe("/connect");
     expect(parsed.search).toBe("");
     expect(readConnectAuthorizeRequest(parsed)).toEqual({
-      state: "q7mK9xV2pL4nR8sT6wYzAQ",
-      challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+      ok: true,
+      request: { state: STATE, challenge: CHALLENGE },
     });
   });
 
-  it("rejects authorize requests missing state or challenge", () => {
-    expect(readConnectAuthorizeRequest(new URL("https://app.t3.codes/connect"))).toBeNull();
+  it("reports authorize requests missing state or challenge", () => {
+    expect(readConnectAuthorizeRequest(new URL("https://app.t3.codes/connect"))).toEqual({
+      ok: false,
+      problem: "missing",
+    });
     expect(
-      readConnectAuthorizeRequest(new URL("https://app.t3.codes/connect#state=abc")),
-    ).toBeNull();
+      readConnectAuthorizeRequest(new URL(`https://app.t3.codes/connect#state=${STATE}`)),
+    ).toEqual({ ok: false, problem: "missing" });
     expect(
-      readConnectAuthorizeRequest(new URL("https://app.t3.codes/connect#challenge=abc")),
-    ).toBeNull();
+      readConnectAuthorizeRequest(new URL(`https://app.t3.codes/connect#challenge=${CHALLENGE}`)),
+    ).toEqual({ ok: false, problem: "missing" });
+  });
+
+  it("reports authorize requests whose values are not the shape the CLI prints", () => {
+    const authorizeUrl = (state: string, challenge: string) =>
+      new URL(
+        buildConnectAuthorizeRequestUrl({
+          hostedAppUrl: "https://app.t3.codes",
+          state,
+          challenge,
+        }),
+      );
+
+    // A character the copied URL picked up from a wrapped terminal line.
+    expect(
+      readConnectAuthorizeRequest(
+        authorizeUrl(`${STATE.slice(0, 10)}│${STATE.slice(11)}`, CHALLENGE),
+      ),
+    ).toEqual({
+      ok: false,
+      problem: "malformed",
+    });
+    expect(
+      readConnectAuthorizeRequest(
+        authorizeUrl(STATE, `${CHALLENGE.slice(0, 20)} ${CHALLENGE.slice(21)}`),
+      ),
+    ).toEqual({ ok: false, problem: "malformed" });
+    // Truncated by a line break that was not copied along.
+    expect(readConnectAuthorizeRequest(authorizeUrl(STATE.slice(0, 18), CHALLENGE))).toEqual({
+      ok: false,
+      problem: "malformed",
+    });
+    expect(readConnectAuthorizeRequest(authorizeUrl(STATE, CHALLENGE.slice(0, 30)))).toEqual({
+      ok: false,
+      problem: "malformed",
+    });
+    // Base64 padding and standard-alphabet characters are not base64url.
+    expect(readConnectAuthorizeRequest(authorizeUrl(`${STATE.slice(0, 20)}==`, CHALLENGE))).toEqual(
+      {
+        ok: false,
+        problem: "malformed",
+      },
+    );
+    expect(readConnectAuthorizeRequest(authorizeUrl(STATE, `${CHALLENGE.slice(0, 42)}+`))).toEqual({
+      ok: false,
+      problem: "malformed",
+    });
+  });
+
+  it("accepts values padded with whitespace while copying", () => {
+    expect(
+      readConnectAuthorizeRequest(
+        new URL(`https://app.t3.codes/connect#state=+${STATE}+&challenge=${CHALLENGE}`),
+      ),
+    ).toEqual({ ok: true, request: { state: STATE, challenge: CHALLENGE } });
   });
 
   it("builds a PKCE authorize URL against the Clerk endpoint", () => {

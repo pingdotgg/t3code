@@ -1,4 +1,7 @@
-import { readConnectAuthorizeRequest } from "@t3tools/shared/connectAuth";
+import {
+  type ConnectAuthorizeRequest,
+  readConnectAuthorizeRequest,
+} from "@t3tools/shared/connectAuth";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -28,6 +31,16 @@ interface RecordedTokenRequest {
   readonly url: string;
   readonly params: URLSearchParams;
 }
+
+// The hosted page rejects anything that is not the exact shape the CLI prints,
+// so these tests also assert that the printed URL survives that check.
+const expectAuthorizeRequest = (authorizeUrl: string): ConnectAuthorizeRequest => {
+  const parsed = readConnectAuthorizeRequest(new URL(authorizeUrl));
+  if (!parsed.ok) {
+    throw new Error(`Expected a valid connect authorize request, got "${parsed.problem}".`);
+  }
+  return parsed.request;
+};
 
 // A JWT whose payload claims { email: "theo@example.test" } (signature is not
 // verified — the CLI only reads the claim to display the connected account).
@@ -168,9 +181,8 @@ it.layer(NodeServices.layer)("CliTokenManager.outOfBandOAuthLogin", (it) => {
         ({ authorizeUrl, validate }: OutOfBandOAuthPromptInput) =>
           Effect.gen(function* () {
             seenAuthorizeUrl = authorizeUrl;
-            const request = readConnectAuthorizeRequest(new URL(authorizeUrl));
-            assert.isNotNull(request);
-            return yield* validate(`clerk-code-123.${request!.state}`).pipe(
+            const request = expectAuthorizeRequest(authorizeUrl);
+            return yield* validate(`clerk-code-123.${request.state}`).pipe(
               Effect.mapError((message) => new PromptRejectedError({ message })),
             );
           }),
@@ -179,9 +191,9 @@ it.layer(NodeServices.layer)("CliTokenManager.outOfBandOAuthLogin", (it) => {
       const authorizeUrl = new URL(seenAuthorizeUrl);
       assert.equal(authorizeUrl.origin, "https://hosted.example.test");
       assert.equal(authorizeUrl.pathname, "/connect");
-      const request = readConnectAuthorizeRequest(authorizeUrl);
-      assert.isNotNull(request);
-      assert.match(request!.state, /^[A-Za-z0-9_-]{22}$/);
+      const request = expectAuthorizeRequest(seenAuthorizeUrl);
+      assert.match(request.state, /^[A-Za-z0-9_-]{22}$/);
+      assert.match(request.challenge, /^[A-Za-z0-9_-]{43}$/);
 
       assert.equal(token.accessToken, "access-token-1");
       assert.equal(token.refreshToken, "refresh-token-1");
@@ -204,7 +216,7 @@ it.layer(NodeServices.layer)("CliTokenManager.outOfBandOAuthLogin", (it) => {
       assert.isNotNull(verifier);
       const crypto = yield* Crypto.Crypto;
       const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode(verifier!));
-      assert.equal(Encoding.encodeBase64Url(digest), request!.challenge);
+      assert.equal(Encoding.encodeBase64Url(digest), request.challenge);
     }),
   );
 
@@ -234,11 +246,8 @@ it.layer(NodeServices.layer)("CliTokenManager.outOfBandOAuthLogin", (it) => {
       const malformedIdToken = `header.${Encoding.encodeBase64Url("not-json")}.signature`;
 
       const { identity } = yield* CliTokenManager.outOfBandOAuthLogin(
-        ({ authorizeUrl }: OutOfBandOAuthPromptInput) => {
-          const request = readConnectAuthorizeRequest(new URL(authorizeUrl));
-          assert.isNotNull(request);
-          return Effect.succeed(`clerk-code-123.${request!.state}`);
-        },
+        ({ authorizeUrl }: OutOfBandOAuthPromptInput) =>
+          Effect.succeed(`clerk-code-123.${expectAuthorizeRequest(authorizeUrl).state}`),
       ).pipe(
         Effect.provide(makeTokenEndpointLayer(requests, { idToken: malformedIdToken })),
         provideTestEnv,

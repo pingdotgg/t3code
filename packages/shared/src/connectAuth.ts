@@ -26,6 +26,31 @@ export interface ConnectAuthorizeRequest {
 }
 
 /**
+ * `state` is base64url over 16 random bytes and the PKCE `challenge` is
+ * base64url over a SHA-256 digest, so both have a fixed length and alphabet.
+ * Keep these in sync with the CLI's request generation.
+ */
+const CONNECT_AUTH_STATE_LENGTH = 22;
+const CONNECT_AUTH_CHALLENGE_LENGTH = 43;
+const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+function isBase64Url(value: string, length: number): boolean {
+  return value.length === length && BASE64URL_PATTERN.test(value);
+}
+
+/**
+ * `missing` means the fragment carries no request at all; `malformed` means it
+ * carries one that the CLI could not have printed — the shape a connect URL
+ * takes when it is truncated or picks up stray characters while being copied
+ * out of a wrapped terminal line.
+ */
+export type ConnectAuthorizeRequestProblem = "missing" | "malformed";
+
+export type ConnectAuthorizeRequestResult =
+  | { readonly ok: true; readonly request: ConnectAuthorizeRequest }
+  | { readonly ok: false; readonly problem: ConnectAuthorizeRequestProblem };
+
+/**
  * The URL a headless CLI prints for the user to open on a machine with a
  * browser. `state` and `code_challenge` ride the fragment so they never reach
  * the hosted app's server or CDN logs; neither is a secret.
@@ -43,14 +68,25 @@ export function buildConnectAuthorizeRequestUrl(input: {
   return url.toString();
 }
 
-export function readConnectAuthorizeRequest(url: URL): ConnectAuthorizeRequest | null {
+/**
+ * Checks the fragment against the shape the CLI prints before any of it is
+ * used, so a corrupted copy of the URL is reported here rather than after a
+ * full browser authorization that the waiting CLI would reject anyway.
+ */
+export function readConnectAuthorizeRequest(url: URL): ConnectAuthorizeRequestResult {
   const params = readHashParams(url);
   const state = params.get(CONNECT_AUTH_STATE_PARAM)?.trim() ?? "";
   const challenge = params.get(CONNECT_AUTH_CHALLENGE_PARAM)?.trim() ?? "";
   if (!state || !challenge) {
-    return null;
+    return { ok: false, problem: "missing" };
   }
-  return { state, challenge };
+  if (
+    !isBase64Url(state, CONNECT_AUTH_STATE_LENGTH) ||
+    !isBase64Url(challenge, CONNECT_AUTH_CHALLENGE_LENGTH)
+  ) {
+    return { ok: false, problem: "malformed" };
+  }
+  return { ok: true, request: { state, challenge } };
 }
 
 export function connectCallbackUrl(hostedAppUrl: string): string {
