@@ -2,6 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   resolveInitialThreadSidebarWidth,
+  resolveThreadSidebarCssWidth,
+  resolveThreadSidebarMaximumWidth,
   THREAD_MAIN_CONTENT_MIN_WIDTH,
   THREAD_SIDEBAR_DEFAULT_WIDTH,
   THREAD_SIDEBAR_MIN_WIDTH,
@@ -25,6 +27,17 @@ describe("thread sidebar width", () => {
 
     expect(resolveInitialThreadSidebarWidth(900, viewportWidth)).toBe(
       viewportWidth - THREAD_MAIN_CONTENT_MIN_WIDTH,
+    );
+  });
+
+  it("raises the maximum when the viewport grows", () => {
+    expect(resolveThreadSidebarMaximumWidth(1000)).toBe(1000 - THREAD_MAIN_CONTENT_MIN_WIDTH);
+    expect(resolveThreadSidebarMaximumWidth(1800)).toBe(1800 - THREAD_MAIN_CONTENT_MIN_WIDTH);
+  });
+
+  it("expresses the preferred width with a live viewport clamp", () => {
+    expect(resolveThreadSidebarCssWidth(400)).toBe(
+      `min(400px, max(${THREAD_SIDEBAR_MIN_WIDTH}px, calc(100vw - ${THREAD_MAIN_CONTENT_MIN_WIDTH}px)))`,
     );
   });
 
