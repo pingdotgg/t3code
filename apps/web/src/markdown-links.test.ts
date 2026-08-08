@@ -108,6 +108,74 @@ describe("resolveMarkdownFileLinkTarget", () => {
     });
   });
 
+  it("keeps posix workspace containment case-sensitive", () => {
+    expect(
+      resolveMarkdownFileLinkMeta(
+        "/tmp/t3code-case-test/project/probe.txt",
+        "/tmp/t3code-case-test/Project",
+      ),
+    ).toMatchObject({
+      displayPath: "/tmp/t3code-case-test/project/probe.txt",
+      workspaceRelativePath: null,
+    });
+  });
+
+  it("creates preview paths for exact-case posix workspace files", () => {
+    expect(
+      resolveMarkdownFileLinkMeta(
+        "/Users/mike/Project/src/session-logic.ts",
+        "/Users/mike/Project",
+      ),
+    ).toMatchObject({
+      displayPath: "Project/src/session-logic.ts",
+      workspaceRelativePath: "src/session-logic.ts",
+    });
+  });
+
+  it("preserves trailing whitespace in encoded workspace file paths", () => {
+    expect(resolveMarkdownFileLinkMeta("/tmp/repo/file.ts%20", "/tmp/repo")).toMatchObject({
+      targetPath: "/tmp/repo/file.ts ",
+      displayPath: "repo/file.ts ",
+      workspaceRelativePath: "file.ts ",
+    });
+  });
+
+  it("keeps windows workspace containment case-insensitive", () => {
+    expect(
+      resolveMarkdownFileLinkMeta(
+        "c:/users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts",
+        "C:/Users/Mike/Dev-Stuff/T3Code",
+      ),
+    ).toMatchObject({
+      displayPath: "T3Code/apps/web/src/session-logic.ts",
+      workspaceRelativePath: "apps/web/src/session-logic.ts",
+    });
+  });
+
+  it("keeps unc workspace containment case-insensitive", () => {
+    expect(
+      resolveMarkdownFileLinkMeta(
+        "\\\\SERVER\\Share\\Project\\src\\session-logic.ts",
+        "\\\\server\\share\\project",
+      ),
+    ).toMatchObject({
+      displayPath: "project/src/session-logic.ts",
+      workspaceRelativePath: "src/session-logic.ts",
+    });
+  });
+
+  it("keeps forward-slash UNC workspace containment case-insensitive", () => {
+    expect(
+      resolveMarkdownFileLinkMeta(
+        "//SERVER/Share/Project/src/session-logic.ts",
+        "//server/share/project",
+      ),
+    ).toMatchObject({
+      displayPath: "project/src/session-logic.ts",
+      workspaceRelativePath: "src/session-logic.ts",
+    });
+  });
+
   it("normalizes slash-prefixed windows drive paths before resolving", () => {
     expect(
       resolveMarkdownFileLinkTarget(

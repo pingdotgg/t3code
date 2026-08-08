@@ -42,10 +42,13 @@ export function normalizeProjectPathForDispatch(value: string): string {
   return trimTrailingPathSeparators(value.trim());
 }
 
-export function normalizeProjectPathForComparison(value: string): string {
-  const normalized = normalizeProjectPathForDispatch(value);
-  if (isWindowsDrivePath(normalized) || isUncPath(normalized)) {
-    return normalized.replaceAll("/", "\\").toLowerCase();
+export function normalizePathCaseForComparison(value: string): string {
+  if (isWindowsDrivePath(value) || isUncPath(value)) {
+    return value.replaceAll("/", "\\").toLowerCase();
   }
-  return normalized;
+  return value;
+}
+
+export function normalizeProjectPathForComparison(value: string): string {
+  return normalizePathCaseForComparison(normalizeProjectPathForDispatch(value));
 }
