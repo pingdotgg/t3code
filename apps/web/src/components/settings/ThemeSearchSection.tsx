@@ -15,6 +15,7 @@ import {
 } from "../../openVsxThemes";
 import {
   getCustomThemes,
+  getStoredCustomThemeCollection,
   replaceCustomThemeCollection,
   type ThemeDefinition,
 } from "../../themePalette";
@@ -36,10 +37,6 @@ const DOWNLOAD_FORMAT = new Intl.NumberFormat(undefined, {
   maximumFractionDigits: 1,
 });
 const SUGGESTED_SEARCHES = ["Dracula", "Catppuccin", "Nord", "Tokyo Night"];
-
-function installedCollectionSnapshot(collectionId: string): string {
-  return JSON.stringify(getCustomThemes().filter((theme) => theme.collection?.id === collectionId));
-}
 
 function ThemeExtensionIcon({ extension }: { extension: OpenVsxThemeExtension }) {
   const [failed, setFailed] = useState(false);
@@ -129,8 +126,8 @@ export function ThemeSearchSection({
 
   const handleInstall = useCallback(
     async (extension: OpenVsxThemeExtension, allowUpdate: boolean) => {
-      const collectionSnapshot = installedCollectionSnapshot(extension.collectionId);
-      const updated = collectionSnapshot !== "[]";
+      const installedCollection = getStoredCustomThemeCollection(extension.collectionId);
+      const updated = installedCollection.length > 0;
       if (updated && !allowUpdate) {
         setPendingUpdate(extension);
         return;
@@ -144,12 +141,9 @@ export function ThemeSearchSection({
       try {
         const themes = await importOpenVsxThemeExtension(extension, controller.signal);
         if (controller.signal.aborted) return;
-        if (installedCollectionSnapshot(extension.collectionId) !== collectionSnapshot) {
-          throw new Error(
-            "Your installed themes changed while this package was downloading. Try again.",
-          );
-        }
-        const imported = replaceCustomThemeCollection(extension.collectionId, themes);
+        const imported = replaceCustomThemeCollection(extension.collectionId, themes, {
+          expectedCollection: installedCollection,
+        });
         onInstalled(imported, { updated });
       } catch (cause) {
         if (!controller.signal.aborted) {

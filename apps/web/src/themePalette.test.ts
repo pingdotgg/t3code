@@ -10,6 +10,7 @@ import {
   getThemePreferenceMode,
   isKnownThemePreference,
   getCustomThemes,
+  getStoredCustomThemeCollection,
   invalidateCustomThemes,
   installCustomTheme,
   canonicalThemePreference,
@@ -583,6 +584,21 @@ describe("theme files", () => {
     });
 
     invalidateCustomThemes();
+    const expectedCollection = getStoredCustomThemeCollection(collection.id);
+    getCustomThemes();
+    const concurrentlyAddedTheme = {
+      id: "other-tab",
+      label: "Other Tab",
+      appearance: "dark",
+      colors: { canvas: "#222222" },
+    };
+    stored.set(
+      CUSTOM_THEMES_STORAGE_KEY,
+      JSON.stringify([
+        ...JSON.parse(stored.get(CUSTOM_THEMES_STORAGE_KEY) ?? "[]"),
+        concurrentlyAddedTheme,
+      ]),
+    );
     const replacement = [
       {
         ...parseThemeFile({
@@ -606,11 +622,14 @@ describe("theme files", () => {
       },
     ];
 
-    expect(replaceCustomThemeCollection(collection.id, replacement)).toEqual(replacement);
+    expect(
+      replaceCustomThemeCollection(collection.id, replacement, { expectedCollection }),
+    ).toEqual(replacement);
     expect(getCustomThemes().map((theme) => theme.id)).toEqual([
       "personal",
       "old-light",
       "new-dark",
+      "other-tab",
     ]);
     expect(setItem).toHaveBeenCalledTimes(1);
 

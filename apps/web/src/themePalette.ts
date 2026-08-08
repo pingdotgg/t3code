@@ -303,6 +303,12 @@ export function getCustomThemes(): ReadonlyArray<ThemeDefinition> {
   return snapshot.status === "ready" ? snapshot.themes : [];
 }
 
+export function getStoredCustomThemeCollection(
+  collectionId: string,
+): ReadonlyArray<ThemeDefinition> {
+  return readCustomThemesFromStorage().filter((theme) => theme.collection?.id === collectionId);
+}
+
 export function subscribeToCustomThemes(listener: () => void): () => void {
   customThemeListeners.add(listener);
   if (typeof window === "undefined") {
@@ -1680,6 +1686,7 @@ export function updateCustomTheme(theme: ThemeDefinition): ThemeDefinition {
 export function replaceCustomThemeCollection(
   collectionId: string,
   themes: ReadonlyArray<ThemeDefinition>,
+  options?: { expectedCollection?: ReadonlyArray<ThemeDefinition> },
 ): ReadonlyArray<ThemeDefinition> {
   if (themes.length === 0) throw new Error("A theme collection cannot be empty.");
 
@@ -1691,7 +1698,14 @@ export function replaceCustomThemeCollection(
     throw new Error("That theme collection is invalid.");
   }
   const replacement = validated as ThemeDefinition[];
-  const current = getCustomThemes();
+  const current = readCustomThemesFromStorage();
+  const currentCollection = current.filter((theme) => theme.collection?.id === collectionId);
+  if (
+    options?.expectedCollection &&
+    JSON.stringify(currentCollection) !== JSON.stringify(options.expectedCollection)
+  ) {
+    throw new Error("Your installed themes changed while this package was downloading. Try again.");
+  }
   const firstCollectionIndex = current.findIndex((theme) => theme.collection?.id === collectionId);
   const withoutCollection = current.filter((theme) => theme.collection?.id !== collectionId);
   const occupiedIds = new Set([
