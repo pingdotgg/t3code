@@ -47,6 +47,7 @@ function normalizeT3McpToolLabel(value: string): string {
 
 function resolveT3McpToolName(value: string): string | null {
   const label = normalizeT3McpToolLabel(value);
+  // Claude / Cursor-style MCP wire names: mcp__t3-code__tool_name
   const mcpMatch = /^mcp__(?<server>.+?)__(?<tool>.+)$/.exec(label);
   if (mcpMatch?.groups) {
     const { server, tool } = mcpMatch.groups;
@@ -57,7 +58,10 @@ function resolveT3McpToolName(value: string): string | null {
       : null;
   }
 
-  const namespaceMatch = /^(?<server>t3-code|t3_code|t3code)[.:/](?<tool>.+)$/i.exec(label);
+  // Provider-native server namespaces:
+  // - Codex-style: t3-code.tool_name (also :, /)
+  // - Grok ACP-style: t3-code__tool_name (double underscore, no mcp__ prefix)
+  const namespaceMatch = /^(?<server>t3-code|t3_code|t3code)(?:[.:/]|__)(?<tool>.+)$/i.exec(label);
   if (namespaceMatch?.groups) {
     return namespaceMatch.groups.tool ?? null;
   }
