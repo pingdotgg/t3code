@@ -16,9 +16,10 @@ class OnboardingScreenTest {
   val composeRule = createAndroidComposeRule<MainActivity>()
 
   @Test
-  fun fresh_install_shows_pairing_actions() {
+  fun fresh_install_shows_pairing_and_t3_connect_entry() {
     composeRule.onNodeWithText("Host or pairing URL").assertIsDisplayed()
     composeRule.onNode(hasText("Add environment") and hasClickAction()).assertIsDisplayed()
     composeRule.onNodeWithText("Scan QR code").assertIsDisplayed()
+    composeRule.onNodeWithText("via T3 Connect").assertIsDisplayed()
   }
 }

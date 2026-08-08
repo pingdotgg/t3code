@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -74,11 +75,14 @@ import com.t3tools.android.protocol.ProviderModel
 import com.t3tools.android.protocol.ThreadDetail
 import com.t3tools.android.protocol.ThreadSummary
 import io.noties.markwon.Markwon
+import java.time.Instant
 import kotlinx.coroutines.flow.collectLatest
 
 private const val ONBOARDING = "onboarding"
+private const val CONNECT = "connect"
 private const val HOME = "home"
 private const val NEW_TASK = "new-task"
+private const val SETTINGS = "settings"
 private const val THREAD = "thread/{threadId}"
 
 @Composable
@@ -99,14 +103,28 @@ fun T3NativeApp(viewModel: AppViewModel) {
     }
   }
   LaunchedEffect(runtime.environment) {
-    if (runtime.environment == null && navController.currentDestination?.route != ONBOARDING) {
+    val route = navController.currentDestination?.route
+    if (runtime.environment == null && route != ONBOARDING && route != CONNECT) {
       navController.navigate(ONBOARDING) { popUpTo(0) }
     }
   }
 
   NavHost(navController = navController, startDestination = start) {
     composable(ONBOARDING) {
-      OnboardingScreen(runtime, dispatchState, viewModel)
+      OnboardingScreen(
+        runtime = runtime,
+        dispatchState = dispatchState,
+        viewModel = viewModel,
+        onOpenConnect = { navController.navigate(CONNECT) },
+      )
+    }
+    composable(CONNECT) {
+      ConnectAuthScreen(
+        runtime = runtime,
+        dispatchState = dispatchState,
+        viewModel = viewModel,
+        onBack = { navController.popBackStack() },
+      )
     }
     composable(HOME) {
       HomeScreen(
@@ -115,6 +133,8 @@ fun T3NativeApp(viewModel: AppViewModel) {
         viewModel = viewModel,
         onNewTask = { navController.navigate(NEW_TASK) },
         onOpenThread = { navController.navigate("thread/$it") },
+        onAddEnvironment = { navController.navigate(ONBOARDING) },
+        onSettings = { navController.navigate(SETTINGS) },
       )
     }
     composable(NEW_TASK) {
@@ -123,6 +143,15 @@ fun T3NativeApp(viewModel: AppViewModel) {
         dispatchState = dispatchState,
         viewModel = viewModel,
         onBack = { navController.popBackStack() },
+      )
+    }
+    composable(SETTINGS) {
+      SettingsScreen(
+        runtime = runtime,
+        dispatchState = dispatchState,
+        viewModel = viewModel,
+        onBack = { navController.popBackStack() },
+        onOpenConnect = { navController.navigate(CONNECT) },
       )
     }
     composable(
@@ -149,6 +178,7 @@ private fun OnboardingScreen(
   runtime: OnlineChatState,
   dispatchState: DispatchState,
   viewModel: AppViewModel,
+  onOpenConnect: () -> Unit,
 ) {
   var host by remember { mutableStateOf("") }
   var code by remember { mutableStateOf("") }
@@ -162,18 +192,27 @@ private fun OnboardingScreen(
       modifier = Modifier
         .fillMaxSize()
         .padding(padding)
+        .verticalScroll(rememberScrollState())
         .padding(20.dp),
       verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
       Text(
-        "Connect directly to a T3 Code environment.",
+        "Connect to T3 Code",
         style = MaterialTheme.typography.titleLarge,
         fontWeight = FontWeight.Bold,
       )
       Text(
-        "Paste a complete pairing URL, or enter a host and one-time code.",
+        "Pair a local environment, or continue with T3 Connect for cloud/relay hosts.",
         color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
+      Button(
+        onClick = onOpenConnect,
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Text("via T3 Connect")
+      }
+      HorizontalDivider()
+      Text("Direct pairing", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
       OutlinedTextField(
         value = host,
         onValueChange = { host = it },
@@ -211,19 +250,196 @@ private fun OnboardingScreen(
 }
 
 @Composable
+private fun ConnectAuthScreen(
+  runtime: OnlineChatState,
+  dispatchState: DispatchState,
+  viewModel: AppViewModel,
+  onBack: () -> Unit,
+) {
+  val cloud = runtime.cloud
+  var email by remember { mutableStateOf("") }
+  var password by remember { mutableStateOf("") }
+  var showPassword by remember { mutableStateOf(false) }
+
+  BackHandler(onBack = onBack)
+  Scaffold(topBar = { BackTopBar("T3 Connect", onBack) }) { padding ->
+    Column(
+      Modifier
+        .fillMaxSize()
+        .padding(padding)
+        .verticalScroll(rememberScrollState())
+        .padding(horizontal = 24.dp, vertical = 28.dp),
+      horizontalAlignment = Alignment.CenterHorizontally,
+      verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+      if (cloud.signedIn) {
+        Text(
+          "Continue to T3 Code",
+          style = MaterialTheme.typography.headlineSmall,
+          fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+          "Signed in as ${cloud.accountLabel ?: cloud.accountId}",
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          OutlinedButton(onClick = viewModel::refreshCloudEnvironments) { Text("Refresh") }
+          OutlinedButton(
+            onClick = viewModel::signOutCloud,
+            enabled = dispatchState !is DispatchState.Sending,
+          ) { Text("Sign out") }
+        }
+        if (cloud.relayEnvironments.isEmpty()) {
+          Text(
+            cloud.lastError ?: "No linked relay environments for this account.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        } else {
+          cloud.relayEnvironments.forEach { environment ->
+            val already = runtime.environments.any { it.environmentId == environment.environmentId }
+            OutlinedButton(
+              onClick = { viewModel.connectRelay(environment.environmentId) },
+              enabled = !already && dispatchState !is DispatchState.Sending,
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Text(
+                if (already) "${environment.label} · saved"
+                else "Connect ${environment.label.ifBlank { environment.environmentId }}",
+              )
+            }
+          }
+        }
+      } else {
+        Text(
+          "Continue to T3 Code",
+          style = MaterialTheme.typography.headlineSmall,
+          fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+          "Welcome! Sign in to continue.",
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+          value = email,
+          onValueChange = { email = it },
+          placeholder = { Text("Enter your email") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth(),
+        )
+        if (showPassword) {
+          OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            placeholder = { Text("Password") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+          )
+          Button(
+            onClick = { viewModel.signInCloud(email, password) },
+            enabled = email.isNotBlank() && password.isNotBlank() &&
+              dispatchState !is DispatchState.Sending,
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Text(if (dispatchState is DispatchState.Sending) "Signing in…" else "Sign in")
+          }
+        } else {
+          Button(
+            onClick = { showPassword = true },
+            enabled = email.isNotBlank() && dispatchState !is DispatchState.Sending,
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Text("Continue")
+          }
+        }
+        Text("or", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(
+          Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          OAuthButton(
+            label = "Apple",
+            enabled = dispatchState !is DispatchState.Sending,
+            modifier = Modifier.weight(1f),
+            onClick = { viewModel.signInCloudOAuth(CloudOAuthProvider.Apple) },
+          )
+          OAuthButton(
+            label = "GitHub",
+            enabled = dispatchState !is DispatchState.Sending,
+            modifier = Modifier.weight(1f),
+            onClick = { viewModel.signInCloudOAuth(CloudOAuthProvider.GitHub) },
+          )
+        }
+        Row(
+          Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          OAuthButton(
+            label = "Google",
+            enabled = dispatchState !is DispatchState.Sending,
+            modifier = Modifier.weight(1f),
+            onClick = { viewModel.signInCloudOAuth(CloudOAuthProvider.Google) },
+          )
+          OAuthButton(
+            label = "Microsoft",
+            enabled = dispatchState !is DispatchState.Sending,
+            modifier = Modifier.weight(1f),
+            onClick = { viewModel.signInCloudOAuth(CloudOAuthProvider.Microsoft) },
+          )
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+          "Secured by Clerk",
+          style = MaterialTheme.typography.labelMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+      AuthError(dispatchState, onDismiss = viewModel::clearDispatchFailure)
+    }
+  }
+}
+
+@Composable
+private fun OAuthButton(
+  label: String,
+  enabled: Boolean,
+  modifier: Modifier = Modifier,
+  onClick: () -> Unit,
+) {
+  OutlinedButton(
+    onClick = onClick,
+    enabled = enabled,
+    modifier = modifier.height(52.dp),
+  ) {
+    Text(label)
+  }
+}
+
+@Composable
 private fun HomeScreen(
   runtime: OnlineChatState,
   dispatchState: DispatchState,
   viewModel: AppViewModel,
   onNewTask: () -> Unit,
   onOpenThread: (String) -> Unit,
+  onAddEnvironment: () -> Unit,
+  onSettings: () -> Unit,
 ) {
   var search by remember { mutableStateOf("") }
   var showEnvironment by remember { mutableStateOf(false) }
-  val activeThreads = runtime.shell.threads.values
-    .filter { it.archivedAt == null && it.title.contains(search, ignoreCase = true) }
-    .sortedByDescending(ThreadSummary::updatedAt)
-    .groupBy(ThreadSummary::projectId)
+  var showArchived by remember { mutableStateOf(false) }
+  val visibleThreads = runtime.shell.threads.values
+    .filter { (it.archivedAt != null) == showArchived && it.title.contains(search, ignoreCase = true) }
+    .sortedWith(
+      compareByDescending<ThreadSummary> { it.pinnedAt != null }
+        .thenBy { it.pinOrderKey ?: "~" }
+        .thenByDescending(ThreadSummary::updatedAt),
+    )
+  val groups = if (runtime.settings.groupThreadsByProject) {
+    visibleThreads.groupBy(ThreadSummary::projectId)
+  } else {
+    mapOf("all" to visibleThreads)
+  }
 
   Scaffold(
     topBar = {
@@ -235,7 +451,8 @@ private fun HomeScreen(
           }
         },
         actions = {
-          TextButton(onClick = { showEnvironment = true }) { Text("Environment") }
+          TextButton(onClick = { showEnvironment = true }) { Text("Environments") }
+          TextButton(onClick = onSettings) { Text("Settings") }
         },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Black),
       )
@@ -256,6 +473,13 @@ private fun HomeScreen(
         singleLine = true,
         modifier = Modifier.fillMaxWidth().padding(16.dp),
       )
+      Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        OutlinedButton(onClick = { showArchived = false }) { Text("Active") }
+        OutlinedButton(onClick = { showArchived = true }) { Text("Archived") }
+      }
       RuntimeError(runtime.error, dispatchState) {
         OutlinedButton(onClick = viewModel::retryConnection) { Text("Retry connection") }
       }
@@ -264,9 +488,22 @@ private fun HomeScreen(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
       ) {
-        activeThreads.forEach { (projectId, threads) ->
+        if (runtime.pendingTasks.isNotEmpty()) {
+          item(key = "pending-title") {
+            Text(
+              "Pending tasks",
+              modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+              style = MaterialTheme.typography.labelLarge,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+          }
+          items(runtime.pendingTasks, key = PendingTask::messageId) { task ->
+            PendingTaskRow(task, viewModel)
+          }
+        }
+        groups.forEach { (projectId, threads) ->
           val project = runtime.shell.projects[projectId]
-          item(key = "project:$projectId") {
+          if (runtime.settings.groupThreadsByProject) item(key = "project:$projectId") {
             Text(
               project?.title ?: "Project",
               modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
@@ -275,10 +512,10 @@ private fun HomeScreen(
             )
           }
           items(threads, key = ThreadSummary::id) { thread ->
-            ThreadRow(thread) { onOpenThread(thread.id) }
+            ThreadRow(thread, runtime.settings.compactThreadRows) { onOpenThread(thread.id) }
           }
         }
-        if (activeThreads.isEmpty()) {
+        if (visibleThreads.isEmpty() && runtime.pendingTasks.isEmpty()) {
           item { Text("No matching threads.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
       }
@@ -286,19 +523,27 @@ private fun HomeScreen(
   }
 
   if (showEnvironment) {
-    EnvironmentDialog(runtime, viewModel) { showEnvironment = false }
+    EnvironmentDialog(
+      runtime = runtime,
+      viewModel = viewModel,
+      onAdd = {
+        showEnvironment = false
+        onAddEnvironment()
+      },
+      dismiss = { showEnvironment = false },
+    )
   }
 }
 
 @Composable
-private fun ThreadRow(thread: ThreadSummary, onClick: () -> Unit) {
+private fun ThreadRow(thread: ThreadSummary, compact: Boolean, onClick: () -> Unit) {
   Card(
     modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
   ) {
-    Column(Modifier.padding(16.dp)) {
-      Text(thread.title, fontWeight = FontWeight.SemiBold)
-      Spacer(Modifier.height(4.dp))
+    Column(Modifier.padding(if (compact) 10.dp else 16.dp)) {
+      Text((if (thread.pinnedAt != null) "Pinned · " else "") + thread.title, fontWeight = FontWeight.SemiBold)
+      if (!compact) Spacer(Modifier.height(4.dp))
       Text(
         thread.threadStatus(),
         style = MaterialTheme.typography.labelSmall,
@@ -309,9 +554,56 @@ private fun ThreadRow(thread: ThreadSummary, onClick: () -> Unit) {
 }
 
 @Composable
+private fun PendingTaskRow(task: PendingTask, viewModel: AppViewModel) {
+  var editing by remember(task.messageId) { mutableStateOf(false) }
+  var text by remember(task.messageId, task.text) { mutableStateOf(task.text) }
+  Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF111827))) {
+    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      Text(task.text, maxLines = 3, fontWeight = FontWeight.SemiBold)
+      Text(
+        when (task.status) {
+          PendingTaskStatus.Queued -> if (task.error == null) "Queued" else "Waiting to retry · ${task.error}"
+          PendingTaskStatus.Sending -> "Sending"
+          PendingTaskStatus.Failed -> "Needs attention · ${task.error.orEmpty()}"
+        },
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (task.status != PendingTaskStatus.Sending) {
+          TextButton(onClick = { editing = true }) { Text("Edit") }
+          TextButton(onClick = { viewModel.removePending(task.messageId) }) { Text("Delete") }
+        }
+        if (task.status == PendingTaskStatus.Failed) {
+          TextButton(onClick = { viewModel.retryPending(task.messageId) }) { Text("Retry") }
+        }
+      }
+    }
+  }
+  if (editing) {
+    AlertDialog(
+      onDismissRequest = { editing = false },
+      title = { Text("Edit pending task") },
+      text = { OutlinedTextField(text, { text = it }, minLines = 3) },
+      confirmButton = {
+        Button(
+          onClick = {
+            viewModel.editPending(task.messageId, text)
+            editing = false
+          },
+          enabled = text.isNotBlank(),
+        ) { Text("Save") }
+      },
+      dismissButton = { TextButton(onClick = { editing = false }) { Text("Cancel") } },
+    )
+  }
+}
+
+@Composable
 private fun EnvironmentDialog(
   runtime: OnlineChatState,
   viewModel: AppViewModel,
+  onAdd: () -> Unit,
   dismiss: () -> Unit,
 ) {
   val environment = runtime.environment ?: return
@@ -321,9 +613,34 @@ private fun EnvironmentDialog(
     onDismissRequest = dismiss,
     title = { Text("Environment") },
     text = {
-      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+      Column(
+        Modifier.verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        runtime.environments.forEach { item ->
+          val status = runtime.environmentStatuses[item.environmentId]
+          OutlinedButton(
+            onClick = { viewModel.selectEnvironment(item.environmentId) },
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Column(Modifier.fillMaxWidth()) {
+              Text(if (item.environmentId == environment.environmentId) "${item.label} · selected" else item.label)
+              Text(
+                status?.connectionPhase?.name ?: "Loading",
+                style = MaterialTheme.typography.labelSmall,
+              )
+            }
+          }
+        }
+        OutlinedButton(onClick = onAdd, modifier = Modifier.fillMaxWidth()) { Text("Add environment") }
+        HorizontalDivider()
         OutlinedTextField(label, { label = it }, label = { Text("Label") })
-        OutlinedTextField(url, { url = it }, label = { Text("URL") })
+        OutlinedTextField(
+          url,
+          { url = it },
+          label = { Text("URL") },
+          enabled = environment.kind == EnvironmentKind.Bearer,
+        )
         OutlinedButton(onClick = {
           viewModel.forgetEnvironment()
           dismiss()
@@ -334,10 +651,71 @@ private fun EnvironmentDialog(
       Button(onClick = {
         viewModel.updateEnvironment(label, url)
         dismiss()
-      }) { Text("Save") }
+      }, enabled = environment.kind == EnvironmentKind.Bearer) { Text("Save") }
     },
     dismissButton = { TextButton(onClick = dismiss) { Text("Cancel") } },
   )
+}
+
+@Composable
+private fun SettingsScreen(
+  runtime: OnlineChatState,
+  dispatchState: DispatchState,
+  viewModel: AppViewModel,
+  onBack: () -> Unit,
+  onOpenConnect: () -> Unit,
+) {
+  BackHandler(onBack = onBack)
+  Scaffold(topBar = { BackTopBar("Settings", onBack) }) { padding ->
+    Column(
+      Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
+      verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+      Text("Appearance", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+      Text("AMOLED dark", color = MaterialTheme.colorScheme.onSurfaceVariant)
+      ToggleRow("Compact thread rows", runtime.settings.compactThreadRows) {
+        viewModel.updateSettings(runtime.settings.copy(compactThreadRows = it))
+      }
+      HorizontalDivider()
+      Text("Grouping", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+      ToggleRow("Group threads by project", runtime.settings.groupThreadsByProject) {
+        viewModel.updateSettings(runtime.settings.copy(groupThreadsByProject = it))
+      }
+      HorizontalDivider()
+      Text("Storage", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+      Text(
+        "${runtime.environments.size} environments · ${runtime.pendingTasks.size} pending tasks",
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+      OutlinedButton(onClick = viewModel::clearCache) { Text("Clear cached snapshots") }
+      HorizontalDivider()
+      Text("T3 Connect", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+      if (runtime.cloud.signedIn) {
+        Text(
+          "Signed in as ${runtime.cloud.accountLabel ?: runtime.cloud.accountId}",
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Button(onClick = onOpenConnect, modifier = Modifier.fillMaxWidth()) {
+          Text("Manage T3 Connect")
+        }
+      } else {
+        Text(
+          "Sign in to discover and open relay environments.",
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Button(onClick = onOpenConnect, modifier = Modifier.fillMaxWidth()) {
+          Text("via T3 Connect")
+        }
+      }
+      HorizontalDivider()
+      Text("Beta", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+      ToggleRow("Native beta features", runtime.settings.betaFeatures) {
+        viewModel.updateSettings(runtime.settings.copy(betaFeatures = it))
+      }
+      Text("Open-source licenses and privacy information ship with T3 Code.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+      RuntimeError(runtime.error, dispatchState)
+    }
+  }
 }
 
 @Composable
@@ -400,7 +778,7 @@ private fun NewTaskScreen(
           )
         },
         enabled = draft.text.isNotBlank() && projectId.isNotBlank() &&
-          runtime.shellSyncPhase == SyncPhase.Synchronized && dispatchState !is DispatchState.Sending,
+          runtime.shell.sequence >= 0 && dispatchState !is DispatchState.Sending,
         modifier = Modifier.fillMaxWidth(),
       ) { Text(if (dispatchState is DispatchState.Sending) "Creating…" else "Create task") }
       DispatchFailure(dispatchState, viewModel::retryDispatch)
@@ -442,6 +820,7 @@ private fun ThreadScreen(
           Text(runtime.error ?: "Opening thread…")
         }
       } else {
+        ThreadActionBar(detail.summary, runtime.threadCapabilities, viewModel)
         ThreadFeed(
           detail = detail,
           modifier = Modifier.weight(1f),
@@ -454,8 +833,7 @@ private fun ThreadScreen(
         Composer(
           detail = detail,
           draft = draft,
-          enabled = runtime.threadSyncPhase == SyncPhase.Synchronized &&
-            runtime.connectionPhase == ConnectionPhase.Connected,
+          enabled = runtime.shell.sequence >= 0,
           sending = dispatchState is DispatchState.Sending,
           onDraft = {
             draft = draft.copy(text = it)
@@ -467,6 +845,78 @@ private fun ThreadScreen(
         )
       }
     }
+  }
+}
+
+@Composable
+private fun ThreadActionBar(
+  thread: ThreadSummary,
+  capabilities: ThreadCapabilities,
+  viewModel: AppViewModel,
+) {
+  var confirmDelete by remember(thread.id) { mutableStateOf(false) }
+  LazyRow(
+    modifier = Modifier.fillMaxWidth(),
+    contentPadding = PaddingValues(horizontal = 10.dp),
+    horizontalArrangement = Arrangement.spacedBy(4.dp),
+  ) {
+    item {
+      TextButton(
+        onClick = {
+          viewModel.threadAction(
+            if (thread.archivedAt == null) "thread.archive" else "thread.unarchive",
+            thread.id,
+          )
+        },
+      ) { Text(if (thread.archivedAt == null) "Archive" else "Restore") }
+    }
+    if (capabilities.pinning) item {
+      TextButton(
+        onClick = {
+          viewModel.threadAction(
+            if (thread.pinnedAt == null) "thread.pin" else "thread.unpin",
+            thread.id,
+            if (thread.pinnedAt == null && capabilities.pinReorder) System.currentTimeMillis().toString() else null,
+          )
+        },
+      ) { Text(if (thread.pinnedAt == null) "Pin" else "Unpin") }
+    }
+    if (capabilities.settlement) item {
+      TextButton(
+        onClick = {
+          viewModel.threadAction(
+            if (thread.settledAt == null) "thread.settle" else "thread.unsettle",
+            thread.id,
+          )
+        },
+      ) { Text(if (thread.settledAt == null) "Settle" else "Activate") }
+    }
+    if (capabilities.snooze) item {
+      TextButton(
+        onClick = {
+          viewModel.threadAction(
+            if (thread.snoozedUntil == null) "thread.snooze" else "thread.unsnooze",
+            thread.id,
+            if (thread.snoozedUntil == null) Instant.now().plusSeconds(3_600).toString() else null,
+          )
+        },
+      ) { Text(if (thread.snoozedUntil == null) "Snooze 1h" else "Unsnooze") }
+    }
+    item { TextButton(onClick = { confirmDelete = true }) { Text("Delete") } }
+  }
+  if (confirmDelete) {
+    AlertDialog(
+      onDismissRequest = { confirmDelete = false },
+      title = { Text("Delete thread?") },
+      text = { Text("This permanently deletes the thread from the environment.") },
+      confirmButton = {
+        Button(onClick = {
+          viewModel.threadAction("thread.delete", thread.id)
+          confirmDelete = false
+        }) { Text("Delete") }
+      },
+      dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+    )
   }
 }
 
@@ -726,11 +1176,27 @@ private fun RuntimeError(
   dispatchState: DispatchState,
   action: (@Composable () -> Unit)? = null,
 ) {
-  val message = (dispatchState as? DispatchState.Failed)?.message ?: runtimeError ?: return
+  // Dispatch failures are shown by DispatchFailure/AuthError only — avoid double banners.
+  if (dispatchState is DispatchState.Failed) return
+  val message = runtimeError ?: return
   Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF2A0B0B))) {
     Column(Modifier.fillMaxWidth().padding(12.dp)) {
       Text(message, color = MaterialTheme.colorScheme.error)
       action?.invoke()
+    }
+  }
+}
+
+@Composable
+private fun AuthError(state: DispatchState, onDismiss: () -> Unit) {
+  val failure = state as? DispatchState.Failed ?: return
+  Card(
+    colors = CardDefaults.cardColors(containerColor = Color(0xFF2A0B0B)),
+    modifier = Modifier.fillMaxWidth(),
+  ) {
+    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      Text(failure.message, color = MaterialTheme.colorScheme.error)
+      TextButton(onClick = onDismiss) { Text("Dismiss") }
     }
   }
 }
@@ -771,6 +1237,9 @@ private fun BackTopBar(title: String, onBack: () -> Unit) {
 
 private fun OnlineChatState.statusLabel() = when {
   connectionPhase == ConnectionPhase.Connecting -> "Connecting"
+  connectionPhase == ConnectionPhase.Backoff -> "Reconnecting"
+  connectionPhase == ConnectionPhase.Blocked -> "Needs attention"
+  connectionPhase == ConnectionPhase.Offline -> "Offline · cached"
   connectionPhase == ConnectionPhase.Error -> "Connection failed"
   shellSyncPhase == SyncPhase.Synchronizing -> "Synchronizing"
   shellSyncPhase == SyncPhase.Error -> "Sync failed"

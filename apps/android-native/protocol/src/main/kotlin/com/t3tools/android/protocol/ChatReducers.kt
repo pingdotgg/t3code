@@ -87,6 +87,30 @@ private fun ThreadState.reduceThreadEvent(event: JsonObject): ThreadState {
         interactionMode = payload.text("interactionMode") ?: current.summary.interactionMode,
       ),
     )
+    "thread.archived" -> current.copy(
+      summary = current.summary.copy(archivedAt = payload.text("archivedAt")),
+    )
+    "thread.unarchived" -> current.copy(summary = current.summary.copy(archivedAt = null))
+    "thread.settled" -> current.copy(
+      summary = current.summary.copy(settledAt = payload.text("settledAt")),
+    )
+    "thread.unsettled" -> current.copy(summary = current.summary.copy(settledAt = null))
+    "thread.snoozed" -> current.copy(
+      summary = current.summary.copy(snoozedUntil = payload.text("snoozedUntil")),
+    )
+    "thread.unsnoozed" -> current.copy(summary = current.summary.copy(snoozedUntil = null))
+    "thread.pinned" -> current.copy(
+      summary = current.summary.copy(
+        pinnedAt = payload.text("pinnedAt"),
+        pinOrderKey = payload.text("pinOrderKey") ?: current.summary.pinOrderKey,
+      ),
+    )
+    "thread.unpinned" -> current.copy(
+      summary = current.summary.copy(pinnedAt = null, pinOrderKey = null),
+    )
+    "thread.pin-reordered" -> current.copy(
+      summary = current.summary.copy(pinOrderKey = payload.text("orderKey")),
+    )
     else -> current
   }
   return copy(sequence = next, detail = updated)
@@ -168,6 +192,10 @@ private fun JsonObject.toThreadSummary(): ThreadSummary? {
     session = obj("session")?.toThreadSession(),
     updatedAt = text("updatedAt") ?: "",
     archivedAt = nullableText("archivedAt"),
+    settledAt = nullableText("settledAt"),
+    snoozedUntil = nullableText("snoozedUntil"),
+    pinnedAt = nullableText("pinnedAt"),
+    pinOrderKey = nullableText("pinOrderKey"),
     hasPendingApprovals = bool("hasPendingApprovals") == true,
     hasPendingUserInput = bool("hasPendingUserInput") == true,
   )

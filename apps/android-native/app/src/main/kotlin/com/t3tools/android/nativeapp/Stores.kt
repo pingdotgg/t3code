@@ -9,32 +9,54 @@ data class SavedEnvironment(
   val environmentId: String,
   val label: String,
   val httpBaseUrl: String,
+  val kind: EnvironmentKind = EnvironmentKind.Bearer,
+  val desired: Boolean = true,
 )
 
 class EnvironmentStore(
   context: Context,
+  private val database: NativeDatabase = NativeDatabase(context),
   private val json: Json = Json { ignoreUnknownKeys = true },
 ) {
   private val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
 
-  fun load(): SavedEnvironment? = preferences.getString(KEY, null)?.let { value ->
-    runCatching { json.decodeFromString<SavedEnvironment>(value) }.getOrNull()
+  init {
+    migrateLegacy()
   }
+
+  fun load(): SavedEnvironment? {
+    val selected = database.selectedEnvironmentId()?.let(database::environment)
+    return selected ?: database.environments().firstOrNull()
+  }
+
+  fun load(environmentId: String) = database.environment(environmentId)
+
+  fun loadAll() = database.environments()
 
   fun save(environment: SavedEnvironment) {
-    check(
-      preferences.edit()
-        .putString(KEY, json.encodeToString(SavedEnvironment.serializer(), environment))
-        .commit(),
-    ) {
-      "Could not persist environment metadata."
-    }
+    database.saveEnvironment(environment)
+    database.selectEnvironment(environment.environmentId)
   }
 
+  fun select(environmentId: String) {
+    requireNotNull(load(environmentId)) { "Unknown environment: $environmentId" }
+    database.selectEnvironment(environmentId)
+  }
+
+  fun remove(environmentId: String) = database.removeEnvironment(environmentId)
+
   fun clear() {
-    check(preferences.edit().remove(KEY).commit()) {
-      "Could not clear environment metadata."
-    }
+    loadAll().map(SavedEnvironment::environmentId).forEach(::remove)
+  }
+
+  private fun migrateLegacy() {
+    if (database.environments().isNotEmpty()) return
+    val legacy = preferences.getString(KEY, null)?.let { value ->
+      runCatching { json.decodeFromString<SavedEnvironment>(value) }.getOrNull()
+    } ?: return
+    database.saveEnvironment(legacy)
+    database.selectEnvironment(legacy.environmentId)
+    check(preferences.edit().remove(KEY).commit()) { "Could not finish environment migration." }
   }
 
   private companion object {

@@ -1,9 +1,11 @@
 package com.t3tools.android.protocol
 
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
+@Serializable
 data class ModelSelection(
   val instanceId: String,
   val model: String,
@@ -16,6 +18,7 @@ fun ModelSelection.toJsonObject() = buildJsonObject(
   "options" to options,
 )
 
+@Serializable
 data class Project(
   val id: String,
   val title: String,
@@ -24,22 +27,26 @@ data class Project(
   val scripts: List<ProjectScript>,
 )
 
+@Serializable
 data class ProjectScript(
   val name: String,
   val command: String,
 )
 
+@Serializable
 data class LatestTurn(
   val id: String,
   val state: String,
 )
 
+@Serializable
 data class ThreadSession(
   val status: String,
   val activeTurnId: String?,
   val lastError: String?,
 )
 
+@Serializable
 data class ThreadSummary(
   val id: String,
   val projectId: String,
@@ -53,10 +60,15 @@ data class ThreadSummary(
   val session: ThreadSession?,
   val updatedAt: String,
   val archivedAt: String?,
+  val settledAt: String? = null,
+  val snoozedUntil: String? = null,
+  val pinnedAt: String? = null,
+  val pinOrderKey: String? = null,
   val hasPendingApprovals: Boolean,
   val hasPendingUserInput: Boolean,
 )
 
+@Serializable
 data class ChatMessage(
   val id: String,
   val role: String,
@@ -67,6 +79,7 @@ data class ChatMessage(
   val updatedAt: String,
 )
 
+@Serializable
 data class ThreadActivity(
   val id: String,
   val tone: String,
@@ -77,6 +90,7 @@ data class ThreadActivity(
   val createdAt: String,
 )
 
+@Serializable
 data class PendingApproval(
   val requestId: String,
   val requestKind: String,
@@ -84,11 +98,13 @@ data class PendingApproval(
   val createdAt: String,
 )
 
+@Serializable
 data class UserInputOption(
   val label: String,
   val description: String,
 )
 
+@Serializable
 data class UserInputQuestion(
   val id: String,
   val header: String,
@@ -97,12 +113,14 @@ data class UserInputQuestion(
   val multiSelect: Boolean,
 )
 
+@Serializable
 data class PendingUserInput(
   val requestId: String,
   val questions: List<UserInputQuestion>,
   val createdAt: String,
 )
 
+@Serializable
 data class ThreadDetail(
   val summary: ThreadSummary,
   val messages: List<ChatMessage>,
@@ -112,6 +130,7 @@ data class ThreadDetail(
   val userInputs: List<PendingUserInput> get() = derivePendingUserInputs(activities)
 }
 
+@Serializable
 data class ShellState(
   val sequence: Long = -1,
   val projects: Map<String, Project> = emptyMap(),
@@ -119,12 +138,14 @@ data class ShellState(
   val synchronized: Boolean = false,
 )
 
+@Serializable
 data class ThreadState(
   val sequence: Long = -1,
   val detail: ThreadDetail? = null,
   val synchronized: Boolean = false,
 )
 
+@Serializable
 data class ProviderModel(
   val instanceId: String,
   val providerLabel: String,

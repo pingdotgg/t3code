@@ -8,6 +8,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 data class StartCommand(
   val threadId: String,
@@ -15,6 +16,45 @@ data class StartCommand(
   val messageId: String,
   val command: JsonObject,
 )
+
+fun startCommand(command: JsonObject): StartCommand {
+  val message = command.required("message").jsonObject
+  return StartCommand(
+    threadId = command.required("threadId").jsonPrimitive.content,
+    commandId = command.required("commandId").jsonPrimitive.content,
+    messageId = message.required("messageId").jsonPrimitive.content,
+    command = command,
+  )
+}
+
+fun editStartCommand(command: JsonObject, prompt: String): JsonObject {
+  require(prompt.isNotBlank()) { "Prompt must not be blank." }
+  val message = command.required("message").jsonObject
+  val title = prompt.trim().replace(Regex("\\s+"), " ").let {
+    if (it.length <= 72) it else "${it.take(69).trimEnd()}..."
+  }
+  val bootstrap = command["bootstrap"] as? JsonObject
+  val createThread = bootstrap?.get("createThread") as? JsonObject
+  return JsonObject(
+    command.toMutableMap().apply {
+      put("message", JsonObject(message.toMutableMap().apply { put("text", JsonPrimitive(prompt)) }))
+      if (containsKey("titleSeed")) put("titleSeed", JsonPrimitive(title))
+      if (bootstrap != null && createThread != null) {
+        put(
+          "bootstrap",
+          JsonObject(
+            bootstrap.toMutableMap().apply {
+              put(
+                "createThread",
+                JsonObject(createThread.toMutableMap().apply { put("title", JsonPrimitive(title)) }),
+              )
+            },
+          ),
+        )
+      }
+    },
+  )
+}
 
 data class WorktreeBootstrap(
   val projectCwd: String,
@@ -130,6 +170,36 @@ fun stopSessionCommand(threadId: String, now: Instant = Instant.now()) = timesta
   threadId = threadId,
   now = now,
 )
+
+fun threadActionCommand(
+  type: String,
+  threadId: String,
+  value: String? = null,
+  now: Instant = Instant.now(),
+): JsonObject {
+  require(
+    type in setOf(
+      "thread.delete",
+      "thread.archive",
+      "thread.unarchive",
+      "thread.settle",
+      "thread.unsettle",
+      "thread.snooze",
+      "thread.unsnooze",
+      "thread.pin",
+      "thread.unpin",
+      "thread.pin.reorder",
+    ),
+  ) { "Unsupported thread action: $type" }
+  val fields = when (type) {
+    "thread.unsettle", "thread.unsnooze" -> arrayOf("reason" to JsonPrimitive("user"))
+    "thread.snooze" -> arrayOf("snoozedUntil" to JsonPrimitive(requireNotNull(value)))
+    "thread.pin", "thread.pin.reorder" -> value?.let { arrayOf("orderKey" to JsonPrimitive(it)) }
+      ?: emptyArray()
+    else -> emptyArray()
+  }
+  return timestampedThreadCommand(type, threadId, now, *fields)
+}
 
 fun approvalResponseCommand(
   threadId: String,

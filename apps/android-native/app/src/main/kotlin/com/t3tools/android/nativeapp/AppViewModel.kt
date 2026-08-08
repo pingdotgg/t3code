@@ -13,6 +13,7 @@ import com.t3tools.android.protocol.interruptCommand
 import com.t3tools.android.protocol.interactionModeCommand
 import com.t3tools.android.protocol.runtimeModeCommand
 import com.t3tools.android.protocol.stopSessionCommand
+import com.t3tools.android.protocol.threadActionCommand
 import com.t3tools.android.protocol.toJsonObject
 import com.t3tools.android.protocol.turnStartCommand
 import com.t3tools.android.protocol.userInputResponseCommand
@@ -93,6 +94,14 @@ class AppViewModel(
     }
   }
 
+  fun selectEnvironment(environmentId: String) {
+    viewModelScope.launch {
+      runCatching { repository.selectEnvironment(environmentId) }
+        .onSuccess { mutableDispatchState.value = DispatchState.Idle }
+        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
+  }
+
   fun updateEnvironment(label: String, httpBaseUrl: String) {
     viewModelScope.launch {
       runCatching { repository.updateEnvironment(label, httpBaseUrl) }
@@ -102,6 +111,12 @@ class AppViewModel(
   }
 
   fun reportFailure(error: Throwable) = fail(error.safeMessage())
+
+  fun clearDispatchFailure() {
+    if (mutableDispatchState.value is DispatchState.Failed) {
+      mutableDispatchState.value = DispatchState.Idle
+    }
+  }
 
   fun forgetEnvironment() {
     viewModelScope.launch {
@@ -204,6 +219,90 @@ class AppViewModel(
 
   fun stop(threadId: String) = dispatchAction(stopSessionCommand(threadId))
 
+  fun threadAction(type: String, threadId: String, value: String? = null) =
+    dispatchAction(threadActionCommand(type, threadId, value))
+
+  fun editPending(messageId: String, text: String) {
+    viewModelScope.launch {
+      runCatching { repository.editPending(messageId, text) }
+        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
+  }
+
+  fun removePending(messageId: String) {
+    viewModelScope.launch {
+      runCatching { repository.removePending(messageId) }
+        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
+  }
+
+  fun retryPending(messageId: String) {
+    viewModelScope.launch {
+      runCatching { repository.retryPending(messageId) }
+        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
+  }
+
+  fun updateSettings(settings: AppSettings) {
+    viewModelScope.launch {
+      runCatching { repository.updateSettings(settings) }
+        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
+  }
+
+  fun clearCache() {
+    viewModelScope.launch {
+      runCatching { repository.clearCache() }
+        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
+  }
+
+  fun signInCloud(email: String, password: String) {
+    viewModelScope.launch {
+      mutableDispatchState.value = DispatchState.Sending
+      runCatching { repository.signInCloud(email, password) }
+        .onSuccess { mutableDispatchState.value = DispatchState.Idle }
+        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
+  }
+
+  fun signInCloudOAuth(provider: CloudOAuthProvider) {
+    viewModelScope.launch {
+      mutableDispatchState.value = DispatchState.Sending
+      runCatching { repository.signInCloudOAuth(provider) }
+        .onSuccess { mutableDispatchState.value = DispatchState.Idle }
+        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
+  }
+
+  fun signOutCloud() {
+    viewModelScope.launch {
+      mutableDispatchState.value = DispatchState.Sending
+      runCatching { repository.signOutCloud() }
+        .onSuccess { mutableDispatchState.value = DispatchState.Idle }
+        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
+  }
+
+  fun refreshCloudEnvironments() {
+    viewModelScope.launch {
+      runCatching { repository.refreshCloudEnvironments() }
+        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
+  }
+
+  fun connectRelay(environmentId: String) {
+    viewModelScope.launch {
+      mutableDispatchState.value = DispatchState.Sending
+      runCatching { repository.connectRelay(environmentId) }
+        .onSuccess {
+          mutableDispatchState.value = DispatchState.Idle
+          mutableEvents.tryEmit(AppEvent.OpenHome)
+        }
+        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
+  }
+
   private fun dispatchExisting(
     start: StartCommand,
     draftKey: String,
@@ -214,8 +313,13 @@ class AppViewModel(
     viewModelScope.launch {
       mutableDispatchState.value = DispatchState.Sending
       runCatching {
-        settings.forEach { repository.dispatch(it) }
-        repository.dispatch(start.command)
+        repository.enqueue(
+          start = start,
+          draftKey = draftKey,
+          settings = settings,
+          createsThread = false,
+          text = draft.text,
+        )
       }
         .onSuccess {
           retryable = null
@@ -232,19 +336,22 @@ class AppViewModel(
     retryable = RetryableDispatch.NewTask(start, draftKey)
     viewModelScope.launch {
       mutableDispatchState.value = DispatchState.Sending
-      runCatching { repository.dispatchAtomicStart(start) }
+      runCatching {
+        repository.enqueue(
+          start = start,
+          draftKey = draftKey,
+          settings = emptyList(),
+          createsThread = true,
+          text = draftStore.load(draftKey).text,
+        )
+      }
         .onSuccess { acceptNew(start, draftKey) }
         .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
     }
   }
 
   private fun recoverNew(start: StartCommand, draftKey: String) {
-    viewModelScope.launch {
-      mutableDispatchState.value = DispatchState.Sending
-      runCatching { repository.recoverAtomicStart(start) }
-        .onSuccess { acceptNew(start, draftKey) }
-        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
-    }
+    dispatchNew(start, draftKey)
   }
 
   private fun acceptNew(start: StartCommand, draftKey: String) {

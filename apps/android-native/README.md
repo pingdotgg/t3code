@@ -1,11 +1,11 @@
-# T3 Code Native Android — Phase 1
+# T3 Code Native Android — Phase 2
 
-This directory contains an independent native Android client for the core online chat loop. Phase 1 supports one active environment: pairing, project and thread navigation, task creation, streaming chat, approvals, structured questions, interrupt/stop, safe retries, and persistent composer drafts.
+Independent native Android client for T3 Code. Phase 0 proved the wire protocol. Phase 1 delivered the online chat vertical slice. Phase 2 adds multi-environment supervision, SQLite persistence with a durable outbox, lifecycle reconnect policy, thread organization/settings, and public T3 Connect (Clerk + DPoP + relay).
 
 ## Modules
 
 - `:protocol` — pairing, bearer authentication, Effect RPC WebSocket transport, typed shell/thread models, sequence-aware reducers, commands, and the headless proof harness.
-- `:app` — the Compose UI, single-environment runtime, persistent drafts, and Android Keystore-backed bearer credential store.
+- `:app` — Compose UI, multi-environment supervisors, SQLite catalog/outbox/cache, T3 Connect client, and Android Keystore-backed credentials.
 
 The Kotlin implementation targets the current matching T3 server revision. Broader server-version compatibility is not promised until versioned wire artifacts exist.
 
@@ -83,9 +83,11 @@ T3_NATIVE_PROMPT='Count slowly from one to twenty, one number per line.' \
 
 It must exit 0 after pairing, loading the shell, creating one task with atomic `thread.turn.start`, recovering an uncertain retry by deterministic thread id, streaming assistant output, dispatching `thread.turn.interrupt`, reconnecting from the saved bearer credential, probing the server, and resuming shell/thread streams without duplicate sequences.
 
-## Phase 1 boundaries
+## Phase 2 boundaries
 
-The client is online-only and intentionally manages one environment at a time. T3 Connect, offline outbox behavior, multi-environment supervision, terminal/review/files/git surfaces, and attachments remain outside Phase 1.
+Multi-environment supervision, cached shell/thread snapshots, durable text-turn outbox, and T3 Connect sign-in/relay discovery are in scope. Terminal, review, files, git, and attachment picker/upload remain Phase 3. Performance benchmarking is deferred until after Phase 3.
+
+Lifecycle ownership, SQLite schema, outbox semantics, credential boundaries, chaos checklist, and the Phase 2 scorecard live in [`docs/PHASE2.md`](docs/PHASE2.md).
 
 ### Atomic bootstrap retry caveat
 

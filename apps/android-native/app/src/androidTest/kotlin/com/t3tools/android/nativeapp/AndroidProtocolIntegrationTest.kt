@@ -29,7 +29,8 @@ class AndroidProtocolIntegrationTest {
       client.shell(connected.session).first { item ->
         if (item["kind"]?.jsonPrimitive?.content == "snapshot") {
           snapshotSeen = true
-          assertTrue(item.toShellSnapshot().projects.isNotEmpty())
+          // Fresh disposable servers may have zero projects; only require a decodable snapshot.
+          assertNotNull(item.toShellSnapshot())
         }
         item["kind"]?.jsonPrimitive?.content == "synchronized"
       }

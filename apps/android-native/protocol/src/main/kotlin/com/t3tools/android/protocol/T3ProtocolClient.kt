@@ -82,6 +82,13 @@ class T3ProtocolClient(
     return connect(descriptor, credential)
   }
 
+  fun fetchDescriptor(httpBaseUrl: String) = auth.fetchDescriptor(httpBaseUrl)
+
+  suspend fun connectWithSocket(
+    descriptor: EnvironmentDescriptor,
+    socketUrl: String,
+  ): ConnectedEnvironment = connect(descriptor, socketUrl)
+
   fun shell(session: EffectRpcSession, afterSequence: Long? = null): Flow<JsonObject> =
     session.stream(
       "orchestration.subscribeShell",
@@ -138,8 +145,13 @@ class T3ProtocolClient(
   private suspend fun connect(
     descriptor: EnvironmentDescriptor,
     credential: SavedCredential,
+  ): ConnectedEnvironment = connect(descriptor, auth.issueWebSocketUrl(credential))
+
+  private suspend fun connect(
+    descriptor: EnvironmentDescriptor,
+    socketUrl: String,
   ): ConnectedEnvironment {
-    val session = EffectRpcSession.connect(http, auth.issueWebSocketUrl(credential))
+    val session = EffectRpcSession.connect(http, socketUrl)
     val config = try {
       session.unary("server.getConfig").jsonObject
     } catch (error: Throwable) {
