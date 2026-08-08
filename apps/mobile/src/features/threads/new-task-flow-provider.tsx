@@ -59,13 +59,16 @@ import {
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
 import {
+  resolveStartWorkspace as computeStartWorkspace,
+  type ResolvedWorkspace,
+  type WorkspaceMode,
+} from "./new-task-workspace-resolution";
+import {
   buildHomeProjectScopes,
   sortHomeProjectScopes,
   type HomeProjectScope,
 } from "../home/homeThreadList";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
-
-type WorkspaceMode = "local" | "worktree";
 
 const EMPTY_BRANCH_REFS: ReadonlyArray<VcsRef> = [];
 
@@ -150,6 +153,13 @@ type NewTaskFlowContextValue = {
   readonly setSelectedModelKey: (key: string | null) => void;
   readonly setWorkspaceMode: (mode: WorkspaceMode) => void;
   readonly selectBranch: (branch: VcsRef) => void;
+  /**
+   * Resolve the workspace configuration to actually start a thread with, so a
+   * task can always be sent regardless of what the user has (or has not)
+   * picked. A worktree thread with no branch resolves to the best available
+   * branch, falling back to a current-checkout thread when no branch is known.
+   */
+  readonly resolveStartWorkspace: (input: ResolvedWorkspace) => ResolvedWorkspace;
   readonly setStartFromOrigin: (value: boolean) => void;
   readonly beginEditingPendingTask: (messageId: string) => boolean;
   readonly finishEditingPendingTask: () => void;
@@ -600,6 +610,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     [selectedBranchName, selectedProjectDraftKey, selectedWorktreePath, workspaceMode],
   );
 
+  const resolveStartWorkspace = useCallback(
+    (input: ResolvedWorkspace): ResolvedWorkspace =>
+      computeStartWorkspace(input, { all: allBranchRefs, available: availableBranches }),
+    [allBranchRefs, availableBranches],
+  );
+
   const refreshBranches = branchState.refresh;
   const loadBranches = useCallback(async () => {
     if (!selectedProject) {
@@ -691,9 +707,17 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         return null;
       }
       const workspaceSelection = draft.workspaceSelection;
-      // Fall back to the resolved mode (server default) so queued tasks drain
-      // with the same mode the composer displayed.
-      const mode = workspaceSelection?.mode ?? workspaceMode;
+      // Resolve the same way the interactive send does, so an offline task
+      // queued without a branch drains as a real thread (default branch, or a
+      // current-checkout fallback) instead of an unstartable worktree.
+      const resolvedWorkspace = resolveStartWorkspace({
+        // Fall back to the resolved mode (server default) so queued tasks drain
+        // with the same mode the composer displayed.
+        mode: workspaceSelection?.mode ?? workspaceMode,
+        branch: workspaceSelection?.branch ?? null,
+        worktreePath: workspaceSelection?.worktreePath ?? null,
+      });
+      const mode = resolvedWorkspace.mode;
       // When the selection is the stand-in built from the queued snapshot,
       // persist the original (possibly absent) snapshot values — the
       // stand-in's placeholder title/workspaceRoot must never be written back
@@ -720,8 +744,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           ...(projectTitle !== undefined ? { projectTitle } : {}),
           ...(projectCwd !== undefined ? { projectCwd } : {}),
           workspaceMode: mode,
-          branch: workspaceSelection?.branch ?? null,
-          worktreePath: mode === "worktree" ? null : (workspaceSelection?.worktreePath ?? null),
+          branch: resolvedWorkspace.branch,
+          worktreePath: mode === "worktree" ? null : resolvedWorkspace.worktreePath,
           // The draft only carries the flag when the user touched it; fall
           // back to the resolved default (server settings) so queued tasks
           // drain with the same origin mode the composer displayed.
@@ -735,6 +759,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     [
       editingPendingProject,
       editingPendingTask,
+      resolveStartWorkspace,
       selectedEnvironmentServerConfig,
       selectedModel,
       selectedProject,
@@ -869,6 +894,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       setSelectedModelKey,
       setWorkspaceMode,
       selectBranch,
+      resolveStartWorkspace,
       setStartFromOrigin,
       beginEditingPendingTask,
       finishEditingPendingTask,
@@ -908,6 +934,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       providerGroups,
       replaceAttachments,
       reset,
+      resolveStartWorkspace,
       runtimeMode,
       selectedBranchName,
       selectedEnvironmentId,
