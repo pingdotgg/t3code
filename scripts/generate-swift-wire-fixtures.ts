@@ -1,5 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
 import {
   OrchestrationShellSnapshot,
@@ -8,8 +8,8 @@ import {
   OrchestrationThreadStreamItem,
 } from "../packages/contracts/src/orchestration.ts";
 
-const root = resolve(import.meta.dirname, "..");
-const outputDirectory = resolve(root, "apps/swift-ios/Tests/Fixtures/Wire");
+const root = NodePath.resolve(import.meta.dirname, "..");
+const outputDirectory = NodePath.resolve(root, "apps/swift-ios/Tests/Fixtures/Wire");
 const check = process.argv.includes("--check");
 const timestamp = "2026-08-07T12:00:00.000Z";
 
@@ -119,17 +119,17 @@ const fixtures = new Map<string, unknown>([
 
 let stale = false;
 for (const [name, value] of fixtures) {
-  const path = resolve(outputDirectory, name);
+  const path = NodePath.resolve(outputDirectory, name);
   const contents = `${JSON.stringify(value, null, 2)}\n`;
   if (check) {
-    const current = await readFile(path, "utf8").catch(() => undefined);
+    const current = await NodeFSP.readFile(path, "utf8").catch(() => undefined);
     if (current !== contents) {
       console.error(`[swift-wire-fixtures] stale: ${name}`);
       stale = true;
     }
   } else {
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, contents);
+    await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true });
+    await NodeFSP.writeFile(path, contents);
     console.log(`[swift-wire-fixtures] wrote ${name}`);
   }
 }
