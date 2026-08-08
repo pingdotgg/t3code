@@ -34,6 +34,30 @@ const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
  */
 function buildScript() {
   const captured = wireFixture.notifications;
+  const progressBurst = captured.flatMap((entry) => {
+    const item = (entry.params as { item?: { type?: string } }).item;
+    const threadId = (entry.params as { threadId?: string }).threadId;
+    if (entry.method === "thread/tokenUsage/updated" && threadId === CHILD_A) {
+      return [entry, entry, entry];
+    }
+    if (
+      (entry.method === "item/started" || entry.method === "item/completed") &&
+      item?.type === "collabAgentToolCall"
+    ) {
+      return [
+        entry,
+        {
+          ...entry,
+          params: {
+            ...entry.params,
+            threadId: CHILD_A,
+            turnId: `${CHILD_A}-turn-1`,
+          },
+        },
+      ];
+    }
+    return [entry];
+  });
   const extras = [
     {
       method: "item/completed",
@@ -66,7 +90,10 @@ function buildScript() {
   ];
   return {
     rootThreadId: ROOT,
-    notifications: [...captured.filter((entry) => entry.method !== "turn/completed"), ...extras],
+    notifications: [
+      ...progressBurst.filter((entry) => entry.method !== "turn/completed"),
+      ...extras,
+    ],
   };
 }
 
@@ -74,7 +101,7 @@ const scriptPath = NodePath.join(import.meta.dirname, "../testFixtures/.collab-s
 const peerPath = NodePath.join(import.meta.dirname, "../testFixtures/codexCollabMockPeer.sh");
 
 describe("CodexSessionRuntime collab integration", () => {
-  it.effect("replays the captured fan-out into synthetic agent events without child leaks", () =>
+  it.live("replays bounded child progress before terminal lifecycle without child leaks", () =>
     Effect.gen(function* () {
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       NodeFS.writeFileSync(scriptPath, JSON.stringify(buildScript()), "utf8");
@@ -115,6 +142,47 @@ describe("CodexSessionRuntime collab integration", () => {
           (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_A,
       );
       assert.isDefined(childTurnCompleted, "child A's turn completion becomes an agent event");
+
+      const childAProgress = events.filter(
+        (event) =>
+          (event.method === "collabAgent/item" || event.method === "collabAgent/tokenUsage") &&
+          (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_A,
+      );
+      const childAItems = childAProgress.filter((event) => event.method === "collabAgent/item");
+      const childAUsage = childAProgress.filter(
+        (event) => event.method === "collabAgent/tokenUsage",
+      );
+      assert.isAtLeast(childAItems.length, 1, "the child item lane survives coalescing");
+      assert.isBelow(childAItems.length, 2, "the two child item updates coalesce");
+      assert.isAtLeast(childAUsage.length, 1, "the child usage lane survives coalescing");
+      assert.isBelow(childAUsage.length, 6, "the six cumulative child usage updates coalesce");
+      const latestItem = childAItems.findLast(() => true);
+      assert.isDefined(latestItem);
+      assert.equal(
+        (latestItem.payload as { item?: { status?: string } }).item?.status,
+        "completed",
+        "the latest child item survives coalescing",
+      );
+      const latestUsage = childAUsage.findLast(() => true);
+      assert.isDefined(latestUsage);
+      assert.equal(
+        (latestUsage.payload as { tokenUsage?: { total?: { totalTokens?: number } } }).tokenUsage
+          ?.total?.totalTokens,
+        41_529,
+        "the latest cumulative child usage survives coalescing",
+      );
+      const childAIdleIndex = events.findIndex(
+        (event) =>
+          event.method === "collabAgent/statusChanged" &&
+          (event.payload as { agentThreadId?: string; status?: { type?: string } })
+            .agentThreadId === CHILD_A &&
+          (event.payload as { status?: { type?: string } }).status?.type === "idle",
+      );
+      assert.isAtLeast(childAIdleIndex, 0, "child A's terminal idle status becomes an agent event");
+      assert.isTrue(
+        childAProgress.every((event) => events.indexOf(event) < childAIdleIndex),
+        "latest child progress must be emitted before terminal lifecycle",
+      );
 
       const childClosed = events.find(
         (event) =>
