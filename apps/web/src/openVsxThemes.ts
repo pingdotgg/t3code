@@ -289,7 +289,7 @@ export async function searchOpenVsxThemes(
             fetch(extension.vsixUrl, { method: "HEAD", signal: requestSignal }),
           ]);
           if (!manifestResponse.ok) throw new Error("manifest unavailable");
-          if (!packageResponse.ok) throw new Error("package unavailable");
+          if (!packageResponse.ok) return null;
           const packageLength = Number(packageResponse.headers.get("content-length"));
           if (Number.isFinite(packageLength) && packageLength > MAX_VSIX_BYTES) {
             return null;

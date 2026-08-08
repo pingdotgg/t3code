@@ -243,6 +243,31 @@ describe("Open VSX themes", () => {
     );
   });
 
+  it("returns no results when every theme package is unavailable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/-/search?")) {
+          return new Response(
+            JSON.stringify({ extensions: [{ namespace: "demo", name: "theme" }] }),
+            { status: 200 },
+          );
+        }
+        if (url.endsWith("/demo/theme")) {
+          return new Response(JSON.stringify(extensionDetail()), { status: 200 });
+        }
+        if (init?.method === "HEAD") return new Response(null, { status: 404 });
+        return new Response(
+          JSON.stringify({ license: "MIT", contributes: { themes: [{ path: "./theme.json" }] } }),
+          { status: 200 },
+        );
+      }),
+    );
+
+    await expect(searchOpenVsxThemes("dracula")).resolves.toEqual([]);
+  });
+
   it("times out a stalled search request", async () => {
     vi.useFakeTimers();
     vi.stubGlobal(
