@@ -613,9 +613,10 @@ function readRouteFields(notification: CodexServerNotification): {
  * WIP, probe-gated: registration is deliberately explicit-signals-only. The
  * spec's "provisionally treat unknown foreign thread ids as v2 children" rule
  * needs a live wire capture of the packaged binary before it lands — blind
- * capture risks eating unrelated traffic. Until then a child whose first
- * notification precedes registration passes through as today (no regression
- * vs main, which passes everything through).
+ * capture risks eating unrelated traffic. Until then foreign child lifecycle
+ * stays out of the parent timeline. The runtime retains only its latest
+ * meaningful liveness state and replays a settlement after explicit
+ * registration; traffic alone never creates an agent identity.
  */
 interface CollabChildAgentState {
   readonly agentThreadId: string;
@@ -632,6 +633,44 @@ interface CollabChildAgentState {
    */
   readonly spawnTurnId: TurnId | undefined;
 }
+
+function toCollabChildSettlement(notification: CodexServerNotification) {
+  switch (notification.method) {
+    case "turn/completed":
+      return {
+        method: "collabAgent/turnCompleted",
+        // The adapter only needs the terminal status to reconstruct task
+        // liveness. Do not retain a completed turn's potentially large item
+        // history for the rest of the session.
+        payload: { turn: { status: notification.params.turn.status } },
+      } as const;
+    case "thread/status/changed": {
+      const statusType = notification.params.status.type;
+      if (statusType !== "idle" && statusType !== "systemError") {
+        return undefined;
+      }
+      return {
+        method: "collabAgent/statusChanged",
+        payload: { status: { type: statusType } },
+      } as const;
+    }
+    case "thread/closed":
+      return { method: "collabAgent/closed", payload: {} } as const;
+    case "error":
+      if (notification.params.willRetry) {
+        return undefined;
+      }
+      return {
+        method: "collabAgent/statusChanged",
+        payload: { status: { type: "systemError" } },
+      } as const;
+    default:
+      return undefined;
+  }
+}
+
+type CollabChildSettlement = NonNullable<ReturnType<typeof toCollabChildSettlement>>;
+type CollabChildLifecycleState = CollabChildSettlement | "active";
 
 function readThreadSpawnSource(thread: { readonly source: unknown }):
   | {
@@ -857,6 +896,9 @@ export const makeCodexSessionRuntime = (
     const collabChildAgentsRef = yield* Ref.make(new Map<string, CollabChildAgentState>());
     /** Child provider-thread id → its currently running provider turn id. */
     const collabChildLiveTurnsRef = yield* Ref.make(new Map<string, string>());
+    const collabChildLifecycleStatesRef = yield* Ref.make(
+      new Map<string, CollabChildLifecycleState>(),
+    );
     const closedRef = yield* Ref.make(false);
 
     // `~` is not shell-expanded when env vars are set via
@@ -949,6 +991,44 @@ export const makeCodexSessionRuntime = (
         message,
       });
 
+    const setCollabChildLifecycleState = Effect.fn(
+      "CodexSessionRuntime.setCollabChildLifecycleState",
+    )(function* (agentThreadId: string, state: CollabChildLifecycleState) {
+      yield* Ref.update(collabChildLifecycleStatesRef, (current) => {
+        const next = new Map(current);
+        next.set(agentThreadId, state);
+        return next;
+      });
+    });
+
+    const emitCollabChildSettlementAfterRegistration = Effect.fn(
+      "CodexSessionRuntime.emitCollabChildSettlementAfterRegistration",
+    )(function* (child: CollabChildAgentState) {
+      const lifecycleState = (yield* Ref.get(collabChildLifecycleStatesRef)).get(
+        child.agentThreadId,
+      );
+      // Registration itself represents a still-active child. Only a newer
+      // settlement needs a second synthetic event. Keep that settlement as
+      // the latest known state because Codex can emit more than one explicit
+      // registration signal for the same child.
+      if (!lifecycleState || lifecycleState === "active") {
+        return;
+      }
+      yield* emitEvent({
+        kind: "notification",
+        threadId: options.threadId,
+        ...(child.spawnTurnId ? { turnId: child.spawnTurnId } : {}),
+        method: lifecycleState.method,
+        payload: {
+          agentThreadId: child.agentThreadId,
+          ...(child.nickname ? { nickname: child.nickname } : {}),
+          ...(child.role ? { role: child.role } : {}),
+          ...(child.agentPath ? { agentPath: child.agentPath } : {}),
+          ...lifecycleState.payload,
+        },
+      });
+    });
+
     const settlePendingApprovals = (decision: ProviderApprovalDecision) =>
       Ref.get(pendingApprovalsRef).pipe(
         Effect.flatMap((pendingApprovals) =>
@@ -1029,6 +1109,7 @@ export const makeCodexSessionRuntime = (
               ...(state.parentThreadId ? { parentThreadId: state.parentThreadId } : {}),
             },
           });
+          yield* emitCollabChildSettlementAfterRegistration(state);
           return true;
         }
 
@@ -1089,6 +1170,20 @@ export const makeCodexSessionRuntime = (
               activityKind: item.kind,
             },
           });
+          if (registeredChild && item.kind === "started") {
+            // A started activity is an explicit registration signal and can
+            // be the second half of thread/started registration. Reapply the
+            // latest settlement so that duplicate starts cannot resurrect a
+            // child whose lifecycle arrived early. Later activity events are
+            // not registration and must not be overwritten by an older
+            // settlement.
+            yield* emitCollabChildSettlementAfterRegistration(registeredChild);
+          } else if (registeredChild && item.kind === "interrupted") {
+            yield* setCollabChildLifecycleState(registeredChild.agentThreadId, {
+              method: "collabAgent/turnCompleted",
+              payload: { turn: { status: "interrupted" } },
+            });
+          }
           return true;
         }
 
@@ -1117,6 +1212,7 @@ export const makeCodexSessionRuntime = (
         };
         switch (notification.method) {
           case "turn/started": {
+            yield* setCollabChildLifecycleState(child.agentThreadId, "active");
             const childTurnId =
               typeof (notification.params as { turn?: { id?: unknown } }).turn?.id === "string"
                 ? ((notification.params as { turn: { id: string } }).turn.id as string)
@@ -1137,7 +1233,11 @@ export const makeCodexSessionRuntime = (
             });
             return true;
           }
-          case "turn/completed":
+          case "turn/completed": {
+            const settlement = toCollabChildSettlement(notification);
+            if (settlement) {
+              yield* setCollabChildLifecycleState(child.agentThreadId, settlement);
+            }
             yield* Ref.update(collabChildLiveTurnsRef, (current) => {
               const next = new Map(current);
               next.delete(child.agentThreadId);
@@ -1154,7 +1254,15 @@ export const makeCodexSessionRuntime = (
               },
             });
             return true;
-          case "thread/status/changed":
+          }
+          case "thread/status/changed": {
+            const lifecycleState =
+              notification.params.status.type === "active"
+                ? "active"
+                : toCollabChildSettlement(notification);
+            if (lifecycleState) {
+              yield* setCollabChildLifecycleState(child.agentThreadId, lifecycleState);
+            }
             yield* emitEvent({
               kind: "notification",
               threadId: options.threadId,
@@ -1166,6 +1274,7 @@ export const makeCodexSessionRuntime = (
               },
             });
             return true;
+          }
           case "thread/tokenUsage/updated":
             yield* emitEvent({
               kind: "notification",
@@ -1191,7 +1300,11 @@ export const makeCodexSessionRuntime = (
               },
             });
             return true;
-          case "thread/closed":
+          case "thread/closed": {
+            const settlement = toCollabChildSettlement(notification);
+            if (settlement) {
+              yield* setCollabChildLifecycleState(child.agentThreadId, settlement);
+            }
             // The child is gone: drop its live-turn entry so a later Stop
             // doesn't waste a turn/interrupt RPC on a closed thread before
             // reaching the parent (review finding).
@@ -1208,6 +1321,7 @@ export const makeCodexSessionRuntime = (
               payload: childIdentity,
             });
             return true;
+          }
           case "error": {
             // A child error must surface as a failed agent, not vanish into
             // the default swallow (review finding: the child stayed
@@ -1219,7 +1333,12 @@ export const makeCodexSessionRuntime = (
             // path.
             const willRetry = (notification.params as { willRetry?: boolean }).willRetry === true;
             if (willRetry) {
+              yield* setCollabChildLifecycleState(child.agentThreadId, "active");
               return true;
+            }
+            const settlement = toCollabChildSettlement(notification);
+            if (settlement) {
+              yield* setCollabChildLifecycleState(child.agentThreadId, settlement);
             }
             yield* Ref.update(collabChildLiveTurnsRef, (current) => {
               const next = new Map(current);
@@ -1286,9 +1405,11 @@ export const makeCodexSessionRuntime = (
             providerConversationId !== suppressRootId
           );
         })();
+        const isTerminalChildError =
+          notification.method === "error" && notification.params.willRetry === false;
         if (
           (childParentTurnId !== undefined || foreignConversation) &&
-          shouldSuppressChildConversationNotification(notification.method)
+          (shouldSuppressChildConversationNotification(notification.method) || isTerminalChildError)
         ) {
           // Stop-everything must not depend on registration timing: a
           // child's turn/started can arrive before the subAgentActivity that
@@ -1299,6 +1420,33 @@ export const makeCodexSessionRuntime = (
           // false-positive entry costs one ignored RPC at worst.
           const foreignThreadId = readNotificationThreadId(notification);
           if (foreignThreadId !== undefined) {
+            const isActiveStatus =
+              notification.method === "thread/status/changed" &&
+              notification.params.status.type === "active";
+            if (notification.method === "turn/started" || isActiveStatus) {
+              yield* setCollabChildLifecycleState(foreignThreadId, "active");
+            } else {
+              const pendingSettlement = toCollabChildSettlement(notification);
+              if (pendingSettlement) {
+                const liveChildTurns = yield* Ref.get(collabChildLiveTurnsRef);
+                const isIdleStatus =
+                  notification.method === "thread/status/changed" &&
+                  notification.params.status.type === "idle";
+                yield* Ref.update(collabChildLifecycleStatesRef, (current) => {
+                  const existing = current.get(foreignThreadId);
+                  if (
+                    isIdleStatus &&
+                    ((existing !== undefined && existing !== "active") ||
+                      (existing === undefined && !liveChildTurns.has(foreignThreadId)))
+                  ) {
+                    return current;
+                  }
+                  const next = new Map(current);
+                  next.set(foreignThreadId, pendingSettlement);
+                  return next;
+                });
+              }
+            }
             if (notification.method === "turn/started") {
               const foreignTurnId =
                 typeof (notification.params as { turn?: { id?: unknown } }).turn?.id === "string"
@@ -1313,7 +1461,8 @@ export const makeCodexSessionRuntime = (
               }
             } else if (
               notification.method === "turn/completed" ||
-              notification.method === "thread/closed"
+              notification.method === "thread/closed" ||
+              isTerminalChildError
             ) {
               yield* Ref.update(collabChildLiveTurnsRef, (current) => {
                 const next = new Map(current);
