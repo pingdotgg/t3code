@@ -451,6 +451,94 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     });
   });
 
+  it("upgrades the Homebrew package the binary actually came from, not the configured formula", () => {
+    expect(
+      packageToolUpdate.resolve({
+        binaryPath: "/usr/local/Caskroom/package-tool@latest/1.2.3/package-tool",
+        env: {
+          PATH: "",
+        },
+      }),
+    ).toEqual({
+      provider: driver("packageTool"),
+      packageName: "@example/package-tool",
+      update: {
+        command: "brew upgrade package-tool@latest",
+
+        executable: "brew",
+
+        args: ["upgrade", "package-tool@latest"],
+
+        lockKey: "homebrew",
+      },
+    });
+  });
+
+  it("keeps the tap prefix when swapping in the installed Homebrew package name", () => {
+    expect(
+      scopedPackageToolUpdate.resolve({
+        binaryPath: "/opt/homebrew/Cellar/scoped-package-tool@2/2.0.1/bin/scoped-package-tool",
+        env: {
+          PATH: "",
+        },
+      }),
+    ).toEqual({
+      provider: driver("scopedPackageTool"),
+      packageName: "@example/scoped-package-tool",
+      update: {
+        command: "brew upgrade example/tap/scoped-package-tool@2",
+
+        executable: "brew",
+
+        args: ["upgrade", "example/tap/scoped-package-tool@2"],
+
+        lockKey: "homebrew",
+      },
+    });
+  });
+
+  it.effect("derives the installed Homebrew package name through the Homebrew bin symlink", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-homebrew-cask-capabilities");
+      const binDir = NodePath.join(tempDir, "usr", "local", "bin");
+      const caskroomDir = NodePath.join(
+        tempDir,
+        "usr",
+        "local",
+        "Caskroom",
+        "package-tool@latest",
+        "1.2.3",
+      );
+      NodeFS.mkdirSync(binDir, { recursive: true });
+      NodeFS.mkdirSync(caskroomDir, { recursive: true });
+      const caskBinaryPath = NodePath.join(caskroomDir, "package-tool");
+      NodeFS.writeFileSync(caskBinaryPath, "#!/bin/sh\n");
+      NodeFS.chmodSync(caskBinaryPath, 0o755);
+      NodeFS.symlinkSync(caskBinaryPath, NodePath.join(binDir, "package-tool"));
+
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+        binaryPath: "package-tool",
+        env: {
+          PATH: binDir,
+        },
+      }).pipe(Effect.provideService(HostProcessPlatform, "darwin"));
+
+      expect(capabilities).toEqual({
+        provider: driver("packageTool"),
+        packageName: "@example/package-tool",
+        update: {
+          command: "brew upgrade package-tool@latest",
+
+          executable: "brew",
+
+          args: ["upgrade", "package-tool@latest"],
+
+          lockKey: "homebrew",
+        },
+      });
+    }),
+  );
+
   it.effect("keeps npm updates for binaries symlinked into npm's global node_modules tree", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-npm-capabilities");

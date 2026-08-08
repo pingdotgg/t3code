@@ -178,8 +178,25 @@ function makeVitePlusGlobalProviderMaintenanceCapabilities(
   });
 }
 
+// Homebrew ships versioned siblings of the same tool (`claude-code` and
+// `claude-code@latest`) as separate packages, so the configured formula name is
+// only a fallback: the package the user actually installed is whatever the
+// Cellar/Caskroom path segment says it is.
+function resolveHomebrewPackageName(
+  configuredFormula: string,
+  installedPackageName: string | null,
+): string {
+  if (!installedPackageName) {
+    return configuredFormula;
+  }
+  const segments = configuredFormula.split("/");
+  // Keep any tap prefix (`example/tap/tool`) and swap only the package name.
+  return [...segments.slice(0, -1), installedPackageName].join("/");
+}
+
 function makeHomebrewProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
+  installedPackageName: string | null,
 ): ProviderMaintenanceCapabilities {
   if (!definition.homebrewFormula) {
     return makeManualOnlyProviderMaintenanceCapabilities({
@@ -188,11 +205,12 @@ function makeHomebrewProviderMaintenanceCapabilities(
     });
   }
 
+  const formula = resolveHomebrewPackageName(definition.homebrewFormula, installedPackageName);
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
     packageName: definition.npmPackageName,
     updateExecutable: "brew",
-    updateArgs: ["upgrade", definition.homebrewFormula],
+    updateArgs: ["upgrade", formula],
     updateLockKey: "homebrew",
   });
 }
@@ -263,6 +281,15 @@ function isHomebrewCommandPath(commandPath: string): boolean {
   );
 }
 
+function extractHomebrewPackageName(commandPath: string): string | null {
+  const segments = normalizeCommandPath(commandPath).split("/");
+  const rootIndex = segments.findIndex((segment) => segment === "cellar" || segment === "caskroom");
+  if (rootIndex < 0) {
+    return null;
+  }
+  return nonEmptyString(segments[rootIndex + 1]);
+}
+
 export function resolvePackageManagedProviderMaintenance(
   definition: PackageManagedProviderMaintenanceDefinition,
   options?: ProviderMaintenanceCapabilityResolutionOptions,
@@ -304,7 +331,10 @@ export function resolvePackageManagedProviderMaintenance(
       return makeNpmGlobalProviderMaintenanceCapabilities(definition);
     }
     if (commandPaths.some(isHomebrewCommandPath)) {
-      return makeHomebrewProviderMaintenanceCapabilities(definition);
+      return makeHomebrewProviderMaintenanceCapabilities(
+        definition,
+        commandPaths.map(extractHomebrewPackageName).find((name) => name !== null) ?? null,
+      );
     }
   }
 
