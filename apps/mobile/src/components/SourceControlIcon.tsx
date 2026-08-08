@@ -1,6 +1,11 @@
 import Svg, { Defs, LinearGradient, Path, Stop } from "react-native-svg";
 
-export type SourceControlIconKind = "github" | "gitlab" | "bitbucket" | "azure-devops";
+export type SourceControlIconKind =
+  | "github"
+  | "github-enterprise"
+  | "gitlab"
+  | "bitbucket"
+  | "azure-devops";
 
 export function SourceControlIcon(props: {
   readonly kind: SourceControlIconKind;
@@ -11,6 +16,7 @@ export function SourceControlIcon(props: {
 
   switch (props.kind) {
     case "github":
+    case "github-enterprise":
       return (
         <Svg width={size} height={size} viewBox="0 0 16 16" fill="none">
           <Path

@@ -97,18 +97,29 @@ export const make = Effect.gen(function* () {
   const ensureConcreteProvider = (input: {
     readonly operation: string;
     readonly provider: SourceControlProviderKind;
+    readonly host?: string | undefined;
   }) => {
-    if (input.provider !== "unknown") {
-      return Effect.succeed(input.provider);
+    if (input.provider === "unknown") {
+      return Effect.fail(
+        new SourceControlRepositoryError({
+          operation: input.operation,
+          provider: input.provider,
+          detail: "Choose a source control provider before continuing.",
+        }),
+      );
     }
 
-    return Effect.fail(
-      new SourceControlRepositoryError({
-        operation: input.operation,
-        provider: input.provider,
-        detail: "Choose a source control provider before continuing.",
-      }),
-    );
+    if (input.provider === "github-enterprise" && !input.host?.trim()) {
+      return Effect.fail(
+        new SourceControlRepositoryError({
+          operation: input.operation,
+          provider: input.provider,
+          detail: "Choose a GitHub Enterprise host before continuing.",
+        }),
+      );
+    }
+
+    return Effect.succeed(input.provider);
   };
 
   const lookupRepository = Effect.fn("SourceControlRepositoryService.lookupRepository")(function* (
@@ -117,11 +128,13 @@ export const make = Effect.gen(function* () {
     const providerKind = yield* ensureConcreteProvider({
       operation: "lookupRepository",
       provider: input.provider,
+      host: input.host,
     });
     const provider = yield* providers.get(providerKind);
     const urls = yield* provider.getRepositoryCloneUrls({
       cwd: input.cwd ?? config.cwd,
       repository: input.repository.trim(),
+      ...(input.host ? { host: input.host } : {}),
     });
     return toRepositoryInfo(providerKind, urls);
   });
@@ -190,6 +203,7 @@ export const make = Effect.gen(function* () {
         provider: input.provider,
         repository: input.repository,
         cwd: preparedDestination.parentPath,
+        ...(input.host ? { host: input.host } : {}),
       });
       remoteUrl = selectRemoteUrl(repository, input.protocol);
       provider = input.provider;
@@ -223,12 +237,14 @@ export const make = Effect.gen(function* () {
       const providerKind = yield* ensureConcreteProvider({
         operation: "publishRepository",
         provider: input.provider,
+        host: input.host,
       });
       const provider = yield* providers.get(providerKind);
       const urls = yield* provider.createRepository({
         cwd: input.cwd,
         repository: input.repository.trim(),
         visibility: input.visibility,
+        ...(input.host ? { host: input.host } : {}),
       });
       const remoteUrl = selectRemoteUrl(urls, input.protocol);
       const remoteName = yield* git.ensureRemote({

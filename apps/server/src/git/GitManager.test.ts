@@ -568,6 +568,14 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             cause: new Error(`Unexpected repository create: ${input.repository}`),
           }),
         ),
+      searchRepositories: (input) =>
+        Effect.fail(
+          new GitHubCli.GitHubCliCommandError({
+            command: "gh",
+            cwd: input.cwd,
+            cause: new Error(`Unexpected repository search: ${input.query}`),
+          }),
+        ),
       checkoutPullRequest: (input) =>
         execute({
           cwd: input.cwd,
@@ -618,6 +626,7 @@ function makeManager(input?: {
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
+  providerKind?: "github" | "github-enterprise";
 }) {
   const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
   const textGeneration = createTextGeneration(input?.textGeneration);
@@ -634,7 +643,7 @@ function makeManager(input?: {
   );
   const sourceControlRegistryLayer = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
-    GitHubSourceControlProvider.make.pipe(
+    GitHubSourceControlProvider.makeProvider(input?.providerKind ?? "github").pipe(
       Effect.map((provider) =>
         SourceControlProviderRegistry.SourceControlProviderRegistry.of({
           get: () => Effect.succeed(provider),
@@ -2777,6 +2786,68 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         ghCalls.some((call) => call.includes("pr create --base main --head feature-create-pr")),
       ).toBe(true);
       expect(ghCalls.some((call) => call.startsWith("pr view "))).toBe(false);
+    }),
+  );
+
+  it.effect("feeds the pull request template to enterprise change requests too", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.mkdirSync(NodePath.join(repoDir, ".github"));
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".github", "pull_request_template.md"),
+        "## What changed?\n\n## Verification",
+      );
+      yield* runGit(repoDir, ["add", ".github/pull_request_template.md"]);
+      yield* runGit(repoDir, ["commit", "-m", "Add pull request template"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature-enterprise-template"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
+      yield* runGit(repoDir, ["add", "changes.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature-enterprise-template"]);
+      yield* runGit(repoDir, [
+        "config",
+        "branch.feature-enterprise-template.gh-merge-base",
+        "main",
+      ]);
+      let generatedChangeRequestTemplate: string | undefined;
+
+      const { manager } = yield* makeManager({
+        providerKind: "github-enterprise",
+        textGeneration: {
+          generatePrContent: (input) => {
+            generatedChangeRequestTemplate = input.changeRequestTemplate;
+            return Effect.succeed({
+              title: "Add stacked git actions",
+              body: "## What changed?\nAdded stacked git actions.",
+            });
+          },
+        },
+        ghScenario: {
+          prListSequence: [
+            "[]",
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 12,
+                title: "Add stacked git actions",
+                url: "https://git.corp.com/owner/repo/pull/12",
+                baseRefName: "main",
+                headRefName: "feature-enterprise-template",
+              },
+            ]),
+          ],
+        },
+      });
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+      });
+
+      expect(result.pr.status).toBe("created");
+      expect(generatedChangeRequestTemplate).toBe("## What changed?\n\n## Verification");
     }),
   );
 

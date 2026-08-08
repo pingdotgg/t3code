@@ -135,6 +135,19 @@ export class GitHubRepositoryDecodeError extends Schema.TaggedErrorClass<GitHubR
   }
 }
 
+export class GitHubRepositorySearchDecodeError extends Schema.TaggedErrorClass<GitHubRepositorySearchDecodeError>()(
+  "GitHubRepositorySearchDecodeError",
+  gitHubCliDecodeFields,
+) {
+  get detail(): string {
+    return "GitHub CLI returned invalid repository search JSON.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in searchRepositories: ${this.detail}`;
+  }
+}
+
 export const GitHubCliError = Schema.Union([
   GitHubCliUnavailableError,
   GitHubCliAuthenticationError,
@@ -144,6 +157,7 @@ export const GitHubCliError = Schema.Union([
   GitHubChangeRequestListDecodeError,
   GitHubPullRequestDecodeError,
   GitHubRepositoryDecodeError,
+  GitHubRepositorySearchDecodeError,
 ]);
 export type GitHubCliError = typeof GitHubCliError.Type;
 
@@ -196,6 +210,10 @@ export interface GitHubRepositoryCloneUrls {
   readonly sshUrl: string;
 }
 
+export interface GitHubRepositorySearchResult {
+  readonly fullName: string;
+}
+
 export class GitHubCli extends Context.Service<
   GitHubCli,
   {
@@ -203,6 +221,7 @@ export class GitHubCli extends Context.Service<
       readonly cwd: string;
       readonly args: ReadonlyArray<string>;
       readonly timeoutMs?: number;
+      readonly host?: string;
     }) => Effect.Effect<VcsProcess.VcsProcessOutput, GitHubCliError>;
 
     readonly listOpenPullRequests: (input: {
@@ -219,12 +238,21 @@ export class GitHubCli extends Context.Service<
     readonly getRepositoryCloneUrls: (input: {
       readonly cwd: string;
       readonly repository: string;
+      readonly host?: string;
     }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
+
+    readonly searchRepositories: (input: {
+      readonly cwd: string;
+      readonly query: string;
+      readonly host?: string;
+      readonly limit?: number;
+    }) => Effect.Effect<ReadonlyArray<GitHubRepositorySearchResult>, GitHubCliError>;
 
     readonly createRepository: (input: {
       readonly cwd: string;
       readonly repository: string;
       readonly visibility: SourceControlRepositoryVisibility;
+      readonly host?: string;
     }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
 
     readonly createPullRequest: (input: {
@@ -256,6 +284,15 @@ const decodeRawGitHubRepositoryCloneUrls = Schema.decodeEffect(
   Schema.fromJsonString(RawGitHubRepositoryCloneUrlsSchema),
 );
 
+const RawGitHubRepositorySearchResultsSchema = Schema.Array(
+  Schema.Struct({
+    fullName: TrimmedNonEmptyString,
+  }),
+);
+const decodeRawGitHubRepositorySearchResults = Schema.decodeEffect(
+  Schema.fromJsonString(RawGitHubRepositorySearchResultsSchema),
+);
+
 function normalizeRepositoryCloneUrls(
   raw: Schema.Schema.Type<typeof RawGitHubRepositoryCloneUrlsSchema>,
 ): GitHubRepositoryCloneUrls {
@@ -275,8 +312,8 @@ function normalizeRepositoryCloneUrls(
 function deriveRepositoryCloneUrlsFromCreateOutput(
   stdout: string,
   repository: string,
+  host: string = "github.com",
 ): GitHubRepositoryCloneUrls {
-  const fallbackHost = "github.com";
   const match = stdout.match(/https?:\/\/[^\s]+/);
   if (match) {
     const cleaned = match[0].replace(/\.git$/, "");
@@ -298,8 +335,8 @@ function deriveRepositoryCloneUrlsFromCreateOutput(
   }
   return {
     nameWithOwner: repository,
-    url: `https://${fallbackHost}/${repository}`,
-    sshUrl: `git@${fallbackHost}:${repository}.git`,
+    url: `https://${host}/${repository}`,
+    sshUrl: `git@${host}:${repository}.git`,
   };
 }
 
@@ -313,6 +350,7 @@ export const make = Effect.gen(function* () {
         command: "gh",
         args: input.args,
         cwd: input.cwd,
+        ...(input.host ? { env: { ...globalThis.process.env, GH_HOST: input.host } } : {}),
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       })
       .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
@@ -394,6 +432,7 @@ export const make = Effect.gen(function* () {
       execute({
         cwd: input.cwd,
         args: ["repo", "view", input.repository, "--json", "nameWithOwner,url,sshUrl"],
+        ...(input.host ? { host: input.host } : {}),
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
@@ -410,13 +449,44 @@ export const make = Effect.gen(function* () {
         ),
         Effect.map(normalizeRepositoryCloneUrls),
       ),
+    searchRepositories: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "search",
+          "repos",
+          input.query,
+          "--limit",
+          String(input.limit ?? 20),
+          "--json",
+          "fullName",
+        ],
+        ...(input.host ? { host: input.host } : {}),
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          raw.length === 0
+            ? Effect.succeed([])
+            : decodeRawGitHubRepositorySearchResults(raw).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new GitHubRepositorySearchDecodeError({
+                      command: "gh",
+                      cwd: input.cwd,
+                      cause,
+                    }),
+                ),
+              ),
+        ),
+      ),
     createRepository: (input) =>
       execute({
         cwd: input.cwd,
         args: ["repo", "create", input.repository, `--${input.visibility}`],
+        ...(input.host ? { host: input.host } : {}),
       }).pipe(
         Effect.map((result) =>
-          deriveRepositoryCloneUrlsFromCreateOutput(result.stdout, input.repository),
+          deriveRepositoryCloneUrlsFromCreateOutput(result.stdout, input.repository, input.host),
         ),
       ),
     createPullRequest: (input) =>
