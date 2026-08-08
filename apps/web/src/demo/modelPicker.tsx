@@ -7,6 +7,7 @@ import React, { useMemo, useState } from "react";
 import ReactDOM from "react-dom/client";
 
 import "../index.css";
+import "./modelPicker.css";
 
 import { ProviderModelPicker } from "../components/chat/ProviderModelPicker";
 import { TraitsPicker } from "../components/chat/TraitsPicker";
@@ -60,7 +61,7 @@ function ModelPickerDemo() {
               instanceEntries={instanceEntries}
               modelOptionsByInstance={modelOptionsByInstance}
               triggerVariant="ghost"
-              triggerClassName="bg-transparent text-foreground hover:bg-white/[0.05] hover:text-foreground"
+              triggerClassName="bg-transparent text-foreground hover:bg-white/[0.05] hover:text-foreground focus-visible:ring-0 focus-visible:ring-offset-0"
               popupSide="top"
               open={open}
               onOpenChange={setOpen}

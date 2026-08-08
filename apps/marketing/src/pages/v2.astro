@@ -371,6 +371,7 @@ const endorsementRows = [
 
   .v2-hero-card {
     display: grid;
+    width: 100%;
     grid-template-columns: minmax(0, 1.08fr) minmax(380px, 0.92fr);
     min-height: clamp(460px, 58svh, 560px);
   }
@@ -590,17 +591,6 @@ const endorsementRows = [
     overflow: hidden;
   }
 
-  .v2-model-lab::after {
-    content: "";
-    position: absolute;
-    inset-block: 0;
-    right: 0;
-    z-index: 2;
-    width: 72px;
-    background: linear-gradient(270deg, #030303 0%, rgba(3, 3, 3, 0.82) 32%, transparent 100%);
-    pointer-events: none;
-  }
-
   .v2-model-panel {
     display: grid;
     min-height: 0;
@@ -608,12 +598,12 @@ const endorsementRows = [
   }
 
   .v2-model-panel iframe {
-    width: 700px;
+    width: 100%;
     height: 100%;
     max-height: 390px;
     border: 0;
     background: transparent;
-    transform: translateX(-64px);
+    transform: none;
   }
 
   .v2-system,
@@ -636,6 +626,7 @@ const endorsementRows = [
 
   .v2-system-grid {
     display: grid;
+    width: 100%;
     grid-template-columns: 0.66fr 1.34fr;
     min-height: 640px;
     border: 1px solid var(--border);
@@ -798,6 +789,7 @@ const endorsementRows = [
 
   .v2-connect-grid {
     display: grid;
+    width: min(100% - 48px, 1240px);
     grid-template-columns: 0.72fr 1.28fr;
     align-items: center;
     gap: 80px;

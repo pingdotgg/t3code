@@ -1,0 +1,4 @@
+[data-chat-provider-model-picker]:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
