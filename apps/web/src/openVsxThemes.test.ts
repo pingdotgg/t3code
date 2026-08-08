@@ -313,6 +313,12 @@ describe("Open VSX themes", () => {
     await expect(importOpenVsxThemeExtension(extension)).rejects.toThrow(
       "does not match its advertised license",
     );
+
+    Reflect.deleteProperty(packagedManifest, "license");
+    await rebuildPackage();
+    await expect(importOpenVsxThemeExtension(extension)).rejects.toThrow(
+      "does not match its advertised license",
+    );
   });
 
   it("stops import work when the request is cancelled", async () => {

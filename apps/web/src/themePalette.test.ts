@@ -277,6 +277,28 @@ describe("theme files", () => {
     });
   });
 
+  it("serializes a theme back into the importable file shape", () => {
+    const theme = {
+      ...parseThemeFile({
+        version: THEME_FILE_VERSION,
+        id: "community-demo",
+        name: "Community Demo",
+        appearance: "dark",
+        colors: { canvas: "#111111" },
+      }),
+      collection: { id: "open-vsx:demo.theme", label: "Demo Theme" },
+    };
+    const serialized = serializeThemeFile(theme);
+    expect(JSON.parse(serialized)).toMatchObject({
+      version: THEME_FILE_VERSION,
+      id: theme.id,
+      name: theme.label,
+      appearance: "dark",
+      collection: theme.collection,
+    });
+    expect(parseThemeFile(JSON.parse(serialized)).collection).toEqual(theme.collection);
+  });
+
   it("keeps sidebar artwork disabled for custom theme files", () => {
     const theme = parseThemeFile({
       version: THEME_FILE_VERSION,

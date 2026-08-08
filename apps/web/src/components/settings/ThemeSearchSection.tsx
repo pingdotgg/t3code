@@ -10,6 +10,7 @@ import {
   getCustomThemes,
   installCustomTheme,
   removeCustomTheme,
+  updateCustomTheme,
   type ThemeDefinition,
 } from "../../themePalette";
 import { Button } from "../ui/button";
@@ -95,26 +96,40 @@ export function ThemeSearchSection({
       try {
         const themes = await importOpenVsxThemeExtension(extension, controller.signal);
         if (controller.signal.aborted) return;
-        const existingIds = new Set(getCustomThemes().map((theme) => theme.id));
-        const missingThemes = themes.filter((theme) => !existingIds.has(theme.id));
-        if (missingThemes.length === 0) {
-          throw new Error(`${extension.name} is already added.`);
-        }
-
-        const installed: ThemeDefinition[] = [];
+        const existingById = new Map(getCustomThemes().map((theme) => [theme.id, theme]));
+        const installedIds: string[] = [];
+        const replaced: ThemeDefinition[] = [];
+        const imported: ThemeDefinition[] = [];
         try {
-          for (const theme of missingThemes) installed.push(installCustomTheme(theme));
+          for (const theme of themes) {
+            const existing = existingById.get(theme.id);
+            if (existing) {
+              replaced.push(existing);
+              imported.push(updateCustomTheme(theme));
+            } else {
+              const installed = installCustomTheme(theme);
+              installedIds.push(installed.id);
+              imported.push(installed);
+            }
+          }
         } catch (cause) {
-          for (const theme of installed) {
+          for (const themeId of installedIds) {
             try {
-              removeCustomTheme(theme.id);
+              removeCustomTheme(themeId);
+            } catch {
+              // Best effort rollback. The original storage failure is clearer.
+            }
+          }
+          for (const theme of replaced) {
+            try {
+              updateCustomTheme(theme);
             } catch {
               // Best effort rollback. The original storage failure is clearer.
             }
           }
           throw cause;
         }
-        onInstalled(installed);
+        onInstalled(imported);
       } catch (cause) {
         if (!controller.signal.aborted) {
           setError(cause instanceof Error ? cause.message : "That theme could not be added.");
@@ -160,6 +175,14 @@ export function ThemeSearchSection({
           Search
         </Button>
       </form>
+
+      <div className="sr-only" role="status">
+        {isSearching
+          ? "Finding themes..."
+          : results
+            ? `${results.length} supported ${results.length === 1 ? "theme" : "themes"} found.`
+            : ""}
+      </div>
 
       {error ? (
         <div

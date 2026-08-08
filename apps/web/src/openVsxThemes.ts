@@ -651,8 +651,8 @@ export async function importOpenVsxThemeExtension(
     throw new Error("That extension package does not match the selected Open VSX theme.");
   }
   if (
-    typeof packagedManifest.license === "string" &&
-    packagedManifest.license.trim() !== extension.license
+    typeof packagedManifest.license !== "string" ||
+    packagedManifest.license.trim().toLowerCase() !== extension.license.toLowerCase()
   ) {
     throw new Error("That extension package does not match its advertised license.");
   }
