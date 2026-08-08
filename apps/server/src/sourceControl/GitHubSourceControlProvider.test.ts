@@ -750,32 +750,62 @@ describe("getRepositoryCloneUrls bare name resolution", () => {
     }),
   );
 
-  it.effect.each(["core", "Sollit/core"])(
-    "refuses %s on enterprise without a host rather than answering for github.com",
-    (repository) =>
-      Effect.gen(function* () {
-        const searchRepositories = vi.fn(() => Effect.succeed([{ fullName: "Sollit/core" }]));
-        const getRepositoryCloneUrls = vi.fn(() =>
-          Effect.succeed({
-            nameWithOwner: "Sollit/core",
-            url: "https://sollit.ghe.com/Sollit/core",
-            sshUrl: "git@sollit.ghe.com:Sollit/core.git",
-          }),
-        );
+  it.effect("refuses a bare enterprise name without a host rather than searching github.com", () =>
+    Effect.gen(function* () {
+      const searchRepositories = vi.fn(() => Effect.succeed([{ fullName: "Sollit/core" }]));
+      const getRepositoryCloneUrls = vi.fn(() =>
+        Effect.succeed({
+          nameWithOwner: "Sollit/core",
+          url: "https://sollit.ghe.com/Sollit/core",
+          sshUrl: "git@sollit.ghe.com:Sollit/core.git",
+        }),
+      );
 
-        const provider = yield* makeProviderOfKind("github-enterprise", {
-          searchRepositories,
-          getRepositoryCloneUrls,
-        });
+      const provider = yield* makeProviderOfKind("github-enterprise", {
+        searchRepositories,
+        getRepositoryCloneUrls,
+      });
 
-        const error = yield* provider
-          .getRepositoryCloneUrls({ cwd: "/repo", repository })
-          .pipe(Effect.flip);
+      const error = yield* provider
+        .getRepositoryCloneUrls({ cwd: "/repo", repository: "core" })
+        .pipe(Effect.flip);
 
-        expect(searchRepositories).not.toHaveBeenCalled();
-        expect(getRepositoryCloneUrls).not.toHaveBeenCalled();
-        expect(error.detail).toContain("host");
-      }),
+      expect(searchRepositories).not.toHaveBeenCalled();
+      expect(getRepositoryCloneUrls).not.toHaveBeenCalled();
+      expect(error.detail).toContain("host");
+    }),
+  );
+
+  // GitManager resolves the enterprise provider from the git remote and looks
+  // up owner/repo with no host, letting `gh` read the host from the clone.
+  it.effect("looks up an owner/repo reference in-repo without a host", () =>
+    Effect.gen(function* () {
+      const searchRepositories = vi.fn(() => Effect.succeed([]));
+      const getRepositoryCloneUrls = vi.fn(() =>
+        Effect.succeed({
+          nameWithOwner: "Sollit/core",
+          url: "https://sollit.ghe.com/Sollit/core",
+          sshUrl: "git@sollit.ghe.com:Sollit/core.git",
+        }),
+      );
+
+      const provider = yield* makeProviderOfKind("github-enterprise", {
+        searchRepositories,
+        getRepositoryCloneUrls,
+      });
+
+      const result = yield* provider.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "Sollit/core",
+      });
+
+      expect(searchRepositories).not.toHaveBeenCalled();
+      expect(getRepositoryCloneUrls).toHaveBeenCalledWith({
+        cwd: "/repo",
+        repository: "Sollit/core",
+      });
+      assert.strictEqual(result.nameWithOwner, "Sollit/core");
+    }),
   );
 
   it.effect("refuses to create an enterprise repository without a host", () =>

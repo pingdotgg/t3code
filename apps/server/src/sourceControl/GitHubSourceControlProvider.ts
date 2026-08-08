@@ -243,10 +243,11 @@ export const makeProvider = (kind: GitHubProviderKind) =>
   Effect.gen(function* () {
     const github = yield* GitHubCli.GitHubCli;
 
-    // Every repo-less `gh` call falls back to github.com without `GH_HOST`, so
-    // an enterprise operation missing its host does not fail — it quietly
-    // answers for public GitHub. The repository service already refuses this,
-    // but the provider is reachable on its own.
+    // A `gh` call with no host and no repo context falls back to github.com, so
+    // it does not fail — it quietly answers for public GitHub. Only operations
+    // that cannot borrow the host from the surrounding remote need this: an
+    // in-repo `gh repo view owner/repo` resolves its own host and must keep
+    // working without one.
     const ensureEnterpriseHost = (input: {
       readonly cwd: string;
       readonly repository: string;
@@ -278,56 +279,68 @@ export const makeProvider = (kind: GitHubProviderKind) =>
         return Effect.succeed(repository);
       }
 
-      return github
-        .searchRepositories({
-          cwd: input.cwd,
-          query: repository,
-          ...(input.host ? { host: input.host } : {}),
-        })
-        .pipe(
-          Effect.mapError(
-            (error) =>
-              new SourceControlProviderError({
-                provider: kind,
-                operation: "getRepositoryCloneUrls",
-                command: error.command,
-                cwd: input.cwd,
-                repository: SourceControlProvider.transportSafeSourceControlErrorValue(repository),
-                detail: error.detail,
-                cause: error,
-              }),
-          ),
-          Effect.flatMap((results) => {
-            const match = pickRepositorySearchMatch(repository, results);
-            if (match._tag === "match") {
-              return Effect.succeed(match.fullName);
-            }
+      // `gh search repos` ignores repo context entirely, so unlike a lookup by
+      // owner/repo this cannot borrow the host from the surrounding remote.
+      return ensureEnterpriseHost({
+        cwd: input.cwd,
+        repository,
+        ...(input.host ? { host: input.host } : {}),
+        operation: "getRepositoryCloneUrls",
+      }).pipe(
+        Effect.andThen(() =>
+          github
+            .searchRepositories({
+              cwd: input.cwd,
+              query: repository,
+              ...(input.host ? { host: input.host } : {}),
+            })
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new SourceControlProviderError({
+                    provider: kind,
+                    operation: "getRepositoryCloneUrls",
+                    command: error.command,
+                    cwd: input.cwd,
+                    repository:
+                      SourceControlProvider.transportSafeSourceControlErrorValue(repository),
+                    detail: error.detail,
+                    cause: error,
+                  }),
+              ),
+              Effect.flatMap((results) => {
+                const match = pickRepositorySearchMatch(repository, results);
+                if (match._tag === "match") {
+                  return Effect.succeed(match.fullName);
+                }
 
-            const safeRepository =
-              SourceControlProvider.transportSafeSourceControlErrorValue(repository);
-            const hostLabel = input.host
-              ? SourceControlProvider.transportSafeSourceControlErrorValue(input.host)
-              : "the configured host";
-            return Effect.fail(
-              new SourceControlProviderError({
-                provider: kind,
-                operation: "getRepositoryCloneUrls",
-                command: "gh",
-                cwd: input.cwd,
-                repository: safeRepository,
-                detail:
-                  match._tag === "ambiguous"
-                    ? `More than one repository on ${hostLabel} matches "${safeRepository}": ${match.candidates
-                        .slice(0, AMBIGUOUS_REPOSITORY_CANDIDATE_LIMIT)
-                        .map((candidate) =>
-                          SourceControlProvider.transportSafeSourceControlErrorValue(candidate),
-                        )
-                        .join(", ")}. Enter the full owner/repo path.`
-                    : `No repository named "${safeRepository}" was found on ${hostLabel}.`,
+                const safeRepository =
+                  SourceControlProvider.transportSafeSourceControlErrorValue(repository);
+                const hostLabel = input.host
+                  ? SourceControlProvider.transportSafeSourceControlErrorValue(input.host)
+                  : "the configured host";
+                return Effect.fail(
+                  new SourceControlProviderError({
+                    provider: kind,
+                    operation: "getRepositoryCloneUrls",
+                    command: "gh",
+                    cwd: input.cwd,
+                    repository: safeRepository,
+                    detail:
+                      match._tag === "ambiguous"
+                        ? `More than one repository on ${hostLabel} matches "${safeRepository}": ${match.candidates
+                            .slice(0, AMBIGUOUS_REPOSITORY_CANDIDATE_LIMIT)
+                            .map((candidate) =>
+                              SourceControlProvider.transportSafeSourceControlErrorValue(candidate),
+                            )
+                            .join(", ")}. Enter the full owner/repo path.`
+                        : `No repository named "${safeRepository}" was found on ${hostLabel}.`,
+                  }),
+                );
               }),
-            );
-          }),
-        );
+            ),
+        ),
+      );
     };
 
     const listChangeRequests: SourceControlProvider.SourceControlProvider["Service"]["listChangeRequests"] =
@@ -464,8 +477,7 @@ export const makeProvider = (kind: GitHubProviderKind) =>
             ),
           ),
       getRepositoryCloneUrls: (input) =>
-        ensureEnterpriseHost({ ...input, operation: "getRepositoryCloneUrls" }).pipe(
-          Effect.andThen(() => resolveRepositoryReference(input)),
+        resolveRepositoryReference(input).pipe(
           Effect.flatMap((repository) =>
             github
               .getRepositoryCloneUrls({
