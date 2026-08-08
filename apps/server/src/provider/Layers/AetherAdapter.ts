@@ -1,37 +1,46 @@
 /**
  * AetherAdapter — session core for the Aether cloud-task driver.
  *
- * T2–T5 slice: real startSession/listSessions/hasSession/readThread/
- * stopSession/stopAll over the REST client, plus the event pipeline (build
- * items 5+6): a session resumed onto a live task attaches PASSIVELY to its
- * workspace WS (never booting a VM to view), maps the 13-kind live event
- * union through `eventMapper`, and reconciles the durable conversation delta
- * on every (re)connect. The turn surface (sendTurn/interruptTurn/
- * respondToUserInput/rollbackThread) still fails loudly until build items
- * 7, 9 and 10 land.
+ * T2–T6 slice: startSession/listSessions/hasSession/readThread/stopSession/
+ * stopAll over the REST client, the event pipeline (build items 5+6: passive
+ * WS attach, 13-kind live union through `eventMapper`, durable delta
+ * reconciliation), and the turn surface (build items 7+8):
+ *   - sendTurn creates the cloud task on the first turn (the ONE path that
+ *     may pass `start=true` to the workspace connect), responds on later
+ *     turns, and defers `turn.started` for a mid-turn steer until the remote
+ *     queue picks the message up;
+ *   - every turn settle flows through the mirror sync engine
+ *     (`aether/mirrorSync.ts`): verify → fetch+reset+clean onto the diff's
+ *     own baseRef → apply the full cumulative diff → `turn.diff.updated` →
+ *     `turn.completed`;
+ *   - interruptTurn stops with `discard_queued_messages: true`, surfaces any
+ *     discarded driver-queued message text, and settles `interrupted` only
+ *     after read-side confirmation.
+ * respondToUserInput/rollbackThread still fail loudly until items 9/10.
  *
  * Design invariants (docs/aether-driver-plumbing-spec.md §2.3):
  *   - startSession NEVER creates a task — the task is created on the first
  *     sendTurn. It preflights the local checkout (clean tree on a pushed,
- *     in-sync branch), resolves the cwd's origin remote to exactly one
- *     linked Aether project, and validates a resume cursor's task still
- *     exists remotely.
+ *     in-sync branch for a FRESH thread; a resumed thread's mirror is dirty
+ *     by design and is guarded by the sync fingerprint instead), resolves
+ *     the cwd's origin remote to exactly one linked Aether project, and
+ *     validates a resume cursor's task still exists remotely.
  *   - stopSession / stopAll are PURE DISCONNECTS: the cloud task keeps
- *     running and the VM idles itself out. `/stop` is never called here.
- *     Closing the session scope tears the socket down (the reaper-safe idle
- *     path: dropping the WS and ceasing activity pings lets the VM suspend).
- *   - resumeCursor = `{schemaVersion: 1, taskId, latestSequence, turnLedger?}`;
- *     t3 persists it at startSession/sendTurn returns, so a fresh session
- *     (no task yet) carries none. latestSequence refreshes in memory as the
- *     mapper advances; replay safety comes from the mapper's deterministic
- *     event IDs, not cursor freshness.
+ *     running and the VM idles itself out. `/stop` is never called there.
+ *   - resumeCursor = `{schemaVersion: 1, taskId, latestSequence,
+ *     mirrorFingerprint?, turnLedger?}`; replay safety comes from the
+ *     mapper's deterministic event IDs, not cursor freshness.
  *
  * @module provider/Layers/AetherAdapter
  */
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
+
 import {
   EventId,
   ProviderDriverKind,
   TurnId,
+  type ChatAttachment,
   type ProviderInstanceId,
   type ProviderRuntimeEvent,
   type ProviderSession,
@@ -40,14 +49,21 @@ import {
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import type { GitCommandError } from "@t3tools/contracts";
-import type { GitStatusDetails } from "../../vcs/GitVcsDriver.ts";
+import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import type {
+  ExecuteGitInput,
+  ExecuteGitResult,
+  GitStatusDetails,
+} from "../../vcs/GitVcsDriver.ts";
 import {
   ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
@@ -61,12 +77,24 @@ import type {
 } from "../Services/ProviderAdapter.ts";
 import { AETHER_API_KEY_ENV_VAR } from "./AetherProvider.ts";
 import { makeAetherEventMapper, type AetherEventMapper } from "./aether/eventMapper.ts";
+import { makeAetherMirrorSync, type AetherMirrorSyncEngine } from "./aether/mirrorSync.ts";
 import type { AetherRestClient } from "./aether/restClient.ts";
-import type { AetherProject, AetherTimelineMessage } from "./aether/restSchemas.ts";
+import type {
+  AetherPromptAttachment,
+  AetherProject,
+  AetherTask,
+  AetherTimelineMessage,
+} from "./aether/restSchemas.ts";
 import { toolLifecycleItemTypeFromAether } from "./aether/vendored/canonicalItemType.ts";
+import {
+  AETHER_AGENT_TYPES,
+  reasoningEffortsForModel,
+  type AetherAgentType,
+} from "./aether/vendored/catalog.ts";
 import { parseFileChanges } from "./aether/vendored/toolDisplay.ts";
 import {
   runAetherAgentStream,
+  type AetherAgentConnection,
   type AetherStreamTiming,
   type AetherWebSocketFactory,
 } from "./aether/workspaceSocket.ts";
@@ -74,7 +102,7 @@ import {
 const PROVIDER = ProviderDriverKind.make("aether");
 
 const NOT_IMPLEMENTED_DETAIL =
-  "Aether driver: not implemented until the turn-lifecycle slices (build items 5-10)";
+  "Aether driver: not implemented until the questions/revert slices (build items 9-10)";
 
 const notImplemented = (method: string): Effect.Effect<never, ProviderAdapterError> =>
   Effect.fail(
@@ -96,6 +124,12 @@ export interface AetherResumeCursor {
   readonly schemaVersion: typeof AETHER_RESUME_VERSION;
   readonly taskId: string;
   readonly latestSequence: number;
+  /**
+   * The mirror sync engine's last-synced content fingerprint. On resume it
+   * is the expected state of the local checkout; a mismatch pauses sync
+   * loudly instead of resetting over unknown local work.
+   */
+  readonly mirrorFingerprint?: string;
   /**
    * Turn → messageId ledger, carried opaquely until the revert slice (build
    * item 10) builds and consumes it. Preserved through parse so a newer
@@ -128,6 +162,9 @@ export function parseAetherResume(raw: unknown): AetherResumeCursor | undefined 
     schemaVersion: AETHER_RESUME_VERSION,
     taskId: record.taskId.trim(),
     latestSequence: record.latestSequence,
+    ...(typeof record.mirrorFingerprint === "string" && record.mirrorFingerprint.length > 0
+      ? { mirrorFingerprint: record.mirrorFingerprint }
+      : {}),
     ...(record.turnLedger !== undefined ? { turnLedger: record.turnLedger } : {}),
   };
 }
@@ -143,6 +180,8 @@ export interface AetherSessionGit {
     cwd: string,
     key: string,
   ) => Effect.Effect<string | null, GitCommandError>;
+  /** Raw git executor — the mirror sync engine's only git surface. */
+  readonly execute: (input: ExecuteGitInput) => Effect.Effect<ExecuteGitResult, GitCommandError>;
 }
 
 /** Transport coordinates for the workspace WS attach (build item 5). */
@@ -157,11 +196,45 @@ export interface AetherAdapterSocketOptions {
   readonly timing?: Partial<AetherStreamTiming>;
 }
 
+/** Server-side ownership registry hook (build item 8a's guard source of truth). */
+export interface AetherMirrorRegistration {
+  readonly register: (cwd: string, key: string) => Effect.Effect<void>;
+  readonly deregister: (cwd: string, key: string) => Effect.Effect<void>;
+}
+
+/** Turn-engine pacing knobs (injectable so tests never sleep real time). */
+export interface AetherTurnTiming {
+  /** REST backstop poll cadence while a turn is active (spec ~3s). */
+  readonly settlePollMs: number;
+  /** Cadence + budget for harvesting the first user row after create. */
+  readonly harvestPollMs: number;
+  readonly harvestMaxAttempts: number;
+  /** Cadence + budget for read-side confirmation after /stop. */
+  readonly interruptPollMs: number;
+  readonly interruptMaxAttempts: number;
+}
+
+const DEFAULT_TURN_TIMING: AetherTurnTiming = {
+  settlePollMs: 3_000,
+  harvestPollMs: 250,
+  harvestMaxAttempts: 40,
+  interruptPollMs: 500,
+  interruptMaxAttempts: 60,
+};
+
 export interface AetherAdapterOptions {
   readonly instanceId: ProviderInstanceId;
   /** Fallback session cwd when the start input carries none (ServerConfig.cwd). */
   readonly defaultCwd: string;
   readonly git: AetherSessionGit;
+  /** Attachment blob store root (ServerConfig.attachmentsDir). */
+  readonly attachmentsDir: string;
+  /**
+   * The fork-side guard registry: every session's cwd is registered while an
+   * Aether thread owns it, and deregistered on disconnect AND adapter
+   * teardown (build item 8a).
+   */
+  readonly mirrorRegistry: AetherMirrorRegistration;
   /**
    * Undefined when the instance has no `AETHER_API_KEY` — startSession then
    * fails loudly with the remediation instead of the driver failing create().
@@ -172,35 +245,167 @@ export interface AetherAdapterOptions {
    * unit tests; the driver always passes it alongside a real client.
    */
   readonly socket?: AetherAdapterSocketOptions | undefined;
+  readonly turnTiming?: Partial<AetherTurnTiming>;
+}
+
+interface AetherActiveTurn {
+  readonly wireTurnId: string;
+  readonly turnId: TurnId;
+}
+
+interface AetherDeferredTurn extends AetherActiveTurn {
+  /** The queued message text — re-offered in a warning card if a Stop discards it. */
+  readonly text: string;
 }
 
 interface AetherSessionContext {
   session: ProviderSession;
   readonly cwd: string;
   readonly projectId: string;
-  /** Undefined until the first sendTurn creates the cloud task (item 7). */
+  /** The branch preflighted at startSession — the task's base_branch. */
+  readonly baseBranch: string | undefined;
+  /** Undefined until the first sendTurn creates the cloud task. */
   taskId: string | undefined;
+  /**
+   * True between a successful createTask and the completed first-turn
+   * bring-up (harvest + attach). A retry while pending re-enters the
+   * first-turn path — skipping the create AND the respond — so a transient
+   * harvest failure can never double-send the prompt as a second message.
+   */
+  firstTurnPending: boolean;
+  /**
+   * Fingerprint of EVERY dispatch-relevant input of the pending created
+   * task (prompt, resolved slug, effort, interaction mode, attachments):
+   * a retry must match all of them — matching only the text would silently
+   * discard changed attachments or model selection.
+   */
+  firstTurnFingerprint: string | undefined;
   latestSequence: number;
   /** Opaque turn ledger carried from the resume cursor (see AetherResumeCursor). */
   turnLedger: unknown;
-  /** Owns the attach pump + socket; closed on stopSession/stopAll. */
+  /** Owns the attach pump, socket and turn poll; closed on stopSession/stopAll. */
   sessionScope: Scope.Closeable | undefined;
   /** The session's event mapper; its latestSequence() is the live cursor. */
   mapper: AetherEventMapper | undefined;
+  /** The mirror sync engine — active from startSession for the thread's life. */
+  mirror: AetherMirrorSyncEngine | undefined;
+  /** Live WS connection handle (undefined while detached). */
+  connection: AetherAgentConnection | undefined;
+  /** The durable reconciliation — the settle backstop the turn poll drives. */
+  reconcile: Effect.Effect<void> | undefined;
+  /** True while an attach pump fiber runs for this session. */
+  pumpRunning: boolean;
+  /** `session.started` is emitted once per session, across pump restarts. */
+  sessionStartedEmitted: boolean;
+  /** The wire turn currently running remotely (driver-tracked). */
+  activeTurn: AetherActiveTurn | undefined;
+  /**
+   * One-shot: the session resumed onto a task that was ALREADY processing,
+   * so the in-flight wire turn is unknown until a reconcile observes
+   * `activeProcessingTurn`. The first observation adopts it — activeTurnId,
+   * turn.started and the settle backstop poll — per spec §2.3 (reconstruct
+   * activeTurnId from status=processing). Cleared by the first adoption or
+   * by the user's own next sendTurn.
+   */
+  adoptActiveTurn: boolean;
+  /** Steer messages queued remotely, their turn.starteds deferred until pickup (FIFO). */
+  deferredTurns: Array<AetherDeferredTurn>;
+  /** Guards against stacking settle-poll fibers. */
+  pollRunning: boolean;
+  /** Ordinal for deterministic client_message_ids (one per own send). */
+  sentCount: number;
 }
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 function buildAetherResumeCursor(context: AetherSessionContext): AetherResumeCursor | undefined {
+  const mirrorFingerprint = context.mirror?.lastSyncedFingerprint();
   return context.taskId === undefined
     ? undefined
     : {
         schemaVersion: AETHER_RESUME_VERSION,
         taskId: context.taskId,
         latestSequence: context.latestSequence,
+        ...(mirrorFingerprint !== undefined ? { mirrorFingerprint } : {}),
         ...(context.turnLedger !== undefined ? { turnLedger: context.turnLedger } : {}),
       };
 }
+
+// ---------------------------------------------------------------------------
+// Turn helpers (pure)
+// ---------------------------------------------------------------------------
+
+const AETHER_TURN_ID_PREFIX = "aether-turn-";
+
+const turnIdForWire = (wireTurnId: string): TurnId =>
+  TurnId.make(`${AETHER_TURN_ID_PREFIX}${wireTurnId}`);
+
+/** Recover the wire turn id from a mapper-stamped t3 TurnId. */
+function wireIdFromTurnId(turnId: TurnId): string | undefined {
+  const raw = String(turnId);
+  return raw.startsWith(AETHER_TURN_ID_PREFIX)
+    ? raw.slice(AETHER_TURN_ID_PREFIX.length)
+    : undefined;
+}
+
+/**
+ * Deterministic, RFC-4122-shaped id for `client_message_id`: stable per
+ * (taskId, session epoch, send ordinal) — the driver-side stand-in for
+ * "(taskId, t3 turnId)", since the t3 TurnId for a respond derives from the
+ * very message_id the call returns. The session epoch keeps ordinals from a
+ * RESUMED session from colliding with an earlier session's sends (the server
+ * dedupes on client_message_id via ON CONFLICT — a collision would silently
+ * swallow the new message).
+ */
+export function deterministicClientMessageId(input: {
+  readonly taskId: string;
+  readonly sessionEpoch: string;
+  readonly sendOrdinal: number;
+}): string {
+  const hash = NodeCrypto.createHash("sha256")
+    .update(`aether:${input.taskId}:${input.sessionEpoch}:send:${input.sendOrdinal}`)
+    .digest("hex");
+  const variant = ((Number.parseInt(hash[16]!, 16) & 0x3) | 0x8).toString(16);
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-${variant}${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
+
+/**
+ * Resolve a composite `<agent_type>/<model>` slug into the create/respond
+ * dispatch pair. Catalog agent types dispatch natively; anything else is an
+ * Aether free-typed custom model, dispatched as agent_type `opencode` with
+ * the FULL slug as the model string (spec §2.5 custom-models row).
+ */
+export function resolveAetherModelSlug(slug: string): {
+  readonly agentType: string;
+  readonly model: string;
+  readonly catalogAgentType: AetherAgentType | undefined;
+} {
+  const separator = slug.indexOf("/");
+  if (separator > 0) {
+    const prefix = slug.slice(0, separator);
+    const known = AETHER_AGENT_TYPES.find((agentType) => agentType === prefix);
+    if (known !== undefined) {
+      return { agentType: known, model: slug.slice(separator + 1), catalogAgentType: known };
+    }
+  }
+  return { agentType: "opencode", model: slug, catalogAgentType: undefined };
+}
+
+/** The platform attachment allowlist (libs/go/promptattachment, kept in sync). */
+const AETHER_ATTACHMENT_MEDIA_TYPES: ReadonlySet<string> = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "application/pdf",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "application/json",
+]);
+
+/** 5 MiB decoded per attachment (promptattachment.MaxBytes). */
+const AETHER_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
 
 /**
  * Verify the local checkout is a safe mirror base for a cloud thread: a git
@@ -226,6 +431,21 @@ function preflightIssue(status: GitStatusDetails, cwd: string): string | undefin
   }
   if (status.behindCount > 0) {
     return `Branch '${status.branch}' is behind its upstream by ${status.behindCount} commit(s). Sync it (git pull --ff-only) before starting an Aether cloud task.`;
+  }
+  return undefined;
+}
+
+/**
+ * Structural-only preflight for a RESUMED thread: its mirror is dirty by
+ * design (reset-to-base + applied cumulative diff), so the clean/pushed
+ * checks do not apply — the sync engine's fingerprint verify guards content.
+ */
+function resumePreflightIssue(status: GitStatusDetails, cwd: string): string | undefined {
+  if (!status.isRepo) {
+    return `'${cwd}' is not a git repository. Aether cloud tasks need a git checkout of the linked repository.`;
+  }
+  if (status.branch === null) {
+    return "The working tree is on a detached HEAD. Check out the thread's branch before resuming this Aether cloud task.";
   }
   return undefined;
 }
@@ -286,15 +506,19 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
 ): Effect.fn.Return<
   ProviderAdapterShape<ProviderAdapterError>,
   never,
-  Crypto.Crypto | Scope.Scope
+  Crypto.Crypto | FileSystem.FileSystem | Scope.Scope
 > {
   const crypto = yield* Crypto.Crypto;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const turnTiming = { ...DEFAULT_TURN_TIMING, ...options.turnTiming };
   // Scope-owned so registry teardown shuts the stream down with the instance.
   const runtimeEvents = yield* Effect.acquireRelease(
     Queue.unbounded<ProviderRuntimeEvent>(),
     Queue.shutdown,
   );
   const sessions = new Map<ThreadId, AetherSessionContext>();
+
+  const registryKey = (threadId: ThreadId) => `${options.instanceId}:${threadId}`;
 
   const emit = (event: ProviderRuntimeEvent) =>
     Queue.offer(runtimeEvents, event).pipe(Effect.asVoid);
@@ -352,79 +576,335 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       : Effect.ignore(Scope.close(context.sessionScope, Exit.void));
 
   // Registry/instance teardown must also stop every attach pump (delete =
-  // full teardown). Registered AFTER the queue's acquireRelease so it runs
-  // FIRST on close: pumps stop emitting, then the queue shuts down.
+  // full teardown) AND release every mirror-guard registration — a torn-down
+  // adapter must never leave a cwd locked. Registered AFTER the queue's
+  // acquireRelease so it runs FIRST on close: pumps stop emitting, then the
+  // queue shuts down.
   yield* Effect.acquireRelease(Effect.void, () =>
     Effect.gen(function* () {
-      for (const context of sessions.values()) {
+      for (const [threadId, context] of sessions.entries()) {
         yield* closeSessionScope(context);
+        yield* options.mirrorRegistry.deregister(context.cwd, registryKey(threadId));
       }
     }),
   );
 
-  const emitAll = (events: ReadonlyArray<ProviderRuntimeEvent>) =>
-    Effect.forEach(events, emit, { discard: true });
+  // Stream-pump callbacks must be infallible (a failing callback would kill
+  // the socket loop); crypto id generation dying is the only acceptable
+  // defect here.
+  const freshEventId = Effect.orDie(randomEventId);
+
+  const baseEvent = (context: AetherSessionContext) =>
+    Effect.gen(function* () {
+      return {
+        eventId: yield* freshEventId,
+        provider: PROVIDER,
+        providerInstanceId: options.instanceId,
+        threadId: context.session.threadId,
+        createdAt: yield* nowIso,
+      };
+    });
 
   /**
-   * The event pipeline (build items 5+6): attach passively to the task's
-   * workspace WS, feed live events through the mapper, and reconcile the
-   * durable delta on every (re)connect — the REST backstop is the ONLY
-   * recovery for live-only turn.* settles missed while detached. Forked into
-   * the session scope; failures surface as runtime.error events (the session
-   * itself stays readable via REST).
+   * Run the mirror sync for one settling turn and emit its surface events
+   * (spec build item 8: sync completes BEFORE turn.completed goes out).
    */
-  const startStreamPump = Effect.fn("startAetherStreamPump")(function* (
-    context: AetherSessionContext,
-    restClient: AetherRestClient,
-    socket: AetherAdapterSocketOptions,
-    taskId: string,
-  ) {
-    const sessionScope = yield* Scope.make();
-    context.sessionScope = sessionScope;
-    const threadId = context.session.threadId;
-    const mapper = makeAetherEventMapper({
-      provider: PROVIDER,
-      instanceId: options.instanceId,
-      threadId,
-      taskId,
-      initialSequence: context.latestSequence,
-    });
-    context.mapper = mapper;
-
-    // Stream-pump callbacks must be infallible (a failing callback would
-    // kill the socket loop); crypto id generation dying is the only
-    // acceptable defect here.
-    const freshEventId = Effect.orDie(randomEventId);
-
-    // The durable reconciliation — also the poll hook the T6 turn engine
-    // will drive for turn-settle backstops. A transient REST failure warns
-    // loudly and leaves the cursor untouched, so the next (re)connect
-    // retries the exact same range instead of silently skipping it.
-    const reconcile = Effect.gen(function* () {
-      const delta = yield* restClient.getConversationDelta(taskId, mapper.latestSequence());
-      const events = mapper.reconcileDelta(delta, yield* nowIso);
-      context.latestSequence = mapper.latestSequence();
-      yield* emitAll(events);
-    }).pipe(
-      Effect.catch((error) =>
-        Effect.gen(function* () {
-          yield* Effect.logWarning("aether.reconcile.failed", { taskId, error: String(error) });
+  const syncMirrorForSettle = (context: AetherSessionContext, turnId: TurnId | undefined) =>
+    Effect.gen(function* () {
+      const mirror = context.mirror;
+      if (mirror === undefined) {
+        return;
+      }
+      const outcome = yield* mirror.syncAtSettle(context.connection);
+      const wireId = turnId !== undefined ? wireIdFromTurnId(turnId) : undefined;
+      switch (outcome._tag) {
+        case "synced":
+          yield* Effect.logDebug("aether.mirror.synced", {
+            taskId: context.taskId,
+            fileCount: outcome.fileCount,
+          });
+          if (outcome.modeOnlySkipped.length > 0) {
+            // The wire diff carries no file-mode information, so a
+            // chmod-only change cannot be mirrored — say so instead of
+            // silently dropping it (or worse, pausing the whole sync).
+            yield* emit({
+              ...(yield* baseEvent(context)),
+              type: "runtime.warning",
+              payload: {
+                message:
+                  `The cloud workspace changed only the file MODE of ${outcome.modeOnlySkipped.join(", ")}; ` +
+                  "mode changes cannot be mirrored into the local checkout (the diff protocol carries no mode bits).",
+              },
+            });
+          }
           yield* emit({
-            eventId: yield* freshEventId,
-            provider: PROVIDER,
-            providerInstanceId: options.instanceId,
-            threadId,
-            createdAt: yield* nowIso,
+            ...(yield* baseEvent(context)),
+            ...(context.taskId !== undefined && wireId !== undefined
+              ? { eventId: EventId.make(`aether:${context.taskId}:turn:${wireId}:diff`) }
+              : {}),
+            ...(turnId !== undefined ? { turnId } : {}),
+            type: "turn.diff.updated",
+            payload: { unifiedDiff: outcome.unifiedDiff },
+          });
+          return;
+        case "skipped-detached":
+          // Expected while detached: the turn settles with an empty
+          // checkpoint and the next successful sync captures the combined
+          // delta (lazy catch-up). No card.
+          yield* Effect.logInfo("aether.mirror.skipped-detached", {
+            taskId: context.taskId,
+            reason: outcome.reason,
+          });
+          return;
+        case "skipped-transport":
+          yield* emit({
+            ...(yield* baseEvent(context)),
             type: "runtime.warning",
             payload: {
-              message: `Could not reconcile the Aether conversation feed: ${error.message}`,
+              message: `The workspace diff sync did not complete for this turn; the next sync catches up. ${outcome.reason}`,
             },
           });
-        }),
-      ),
-    );
+          return;
+        case "paused":
+          if (outcome.firstPause) {
+            yield* emit({
+              ...(yield* baseEvent(context)),
+              type: "runtime.error",
+              payload: {
+                message: `Aether mirror sync is paused: ${outcome.reason}`,
+                class: "provider_error",
+              },
+            });
+          } else {
+            yield* emit({
+              ...(yield* baseEvent(context)),
+              type: "runtime.warning",
+              payload: {
+                message: `Aether mirror sync remains paused; this turn settled without syncing. ${outcome.reason}`,
+              },
+            });
+          }
+          return;
+      }
+    });
 
-    let sessionStartedEmitted = false;
+  /** Emit one deferred steer turn's `turn.started` and promote it to active. */
+  const emitDeferredStarted = (context: AetherSessionContext, wireTurnId: string) =>
+    Effect.gen(function* () {
+      const index = context.deferredTurns.findIndex(
+        (candidate) => candidate.wireTurnId === wireTurnId,
+      );
+      if (index === -1) {
+        return;
+      }
+      const deferred = context.deferredTurns[index]!;
+      context.deferredTurns.splice(index, 1);
+      context.activeTurn = { wireTurnId: deferred.wireTurnId, turnId: deferred.turnId };
+      context.session = {
+        ...context.session,
+        status: "running",
+        activeTurnId: deferred.turnId,
+        updatedAt: yield* nowIso,
+      };
+      yield* emit({
+        ...(yield* baseEvent(context)),
+        ...(context.taskId !== undefined
+          ? {
+              eventId: EventId.make(`aether:${context.taskId}:turn:${deferred.wireTurnId}:started`),
+            }
+          : {}),
+        turnId: deferred.turnId,
+        type: "turn.started",
+        payload: {},
+      });
+    });
+
+  /** Bookkeeping when a terminal settle for `turnId` has just been emitted. */
+  const onTurnSettled = (context: AetherSessionContext, turnId: TurnId | undefined) =>
+    Effect.gen(function* () {
+      if (turnId === undefined) {
+        return;
+      }
+      context.deferredTurns = context.deferredTurns.filter(
+        (candidate) => candidate.turnId !== turnId,
+      );
+      if (context.activeTurn?.turnId === turnId) {
+        context.activeTurn = undefined;
+      }
+      const nextActive =
+        context.activeTurn?.turnId ??
+        context.deferredTurns[context.deferredTurns.length - 1]?.turnId;
+      const session: ProviderSession = {
+        ...context.session,
+        status: nextActive !== undefined ? "running" : "ready",
+        updatedAt: yield* nowIso,
+      };
+      // `activeTurnId` is optional — rebuild without the key when cleared.
+      if (nextActive !== undefined) {
+        context.session = { ...session, activeTurnId: nextActive };
+      } else {
+        const { activeTurnId: _cleared, ...rest } = session;
+        context.session = rest;
+      }
+      const resumeCursor = buildAetherResumeCursor(context);
+      if (resumeCursor !== undefined) {
+        context.session = { ...context.session, resumeCursor };
+      }
+    });
+
+  /**
+   * THE event funnel: every mapper output batch flows through here. The
+   * mapper stays pure — its `turn.completed` IS the pre-settle signal, and
+   * this funnel turns it into sync-then-settle when a mirror is active. It
+   * also owns the deferred steer `turn.started` ordering: strictly after the
+   * predecessor's `turn.completed`, strictly before the new turn's first
+   * event (spec §2.1 queued/steering row).
+   */
+  const processMapperEvents = (
+    context: AetherSessionContext,
+    events: ReadonlyArray<ProviderRuntimeEvent>,
+  ) =>
+    Effect.gen(function* () {
+      // Resume-onto-processing adoption (spec §2.3): the session resumed
+      // while a turn was already in flight, so the first observation of the
+      // active wire turn reconstructs activeTurnId, emits its turn.started
+      // (BEFORE the batch's own events) and arms the settle backstop poll —
+      // Stop and the mandatory dual-path settle work immediately, not only
+      // after the next sendTurn.
+      const adoptWire = context.mapper?.activeWireTurnId();
+      if (
+        context.adoptActiveTurn &&
+        adoptWire !== undefined &&
+        context.activeTurn === undefined &&
+        !context.deferredTurns.some((candidate) => candidate.wireTurnId === adoptWire)
+      ) {
+        context.adoptActiveTurn = false;
+        const adopted: AetherActiveTurn = {
+          wireTurnId: adoptWire,
+          turnId: turnIdForWire(adoptWire),
+        };
+        context.activeTurn = adopted;
+        yield* emitTurnStarted(context, adopted, {});
+        yield* startSettlePoll(context);
+      }
+      for (const event of events) {
+        const deferredMatch =
+          event.turnId !== undefined
+            ? context.deferredTurns.find((candidate) => candidate.turnId === event.turnId)
+            : undefined;
+        if (deferredMatch !== undefined) {
+          // Remote pickup observed (an event of the deferred turn — possibly
+          // its own settle): start the turn before forwarding it. The
+          // predecessor's turn.completed already flowed earlier in this
+          // batch (the mapper settles a displaced turn first).
+          yield* emitDeferredStarted(context, deferredMatch.wireTurnId);
+        }
+        if (event.type === "turn.completed") {
+          yield* syncMirrorForSettle(context, event.turnId);
+          yield* emit(event);
+          yield* onTurnSettled(context, event.turnId);
+        } else {
+          yield* emit(event);
+        }
+      }
+      // Pickup can also surface as a bare `activeProcessingTurn` flip in the
+      // delta (no rows for the new turn yet).
+      const activeWire = context.mapper?.activeWireTurnId();
+      if (
+        activeWire !== undefined &&
+        context.deferredTurns.some((candidate) => candidate.wireTurnId === activeWire)
+      ) {
+        yield* emitDeferredStarted(context, activeWire);
+      }
+    });
+
+  /**
+   * The session scope, mapper and durable reconciliation — everything the
+   * turn engine needs BEFORE any transport exists. Split out of
+   * `ensureTaskPipeline` on purpose: sendTurn must be able to record its new
+   * turn (mapper + activeTurn + `turn.started`) while nothing can observe a
+   * settle yet, and the pump fork is exactly what starts observing.
+   */
+  const ensureTaskMapper = Effect.fn("ensureAetherTaskMapper")(function* (
+    context: AetherSessionContext,
+    restClient: AetherRestClient,
+    taskId: string,
+  ) {
+    if (context.sessionScope === undefined) {
+      context.sessionScope = yield* Scope.make();
+    }
+    const sessionScope = context.sessionScope;
+    const threadId = context.session.threadId;
+
+    if (context.mapper === undefined) {
+      const mapper = makeAetherEventMapper({
+        provider: PROVIDER,
+        instanceId: options.instanceId,
+        threadId,
+        taskId,
+        initialSequence: context.latestSequence,
+      });
+      context.mapper = mapper;
+      // The durable reconciliation — also the settle backstop the turn poll
+      // drives. A transient REST failure warns loudly and leaves the cursor
+      // untouched, so the next beat retries the exact same range.
+      context.reconcile = Effect.gen(function* () {
+        const delta = yield* restClient.getConversationDelta(taskId, mapper.latestSequence());
+        const events = mapper.reconcileDelta(delta, yield* nowIso);
+        context.latestSequence = mapper.latestSequence();
+        yield* processMapperEvents(context, events);
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.gen(function* () {
+            yield* Effect.logWarning("aether.reconcile.failed", { taskId, error: String(error) });
+            yield* emit({
+              ...(yield* baseEvent(context)),
+              type: "runtime.warning",
+              payload: {
+                message: `Could not reconcile the Aether conversation feed: ${error.message}`,
+              },
+            });
+          }),
+        ),
+      );
+    }
+    return { mapper: context.mapper, sessionScope };
+  });
+
+  /**
+   * Ensure the mapper exists and (when transport options exist) fork the WS
+   * attach pump into the session scope. Idempotent per (session, task):
+   * re-invoked by sendTurn to restart an ended pump with the one-shot
+   * `start=true` permission.
+   *
+   * CALL ORDER: every caller that is about to start a turn must record that
+   * turn FIRST — the attach's `onConnected` reconcile runs on the forked
+   * fiber and can settle it immediately.
+   */
+  const ensureTaskPipeline = Effect.fn("ensureAetherTaskPipeline")(function* (
+    context: AetherSessionContext,
+    restClient: AetherRestClient,
+    taskId: string,
+    input: { readonly allowStart: boolean },
+  ) {
+    const { mapper, sessionScope } = yield* ensureTaskMapper(context, restClient, taskId);
+    const reconcile = context.reconcile ?? Effect.void;
+
+    const socket = options.socket;
+    if (socket === undefined) {
+      // REST-only mode (no transport configured): the settle backstop poll
+      // is the only feed. Nothing to fork here.
+      return;
+    }
+    // One pump per session at a time. A running pump reconnects by itself;
+    // a pump that ENDED (durable-only mode, terminal failure) is restarted
+    // here on the next sendTurn — with the one-shot start permission.
+    if (context.pumpRunning) {
+      return;
+    }
+    context.pumpRunning = true;
+
+    let sessionStartedEmitted = context.sessionStartedEmitted;
     let slashCommandsLogged = false;
     // Degradation warning: once per failure streak, reset on reconnect.
     let connectRetryWarned = false;
@@ -438,22 +918,25 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
         ? { webSocketFactory: socket.webSocketFactory }
         : {}),
       ...(socket.timing !== undefined ? { timing: socket.timing } : {}),
-      onConnected: () =>
+      ...(input.allowStart ? { startOnFirstAttach: true } : {}),
+      onConnected: (connection) =>
         Effect.gen(function* () {
           connectRetryWarned = false;
+          context.connection = connection;
           if (!sessionStartedEmitted) {
             sessionStartedEmitted = true;
+            context.sessionStartedEmitted = true;
             yield* emit({
-              eventId: yield* freshEventId,
-              provider: PROVIDER,
-              providerInstanceId: options.instanceId,
-              threadId,
-              createdAt: yield* nowIso,
+              ...(yield* baseEvent(context)),
               type: "session.started",
               payload: { message: "Attached to the Aether workspace stream." },
             });
           }
           yield* reconcile;
+        }),
+      onDisconnected: () =>
+        Effect.sync(() => {
+          context.connection = undefined;
         }),
       onEvent: (event) =>
         Effect.gen(function* () {
@@ -464,17 +947,13 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
           }
           const events = mapper.mapWsEvent(event, yield* nowIso);
           context.latestSequence = mapper.latestSequence();
-          yield* emitAll(events);
+          yield* processMapperEvents(context, events);
         }),
       onFrameDropped: (problem) =>
         Effect.gen(function* () {
           yield* Effect.logWarning("aether.frame.dropped", { taskId, ...problem });
           yield* emit({
-            eventId: yield* freshEventId,
-            provider: PROVIDER,
-            providerInstanceId: options.instanceId,
-            threadId,
-            createdAt: yield* nowIso,
+            ...(yield* baseEvent(context)),
             type: "runtime.warning",
             payload: {
               message:
@@ -494,11 +973,7 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
           if (!connectRetryWarned) {
             connectRetryWarned = true;
             yield* emit({
-              eventId: yield* freshEventId,
-              provider: PROVIDER,
-              providerInstanceId: options.instanceId,
-              threadId,
-              createdAt: yield* nowIso,
+              ...(yield* baseEvent(context)),
               type: "runtime.warning",
               payload: {
                 message:
@@ -525,11 +1000,8 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
             // The task-errored surface shares the mapper's deterministic id
             // so a REST-side projection of the same failure collides
             // (idempotent) instead of duplicating.
-            eventId: isTaskErrored ? EventId.make(`aether:${taskId}:errored`) : yield* freshEventId,
-            provider: PROVIDER,
-            providerInstanceId: options.instanceId,
-            threadId,
-            createdAt: yield* nowIso,
+            ...(yield* baseEvent(context)),
+            ...(isTaskErrored ? { eventId: EventId.make(`aether:${taskId}:errored`) } : {}),
             type: "runtime.error",
             payload: {
               message: error.message,
@@ -538,7 +1010,45 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
           });
         }),
       ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          context.pumpRunning = false;
+          context.connection = undefined;
+        }),
+      ),
       Effect.forkIn(sessionScope),
+    );
+  });
+
+  /**
+   * The REST settle backstop (spec build item 7): while a turn is active,
+   * poll the durable feed every ~settlePollMs — turn.completed/failed are
+   * live-only, so this is the ONLY settle recovery while the socket is down.
+   * Also drives the user-activity keep-alive so the VM's interactive idle
+   * hold survives a long turn.
+   */
+  const startSettlePoll = Effect.fn("startAetherSettlePoll")(function* (
+    context: AetherSessionContext,
+  ) {
+    if (context.pollRunning || context.sessionScope === undefined) {
+      return;
+    }
+    context.pollRunning = true;
+    yield* Effect.gen(function* () {
+      while (context.activeTurn !== undefined || context.deferredTurns.length > 0) {
+        yield* Effect.sleep(Duration.millis(turnTiming.settlePollMs));
+        if (context.connection !== undefined) {
+          yield* context.connection.sendUserActivity().pipe(Effect.ignore);
+        }
+        yield* context.reconcile ?? Effect.void;
+      }
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          context.pollRunning = false;
+        }),
+      ),
+      Effect.forkIn(context.sessionScope),
     );
   });
 
@@ -559,11 +1069,17 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       });
     }
 
-    // (1) Mirror preflight: clean tree on a pushed, in-sync branch.
+    // (1) Mirror preflight. A FRESH thread requires a clean tree on a
+    // pushed, in-sync branch — the mirror's base state. A RESUMED thread's
+    // mirror is dirty BY DESIGN (it holds the applied cumulative diff), so
+    // only the structural checks apply; content integrity is enforced by the
+    // sync engine's fingerprint verify instead.
+    const resume = parseAetherResume(input.resumeCursor);
+    const isResume = resume !== undefined;
     const status = yield* options.git
       .statusDetails(cwd)
       .pipe(Effect.mapError(toGitRequestError("startSession")));
-    const issue = preflightIssue(status, cwd);
+    const issue = isResume ? resumePreflightIssue(status, cwd) : preflightIssue(status, cwd);
     if (issue !== undefined) {
       return yield* new ProviderAdapterValidationError({
         provider: PROVIDER,
@@ -571,6 +1087,18 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
         issue,
       });
     }
+    // The mirror baseline: for a never-synced thread the expected pre-sync
+    // state is "clean tree at this HEAD".
+    const baselineHeadSha = yield* options.git
+      .execute({
+        operation: "aether.startSession.baseline",
+        cwd,
+        args: ["rev-parse", "HEAD"],
+      })
+      .pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.mapError(toGitRequestError("startSession")),
+      );
 
     // (2) Repo → project resolution via the canonical owner/repo key.
     const originUrl = yield* options.git
@@ -612,10 +1140,10 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
     // belong to the project the cwd just resolved to — a persisted cursor is
     // untrusted input, and binding a foreign project's task here would later
     // mirror that repo's diffs onto this checkout.
-    const resume = parseAetherResume(input.resumeCursor);
     let taskId: string | undefined;
     let latestSequence = 0;
     let turnLedger: unknown;
+    let resumedTask: AetherTask | undefined;
     if (resume !== undefined) {
       const task = yield* restClient.getTask(resume.taskId).pipe(
         Effect.mapError((cause) =>
@@ -636,6 +1164,7 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
         });
       }
       taskId = resume.taskId;
+      resumedTask = task;
       // Keep the CURSOR's sequence, not the task row's: it is the safe
       // replay point — fast-forwarding here would skip never-ingested rows.
       latestSequence = resume.latestSequence;
@@ -662,11 +1191,32 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       },
       cwd,
       projectId: project.id,
+      baseBranch: status.branch ?? undefined,
       taskId,
       latestSequence,
       turnLedger,
       sessionScope: undefined,
       mapper: undefined,
+      mirror: makeAetherMirrorSync({
+        cwd,
+        git: options.git,
+        baselineHeadSha,
+        persistedFingerprint: resume?.mirrorFingerprint,
+        // Lazily reads the surrounding context: the first sendTurn fills the
+        // task id in before any turn can settle.
+        getTaskId: () => context.taskId,
+      }),
+      connection: undefined,
+      reconcile: undefined,
+      pumpRunning: false,
+      sessionStartedEmitted: false,
+      activeTurn: undefined,
+      adoptActiveTurn: resumedTask?.status === "processing",
+      deferredTurns: [],
+      pollRunning: false,
+      sentCount: 0,
+      firstTurnPending: false,
+      firstTurnFingerprint: undefined,
     };
     const resumeCursor = buildAetherResumeCursor(context);
     if (resumeCursor !== undefined) {
@@ -677,14 +1227,17 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
     const previous = sessions.get(input.threadId);
     if (previous !== undefined) {
       yield* closeSessionScope(previous);
+      yield* options.mirrorRegistry.deregister(previous.cwd, registryKey(input.threadId));
     }
     sessions.set(input.threadId, context);
+    // The fork-side write guard owns this cwd for the thread's lifetime.
+    yield* options.mirrorRegistry.register(cwd, registryKey(input.threadId));
 
-    // (5) Passive stream attach: a resumed live task starts streaming
-    // immediately. No task yet (fresh thread) → nothing to attach until the
-    // first sendTurn (T6) creates one.
-    if (taskId !== undefined && options.socket !== undefined) {
-      yield* startStreamPump(context, restClient, options.socket, taskId);
+    // (5) Stream attach: a resumed live task starts streaming immediately
+    // (PASSIVE — never boots a VM). No task yet (fresh thread) → nothing to
+    // attach until the first sendTurn creates one.
+    if (taskId !== undefined) {
+      yield* ensureTaskPipeline(context, restClient, taskId, { allowStart: false });
     }
     return context.session;
   });
@@ -700,6 +1253,9 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
   ) {
     yield* closeSessionScope(context);
     sessions.delete(threadId);
+    // Release the fork-side write guard: the cwd is an ordinary local
+    // checkout again the moment the Aether thread lets go of it.
+    yield* options.mirrorRegistry.deregister(context.cwd, registryKey(threadId));
     yield* emit({
       eventId: yield* randomEventId,
       provider: PROVIDER,
@@ -777,6 +1333,456 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
     } satisfies ProviderThreadSnapshot;
   });
 
+  // -- turn lifecycle (build item 7) ----------------------------------------
+
+  /** Validate + encode t3 chat attachments into Aether prompt attachments. */
+  const buildPromptAttachments = Effect.fn("buildAetherAttachments")(function* (
+    attachments: ReadonlyArray<ChatAttachment>,
+  ): Effect.fn.Return<ReadonlyArray<AetherPromptAttachment> | undefined, ProviderAdapterError> {
+    if (attachments.length === 0) {
+      return undefined;
+    }
+    const built: Array<AetherPromptAttachment> = [];
+    for (const attachment of attachments) {
+      // Aether validates a lowercase, parameter-free media type against its
+      // platform allowlist — reject locally BEFORE any API call.
+      const mediaType = (attachment.mimeType.split(";")[0] ?? "").trim().toLowerCase();
+      if (!AETHER_ATTACHMENT_MEDIA_TYPES.has(mediaType)) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "sendTurn",
+          issue: `Attachment '${attachment.name}' has media type '${mediaType}', which Aether does not accept. Supported: ${[...AETHER_ATTACHMENT_MEDIA_TYPES].sort().join(", ")}.`,
+        });
+      }
+      if (attachment.sizeBytes > AETHER_ATTACHMENT_MAX_BYTES) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "sendTurn",
+          issue: `Attachment '${attachment.name}' is ${attachment.sizeBytes} bytes; Aether accepts at most ${AETHER_ATTACHMENT_MAX_BYTES} bytes (5 MiB) per attachment.`,
+        });
+      }
+      const attachmentPath = resolveAttachmentPath({
+        attachmentsDir: options.attachmentsDir,
+        attachment,
+      });
+      if (attachmentPath === null) {
+        return yield* new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "sendTurn",
+          detail: `Invalid attachment id '${attachment.id}'.`,
+        });
+      }
+      const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "sendTurn",
+              detail: `Could not read attachment '${attachment.name}': ${cause.message}`,
+              cause,
+            }),
+        ),
+      );
+      if (bytes.length > AETHER_ATTACHMENT_MAX_BYTES) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "sendTurn",
+          issue: `Attachment '${attachment.name}' decodes to ${bytes.length} bytes; Aether accepts at most ${AETHER_ATTACHMENT_MAX_BYTES} bytes (5 MiB) per attachment.`,
+        });
+      }
+      built.push({
+        filename: attachment.name,
+        mediaType,
+        data: Buffer.from(bytes).toString("base64"),
+      });
+    }
+    return built;
+  });
+
+  /**
+   * Reasoning effort from the model selection's option descriptor selection.
+   * Catalog models validate against their selectable set — Aether 422s
+   * non-selectable values, so an invalid selection fails HERE, loudly.
+   */
+  const resolveEffortSelection = (
+    selection:
+      | {
+          readonly options?: ReadonlyArray<{
+            readonly id: string;
+            readonly value: string | boolean;
+          }>;
+        }
+      | undefined,
+    resolved: ReturnType<typeof resolveAetherModelSlug>,
+  ): Effect.Effect<string | undefined, ProviderAdapterValidationError> =>
+    Effect.gen(function* () {
+      const raw = selection?.options?.find((option) => option.id === "reasoningEffort")?.value;
+      if (raw === undefined) {
+        return undefined;
+      }
+      if (typeof raw !== "string") {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "sendTurn",
+          issue: `Reasoning effort selection must be a string, got ${typeof raw}.`,
+        });
+      }
+      if (resolved.catalogAgentType !== undefined) {
+        const allowed = reasoningEffortsForModel(resolved.catalogAgentType, resolved.model);
+        if (!allowed.includes(raw)) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "sendTurn",
+            issue: `Reasoning effort '${raw}' is not selectable for ${resolved.catalogAgentType}/${resolved.model}. Selectable: ${allowed.join(", ") || "(none)"}.`,
+          });
+        }
+      }
+      return raw;
+    });
+
+  /**
+   * Turn 1's wire turn id is the first user row's id — `POST /tasks` returns
+   * `{id, name}` only, so it is harvested from the conversation delta
+   * (spec resolved note 7).
+   */
+  const harvestFirstUserRowId = Effect.fn("harvestAetherFirstUserRow")(function* (
+    restClient: AetherRestClient,
+    taskId: string,
+  ): Effect.fn.Return<string, ProviderAdapterError> {
+    for (let attempt = 1; attempt <= turnTiming.harvestMaxAttempts; attempt++) {
+      const delta = yield* restClient
+        .getConversationDelta(taskId, 0)
+        .pipe(Effect.mapError(toRestRequestError("sendTurn")));
+      const userRow = [...delta.messages]
+        .filter((row) => row.role === "user")
+        .sort((left, right) => left.sequence - right.sequence)[0];
+      if (userRow !== undefined) {
+        return userRow.id;
+      }
+      yield* Effect.sleep(Duration.millis(turnTiming.harvestPollMs));
+    }
+    return yield* new ProviderAdapterRequestError({
+      provider: PROVIDER,
+      method: "sendTurn",
+      detail: `Created Aether task '${taskId}' but its first user message row never appeared in the conversation feed.`,
+    });
+  });
+
+  const emitTurnStarted = (
+    context: AetherSessionContext,
+    turn: AetherActiveTurn,
+    payload: { readonly model?: string; readonly effort?: string },
+  ) =>
+    Effect.gen(function* () {
+      context.session = {
+        ...context.session,
+        status: "running",
+        activeTurnId: turn.turnId,
+        updatedAt: yield* nowIso,
+      };
+      const resumeCursor = buildAetherResumeCursor(context);
+      if (resumeCursor !== undefined) {
+        context.session = { ...context.session, resumeCursor };
+      }
+      yield* emit({
+        ...(yield* baseEvent(context)),
+        ...(context.taskId !== undefined
+          ? { eventId: EventId.make(`aether:${context.taskId}:turn:${turn.wireTurnId}:started`) }
+          : {}),
+        turnId: turn.turnId,
+        type: "turn.started",
+        payload: {
+          ...(payload.model !== undefined ? { model: payload.model } : {}),
+          ...(payload.effort !== undefined ? { effort: payload.effort } : {}),
+        },
+      });
+    });
+
+  const sendTurn: ProviderAdapterShape<ProviderAdapterError>["sendTurn"] = Effect.fn("sendTurn")(
+    function* (input) {
+      const context = yield* ensureContext(input.threadId);
+      const restClient = yield* requireRestClient("sendTurn");
+      if (
+        input.modelSelection !== undefined &&
+        input.modelSelection.instanceId !== options.instanceId
+      ) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "sendTurn",
+          issue: `Aether model selection is bound to instance '${input.modelSelection.instanceId}', expected '${options.instanceId}'.`,
+        });
+      }
+      const message = input.input?.trim();
+      if (message === undefined || message.length === 0) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "sendTurn",
+          issue: "Aether requires a non-empty text prompt for every turn.",
+        });
+      }
+      // Attachments validate + encode BEFORE any API call.
+      const attachments = yield* buildPromptAttachments(input.attachments ?? []);
+      const promptContext = attachments !== undefined ? { attachments } : undefined;
+
+      // -- first turn: create the cloud task --------------------------------
+      if (context.taskId === undefined || context.firstTurnPending) {
+        const slug = input.modelSelection?.model ?? context.session.model;
+        if (slug === undefined) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "sendTurn",
+            detail: "The session carries no model slug; cannot dispatch an Aether task.",
+          });
+        }
+        const resolved = resolveAetherModelSlug(slug);
+        const effort = yield* resolveEffortSelection(input.modelSelection, resolved);
+        // Length-prefixed, control-char-delimited — deterministic without
+        // JSON (repo lint prefers Schema codecs for real serialization; this
+        // string is only ever compared, never parsed).
+        const dispatchFingerprint = [
+          `${message.length}:${message}`,
+          slug,
+          effort ?? "",
+          input.interactionMode ?? "default",
+          ...(attachments ?? []).map(
+            (attachment) =>
+              `${attachment.filename}\u0000${attachment.mediaType}\u0000${attachment.data.length}:${attachment.data}`,
+          ),
+        ].join("\u0001");
+        if (context.taskId === undefined) {
+          const created = yield* restClient
+            .createTask({
+              project_id: context.projectId,
+              prompt: message,
+              ...(context.baseBranch !== undefined ? { base_branch: context.baseBranch } : {}),
+              ...(promptContext !== undefined ? { context: promptContext } : {}),
+              agent_type: resolved.agentType,
+              model: resolved.model,
+              interaction_mode: input.interactionMode ?? "default",
+              ...(effort !== undefined ? { reasoning_effort: effort } : {}),
+              auto_fix_ci: false,
+              auto_fix_pr_comments: false,
+              auto_rebase: false,
+            })
+            .pipe(Effect.mapError(toRestRequestError("sendTurn")));
+          context.taskId = created.id;
+          context.sentCount = 1;
+          context.firstTurnPending = true;
+          context.firstTurnFingerprint = dispatchFingerprint;
+        } else if (context.firstTurnFingerprint !== dispatchFingerprint) {
+          // The created task already carries the first dispatch; a retry
+          // with different text, attachments, model or mode would silently
+          // discard one of the two. Refuse.
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "sendTurn",
+            issue:
+              "The first prompt was already dispatched to Aether but its turn is still being brought up. Retry with exactly the same input, or wait for the turn to appear and send the change as a follow-up.",
+          });
+        }
+        const taskIdForFirstTurn = context.taskId;
+        // Turn 1's wire id = the first user row (nothing else names it).
+        // Harvest/attach failures leave firstTurnPending set: the retry
+        // re-enters HERE — never the respond path, never a second create.
+        const wireTurnId = yield* harvestFirstUserRowId(restClient, taskIdForFirstTurn);
+        const turn: AetherActiveTurn = { wireTurnId, turnId: turnIdForWire(wireTurnId) };
+        // RECORD THE TURN FIRST. The mapper must learn the active wire turn
+        // so a settle observed only through the REST backstop still lands —
+        // and the attach below forks a fiber whose onConnected reconcile can
+        // settle this very turn on its first beat. Attaching before the turn
+        // exists lets `turn.completed` (and onTurnSettled's clean-up) run
+        // against a turn that was never started, stranding activeTurn state.
+        const { mapper } = yield* ensureTaskMapper(context, restClient, taskIdForFirstTurn);
+        yield* processMapperEvents(context, mapper.noteTurnStarted(wireTurnId, yield* nowIso));
+        context.activeTurn = turn;
+        yield* emitTurnStarted(context, turn, {
+          model: slug,
+          ...(effort !== undefined ? { effort } : {}),
+        });
+        // ACTIVE attach — the one path allowed to pass start=true.
+        yield* ensureTaskPipeline(context, restClient, taskIdForFirstTurn, { allowStart: true });
+        yield* startSettlePoll(context);
+        context.firstTurnPending = false;
+        context.firstTurnFingerprint = undefined;
+        const resumeCursor = buildAetherResumeCursor(context);
+        return {
+          threadId: input.threadId,
+          turnId: turn.turnId,
+          ...(resumeCursor !== undefined ? { resumeCursor } : {}),
+        };
+      }
+
+      // -- later turns: respond ---------------------------------------------
+      const taskId = context.taskId;
+      if (
+        input.modelSelection !== undefined &&
+        input.modelSelection.model !== context.session.model
+      ) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "sendTurn",
+          issue: `Mid-thread model switch to '${input.modelSelection.model}' is not supported yet (Aether driver build item 11).`,
+        });
+      }
+      const clientMessageId = deterministicClientMessageId({
+        taskId,
+        sessionEpoch: context.session.createdAt,
+        sendOrdinal: context.sentCount,
+      });
+      const responded = yield* restClient
+        .respondToTask(taskId, {
+          message,
+          ...(promptContext !== undefined ? { context: promptContext } : {}),
+          ...(input.interactionMode !== undefined
+            ? { interaction_mode: input.interactionMode }
+            : {}),
+          client_message_id: clientMessageId,
+        })
+        .pipe(Effect.mapError(toRestRequestError("sendTurn")));
+      // Advance the ordinal only on a confirmed 202: a respond whose answer
+      // was lost in transit retries with the SAME client_message_id, so the
+      // server's ON CONFLICT dedupe can actually fire — incrementing before
+      // the call would burn the id and deliver the prompt twice.
+      context.sentCount++;
+      // The user is driving this thread now — a pending resume-adoption of a
+      // remotely running turn no longer applies.
+      context.adoptActiveTurn = false;
+      const wireTurnId = responded.message_id;
+      const turn: AetherActiveTurn = { wireTurnId, turnId: turnIdForWire(wireTurnId) };
+
+      if (context.activeTurn !== undefined || context.deferredTurns.length > 0) {
+        // STEER: Aether queues the message server-side; the running turn
+        // completes first. DEFER turn.started until remote pickup, but set
+        // the session's activeTurnId to the new turn NOW (spec §2.1
+        // queued/steering row).
+        context.deferredTurns.push({ ...turn, text: message });
+        context.session = {
+          ...context.session,
+          activeTurnId: turn.turnId,
+          updatedAt: yield* nowIso,
+        };
+        yield* startSettlePoll(context);
+        const resumeCursor = buildAetherResumeCursor(context);
+        return {
+          threadId: input.threadId,
+          turnId: turn.turnId,
+          ...(resumeCursor !== undefined ? { resumeCursor } : {}),
+        };
+      }
+
+      // Idle task: the respond dispatches immediately. The turn is recorded
+      // BEFORE the attach for the same reason as the create path — a pump
+      // restarted here reconciles on its first beat and can settle it.
+      const { mapper } = yield* ensureTaskMapper(context, restClient, taskId);
+      context.activeTurn = turn;
+      yield* processMapperEvents(context, mapper.noteTurnStarted(wireTurnId, yield* nowIso));
+      yield* emitTurnStarted(context, turn, {});
+      // Re-attach if the pump ended (suspended VM) — active, may start.
+      yield* ensureTaskPipeline(context, restClient, taskId, { allowStart: true });
+      yield* startSettlePoll(context);
+      const resumeCursor = buildAetherResumeCursor(context);
+      return {
+        threadId: input.threadId,
+        turnId: turn.turnId,
+        ...(resumeCursor !== undefined ? { resumeCursor } : {}),
+      };
+    },
+  );
+
+  const interruptTurn: ProviderAdapterShape<ProviderAdapterError>["interruptTurn"] = Effect.fn(
+    "interruptTurn",
+  )(function* (threadId, _turnId) {
+    const context = yield* ensureContext(threadId);
+    const restClient = yield* requireRestClient("interruptTurn");
+    const taskId = context.taskId;
+    if (taskId === undefined) {
+      return yield* new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "interruptTurn",
+        detail: "The thread has no Aether task yet; there is nothing to interrupt.",
+      });
+    }
+    const active = context.activeTurn;
+    const deferred = [...context.deferredTurns];
+    if (active === undefined && deferred.length === 0) {
+      return yield* new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "interruptTurn",
+        detail: "No Aether turn is active on this thread.",
+      });
+    }
+    // Discarding queued messages is the explicit design choice: keeping them
+    // would let Aether's done-callback restart the agent and Stop would not
+    // stick (spec resolved note 6).
+    yield* restClient
+      .stopTask(taskId, { discardQueuedMessages: true })
+      .pipe(Effect.mapError(toRestRequestError("interruptTurn")));
+    // The settle — whichever transport observes it — must read `interrupted`.
+    // Marked only AFTER the stop 200: a failed stop leaves the turn running
+    // remotely, and the mapper flag is sticky — marking optimistically would
+    // falsify a later natural settle into 'interrupted'.
+    if (active !== undefined) {
+      context.mapper?.markInterrupted(active.wireTurnId);
+    }
+    // Re-offer any driver-queued (steer) message text the stop discarded,
+    // and cancel their deferred turn.starteds — the thread must stay idle.
+    context.deferredTurns = [];
+    for (const discarded of deferred) {
+      yield* emit({
+        ...(yield* baseEvent(context)),
+        type: "runtime.warning",
+        payload: {
+          message: `Stopping discarded your queued message. You can send it again:\n\n${discarded.text}`,
+        },
+      });
+    }
+    // Read-side confirmation: settle ONLY once the task row has actually
+    // left processing — never optimistically on the 200.
+    let confirmed: AetherTask | undefined;
+    for (let attempt = 1; attempt <= turnTiming.interruptMaxAttempts; attempt++) {
+      const task = yield* restClient
+        .getTask(taskId)
+        .pipe(Effect.mapError(toRestRequestError("interruptTurn")));
+      if (task.status !== "processing" && task.status !== "queued") {
+        confirmed = task;
+        break;
+      }
+      yield* Effect.sleep(Duration.millis(turnTiming.interruptPollMs));
+    }
+    if (confirmed === undefined) {
+      return yield* new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "interruptTurn",
+        detail: `Aether task '${taskId}' is still processing after the stop request; the interrupt could not be confirmed.`,
+      });
+    }
+    // Settle through the standard pipeline: mirror sync runs, the mapper's
+    // interrupt flag turns the settle into state=interrupted, and if the
+    // live path already settled the turn this emits nothing extra.
+    if (context.mapper !== undefined) {
+      yield* processMapperEvents(context, context.mapper.reconcileTask(confirmed, yield* nowIso));
+    }
+    // Every DISCARDED deferred turn needs its own terminal settle: it was
+    // announced through session.activeTurnId at queue time, but the remote
+    // never picked it up, so neither the mapper nor the reconcile above will
+    // ever settle it — without this a stop pressed while ONLY a queued steer
+    // exists leaves the session running on a turn that no longer exists.
+    for (const discarded of deferred) {
+      yield* emit({
+        ...(yield* baseEvent(context)),
+        eventId: EventId.make(`aether:${taskId}:turn:${discarded.wireTurnId}:settled`),
+        turnId: discarded.turnId,
+        type: "turn.completed",
+        payload: { state: "interrupted" },
+      });
+      yield* onTurnSettled(context, discarded.turnId);
+    }
+    // The session must not stay wedged on a turn the remote no longer runs.
+    if (context.activeTurn !== undefined && context.activeTurn.turnId === active?.turnId) {
+      yield* onTurnSettled(context, active.turnId);
+    }
+  });
+
   return {
     provider: PROVIDER,
     capabilities: {
@@ -784,8 +1790,8 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       sessionModelSwitch: "unsupported",
     },
     startSession,
-    sendTurn: () => notImplemented("sendTurn"),
-    interruptTurn: () => notImplemented("interruptTurn"),
+    sendTurn,
+    interruptTurn,
     respondToRequest: () => notImplemented("respondToRequest"),
     respondToUserInput: () => notImplemented("respondToUserInput"),
     stopSession,

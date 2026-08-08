@@ -134,22 +134,6 @@ export function readAetherApiKey(environment: NodeJS.ProcessEnv): string | undef
 
 const MISSING_KEY_MESSAGE = `No Aether API key configured. Add a sensitive ${AETHER_API_KEY_ENV_VAR} environment variable to this provider instance.`;
 
-/**
- * T6 removes this gate. Until the turn protocol exists (T3–T6), any
- * selectable Aether snapshot routes turns into the not-implemented adapter.
- * The composer resolves send availability from `enabled && isAvailable`, and
- * mobile's model options check only enabled/installed/auth — so the gate must
- * hold on ALL of them at once, per the ServerProvider contract that
- * `availability: "unavailable"` snapshots set `enabled: false` and
- * `installed: false`. Probes still run so key validation surfaces in
- * settings via status/auth/message.
- */
-const gateUntilTurnProtocol = (base: ServerProviderDraft): ServerProviderDraft => ({
-  ...base,
-  availability: "unavailable",
-  unavailableReason: "Aether driver preview: sessions arrive in a later update.",
-});
-
 /** Instant zero-I/O draft published while the first probe runs. */
 export const makePendingAetherProvider = (
   aetherSettings: AetherSettings,
@@ -159,38 +143,35 @@ export const makePendingAetherProvider = (
     const models = aetherModels(aetherSettings);
 
     if (!aetherSettings.enabled) {
-      return gateUntilTurnProtocol(
-        buildServerProvider({
-          presentation: AETHER_PRESENTATION,
-          enabled: false,
-          checkedAt,
-          models,
-          probe: {
-            installed: false,
-            version: null,
-            status: "warning",
-            auth: { status: "unknown" },
-            message: "Aether is disabled in T3 Code settings.",
-          },
-        }),
-      );
-    }
-
-    return gateUntilTurnProtocol(
-      buildServerProvider({
+      return buildServerProvider({
         presentation: AETHER_PRESENTATION,
         enabled: false,
         checkedAt,
         models,
         probe: {
-          installed: false,
+          // Cloud API — there is no binary to install, ever.
+          installed: true,
           version: null,
           status: "warning",
           auth: { status: "unknown" },
-          message: "Aether provider status has not been checked in this session yet.",
+          message: "Aether is disabled in T3 Code settings.",
         },
-      }),
-    );
+      });
+    }
+
+    return buildServerProvider({
+      presentation: AETHER_PRESENTATION,
+      enabled: true,
+      checkedAt,
+      models,
+      probe: {
+        installed: true,
+        version: null,
+        status: "warning",
+        auth: { status: "unknown" },
+        message: "Aether provider status has not been checked in this session yet.",
+      },
+    });
   });
 
 /**
@@ -211,21 +192,21 @@ export const checkAetherProviderStatus = Effect.fn("checkAetherProviderStatus")(
     readonly auth: ServerProviderDraft["auth"];
     readonly message: string;
   }): ServerProviderDraft =>
-    gateUntilTurnProtocol(
-      buildServerProvider({
-        presentation: AETHER_PRESENTATION,
-        enabled: false,
-        checkedAt,
-        models,
-        probe: {
-          installed: false,
-          version: null,
-          status: probe.status,
-          auth: probe.auth,
-          message: probe.message,
-        },
-      }),
-    );
+    buildServerProvider({
+      presentation: AETHER_PRESENTATION,
+      enabled: aetherSettings.enabled,
+      checkedAt,
+      models,
+      probe: {
+        // Cloud API — no local binary, so "installed" is unconditionally
+        // true and the status copy never says "Sign in via the CLI".
+        installed: true,
+        version: null,
+        status: probe.status,
+        auth: probe.auth,
+        message: probe.message,
+      },
+    });
 
   if (!aetherSettings.enabled) {
     return draft({

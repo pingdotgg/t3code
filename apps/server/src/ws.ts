@@ -20,6 +20,8 @@ import {
   EventId,
   type OrchestrationCommand,
   type GitActionProgressEvent,
+  GitCommandError,
+  GitManagerError,
   type GitManagerServiceError,
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
@@ -79,6 +81,13 @@ import {
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import {
+  AETHER_MIRROR_REFUSAL,
+  aetherMirrorWriteFileError,
+  guardAetherRemoveWorktree,
+  guardAetherVcsMutation,
+} from "./provider/AetherMirrorGuards.ts";
+import { AetherMirrorRegistry } from "./provider/AetherMirrorRegistry.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -360,6 +369,27 @@ const makeWsRpcLayer = (
       const keybindings = yield* Keybindings.Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+      const aetherMirrorRegistry = yield* AetherMirrorRegistry;
+
+      // -- Aether cloud-session write guard (build item 8a) -----------------
+      // While an Aether thread owns a cwd, that checkout is a one-way mirror
+      // of the cloud VM: local writes never reach the VM and silently break
+      // the next turn's reset-and-apply sync. These RPCs dispatch straight
+      // into workspaceFileSystem/gitWorkflow (they never cross
+      // ProviderAdapter), so the refusal lives HERE, at the dispatch sites —
+      // the guard logic itself is in provider/AetherMirrorGuards.ts (tested).
+      const guardVcsMutation = <A, E, R>(
+        operation: string,
+        cwd: string,
+        effect: Effect.Effect<A, E, R>,
+      ): Effect.Effect<A, E | GitCommandError, R> =>
+        guardAetherVcsMutation(aetherMirrorRegistry, operation, cwd, effect);
+
+      const guardRemoveWorktree = <A, E, R>(
+        input: { readonly cwd: string; readonly path: string },
+        effect: Effect.Effect<A, E, R>,
+      ): Effect.Effect<A, E | GitCommandError, R> =>
+        guardAetherRemoveWorktree(aetherMirrorRegistry, input, effect);
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -1691,16 +1721,25 @@ const makeWsRpcLayer = (
         [WS_METHODS.projectsWriteFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsWriteFile,
-            workspaceFileSystem.writeFile(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProjectWriteFileError({
-                    cwd: input.cwd,
-                    relativePath: input.relativePath,
-                    ...projectFileFailureContext(cause),
-                    cause,
-                  }),
-              ),
+            // ownsPathWithin, not ownsCwd: relativePath resolves under cwd,
+            // so a PARENT project cwd can descend into an active mirror
+            // (cwd=/repo, relativePath=.worktrees/mirror/app.ts).
+            Effect.flatMap(
+              aetherMirrorRegistry.ownsPathWithin(input.cwd, input.relativePath),
+              (owned) =>
+                owned
+                  ? Effect.fail(aetherMirrorWriteFileError(input))
+                  : workspaceFileSystem.writeFile(input).pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new ProjectWriteFileError({
+                            cwd: input.cwd,
+                            relativePath: input.relativePath,
+                            ...projectFileFailureContext(cause),
+                            cause,
+                          }),
+                      ),
+                    ),
             ),
             { "rpc.aggregate": "workspace" },
           ),
@@ -1790,35 +1829,54 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsPull]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsPull,
-            gitWorkflow.pullCurrentBranch(input.cwd).pipe(
-              Effect.matchCauseEffect({
-                onFailure: (cause) => Effect.failCause(cause),
-                onSuccess: (result) =>
-                  refreshGitStatus(input.cwd).pipe(Effect.ignore({ log: true }), Effect.as(result)),
-              }),
+            guardVcsMutation(
+              "vcs.pull",
+              input.cwd,
+              gitWorkflow.pullCurrentBranch(input.cwd).pipe(
+                Effect.matchCauseEffect({
+                  onFailure: (cause) => Effect.failCause(cause),
+                  onSuccess: (result) =>
+                    refreshGitStatus(input.cwd).pipe(
+                      Effect.ignore({ log: true }),
+                      Effect.as(result),
+                    ),
+                }),
+              ),
             ),
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.gitRunStackedAction]: (input) =>
           observeRpcStream(
             WS_METHODS.gitRunStackedAction,
-            Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
-              gitWorkflow
-                .runStackedAction(input, {
-                  actionId: input.actionId,
-                  progressReporter: {
-                    publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
-                  },
-                })
-                .pipe(
-                  Effect.matchCauseEffect({
-                    onFailure: (cause) => Queue.failCause(queue, cause),
-                    onSuccess: () =>
-                      refreshGitStatus(input.cwd).pipe(
-                        Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
-                      ),
-                  }),
-                ),
+            Stream.unwrap(
+              Effect.map(aetherMirrorRegistry.ownsCwd(input.cwd), (owned) =>
+                owned
+                  ? Stream.fail(
+                      new GitManagerError({
+                        operation: "git.runStackedAction",
+                        cwd: input.cwd,
+                        detail: AETHER_MIRROR_REFUSAL,
+                      }),
+                    )
+                  : Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
+                      gitWorkflow
+                        .runStackedAction(input, {
+                          actionId: input.actionId,
+                          progressReporter: {
+                            publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
+                          },
+                        })
+                        .pipe(
+                          Effect.matchCauseEffect({
+                            onFailure: (cause) => Queue.failCause(queue, cause),
+                            onSuccess: () =>
+                              refreshGitStatus(input.cwd).pipe(
+                                Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
+                              ),
+                          }),
+                        ),
+                    ),
+              ),
             ),
             { "rpc.aggregate": "vcs" },
           ),
@@ -1845,25 +1903,40 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsCreateWorktree,
-            gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            guardVcsMutation(
+              "vcs.createWorktree",
+              input.cwd,
+              gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsRemoveWorktree,
-            gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            guardRemoveWorktree(
+              input,
+              gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsCreateRef]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsCreateRef,
-            gitWorkflow.createRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            guardVcsMutation(
+              "vcs.createRef",
+              input.cwd,
+              gitWorkflow.createRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsSwitchRef]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsSwitchRef,
-            gitWorkflow.switchRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            guardVcsMutation(
+              "vcs.switchRef",
+              input.cwd,
+              gitWorkflow.switchRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsInit]: (input) =>

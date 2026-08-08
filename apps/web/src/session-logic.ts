@@ -52,13 +52,13 @@ export const PROVIDER_OPTIONS: Array<{
     available: true,
     pickerSidebarBadge: "new",
   },
-  // T1 skeleton: the Aether adapter fails every session/turn operation until
-  // T3/T6 land, so the picker entry stays unavailable ("soon"), not live.
+  // T6 landed the turn protocol + mirror sync: Aether is selectable end to
+  // end.
   {
     value: ProviderDriverKind.make("aether"),
     label: "Aether",
-    available: false,
-    pickerSidebarBadge: "soon",
+    available: true,
+    pickerSidebarBadge: "new",
   },
 ];
 

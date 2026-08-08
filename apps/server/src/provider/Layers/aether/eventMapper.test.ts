@@ -777,3 +777,43 @@ describe("parseAetherQuestions", () => {
     expect(issues).toEqual(["ask_user input carries no questions array"]);
   });
 });
+
+describe("AetherEventMapper — interrupted turns (T6)", () => {
+  it("settles an interrupt-flagged turn as interrupted, whichever transport observes it", () => {
+    const mapper = makeMapper();
+    mapper.noteTurnStarted("u1", NOW);
+    expect(mapper.activeWireTurnId()).toBe("u1");
+    mapper.markInterrupted("u1");
+    const events = mapper.mapWsEvent(parseFrame(wsTurnCompleted), NOW);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "turn.completed",
+      turnId: "aether-turn-u1",
+      payload: { state: "interrupted" },
+    });
+    expect(mapper.activeWireTurnId()).toBeUndefined();
+  });
+
+  it("suppresses the error card when turn.failed lands after a user stop", () => {
+    const mapper = makeMapper();
+    mapper.noteTurnStarted("u1", NOW);
+    mapper.markInterrupted("u1");
+    const events = mapper.mapWsEvent(parseFrame(wsTurnFailed), NOW);
+    // A stop often surfaces remotely as a failed turn: the settle reads
+    // interrupted and NO runtime.error follows — the user asked for it.
+    expect(events.map((event) => event.type)).toEqual(["turn.completed"]);
+    expect(events[0]).toMatchObject({ payload: { state: "interrupted" } });
+  });
+
+  it("noteTurnStarted settles a displaced predecessor exactly like an observed transition", () => {
+    const mapper = makeMapper();
+    mapper.noteTurnStarted("u1", NOW);
+    const events = mapper.noteTurnStarted("u2", NOW);
+    expect(events.map((event) => event.type)).toEqual(["turn.completed"]);
+    expect(events[0]).toMatchObject({
+      turnId: "aether-turn-u1",
+      payload: { state: "completed" },
+    });
+    expect(mapper.activeWireTurnId()).toBe("u2");
+  });
+});

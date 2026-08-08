@@ -91,6 +91,26 @@ export interface AetherEventMapper {
   readonly reconcileTask: (task: AetherTask, nowIso: string) => ReadonlyArray<ProviderRuntimeEvent>;
   /** The highest durable sequence applied so far (in-memory cursor). */
   readonly latestSequence: () => number;
+  /** The wire turn id currently tracked as in flight, if any. */
+  readonly activeWireTurnId: () => string | undefined;
+  /**
+   * Register a driver-initiated turn (sendTurn minted it from the 202 /
+   * harvested user row) as the active wire turn, so a settle observed ONLY
+   * through the REST backstop (durable rows carry no turn ids) still finds
+   * the turn to settle. Returns the displaced predecessor's settle events,
+   * exactly like an observed turn transition.
+   */
+  readonly noteTurnStarted: (
+    wireTurnId: string,
+    nowIso: string,
+  ) => ReadonlyArray<ProviderRuntimeEvent>;
+  /**
+   * Flag a wire turn as user-interrupted (T6 interruptTurn): its single
+   * terminal settle — whichever transport observes it — emits
+   * `turn.completed state=interrupted`, and a `turn.failed` twin arriving
+   * after the stop skips its error card (a stop is not a provider failure).
+   */
+  readonly markInterrupted: (wireTurnId: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -298,6 +318,8 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
   const warnedOnce = new Set<string>();
   /** The wire turn id currently in flight, for settles observed via REST. */
   let activeWireTurnId: string | undefined;
+  /** Wire turns the user interrupted — their settle state is `interrupted`. */
+  const interruptedTurns = new Set<string>();
   /**
    * The session state ingestion currently believes, mirrored so the status
    * projection (spec §2.1 working-indicator row) emits only on transitions.
@@ -671,9 +693,14 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
     if (activeWireTurnId === input.wireTurnId) {
       activeWireTurnId = undefined;
     }
+    // A user-interrupted turn settles as `interrupted` no matter which
+    // transport observes the settle (spec §2.3 interrupt row).
+    const state: "completed" | "failed" | "interrupted" = interruptedTurns.has(input.wireTurnId)
+      ? "interrupted"
+      : input.state;
     // Ingestion flips the session to error/ready on a turn settle; mirror it
     // so the status projection re-emits `running` for the NEXT turn.
-    lastProjectedState = input.state === "failed" ? "error" : "ready";
+    lastProjectedState = state === "failed" ? "error" : "ready";
     const errorMessage = trimmedOrUndefined(input.errorMessage);
     return [
       {
@@ -684,7 +711,7 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
         }),
         type: "turn.completed",
         payload: {
-          state: input.state,
+          state,
           ...(errorMessage !== undefined ? { errorMessage } : {}),
         },
       },
@@ -877,7 +904,15 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
           ...settleTurn({ wireTurnId: event.turnId, state: "completed", createdAt }),
         ];
 
-      case "turn.failed":
+      case "turn.failed": {
+        if (interruptedTurns.has(event.turnId)) {
+          // A stop often surfaces remotely as a failed turn; the user asked
+          // for it, so no error card — just the interrupted settle.
+          return [
+            ...trackTurn(event.turnId, createdAt),
+            ...settleTurn({ wireTurnId: event.turnId, state: "failed", createdAt }),
+          ];
+        }
         return [
           ...trackTurn(event.turnId, createdAt),
           ...settleTurn({
@@ -900,6 +935,7 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
             payload: { message: event.payload.errorMessage, class: "provider_error" },
           },
         ];
+      }
 
       case "turn.awaiting_input": {
         // An awaiting_input IS a settle: the remote turn ended and parked on
@@ -1212,5 +1248,10 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
     reconcileDelta,
     reconcileTask,
     latestSequence: () => lastSequence,
+    activeWireTurnId: () => activeWireTurnId,
+    noteTurnStarted: (wireTurnId, nowIso) => trackTurn(wireTurnId, stamp(undefined, nowIso)),
+    markInterrupted: (wireTurnId) => {
+      interruptedTurns.add(wireTurnId);
+    },
   };
 }

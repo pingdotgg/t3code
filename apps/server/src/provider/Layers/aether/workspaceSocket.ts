@@ -37,6 +37,7 @@
  *
  * @module provider/Layers/aether/workspaceSocket
  */
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
@@ -44,7 +45,16 @@ import * as Schema from "effect/Schema";
 
 import type { AetherRestClient, AetherRestError } from "./restClient.ts";
 import type { AetherTask } from "./restSchemas.ts";
-import { parseAetherAgentFrame, type AetherAgentEvent } from "./wireEvents.ts";
+import {
+  parseAetherAgentFrame,
+  parseAetherFileReadResponse,
+  parseAetherGitDiffResponse,
+  type AetherAgentEvent,
+  type AetherFrameParseResult,
+  type AetherWsFileReadSuccessResponse,
+  type AetherWsGitDiffResult,
+  type AetherWsRequestOutcome,
+} from "./wireEvents.ts";
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -108,6 +118,71 @@ export type AetherAttachError =
   | AetherTaskUnknownStatusError
   | AetherWorkspaceConnectTimeoutError
   | AetherRestError;
+
+// ---------------------------------------------------------------------------
+// Request-response errors (git diff / files read over the live socket)
+// ---------------------------------------------------------------------------
+
+/** The workspace never answered a correlated request within the budget. */
+export class AetherWorkspaceRequestTimeoutError extends Schema.TaggedErrorClass<AetherWorkspaceRequestTimeoutError>()(
+  "AetherWorkspaceRequestTimeoutError",
+  {
+    channel: Schema.String,
+    requestType: Schema.String,
+    requestId: Schema.String,
+    timeoutMs: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Aether workspace did not answer the ${this.channel} '${this.requestType}' request within ${this.timeoutMs}ms.`;
+  }
+}
+
+/** The workspace answered a correlated request with success:false. */
+export class AetherWorkspaceRequestFailedError extends Schema.TaggedErrorClass<AetherWorkspaceRequestFailedError>()(
+  "AetherWorkspaceRequestFailedError",
+  {
+    channel: Schema.String,
+    requestType: Schema.String,
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Aether workspace ${this.channel} '${this.requestType}' request failed: ${this.detail}`;
+  }
+}
+
+/** The socket dropped (or was never open) while a request needed it. */
+export class AetherWorkspaceDetachedError extends Schema.TaggedErrorClass<AetherWorkspaceDetachedError>()(
+  "AetherWorkspaceDetachedError",
+  {
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Aether workspace socket is not attached: ${this.detail}`;
+  }
+}
+
+/** A correlated response that this build cannot parse — a contract break. */
+export class AetherWorkspaceResponseMalformedError extends Schema.TaggedErrorClass<AetherWorkspaceResponseMalformedError>()(
+  "AetherWorkspaceResponseMalformedError",
+  {
+    channel: Schema.String,
+    requestType: Schema.String,
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Aether workspace ${this.channel} '${this.requestType}' response did not parse: ${this.detail}`;
+  }
+}
+
+export type AetherWorkspaceRequestError =
+  | AetherWorkspaceRequestTimeoutError
+  | AetherWorkspaceRequestFailedError
+  | AetherWorkspaceDetachedError
+  | AetherWorkspaceResponseMalformedError;
 
 // ---------------------------------------------------------------------------
 // WebSocket seam (injectable for tests; defaults to the Node global)
@@ -191,6 +266,8 @@ export interface AetherStreamTiming {
   readonly connectMaxAttempts: number;
   /** Fallback wait when the server sends no retry_after_ms. */
   readonly connectDefaultRetryMs: number;
+  /** Budget for one correlated git/files request over the live socket. */
+  readonly requestTimeoutMs: number;
 }
 
 const DEFAULT_TIMING: AetherStreamTiming = {
@@ -201,6 +278,7 @@ const DEFAULT_TIMING: AetherStreamTiming = {
   openTimeoutMs: 15_000,
   connectMaxAttempts: 60,
   connectDefaultRetryMs: 1_000,
+  requestTimeoutMs: 30_000,
 };
 
 const backoffMs = (initialMs: number, maxMs: number, attempt: number): number =>
@@ -336,10 +414,25 @@ export const connectForTransport = Effect.fn("connectForTransport")(function* (o
 export interface AetherAgentConnection {
   /**
    * Send one `user_activity` keep-alive ping. The T6 turn engine drives this
-   * (throttled to ACTIVITY_PING_THROTTLE_MS) while a turn is active so the
-   * VM's interactive idle hold stays alive; nothing calls it yet.
+   * from its settle-poll beat while a turn is active so the VM's interactive
+   * idle hold stays alive.
    */
   readonly sendUserActivity: () => Effect.Effect<void>;
+  /**
+   * Request the cumulative git diff over the git channel:
+   * `{channel:"git", type:"diff", requestId, mode}` → `GitDiffResult`.
+   * requestId-correlated with a timeout; every failure is typed.
+   */
+  readonly requestGitDiff: (input: {
+    readonly mode: "main" | "lastCommit";
+  }) => Effect.Effect<AetherWsGitDiffResult, AetherWorkspaceRequestError>;
+  /**
+   * Read one workspace file over the files channel (the binary-file path of
+   * the mirror sync — base64 content for isBinary diff entries).
+   */
+  readonly readWorkspaceFile: (
+    path: string,
+  ) => Effect.Effect<AetherWsFileReadSuccessResponse, AetherWorkspaceRequestError>;
 }
 
 export interface AetherAgentStreamOptions {
@@ -350,10 +443,20 @@ export interface AetherAgentStreamOptions {
   readonly webSocketFactory?: AetherWebSocketFactory;
   readonly timing?: Partial<AetherStreamTiming>;
   /**
+   * Pass `start=true` to the FIRST connect attempt of this stream — the one
+   * path allowed to boot a VM, reserved for a user-initiated turn (the T6
+   * sendTurn attach). Consumed after one connect; every re-attach after a
+   * drop is passive again (`start=false`), preserving the
+   * viewing-never-starts-a-VM invariant.
+   */
+  readonly startOnFirstAttach?: boolean;
+  /**
    * Fires after every successful attach+subscribe, BEFORE live frames are
    * handled — drive the conversation/delta reconciliation from the resume
    * cursor here (the ONLY recovery for live-only turn.* events missed while
-   * detached).
+   * detached). The reconcile may settle a turn and issue correlated
+   * git/files requests on the handed connection: those resolve normally,
+   * because the frame router is already draining when this runs.
    */
   readonly onConnected: (connection: AetherAgentConnection) => Effect.Effect<void>;
   /** One parsed agent event. */
@@ -386,6 +489,12 @@ export interface AetherAgentStreamOptions {
    * workspace). Terminal for this attach: the next sendTurn re-attaches.
    */
   readonly onDurableOnly: (reason: string) => Effect.Effect<void>;
+  /**
+   * The live socket dropped (after having connected). The connection handle
+   * handed to `onConnected` is dead from this moment — callers must stop
+   * issuing requests on it until the next `onConnected`.
+   */
+  readonly onDisconnected?: () => Effect.Effect<void>;
 }
 
 type SocketSignal =
@@ -501,6 +610,10 @@ export const runAetherAgentStream = Effect.fn("runAetherAgentStream")(function* 
   let reconnectAttempt = 0;
   let consecutiveFailures = 0;
   let everConnected = false;
+  // One-shot start permission (user-initiated turn). Consumed by the first
+  // connect attempt whether or not it succeeds — a failed active attach must
+  // not leave a VM-boot permission armed for a later passive reconnect.
+  let startPermission = options.startOnFirstAttach === true;
 
   while (true) {
     // Re-resolve the FULL attach every iteration: task status and workspace
@@ -515,10 +628,12 @@ export const runAetherAgentStream = Effect.fn("runAetherAgentStream")(function* 
       if (resolution._tag === "parked") {
         return { _tag: "parked" } as const;
       }
+      const start = startPermission;
+      startPermission = false;
       const transport = yield* connectForTransport({
         connectWorkspace: options.restClient.connectWorkspace,
         workspaceId: resolution.workspaceId,
-        start: false,
+        start,
         timing,
       });
       if (transport._tag === "unavailable") {
@@ -577,6 +692,124 @@ export const runAetherAgentStream = Effect.fn("runAetherAgentStream")(function* 
               reconnectAttempt = 0;
               consecutiveFailures = 0;
               everConnected = true;
+
+              // Correlated request-response state for this connection.
+              // Every pending request fails with a typed detached error when
+              // the connection scope closes (socket drop or session stop).
+              const pending = new Map<
+                string,
+                Deferred.Deferred<unknown, AetherWorkspaceDetachedError>
+              >();
+              let requestCounter = 0;
+              yield* Effect.addFinalizer(() =>
+                Effect.gen(function* () {
+                  for (const deferred of pending.values()) {
+                    yield* Deferred.fail(
+                      deferred,
+                      new AetherWorkspaceDetachedError({
+                        detail: "the workspace socket closed with the request in flight",
+                      }),
+                    ).pipe(Effect.ignore);
+                  }
+                  pending.clear();
+                }),
+              );
+
+              const sendRequest = <A>(input: {
+                readonly channel: "git" | "files";
+                readonly requestType: string;
+                readonly message: (requestId: string) => string;
+                readonly parse: (frame: unknown) => AetherWsRequestOutcome<A>;
+              }): Effect.Effect<A, AetherWorkspaceRequestError> =>
+                Effect.gen(function* () {
+                  requestCounter++;
+                  const requestId = `t3-${input.channel}-${requestCounter}`;
+                  const deferred = yield* Deferred.make<unknown, AetherWorkspaceDetachedError>();
+                  pending.set(requestId, deferred);
+                  yield* Effect.try({
+                    try: () => opened.socket.send(input.message(requestId)),
+                    catch: (cause) =>
+                      new AetherWorkspaceDetachedError({
+                        detail: `failed to send the ${input.channel} '${input.requestType}' request: ${String(cause)}`,
+                      }),
+                  });
+                  const frame = yield* Deferred.await(deferred).pipe(
+                    Effect.timeout(Duration.millis(timing.requestTimeoutMs)),
+                    Effect.catchTag(
+                      "TimeoutError",
+                      () =>
+                        new AetherWorkspaceRequestTimeoutError({
+                          channel: input.channel,
+                          requestType: input.requestType,
+                          requestId,
+                          timeoutMs: timing.requestTimeoutMs,
+                        }),
+                    ),
+                    Effect.ensuring(Effect.sync(() => pending.delete(requestId))),
+                  );
+                  const outcome = input.parse(frame);
+                  switch (outcome._tag) {
+                    case "success":
+                      return outcome.value;
+                    case "failure":
+                      return yield* new AetherWorkspaceRequestFailedError({
+                        channel: input.channel,
+                        requestType: input.requestType,
+                        detail: outcome.error,
+                      });
+                    case "malformed":
+                      return yield* new AetherWorkspaceResponseMalformedError({
+                        channel: input.channel,
+                        requestType: input.requestType,
+                        detail: outcome.detail,
+                      });
+                  }
+                });
+
+              // Frame ROUTING runs on its own fiber so request-response
+              // resolution never waits behind event handling: the mirror
+              // sync engine issues correlated git/files requests from INSIDE
+              // `onEvent` (sync-then-settle) AND from inside `onConnected`
+              // (the reconcile can settle a turn), and a single fiber doing
+              // both would deadlock — the response frame would sit in the
+              // signal queue behind the very handler awaiting it,
+              // guaranteeing the request timeout. The router is therefore
+              // forked and DRAINING before `onConnected` runs. Event ORDER is
+              // preserved regardless: the router only forwards non-response
+              // frames FIFO into `routed`, and nothing takes from `routed`
+              // until the consumer loop below, which starts strictly after
+              // `onConnected` has returned.
+              const routed = yield* Queue.unbounded<
+                | { readonly _tag: "closed"; readonly code: number; readonly reason: string }
+                | {
+                    readonly _tag: "frame";
+                    readonly parsed: Exclude<
+                      AetherFrameParseResult,
+                      { readonly _tag: "request-response" }
+                    >;
+                  }
+              >();
+              yield* Effect.gen(function* () {
+                while (true) {
+                  const signal = yield* Queue.take(opened.signals);
+                  if (signal._tag === "closed") {
+                    yield* Queue.offer(routed, signal);
+                    return;
+                  }
+                  const parsed = parseAetherAgentFrame(signal.data);
+                  if (parsed._tag === "request-response") {
+                    const waiter = pending.get(parsed.requestId);
+                    if (waiter !== undefined) {
+                      pending.delete(parsed.requestId);
+                      yield* Deferred.succeed(waiter, parsed.frame).pipe(Effect.ignore);
+                    }
+                    // No waiter: the request already timed out — drop.
+                    continue;
+                  }
+                  yield* Queue.offer(routed, { _tag: "frame", parsed });
+                }
+              }).pipe(Effect.forkScoped);
+
               yield* options.onConnected({
                 sendUserActivity: () =>
                   Effect.sync(() =>
@@ -584,14 +817,30 @@ export const runAetherAgentStream = Effect.fn("runAetherAgentStream")(function* 
                       encodeUserActivityMessage({ channel: "activity", type: "user_activity" }),
                     ),
                   ),
+                requestGitDiff: ({ mode }) =>
+                  sendRequest({
+                    channel: "git",
+                    requestType: "diff",
+                    message: (requestId) =>
+                      JSON.stringify({ channel: "git", type: "diff", requestId, mode }),
+                    parse: parseAetherGitDiffResponse,
+                  }),
+                readWorkspaceFile: (path) =>
+                  sendRequest({
+                    channel: "files",
+                    requestType: "read",
+                    message: (requestId) =>
+                      JSON.stringify({ channel: "files", type: "read", requestId, path }),
+                    parse: parseAetherFileReadResponse,
+                  }),
               });
 
               while (true) {
-                const signal = yield* Queue.take(opened.signals);
-                if (signal._tag === "closed") {
-                  return signal;
+                const item = yield* Queue.take(routed);
+                if (item._tag === "closed") {
+                  return item;
                 }
-                const parsed = parseAetherAgentFrame(signal.data);
+                const parsed = item.parsed;
                 switch (parsed._tag) {
                   case "event": {
                     // The socket is workspace-scoped and frames carry their
@@ -679,6 +928,9 @@ export const runAetherAgentStream = Effect.fn("runAetherAgentStream")(function* 
         code: pumped.code,
         reason: pumped.reason,
       });
+      if (options.onDisconnected !== undefined) {
+        yield* options.onDisconnected();
+      }
     }
     reconnectAttempt++;
     yield* Effect.sleep(

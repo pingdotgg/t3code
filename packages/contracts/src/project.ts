@@ -233,6 +233,8 @@ type ProjectFileFailureContext = {
   readonly resolvedWorkspaceRoot?: string;
   readonly operation?: ProjectFileOperation;
   readonly operationPath?: string;
+  /** Overrides the derived message (the constructors honor it via decodedProjectErrorMessage). */
+  readonly message?: string;
   readonly cause?: unknown;
 };
 

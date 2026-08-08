@@ -66,24 +66,23 @@ describe("makePendingAetherProvider", () => {
     Effect.gen(function* () {
       const snapshot = yield* makePendingAetherProvider(decodeAetherSettings({ enabled: false }));
       expect(snapshot.enabled).toBe(false);
-      expect(snapshot.installed).toBe(false);
+      // Cloud API: no binary, installed is unconditionally true.
+      expect(snapshot.installed).toBe(true);
       expect(snapshot.message).toContain("disabled");
-      expect(snapshot.availability).toBe("unavailable");
+      expect(snapshot.availability).toBeUndefined();
     }),
   );
 
   it.effect("returns a pending snapshot carrying the vendored catalog by default", () =>
     Effect.gen(function* () {
       const snapshot = yield* makePendingAetherProvider(enabledSettings);
-      // T6 flips enabled/installed back on: until the turn protocol exists,
-      // the pending snapshot must be unselectable on every client — the
-      // composer keys on enabled && isAvailable, mobile on
-      // enabled/installed/auth — so all gate flags hold at once.
-      expect(snapshot.enabled).toBe(false);
-      expect(snapshot.installed).toBe(false);
-      expect(snapshot.availability).toBe("unavailable");
-      expect(snapshot.unavailableReason).toBeTruthy();
-      expect(snapshot.status).toBe("disabled");
+      // T6 flipped the preview gate: the turn protocol is real, so a healthy
+      // instance is selectable end to end (no availability stamp).
+      expect(snapshot.enabled).toBe(true);
+      expect(snapshot.installed).toBe(true);
+      expect(snapshot.availability).toBeUndefined();
+      expect(snapshot.unavailableReason).toBeUndefined();
+      expect(snapshot.status).toBe("warning");
       expect(snapshot.version).toBeNull();
       expect(snapshot.message).toContain("not been checked");
       expect(snapshot.models.length).toBeGreaterThan(0);
@@ -109,7 +108,7 @@ describe("checkAetherProviderStatus", () => {
       const snapshot = yield* checkAetherProviderStatus(enabledSettings, {}).pipe(
         Effect.provideService(HttpClient.HttpClient, failingClient()),
       );
-      expect(snapshot.status).toBe("disabled");
+      expect(snapshot.status).toBe("error");
       expect(snapshot.auth.status).toBe("unauthenticated");
       expect(snapshot.message).toContain(AETHER_API_KEY_ENV_VAR);
     }),
@@ -120,7 +119,7 @@ describe("checkAetherProviderStatus", () => {
       const snapshot = yield* checkAetherProviderStatus(enabledSettings, {
         [AETHER_API_KEY_ENV_VAR]: "   ",
       }).pipe(Effect.provideService(HttpClient.HttpClient, failingClient()));
-      expect(snapshot.status).toBe("disabled");
+      expect(snapshot.status).toBe("error");
       expect(snapshot.auth.status).toBe("unauthenticated");
     }),
   );
@@ -133,7 +132,7 @@ describe("checkAetherProviderStatus", () => {
           respondingClient(() => new Response(null, { status: 401 })),
         ),
       );
-      expect(snapshot.status).toBe("disabled");
+      expect(snapshot.status).toBe("error");
       expect(snapshot.auth.status).toBe("unauthenticated");
       expect(snapshot.message).toContain("Invalid Aether API key");
     }),
@@ -147,7 +146,7 @@ describe("checkAetherProviderStatus", () => {
           respondingClient(() => new Response(null, { status: 503 })),
         ),
       );
-      expect(snapshot.status).toBe("disabled");
+      expect(snapshot.status).toBe("error");
       expect(snapshot.auth.status).toBe("unknown");
       expect(snapshot.message).toContain("HTTP 503");
     }),
@@ -158,7 +157,7 @@ describe("checkAetherProviderStatus", () => {
       const snapshot = yield* checkAetherProviderStatus(enabledSettings, keyedEnvironment).pipe(
         Effect.provideService(HttpClient.HttpClient, failingClient()),
       );
-      expect(snapshot.status).toBe("disabled");
+      expect(snapshot.status).toBe("error");
       expect(snapshot.message).toContain("Couldn't reach the Aether API");
     }),
   );
@@ -171,7 +170,7 @@ describe("checkAetherProviderStatus", () => {
           respondingClient(() => new Response("not json", { status: 200 })),
         ),
       );
-      expect(snapshot.status).toBe("disabled");
+      expect(snapshot.status).toBe("error");
       expect(snapshot.message).toContain("unexpected /profile payload");
     }),
   );
@@ -193,21 +192,19 @@ describe("checkAetherProviderStatus", () => {
       );
       expect(seen?.url).toBe("https://api.example.test/profile");
       expect(seen?.headers["authorization"]).toBe("Bearer test-key");
-      expect(snapshot.status).toBe("disabled");
       expect(snapshot.auth).toEqual({
         status: "authenticated",
         type: "aether",
         email: "dev@example.test",
       });
       expect(snapshot.message).toBe("Connected to Aether as dev@example.test.");
-      // T6 flips this: until the turn protocol exists, even a healthy,
-      // authenticated instance must stay unselectable on every client —
-      // availability for clients that honor it, enabled/installed for the
-      // ones (mobile) that do not.
-      expect(snapshot.availability).toBe("unavailable");
-      expect(snapshot.unavailableReason).toBeTruthy();
-      expect(snapshot.enabled).toBe(false);
-      expect(snapshot.installed).toBe(false);
+      // UN-gated shape (T6): a healthy probe is ready, authenticated and
+      // picker-eligible — no availability stamp, enabled+installed true.
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.availability).toBeUndefined();
+      expect(snapshot.unavailableReason).toBeUndefined();
+      expect(snapshot.enabled).toBe(true);
+      expect(snapshot.installed).toBe(true);
     }),
   );
 
@@ -219,7 +216,7 @@ describe("checkAetherProviderStatus", () => {
           respondingClient(() => Response.json({})),
         ),
       );
-      expect(snapshot.status).toBe("disabled");
+      expect(snapshot.status).toBe("ready");
       expect(snapshot.auth).toEqual({ status: "authenticated", type: "aether" });
       expect(snapshot.message).toBe("Connected to Aether.");
     }),

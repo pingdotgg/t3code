@@ -159,6 +159,124 @@ const AetherWsSlashCommandsUpdatedEvent = Schema.Struct({
 });
 export type AetherWsSlashCommandsUpdatedEvent = typeof AetherWsSlashCommandsUpdatedEvent.Type;
 
+// ---------------------------------------------------------------------------
+// Git / files channel request-response payloads (T6 mirror sync)
+// ---------------------------------------------------------------------------
+
+/**
+ * Loose twin of the workspace-protocol `DiffLine` (messages.ts:813-838).
+ * `kind` stays an open string at this boundary — the mirror engine dispatches
+ * on add|del|context and fails loudly on anything else (a diff it cannot
+ * rebuild must never be half-applied). The per-side line numbers are not
+ * consumed (hunk headers carry the positions), so they are tolerated and
+ * dropped by the loose struct.
+ */
+const AetherWsDiffLine = Schema.Struct({
+  kind: Schema.String,
+  text: Schema.String,
+  noTrailingNewline: Schema.optional(Schema.Boolean),
+});
+export type AetherWsDiffLine = typeof AetherWsDiffLine.Type;
+
+const AetherWsGitDiffHunk = Schema.Struct({
+  header: Schema.String,
+  oldStart: Schema.Number,
+  oldCount: Schema.Number,
+  newStart: Schema.Number,
+  newCount: Schema.Number,
+  lines: Schema.Array(AetherWsDiffLine),
+});
+export type AetherWsGitDiffHunk = typeof AetherWsGitDiffHunk.Type;
+
+const AetherWsGitDiffFile = Schema.Struct({
+  oldPath: Schema.String,
+  newPath: Schema.String,
+  displayPath: Schema.String,
+  // GitFileStatus is added|modified|deleted|renamed today; open string so a
+  // new status degrades into a typed rebuild error, not a parse crash.
+  status: Schema.String,
+  isBinary: Schema.Boolean,
+  hunks: Schema.Array(AetherWsGitDiffHunk),
+});
+export type AetherWsGitDiffFile = typeof AetherWsGitDiffFile.Type;
+
+/** `GitDiffResult` (messages.ts:862-866): the cumulative merge-base→tree diff. */
+const AetherWsGitDiffResult = Schema.Struct({
+  baseRef: Schema.String,
+  files: Schema.Array(AetherWsGitDiffFile),
+});
+export type AetherWsGitDiffResult = typeof AetherWsGitDiffResult.Type;
+
+const AetherWsGitDiffSuccessResponse = Schema.Struct({
+  success: Schema.Literal(true),
+  diff: AetherWsGitDiffResult,
+});
+const AetherWsRequestFailureResponse = Schema.Struct({
+  success: Schema.Literal(false),
+  error: Schema.String,
+});
+
+/** WS files `read` success (messages.ts FileReadResponse). */
+const AetherWsFileReadSuccessResponse = Schema.Struct({
+  success: Schema.Literal(true),
+  content: Schema.String,
+  encoding: Schema.Literals(["utf8", "base64"]),
+  isBinary: Schema.Boolean,
+});
+export type AetherWsFileReadSuccessResponse = typeof AetherWsFileReadSuccessResponse.Type;
+
+export type AetherWsRequestOutcome<A> =
+  | { readonly _tag: "success"; readonly value: A }
+  /** The workspace reported the request failed (e.g. git write lock held). */
+  | { readonly _tag: "failure"; readonly error: string }
+  /** A correlated response this build cannot parse — a contract break. */
+  | { readonly _tag: "malformed"; readonly detail: string };
+
+const decodeGitDiffSuccess = Schema.decodeUnknownResult(AetherWsGitDiffSuccessResponse);
+const decodeRequestFailure = Schema.decodeUnknownResult(AetherWsRequestFailureResponse);
+const decodeFileReadSuccess = Schema.decodeUnknownResult(AetherWsFileReadSuccessResponse);
+const decodeSuccessProbe = Schema.decodeUnknownResult(Schema.Struct({ success: Schema.Boolean }));
+
+function parseRequestOutcome<A>(
+  frame: unknown,
+  decodeSuccess: (frame: unknown) => Result.Result<A, Schema.SchemaError>,
+): AetherWsRequestOutcome<A> {
+  const probe = decodeSuccessProbe(frame);
+  if (Result.isFailure(probe)) {
+    return { _tag: "malformed", detail: "Response carries no boolean `success` field." };
+  }
+  if (!probe.success.success) {
+    const failure = decodeRequestFailure(frame);
+    return {
+      _tag: "failure",
+      error: Result.isSuccess(failure)
+        ? failure.success.error
+        : "workspace reported a failure without an error message",
+    };
+  }
+  const decoded = decodeSuccess(frame);
+  if (Result.isFailure(decoded)) {
+    return { _tag: "malformed", detail: String(decoded.failure) };
+  }
+  return { _tag: "success", value: decoded.success };
+}
+
+/** Parse a correlated git `diff` response frame. */
+export function parseAetherGitDiffResponse(
+  frame: unknown,
+): AetherWsRequestOutcome<AetherWsGitDiffResult> {
+  return parseRequestOutcome(frame, (input) =>
+    Result.map(decodeGitDiffSuccess(input), (response) => response.diff),
+  );
+}
+
+/** Parse a correlated files `read` response frame. */
+export function parseAetherFileReadResponse(
+  frame: unknown,
+): AetherWsRequestOutcome<AetherWsFileReadSuccessResponse> {
+  return parseRequestOutcome(frame, decodeFileReadSuccess);
+}
+
 /** The full parsed agent event union — all 13 wire kinds. */
 export type AetherAgentEvent =
   | AetherWsToolCallEvent
@@ -190,6 +308,18 @@ export type AetherFrameParseResult =
    * zero diagnostics under protocol skew. The caller must surface it.
    */
   | { readonly _tag: "server-error"; readonly detail: string }
+  /**
+   * A requestId-correlated response on the `git` or `files` channel — the
+   * answer to a driver-issued request (mirror sync's diff / binary read).
+   * The frame stays opaque here; the request issuer decodes it with the
+   * response parser matching what it asked for.
+   */
+  | {
+      readonly _tag: "request-response";
+      readonly channel: "git" | "files";
+      readonly requestId: string;
+      readonly frame: unknown;
+    }
   /** An agent task event whose kind this build does not know. Log once, drop. */
   | { readonly _tag: "unknown-kind"; readonly kind: string }
   /** Not JSON, no envelope, or a KNOWN kind whose payload failed to parse. */
@@ -203,6 +333,9 @@ const decodeKindProbe = Schema.decodeUnknownResult(Schema.Struct({ kind: Schema.
 // The server error frame is `{channel:"error", type:"error", error: string}`
 // (workspace-service server.ts); probed loosely like everything else.
 const decodeErrorProbe = Schema.decodeUnknownResult(Schema.Struct({ error: Schema.String }));
+const decodeRequestIdProbe = Schema.decodeUnknownResult(
+  Schema.Struct({ requestId: Schema.String }),
+);
 
 const decodeToolCall = Schema.decodeUnknownResult(AetherWsToolCallEvent);
 const decodeAssistantDelta = Schema.decodeUnknownResult(AetherWsAssistantDeltaEvent);
@@ -279,6 +412,21 @@ export function parseAetherAgentFrame(raw: string): AetherFrameParseResult {
         ? probe.success.error
         : "server sent an error frame carrying no string `error` field",
     };
+  }
+  if (envelope.success.channel === "git" || envelope.success.channel === "files") {
+    // Correlated request-response traffic for the mirror sync engine. Frames
+    // WITHOUT a requestId (files change broadcasts, git checkpoint
+    // notifications) are ordinary multiplexed traffic — ignored.
+    const requestIdProbe = decodeRequestIdProbe(frame);
+    if (Result.isSuccess(requestIdProbe)) {
+      return {
+        _tag: "request-response",
+        channel: envelope.success.channel,
+        requestId: requestIdProbe.success.requestId,
+        frame,
+      };
+    }
+    return { _tag: "ignored", channel: envelope.success.channel, type: envelope.success.type };
   }
   if (envelope.success.channel !== "agent" || envelope.success.type !== "task_event") {
     return { _tag: "ignored", channel: envelope.success.channel, type: envelope.success.type };

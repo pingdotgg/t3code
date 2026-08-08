@@ -14,6 +14,7 @@
 import { AetherSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 
@@ -22,6 +23,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeAetherTextGeneration } from "../../textGeneration/AetherTextGeneration.ts";
 import { GitVcsDriver } from "../../vcs/GitVcsDriver.ts";
+import { AetherMirrorRegistry } from "../AetherMirrorRegistry.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeAetherAdapter } from "../Layers/AetherAdapter.ts";
 import { makeAetherRestClient } from "../Layers/aether/restClient.ts";
@@ -56,8 +58,10 @@ const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
 });
 
 export type AetherDriverEnv =
+  | AetherMirrorRegistry
   | BackgroundPolicy.BackgroundPolicy
   | Crypto.Crypto
+  | FileSystem.FileSystem
   | GitVcsDriver
   | HttpClient.HttpClient
   | ServerConfig
@@ -118,10 +122,13 @@ export const AetherDriver: ProviderDriver<AetherSettings, AetherDriverEnv> = {
               apiKey,
               httpClient,
             });
+      const mirrorRegistry = yield* AetherMirrorRegistry;
       const adapter = yield* makeAetherAdapter({
         instanceId,
         defaultCwd: serverConfig.cwd,
         git: gitVcsDriver,
+        attachmentsDir: serverConfig.attachmentsDir,
+        mirrorRegistry,
         restClient,
         socket:
           apiKey === undefined ? undefined : { apiBaseUrl: effectiveConfig.apiBaseUrl, apiKey },

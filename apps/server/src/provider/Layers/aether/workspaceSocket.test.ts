@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import { AetherApiTransportError } from "./restClient.ts";
@@ -11,6 +12,7 @@ import {
   resolveTaskWorkspace,
   runAetherAgentStream,
   aetherWorkspaceSocketUrl,
+  type AetherAgentConnection,
   type AetherAgentStreamOptions,
   type AetherWebSocketLike,
 } from "./workspaceSocket.ts";
@@ -601,6 +603,282 @@ describe("runAetherAgentStream", () => {
       const error = yield* Effect.flip(runAetherAgentStream(harness.options));
       expect(error._tag).toBe("AetherApiTransportError");
       expect(harness.connectRetries).toEqual([]);
+    }),
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Git / files channel request-response correlation (T6 mirror sync transport)
+// ---------------------------------------------------------------------------
+
+const decodeSentRequestFrame = Schema.decodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      channel: Schema.String,
+      type: Schema.String,
+      requestId: Schema.String,
+      mode: Schema.optional(Schema.String),
+      path: Schema.optional(Schema.String),
+    }),
+  ),
+);
+
+describe("workspace request-response channel", () => {
+  const connectedHarness = () => {
+    const connections: Array<AetherAgentConnection> = [];
+    const harness = makeHarness({
+      getTask: scriptedGetTask([taskProcessing]).getTask,
+      connectWorkspace: scriptedConnect([runningOutcome]).connectWorkspace,
+    });
+    const options: AetherAgentStreamOptions = {
+      ...harness.options,
+      onConnected: (connection) => Effect.sync(() => void connections.push(connection)),
+    };
+    return { harness, options, connections };
+  };
+
+  it.effect("correlates a git diff response by requestId", () =>
+    Effect.gen(function* () {
+      const { harness, options, connections } = connectedHarness();
+      const fiber = yield* Effect.forkChild(runAetherAgentStream(options));
+      yield* settlePump;
+      const connection = connections[0]!;
+      const socket = harness.sockets[0]!;
+
+      const request = yield* Effect.forkChild(connection.requestGitDiff({ mode: "main" }));
+      yield* settlePump;
+      const sentFrame = socket.sent.find((frame) => frame.includes('"channel":"git"'));
+      expect(sentFrame).toBeDefined();
+      const parsed = decodeSentRequestFrame(sentFrame!);
+      expect(parsed.type).toBe("diff");
+      expect(parsed.mode).toBe("main");
+
+      // An unmatched response is dropped, the matched one resolves.
+      socket.message({
+        channel: "git",
+        type: "diff",
+        requestId: "someone-else",
+        success: true,
+        diff: { baseRef: "bogus", files: [] },
+      });
+      socket.message({
+        channel: "git",
+        type: "diff",
+        requestId: parsed.requestId,
+        success: true,
+        diff: { baseRef: "abc123", files: [] },
+      });
+      yield* settlePump;
+      const diff = yield* Fiber.join(request);
+      expect(diff).toEqual({ baseRef: "abc123", files: [] });
+
+      yield* Fiber.interrupt(fiber);
+    }),
+  );
+
+  it.effect("maps success:false, timeout, and socket-drop to typed errors", () =>
+    Effect.gen(function* () {
+      const { harness, options, connections } = connectedHarness();
+      const fiber = yield* Effect.forkChild(runAetherAgentStream(options));
+      yield* settlePump;
+      const connection = connections[0]!;
+      const socket = harness.sockets[0]!;
+
+      // success:false → request-failed (the write-lock answer takes this shape).
+      const failing = yield* Effect.forkChild(
+        Effect.flip(connection.requestGitDiff({ mode: "main" })),
+      );
+      yield* settlePump;
+      const failingId = decodeSentRequestFrame(socket.sent.at(-1)!).requestId;
+      socket.message({
+        channel: "git",
+        type: "diff",
+        requestId: failingId,
+        success: false,
+        error: "A git write operation is in progress, cannot read diff",
+      });
+      yield* settlePump;
+      const failure = yield* Fiber.join(failing);
+      expect(failure._tag).toBe("AetherWorkspaceRequestFailedError");
+      expect(failure.message).toContain("write operation is in progress");
+
+      // No answer → timeout after the request budget.
+      const timing = yield* Effect.forkChild(
+        Effect.flip(connection.requestGitDiff({ mode: "main" })),
+      );
+      yield* settlePump;
+      yield* TestClock.adjust("31 seconds");
+      const timeout = yield* Fiber.join(timing);
+      expect(timeout._tag).toBe("AetherWorkspaceRequestTimeoutError");
+
+      // Socket drop with a request in flight → typed detached failure.
+      const dropped = yield* Effect.forkChild(Effect.flip(connection.readWorkspaceFile("a/b.bin")));
+      yield* settlePump;
+      socket.serverClose(1006, "gone");
+      yield* settlePump;
+      const detached = yield* Fiber.join(dropped);
+      expect(detached._tag).toBe("AetherWorkspaceDetachedError");
+
+      yield* Fiber.interrupt(fiber);
+    }),
+  );
+
+  it.effect("a request issued from INSIDE onEvent resolves — no pump self-deadlock", () =>
+    Effect.gen(function* () {
+      // Regression: the mirror sync engine requests the git diff from inside
+      // the turn-settle event handler (sync-then-settle). If frame routing
+      // and event handling shared one fiber, the response frame would sit in
+      // the signal queue behind the very handler awaiting it and EVERY
+      // live-observed settle would stall for the full request timeout.
+      const connections: Array<AetherAgentConnection> = [];
+      const resolvedDiffs: Array<string> = [];
+      const harness = makeHarness(
+        {
+          getTask: scriptedGetTask([taskProcessing]).getTask,
+          connectWorkspace: scriptedConnect([runningOutcome]).connectWorkspace,
+        },
+        (socket) => {
+          // The workspace side: answer every git diff request as soon as it
+          // is sent (synchronously — the harshest ordering).
+          const originalSend = socket.send.bind(socket);
+          socket.send = (data: string) => {
+            originalSend(data);
+            const frame = JSON.parse(data) as { channel?: string; requestId?: string };
+            if (frame.channel === "git" && typeof frame.requestId === "string") {
+              socket.message({
+                channel: "git",
+                type: "diff",
+                requestId: frame.requestId,
+                success: true,
+                diff: { baseRef: "abc123", files: [] },
+              });
+            }
+          };
+        },
+      );
+      const options: AetherAgentStreamOptions = {
+        ...harness.options,
+        onConnected: (connection) => Effect.sync(() => void connections.push(connection)),
+        onEvent: () =>
+          Effect.gen(function* () {
+            // orDie: a timeout HERE is exactly the deadlock this test guards
+            // against — it must crash the test, never be swallowed.
+            const diff = yield* Effect.orDie(connections[0]!.requestGitDiff({ mode: "main" }));
+            resolvedDiffs.push(diff.baseRef);
+          }),
+      };
+      const fiber = yield* Effect.forkChild(runAetherAgentStream(options));
+      yield* settlePump;
+
+      // Two settles in a row: each handler's request must resolve without
+      // ANY clock advancement (the request timeout never fires) and the pump
+      // must keep flowing to the next event.
+      harness.sockets[0]!.message(wsAssistantDelta);
+      yield* settlePump;
+      harness.sockets[0]!.message(wsAssistantDelta);
+      yield* settlePump;
+      expect(resolvedDiffs).toEqual(["abc123", "abc123"]);
+
+      yield* Fiber.interrupt(fiber);
+    }),
+  );
+
+  it.effect(
+    "a request issued from INSIDE onConnected resolves — the router drains first",
+    () =>
+      Effect.gen(function* () {
+        // Regression: onConnected drives the reconcile, which can settle a
+        // turn and (through the mirror sync) request the git diff. With the
+        // router forked only AFTER onConnected returned, that response sat
+        // unconsumed in the signal queue while onConnected awaited it —
+        // every reconnect-with-a-pending-settle deadlocked for the full
+        // request timeout.
+        const resolvedDiffs: Array<string> = [];
+        const harness = makeHarness(
+          {
+            getTask: scriptedGetTask([taskProcessing]).getTask,
+            connectWorkspace: scriptedConnect([runningOutcome]).connectWorkspace,
+          },
+          (socket) => {
+            // The workspace side answers every git diff request synchronously
+            // — the harshest ordering for the drain loop.
+            const originalSend = socket.send.bind(socket);
+            socket.send = (data: string) => {
+              originalSend(data);
+              const frame = JSON.parse(data) as { channel?: string; requestId?: string };
+              if (frame.channel === "git" && typeof frame.requestId === "string") {
+                socket.message({
+                  channel: "git",
+                  type: "diff",
+                  requestId: frame.requestId,
+                  success: true,
+                  diff: { baseRef: "abc123", files: [] },
+                });
+              }
+            };
+          },
+        );
+        const options: AetherAgentStreamOptions = {
+          ...harness.options,
+          onConnected: (connection) =>
+            Effect.gen(function* () {
+              // orDie: a timeout HERE is exactly the deadlock under test.
+              const diff = yield* Effect.orDie(connection.requestGitDiff({ mode: "main" }));
+              resolvedDiffs.push(diff.baseRef);
+            }),
+        };
+        const fiber = yield* Effect.forkChild(runAetherAgentStream(options));
+        yield* settlePump;
+        // Resolved without ANY clock advancement (the request timeout never
+        // fired), and the pump went on to handle live frames normally.
+        expect(resolvedDiffs).toEqual(["abc123"]);
+
+        harness.sockets[0]!.message(wsAssistantDelta);
+        yield* settlePump;
+        expect(harness.events).toHaveLength(1);
+
+        // The same on RECONNECT: the second attach's onConnected must not
+        // hang either.
+        harness.sockets[0]!.serverClose(1006, "vm went away");
+        yield* settlePump;
+        expect(resolvedDiffs).toEqual(["abc123", "abc123"]);
+
+        yield* Fiber.interrupt(fiber);
+      }),
+    // A regression deadlocks instead of failing an assertion: cap it so the
+    // suite fails fast rather than hanging.
+    { timeout: 15_000 },
+  );
+
+  it.effect("reads a workspace file over the files channel", () =>
+    Effect.gen(function* () {
+      const { harness, options, connections } = connectedHarness();
+      const fiber = yield* Effect.forkChild(runAetherAgentStream(options));
+      yield* settlePump;
+      const connection = connections[0]!;
+      const socket = harness.sockets[0]!;
+
+      const request = yield* Effect.forkChild(connection.readWorkspaceFile("assets/logo.png"));
+      yield* settlePump;
+      const frame = decodeSentRequestFrame(socket.sent.at(-1)!);
+      expect(frame).toMatchObject({ channel: "files", type: "read", path: "assets/logo.png" });
+      socket.message({
+        channel: "files",
+        type: "read",
+        requestId: frame.requestId,
+        success: true,
+        path: "assets/logo.png",
+        content: "aGVsbG8=",
+        encoding: "base64",
+        size: 5,
+        modified: "2026-08-08T10:00:00Z",
+        isBinary: true,
+      });
+      yield* settlePump;
+      const read = yield* Fiber.join(request);
+      expect(read).toMatchObject({ content: "aGVsbG8=", encoding: "base64", isBinary: true });
+
+      yield* Fiber.interrupt(fiber);
     }),
   );
 });
