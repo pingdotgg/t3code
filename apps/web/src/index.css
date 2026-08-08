@@ -995,12 +995,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
-/* Keep both navigation implementations on the same quiet zinc hierarchy:
-   zinc-50 navigation, zinc-25 hover, and white selected/raised surfaces.
-   The version attribute remains useful for layout-specific styling without
-   changing the color system when the beta is toggled. */
-[data-sidebar-version="v1"],
-[data-sidebar-version="v2"] {
+/* Keep both sidebar implementations (default and legacy) on the same quiet
+   zinc hierarchy: zinc-50 navigation, zinc-25 hover, and white selected/raised
+   surfaces. */
+[data-app-sidebar] {
   --background: var(--color-zinc-25);
   --foreground: var(--color-zinc-800);
   --card: var(--color-white);
@@ -1023,8 +1021,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   background-color: var(--sidebar);
 }
 
-.dark [data-sidebar-version="v1"],
-.dark [data-sidebar-version="v2"] {
+.dark [data-app-sidebar] {
   --background: #000;
   --foreground: #f1f3f7;
   --card: #000;
@@ -1321,8 +1318,7 @@ html[data-theme-id] .chat-markdown .chat-markdown-chrome-action[aria-pressed="tr
   color: var(--code-foreground);
 }
 
-html[data-theme-id] [data-sidebar-version="v1"],
-html[data-theme-id] [data-sidebar-version="v2"] {
+html[data-theme-id] [data-app-sidebar] {
   --background: var(--app-theme-canvas);
   --foreground: var(--app-theme-text);
   --card: var(--app-theme-surface);
