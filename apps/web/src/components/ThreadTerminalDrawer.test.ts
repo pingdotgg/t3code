@@ -2,8 +2,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   resolveTerminalSelectionActionPosition,
+  shouldClearTerminalSelectionAction,
   shouldHandleTerminalExit,
   shouldHandleTerminalSelectionMouseUp,
+  terminalContextMenuItems,
   terminalSelectionActionDelayForClickCount,
   terminalSelectionLineRange,
 } from "./ThreadTerminalDrawer";
@@ -88,5 +90,58 @@ describe("resolveTerminalSelectionActionPosition", () => {
     expect(shouldHandleTerminalExit("exited", "running", false)).toBe(true);
     expect(shouldHandleTerminalExit("exited", "exited", false)).toBe(false);
     expect(shouldHandleTerminalExit("closed", "running", true)).toBe(false);
+  });
+
+  it("offers paste on the right-click menu even with nothing selected", () => {
+    expect(terminalContextMenuItems({ hasSelection: false })).toEqual([
+      { id: "add-to-chat", label: "Add to chat", disabled: true },
+      { id: "copy", label: "Copy", disabled: true },
+      { id: "paste", label: "Paste" },
+    ]);
+  });
+
+  it("enables the selection actions once the terminal has a selection", () => {
+    expect(terminalContextMenuItems({ hasSelection: true })).toEqual([
+      { id: "add-to-chat", label: "Add to chat", disabled: false },
+      { id: "copy", label: "Copy", disabled: false },
+      { id: "paste", label: "Paste" },
+    ]);
+  });
+
+  it("cancels the selection action while its popup timer or menu is current", () => {
+    expect(
+      shouldClearTerminalSelectionAction({
+        timerPending: true,
+        openMenuRequestId: null,
+        currentRequestId: 3,
+      }),
+    ).toBe(true);
+    expect(
+      shouldClearTerminalSelectionAction({
+        timerPending: false,
+        openMenuRequestId: 3,
+        currentRequestId: 3,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a context-menu paste alive when no selection popup is current", () => {
+    // Nothing pending at all: routine buffer sync must not cancel anything.
+    expect(
+      shouldClearTerminalSelectionAction({
+        timerPending: false,
+        openMenuRequestId: null,
+        currentRequestId: 4,
+      }),
+    ).toBe(false);
+    // A popup superseded by a right-click (its menu promise not yet settled)
+    // must not cancel the newer context-menu flow.
+    expect(
+      shouldClearTerminalSelectionAction({
+        timerPending: false,
+        openMenuRequestId: 3,
+        currentRequestId: 4,
+      }),
+    ).toBe(false);
   });
 });
