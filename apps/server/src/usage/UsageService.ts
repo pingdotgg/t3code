@@ -38,6 +38,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
+import { readOpenCodeUsage, resolveOpenCodeDataDir } from "./usageOpenCodeReader.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -128,6 +129,7 @@ export const make = Effect.gen(function* () {
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, "usage-scan-cache.json");
+  const openCodeDataDir = resolveOpenCodeDataDir(NodeOS.homedir(), process.env["XDG_DATA_HOME"]);
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
   let ratesStatus: UsageSummary["pricing"]["status"] = "unavailable";
@@ -378,6 +380,82 @@ export const make = Effect.gen(function* () {
         distinctSessions: sessionIds.size,
         message: null,
       });
+    }
+
+    const openCodeVolumeId = yield* Effect.promise(() => readDirectoryVolumeId(openCodeDataDir));
+    const openCodeExists = yield* fileSystem
+      .exists(openCodeDataDir)
+      .pipe(Effect.catchCause(() => Effect.succeed(false)));
+
+    if (!openCodeExists) {
+      sources.push({
+        fingerprint: {
+          hostId,
+          provider: "opencode",
+          resolvedHomePath: openCodeDataDir,
+          volumeId: openCodeVolumeId,
+        },
+        status: "missing",
+        scannedFiles: 0,
+        skippedFiles: 0,
+        malformedRecords: 0,
+        distinctSessions: 0,
+        message: "No OpenCode data directory on this environment.",
+      });
+    } else {
+      const result = yield* Effect.promise(() => readOpenCodeUsage(openCodeDataDir, windowStartMs));
+      if (result === null) {
+        sources.push({
+          fingerprint: {
+            hostId,
+            provider: "opencode",
+            resolvedHomePath: openCodeDataDir,
+            volumeId: openCodeVolumeId,
+          },
+          status: "failed",
+          scannedFiles: 0,
+          skippedFiles: 0,
+          malformedRecords: 0,
+          distinctSessions: 0,
+          message: "OpenCode usage storage could not be read.",
+        });
+      } else if (result.storageKind === "missing") {
+        sources.push({
+          fingerprint: {
+            hostId,
+            provider: "opencode",
+            resolvedHomePath: openCodeDataDir,
+            volumeId: openCodeVolumeId,
+          },
+          status: "missing",
+          scannedFiles: 0,
+          skippedFiles: 0,
+          malformedRecords: 0,
+          distinctSessions: 0,
+          message: "No OpenCode message store on this environment.",
+        });
+      } else {
+        const sessionIds = new Set<string>();
+        for (const record of result.records) {
+          if (aggregator.add(record) && record.sessionId.length > 0) {
+            sessionIds.add(record.sessionId);
+          }
+        }
+        sources.push({
+          fingerprint: {
+            hostId,
+            provider: "opencode",
+            resolvedHomePath: openCodeDataDir,
+            volumeId: openCodeVolumeId,
+          },
+          status: result.malformedRecords > 0 ? "partial" : "ok",
+          scannedFiles: result.scannedFiles,
+          skippedFiles: result.skippedFiles,
+          malformedRecords: result.malformedRecords,
+          distinctSessions: sessionIds.size,
+          message: result.malformedRecords > 0 ? "Some OpenCode messages could not be read." : null,
+        });
+      }
     }
 
     const pruned = pruneScanCache(fileCache, {
