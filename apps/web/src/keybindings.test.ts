@@ -679,6 +679,53 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it("uses layout-aware letters for Command shortcuts", () => {
+    const keybindings = compile([
+      { shortcut: modShortcut("k"), command: "commandPalette.toggle" },
+      { shortcut: modShortcut("p"), command: "filePicker.toggle" },
+      {
+        shortcut: modShortcut("f", { shiftKey: true }),
+        command: "projectSearch.toggle",
+      },
+      { shortcut: modShortcut("n"), command: "chat.new" },
+    ]);
+    const cases = [
+      {
+        label: "Colemak Command K",
+        event: event({ key: "k", code: "KeyN", metaKey: true }),
+        expected: "commandPalette.toggle",
+      },
+      {
+        label: "Colemak Command E",
+        event: event({ key: "e", code: "KeyK", metaKey: true }),
+        expected: null,
+      },
+      {
+        label: "Colemak Command P",
+        event: event({ key: "p", code: "KeyR", metaKey: true }),
+        expected: "filePicker.toggle",
+      },
+      {
+        label: "Colemak Command Shift F",
+        event: event({ key: "f", code: "KeyE", metaKey: true, shiftKey: true }),
+        expected: "projectSearch.toggle",
+      },
+      {
+        label: "non-Latin Command K",
+        event: event({ key: "л", code: "KeyK", metaKey: true }),
+        expected: "commandPalette.toggle",
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      assert.strictEqual(
+        resolveShortcutCommand(testCase.event, keybindings, { platform: "MacIntel" }),
+        testCase.expected,
+        testCase.label,
+      );
+    }
+  });
+
   it("matches bracket shortcuts using the physical key code", () => {
     assert.strictEqual(
       resolveShortcutCommand(
