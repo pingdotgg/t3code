@@ -16,7 +16,18 @@
  *   - interruptTurn stops with `discard_queued_messages: true`, surfaces any
  *     discarded driver-queued message text, and settles `interrupted` only
  *     after read-side confirmation.
- * respondToUserInput/rollbackThread still fail loudly until items 9/10.
+ * The questions/plans slice (build item 9):
+ *   - respondToUserInput answers a pending ask_user via `POST /respond`
+ *     `tool_response {tool_name:"ask_user", data:{answers, customAnswers}}`,
+ *     mapping option labels → raw option indices and free-typed text → the
+ *     `-1` custom sentinel (apitypes/tasks.go askUserToolResponseSchema);
+ *   - a sendTurn that lands while a plan is pending IS the accept/reject
+ *     verb: interactionMode default → `propose_plan {approved:true}` +
+ *     interaction_mode 'default', plan → `{approved:false, feedback}` +
+ *     interaction_mode 'plan' (t3 routes plan acceptance as a fresh turn —
+ *     ChatView sends thread.turn.start with interactionMode 'default').
+ * rollbackThread is a deliberate typed refusal in v1: the local checkout is
+ * a one-way mirror, and reverting a cloud session locally would desync it.
  *
  * Design invariants (docs/aether-driver-plumbing-spec.md §2.3):
  *   - startSession NEVER creates a task — the task is created on the first
@@ -30,6 +41,12 @@
  *   - resumeCursor = `{schemaVersion: 1, taskId, latestSequence,
  *     mirrorFingerprint?, turnLedger?}`; replay safety comes from the
  *     mapper's deterministic event IDs, not cursor freshness.
+ *   - turnLedger records the turn→messageId pairs (turn 1's id harvested
+ *     from the timeline, every later own send from the respond 202, and the
+ *     WHOLE ledger rebuilt from the conversation page on resume — resolved
+ *     note 7) — the future revert slice consumes the pairs, and build item
+ *     13 uses the ledger to classify unledgered user rows as
+ *     remote-originated turns.
  *
  * @module provider/Layers/AetherAdapter
  */
@@ -44,6 +61,7 @@ import {
   type ProviderInstanceId,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  type ProviderUserInputAnswers,
   type ThreadId,
 } from "@t3tools/contracts";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
@@ -76,7 +94,11 @@ import type {
   ProviderThreadTurnSnapshot,
 } from "../Services/ProviderAdapter.ts";
 import { AETHER_API_KEY_ENV_VAR } from "./AetherProvider.ts";
-import { makeAetherEventMapper, type AetherEventMapper } from "./aether/eventMapper.ts";
+import {
+  makeAetherEventMapper,
+  type AetherAnswerableQuestion,
+  type AetherEventMapper,
+} from "./aether/eventMapper.ts";
 import { makeAetherMirrorSync, type AetherMirrorSyncEngine } from "./aether/mirrorSync.ts";
 import type { AetherRestClient } from "./aether/restClient.ts";
 import type {
@@ -101,24 +123,24 @@ import {
 
 const PROVIDER = ProviderDriverKind.make("aether");
 
-const NOT_IMPLEMENTED_DETAIL =
-  "Aether driver: not implemented until the questions/revert slices (build items 9-10)";
-
-const notImplemented = (method: string): Effect.Effect<never, ProviderAdapterError> =>
-  Effect.fail(
-    new ProviderAdapterRequestError({
-      provider: PROVIDER,
-      method,
-      detail: NOT_IMPLEMENTED_DETAIL,
-    }),
-  );
-
 /**
  * Version tag stamped into the Aether resume cursor. Bump if the cursor
  * shape changes so stale-shaped cursors written by older builds are ignored
  * rather than misread (mirrors OPENCODE_RESUME_VERSION).
  */
 const AETHER_RESUME_VERSION = 1 as const;
+
+/**
+ * One driver-originated turn: the t3 TurnId and the wire message id that
+ * opened it (identical strings modulo the `aether-turn-` prefix — the wire
+ * turn id IS the opening user message id). Recorded per send/harvest so the
+ * future revert slice can map "N turns back" → the `git restore` messageId,
+ * and so build item 13 can classify user rows the driver never sent.
+ */
+export interface AetherTurnLedgerEntry {
+  readonly turnId: string;
+  readonly messageId: string;
+}
 
 export interface AetherResumeCursor {
   readonly schemaVersion: typeof AETHER_RESUME_VERSION;
@@ -130,12 +152,36 @@ export interface AetherResumeCursor {
    * loudly instead of resetting over unknown local work.
    */
   readonly mirrorFingerprint?: string;
-  /**
-   * Turn → messageId ledger, carried opaquely until the revert slice (build
-   * item 10) builds and consumes it. Preserved through parse so a newer
-   * build's ledger survives a round-trip through this one.
-   */
-  readonly turnLedger?: unknown;
+  /** The driver's own turn→messageId pairs, oldest first. */
+  readonly turnLedger?: ReadonlyArray<AetherTurnLedgerEntry>;
+}
+
+/**
+ * Parse a persisted ledger. Any malformed entry drops the WHOLE ledger (a
+ * partial ledger would misclassify the dropped turns as remote-originated) —
+ * the session still resumes, matching the cursor parser's lenient contract.
+ */
+function parseTurnLedger(raw: unknown): ReadonlyArray<AetherTurnLedgerEntry> | undefined {
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+  const entries: Array<AetherTurnLedgerEntry> = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      return undefined;
+    }
+    const record = entry as Record<string, unknown>;
+    if (
+      typeof record.turnId !== "string" ||
+      record.turnId.length === 0 ||
+      typeof record.messageId !== "string" ||
+      record.messageId.length === 0
+    ) {
+      return undefined;
+    }
+    entries.push({ turnId: record.turnId, messageId: record.messageId });
+  }
+  return entries;
 }
 
 /**
@@ -158,6 +204,7 @@ export function parseAetherResume(raw: unknown): AetherResumeCursor | undefined 
   if (typeof record.latestSequence !== "number" || !Number.isFinite(record.latestSequence)) {
     return undefined;
   }
+  const turnLedger = parseTurnLedger(record.turnLedger);
   return {
     schemaVersion: AETHER_RESUME_VERSION,
     taskId: record.taskId.trim(),
@@ -165,7 +212,7 @@ export function parseAetherResume(raw: unknown): AetherResumeCursor | undefined 
     ...(typeof record.mirrorFingerprint === "string" && record.mirrorFingerprint.length > 0
       ? { mirrorFingerprint: record.mirrorFingerprint }
       : {}),
-    ...(record.turnLedger !== undefined ? { turnLedger: record.turnLedger } : {}),
+    ...(turnLedger !== undefined ? { turnLedger } : {}),
   };
 }
 
@@ -281,8 +328,29 @@ interface AetherSessionContext {
    */
   firstTurnFingerprint: string | undefined;
   latestSequence: number;
-  /** Opaque turn ledger carried from the resume cursor (see AetherResumeCursor). */
-  turnLedger: unknown;
+  /** The driver's own turn→messageId pairs, oldest first (see AetherResumeCursor). */
+  turnLedger: Array<AetherTurnLedgerEntry>;
+  /**
+   * Every `client_message_id` this session issued, registered BEFORE the
+   * respond call goes out — the second half of the own-send classification.
+   * The server commits the user row before returning the 202, so a
+   * settle-poll reconcile can observe the fresh row while sendTurn still
+   * awaits the response (the row is not yet in `turnLedger`); the
+   * pre-registered id keeps that window from misclassifying the driver's
+   * own send as remote-originated. In-memory only: across a restart the
+   * classification is covered by the ledger rebuild from the conversation
+   * page at startSession instead.
+   */
+  readonly issuedClientMessageIds: Set<string>;
+  /** Remote-originated user rows already surfaced as warnings (build item 13). */
+  readonly warnedRemoteRows: Set<string>;
+  /**
+   * Wire turns a live frame revealed that this adapter never issued — each
+   * triggers exactly ONE eager durable reconcile so the build-item-13
+   * warning precedes the remote turn's live output (see
+   * eagerRemoteTurnReconcile).
+   */
+  readonly remoteTurnSyncs: Set<string>;
   /** Owns the attach pump, socket and turn poll; closed on stopSession/stopAll. */
   sessionScope: Scope.Closeable | undefined;
   /** The session's event mapper; its latestSequence() is the live cursor. */
@@ -327,7 +395,7 @@ function buildAetherResumeCursor(context: AetherSessionContext): AetherResumeCur
         taskId: context.taskId,
         latestSequence: context.latestSequence,
         ...(mirrorFingerprint !== undefined ? { mirrorFingerprint } : {}),
-        ...(context.turnLedger !== undefined ? { turnLedger: context.turnLedger } : {}),
+        ...(context.turnLedger.length > 0 ? { turnLedger: [...context.turnLedger] } : {}),
       };
 }
 
@@ -389,6 +457,104 @@ export function resolveAetherModelSlug(slug: string): {
     }
   }
   return { agentType: "opencode", model: slug, catalogAgentType: undefined };
+}
+
+/**
+ * The custom-answer sentinel: Aether's ask_user wire marks a free-typed
+ * answer as `answers[q] = [-1]` paired with `customAnswers[q]` (apitypes/
+ * tasks.go askUserToolResponseSchema documents `-1`; the web composer's
+ * serializeResponse in packages/conversation question-drafts.ts emits it).
+ */
+const AETHER_CUSTOM_ANSWER_SENTINEL = -1;
+
+/**
+ * Map t3's ProviderUserInputAnswers (question id → answer label(s) / typed
+ * text) onto the aether-exact ask_user data payload: answers keyed by the
+ * question's RAW wire index, option labels resolved to raw option indices,
+ * one free-typed answer per question via the `-1` sentinel + customAnswers.
+ * Pure and total: every unrepresentable submission returns a named issue.
+ */
+export function buildAskUserToolResponse(
+  questions: ReadonlyArray<AetherAnswerableQuestion>,
+  answers: ProviderUserInputAnswers,
+):
+  | {
+      readonly data: {
+        readonly answers: Readonly<Record<string, ReadonlyArray<number>>>;
+        readonly customAnswers?: Readonly<Record<string, string>>;
+      };
+    }
+  | { readonly issue: string } {
+  const answerRecord: Record<string, ReadonlyArray<number>> = {};
+  const customAnswers: Record<string, string> = {};
+  for (const [questionId, value] of Object.entries(answers)) {
+    const question = questions.find((candidate) => candidate.id === questionId);
+    if (question === undefined) {
+      return { issue: `The answer targets an unknown question '${questionId}'.` };
+    }
+    const texts = normalizeUserInputAnswer(value);
+    if (texts === undefined) {
+      return {
+        issue: `The answer for question '${questionId}' has an unsupported shape (expected a string, an array of strings, or {answers: string[]}).`,
+      };
+    }
+    const trimmed = texts.map((text) => text.trim()).filter((text) => text.length > 0);
+    if (trimmed.length === 0) {
+      continue;
+    }
+    const indices: Array<number> = [];
+    const unmatched: Array<string> = [];
+    for (const text of trimmed) {
+      const option = question.options.find((candidate) => candidate.label === text);
+      if (option !== undefined) {
+        indices.push(option.rawIndex);
+      } else {
+        unmatched.push(text);
+      }
+    }
+    const key = String(question.rawIndex);
+    if (unmatched.length === 0) {
+      answerRecord[key] = indices;
+      continue;
+    }
+    if (unmatched.length === 1 && indices.length === 0) {
+      answerRecord[key] = [AETHER_CUSTOM_ANSWER_SENTINEL];
+      customAnswers[key] = unmatched[0]!;
+      continue;
+    }
+    return {
+      issue: `The answer for question '${questionId}' mixes free-typed text with option selections; Aether accepts either option labels or exactly one custom answer.`,
+    };
+  }
+  if (Object.keys(answerRecord).length === 0) {
+    return { issue: "The submission carries no answers." };
+  }
+  return {
+    data: {
+      answers: answerRecord,
+      ...(Object.keys(customAnswers).length > 0 ? { customAnswers } : {}),
+    },
+  };
+}
+
+/** The three answer-value shapes t3 submits (mirrors the Codex adapter). */
+function normalizeUserInputAnswer(value: unknown): ReadonlyArray<string> | undefined {
+  if (typeof value === "string") {
+    return [value];
+  }
+  if (Array.isArray(value)) {
+    return value.every((entry): entry is string => typeof entry === "string") ? value : undefined;
+  }
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "answers" in value &&
+    Array.isArray((value as { answers: unknown }).answers) &&
+    (value as { answers: Array<unknown> }).answers.every((entry) => typeof entry === "string")
+  ) {
+    return (value as { answers: Array<string> }).answers;
+  }
+  return undefined;
 }
 
 /** The platform attachment allowlist (libs/go/promptattachment, kept in sync). */
@@ -753,6 +919,125 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
     });
 
   /**
+   * Adapter-side delta inspection, run BEFORE the mapper consumes the batch
+   * so its emissions precede the turn's own output:
+   *   - build item 14: a driver-queued steer the remote unqueued (web
+   *     unqueue, remote stop with discard) will never be picked up — settle
+   *     its deferred turn and re-offer the text, or the session stays wedged
+   *     on a turn the remote no longer knows. The ONLY wire signal for this
+   *     is `removedMessageIds`: cancelled user rows never cross the
+   *     conversation wire (the timeline queries select only delivery_status
+   *     queued|processing|processed), but the cancel bumps the revision
+   *     sequence, which lands the id in the delta's removed set;
+   *   - build item 13: user rows the driver never sent (id not in the turn
+   *     ledger, clientMessageId not issued here) are remote-originated turns
+   *     — surface the injected prompt as a warning card, since t3 persists
+   *     user bubbles only from its own thread.turn.start.
+   */
+  const inspectDeltaRows = (
+    context: AetherSessionContext,
+    delta: {
+      readonly messages: ReadonlyArray<AetherTimelineMessage>;
+      readonly removedMessageIds: ReadonlyArray<string>;
+    },
+    afterSequence: number,
+  ) =>
+    Effect.gen(function* () {
+      const taskId = context.taskId;
+      if (taskId === undefined) {
+        return;
+      }
+      for (const removedId of delta.removedMessageIds) {
+        const deferredIndex = context.deferredTurns.findIndex(
+          (candidate) => candidate.wireTurnId === removedId,
+        );
+        if (deferredIndex === -1) {
+          continue;
+        }
+        const discarded = context.deferredTurns[deferredIndex]!;
+        context.deferredTurns.splice(deferredIndex, 1);
+        yield* emit({
+          ...(yield* baseEvent(context)),
+          eventId: EventId.make(`aether:${taskId}:turn:${discarded.wireTurnId}:cancelled`),
+          type: "runtime.warning",
+          payload: {
+            message: `Your queued message was removed on the Aether side before the agent picked it up. You can send it again:\n\n${discarded.text}`,
+          },
+        });
+        yield* emit({
+          ...(yield* baseEvent(context)),
+          eventId: EventId.make(`aether:${taskId}:turn:${discarded.wireTurnId}:settled`),
+          turnId: discarded.turnId,
+          type: "turn.completed",
+          payload: { state: "interrupted" },
+        });
+        yield* onTurnSettled(context, discarded.turnId);
+      }
+      for (const row of delta.messages) {
+        if (row.role !== "user" || row.sequence <= afterSequence) {
+          continue;
+        }
+        const ledgered =
+          context.turnLedger.some((entry) => entry.messageId === row.id) ||
+          (row.clientMessageId !== undefined &&
+            context.issuedClientMessageIds.has(row.clientMessageId));
+        if (ledgered || context.warnedRemoteRows.has(row.id)) {
+          continue;
+        }
+        context.warnedRemoteRows.add(row.id);
+        yield* emit({
+          ...(yield* baseEvent(context)),
+          eventId: EventId.make(`aether:${taskId}:remote:${row.id}`),
+          type: "runtime.warning",
+          payload: {
+            message: `This task was driven from the Aether app: ${row.content}`,
+          },
+        });
+      }
+    });
+
+  /**
+   * Remote-turn eager reconcile (build item 13, idle path): while the session
+   * sits idle on a healthy WS, NOTHING else triggers the durable reconcile —
+   * a turn injected from the Aether app would stream its whole output live
+   * with the warning card arriving only at the next sendTurn/reconnect,
+   * violating the warning-before-output contract (spec resolved note 9).
+   *
+   * Runs on the LIVE FRAME'S OWN wire turn, BEFORE the frame is mapped: the
+   * durable feed is authoritative (`inspectDeltaRows` emits the warning, then
+   * the delta's rows flow through the mapper), so the frame is mapped against
+   * a mapper that has already absorbed everything durable. A frame whose
+   * durable twin the reconcile just ingested is then swallowed by the
+   * mapper's own gates instead of trailing the reconcile's events as a stale
+   * replay — which is exactly what a socket backlog delivers on reconnect.
+   * The guard set is populated BEFORE the reconcile so its own
+   * processMapperEvents cannot re-enter; a transiently failed reconcile warns
+   * loudly through the reconcile's own catch, and the warning then lands on a
+   * later reconcile beat.
+   */
+  const eagerRemoteTurnReconcile = (
+    context: AetherSessionContext,
+    wireTurnId: string | undefined,
+  ) =>
+    Effect.gen(function* () {
+      if (
+        wireTurnId === undefined ||
+        // A resumed in-flight turn belongs to the adoption path (spec §2.3),
+        // not to a remote injection — its opening row predates the resume
+        // snapshot, so no warning is owed for it.
+        context.adoptActiveTurn ||
+        context.activeTurn?.wireTurnId === wireTurnId ||
+        context.deferredTurns.some((candidate) => candidate.wireTurnId === wireTurnId) ||
+        context.turnLedger.some((entry) => entry.messageId === wireTurnId) ||
+        context.remoteTurnSyncs.has(wireTurnId)
+      ) {
+        return;
+      }
+      context.remoteTurnSyncs.add(wireTurnId);
+      yield* context.reconcile ?? Effect.void;
+    });
+
+  /**
    * THE event funnel: every mapper output batch flows through here. The
    * mapper stays pure — its `turn.completed` IS the pre-settle signal, and
    * this funnel turns it into sync-then-settle when a mirror is active. It
@@ -849,7 +1134,11 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       // drives. A transient REST failure warns loudly and leaves the cursor
       // untouched, so the next beat retries the exact same range.
       context.reconcile = Effect.gen(function* () {
-        const delta = yield* restClient.getConversationDelta(taskId, mapper.latestSequence());
+        const afterSequence = mapper.latestSequence();
+        const delta = yield* restClient.getConversationDelta(taskId, afterSequence);
+        // Inspect BEFORE the mapper: remote-originated warnings and
+        // superseded-steer settles must precede the batch's own output.
+        yield* inspectDeltaRows(context, delta, afterSequence);
         const events = mapper.reconcileDelta(delta, yield* nowIso);
         context.latestSequence = mapper.latestSequence();
         yield* processMapperEvents(context, events);
@@ -945,6 +1234,8 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
             slashCommandsLogged = true;
             yield* Effect.logInfo("aether.slash-commands.ignored", { taskId });
           }
+          // STRICTLY before the frame is mapped — see eagerRemoteTurnReconcile.
+          yield* eagerRemoteTurnReconcile(context, "turnId" in event ? event.turnId : undefined);
           const events = mapper.mapWsEvent(event, yield* nowIso);
           context.latestSequence = mapper.latestSequence();
           yield* processMapperEvents(context, events);
@@ -1052,6 +1343,51 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
     );
   });
 
+  /**
+   * Fetch the FULL conversation timeline, oldest row first, walking
+   * `hasMoreOlder` back to the first turn — the endpoint serves the NEWEST
+   * page first. Shared by readThread (snapshot) and the startSession ledger
+   * rebuild. The cursor must advance every page and must exist whenever more
+   * rows are claimed — either violation is a contract break, surfaced loudly
+   * instead of looping forever or silently truncating.
+   */
+  const fetchFullTimeline = Effect.fn("fetchAetherFullTimeline")(function* (
+    restClient: AetherRestClient,
+    taskId: string,
+    method: string,
+  ): Effect.fn.Return<ReadonlyArray<AetherTimelineMessage>, ProviderAdapterError> {
+    let page = yield* restClient
+      .getConversationMessages(taskId)
+      .pipe(Effect.mapError(toRestRequestError(method)));
+    const rows: Array<AetherTimelineMessage> = [...page.messages];
+    while (page.hasMoreOlder) {
+      const beforeSequence = page.oldestSequenceLoaded;
+      const beforeSortTimestamp = page.oldestSortTimestampLoaded;
+      if (beforeSequence === null || beforeSortTimestamp === null) {
+        return yield* new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method,
+          detail: `Aether conversation page for task '${taskId}' reports more older rows but carries no older-page cursor.`,
+        });
+      }
+      page = yield* restClient
+        .getConversationMessages(taskId, {
+          sequence: beforeSequence,
+          sortTimestamp: beforeSortTimestamp,
+        })
+        .pipe(Effect.mapError(toRestRequestError(method)));
+      if (page.oldestSequenceLoaded !== null && page.oldestSequenceLoaded >= beforeSequence) {
+        return yield* new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method,
+          detail: `Aether conversation paging for task '${taskId}' did not advance past sequence ${beforeSequence}.`,
+        });
+      }
+      rows.unshift(...page.messages);
+    }
+    return rows;
+  });
+
   const startSession: ProviderAdapterShape<ProviderAdapterError>["startSession"] = Effect.fn(
     "startSession",
   )(function* (input) {
@@ -1142,7 +1478,7 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
     // mirror that repo's diffs onto this checkout.
     let taskId: string | undefined;
     let latestSequence = 0;
-    let turnLedger: unknown;
+    let turnLedger: Array<AetherTurnLedgerEntry> = [];
     let resumedTask: AetherTask | undefined;
     if (resume !== undefined) {
       const task = yield* restClient.getTask(resume.taskId).pipe(
@@ -1168,7 +1504,19 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       // Keep the CURSOR's sequence, not the task row's: it is the safe
       // replay point — fast-forwarding here would skip never-ingested rows.
       latestSequence = resume.latestSequence;
-      turnLedger = resume.turnLedger;
+      // Rebuild the WHOLE turn ledger from the conversation page rather than
+      // trusting the cursor snapshot (spec build item 10, resolved note 7):
+      // the persisted ledger is stale by up to a turn after a crash (a
+      // respond's entry lives only in memory until the next cursor
+      // snapshot), and an unledgered own row would be misclassified as
+      // remote-originated. Every user row IS a turn (the wire turn id is the
+      // opening user row's id), so remote-turn warnings (build item 13)
+      // apply only to rows arriving AFTER this snapshot — exactly the set
+      // the readThread snapshot cannot already render as real turns.
+      const timeline = yield* fetchFullTimeline(restClient, resume.taskId, "startSession");
+      turnLedger = timeline
+        .filter((row) => row.role === "user")
+        .map((row) => ({ turnId: String(turnIdForWire(row.id)), messageId: row.id }));
     }
 
     // (4) Session record. Model precedence: explicit selection, else the
@@ -1195,6 +1543,9 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       taskId,
       latestSequence,
       turnLedger,
+      issuedClientMessageIds: new Set<string>(),
+      warnedRemoteRows: new Set<string>(),
+      remoteTurnSyncs: new Set<string>(),
       sessionScope: undefined,
       mapper: undefined,
       mirror: makeAetherMirrorSync({
@@ -1293,40 +1644,9 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       return { threadId, turns: [] } satisfies ProviderThreadSnapshot;
     }
     const restClient = yield* requireRestClient("readThread");
-    const taskId = context.taskId;
-    let page = yield* restClient
-      .getConversationMessages(taskId)
-      .pipe(Effect.mapError(toRestRequestError("readThread")));
-    const rows: Array<AetherTimelineMessage> = [...page.messages];
-    // Walk `hasMoreOlder` back to the first turn: the endpoint serves the
-    // NEWEST page first, and a snapshot missing older turns would be silent
-    // data loss. The cursor must advance every page — a stuck cursor is a
-    // contract break, surfaced loudly instead of looping forever.
-    while (page.hasMoreOlder) {
-      const beforeSequence = page.oldestSequenceLoaded;
-      const beforeSortTimestamp = page.oldestSortTimestampLoaded;
-      if (beforeSequence === null || beforeSortTimestamp === null) {
-        return yield* new ProviderAdapterRequestError({
-          provider: PROVIDER,
-          method: "readThread",
-          detail: `Aether conversation page for task '${taskId}' reports more older rows but carries no older-page cursor.`,
-        });
-      }
-      page = yield* restClient
-        .getConversationMessages(taskId, {
-          sequence: beforeSequence,
-          sortTimestamp: beforeSortTimestamp,
-        })
-        .pipe(Effect.mapError(toRestRequestError("readThread")));
-      if (page.oldestSequenceLoaded !== null && page.oldestSequenceLoaded >= beforeSequence) {
-        return yield* new ProviderAdapterRequestError({
-          provider: PROVIDER,
-          method: "readThread",
-          detail: `Aether conversation paging for task '${taskId}' did not advance past sequence ${beforeSequence}.`,
-        });
-      }
-      rows.unshift(...page.messages);
-    }
+    // A snapshot missing older turns would be silent data loss — walk the
+    // whole timeline back to the first turn.
+    const rows = yield* fetchFullTimeline(restClient, context.taskId, "readThread");
     return {
       threadId,
       turns: snapshotTurnsFromMessages(rows),
@@ -1498,6 +1818,32 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       });
     });
 
+  /**
+   * Shared post-202 bookkeeping for a respond that dispatches IMMEDIATELY
+   * (idle follow-up, plan accept/reject, question answer): ledger the new
+   * wire turn, (re)attach the pipeline with the one-shot start permission,
+   * register + announce the turn, and arm the settle backstop.
+   */
+  const activateRespondedTurn = Effect.fn("activateAetherRespondedTurn")(function* (
+    context: AetherSessionContext,
+    restClient: AetherRestClient,
+    taskId: string,
+    wireTurnId: string,
+  ): Effect.fn.Return<AetherActiveTurn, ProviderAdapterError> {
+    const turn: AetherActiveTurn = { wireTurnId, turnId: turnIdForWire(wireTurnId) };
+    context.turnLedger.push({ turnId: String(turn.turnId), messageId: wireTurnId });
+    // RECORD THE TURN FIRST (T6 invariant): the attach below forks a pump
+    // whose onConnected reconcile can settle this very turn on its first
+    // beat — attaching before the turn exists strands activeTurn state.
+    const { mapper } = yield* ensureTaskMapper(context, restClient, taskId);
+    context.activeTurn = turn;
+    yield* processMapperEvents(context, mapper.noteTurnStarted(wireTurnId, yield* nowIso));
+    yield* emitTurnStarted(context, turn, {});
+    yield* ensureTaskPipeline(context, restClient, taskId, { allowStart: true });
+    yield* startSettlePoll(context);
+    return turn;
+  });
+
   const sendTurn: ProviderAdapterShape<ProviderAdapterError>["sendTurn"] = Effect.fn("sendTurn")(
     function* (input) {
       const context = yield* ensureContext(input.threadId);
@@ -1586,6 +1932,9 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
         // re-enters HERE — never the respond path, never a second create.
         const wireTurnId = yield* harvestFirstUserRowId(restClient, taskIdForFirstTurn);
         const turn: AetherActiveTurn = { wireTurnId, turnId: turnIdForWire(wireTurnId) };
+        // Ledger the harvested pair — `POST /tasks` returns no message_id,
+        // so the timeline harvest is turn 1's only naming (resolved note 7).
+        context.turnLedger.push({ turnId: String(turn.turnId), messageId: wireTurnId });
         // RECORD THE TURN FIRST. The mapper must learn the active wire turn
         // so a settle observed only through the REST backstop still lands —
         // and the attach below forks a fiber whose onConnected reconcile can
@@ -1614,21 +1963,130 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
 
       // -- later turns: respond ---------------------------------------------
       const taskId = context.taskId;
+
+      // The selection's reasoning effort, resolved (and validated) ONCE for
+      // both the settings PUT below and the respond. It rides EVERY respond,
+      // not just a slug switch: a model OPTION can change while the slug
+      // stays the same, and a respond that omits it inherits the task row's
+      // stored effort — silently pinning the previous one. `POST /respond`
+      // carries a per-message `reasoning_effort` (apitypes/tasks.go
+      // RespondToTaskRequest → task_messages.reasoning_effort) that IS what
+      // the runner reads for the turn, so stating it here is both the
+      // smallest fix and the only one that works for a steer queued behind a
+      // running turn (a PUT is refused while the task is processing).
+      const selectionEffort =
+        input.modelSelection === undefined
+          ? undefined
+          : yield* resolveEffortSelection(
+              input.modelSelection,
+              resolveAetherModelSlug(input.modelSelection.model),
+            );
+
+      // Model switch between turns (build item 11): `PUT /tasks/{id}` is a
+      // FULL settings replace, so the current row is read back first — the
+      // auto_fix_* flags are live-mutable remotely and must not be clobbered
+      // with the driver's create-time `false`.
       if (
         input.modelSelection !== undefined &&
         input.modelSelection.model !== context.session.model
       ) {
-        return yield* new ProviderAdapterValidationError({
-          provider: PROVIDER,
-          operation: "sendTurn",
-          issue: `Mid-thread model switch to '${input.modelSelection.model}' is not supported yet (Aether driver build item 11).`,
-        });
+        if (context.activeTurn !== undefined || context.deferredTurns.length > 0) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "sendTurn",
+            issue: `Cannot switch the model to '${input.modelSelection.model}' while a turn is running; stop the turn or let it finish first.`,
+          });
+        }
+        const resolved = resolveAetherModelSlug(input.modelSelection.model);
+        const current = yield* restClient
+          .getTask(taskId)
+          .pipe(Effect.mapError(toRestRequestError("sendTurn")));
+        if (current.status === "processing" || current.status === "queued") {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "sendTurn",
+            issue: `Cannot switch the model: Aether task '${taskId}' is currently ${current.status} (a turn driven from the Aether app may be running). Wait for it to settle, then retry.`,
+          });
+        }
+        yield* restClient
+          .updateTask(taskId, {
+            agent_type: resolved.agentType,
+            model: resolved.model,
+            // Per-turn plan mode travels on the respond below; the stored
+            // task setting is preserved as-is.
+            interaction_mode: current.interaction_mode,
+            // Required-but-nullable on update: null means an explicit null.
+            reasoning_effort: selectionEffort ?? null,
+            auto_fix_ci: current.auto_fix_ci,
+            auto_fix_pr_comments: current.auto_fix_pr_comments,
+            auto_rebase: current.auto_rebase,
+          })
+          .pipe(Effect.mapError(toRestRequestError("sendTurn")));
+        context.session = {
+          ...context.session,
+          model: input.modelSelection.model,
+          updatedAt: yield* nowIso,
+        };
       }
+
       const clientMessageId = deterministicClientMessageId({
         taskId,
         sessionEpoch: context.session.createdAt,
         sendOrdinal: context.sentCount,
       });
+
+      // A task parked on a proposed plan makes this send the accept/reject
+      // verb (spec §2.4): t3 routes plan acceptance as a fresh turn with
+      // interactionMode 'default' (ChatView thread.turn.start) and a
+      // keep-planning follow-up as interactionMode 'plan' — Aether demands
+      // the propose_plan tool_response either way.
+      const pendingPlan = context.mapper?.openUserInput();
+      if (pendingPlan !== undefined && pendingPlan.toolName === "propose_plan") {
+        const approved = input.interactionMode !== "plan";
+        // Registered BEFORE the call: the server commits the user row before
+        // the 202 returns, so a concurrent settle-poll reconcile can observe
+        // it mid-flight — pre-registration keeps the own-send classification
+        // from warning on it. Safe: the id is deterministic per ordinal, and
+        // the ordinal advances only on a confirmed 202.
+        context.issuedClientMessageIds.add(clientMessageId);
+        const responded = yield* restClient
+          .respondToTask(taskId, {
+            message,
+            ...(promptContext !== undefined ? { context: promptContext } : {}),
+            interaction_mode: approved ? "default" : "plan",
+            tool_response: {
+              tool_name: "propose_plan",
+              data: { approved, ...(approved ? {} : { feedback: message }) },
+            },
+            client_message_id: clientMessageId,
+          })
+          .pipe(Effect.mapError(toRestRequestError("sendTurn")));
+        context.sentCount++;
+        context.adoptActiveTurn = false;
+        if (context.mapper !== undefined) {
+          // Close the pending slot (no resolution event for plan cards).
+          yield* processMapperEvents(
+            context,
+            context.mapper.noteInputResolved(pendingPlan.pendingId, {}, yield* nowIso),
+          );
+        }
+        const turn = yield* activateRespondedTurn(
+          context,
+          restClient,
+          taskId,
+          responded.message_id,
+        );
+        const resumeCursor = buildAetherResumeCursor(context);
+        return {
+          threadId: input.threadId,
+          turnId: turn.turnId,
+          ...(resumeCursor !== undefined ? { resumeCursor } : {}),
+        };
+      }
+
+      // Registered BEFORE the call (see the plan branch above): the row can
+      // hit the wire before the 202 lands here.
+      context.issuedClientMessageIds.add(clientMessageId);
       const responded = yield* restClient
         .respondToTask(taskId, {
           message,
@@ -1636,6 +2094,11 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
           ...(input.interactionMode !== undefined
             ? { interaction_mode: input.interactionMode }
             : {}),
+          // Only on a plain prompt: workspace-service applies a queued
+          // message's reasoning_effort ONLY when the message carries no
+          // tool_response (http/agent-handlers.ts), so stating it on the plan
+          // branch above would be dead payload.
+          ...(selectionEffort !== undefined ? { reasoning_effort: selectionEffort } : {}),
           client_message_id: clientMessageId,
         })
         .pipe(Effect.mapError(toRestRequestError("sendTurn")));
@@ -1648,13 +2111,14 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       // remotely running turn no longer applies.
       context.adoptActiveTurn = false;
       const wireTurnId = responded.message_id;
-      const turn: AetherActiveTurn = { wireTurnId, turnId: turnIdForWire(wireTurnId) };
 
       if (context.activeTurn !== undefined || context.deferredTurns.length > 0) {
         // STEER: Aether queues the message server-side; the running turn
         // completes first. DEFER turn.started until remote pickup, but set
         // the session's activeTurnId to the new turn NOW (spec §2.1
         // queued/steering row).
+        const turn: AetherActiveTurn = { wireTurnId, turnId: turnIdForWire(wireTurnId) };
+        context.turnLedger.push({ turnId: String(turn.turnId), messageId: wireTurnId });
         context.deferredTurns.push({ ...turn, text: message });
         context.session = {
           ...context.session,
@@ -1670,16 +2134,11 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
         };
       }
 
-      // Idle task: the respond dispatches immediately. The turn is recorded
-      // BEFORE the attach for the same reason as the create path — a pump
-      // restarted here reconciles on its first beat and can settle it.
-      const { mapper } = yield* ensureTaskMapper(context, restClient, taskId);
-      context.activeTurn = turn;
-      yield* processMapperEvents(context, mapper.noteTurnStarted(wireTurnId, yield* nowIso));
-      yield* emitTurnStarted(context, turn, {});
-      // Re-attach if the pump ended (suspended VM) — active, may start.
-      yield* ensureTaskPipeline(context, restClient, taskId, { allowStart: true });
-      yield* startSettlePoll(context);
+      // Idle task: the respond dispatches immediately. activateRespondedTurn
+      // records the turn BEFORE the attach for the same reason as the create
+      // path — a pump restarted here reconciles on its first beat and can
+      // settle it. Re-attaches if the pump ended (suspended VM); may start.
+      const turn = yield* activateRespondedTurn(context, restClient, taskId, wireTurnId);
       const resumeCursor = buildAetherResumeCursor(context);
       return {
         threadId: input.threadId,
@@ -1783,28 +2242,152 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
     }
   });
 
+  // -- questions (build item 9) ----------------------------------------------
+
+  const respondToUserInput: ProviderAdapterShape<ProviderAdapterError>["respondToUserInput"] =
+    Effect.fn("respondToUserInput")(function* (threadId, requestId, answers) {
+      const context = yield* ensureContext(threadId);
+      const restClient = yield* requireRestClient("respondToUserInput");
+      const requestKey = String(requestId);
+      const pending = context.mapper?.openUserInput();
+      // The exact substring `unknown pending user-input request` is t3's
+      // stale-request trigger (ProviderCommandReactor / decider render it as
+      // "Stale pending user-input request … restart the turn").
+      if (
+        context.taskId === undefined ||
+        pending === undefined ||
+        pending.pendingId !== requestKey
+      ) {
+        return yield* new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "respondToUserInput",
+          detail: `Aether driver: unknown pending user-input request '${requestKey}'. The question may have been answered from the Aether app or superseded; the transcript catches up on the next sync.`,
+        });
+      }
+      if (pending.toolName !== "ask_user") {
+        return yield* new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "respondToUserInput",
+          detail: `Pending input '${requestKey}' is a proposed plan, not a question. Send a message to accept the plan, or a plan-mode follow-up to keep planning.`,
+        });
+      }
+      const taskId = context.taskId;
+      const built = buildAskUserToolResponse(pending.questions, answers);
+      if ("issue" in built) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "respondToUserInput",
+          issue: built.issue,
+        });
+      }
+      const clientMessageId = deterministicClientMessageId({
+        taskId,
+        sessionEpoch: context.session.createdAt,
+        sendOrdinal: context.sentCount,
+      });
+      // Registered BEFORE the call (see sendTurn): the answer row can hit
+      // the wire before the 202 lands here.
+      context.issuedClientMessageIds.add(clientMessageId);
+      const responded = yield* restClient
+        .respondToTask(taskId, {
+          // The transcript row: the raw response JSON, exactly like Aether's
+          // own composer (packages/conversation toolResponseRequestBody).
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - mirrors aether-web's wire-exact transcript row, not a schema decode.
+          message: JSON.stringify(built.data),
+          tool_response: { tool_name: "ask_user", data: built.data },
+          client_message_id: clientMessageId,
+        })
+        .pipe(
+          Effect.catch((cause) =>
+            cause._tag === "AetherApiConflictError"
+              ? // 409: already answered / wrong pending kind. Re-sync the
+                // durable feed FIRST so the stale panel resolves before any
+                // retry (best-effort — the reconcile swallows its own
+                // transient failures), then fail with a detail that CARRIES
+                // the exact `unknown pending user-input request` substring:
+                // spec §2.4 mandates it for the 409 path, and t3's
+                // stale-request machinery (ProviderCommandReactor, decider,
+                // ProjectionPipeline) classifies the failure only by that
+                // substring. The decoded body's message rides along.
+                (context.reconcile ?? Effect.void).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new ProviderAdapterRequestError({
+                        provider: PROVIDER,
+                        method: "respondToUserInput",
+                        detail: `Aether driver: unknown pending user-input request '${requestKey}' — Aether rejected the answer (409): ${cause.detail}`,
+                        cause,
+                      }),
+                    ),
+                  ),
+                )
+              : Effect.fail(toRestRequestError("respondToUserInput")(cause)),
+          ),
+        );
+      context.sentCount++;
+      context.adoptActiveTurn = false;
+      // Resolve the panel BEFORE announcing the resumed turn.
+      if (context.mapper !== undefined) {
+        yield* processMapperEvents(
+          context,
+          context.mapper.noteInputResolved(requestKey, answers, yield* nowIso),
+        );
+      }
+      yield* activateRespondedTurn(context, restClient, taskId, responded.message_id);
+    });
+
   return {
     provider: PROVIDER,
     capabilities: {
-      // Flips to "in-session" with the model-switch slice (build item 11).
-      sessionModelSwitch: "unsupported",
+      // "in-session", not restart-based: `PUT /tasks/{id}` replaces the
+      // task's settings in place (apitypes/tasks.go UpdateTaskRequest), so a
+      // mid-thread model pick lands on the SAME cloud conversation. The
+      // restart path (`unsupported` + requiresNewThreadForModelChange) would
+      // lie here — a restarted session rebinds the same taskId anyway, and
+      // the reactor would silently pin the previous model for turns sent
+      // without an explicit selection.
+      sessionModelSwitch: "in-session",
     },
     startSession,
     sendTurn,
     interruptTurn,
-    respondToRequest: () => notImplemented("respondToRequest"),
-    respondToUserInput: () => notImplemented("respondToUserInput"),
+    // Aether surfaces no command/file approvals to clients — tools are
+    // auto-approved remotely inside the VM (tool_response is only
+    // ask_user | propose_plan). No request.opened is ever emitted, so this
+    // is unreachable; if it fires anyway, say what actually happens.
+    respondToRequest: (_threadId, requestId) =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "respondToRequest",
+          detail: `Aether cloud tasks run with full workspace access and auto-approve tool use remotely; there is no approval request '${String(requestId)}' to answer.`,
+        }),
+      ),
+    respondToUserInput,
     stopSession,
     listSessions: () => Effect.sync(() => [...sessions.values()].map((context) => context.session)),
     hasSession: (threadId) => Effect.sync(() => sessions.has(threadId)),
     readThread,
-    rollbackThread: () => notImplemented("rollbackThread"),
+    // v1 refusal (spec §2.2 revert row): the WS `git restore` verb exists,
+    // but reverting also truncates the remote conversation and moves the
+    // VM's tree — wiring that safely is the revert slice. Refuse loudly with
+    // the actionable alternative instead of a silent no-op.
+    rollbackThread: (threadId) =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "rollbackThread",
+          detail: `Reverting turns is not supported for Aether cloud sessions yet (thread '${String(threadId)}'): the local checkout is a one-way mirror of the cloud workspace. Revert the task from the Aether app; the next turn's sync re-baselines the local checkout.`,
+        }),
+      ),
     // Pure disconnect for every session; remote tasks are untouched. Each
     // thread gets the same scope-closing teardown and graceful session.exited
     // stopSession emits — ingestion clears per-session state from that event.
     stopAll: () =>
       Effect.gen(function* () {
-        for (const [threadId, context] of [...sessions.entries()]) {
+        // The copy is load-bearing: disconnectSession deletes from the map
+        // mid-iteration (Array.from over a spread per unicorn/no-useless-spread).
+        for (const [threadId, context] of Array.from(sessions.entries())) {
           yield* disconnectSession(threadId, context);
         }
       }),

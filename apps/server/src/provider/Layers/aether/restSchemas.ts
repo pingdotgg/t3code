@@ -117,6 +117,12 @@ const aetherTaskBaseFields = {
   reasoning_effort: Schema.optional(Schema.NullOr(Schema.String)),
   last_error: Schema.optional(Schema.NullOr(Schema.String)),
   head_branch: Schema.optional(Schema.NullOr(Schema.String)),
+  // Live-mutable remotely (Aether web toggles). The model-switch PUT is a
+  // FULL settings replace, so the driver reads these back rather than
+  // clobbering a remote flip with its create-time `false` (build item 11).
+  auto_fix_ci: Schema.Boolean,
+  auto_fix_pr_comments: Schema.Boolean,
+  auto_rebase: Schema.Boolean,
   latest_sequence: Schema.Number,
 } as const;
 

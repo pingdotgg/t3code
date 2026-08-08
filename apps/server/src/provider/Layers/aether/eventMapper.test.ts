@@ -817,3 +817,202 @@ describe("AetherEventMapper — interrupted turns (T6)", () => {
     expect(mapper.activeWireTurnId()).toBe("u2");
   });
 });
+
+describe("AetherEventMapper — open pending input (T7/T8)", () => {
+  it("exposes the open ask_user input with raw answer indices", () => {
+    const mapper = makeMapper();
+    mapper.mapWsEvent(parseFrame(wsAwaitingInputQuestions), NOW);
+    expect(mapper.openUserInput()).toEqual({
+      pendingId: "pi-1",
+      toolName: "ask_user",
+      wireTurnId: "u1",
+      questions: [
+        {
+          id: "q1",
+          rawIndex: 0,
+          multiSelect: false,
+          options: [
+            { label: "Patch the reducer", rawIndex: 0 },
+            { label: "Rewrite the module", rawIndex: 1 },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("preserves RAW wire indices when malformed questions/options are skipped", () => {
+    // Question 0 and option 0 are malformed and skipped from the rendered
+    // questions — the answer keys must still address the wire positions.
+    const parsed = parseAetherQuestions({
+      questions: [
+        "not-an-object",
+        {
+          question: "Which db?",
+          options: [{ description: "no label" }, { label: "sqlite" }],
+        },
+      ],
+    });
+    expect(parsed.issues).toHaveLength(2);
+    expect(parsed.answerable).toEqual([
+      {
+        id: "Which db?",
+        rawIndex: 1,
+        multiSelect: false,
+        options: [{ label: "sqlite", rawIndex: 1 }],
+      },
+    ]);
+  });
+
+  it("dedupes synthesized question ids so answers stay addressable", () => {
+    const parsed = parseAetherQuestions({
+      questions: [{ question: "Proceed?" }, { question: "Proceed?" }],
+    });
+    expect(parsed.questions.map((question) => question.id)).toEqual(["Proceed?", "Proceed?#2"]);
+    expect(parsed.answerable.map((question) => question.rawIndex)).toEqual([0, 1]);
+  });
+
+  it("noteInputResolved emits user-input.resolved once and closes the slot", () => {
+    const mapper = makeMapper();
+    mapper.mapWsEvent(parseFrame(wsAwaitingInputQuestions), NOW);
+    const answers = { q1: ["Rewrite the module"] };
+    const events = mapper.noteInputResolved("pi-1", answers, NOW);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "user-input.resolved",
+      eventId: "aether:task-1:input:pi-1:resolved",
+      requestId: "pi-1",
+      turnId: "aether-turn-u1",
+      payload: { answers },
+    });
+    expect(mapper.openUserInput()).toBeUndefined();
+    // Already resolved: nothing more, whatever id arrives.
+    expect(mapper.noteInputResolved("pi-1", answers, NOW)).toEqual([]);
+  });
+
+  it("resolves an open question out of band when a different turn starts (live)", () => {
+    const mapper = makeMapper();
+    mapper.mapWsEvent(parseFrame(wsAwaitingInputQuestions), NOW);
+    // The answer was submitted from the Aether app: the resumed turn's first
+    // live event proves it — the panel must clear before the new output.
+    const events = mapper.mapWsEvent(
+      parseFrame({ ...wsAssistantDelta, turnId: "u2", messageId: "m9" }),
+      NOW,
+    );
+    expect(events.map((event) => event.type)).toEqual(["user-input.resolved", "content.delta"]);
+    expect(events[0]).toMatchObject({ requestId: "pi-1", payload: { answers: {} } });
+    expect(mapper.openUserInput()).toBeUndefined();
+  });
+
+  it("does NOT resolve an open question on a bare processing beat (awaiting_input commit race)", () => {
+    const mapper = makeMapper();
+    mapper.mapWsEvent(parseFrame(wsAwaitingInputQuestions), NOW);
+    // The workspace emits the live question BEFORE the API commits the task
+    // row to awaiting_input, so a reconcile in that window reads a stale
+    // `processing` with NO new rows and no activeProcessingTurn flip.
+    // Resolving on that would permanently suppress the question
+    // (requestedInputs never re-surfaces the same tool_id) and wedge the
+    // thread — the bare status is not evidence of an out-of-band answer.
+    const events = mapper.reconcileDelta(makeDelta({ task: taskProcessing, messages: [] }), NOW);
+    expect(events).toEqual([]);
+    expect(mapper.openUserInput()).toMatchObject({ pendingId: "pi-1" });
+    // Same for a stale `queued` beat.
+    const queued = mapper.reconcileTask(
+      { ...taskProcessing, status: "queued", run_context: null },
+      NOW,
+    );
+    expect(queued).toEqual([]);
+    expect(mapper.openUserInput()).toMatchObject({ pendingId: "pi-1" });
+  });
+
+  it("resolves an open question when the delta names a DIFFERENT processing turn", () => {
+    const mapper = makeMapper();
+    mapper.mapWsEvent(parseFrame(wsAwaitingInputQuestions), NOW);
+    // Genuine out-of-band answer: the resumed turn IS the evidence — the
+    // delta's activeProcessingTurn names a wire turn other than the asker.
+    const events = mapper.reconcileDelta(
+      makeDelta({
+        task: taskProcessing,
+        messages: [],
+        activeProcessingTurn: { messageId: "m9", startedAt: NOW },
+      }),
+      NOW,
+    );
+    expect(events.map((event) => event.type)).toEqual([
+      "user-input.resolved",
+      "session.state.changed",
+    ]);
+    expect(events[0]).toMatchObject({ requestId: "pi-1", payload: { answers: {} } });
+    expect(events[1]).toMatchObject({ payload: { state: "running" } });
+    expect(mapper.openUserInput()).toBeUndefined();
+  });
+
+  it("resolves an open question when the delta carries the answering user row", () => {
+    const mapper = makeMapper();
+    mapper.mapWsEvent(parseFrame(wsAwaitingInputQuestions), NOW);
+    // The remotely submitted answer arrives as a delivered user row — a turn
+    // opener for a different wire turn, which resolves the parked input.
+    const events = mapper.reconcileDelta(
+      makeDelta({
+        task: taskProcessing,
+        messages: [
+          {
+            id: "m9",
+            role: "user",
+            content: '{"answers":{"0":[0]}}',
+            deliveryStatus: "processing",
+            timestamp: NOW,
+            sequence: 10,
+          },
+        ],
+      }),
+      NOW,
+    );
+    expect(events.map((event) => event.type)).toEqual([
+      "user-input.resolved",
+      "session.state.changed",
+    ]);
+    expect(events[0]).toMatchObject({ requestId: "pi-1" });
+    expect(mapper.openUserInput()).toBeUndefined();
+  });
+
+  it("out-of-band resolution into message-idle emits the corrective READY", () => {
+    const mapper = makeMapper();
+    mapper.mapWsEvent(parseFrame(wsAwaitingInputQuestions), NOW);
+    // The whole answer turn happened while detached: the next observation is
+    // already the idle state, so nothing else corrects the projected
+    // `waiting` — the explicit ready emission must.
+    const events = mapper.reconcileDelta(
+      makeDelta({ task: taskAwaitingMessage, messages: [] }),
+      NOW,
+    );
+    expect(events.map((event) => event.type)).toEqual([
+      "user-input.resolved",
+      "session.state.changed",
+    ]);
+    expect(events[1]).toMatchObject({ payload: { state: "ready" } });
+  });
+
+  it("a NEW pending input supersedes and resolves the previous one", () => {
+    const mapper = makeMapper();
+    mapper.mapWsEvent(parseFrame(wsAwaitingInputQuestions), NOW);
+    // Aether holds one pending slot per task: a second callback overwrites
+    // it wholesale, so the first input resolves before the new card.
+    const events = mapper.mapWsEvent(
+      parseFrame({
+        ...wsAwaitingInputPlan,
+        turnId: "u2",
+        pendingInputId: "pi-9",
+      }),
+      NOW,
+    );
+    expect(events.map((event) => event.type)).toEqual([
+      "user-input.resolved",
+      // The new asking turn's own settle (awaiting_input IS a settle).
+      "turn.completed",
+      "turn.proposed.completed",
+      "session.state.changed",
+    ]);
+    expect(events[0]).toMatchObject({ requestId: "pi-1" });
+    expect(mapper.openUserInput()).toMatchObject({ pendingId: "pi-9", toolName: "propose_plan" });
+  });
+});

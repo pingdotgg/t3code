@@ -67,6 +67,43 @@ export interface AetherEventMapperOptions {
   readonly initialSequence: number;
 }
 
+/**
+ * One selectable option of an open ask_user question, keyed for the answer
+ * wire: Aether's respond verb addresses options by their RAW index in the
+ * tool input's options array (packages/conversation question-drafts.ts —
+ * "question identity is array position"), so the mapper records the raw
+ * index alongside the label the t3 UI echoes back.
+ */
+export interface AetherAnswerableOption {
+  readonly label: string;
+  readonly rawIndex: number;
+}
+
+export interface AetherAnswerableQuestion {
+  /** The id emitted on the t3 `user-input.requested` question (unique per input). */
+  readonly id: string;
+  /** The question's raw index in the wire input — the `answers` record key. */
+  readonly rawIndex: number;
+  readonly multiSelect: boolean;
+  readonly options: ReadonlyArray<AetherAnswerableOption>;
+}
+
+/**
+ * The single pending interaction the remote task is parked on. Aether's
+ * domain holds at most ONE pending input per task (the
+ * `tasks.pending_question_payload` slot — a new callback overwrites it
+ * wholesale), so the mapper mirrors that as a single open slot.
+ */
+export interface AetherOpenUserInput {
+  /** `pendingInputId` (WS) ≡ `tool_id` (REST) — the id the respond verb answers. */
+  readonly pendingId: string;
+  readonly toolName: "ask_user" | "propose_plan";
+  /** The wire turn that asked, when known (stamps the resolution event). */
+  readonly wireTurnId: string | undefined;
+  /** Empty for propose_plan. */
+  readonly questions: ReadonlyArray<AetherAnswerableQuestion>;
+}
+
 export interface AetherEventMapper {
   /** Map one parsed live WS agent event. `slash_commands.updated` maps to []. */
   readonly mapWsEvent: (
@@ -111,6 +148,25 @@ export interface AetherEventMapper {
    * after the stop skips its error card (a stop is not a provider failure).
    */
   readonly markInterrupted: (wireTurnId: string) => void;
+  /**
+   * The pending input the remote task is currently parked on, if any —
+   * the answer-side twin of `user-input.requested`/`turn.proposed.completed`
+   * (build item 9: respondToUserInput / plan accept read it to build the
+   * aether-exact tool_response).
+   */
+  readonly openUserInput: () => AetherOpenUserInput | undefined;
+  /**
+   * The driver answered the open input itself (respond 202 landed): emit its
+   * `user-input.resolved` (ask_user only — plan cards have no resolution
+   * event) carrying the submitted answers, and close the slot so the durable
+   * reconcile does not re-resolve it. A stale/mismatched pendingId maps to []
+   * — the slot was already resolved out of band.
+   */
+  readonly noteInputResolved: (
+    pendingId: string,
+    answers: Record<string, unknown>,
+    nowIso: string,
+  ) => ReadonlyArray<ProviderRuntimeEvent>;
 }
 
 // ---------------------------------------------------------------------------
@@ -231,6 +287,13 @@ function readTodoItems(blocks: ReadonlyArray<unknown> | undefined): ReadonlyArra
 interface ParsedQuestions {
   readonly questions: ReadonlyArray<UserInputQuestion>;
   readonly issues: ReadonlyArray<string>;
+  /**
+   * Aligned 1:1 with `questions`: the raw wire indices the aether respond
+   * verb keys `answers`/`customAnswers` by. Malformed questions/options are
+   * SKIPPED from `questions`, which shifts positions — the raw indices here
+   * are the only correct answer keys after such a skip.
+   */
+  readonly answerable: ReadonlyArray<AetherAnswerableQuestion>;
 }
 
 /**
@@ -244,9 +307,14 @@ export function parseAetherQuestions(input: Record<string, unknown>): ParsedQues
   const issues: Array<string> = [];
   const rawQuestions = Array.isArray(input.questions) ? input.questions : undefined;
   if (rawQuestions === undefined) {
-    return { questions: [], issues: ["ask_user input carries no questions array"] };
+    return { questions: [], issues: ["ask_user input carries no questions array"], answerable: [] };
   }
   const questions: Array<UserInputQuestion> = [];
+  const answerable: Array<AetherAnswerableQuestion> = [];
+  // t3 keys answers by question id, so ids must be unique per input even
+  // though the wire's `id` is optional and the synthesized fallback (the
+  // question text) can repeat — a collision gets the raw index appended.
+  const usedIds = new Set<string>();
   rawQuestions.forEach((raw, index) => {
     if (!isRecord(raw)) {
       issues.push(`question ${index} is not an object`);
@@ -258,6 +326,7 @@ export function parseAetherQuestions(input: Record<string, unknown>): ParsedQues
       return;
     }
     const options: Array<{ label: string; description: string }> = [];
+    const answerableOptions: Array<AetherAnswerableOption> = [];
     if (Array.isArray(raw.options)) {
       raw.options.forEach((rawOption, optionIndex) => {
         if (!isRecord(rawOption)) {
@@ -274,17 +343,25 @@ export function parseAetherQuestions(input: Record<string, unknown>): ParsedQues
           label,
           description: trimmedOrUndefined(readString(rawOption, "description")) ?? label,
         });
+        answerableOptions.push({ label, rawIndex: optionIndex });
       });
     }
+    let id = trimmedOrUndefined(readString(raw, "id")) ?? question;
+    if (usedIds.has(id)) {
+      id = `${id}#${index + 1}`;
+    }
+    usedIds.add(id);
+    const multiSelect = raw.multiSelect === true;
     questions.push({
-      id: trimmedOrUndefined(readString(raw, "id")) ?? question,
+      id,
       header: trimmedOrUndefined(readString(raw, "header")) ?? `Question ${index + 1}`,
       question,
       options,
-      multiSelect: raw.multiSelect === true,
+      multiSelect,
     });
+    answerable.push({ id, rawIndex: index, multiSelect, options: answerableOptions });
   });
-  return { questions, issues };
+  return { questions, issues, answerable };
 }
 
 // ---------------------------------------------------------------------------
@@ -318,6 +395,13 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
   const warnedOnce = new Set<string>();
   /** The wire turn id currently in flight, for settles observed via REST. */
   let activeWireTurnId: string | undefined;
+  /**
+   * The single pending interaction, mirroring Aether's one-slot domain
+   * (`tasks.pending_question_payload`). Set when the input surfaces, cleared
+   * by the driver's own answer (`noteInputResolved`) or by an out-of-band
+   * resolution observed on either transport (build item 14).
+   */
+  let openInput: AetherOpenUserInput | undefined;
   /** Wire turns the user interrupted — their settle state is `interrupted`. */
   const interruptedTurns = new Set<string>();
   /**
@@ -387,12 +471,18 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
     if (wireTurnId === undefined || settledTurns.has(wireTurnId)) {
       return [];
     }
-    const predecessor =
-      activeWireTurnId !== undefined && activeWireTurnId !== wireTurnId
-        ? settleTurn({ wireTurnId: activeWireTurnId, state: "completed", createdAt })
-        : [];
+    const events: Array<ProviderRuntimeEvent> = [];
+    if (activeWireTurnId !== undefined && activeWireTurnId !== wireTurnId) {
+      events.push(...settleTurn({ wireTurnId: activeWireTurnId, state: "completed", createdAt }));
+    }
+    // A turn OTHER than the one that asked becoming active proves the
+    // pending input was answered out of band (an answer is the only thing
+    // that resumes a parked task) — clear the panel (build item 14).
+    if (openInput !== undefined && openInput.wireTurnId !== wireTurnId) {
+      events.push(...resolveOpenInput({}, createdAt));
+    }
     activeWireTurnId = wireTurnId;
-    return predecessor;
+    return events;
   };
 
   /**
@@ -718,6 +808,38 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
     ];
   };
 
+  /**
+   * Close the open pending-input slot and emit its resolution. ask_user
+   * inputs pair `user-input.requested` with `user-input.resolved` (t3 clears
+   * the composer panel from it); plan cards have no resolution event — the
+   * follow-up turn's own lifecycle supersedes the banner.
+   */
+  const resolveOpenInput = (
+    answers: Record<string, unknown>,
+    createdAt: string,
+  ): ReadonlyArray<ProviderRuntimeEvent> => {
+    if (openInput === undefined) {
+      return [];
+    }
+    const resolved = openInput;
+    openInput = undefined;
+    if (resolved.toolName !== "ask_user") {
+      return [];
+    }
+    return [
+      {
+        ...base({
+          eventId: `aether:${taskId}:input:${resolved.pendingId}:resolved`,
+          createdAt,
+          wireTurnId: resolved.wireTurnId,
+          requestId: resolved.pendingId,
+        }),
+        type: "user-input.resolved",
+        payload: { answers },
+      },
+    ];
+  };
+
   const pendingInput = (input: {
     readonly pendingId: string;
     readonly toolName: "ask_user" | "propose_plan";
@@ -731,9 +853,15 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
       return [];
     }
     const events: Array<ProviderRuntimeEvent> = [];
+    // Aether holds ONE pending input per task: a new callback overwrites the
+    // slot wholesale, so a different id arriving means the previous input
+    // was superseded remotely — resolve it before surfacing the new one.
+    if (openInput !== undefined && openInput.pendingId !== input.pendingId) {
+      events.push(...resolveOpenInput({}, input.createdAt));
+    }
 
     if (input.toolName === "ask_user") {
-      const { questions, issues } = parseAetherQuestions(input.payload);
+      const { questions, issues, answerable } = parseAetherQuestions(input.payload);
       if (issues.length > 0) {
         events.push(
           ...warningOnce(
@@ -750,6 +878,12 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
         return events;
       }
       requestedInputs.add(input.pendingId);
+      openInput = {
+        pendingId: input.pendingId,
+        toolName: "ask_user",
+        wireTurnId: input.wireTurnId,
+        questions: answerable,
+      };
       events.push({
         ...base({
           eventId: `aether:${taskId}:input:${input.pendingId}`,
@@ -763,14 +897,23 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
     } else {
       const plan = trimmedOrUndefined(readString(input.payload, "plan"));
       if (plan === undefined) {
-        return warningOnce(
-          `input:${input.pendingId}:malformed`,
-          "Aether proposed a plan with no plan markdown.",
-          { input: input.payload },
-          input.createdAt,
+        events.push(
+          ...warningOnce(
+            `input:${input.pendingId}:malformed`,
+            "Aether proposed a plan with no plan markdown.",
+            { input: input.payload },
+            input.createdAt,
+          ),
         );
+        return events;
       }
       requestedInputs.add(input.pendingId);
+      openInput = {
+        pendingId: input.pendingId,
+        toolName: "propose_plan",
+        wireTurnId: input.wireTurnId,
+        questions: [],
+      };
       events.push({
         ...base({
           eventId: `aether:${taskId}:input:${input.pendingId}`,
@@ -1017,14 +1160,30 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
       // Status projection (spec §2.1 working-indicator row, must):
       // queued→starting, processing→running — without these a passive resume
       // onto a mid-turn task shows an idle thread receiving assistant output.
+      // A bare queued/processing observation is NOT proof an open input was
+      // answered out of band: the workspace emits the live
+      // turn.awaiting_input BEFORE the API transaction that parks the task
+      // row commits (handler.ts emits, then flushes the question callback —
+      // a failed flush widens the window to its replay), so a reconcile beat
+      // landing in that window still reads the pre-park status. Resolving
+      // here would permanently suppress the question (`requestedInputs`
+      // dedupes re-surfacing) and wedge the thread: Aether 409s a plain
+      // respond while awaiting questions/plan. A GENUINE out-of-band answer
+      // always surfaces harder evidence — the answering user row /
+      // `activeProcessingTurn` names a DIFFERENT wire turn (trackTurn
+      // resolves the input, build item 14), or the task lands on an advanced
+      // state (awaiting_input / errored, handled below). Until that evidence
+      // arrives, leave the panel and the `waiting` projection untouched.
       case "queued":
-        return projectSessionState(
-          "starting",
-          "Aether queued the task; waiting for a workspace.",
-          createdAt,
-        );
+        return openInput !== undefined
+          ? []
+          : projectSessionState(
+              "starting",
+              "Aether queued the task; waiting for a workspace.",
+              createdAt,
+            );
       case "processing":
-        return projectSessionState("running", undefined, createdAt);
+        return openInput !== undefined ? [] : projectSessionState("running", undefined, createdAt);
 
       case "awaiting_input": {
         const events: Array<ProviderRuntimeEvent> = [];
@@ -1043,7 +1202,25 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
         switch (task.awaiting_input.kind) {
           case "message":
             // The idle state between EVERY pair of turns: session READY,
-            // deliberately NO state emission (spec resolved note 2).
+            // deliberately NO state emission (spec resolved note 2). An open
+            // input observed here was answered out of band; when nothing
+            // else corrects the projected `waiting` (no tracked turn to
+            // settle), the explicit READY emission does.
+            if (openInput !== undefined) {
+              events.push(...resolveOpenInput({}, createdAt));
+              if (lastProjectedState === "waiting") {
+                lastProjectedState = "ready";
+                stateEmissions++;
+                events.push({
+                  ...base({
+                    eventId: `aether:${taskId}:state:${stateEmissions}:ready`,
+                    createdAt,
+                  }),
+                  type: "session.state.changed",
+                  payload: { state: "ready" },
+                });
+              }
+            }
             return events;
           case "questions":
             return [
@@ -1084,6 +1261,8 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
 
       case "errored": {
         const events: Array<ProviderRuntimeEvent> = [];
+        // An errored task no longer waits on anything — clear a stale panel.
+        events.push(...resolveOpenInput({}, createdAt));
         if (activeWireTurnId !== undefined) {
           events.push(
             ...settleTurn({
@@ -1253,5 +1432,10 @@ export function makeAetherEventMapper(options: AetherEventMapperOptions): Aether
     markInterrupted: (wireTurnId) => {
       interruptedTurns.add(wireTurnId);
     },
+    openUserInput: () => openInput,
+    noteInputResolved: (pendingId, answers, nowIso) =>
+      openInput !== undefined && openInput.pendingId === pendingId
+        ? resolveOpenInput(answers, stamp(undefined, nowIso))
+        : [],
   };
 }

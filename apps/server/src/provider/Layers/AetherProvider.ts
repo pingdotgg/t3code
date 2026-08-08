@@ -35,6 +35,9 @@ import {
 
 const AETHER_PRESENTATION = {
   displayName: "Aether",
+  // Parity with the web driver metadata (providerDriverMeta.ts): every
+  // instance of the driver advertises the early-access gate.
+  badgeLabel: "Early Access",
   showInteractionModeToggle: true,
 } as const;
 

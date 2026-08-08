@@ -49,6 +49,15 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
+  if (props.provider === "aether") {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <Path fill="#6e72d6" d="M12 2 22.5 21h-5.06L12 11.13 6.56 21H1.5L12 2Z" />
+        <Path fill="#6e72d6" d="m12 15.4 3.1 5.6H8.9l3.1-5.6Z" />
+      </Svg>
+    );
+  }
+
   if (props.provider === "opencode") {
     return (
       <Svg width={size} height={size} viewBox="0 0 32 40" fill="none">

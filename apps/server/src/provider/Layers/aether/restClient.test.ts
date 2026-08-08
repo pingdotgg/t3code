@@ -67,6 +67,9 @@ const taskBase = {
   agent_type: "codex",
   model: "gpt-5.6-sol",
   interaction_mode: "default",
+  auto_fix_ci: false,
+  auto_fix_pr_comments: false,
+  auto_rebase: false,
   latest_sequence: 41,
   // Additive fields the client must tolerate without declaring them:
   display_status: "Working",

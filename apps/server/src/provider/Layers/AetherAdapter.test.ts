@@ -1,7 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { ProviderInstanceId, ThreadId, type ProviderRuntimeEvent } from "@t3tools/contracts";
+import {
+  ApprovalRequestId,
+  ProviderInstanceId,
+  ThreadId,
+  type ProviderRuntimeEvent,
+} from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import type * as Scope from "effect/Scope";
@@ -13,6 +19,7 @@ import type { ExecuteGitResult, GitStatusDetails } from "../../vcs/GitVcsDriver.
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import type { ProviderAdapterError } from "../Errors.ts";
 import {
+  deterministicClientMessageId,
   makeAetherAdapter,
   parseAetherResume,
   type AetherAdapterSocketOptions,
@@ -21,6 +28,7 @@ import {
   type AetherTurnTiming,
 } from "./AetherAdapter.ts";
 import {
+  AetherApiConflictError,
   AetherApiNotFoundError,
   AetherApiTransportError,
   type AetherRestClient,
@@ -139,10 +147,29 @@ const processingTask: AetherTask = {
   agent_type: "codex",
   model: "gpt-5.6-sol",
   interaction_mode: "default",
+  auto_fix_ci: false,
+  auto_fix_pr_comments: false,
+  auto_rebase: false,
   latest_sequence: 12,
   status: "processing",
   run_context: { workspace_id: "ws-1", started_at: "2026-08-08T10:01:00Z" },
 };
+
+/**
+ * Conversation page for the startSession ledger rebuild (spec item 10): a
+ * resumed session re-derives the turn ledger from these rows, so most tests
+ * hand it an empty history.
+ */
+const messagesPage = (task: AetherTask, messages: ReadonlyArray<AetherTimelineMessage> = []) => ({
+  task,
+  messages,
+  activity: [],
+  activeProcessingTurn: null,
+  latestSequence: task.latest_sequence,
+  oldestSequenceLoaded: messages.length > 0 ? messages[0]!.sequence : null,
+  oldestSortTimestampLoaded: messages.length > 0 ? messages[0]!.timestamp : null,
+  hasMoreOlder: false,
+});
 
 const startInput = (overrides?: {
   readonly resumeCursor?: unknown;
@@ -202,19 +229,36 @@ const expectStartFailure = (options: {
   );
 
 describe("parseAetherResume", () => {
-  it("parses a current-version cursor and preserves the opaque turn ledger", () => {
+  it("parses a current-version cursor including the typed turn ledger", () => {
     expect(
       parseAetherResume({
         schemaVersion: 1,
         taskId: "task-1",
         latestSequence: 12,
-        turnLedger: [{ turn: 1 }],
+        turnLedger: [{ turnId: "aether-turn-u1", messageId: "u1" }],
       }),
     ).toEqual({
       schemaVersion: 1,
       taskId: "task-1",
       latestSequence: 12,
-      turnLedger: [{ turn: 1 }],
+      turnLedger: [{ turnId: "aether-turn-u1", messageId: "u1" }],
+    });
+  });
+
+  it("drops a malformed turn ledger wholesale but keeps the resume", () => {
+    // A partial ledger would misclassify the dropped turns as
+    // remote-originated, so one bad entry voids the whole ledger.
+    expect(
+      parseAetherResume({
+        schemaVersion: 1,
+        taskId: "task-1",
+        latestSequence: 12,
+        turnLedger: [{ turnId: "aether-turn-u1", messageId: "u1" }, { turn: 1 }],
+      }),
+    ).toEqual({
+      schemaVersion: 1,
+      taskId: "task-1",
+      latestSequence: 12,
     });
   });
 
@@ -409,6 +453,7 @@ describe("AetherAdapter startSession", () => {
               Effect.sync(() => {
                 requestedTaskIds.push(taskId);
               }).pipe(Effect.as(processingTask)),
+            getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
           },
         },
         (adapter) =>
@@ -464,13 +509,42 @@ describe("AetherAdapter startSession", () => {
     }),
   );
 
-  it.effect("round-trips an opaque turn ledger through the rebuilt resume cursor", () =>
+  it.effect("rebuilds the turn ledger from the conversation page, never the cursor snapshot", () =>
     withAdapter(
       {
         restClient: {
           ...unusedRestClient,
           listProjects: () => Effect.succeed([project()]),
           getTask: () => Effect.succeed(processingTask),
+          getConversationMessages: () =>
+            Effect.succeed(
+              messagesPage(processingTask, [
+                {
+                  id: "u1",
+                  role: "user",
+                  content: "first turn",
+                  deliveryStatus: "processed",
+                  timestamp: "t1",
+                  sequence: 1,
+                },
+                {
+                  id: "a1",
+                  role: "assistant",
+                  variant: "text",
+                  content: "done",
+                  timestamp: "t2",
+                  sequence: 2,
+                },
+                {
+                  id: "m2",
+                  role: "user",
+                  content: "answered after the last cursor snapshot",
+                  deliveryStatus: "processed",
+                  timestamp: "t3",
+                  sequence: 3,
+                },
+              ]),
+            ),
         },
       },
       (adapter) =>
@@ -481,17 +555,22 @@ describe("AetherAdapter startSession", () => {
                 schemaVersion: 1,
                 taskId: "task-1",
                 latestSequence: 7,
-                turnLedger: [{ turn: 1, messageId: "m-1" }],
+                // Stale by a turn (a crash before the next cursor snapshot):
+                // m2 is missing here but present on the page — trusting this
+                // ledger would misclassify the driver's own m2 as a
+                // remote-originated turn (spec resolved note 7).
+                turnLedger: [{ turnId: "aether-turn-u1", messageId: "u1" }],
               },
             }),
           );
-          // A ledger written by a newer build (item 10) must survive a
-          // startSession round-trip through this one.
           expect(session.resumeCursor).toEqual({
             schemaVersion: 1,
             taskId: "task-1",
             latestSequence: 7,
-            turnLedger: [{ turn: 1, messageId: "m-1" }],
+            turnLedger: [
+              { turnId: "aether-turn-u1", messageId: "u1" },
+              { turnId: "aether-turn-m2", messageId: "m2" },
+            ],
           });
         }),
     ),
@@ -522,6 +601,7 @@ describe("AetherAdapter session lifecycle", () => {
           ...unusedRestClient,
           listProjects: () => Effect.succeed([project()]),
           getTask: () => Effect.succeed(processingTask),
+          getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
         },
       },
       (adapter) =>
@@ -599,7 +679,7 @@ describe("AetherAdapter session lifecycle", () => {
     ),
   );
 
-  it.effect("turn methods fail session-not-found for unknown threads; T7+ stubs stay loud", () =>
+  it.effect("turn methods fail session-not-found for unknown threads; refusals stay loud", () =>
     withAdapter({}, (adapter) =>
       Effect.gen(function* () {
         const threadId = ThreadId.make("thread-1");
@@ -607,10 +687,19 @@ describe("AetherAdapter session lifecycle", () => {
         expect(sendTurn._tag).toBe("ProviderAdapterSessionNotFoundError");
         const interrupt = yield* Effect.flip(adapter.interruptTurn(threadId));
         expect(interrupt._tag).toBe("ProviderAdapterSessionNotFoundError");
-        // Questions/revert land with build items 9/10 — still typed stubs.
+        // Revert is a deliberate v1 refusal: the mirror is one-way, so the
+        // message names the actionable alternative instead of a stub.
         const rollback = yield* Effect.flip(adapter.rollbackThread(threadId, 1));
         expect(rollback._tag).toBe("ProviderAdapterRequestError");
-        expect(rollback.message).toContain("not implemented");
+        expect(rollback.message).toContain("one-way mirror");
+        expect(rollback.message).toContain("Revert the task from the Aether app");
+        // Approvals never exist for Aether — the refusal says what actually
+        // happens (auto-approved remotely), not "not implemented".
+        const approval = yield* Effect.flip(
+          adapter.respondToRequest(threadId, ApprovalRequestId.make("req-1"), "accept"),
+        );
+        expect(approval._tag).toBe("ProviderAdapterRequestError");
+        expect(approval.message).toContain("auto-approve");
       }),
     ),
   );
@@ -815,40 +904,58 @@ describe("AetherAdapter readThread", () => {
             expect(snapshot.turns[1]?.id).toBe("aether-turn-u2");
           }),
       );
-      expect(cursors).toEqual([undefined, { sequence: 5, sortTimestamp: "t5" }]);
+      // TWO full walks: the startSession ledger rebuild and the readThread
+      // snapshot each page back to the first turn.
+      expect(cursors).toEqual([
+        undefined,
+        { sequence: 5, sortTimestamp: "t5" },
+        undefined,
+        { sequence: 5, sortTimestamp: "t5" },
+      ]);
     }),
   );
 
   it.effect("fails loudly when a page claims more older rows without a cursor", () =>
-    withAdapter(
-      {
-        restClient: {
-          ...unusedRestClient,
-          listProjects: () => Effect.succeed([project()]),
-          getTask: () => Effect.succeed(processingTask),
-          getConversationMessages: () =>
-            Effect.succeed({
-              task: processingTask,
-              messages: timelineFixture,
-              activity: [],
-              activeProcessingTurn: null,
-              latestSequence: 6,
-              oldestSequenceLoaded: null,
-              oldestSortTimestampLoaded: null,
-              hasMoreOlder: true,
-            }),
+    Effect.gen(function* () {
+      // The FIRST fetch (the startSession ledger rebuild) is well-formed;
+      // the readThread walk then hits the contract break.
+      let calls = 0;
+      yield* withAdapter(
+        {
+          restClient: {
+            ...unusedRestClient,
+            listProjects: () => Effect.succeed([project()]),
+            getTask: () => Effect.succeed(processingTask),
+            getConversationMessages: () =>
+              Effect.sync(() => {
+                calls++;
+              }).pipe(
+                Effect.map(() => ({
+                  task: processingTask,
+                  messages: timelineFixture,
+                  activity: [],
+                  activeProcessingTurn: null,
+                  latestSequence: 6,
+                  oldestSequenceLoaded: null,
+                  oldestSortTimestampLoaded: null,
+                  hasMoreOlder: calls > 1,
+                })),
+              ),
+          },
         },
-      },
-      (adapter) =>
-        Effect.gen(function* () {
-          const session = yield* adapter.startSession(
-            startInput({ resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 6 } }),
-          );
-          const error = yield* Effect.flip(adapter.readThread(session.threadId));
-          expect(error._tag).toBe("ProviderAdapterRequestError");
-          expect(error.message).toContain("no older-page cursor");
-        }),
-    ),
+        (adapter) =>
+          Effect.gen(function* () {
+            const session = yield* adapter.startSession(
+              startInput({
+                resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 6 },
+              }),
+            );
+            const error = yield* Effect.flip(adapter.readThread(session.threadId));
+            expect(error._tag).toBe("ProviderAdapterRequestError");
+            expect(error.message).toContain("no older-page cursor");
+          }),
+      );
+    }),
   );
 });
 
@@ -958,6 +1065,7 @@ describe("AetherAdapter event pipeline", () => {
     ...unusedRestClient,
     listProjects: () => Effect.succeed([project()]),
     getTask: () => Effect.succeed(processingTask),
+    getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
     connectWorkspace: () =>
       Effect.succeed({
         state: "running",
@@ -1069,6 +1177,7 @@ describe("AetherAdapter event pipeline", () => {
         ...unusedRestClient,
         listProjects: () => Effect.succeed([project()]),
         getTask: () => Effect.succeed(processingTask),
+        getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
         connectWorkspace: () =>
           Effect.succeed({
             state: "running",
@@ -1156,6 +1265,209 @@ describe("AetherAdapter event pipeline", () => {
     }),
   );
 
+  it.effect(
+    "an IDLE session eagerly reconciles a remote turn: warning precedes its live output",
+    () =>
+      Effect.gen(function* () {
+        const sockets: Array<FakeAdapterSocket> = [];
+        let deltaCalls = 0;
+        const restClient: AetherRestClient = {
+          ...unusedRestClient,
+          listProjects: () => Effect.succeed([project()]),
+          getTask: () => Effect.succeed(idleMessageTask),
+          getConversationMessages: () => Effect.succeed(messagesPage(idleMessageTask)),
+          connectWorkspace: () =>
+            Effect.succeed({
+              state: "running",
+              transport: { websocket_path: "/workspaces/ws-1/ws", preview_token: "t".repeat(32) },
+            } as const),
+          getConversationDelta: (_taskId, after) =>
+            Effect.sync(() => {
+              deltaCalls++;
+              return deltaCalls === 1
+                ? emptyDelta(idleMessageTask, after)
+                : ({
+                    task: processingTask,
+                    messages: [
+                      {
+                        id: "u9",
+                        role: "user",
+                        content: "driven from the app",
+                        deliveryStatus: "processing",
+                        timestamp: "t8",
+                        sequence: 8,
+                      },
+                    ],
+                    activity: [],
+                    activeProcessingTurn: { messageId: "u9", startedAt: "2026-08-08T10:03:00Z" },
+                    latestSequence: 8,
+                    removedMessageIds: [],
+                    truncated: false,
+                  } satisfies AetherConversationDelta);
+            }),
+        };
+        yield* withAdapter(
+          {
+            restClient,
+            socket: {
+              apiBaseUrl: "https://api.runaether.dev",
+              apiKey: "aether_test_key",
+              timing: { ...zeroSocketTiming, requestTimeoutMs: 60_000 },
+              webSocketFactory: () => {
+                const socket = diffAnsweringSocket();
+                sockets.push(socket);
+                return socket;
+              },
+            },
+          },
+          (adapter) =>
+            Effect.gen(function* () {
+              const collector = yield* adapter.streamEvents.pipe(
+                Stream.take(4),
+                Stream.runCollect,
+                Effect.forkScoped,
+              );
+              yield* adapter.startSession(
+                startInput({
+                  resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 7 },
+                }),
+              );
+              yield* settleAdapterPump;
+              // The session sits IDLE on a healthy WS: no driver turn is
+              // active so the settle poll is not running — the live frame
+              // itself must trigger the durable reconcile that carries the
+              // remote user row (spec resolved note 9).
+              sockets[0]!.message({ ...wsAssistantDelta, turnId: "u9", messageId: "m9" });
+              yield* settleAdapterPump;
+              const events = yield* Fiber.join(collector);
+              expect(events.map((event) => event.type)).toEqual([
+                "session.started",
+                // Build item 13: the injected prompt's warning card lands
+                // BEFORE the remote turn's live output.
+                "runtime.warning",
+                "session.state.changed",
+                "content.delta",
+              ]);
+              expect(events[1]).toMatchObject({ eventId: "aether:task-1:remote:u9" });
+              expect(events[1]!.type === "runtime.warning" && events[1]!.payload.message).toContain(
+                "driven from the app",
+              );
+              expect(events[3]).toMatchObject({ eventId: "aether:task-1:stream:m9:1" });
+            }),
+        );
+      }),
+  );
+
+  it.effect(
+    "a durable backlog the eager reconcile ingests is never re-emitted by the live frame it raced",
+    () =>
+      Effect.gen(function* () {
+        const sockets: Array<FakeAdapterSocket> = [];
+        let deltaCalls = 0;
+        const restClient: AetherRestClient = {
+          ...unusedRestClient,
+          listProjects: () => Effect.succeed([project()]),
+          getTask: () => Effect.succeed(idleMessageTask),
+          getConversationMessages: () => Effect.succeed(messagesPage(idleMessageTask)),
+          connectWorkspace: () =>
+            Effect.succeed({
+              state: "running",
+              transport: { websocket_path: "/workspaces/ws-1/ws", preview_token: "t".repeat(32) },
+            } as const),
+          getConversationDelta: (_taskId, after) =>
+            Effect.sync(() => {
+              deltaCalls++;
+              // Reconnect/backlog: by the time the FIRST live frame of the
+              // remote turn is delivered, the durable feed already carries
+              // that turn whole — its user row, its assistant item AND its
+              // settle (the task is back at awaiting_input).
+              return deltaCalls === 1
+                ? emptyDelta(idleMessageTask, after)
+                : ({
+                    task: idleMessageTask,
+                    messages: [
+                      {
+                        id: "u9",
+                        role: "user",
+                        content: "driven from the app",
+                        deliveryStatus: "delivered",
+                        timestamp: "t8",
+                        sequence: 8,
+                      },
+                      {
+                        id: "m9",
+                        role: "assistant",
+                        variant: "text",
+                        content: "the whole answer",
+                        timestamp: "t9",
+                        sequence: 9,
+                      },
+                    ],
+                    activity: [],
+                    activeProcessingTurn: null,
+                    latestSequence: 9,
+                    removedMessageIds: [],
+                    truncated: false,
+                  } satisfies AetherConversationDelta);
+            }),
+        };
+        yield* withAdapter(
+          {
+            restClient,
+            socket: {
+              apiBaseUrl: "https://api.runaether.dev",
+              apiKey: "aether_test_key",
+              timing: { ...zeroSocketTiming, requestTimeoutMs: 60_000 },
+              webSocketFactory: () => {
+                const socket = diffAnsweringSocket();
+                sockets.push(socket);
+                return socket;
+              },
+            },
+          },
+          (adapter) =>
+            Effect.gen(function* () {
+              // Six, with `session.exited` as the sentinel: a stale replay of
+              // the live frame would land BEFORE it and shift the tail.
+              const collector = yield* adapter.streamEvents.pipe(
+                Stream.take(6),
+                Stream.runCollect,
+                Effect.forkScoped,
+              );
+              const session = yield* adapter.startSession(
+                startInput({
+                  resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 7 },
+                }),
+              );
+              yield* settleAdapterPump;
+              // The live frame carries the SAME item the durable backlog
+              // already holds.
+              sockets[0]!.message({ ...wsAssistantDelta, turnId: "u9", messageId: "m9" });
+              yield* settleAdapterPump;
+              yield* adapter.stopSession(session.threadId);
+              const events = yield* Fiber.join(collector);
+              const types = events.map((event) => event.type);
+              // The eager reconcile runs BEFORE the frame is mapped, so the
+              // frame is mapped against a mapper that already ingested the
+              // durable twin: the stale delta is swallowed instead of
+              // trailing the turn's own settle.
+              expect(types).toEqual([
+                "session.started",
+                "runtime.warning",
+                "item.completed",
+                "turn.diff.updated",
+                "turn.completed",
+                "session.exited",
+              ]);
+              expect(types).not.toContain("content.delta");
+              expect(events[1]).toMatchObject({ eventId: "aether:task-1:remote:u9" });
+              expect(events[2]).toMatchObject({ eventId: "aether:task-1:item:m9" });
+              expect(events[4]).toMatchObject({ turnId: "aether-turn-u9" });
+            }),
+        );
+      }),
+  );
+
   it.effect("does not attach when the thread has no task yet", () =>
     Effect.gen(function* () {
       const sockets: Array<FakeAdapterSocket> = [];
@@ -1220,6 +1532,7 @@ describe("AetherAdapter turn lifecycle", () => {
     readonly messages?: ReadonlyArray<AetherTimelineMessage>;
     readonly activeMessageId?: string;
     readonly latestSequence: number;
+    readonly removedMessageIds?: ReadonlyArray<string>;
   }): AetherConversationDelta => ({
     task: input.task,
     messages: input.messages ?? [],
@@ -1229,7 +1542,7 @@ describe("AetherAdapter turn lifecycle", () => {
         ? { messageId: input.activeMessageId, startedAt: "2026-08-08T10:02:00Z" }
         : null,
     latestSequence: input.latestSequence,
-    removedMessageIds: [],
+    removedMessageIds: input.removedMessageIds ?? [],
     truncated: false,
   });
 
@@ -1536,6 +1849,7 @@ describe("AetherAdapter turn lifecycle", () => {
               ...unusedRestClient,
               listProjects: () => Effect.succeed([project()]),
               getTask: () => Effect.succeed(processingTask),
+              getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
               respondToTask: (taskId, request) =>
                 Effect.sync(() => {
                   respondRequests.push({ taskId, request });
@@ -1610,6 +1924,7 @@ describe("AetherAdapter turn lifecycle", () => {
             listProjects: () => Effect.succeed([project()]),
             // Interrupt confirmation: the task has already left processing.
             getTask: () => Effect.succeed(messageIdleTask),
+            getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
             respondToTask: () =>
               Effect.sync(() => {
                 respondCount++;
@@ -1768,6 +2083,7 @@ describe("AetherAdapter turn lifecycle", () => {
             ...unusedRestClient,
             listProjects: () => Effect.succeed([project()]),
             getTask: () => Effect.succeed(messageIdleTask),
+            getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
             respondToTask: (_taskId, request) =>
               Effect.suspend(() => {
                 seenIds.push((request as { client_message_id: string }).client_message_id);
@@ -1822,6 +2138,7 @@ describe("AetherAdapter turn lifecycle", () => {
             ...unusedRestClient,
             listProjects: () => Effect.succeed([project()]),
             getTask: () => Effect.succeed(messageIdleTask),
+            getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
             respondToTask: () =>
               Effect.sync(() => {
                 respondCount++;
@@ -1901,6 +2218,7 @@ describe("AetherAdapter turn lifecycle", () => {
             ...unusedRestClient,
             listProjects: () => Effect.succeed([project()]),
             getTask: () => Effect.succeed(messageIdleTask),
+            getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
             respondToTask: () => Effect.succeed({ message_id: "m2" }),
             stopTask: () =>
               Effect.fail(
@@ -1998,6 +2316,669 @@ describe("AetherAdapter turn lifecycle", () => {
           expect(error.message).toContain("non-empty text prompt");
         }),
     ),
+  );
+
+  // -- questions + plans (T7) -----------------------------------------------
+
+  const optionsQuestionTask: AetherTask = {
+    ...processingTask,
+    status: "awaiting_input",
+    awaiting_input: {
+      kind: "questions",
+      tool_id: "input-1",
+      input: {
+        questions: [
+          {
+            id: "q1",
+            question: "Which approach?",
+            options: [{ label: "Patch" }, { label: "Rewrite" }],
+          },
+          { id: "q2", question: "Anything else?", options: [] },
+        ],
+      },
+    },
+  };
+
+  const planPendingTask: AetherTask = {
+    ...processingTask,
+    status: "awaiting_input",
+    awaiting_input: {
+      kind: "plan",
+      tool_id: "plan-1",
+      input: { summary: "Fix it", plan: "1. Reproduce\n2. Fix" },
+    },
+  };
+
+  it.effect(
+    "respondToUserInput maps labels to raw indices, uses the -1 custom sentinel, resumes the turn",
+    () =>
+      Effect.gen(function* () {
+        const respondRequests: Array<unknown> = [];
+        const deltas = scriptedDeltas([
+          delta({
+            task: processingTask,
+            messages: [userRow("u1", 1)],
+            activeMessageId: "u1",
+            latestSequence: 1,
+          }),
+          delta({ task: optionsQuestionTask, messages: [userRow("u1", 1)], latestSequence: 1 }),
+        ]);
+        yield* withAdapter(
+          {
+            restClient: {
+              ...unusedRestClient,
+              listProjects: () => Effect.succeed([project()]),
+              createTask: () => Effect.succeed({ id: "task-9", name: "n" }),
+              respondToTask: (_taskId, request) =>
+                Effect.sync(() => {
+                  respondRequests.push(request);
+                }).pipe(Effect.as({ message_id: "m2" })),
+              getConversationDelta: deltas.getConversationDelta,
+            },
+          },
+          (adapter) =>
+            Effect.gen(function* () {
+              const collector = yield* adapter.streamEvents.pipe(
+                Stream.take(6),
+                Stream.runCollect,
+                Effect.forkScoped,
+              );
+              const session = yield* adapter.startSession(startInput());
+              yield* adapter.sendTurn({ threadId: session.threadId, input: "go" });
+              yield* drainPoll;
+
+              yield* adapter.respondToUserInput(
+                session.threadId,
+                ApprovalRequestId.make("input-1"),
+                { q1: "Rewrite", q2: "use sqlite instead" },
+              );
+
+              // The aether-exact wire shape: answers keyed by RAW question
+              // index, labels resolved to raw option indices, free-typed
+              // text as the -1 sentinel + customAnswers (tasks.go oneOf).
+              const expectedData = {
+                answers: { "0": [1], "1": [-1] },
+                customAnswers: { "1": "use sqlite instead" },
+              };
+              expect(respondRequests).toHaveLength(1);
+              expect(respondRequests[0]).toMatchObject({
+                // @effect-diagnostics-next-line preferSchemaOverJson:off - asserts the wire-exact transcript row aether-web writes.
+                message: JSON.stringify(expectedData),
+                tool_response: { tool_name: "ask_user", data: expectedData },
+              });
+              expect(
+                (respondRequests[0] as { client_message_id?: string }).client_message_id,
+              ).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+
+              const events = yield* Fiber.join(collector);
+              expect(events.map((event) => event.type)).toEqual([
+                "turn.started",
+                "turn.completed",
+                "user-input.requested",
+                "session.state.changed",
+                // The panel resolves BEFORE the resumed turn is announced.
+                "user-input.resolved",
+                "turn.started",
+              ]);
+              expect(events[4]).toMatchObject({
+                requestId: "input-1",
+                payload: { answers: { q1: "Rewrite", q2: "use sqlite instead" } },
+              });
+              expect(events[5]).toMatchObject({ turnId: "aether-turn-m2" });
+
+              // The ledger carries both driver-originated turns.
+              const settled = (yield* adapter.listSessions())[0]!;
+              expect(settled.resumeCursor).toMatchObject({
+                turnLedger: [
+                  { turnId: "aether-turn-u1", messageId: "u1" },
+                  { turnId: "aether-turn-m2", messageId: "m2" },
+                ],
+              });
+            }),
+        );
+      }),
+  );
+
+  it.effect("respondToUserInput with a stale requestId renders as t3's stale-request error", () =>
+    withAdapter(
+      {
+        restClient: {
+          ...unusedRestClient,
+          listProjects: () => Effect.succeed([project()]),
+          getTask: () => Effect.succeed(messageIdleTask),
+          getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
+        },
+      },
+      (adapter) =>
+        Effect.gen(function* () {
+          const session = yield* adapter.startSession(
+            startInput({
+              resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 2 },
+            }),
+          );
+          const failure = yield* Effect.flip(
+            adapter.respondToUserInput(session.threadId, ApprovalRequestId.make("input-gone"), {
+              q1: "yes",
+            }),
+          );
+          expect(failure._tag).toBe("ProviderAdapterRequestError");
+          // The EXACT substring t3's reactor/decider key their stale
+          // rendering on ("Stale pending user-input request … restart").
+          expect(failure.message).toContain("unknown pending user-input request");
+        }),
+    ),
+  );
+
+  it.effect(
+    "a 409 on the answer classifies as a stale request AND carries the body's message",
+    () =>
+      Effect.gen(function* () {
+        const deltas = scriptedDeltas([
+          delta({
+            task: processingTask,
+            messages: [userRow("u1", 1)],
+            activeMessageId: "u1",
+            latestSequence: 1,
+          }),
+          delta({ task: optionsQuestionTask, messages: [userRow("u1", 1)], latestSequence: 1 }),
+        ]);
+        yield* withAdapter(
+          {
+            restClient: {
+              ...unusedRestClient,
+              listProjects: () => Effect.succeed([project()]),
+              createTask: () => Effect.succeed({ id: "task-9", name: "n" }),
+              respondToTask: () =>
+                Effect.fail(
+                  new AetherApiConflictError({
+                    endpoint: "POST /tasks/{id}/respond",
+                    detail: "Task is no longer awaiting input",
+                    code: "task_not_accepting_messages",
+                  }),
+                ),
+              getConversationDelta: deltas.getConversationDelta,
+            },
+          },
+          (adapter) =>
+            Effect.gen(function* () {
+              const session = yield* adapter.startSession(startInput());
+              yield* adapter.sendTurn({ threadId: session.threadId, input: "go" });
+              yield* drainPoll;
+              const failure = yield* Effect.flip(
+                adapter.respondToUserInput(session.threadId, ApprovalRequestId.make("input-1"), {
+                  q1: "Patch",
+                }),
+              );
+              expect(failure._tag).toBe("ProviderAdapterRequestError");
+              // Spec §2.4: the 409 path MUST carry the exact substring t3's
+              // stale-request machinery (reactor/decider/projection) keys on —
+              // the decoded body's message rides along for context.
+              expect(failure.message).toContain("unknown pending user-input request");
+              expect(failure.message).toContain("Task is no longer awaiting input");
+            }),
+        );
+      }),
+  );
+
+  it.effect("a sendTurn while a plan is pending ACCEPTS it (interactionMode default)", () =>
+    Effect.gen(function* () {
+      const respondRequests: Array<unknown> = [];
+      const deltas = scriptedDeltas([
+        delta({
+          task: processingTask,
+          messages: [userRow("u1", 1)],
+          activeMessageId: "u1",
+          latestSequence: 1,
+        }),
+        delta({ task: planPendingTask, messages: [userRow("u1", 1)], latestSequence: 1 }),
+      ]);
+      yield* withAdapter(
+        {
+          restClient: {
+            ...unusedRestClient,
+            listProjects: () => Effect.succeed([project()]),
+            createTask: () => Effect.succeed({ id: "task-9", name: "n" }),
+            respondToTask: (_taskId, request) =>
+              Effect.sync(() => {
+                respondRequests.push(request);
+              }).pipe(Effect.as({ message_id: "m2" })),
+            getConversationDelta: deltas.getConversationDelta,
+          },
+        },
+        (adapter) =>
+          Effect.gen(function* () {
+            const collector = yield* adapter.streamEvents.pipe(
+              Stream.take(4),
+              Stream.runCollect,
+              Effect.forkScoped,
+            );
+            const session = yield* adapter.startSession(startInput());
+            yield* adapter.sendTurn({ threadId: session.threadId, input: "plan it" });
+            yield* drainPoll;
+            const events = yield* Fiber.join(collector);
+            expect(events.map((event) => event.type)).toEqual([
+              "turn.started",
+              "turn.completed",
+              "turn.proposed.completed",
+              "session.state.changed",
+            ]);
+
+            const accept = yield* adapter.sendTurn({
+              threadId: session.threadId,
+              input: "build it",
+              interactionMode: "default",
+            });
+            expect(accept.turnId).toBe("aether-turn-m2");
+            expect(respondRequests).toHaveLength(1);
+            expect(respondRequests[0]).toMatchObject({
+              message: "build it",
+              interaction_mode: "default",
+              tool_response: { tool_name: "propose_plan", data: { approved: true } },
+            });
+            expect(
+              (respondRequests[0] as { tool_response: { data: Record<string, unknown> } })
+                .tool_response.data.feedback,
+            ).toBeUndefined();
+          }),
+      );
+    }),
+  );
+
+  it.effect("a plan-mode follow-up REJECTS the pending plan with feedback", () =>
+    Effect.gen(function* () {
+      const respondRequests: Array<unknown> = [];
+      const deltas = scriptedDeltas([
+        delta({
+          task: processingTask,
+          messages: [userRow("u1", 1)],
+          activeMessageId: "u1",
+          latestSequence: 1,
+        }),
+        delta({ task: planPendingTask, messages: [userRow("u1", 1)], latestSequence: 1 }),
+      ]);
+      yield* withAdapter(
+        {
+          restClient: {
+            ...unusedRestClient,
+            listProjects: () => Effect.succeed([project()]),
+            createTask: () => Effect.succeed({ id: "task-9", name: "n" }),
+            respondToTask: (_taskId, request) =>
+              Effect.sync(() => {
+                respondRequests.push(request);
+              }).pipe(Effect.as({ message_id: "m2" })),
+            getConversationDelta: deltas.getConversationDelta,
+          },
+        },
+        (adapter) =>
+          Effect.gen(function* () {
+            const session = yield* adapter.startSession(startInput());
+            yield* adapter.sendTurn({ threadId: session.threadId, input: "plan it" });
+            yield* drainPoll;
+            yield* adapter.sendTurn({
+              threadId: session.threadId,
+              input: "tighten the rollout steps",
+              interactionMode: "plan",
+            });
+            expect(respondRequests).toHaveLength(1);
+            expect(respondRequests[0]).toMatchObject({
+              message: "tighten the rollout steps",
+              interaction_mode: "plan",
+              tool_response: {
+                tool_name: "propose_plan",
+                data: { approved: false, feedback: "tighten the rollout steps" },
+              },
+            });
+          }),
+      );
+    }),
+  );
+
+  // -- hardening + steer-queue polish (T8) ------------------------------------
+
+  it.effect(
+    "an unledgered user row surfaces as a remote-originated warning before its output",
+    () =>
+      Effect.gen(function* () {
+        const deltas = scriptedDeltas([
+          delta({ task: processingTask, activeMessageId: "m2", latestSequence: 3 }),
+          delta({
+            task: messageIdleTask,
+            messages: [userRow("remote-1", 5), assistantRow("a5", 6)],
+            latestSequence: 6,
+          }),
+        ]);
+        let respondCount = 0;
+        yield* withAdapter(
+          {
+            restClient: {
+              ...unusedRestClient,
+              listProjects: () => Effect.succeed([project()]),
+              getTask: () => Effect.succeed(processingTask),
+              getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
+              respondToTask: () =>
+                Effect.sync(() => {
+                  respondCount++;
+                }).pipe(Effect.map(() => ({ message_id: `m${respondCount + 1}` }))),
+              getConversationDelta: deltas.getConversationDelta,
+            },
+          },
+          (adapter) =>
+            Effect.gen(function* () {
+              const collector = yield* adapter.streamEvents.pipe(
+                Stream.take(6),
+                Stream.runCollect,
+                Effect.forkScoped,
+              );
+              const session = yield* adapter.startSession(
+                startInput({
+                  resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 2 },
+                }),
+              );
+              yield* adapter.sendTurn({ threadId: session.threadId, input: "turn two" });
+              yield* drainPoll;
+              const events = yield* Fiber.join(collector);
+              const types = events.map((event) => event.type);
+              const warningIndex = types.indexOf("runtime.warning");
+              const outputIndex = types.indexOf("item.completed");
+              expect(warningIndex).toBeGreaterThanOrEqual(0);
+              // The injected prompt lands BEFORE the turn's output.
+              expect(warningIndex).toBeLessThan(outputIndex);
+              const warning = events[warningIndex]!;
+              expect(warning.eventId).toBe("aether:task-1:remote:remote-1");
+              expect(warning.type === "runtime.warning" && warning.payload.message).toContain(
+                "This task was driven from the Aether app: message remote-1",
+              );
+            }),
+        );
+      }),
+  );
+
+  it.effect("a reconcile racing the steer's 202 does NOT misclassify the driver's own row", () =>
+    Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      let respondCount = 0;
+      let sessionEpoch = "";
+      let steerRowVisible = false;
+      let taskIdlePhase = false;
+      const getDelta = (_taskId: string, _after: number) =>
+        Effect.sync(() =>
+          taskIdlePhase
+            ? delta({ task: messageIdleTask, latestSequence: 6 })
+            : steerRowVisible
+              ? delta({
+                  task: processingTask,
+                  activeMessageId: "m2",
+                  messages: [
+                    {
+                      id: "m3",
+                      role: "user",
+                      content: "steer it",
+                      deliveryStatus: "queued",
+                      timestamp: "t5",
+                      sequence: 5,
+                      // The row the server committed for the in-flight steer
+                      // carries the driver's own deterministic id.
+                      clientMessageId: deterministicClientMessageId({
+                        taskId: "task-1",
+                        sessionEpoch,
+                        sendOrdinal: 1,
+                      }),
+                    },
+                  ],
+                  latestSequence: 5,
+                })
+              : delta({ task: processingTask, activeMessageId: "m2", latestSequence: 3 }),
+        );
+      yield* withAdapter(
+        {
+          restClient: {
+            ...unusedRestClient,
+            listProjects: () => Effect.succeed([project()]),
+            getTask: () => Effect.succeed(processingTask),
+            getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
+            respondToTask: () =>
+              Effect.suspend(() => {
+                respondCount++;
+                if (respondCount === 1) {
+                  return Effect.succeed({ message_id: "m2" });
+                }
+                // The server commits the user row BEFORE returning the 202 —
+                // from this moment the settle poll can observe it while the
+                // steer's sendTurn still awaits the response.
+                steerRowVisible = true;
+                return Deferred.await(gate).pipe(Effect.as({ message_id: "m3" }));
+              }),
+            getConversationDelta: getDelta,
+          },
+        },
+        (adapter) =>
+          Effect.gen(function* () {
+            const collector = yield* adapter.streamEvents.pipe(
+              Stream.take(3),
+              Stream.runCollect,
+              Effect.forkScoped,
+            );
+            const session = yield* adapter.startSession(
+              startInput({
+                resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 2 },
+              }),
+            );
+            sessionEpoch = session.createdAt;
+            yield* adapter.sendTurn({ threadId: session.threadId, input: "turn two" });
+            const steer = yield* Effect.forkScoped(
+              adapter.sendTurn({ threadId: session.threadId, input: "steer it" }),
+            );
+            // Poll beats run while the 202 is still parked on the gate: they
+            // observe the committed steer row (not yet in the turn ledger).
+            yield* drainPoll;
+            yield* Deferred.succeed(gate, undefined);
+            yield* Fiber.join(steer);
+            taskIdlePhase = true;
+            yield* drainPoll;
+            const events = yield* Fiber.join(collector);
+            // The pre-registered client_message_id classifies the row as the
+            // driver's own send — with the ledger entry landing only after
+            // the 202, a post-202 registration would have surfaced a false
+            // "driven from the Aether app" warning here instead of the
+            // settle.
+            expect(events.map((event) => event.type)).toEqual([
+              "turn.started",
+              "session.state.changed",
+              "turn.completed",
+            ]);
+            expect(events[2]).toMatchObject({
+              turnId: "aether-turn-m2",
+              payload: { state: "completed" },
+            });
+          }),
+      );
+    }),
+  );
+
+  it.effect("a queued steer unqueued remotely settles its deferred turn (removedMessageIds)", () =>
+    Effect.gen(function* () {
+      const deltas = scriptedDeltas([
+        delta({ task: processingTask, activeMessageId: "m2", latestSequence: 3 }),
+        // The remote unqueue never surfaces as a row — cancelled user
+        // messages are filtered out of the conversation wire entirely; the
+        // ONLY signal is the id landing in the delta's removedMessageIds
+        // (the cancel bumps the revision sequence).
+        delta({
+          task: processingTask,
+          activeMessageId: "m2",
+          removedMessageIds: ["m3"],
+          latestSequence: 5,
+        }),
+      ]);
+      let respondCount = 0;
+      yield* withAdapter(
+        {
+          restClient: {
+            ...unusedRestClient,
+            listProjects: () => Effect.succeed([project()]),
+            getTask: () => Effect.succeed(processingTask),
+            getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
+            respondToTask: () =>
+              Effect.sync(() => {
+                respondCount++;
+              }).pipe(Effect.map(() => ({ message_id: respondCount === 1 ? "m2" : "m3" }))),
+            getConversationDelta: deltas.getConversationDelta,
+          },
+        },
+        (adapter) =>
+          Effect.gen(function* () {
+            const collector = yield* adapter.streamEvents.pipe(
+              Stream.take(4),
+              Stream.runCollect,
+              Effect.forkScoped,
+            );
+            const session = yield* adapter.startSession(
+              startInput({
+                resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 2 },
+              }),
+            );
+            yield* adapter.sendTurn({ threadId: session.threadId, input: "turn two" });
+            yield* adapter.sendTurn({ threadId: session.threadId, input: "steer it" });
+            yield* drainPoll;
+            const events = yield* Fiber.join(collector);
+            expect(events.map((event) => event.type)).toEqual([
+              "turn.started",
+              "session.state.changed",
+              "runtime.warning",
+              "turn.completed",
+            ]);
+            expect(events[2]!.type === "runtime.warning" && events[2]!.payload.message).toContain(
+              "steer it",
+            );
+            expect(events[3]).toMatchObject({
+              turnId: "aether-turn-m3",
+              payload: { state: "interrupted" },
+            });
+            // The session falls back to the still-running predecessor
+            // instead of staying wedged on the cancelled steer.
+            const after = (yield* adapter.listSessions())[0]!;
+            expect(after.status).toBe("running");
+            expect(after.activeTurnId).toBe("aether-turn-m2");
+          }),
+      );
+    }),
+  );
+
+  it.effect("a model change between turns PUTs the full settings replace, then responds", () =>
+    Effect.gen(function* () {
+      const updates: Array<unknown> = [];
+      const respondRequests: Array<unknown> = [];
+      const deltas = scriptedDeltas([delta({ task: messageIdleTask, latestSequence: 3 })]);
+      yield* withAdapter(
+        {
+          restClient: {
+            ...unusedRestClient,
+            listProjects: () => Effect.succeed([project()]),
+            getTask: () => Effect.succeed(messageIdleTask),
+            getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
+            updateTask: (_taskId, request) =>
+              Effect.sync(() => {
+                updates.push(request);
+              }).pipe(Effect.as(messageIdleTask)),
+            respondToTask: (_taskId, request) =>
+              Effect.sync(() => {
+                respondRequests.push(request);
+              }).pipe(Effect.as({ message_id: "m2" })),
+            getConversationDelta: deltas.getConversationDelta,
+          },
+        },
+        (adapter) =>
+          Effect.gen(function* () {
+            expect(adapter.capabilities.sessionModelSwitch).toBe("in-session");
+            const session = yield* adapter.startSession(
+              startInput({
+                resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 2 },
+              }),
+            );
+            yield* adapter.sendTurn({
+              threadId: session.threadId,
+              input: "switch to claude",
+              modelSelection: { instanceId, model: "claude-code/claude-opus-5" },
+            });
+            // FULL replace (every field required; reasoning_effort is
+            // required-but-nullable), with the live-mutable auto_fix_* flags
+            // read back from the task row, never assumed false.
+            expect(updates).toEqual([
+              {
+                agent_type: "claude-code",
+                model: "claude-opus-5",
+                interaction_mode: "default",
+                reasoning_effort: null,
+                auto_fix_ci: false,
+                auto_fix_pr_comments: false,
+                auto_rebase: false,
+              },
+            ]);
+            expect(respondRequests).toHaveLength(1);
+            const after = (yield* adapter.listSessions())[0]!;
+            expect(after.model).toBe("claude-code/claude-opus-5");
+          }),
+      );
+    }),
+  );
+
+  it.effect("a reasoning-effort change on the SAME model slug rides every respond", () =>
+    Effect.gen(function* () {
+      const respondRequests: Array<unknown> = [];
+      const deltas = scriptedDeltas([delta({ task: messageIdleTask, latestSequence: 3 })]);
+      yield* withAdapter(
+        {
+          restClient: {
+            ...unusedRestClient,
+            listProjects: () => Effect.succeed([project()]),
+            // updateTask stays the defecting stub on purpose: an option-only
+            // change must never take the full-replace PUT path (which is
+            // refused outright while a turn is running).
+            getTask: () => Effect.succeed(messageIdleTask),
+            getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
+            respondToTask: (_taskId, request) =>
+              Effect.sync(() => {
+                respondRequests.push(request);
+                return { message_id: `m${respondRequests.length + 1}` };
+              }),
+            getConversationDelta: deltas.getConversationDelta,
+          },
+        },
+        (adapter) =>
+          Effect.gen(function* () {
+            const session = yield* adapter.startSession(
+              startInput({
+                resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 2 },
+              }),
+            );
+            // The project defaults name the session's slug; only the effort
+            // OPTION moves between the two sends.
+            const selection = (effort: string) => ({
+              instanceId,
+              model: "codex/gpt-5.6-sol",
+              options: [{ id: "reasoningEffort", value: effort }],
+            });
+            yield* adapter.sendTurn({
+              threadId: session.threadId,
+              input: "think harder",
+              modelSelection: selection("high"),
+            });
+            yield* adapter.sendTurn({
+              threadId: session.threadId,
+              input: "actually, be quick",
+              modelSelection: selection("low"),
+            });
+            // `POST /respond` carries the per-message reasoning_effort the
+            // runner reads; without it the second turn would inherit the
+            // task row's stored effort.
+            expect(respondRequests).toMatchObject([
+              { message: "think harder", reasoning_effort: "high" },
+              { message: "actually, be quick", reasoning_effort: "low" },
+            ]);
+            expect((yield* adapter.listSessions())[0]!.model).toBe("codex/gpt-5.6-sol");
+          }),
+      );
+    }),
   );
 
   it.effect("stopSession deregisters the mirror-guard claim", () =>

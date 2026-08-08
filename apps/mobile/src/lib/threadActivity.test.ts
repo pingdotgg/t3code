@@ -12,7 +12,9 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  buildPendingUserInputAnswers,
   buildThreadFeed,
+  derivePendingUserInputs,
   deriveThreadFeedPresentation,
   type ThreadFeedActivity,
   type ThreadFeedEntry,
@@ -54,6 +56,50 @@ function makeThread(
     settledAt: input.settledAt ?? null,
   };
 }
+
+describe("derivePendingUserInputs", () => {
+  it("keeps a custom-answer-only question so the submission is never partial", () => {
+    const pending = derivePendingUserInputs([
+      makeActivity({
+        id: EventId.make("activity-ask"),
+        kind: "user-input.requested",
+        summary: "User input needed",
+        createdAt: "2026-08-08T10:00:00.000Z",
+        payload: {
+          requestId: "request-1",
+          questions: [
+            {
+              id: "q1",
+              header: "Scope",
+              question: "Which files should I touch?",
+              options: [{ label: "All", description: "Everything in the repo" }],
+            },
+            // The provider's custom-answer-only question: an EMPTY options
+            // array is legal and the card answers it with free text.
+            { id: "q2", header: "Anything else", question: "Notes?", options: [] },
+            // Options were sent but none parse — a choice-less card would
+            // misrepresent this one, so it stays dropped.
+            { id: "q3", header: "Broken", question: "Pick one", options: [{ label: 7 }] },
+          ],
+        },
+      }),
+    ]);
+
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.questions.map((question) => question.id)).toEqual(["q1", "q2"]);
+    expect(pending[0]!.questions[1]!.options).toEqual([]);
+    // Submit stays disabled until the custom-only question is answered too.
+    expect(
+      buildPendingUserInputAnswers(pending[0]!.questions, { q1: { selectedOptionLabel: "All" } }),
+    ).toBeNull();
+    expect(
+      buildPendingUserInputAnswers(pending[0]!.questions, {
+        q1: { selectedOptionLabel: "All" },
+        q2: { customAnswer: "ship it" },
+      }),
+    ).toEqual({ q1: "All", q2: "ship it" });
+  });
+});
 
 describe("buildThreadFeed", () => {
   it("keeps historic work entries attributed to their turns", () => {

@@ -371,6 +371,9 @@ const taskBase = {
   agent_type: "codex",
   model: "gpt-5.6-sol",
   interaction_mode: "default",
+  auto_fix_ci: false,
+  auto_fix_pr_comments: false,
+  auto_rebase: false,
 } as const;
 
 export const taskProcessing: AetherTask = {

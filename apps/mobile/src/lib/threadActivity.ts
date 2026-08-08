@@ -203,7 +203,13 @@ function parseUserInputQuestions(
           };
         })
         .filter((option): option is UserInputQuestion["options"][number] => option !== null);
-      if (options.length === 0) {
+      // A question the provider sent with NO options is answerable by free
+      // text alone (the card always renders the custom-answer field), so it
+      // must survive — dropping it hides the question and submits a partial
+      // answer set the provider rejects. Options that WERE sent but all
+      // failed to parse still drop the question: a choice-less card would
+      // misrepresent a multiple-choice question.
+      if (options.length === 0 && question.options.length > 0) {
         return null;
       }
       return {
