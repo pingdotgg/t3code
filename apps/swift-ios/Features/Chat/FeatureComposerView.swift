@@ -632,7 +632,7 @@ final class FeatureComposerUITextView: UITextView {
             return
         }
         if let pastedText = FeatureComposerPasteTextPolicy.text(
-            from: UIPasteboard.general.items
+            from: UIPasteboard.general
         ) {
             insertText(pastedText)
         }
@@ -657,26 +657,69 @@ enum FeatureComposerTextSelectionPolicy {
     }
 }
 
+struct FeatureComposerPasteItem {
+    let typeIdentifiers: [String]
+    let stringsByType: [String: String]
+}
+
 enum FeatureComposerPasteTextPolicy {
-    static func text(from items: [[String: Any]]) -> String? {
+    static func text(from pasteboard: UIPasteboard) -> String? {
+        let items = (0..<pasteboard.numberOfItems).map { itemIndex in
+            let itemSet = IndexSet(integer: itemIndex)
+            let typeIdentifiers = pasteboard.types(forItemSet: itemSet)?
+                .first ?? []
+            var stringsByType: [String: String] = [:]
+            for typeIdentifier in preferredPlainTextTypes(in: typeIdentifiers) {
+                let value = pasteboard.values(
+                    forPasteboardType: typeIdentifier,
+                    inItemSet: itemSet
+                )?.first as? String
+                if let value {
+                    stringsByType[typeIdentifier] = value
+                }
+            }
+            return FeatureComposerPasteItem(
+                typeIdentifiers: typeIdentifiers,
+                stringsByType: stringsByType
+            )
+        }
+        return text(from: items)
+    }
+
+    static func text(from items: [FeatureComposerPasteItem]) -> String? {
         let strings = items.compactMap { item -> String? in
-            let containsImage = item.keys.contains {
+            let containsImage = item.typeIdentifiers.contains {
                 UTType($0)?.conforms(to: .image) == true
             }
             guard !containsImage else { return nil }
 
-            let textKey = item.keys.first {
-                UTType($0)?.conforms(to: .text) == true
+            for typeIdentifier in preferredPlainTextTypes(
+                in: item.typeIdentifiers
+            ) {
+                if let text = item.stringsByType[typeIdentifier], !text.isEmpty {
+                    return text
+                }
             }
-            guard let textKey,
-                  let text = item[textKey] as? String,
-                  !text.isEmpty else {
-                return nil
-            }
-            return text
+            return nil
         }
         guard !strings.isEmpty else { return nil }
         return strings.joined(separator: "\n")
+    }
+
+    private static func preferredPlainTextTypes(
+        in typeIdentifiers: [String]
+    ) -> [String] {
+        typeIdentifiers
+            .filter { UTType($0)?.conforms(to: .plainText) == true }
+            .sorted { lhs, rhs in
+                (plainTextPriority(lhs), lhs) < (plainTextPriority(rhs), rhs)
+            }
+    }
+
+    private static func plainTextPriority(_ typeIdentifier: String) -> Int {
+        if typeIdentifier == UTType.utf8PlainText.identifier { return 0 }
+        if typeIdentifier == UTType.plainText.identifier { return 1 }
+        return 2
     }
 }
 

@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 import UniformTypeIdentifiers
 @testable import T3Code
@@ -58,19 +59,36 @@ struct FeatureComposerPowerTests {
 
     @Test
     func mixedPasteKeepsOnlyTextFromNonImageItems() {
-        let items: [[String: Any]] = [
-            [
-                UTType.png.identifier: Data([0x89]),
-                UTType.plainText.identifier: "image metadata",
-            ],
-            [UTType.plainText.identifier: "first"],
-            [UTType.utf8PlainText.identifier: "second"],
+        let items = [
+            FeatureComposerPasteItem(
+                typeIdentifiers: [UTType.png.identifier, UTType.plainText.identifier],
+                stringsByType: [UTType.plainText.identifier: "image metadata"]
+            ),
+            FeatureComposerPasteItem(
+                typeIdentifiers: [UTType.plainText.identifier],
+                stringsByType: [UTType.plainText.identifier: "first"]
+            ),
+            FeatureComposerPasteItem(
+                typeIdentifiers: [
+                    UTType.html.identifier,
+                    UTType.utf8PlainText.identifier,
+                ],
+                stringsByType: [
+                    UTType.html.identifier: "<b>second</b>",
+                    UTType.utf8PlainText.identifier: "second",
+                ]
+            ),
         ]
 
         #expect(FeatureComposerPasteTextPolicy.text(from: items) == "first\nsecond")
         #expect(
             FeatureComposerPasteTextPolicy.text(
-                from: [[UTType.jpeg.identifier: Data([0xFF])]]
+                from: [
+                    FeatureComposerPasteItem(
+                        typeIdentifiers: [UTType.jpeg.identifier],
+                        stringsByType: [:]
+                    ),
+                ]
             ) == nil
         )
     }
