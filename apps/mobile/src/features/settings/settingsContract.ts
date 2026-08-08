@@ -1,7 +1,7 @@
 export const SHARED_SETTINGS_TAIL_SECTION_IDS = [
   "general",
   "appearance",
-  "beta",
+  "legacy",
   "archive",
   "app",
 ] as const;

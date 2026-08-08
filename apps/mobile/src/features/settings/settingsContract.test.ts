@@ -29,7 +29,7 @@ describe("native settings contract", () => {
     expect(SHARED_SETTINGS_TAIL_SECTION_IDS_BY_MODE[mode]).toEqual([
       "general",
       "appearance",
-      "beta",
+      "legacy",
       "archive",
       "app",
     ]);

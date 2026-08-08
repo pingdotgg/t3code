@@ -525,7 +525,7 @@ function ConfiguredSettingsRouteScreen() {
 const SHARED_SETTINGS_TAIL_COMPONENTS = {
   general: GeneralSettingsSection,
   appearance: AppearanceSettingsSection,
-  beta: BetaSettingsSection,
+  legacy: LegacySettingsSection,
   archive: ArchivedThreadsSettingsSection,
   app: AppSettingsSection,
 } satisfies Record<SharedSettingsTailSectionId, ComponentType>;
@@ -558,26 +558,27 @@ function AppearanceSettingsSection() {
 }
 
 /**
- * Device-local beta toggles. Mobile has no client-settings sync, so this is
- * the counterpart of web's Settings → Beta backed by mobile preferences.
+ * Device-local legacy toggles. Mobile has no client-settings sync, so this is
+ * the counterpart of web's Settings → General → Legacy features backed by
+ * mobile preferences.
  */
-function BetaSettingsSection() {
+function LegacySettingsSection() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const threadListV2Enabled = useThreadListV2Enabled();
 
   return (
     <View className="gap-3">
-      <SettingsSection title="Beta">
+      <SettingsSection title="Legacy">
         <SettingsSwitchRow
           icon="sidebar.left"
-          label="Thread List v2"
-          value={threadListV2Enabled}
-          onValueChange={(value) => savePreferences({ threadListV2Enabled: value })}
+          label="Legacy Thread List"
+          value={!threadListV2Enabled}
+          onValueChange={(value) => savePreferences({ legacyThreadListEnabled: value })}
         />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        One flat thread list in creation order. Active work renders as cards; settled threads
-        collapse to compact rows. Switch back any time.
+        Brings back the original grouped thread list. The default list is flat, in creation order:
+        active work renders as cards; settled threads collapse to compact rows.
       </Text>
     </View>
   );
