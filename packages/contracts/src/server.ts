@@ -43,7 +43,13 @@ export type ServerConfigIssue = typeof ServerConfigIssue.Type;
 // decode over a kind they cannot render.
 const ServerConfigIssues = ForwardCompatibleArray(ServerConfigIssue);
 
-export const ServerProviderState = Schema.Literals(["ready", "warning", "error", "disabled"]);
+export const ServerProviderState = Schema.Literals([
+  "ready",
+  "warning",
+  "error",
+  "disabled",
+  "pending",
+]);
 export type ServerProviderState = typeof ServerProviderState.Type;
 
 export const ServerProviderAuthStatus = Schema.Literals([

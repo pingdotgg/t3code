@@ -1,4 +1,8 @@
-import type { ServerProvider, ServerProviderVersionAdvisory } from "@t3tools/contracts";
+import type {
+  ServerProvider,
+  ServerProviderState,
+  ServerProviderVersionAdvisory,
+} from "@t3tools/contracts";
 
 /**
  * Visual treatment for each server-reported provider status. Centralized so
@@ -14,10 +18,13 @@ export const PROVIDER_STATUS_STYLES = {
   ready: {
     dot: "bg-success",
   },
+  pending: {
+    dot: "bg-muted-foreground/50",
+  },
   warning: {
     dot: "bg-warning",
   },
-} as const;
+} as const satisfies Record<ServerProviderState, { readonly dot: string }>;
 
 export type ProviderStatusKey = keyof typeof PROVIDER_STATUS_STYLES;
 
@@ -40,6 +47,12 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
       headline: "Disabled",
       detail:
         provider.message ?? "This provider is installed but disabled for new sessions in T3 Code.",
+    };
+  }
+  if (provider.status === "pending") {
+    return {
+      headline: "Checking provider status",
+      detail: provider.message ?? "Waiting for installation and authentication details.",
     };
   }
   if (!provider.installed) {
