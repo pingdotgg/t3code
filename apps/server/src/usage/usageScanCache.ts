@@ -120,6 +120,11 @@ export function decodeScanCache(document: unknown): ScanCache {
   if (!isRecordArray(root.models) || !isRecordArray(root.sessions)) return cache;
   if (typeof root.files !== "object" || root.files === null) return cache;
 
+  // The intern tables must be all strings: a numeric entry would pass the
+  // undefined guard below, land in a record's model, and crash the aggregate
+  // at normalizeModelName. A corrupt table rejects the whole cache.
+  if (!root.models.every((value) => typeof value === "string")) return cache;
+  if (!root.sessions.every((value) => typeof value === "string")) return cache;
   const models = root.models as readonly string[];
   const sessions = root.sessions as readonly string[];
 

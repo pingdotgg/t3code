@@ -77,6 +77,15 @@ describe("scan cache round trip", () => {
     expect([...restored.keys()]).toEqual(["/good.jsonl"]);
   });
 
+  it("rejects the whole cache when an intern table holds a non-string", () => {
+    // models: [1] would pass the undefined guard, put a number in a record's
+    // model, and crash normalizeModelName at aggregate time.
+    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
+    const poisoned = { ...encoded, models: [1] };
+
+    expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned))).size).toBe(0);
+  });
+
   it("drops the whole entry when any row is corrupt, forcing a cold re-parse", () => {
     // Keeping the surviving rows under the original (size, mtime) would read
     // as a valid warm hit and the file would never be re-parsed.

@@ -21,6 +21,7 @@ import {
   type UsageSummaryInput,
   UsageReadError,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -204,10 +205,11 @@ export const make = Effect.gen(function* () {
         (cause) =>
           new UsageReadError({
             reason: "scanFailed",
-            // Bounded description only; the chain travels in `cause` so defect
-            // text never leaks into the wire-serialized message.
+            // Bounded description; the squashed failure travels as the cause.
+            // Squashed, not the Cause tree: a full tree in a Defect field is
+            // the unbounded wire payload the bounded detail exists to avoid.
             detail: "Server settings could not be read.",
-            cause,
+            cause: Cause.squash(cause),
           }),
       ),
     );
@@ -263,7 +265,16 @@ export const make = Effect.gen(function* () {
   ): Effect.Effect<readonly UsageRecord[]> =>
     Effect.gen(function* () {
       const cached = fileCache.get(filePath);
-      if (cached && cached.size === size && cached.mtimeMs === mtimeMs) return cached.records;
+      // Provider is part of the identity: if both providers were ever pointed
+      // at one directory, a hit parsed by the other parser must not be reused.
+      if (
+        cached &&
+        cached.size === size &&
+        cached.mtimeMs === mtimeMs &&
+        cached.provider === provider
+      ) {
+        return cached.records;
+      }
 
       const parsed = yield* Effect.promise(() => readTranscriptRecords(filePath, provider));
       // A read failure is not an empty transcript: caching it under this
