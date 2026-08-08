@@ -48,6 +48,7 @@ describe("Open VSX themes", () => {
               { namespace: "icons", name: "theme" },
               { namespace: "oversized", name: "theme" },
               { namespace: "unlicensed", name: "theme" },
+              { namespace: "unavailable", name: "theme" },
               { namespace: "closed", name: "theme" },
               { namespace: "huge", name: "theme" },
             ],
@@ -97,6 +98,21 @@ describe("Open VSX themes", () => {
           { status: 200 },
         );
       }
+      if (url.endsWith("/unavailable/theme")) {
+        return new Response(
+          JSON.stringify(
+            extensionDetail({
+              namespace: "unavailable",
+              files: {
+                ...extensionDetail().files,
+                download: `${ASSET_ROOT.replace("demo/theme", "unavailable/theme")}/unavailable.vsix`,
+                manifest: `${ASSET_ROOT.replace("demo/theme", "unavailable/theme")}/package.json`,
+              },
+            }),
+          ),
+          { status: 200 },
+        );
+      }
       if (url.endsWith("/closed/theme")) {
         return new Response(
           JSON.stringify(extensionDetail({ namespace: "closed", license: "All Rights Reserved" })),
@@ -112,6 +128,9 @@ describe("Open VSX themes", () => {
           status: 200,
         });
       }
+      if (url.endsWith("/unavailable/theme/1.0.0/file/unavailable.vsix")) {
+        return new Response(null, { status: 404 });
+      }
       if (url.endsWith(".vsix")) {
         return new Response(null, { headers: { "content-length": "1024" }, status: 200 });
       }
@@ -121,6 +140,12 @@ describe("Open VSX themes", () => {
       if (url.endsWith("/unlicensed/theme/1.0.0/file/package.json")) {
         return new Response(
           JSON.stringify({ contributes: { themes: [{ path: "./theme.json" }] } }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/unavailable/theme/1.0.0/file/package.json")) {
+        return new Response(
+          JSON.stringify({ license: "MIT", contributes: { themes: [{ path: "./theme.json" }] } }),
           { status: 200 },
         );
       }
