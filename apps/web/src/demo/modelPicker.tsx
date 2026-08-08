@@ -79,7 +79,7 @@ function ModelPickerDemo() {
               triggerClassName="text-foreground hover:text-foreground"
             />
             <ComposerFooterModeControls
-              showInteractionModeToggle
+              showInteractionModeToggle={false}
               interactionMode="default"
               runtimeMode={runtimeMode}
               onToggleInteractionMode={() => undefined}

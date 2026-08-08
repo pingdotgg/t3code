@@ -545,9 +545,9 @@ const socialImageUrl = new URL(socialImage, siteUrl);
   .nav-inner {
     position: relative;
     z-index: 1;
-    max-width: 1240px;
+    width: min(100% - 48px, 1240px);
     margin: 0 auto;
-    padding: 12px 32px;
+    padding: 12px 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -728,7 +728,10 @@ const socialImageUrl = new URL(socialImage, siteUrl);
   }
 
   @media (max-width: 820px) {
-    .nav-inner,
+    .nav-inner {
+      width: min(100% - 40px, 680px);
+    }
+
     .footer-inner {
       padding-left: 20px;
       padding-right: 20px;
@@ -764,6 +767,10 @@ const socialImageUrl = new URL(socialImage, siteUrl);
   }
 
   @media (max-width: 520px) {
+    .nav-inner {
+      width: min(100% - 32px, 480px);
+    }
+
     .nav-link {
       display: none;
     }
