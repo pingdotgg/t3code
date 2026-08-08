@@ -212,9 +212,13 @@ export function UsagePage() {
                 detail={`includes ${formatTokens(merged.reasoningTokens)} reasoning`}
               />
               <Metric
-                label="Responses"
-                value={formatCount(merged.records)}
-                detail={`${formatCount(merged.sessions)} sessions`}
+                label="Cache savings"
+                value={formatUsd(merged.costQuality.cacheSavingsUsd)}
+                detail={
+                  merged.costUsd > 0
+                    ? `${(merged.costQuality.cacheSavingsUsd / merged.costUsd).toFixed(1)}x the raw token cost`
+                    : "vs full input rates"
+                }
               />
             </section>
 
