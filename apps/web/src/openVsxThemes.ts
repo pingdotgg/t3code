@@ -380,7 +380,6 @@ function contributionType(uiTheme: unknown): string | null {
 }
 
 type ZipEntrySizes = {
-  compressedSize?: unknown;
   uncompressedSize?: unknown;
 };
 
@@ -406,11 +405,12 @@ function inspectZipDirectory(bytes: Uint8Array): Uint8Array {
   const directorySize = view.getUint32(endOffset + 12, true);
   const directoryOffset = view.getUint32(endOffset + 16, true);
   const directoryEnd = directoryOffset + directorySize;
-  if (directoryEnd > endOffset || directoryEnd > bytes.byteLength) {
+  if (directoryEnd !== endOffset || directoryEnd > bytes.byteLength) {
     throw new Error("That extension package has an invalid ZIP directory.");
   }
 
   let entryCount = 0;
+  let totalUncompressed = 0;
   let offset = directoryOffset;
   while (offset < directoryEnd) {
     if (offset + 46 > directoryEnd || view.getUint32(offset, true) !== 0x02014b50) {
@@ -419,6 +419,21 @@ function inspectZipDirectory(bytes: Uint8Array): Uint8Array {
     entryCount += 1;
     if (entryCount > MAX_ZIP_ENTRIES) {
       throw new Error("That extension package has too many files.");
+    }
+    const compressed = view.getUint32(offset + 20, true);
+    const uncompressed = view.getUint32(offset + 24, true);
+    if (compressed === 0xffffffff || uncompressed === 0xffffffff) {
+      throw new Error("That extension package has unsupported ZIP64 metadata.");
+    }
+    totalUncompressed += uncompressed;
+    if (totalUncompressed > MAX_UNCOMPRESSED_BYTES) {
+      throw new Error("That extension package expands beyond the safe import limit.");
+    }
+    if (
+      uncompressed > 0 &&
+      (compressed === 0 || uncompressed / compressed > MAX_COMPRESSION_RATIO)
+    ) {
+      throw new Error("That extension package has an unsafe compression ratio.");
     }
     const nameLength = view.getUint16(offset + 28, true);
     const extraLength = view.getUint16(offset + 30, true);
@@ -444,25 +459,8 @@ function inspectZip(zip: JSZip): void {
   if (entries.length > MAX_ZIP_ENTRIES)
     throw new Error("That extension package has too many files.");
 
-  let totalUncompressed = 0;
   for (const entry of entries) {
     if (entry.unsafeOriginalName) normalizePackagePath(entry.unsafeOriginalName);
-    if (entry.dir) continue;
-    const compressed = entry._data?.compressedSize;
-    const uncompressed = entry._data?.uncompressedSize;
-    if (typeof compressed !== "number" || typeof uncompressed !== "number") {
-      throw new Error("That extension package has unreadable file metadata.");
-    }
-    totalUncompressed += uncompressed;
-    if (totalUncompressed > MAX_UNCOMPRESSED_BYTES) {
-      throw new Error("That extension package expands beyond the safe import limit.");
-    }
-    if (
-      uncompressed > 0 &&
-      (compressed === 0 || uncompressed / compressed > MAX_COMPRESSION_RATIO)
-    ) {
-      throw new Error("That extension package has an unsafe compression ratio.");
-    }
   }
 }
 

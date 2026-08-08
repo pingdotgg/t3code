@@ -292,6 +292,7 @@ describe("Open VSX themes", () => {
 
   it("downloads a verified VSIX, reads JSONC includes, and pairs contributed variants", async () => {
     const zip = new JSZip();
+    zip.file("extension/.gitkeep", "");
     zip.file(
       "extension/themes/base.jsonc",
       `{

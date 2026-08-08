@@ -119,56 +119,50 @@ function ThemeLibraryCard({
             onClick={onUse}
             style={isActive ? { boxShadow: "inset 0 0 0 1px var(--ring)" } : undefined}
           >
-            <ThemePreviewCircles
-              label={theme.label}
-              activeModes={activeModes}
-              onSelectMode={onUseMode}
-              previews={theme.previews}
-            />
-            {variantNavigation ? (
-              <div
-                className="flex items-center gap-1 border-t border-border/50 px-2 py-1"
-                aria-label={variantNavigation.collectionLabel}
-              >
-                <Button
-                  aria-label={`Previous ${variantNavigation.collectionLabel} variant`}
-                  size="icon-xs"
-                  variant="ghost"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    variantNavigation.onPrevious();
-                  }}
-                >
-                  <ChevronLeftIcon />
-                </Button>
-                <div
-                  className="min-w-0 flex-1 text-center text-xs text-muted-foreground"
-                  aria-live="polite"
-                >
-                  <div className="truncate">
-                    {theme.label} · {variantNavigation.index + 1} of {variantNavigation.count}
-                  </div>
-                  {variantNavigation.activeAssignments.length > 0 ? (
-                    <div className="truncate text-[10px]">
-                      {variantNavigation.activeAssignments
-                        .map(({ mode, label }) => `${mode}: ${label}`)
-                        .join(" · ")}
-                    </div>
-                  ) : null}
-                </div>
-                <Button
-                  aria-label={`Next ${variantNavigation.collectionLabel} variant`}
-                  size="icon-xs"
-                  variant="ghost"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    variantNavigation.onNext();
-                  }}
-                >
-                  <ChevronRightIcon />
-                </Button>
-              </div>
-            ) : null}
+            <div className="relative">
+              <ThemePreviewCircles
+                label={theme.label}
+                activeModes={activeModes}
+                onSelectMode={onUseMode}
+                previews={theme.previews}
+              />
+              {variantNavigation ? (
+                <>
+                  <Button
+                    aria-label={`Previous ${variantNavigation.collectionLabel} variant`}
+                    className="absolute left-2 top-2 z-10 bg-background/80 shadow-sm backdrop-blur-sm"
+                    size="icon-xs"
+                    variant="ghost"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      variantNavigation.onPrevious();
+                    }}
+                  >
+                    <ChevronLeftIcon />
+                  </Button>
+                  <Button
+                    aria-label={`Next ${variantNavigation.collectionLabel} variant`}
+                    className="absolute right-2 top-2 z-10 bg-background/80 shadow-sm backdrop-blur-sm"
+                    size="icon-xs"
+                    variant="ghost"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      variantNavigation.onNext();
+                    }}
+                  >
+                    <ChevronRightIcon />
+                  </Button>
+                  <span className="sr-only" aria-live="polite">
+                    {theme.label}, {variantNavigation.index + 1} of {variantNavigation.count}
+                    {variantNavigation.activeAssignments.length > 0
+                      ? `, ${variantNavigation.activeAssignments
+                          .map(({ mode, label }) => `${mode}: ${label}`)
+                          .join(", ")}`
+                      : ""}
+                  </span>
+                </>
+              ) : null}
+            </div>
             <div className="flex items-center gap-2 px-3 pb-3 pt-2">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
