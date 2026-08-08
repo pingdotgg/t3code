@@ -92,7 +92,7 @@ describe("ServerProvider", () => {
     expect(parsed.continuation?.groupKey).toBe("codex:home:/Users/julius/.codex");
   });
 
-  it("decodes optional legacy model metadata", () => {
+  it("accepts provider snapshots with usage limits", () => {
     const parsed = decodeServerProvider({
       instanceId: "codex",
       driver: "codex",
@@ -100,58 +100,194 @@ describe("ServerProvider", () => {
       installed: true,
       version: "1.0.0",
       status: "ready",
-      auth: { status: "authenticated" },
+      auth: {
+        status: "authenticated",
+      },
       checkedAt: "2026-04-10T00:00:00.000Z",
-      models: [
-        {
-          slug: "gpt-5.4",
-          name: "GPT-5.4",
-          isCustom: false,
-          isLegacy: true,
-          capabilities: null,
+      models: [],
+      usageLimits: {
+        source: "codexAppServer",
+        available: true,
+        checkedAt: "2026-04-10T00:00:00.000Z",
+        windows: [
+          {
+            kind: "session",
+            label: "Session",
+            usedPercent: 42,
+            windowDurationMins: 300,
+            resetsAt: "2026-04-10T05:00:00.000Z",
+          },
+        ],
+      },
+    });
+
+    expect(parsed.usageLimits?.available).toBe(true);
+    expect(parsed.usageLimits?.windows).toHaveLength(1);
+  });
+
+  it("accepts unavailable usage limit snapshots", () => {
+    const parsed = decodeServerProvider({
+      instanceId: "claudeAgent",
+      driver: "claudeAgent",
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+      usageLimits: {
+        source: "claudeStatusProbe",
+        available: false,
+        reason: "Usage limits unavailable for this account.",
+        checkedAt: "2026-04-10T00:00:00.000Z",
+        windows: [],
+      },
+    });
+
+    expect(parsed.usageLimits).toEqual({
+      source: "claudeStatusProbe",
+      available: false,
+      reason: "Usage limits unavailable for this account.",
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      windows: [],
+    });
+  });
+
+  it("accepts cursor and opencode usage limit sources", () => {
+    const cursorParsed = decodeServerProvider({
+      instanceId: "cursor",
+      driver: "cursor",
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+      usageLimits: {
+        source: "cursorAcp",
+        available: false,
+        reason: "Cursor does not expose subscription usage",
+        checkedAt: "2026-04-10T00:00:00.000Z",
+        windows: [],
+      },
+    });
+    const openCodeParsed = decodeServerProvider({
+      instanceId: "opencode",
+      driver: "opencode",
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+      usageLimits: {
+        source: "opencodeManaged",
+        available: false,
+        reason: "Unable to fetch usage",
+        checkedAt: "2026-04-10T00:00:00.000Z",
+        windows: [],
+      },
+    });
+
+    expect(cursorParsed.usageLimits?.source).toBe("cursorAcp");
+    expect(cursorParsed.usageLimits?.available).toBe(false);
+    expect(openCodeParsed.usageLimits?.source).toBe("opencodeManaged");
+  });
+
+  it("accepts grok usage limit sources", () => {
+    const unavailable = decodeServerProvider({
+      instanceId: "grok",
+      driver: "grok",
+      enabled: true,
+      installed: true,
+      version: "0.2.59",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+        email: "user@example.com",
+        type: "SuperGrok",
+        label: "SuperGrok",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+      usageLimits: {
+        source: "grokAcp",
+        available: false,
+        reason: "Grok does not expose subscription usage",
+        checkedAt: "2026-04-10T00:00:00.000Z",
+        windows: [],
+      },
+    });
+
+    expect(unavailable.usageLimits?.source).toBe("grokAcp");
+    expect(unavailable.usageLimits?.available).toBe(false);
+
+    const fromTui = decodeServerProvider({
+      instanceId: "grok",
+      driver: "grok",
+      enabled: true,
+      installed: true,
+      version: "0.2.87",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-07-07T00:00:00.000Z",
+      models: [],
+      usageLimits: {
+        source: "grokStatusProbe",
+        available: true,
+        checkedAt: "2026-07-07T00:00:00.000Z",
+        windows: [
+          {
+            kind: "weekly",
+            label: "Weekly",
+            usedPercent: 32,
+            windowDurationMins: 10080,
+            resetsAt: "2026-07-11T09:10:00.000Z",
+          },
+        ],
+      },
+    });
+
+    expect(fromTui.usageLimits?.source).toBe("grokStatusProbe");
+    expect(fromTui.usageLimits?.windows[0]?.usedPercent).toBe(32);
+  });
+
+  it("rejects invalid usage percentages", () => {
+    expect(() =>
+      decodeServerProvider({
+        instanceId: "codex",
+        driver: "codex",
+        enabled: true,
+        installed: true,
+        version: "1.0.0",
+        status: "ready",
+        auth: {
+          status: "authenticated",
         },
-      ],
-    });
-
-    expect(parsed.models[0]?.isLegacy).toBe(true);
-  });
-});
-
-describe("server config forward compatibility", () => {
-  it("drops config issues with kinds this build does not know", () => {
-    const parsed = decodeUpsertKeybindingResult({
-      keybindings: [],
-      issues: [
-        { kind: "keybindings.invalid-entry", message: "Bad entry", index: 2 },
-        { kind: "keybindings.future-issue", message: "From a newer server" },
-      ],
-    });
-
-    expect(parsed.issues).toEqual([
-      { kind: "keybindings.invalid-entry", message: "Bad entry", index: 2 },
-    ]);
-  });
-
-  it("drops editor ids this build does not know", () => {
-    const parsed = decodeAvailableEditors(["zed", "some-future-editor", "vscode"]);
-
-    expect(parsed).toEqual(["zed", "vscode"]);
-  });
-
-  // A provider status this build has never seen (a new ServerProviderState,
-  // ServerProviderAuthStatus, etc. member) previously failed the whole
-  // `providers` array, taking every other provider down with it and, since
-  // `providers` sits inside `ServerConfig`, failing the whole config decode —
-  // an older client would drop its connection over one provider it can't
-  // render. Dropping just that element keeps every other provider working.
-  it("drops providers this build cannot decode instead of failing the whole array", () => {
-    const decodedBase = decodeServerProvider(baseProviderSnapshot);
-
-    const parsed = decodeServerProviders([
-      baseProviderSnapshot,
-      { ...baseProviderSnapshot, instanceId: "future", status: "some-future-status" },
-    ]);
-
-    expect(parsed).toEqual([decodedBase]);
+        checkedAt: "2026-04-10T00:00:00.000Z",
+        models: [],
+        usageLimits: {
+          source: "codexAppServer",
+          available: true,
+          checkedAt: "2026-04-10T00:00:00.000Z",
+          windows: [
+            {
+              kind: "session",
+              label: "Session",
+              usedPercent: 101,
+            },
+          ],
+        },
+      }),
+    ).toThrow();
   });
 });

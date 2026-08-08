@@ -7,6 +7,7 @@ import type {
   ServerProviderAuth,
   ServerProviderModel,
   ServerProviderState,
+  ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -44,6 +45,9 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
+import { probeCursorUsageLimits } from "../cursorUsageProbe.ts";
+import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
 import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import { CursorListAvailableModelsResponse } from "../acp/CursorAcpExtension.ts";
 
@@ -628,6 +632,7 @@ export function buildCursorProviderSnapshot(input: {
   readonly parsed: CursorAboutResult;
   readonly discoveredModels?: ReadonlyArray<ServerProviderModel>;
   readonly discoveryWarning?: string;
+  readonly usageLimits?: ServerProviderUsageLimits;
 }): ServerProviderDraft {
   const message = joinProviderMessages(input.parsed.message, input.discoveryWarning);
   return buildServerProvider({
@@ -645,6 +650,7 @@ export function buildCursorProviderSnapshot(input: {
       status:
         input.discoveryWarning && input.parsed.status === "ready" ? "warning" : input.parsed.status,
       auth: input.parsed.auth,
+      ...(input.usageLimits ? { usageLimits: input.usageLimits } : {}),
       ...(message ? { message } : {}),
     },
   });
@@ -987,6 +993,8 @@ const runCursorAboutCommand = (cursorSettings: CursorSettings, environment?: Nod
 export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(function* (
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
+  ptyAdapter?: PtyAdapter.PtyAdapter["Service"],
+  cwd = process.cwd(),
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -1101,6 +1109,27 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       discoveredModels = discoveryExit.value;
     }
   }
+
+  const usageLimits =
+    parsed.auth.status === "unauthenticated"
+      ? undefined
+      : ptyAdapter
+        ? yield* probeCursorUsageLimits(
+            {
+              binaryPath: cursorSettings.binaryPath,
+              ...(cursorSettings.apiEndpoint ? { apiEndpoint: cursorSettings.apiEndpoint } : {}),
+              cwd,
+              checkedAt,
+              ...(environment ? { environment } : {}),
+            },
+            ptyAdapter,
+          ).pipe(Effect.map((result) => result.usageLimits))
+        : makeUnavailableUsageLimits({
+            source: "cursorStatusProbe",
+            checkedAt,
+            reason: "Usage limits are unavailable in this runtime.",
+          });
+
   return buildCursorProviderSnapshot({
     checkedAt,
     cursorSettings,
@@ -1110,6 +1139,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       () => [] as const,
     ),
     ...(discoveryWarning ? { discoveryWarning } : {}),
+    ...(usageLimits ? { usageLimits } : {}),
   });
 });
 
