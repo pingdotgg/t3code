@@ -116,6 +116,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SuperCompressSettingsSection } from "./SuperCompressSettings";
 import { ThemeLibrary } from "./ThemeSettings";
 import {
   backgroundActivityOverrideSettings,
@@ -2206,6 +2207,8 @@ export function GeneralSettingsPanel() {
           }
         />
       </SettingsSection>
+
+      <SuperCompressSettingsSection />
 
       <SettingsSection title="About">
         {isElectron || HOSTED_APP_CHANNEL ? (

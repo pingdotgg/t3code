@@ -475,6 +475,31 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+/**
+ * Opt-in SuperCompress connection. When enabled with an API key, T3 compresses
+ * bulky pasted context on each coding-agent turn *before* the provider request
+ * leaves the server. The user ask stays uncompressed.
+ */
+export const MIN_SUPERCOMPRESS_MIN_CHARS = 200;
+export const MAX_SUPERCOMPRESS_MIN_CHARS = 20_000;
+export const DEFAULT_SUPERCOMPRESS_MIN_CHARS = 800;
+export const SuperCompressMinChars = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_SUPERCOMPRESS_MIN_CHARS,
+    maximum: MAX_SUPERCOMPRESS_MIN_CHARS,
+  }),
+);
+export type SuperCompressMinChars = typeof SuperCompressMinChars.Type;
+
+export const SuperCompressSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  apiKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  minChars: SuperCompressMinChars.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SUPERCOMPRESS_MIN_CHARS)),
+  ),
+});
+export type SuperCompressSettings = typeof SuperCompressSettings.Type;
+
 export const SourceControlWritingStyleMode = Schema.Literals([
   "repo_conventions",
   "conventional_commits",
@@ -609,6 +634,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  supercompress: SuperCompressSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -733,6 +759,13 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  supercompress: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      apiKey: Schema.optionalKey(TrimmedString),
+      minChars: Schema.optionalKey(SuperCompressMinChars),
     }),
   ),
   providers: Schema.optionalKey(
