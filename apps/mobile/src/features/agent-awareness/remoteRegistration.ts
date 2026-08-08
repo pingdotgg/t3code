@@ -35,6 +35,16 @@ import { supportsAgentAwarenessPush } from "./capabilities";
 import { makeRelayDeviceRegistrationRequest, resolveApsEnvironment } from "./registrationPayload";
 
 const REMOTE_ACTIVITY_REGISTRATION_RETRY_MS = 15_000;
+// How long a locally armed placeholder may sit at "Connecting" before the app
+// checks whether the relay owns the card at all. An environment with
+// agent-activity publishing disabled never publishes, so the registration
+// replay that normally repaints the placeholder has nothing to send and the
+// relay's end-on-empty stays held off by the grace window every foreground
+// re-registration renews. The app cannot read an activity's current props, so
+// it asks the relay what the card should show instead. Retried once, because a
+// single failed read says nothing about what the relay would push.
+const LOCALLY_ARMED_RECONCILE_MS = 60_000;
+const LOCALLY_ARMED_RECONCILE_ATTEMPTS = 2;
 
 const AgentAwarenessOperation = Schema.Literals([
   "read-notification-permissions",
@@ -110,6 +120,7 @@ export function subscribeAgentAwarenessRegistrationStatus(listener: () => void):
   };
 }
 let activeLiveActivityRegistrationRetry: ReturnType<typeof setTimeout> | null = null;
+let locallyArmedReconcile: ReturnType<typeof setTimeout> | null = null;
 let relayTokenProvider: (() => Promise<string | null>) | null = null;
 let relayTokenProviderIdentity: string | null = null;
 let deviceRegistrationGeneration = 0;
@@ -192,6 +203,10 @@ export function setAgentAwarenessRelayTokenProvider(
       clearTimeout(activeLiveActivityRegistrationRetry);
       activeLiveActivityRegistrationRetry = null;
     }
+    if (locallyArmedReconcile) {
+      clearTimeout(locallyArmedReconcile);
+      locallyArmedReconcile = null;
+    }
     // Without a signed-in user the relay can no longer update or end these
     // activities, so they would sit orphaned on the lock screen.
     endLocalLiveActivities("live activity cleanup after cloud sign-out failed");
@@ -236,6 +251,10 @@ export function releaseAgentAwarenessRelayTokenProvider(): void {
   if (activeLiveActivityRegistrationRetry) {
     clearTimeout(activeLiveActivityRegistrationRetry);
     activeLiveActivityRegistrationRetry = null;
+  }
+  if (locallyArmedReconcile) {
+    clearTimeout(locallyArmedReconcile);
+    locallyArmedReconcile = null;
   }
 }
 
@@ -452,7 +471,9 @@ function unregisterDeviceWithRelay(input: {
 // phone, while the app is still foregrounded and the fresh activity's token
 // can be registered immediately. The seeded row is a best-effort placeholder;
 // the relay's registration replay repaints it with the authoritative
-// aggregate within seconds. No-ops when a card is already armed.
+// aggregate within seconds, and if no authoritative content ever arrives the
+// bounded reconcile retires it (LOCALLY_ARMED_RECONCILE_MS). No-ops when a
+// card is already armed.
 export function armAgentAwarenessLiveActivityForLocalWork(input: {
   readonly threadTitle: string;
   readonly projectTitle: string;
@@ -505,9 +526,86 @@ function armAgentAwarenessLiveActivityForLocalWorkNow(input: {
       registerLiveActivityPushToken({ activity }).pipe(Effect.asVoid),
       "live activity arming after local task start failed",
     );
+    scheduleLocallyArmedLiveActivityReconcile();
   } catch (error) {
     logRegistrationError("live activity arming failed", error);
   }
+}
+
+// Restarts the window on every arm: sends arm a card per turn, and a card armed
+// seconds before an older deadline must not inherit its remainder.
+function scheduleLocallyArmedLiveActivityReconcile(attempt = 1): void {
+  if (locallyArmedReconcile) {
+    clearTimeout(locallyArmedReconcile);
+  }
+
+  locallyArmedReconcile = setTimeout(() => {
+    locallyArmedReconcile = null;
+    runRegistrationInBackground(
+      reconcileLocallyArmedLiveActivity(attempt),
+      "locally armed live activity reconciliation failed",
+    );
+  }, LOCALLY_ARMED_RECONCILE_MS);
+}
+
+// Retires a placeholder the relay turns out not to own. Exported for the
+// bound's timer and for tests; see LOCALLY_ARMED_RECONCILE_MS for why the
+// snapshot is the only signal available here.
+export function reconcileLocallyArmedLiveActivity(
+  attempt = 1,
+): Effect.Effect<void, never, ManagedRelay.ManagedRelayClient> {
+  return Effect.gen(function* () {
+    // Without a provider the relay cannot be asked anything, and provider
+    // teardown while signed in deliberately leaves cards alone.
+    if (!canRegisterRemoteLiveActivities() || !relayTokenProvider) {
+      return;
+    }
+
+    const activities = yield* listLocalLiveActivities("locally armed live activity lookup failed");
+    if (activities.length === 0) {
+      return;
+    }
+
+    const snapshot = yield* readAgentActivitySnapshot();
+    if (!snapshot) {
+      // An unreadable snapshot says nothing about what the relay would push —
+      // APNs delivery does not depend on this request — so the card stays. One
+      // more look a window later keeps a flaky read from restoring an
+      // unbounded placeholder.
+      if (attempt < LOCALLY_ARMED_RECONCILE_ATTEMPTS) {
+        scheduleLocallyArmedLiveActivityReconcile(attempt + 1);
+      }
+      return;
+    }
+    // Any aggregate means this account's activity is being published, so the
+    // relay owns the card — including ending it. An all-done aggregate is left
+    // alone deliberately: its dismissal rides on the relay's own end push.
+    if (snapshot.aggregate) {
+      return;
+    }
+    logRegistrationDebug("locally armed live activity retired; relay has nothing to show");
+    endLocalLiveActivities("locally armed live activity cleanup failed");
+  });
+}
+
+function listLocalLiveActivities(
+  context: string,
+): Effect.Effect<ReadonlyArray<LiveActivity<AgentActivityProps>>> {
+  return Effect.try({
+    try: () => AgentActivity.getInstances(),
+    catch: (cause) =>
+      new AgentAwarenessOperationError({
+        operation: "list-active-live-activities",
+        cause,
+      }),
+  }).pipe(
+    Effect.catch((error) =>
+      Effect.sync(() => {
+        logRegistrationError(context, error);
+        return [] as ReadonlyArray<LiveActivity<AgentActivityProps>>;
+      }),
+    ),
+  );
 }
 
 function readAgentActivitySnapshot(): Effect.Effect<
@@ -816,6 +914,10 @@ export function unregisterAllAgentAwarenessConnections(): void {
     clearTimeout(activeLiveActivityRegistrationRetry);
     activeLiveActivityRegistrationRetry = null;
   }
+  if (locallyArmedReconcile) {
+    clearTimeout(locallyArmedReconcile);
+    locallyArmedReconcile = null;
+  }
 }
 
 export function refreshAgentAwarenessRegistration(): Effect.Effect<
@@ -861,6 +963,10 @@ export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   if (activeLiveActivityRegistrationRetry) {
     clearTimeout(activeLiveActivityRegistrationRetry);
     activeLiveActivityRegistrationRetry = null;
+  }
+  if (locallyArmedReconcile) {
+    clearTimeout(locallyArmedReconcile);
+    locallyArmedReconcile = null;
   }
   relayTokenProvider = null;
   relayTokenProviderIdentity = null;
@@ -1010,21 +1116,7 @@ export function refreshActiveLiveActivityRemoteRegistration(): Effect.Effect<
       return;
     }
 
-    let activities = yield* Effect.try({
-      try: () => AgentActivity.getInstances(),
-      catch: (cause) =>
-        new AgentAwarenessOperationError({
-          operation: "list-active-live-activities",
-          cause,
-        }),
-    }).pipe(
-      Effect.catch((error) =>
-        Effect.sync(() => {
-          logRegistrationError("active live activity lookup failed", error);
-          return [] as ReadonlyArray<LiveActivity<AgentActivityProps>>;
-        }),
-      ),
-    );
+    let activities = yield* listLocalLiveActivities("active live activity lookup failed");
 
     // The relay tracks exactly one card per device; if concurrent arming ever
     // produced extras, end them so only one keeps receiving updates.
