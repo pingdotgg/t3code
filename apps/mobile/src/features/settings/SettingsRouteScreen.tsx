@@ -8,6 +8,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import * as Effect from "effect/Effect";
 import { AsyncResult } from "effect/unstable/reactivity";
+import { DEFAULT_ACTIVE_TURN_MESSAGE_BEHAVIOR } from "@t3tools/contracts/settings";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Alert, Linking, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -530,8 +531,36 @@ function ConfiguredSettingsRouteScreen() {
 }
 
 function GeneralSettingsSection() {
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const activeTurnMessageBehavior = AsyncResult.isSuccess(preferencesResult)
+    ? (preferencesResult.value.activeTurnMessageBehavior ?? DEFAULT_ACTIVE_TURN_MESSAGE_BEHAVIOR)
+    : DEFAULT_ACTIVE_TURN_MESSAGE_BEHAVIOR;
+
   return (
     <SettingsSection title="General">
+      <SettingsRow
+        icon="arrow.triangle.branch"
+        label="Messages While Working"
+        value={activeTurnMessageBehavior === "queue" ? "Queue" : "Steer"}
+        onPress={() =>
+          Alert.alert(
+            "Messages while working",
+            "Steer adds the message to the active turn. Queue waits and sends messages one at a time after the current turn finishes.",
+            [
+              {
+                text: "Steer",
+                onPress: () => savePreferences({ activeTurnMessageBehavior: "steer" }),
+              },
+              {
+                text: "Queue",
+                onPress: () => savePreferences({ activeTurnMessageBehavior: "queue" }),
+              },
+              { text: "Cancel", style: "cancel" },
+            ],
+          )
+        }
+      />
       <SettingsRow icon="folder" label="Project Grouping" target="SettingsProjectGrouping" />
     </SettingsSection>
   );

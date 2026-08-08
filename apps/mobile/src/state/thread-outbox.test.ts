@@ -18,6 +18,7 @@ import {
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxFailureAction,
   resolveQueuedThreadSettings,
+  shouldDeferConfirmedThreadOutboxDelivery,
   shouldRetryThreadOutboxDelivery,
   threadOutboxRetryDelayMs,
   type QueuedThreadMessage,
@@ -465,6 +466,7 @@ describe("thread outbox", () => {
         shellStatus: "synchronizing",
         environmentConnected: true,
         threadBusy: false,
+        threadSteerable: false,
       }),
     ).toBe("wait");
     expect(
@@ -474,6 +476,7 @@ describe("thread outbox", () => {
         shellStatus: "live",
         environmentConnected: true,
         threadBusy: false,
+        threadSteerable: false,
       }),
     ).toBe("remove");
     expect(
@@ -483,8 +486,65 @@ describe("thread outbox", () => {
         shellStatus: "live",
         environmentConnected: true,
         threadBusy: false,
+        threadSteerable: false,
       }),
     ).toBe("send");
+  });
+
+  it("waits behind active work in queue mode and dispatches into it in steer mode", () => {
+    const input = {
+      isCreation: false,
+      threadExists: true,
+      shellStatus: "live" as const,
+      environmentConnected: true,
+      threadBusy: true,
+      threadSteerable: true,
+    };
+
+    // Omitted preserves the behavior of outbox entries written by older mobile builds.
+    expect(resolveThreadOutboxDeliveryAction(input)).toBe("wait");
+    expect(
+      resolveThreadOutboxDeliveryAction({
+        ...input,
+        activeTurnMessageBehavior: "queue",
+      }),
+    ).toBe("wait");
+    expect(
+      resolveThreadOutboxDeliveryAction({
+        ...input,
+        activeTurnMessageBehavior: "steer",
+      }),
+    ).toBe("send");
+  });
+
+  it("keeps steer delivery eligible only after a turn is running", () => {
+    const input = {
+      deliveryAction: "send" as const,
+      isCreation: false,
+      threadBusy: true,
+      threadSteerable: true,
+    };
+
+    expect(shouldDeferConfirmedThreadOutboxDelivery(input)).toBe(true);
+    expect(
+      shouldDeferConfirmedThreadOutboxDelivery({
+        ...input,
+        activeTurnMessageBehavior: "queue",
+      }),
+    ).toBe(true);
+    expect(
+      shouldDeferConfirmedThreadOutboxDelivery({
+        ...input,
+        activeTurnMessageBehavior: "steer",
+      }),
+    ).toBe(false);
+    expect(
+      shouldDeferConfirmedThreadOutboxDelivery({
+        ...input,
+        threadSteerable: false,
+        activeTurnMessageBehavior: "steer",
+      }),
+    ).toBe(true);
   });
 
   it("sends queued creations once connected and live, removing already-created ones", () => {
@@ -495,6 +555,7 @@ describe("thread outbox", () => {
         shellStatus: "cached",
         environmentConnected: false,
         threadBusy: false,
+        threadSteerable: false,
       }),
     ).toBe("wait");
     // Connected but not yet synchronized: a previously delivered creation may
@@ -506,6 +567,7 @@ describe("thread outbox", () => {
         shellStatus: "synchronizing",
         environmentConnected: true,
         threadBusy: false,
+        threadSteerable: false,
       }),
     ).toBe("wait");
     expect(
@@ -515,6 +577,7 @@ describe("thread outbox", () => {
         shellStatus: "live",
         environmentConnected: true,
         threadBusy: false,
+        threadSteerable: false,
       }),
     ).toBe("send");
     expect(
@@ -524,6 +587,7 @@ describe("thread outbox", () => {
         shellStatus: "live",
         environmentConnected: true,
         threadBusy: true,
+        threadSteerable: true,
       }),
     ).toBe("remove");
   });

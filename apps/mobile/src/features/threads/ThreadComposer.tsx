@@ -8,6 +8,7 @@ import type {
   RuntimeMode,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
+import type { ActiveTurnMessageBehavior } from "@t3tools/contracts/settings";
 import {
   detectComposerTrigger,
   replaceTextRange,
@@ -99,6 +100,7 @@ export interface ThreadComposerProps {
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
   readonly activeThreadBusy: boolean;
+  readonly activeTurnMessageBehavior: ActiveTurnMessageBehavior;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
   readonly editorRef?: RefObject<ComposerEditorHandle | null>;
@@ -319,9 +321,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     props.selectedThread.session?.status === "starting";
 
   const sendLabel =
-    props.connectionState !== "connected" || props.activeThreadBusy || props.queueCount > 0
+    props.connectionState !== "connected" || props.queueCount > 0
       ? "Queue"
-      : "Send";
+      : props.activeThreadBusy
+        ? props.activeTurnMessageBehavior === "queue"
+          ? "Queue"
+          : "Steer"
+        : "Send";
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
   const currentInteractionMode = props.selectedThread.interactionMode ?? "default";

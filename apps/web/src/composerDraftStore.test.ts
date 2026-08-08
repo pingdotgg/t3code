@@ -287,6 +287,30 @@ describe("composerDraftStore clearComposerContent", () => {
     expect(draft).toBeUndefined();
     expect(revokeSpy).not.toHaveBeenCalledWith("blob:optimistic");
   });
+
+  it("restores a failed send ahead of content typed after the send started", () => {
+    const sentImage = makeImage({ id: "img-sent", previewUrl: "blob:sent" });
+    const nextImage = makeImage({ id: "img-next", previewUrl: "blob:next" });
+    const store = useComposerDraftStore.getState();
+
+    store.setPrompt(threadRef, "first message");
+    store.addImage(threadRef, sentImage);
+    store.clearComposerContent(threadRef);
+    store.setPrompt(threadRef, "next message");
+    store.addImage(threadRef, nextImage);
+    store.restoreComposerContent(threadRef, {
+      prompt: "first message",
+      images: [sentImage],
+      terminalContexts: [],
+      elementContexts: [],
+      previewAnnotations: [],
+      reviewComments: [],
+    });
+
+    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    expect(draft?.prompt).toBe("first message\n\nnext message");
+    expect(draft?.images.map((image) => image.id)).toEqual(["img-sent", "img-next"]);
+  });
 });
 
 describe("composerDraftStore syncPersistedAttachments", () => {

@@ -277,6 +277,16 @@ export interface ComposerThreadDraftState {
   interactionMode: ProviderInteractionMode | null;
 }
 
+export type ComposerDraftContentSnapshot = Pick<
+  ComposerThreadDraftState,
+  | "prompt"
+  | "images"
+  | "terminalContexts"
+  | "elementContexts"
+  | "previewAnnotations"
+  | "reviewComments"
+>;
+
 /**
  * Mutable routing and execution context for a pre-thread draft session.
  *
@@ -495,6 +505,10 @@ interface ComposerDraftStoreState {
     attachments: PersistedComposerImageAttachment[],
   ) => void;
   clearComposerContent: (threadRef: ComposerThreadTarget) => void;
+  restoreComposerContent: (
+    threadRef: ComposerThreadTarget,
+    snapshot: ComposerDraftContentSnapshot,
+  ) => void;
   /**
    * Clears only the prompt text and image attachments, preserving terminal /
    * element contexts, preview annotations, and review comments. Used by the
@@ -3345,6 +3359,47 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftsByThreadKey[threadKey] = nextDraft;
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        restoreComposerContent: (threadRef, snapshot) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) {
+            return;
+          }
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            const promptSeparator =
+              snapshot.prompt.length > 0 && current.prompt.length > 0 ? "\n\n" : "";
+            const mergeById = <T extends { readonly id: string }>(
+              first: ReadonlyArray<T>,
+              second: ReadonlyArray<T>,
+            ): T[] => {
+              const seen = new Set<string>();
+              return [...first, ...second].filter((entry) => {
+                if (seen.has(entry.id)) return false;
+                seen.add(entry.id);
+                return true;
+              });
+            };
+            const images = mergeById(snapshot.images, current.images);
+            const nextDraft: ComposerThreadDraftState = {
+              ...current,
+              prompt: `${snapshot.prompt}${promptSeparator}${current.prompt}`,
+              images,
+              terminalContexts: mergeById(snapshot.terminalContexts, current.terminalContexts),
+              elementContexts: mergeById(snapshot.elementContexts, current.elementContexts),
+              previewAnnotations: mergeById(
+                snapshot.previewAnnotations,
+                current.previewAnnotations,
+              ),
+              reviewComments: mergeById(snapshot.reviewComments, current.reviewComments),
+            };
+            return {
+              draftsByThreadKey: {
+                ...state.draftsByThreadKey,
+                [threadKey]: nextDraft,
+              },
+            };
           });
         },
         clearComposerPromptAndImages: (threadRef) => {

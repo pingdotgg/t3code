@@ -1,6 +1,8 @@
 import * as Effect from "effect/Effect";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
+import { DEFAULT_ACTIVE_TURN_MESSAGE_BEHAVIOR } from "@t3tools/contracts/settings";
+import type { ActiveTurnMessageBehavior } from "@t3tools/contracts/settings";
 import { MobilePreferencesStore, type Preferences } from "../persistence/mobile-preferences";
 import * as Runtime from "../lib/runtime";
 
@@ -122,3 +124,40 @@ export const mobilePreferencesState = createMobilePreferencesState(mobilePrefere
 
 export const mobilePreferencesAtom = mobilePreferencesState.preferencesAtom;
 export const updateMobilePreferencesAtom = mobilePreferencesState.updatePreferencesAtom;
+
+function settledActiveTurnMessageBehavior<E>(
+  result: AsyncResult.AsyncResult<Preferences, E>,
+): ActiveTurnMessageBehavior | null {
+  if (result.waiting) {
+    return null;
+  }
+  return AsyncResult.isSuccess(result)
+    ? (result.value.activeTurnMessageBehavior ?? DEFAULT_ACTIVE_TURN_MESSAGE_BEHAVIOR)
+    : DEFAULT_ACTIVE_TURN_MESSAGE_BEHAVIOR;
+}
+
+/**
+ * Reads the send behavior from the settled preference snapshot. A composer can
+ * render before the device preference read finishes, so capturing its
+ * render-time fallback would steer a message that the user intended to queue.
+ */
+export function awaitActiveTurnMessageBehavior<E>(
+  registry: AtomRegistry.AtomRegistry,
+  preferencesAtom: Atom.Atom<AsyncResult.AsyncResult<Preferences, E>>,
+): Promise<ActiveTurnMessageBehavior> {
+  const current = settledActiveTurnMessageBehavior(registry.get(preferencesAtom));
+  if (current !== null) {
+    return Promise.resolve(current);
+  }
+
+  return new Promise((resolve) => {
+    const unsubscribe = registry.subscribe(preferencesAtom, (result) => {
+      const behavior = settledActiveTurnMessageBehavior(result);
+      if (behavior === null) {
+        return;
+      }
+      unsubscribe();
+      resolve(behavior);
+    });
+  });
+}

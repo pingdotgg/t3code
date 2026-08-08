@@ -903,6 +903,19 @@ function mapToRuntimeEvents(
     ];
   }
 
+  if (event.method === "session/error") {
+    return [
+      {
+        ...runtimeEventBase(event, canonicalThreadId),
+        type: "session.state.changed",
+        payload: {
+          state: "error",
+          ...(event.message ? { reason: event.message } : {}),
+        },
+      },
+    ];
+  }
+
   if (event.method === "session/started") {
     return [
       {
