@@ -9,7 +9,9 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import {
+  DEFAULT_SOURCE_CONTROL_ALL_REMOTES_FETCH_INTERVAL,
   GitCommandError,
   type VcsPanelAddRemoteInput,
   type VcsPanelBranchActionInput,
@@ -44,6 +46,7 @@ import {
   type VcsRef,
   type VcsStatusResult,
 } from "@t3tools/contracts";
+import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 
 import { sanitizeErrorCause } from "../diagnostics/ErrorCause.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
@@ -206,7 +209,7 @@ export class SourceControlPanelService extends Context.Service<
     readonly fetchRemote: (input: VcsPanelRemoteInput) => Effect.Effect<void, GitCommandError>;
     readonly fetchAllRemotes: (
       input: VcsPanelFetchAllRemotesInput,
-    ) => Effect.Effect<void, GitCommandError>;
+    ) => Effect.Effect<boolean, GitCommandError>;
     readonly addRemote: (input: VcsPanelAddRemoteInput) => Effect.Effect<void, GitCommandError>;
     readonly removeRemote: (input: VcsPanelRemoteInput) => Effect.Effect<void, GitCommandError>;
     readonly createStash: (input: VcsPanelStashInput) => Effect.Effect<void, GitCommandError>;
@@ -314,22 +317,38 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     snapshotsByCwd: new Map(),
   });
 
+  const sourceControlAllRemotesFetchInterval = serverSettings.getSettings.pipe(
+    Effect.map(
+      (settings) =>
+        resolveServerBackgroundActivitySettings(settings).sourceControlAllRemotesFetchInterval,
+    ),
+    Effect.orElseSucceed(() => DEFAULT_SOURCE_CONTROL_ALL_REMOTES_FETCH_INTERVAL),
+  );
+
   const fetchAllRemotesCache = yield* Cache.makeWith(
     (gitCommonDir: string) => {
       const fetchCwd =
         path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
-      return run("vcs.panel.fetchAllRemotes", fetchCwd, [
-        "--git-dir",
-        gitCommonDir,
-        "fetch",
-        "--all",
-      ]).pipe(Effect.asVoid, Effect.ensuring(git.invalidateRefs(fetchCwd)));
+      return Effect.gen(function* () {
+        const interval = yield* sourceControlAllRemotesFetchInterval;
+        yield* run("vcs.panel.fetchAllRemotes", fetchCwd, [
+          "--git-dir",
+          gitCommonDir,
+          "fetch",
+          "--all",
+        ]).pipe(Effect.ensuring(git.invalidateRefs(fetchCwd)));
+        return interval;
+      });
     },
     {
       capacity: 128,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.minutes(5) : Duration.seconds(5)),
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? exit.value : Duration.seconds(5)),
     },
   );
+
+  yield* Stream.runForEach(serverSettings.streamChanges, () =>
+    Cache.invalidateAll(fetchAllRemotesCache),
+  ).pipe(Effect.forkScoped);
 
   const resolveGitCommonDir = Effect.fn("SourceControlPanelService.resolveGitCommonDir")(function* (
     cwd: string,
@@ -344,11 +363,18 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
   const fetchAllRemotes: SourceControlPanelService["Service"]["fetchAllRemotes"] = Effect.fn(
     "fetchAllRemotes",
   )(function* (input) {
+    if (input.force !== true) {
+      const interval = yield* sourceControlAllRemotesFetchInterval;
+      if (Duration.isZero(interval)) return false;
+    }
     const gitCommonDir = yield* resolveGitCommonDir(input.cwd);
     if (input.force === true) {
       yield* Cache.invalidate(fetchAllRemotesCache, gitCommonDir);
+    } else if (Option.isSome(yield* Cache.getOption(fetchAllRemotesCache, gitCommonDir))) {
+      return false;
     }
     yield* Cache.get(fetchAllRemotesCache, gitCommonDir);
+    return true;
   });
 
   const withTemporaryIntentToAddIndex = <A, E>(

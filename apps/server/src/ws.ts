@@ -1027,9 +1027,9 @@ const makeWsRpcLayer = (
         };
       });
 
-      const refreshGitStatus = (cwd: string) =>
+      const refreshGitStatus = (cwd: string, options?: { readonly refreshUpstream?: boolean }) =>
         vcsStatusBroadcaster
-          .refreshStatus(cwd)
+          .refreshStatus(cwd, options)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({
@@ -1964,7 +1964,7 @@ const makeWsRpcLayer = (
             WS_METHODS.vcsPanelFetchBranch,
             sourceControlPanel
               .fetchBranch(input)
-              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd, { refreshUpstream: false }))),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsPanelFetchRemote]: (input) =>
@@ -1972,15 +1972,25 @@ const makeWsRpcLayer = (
             WS_METHODS.vcsPanelFetchRemote,
             sourceControlPanel
               .fetchRemote(input)
-              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd, { refreshUpstream: false }))),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsPanelFetchAllRemotes]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsPanelFetchAllRemotes,
-            sourceControlPanel
-              .fetchAllRemotes(input)
-              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            Effect.gen(function* () {
+              if (input.force !== true) {
+                const shouldRun = yield* Effect.all([
+                  backgroundPolicy.shouldRunScopeWork({ type: "git-refs", cwd: input.cwd }),
+                  backgroundPolicy.shouldRunScopeWork({ type: "vcs-status", cwd: input.cwd }),
+                ]).pipe(Effect.map((decisions) => decisions.some(Boolean)));
+                if (!shouldRun) return;
+              }
+              const fetched = yield* sourceControlPanel.fetchAllRemotes(input);
+              if (fetched) {
+                yield* refreshGitStatus(input.cwd, { refreshUpstream: false });
+              }
+            }),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsPanelAddRemote]: (input) =>

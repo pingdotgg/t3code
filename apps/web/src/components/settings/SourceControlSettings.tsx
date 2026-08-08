@@ -380,6 +380,9 @@ function GitFetchIntervalSettings() {
   const automaticGitFetchIntervalSeconds = durationToSeconds(
     resolvedBackgroundActivity.automaticGitFetchInterval,
   );
+  const sourceControlAllRemotesFetchIntervalSeconds = durationToSeconds(
+    resolvedBackgroundActivity.sourceControlAllRemotesFetchInterval,
+  );
   const defaultAutomaticGitFetchIntervalSeconds = durationToSeconds(
     getBackgroundActivityPresetSettings(
       getBackgroundActivityBaseProfile(settings.backgroundActivity),
@@ -387,6 +390,14 @@ function GitFetchIntervalSettings() {
   );
   const canResetFetchInterval =
     automaticGitFetchIntervalSeconds !== defaultAutomaticGitFetchIntervalSeconds;
+  const defaultSourceControlAllRemotesFetchIntervalSeconds = durationToSeconds(
+    getBackgroundActivityPresetSettings(
+      getBackgroundActivityBaseProfile(settings.backgroundActivity),
+    ).sourceControlAllRemotesFetchInterval,
+  );
+  const canResetAllRemotesFetchInterval =
+    sourceControlAllRemotesFetchIntervalSeconds !==
+    defaultSourceControlAllRemotesFetchIntervalSeconds;
 
   return (
     <div className="grid gap-3">
@@ -423,8 +434,7 @@ function GitFetchIntervalSettings() {
             </span>
           </div>
           <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-            Refresh remote branch status in the background. Set this to 0 seconds if Git credentials
-            or security keys should only be prompted by explicit Git actions.
+            Refresh the current branch's upstream status in the background.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -449,6 +459,71 @@ function GitFetchIntervalSettings() {
             </NumberFieldGroup>
           </NumberField>
           <span className="text-xs text-muted-foreground">seconds</span>
+        </div>
+      </div>
+      <div className="border-t pt-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 space-y-1">
+            <div className="flex min-w-0 items-center gap-1">
+              <span className="text-xs font-medium text-foreground">
+                {searchableSetting("all-remotes-fetch-interval").title}
+              </span>
+              <BackgroundPolicyTooltip>
+                This broader fetch is requested only while the Version Control panel is open and the
+                shared Background activity policy allows it. Custom intervals appear as Advanced in
+                General settings.
+              </BackgroundPolicyTooltip>
+              <span
+                className={cn(
+                  "inline-flex size-5 shrink-0 items-center justify-center transition-opacity",
+                  canResetAllRemotesFetchInterval ? "opacity-100" : "pointer-events-none opacity-0",
+                )}
+                aria-hidden={!canResetAllRemotesFetchInterval}
+              >
+                {canResetAllRemotesFetchInterval ? (
+                  <SettingResetButton
+                    label="all-remotes fetch interval"
+                    onClick={() =>
+                      updateSettings(
+                        backgroundActivityOverrideSettings(settings.backgroundActivity, {
+                          sourceControlAllRemotesFetchInterval: undefined,
+                        }),
+                      )
+                    }
+                  />
+                ) : null}
+              </span>
+            </div>
+            <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
+              Refresh every remote shown by the Version Control panel. Set this to 0 seconds to
+              fetch all remotes only through explicit Git actions.
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <NumberField
+              value={sourceControlAllRemotesFetchIntervalSeconds}
+              min={0}
+              step={30}
+              size="sm"
+              className="w-32"
+              onValueChange={(value) =>
+                updateSettings(
+                  backgroundActivityOverrideSettings(settings.backgroundActivity, {
+                    sourceControlAllRemotesFetchInterval: Duration.seconds(
+                      normalizeFetchIntervalSeconds(value),
+                    ),
+                  }),
+                )
+              }
+            >
+              <NumberFieldGroup>
+                <NumberFieldDecrement aria-label="Decrease all-remotes fetch interval" />
+                <NumberFieldInput aria-label="All-remotes fetch interval in seconds" />
+                <NumberFieldIncrement aria-label="Increase all-remotes fetch interval" />
+              </NumberFieldGroup>
+            </NumberField>
+            <span className="text-xs text-muted-foreground">seconds</span>
+          </div>
         </div>
       </div>
     </div>

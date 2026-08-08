@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import {
   onRetainedMobileBackgroundScopesChange,
   observeMobileBackgroundActivitySubscription,
+  retainMobileBackgroundActivityScope,
   retainedMobileBackgroundScopes,
 } from "./background-activity-scopes";
 
@@ -74,4 +75,14 @@ describe("mobile background activity", () => {
       removeListener();
     }),
   );
+
+  it("retains Version Control git-ref demand explicitly", () => {
+    const environmentId = EnvironmentId.make("mobile-version-control-panel");
+    const scope = { type: "git-refs" as const, cwd: "/workspace" };
+    const release = retainMobileBackgroundActivityScope(environmentId, scope);
+
+    expect(retainedMobileBackgroundScopes(environmentId)).toEqual([scope]);
+    release();
+    expect(retainedMobileBackgroundScopes(environmentId)).toEqual([]);
+  });
 });

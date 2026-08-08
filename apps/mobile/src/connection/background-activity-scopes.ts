@@ -49,6 +49,29 @@ function scopeForSubscription(
   return typeof input.cwd === "string" ? { type: "vcs-status", cwd: input.cwd } : null;
 }
 
+export function retainMobileBackgroundActivityScope(
+  environmentId: EnvironmentId,
+  scope: BackgroundScope,
+): () => void {
+  const key = stableScopeKey(environmentId, scope);
+  const current = retainedScopes.get(key);
+  if (current) {
+    current.refCount += 1;
+  } else {
+    retainedScopes.set(key, { environmentId, scope, refCount: 1 });
+    notify();
+  }
+  return () => {
+    const retained = retainedScopes.get(key);
+    if (!retained) return;
+    retained.refCount -= 1;
+    if (retained.refCount <= 0) {
+      retainedScopes.delete(key);
+      notify();
+    }
+  };
+}
+
 export function retainedMobileBackgroundScopes(
   environmentId: EnvironmentId,
 ): ReadonlyArray<BackgroundScope> {
@@ -64,23 +87,7 @@ export function observeMobileBackgroundActivitySubscription(
   if (scope === null) return Effect.succeed(Effect.void);
   return Effect.sync(() => {
     const environmentId = observation.environmentId as EnvironmentId;
-    const key = stableScopeKey(environmentId, scope);
-    const current = retainedScopes.get(key);
-    if (current) {
-      current.refCount += 1;
-    } else {
-      retainedScopes.set(key, { environmentId, scope, refCount: 1 });
-      notify();
-    }
-    return Effect.sync(() => {
-      const retained = retainedScopes.get(key);
-      if (!retained) return;
-      retained.refCount -= 1;
-      if (retained.refCount <= 0) {
-        retainedScopes.delete(key);
-        notify();
-      }
-    });
+    return Effect.sync(retainMobileBackgroundActivityScope(environmentId, scope));
   });
 }
 

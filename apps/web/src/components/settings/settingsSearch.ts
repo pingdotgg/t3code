@@ -193,6 +193,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "source-control",
   },
   {
+    id: "all-remotes-fetch-interval",
+    title: "Version Control all remotes interval",
+    to: "/settings/source-control",
+    targetId: "source-control",
+  },
+  {
     id: "commit-author-avatars",
     title: "Commit author avatars",
     to: "/settings/source-control",

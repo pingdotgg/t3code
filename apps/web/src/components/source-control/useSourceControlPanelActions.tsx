@@ -115,6 +115,7 @@ export function useSourceControlPanelActions(
     setRunningActions,
     setStashDialogTarget,
     snapshot,
+    sourceControlAllRemotesFetchIntervalMs,
     stashDialogTarget,
     vcsStatus,
     worktreePath,
@@ -564,24 +565,48 @@ export function useSourceControlPanelActions(
     [api, cwd, runAction],
   );
 
-  useEffect(() => {
+  const automaticallyFetchActionableBranches = useCallback(async () => {
     if (!api) return;
-    if (initialFetchCwdRef.current === cwd) return;
-    initialFetchCwdRef.current = cwd;
-    void fetchActionableBranches();
-  }, [api, cwd, fetchActionableBranches]);
+    try {
+      await api.vcs.fetchAllRemotes({ cwd });
+      await refresh();
+    } catch {
+      // Automatic refresh remains best-effort. Explicit Fetch owns surfaced
+      // failures and always bypasses the shared background policy.
+    }
+  }, [api, cwd, refresh]);
 
   useEffect(() => {
     if (!api) return;
-    const interval = window.setInterval(
-      () => {
-        if (runningActions.has("work-fetch")) return;
-        void fetchActionableBranches();
-      },
-      5 * 60 * 1_000,
-    );
+    if (sourceControlAllRemotesFetchIntervalMs <= 0) {
+      initialFetchCwdRef.current = null;
+      return;
+    }
+    if (initialFetchCwdRef.current === cwd) return;
+    initialFetchCwdRef.current = cwd;
+    void automaticallyFetchActionableBranches();
+  }, [
+    api,
+    automaticallyFetchActionableBranches,
+    cwd,
+    initialFetchCwdRef,
+    sourceControlAllRemotesFetchIntervalMs,
+  ]);
+
+  useEffect(() => {
+    if (!api) return;
+    if (sourceControlAllRemotesFetchIntervalMs <= 0) return;
+    const interval = window.setInterval(() => {
+      if (runningActions.has("work-fetch")) return;
+      void automaticallyFetchActionableBranches();
+    }, sourceControlAllRemotesFetchIntervalMs);
     return () => window.clearInterval(interval);
-  }, [api, fetchActionableBranches, runningActions]);
+  }, [
+    api,
+    automaticallyFetchActionableBranches,
+    runningActions,
+    sourceControlAllRemotesFetchIntervalMs,
+  ]);
 
   const runPanelCommit = useCallback(
     (message: string) => {

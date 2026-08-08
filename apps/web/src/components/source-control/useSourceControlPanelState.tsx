@@ -12,11 +12,15 @@ import type {
   VcsRef,
   VcsStatusResult,
 } from "@t3tools/contracts";
+import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { useAtomValue } from "@effect/atom-react";
+import * as Duration from "effect/Duration";
 import { useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { useOpenInPreferredEditor } from "~/editorPreferences";
+import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
+import { retainBackgroundActivityScope } from "~/lib/backgroundActivityReporter";
 import { useGitStackedAction } from "~/state/sourceControlActions";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -87,6 +91,11 @@ export function useSourceControlPanelState({
   const gitActionScope = useMemo(() => ({ environmentId, cwd }), [cwd, environmentId]);
   const gitAction = useGitStackedAction(gitActionScope);
   const api = useSourceControlPanelApi(environmentId);
+  const sourceControlAllRemotesFetchIntervalMs = useEnvironmentSettings(environmentId, (settings) =>
+    Duration.toMillis(
+      resolveServerBackgroundActivitySettings(settings).sourceControlAllRemotesFetchInterval,
+    ),
+  );
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
     environmentId,
@@ -227,6 +236,11 @@ export function useSourceControlPanelState({
   const [selectedWorktreeChangePaths, setSelectedWorktreeChangePaths] = useState<
     ReadonlyMap<string, ReadonlySet<string>>
   >(() => cachedPanelState?.selectedWorktreeChangePaths ?? new Map());
+
+  useEffect(
+    () => retainBackgroundActivityScope(environmentId, { type: "git-refs", cwd }),
+    [cwd, environmentId],
+  );
   const displayedChangeGroups = useMemo(
     () =>
       applyWorkingTreeFileEnrichment(
@@ -863,6 +877,7 @@ export function useSourceControlPanelState({
     snapshot,
     snapshotFingerprintRef,
     snapshotRef,
+    sourceControlAllRemotesFetchIntervalMs,
     stashDetailsByKey,
     stashDetailsByKeyRef,
     stashDialogTarget,

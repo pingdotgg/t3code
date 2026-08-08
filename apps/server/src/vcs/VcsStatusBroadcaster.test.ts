@@ -228,6 +228,7 @@ describe("VcsStatusBroadcaster", () => {
       remoteStatusCalls: 0,
       localInvalidationCalls: 0,
       remoteInvalidationCalls: 0,
+      remoteStatusRefreshUpstreamValues: [] as Array<boolean | undefined>,
     };
 
     return Effect.gen(function* () {
@@ -242,7 +243,7 @@ describe("VcsStatusBroadcaster", () => {
         ...baseRemoteStatus,
         aheadCount: 2,
       };
-      const refreshed = yield* broadcaster.refreshStatus("/repo");
+      const refreshed = yield* broadcaster.refreshStatus("/repo", { refreshUpstream: false });
       const cached = yield* broadcaster.getStatus({ cwd: "/repo" });
 
       assert.deepStrictEqual(initial, baseStatus);
@@ -256,6 +257,7 @@ describe("VcsStatusBroadcaster", () => {
       });
       assert.equal(state.localStatusCalls, 2);
       assert.equal(state.remoteStatusCalls, 2);
+      assert.deepStrictEqual(state.remoteStatusRefreshUpstreamValues, [undefined, false]);
       assert.equal(state.localInvalidationCalls, 1);
       assert.equal(state.remoteInvalidationCalls, 1);
     }).pipe(Effect.provide(makeTestLayer(state)));

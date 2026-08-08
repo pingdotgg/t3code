@@ -51,6 +51,18 @@ The **Source Control settings** page shows you exactly what's connected:
 
 Run a quick **Rescan** after setting up a new machine or changing credentials.
 
+### Control Background Remote Refreshes
+
+The Git details in **Settings → Source Control** expose two separate refresh intervals:
+
+- **Git fetch interval** refreshes the current branch's upstream status.
+- **Version Control all remotes interval** refreshes every remote shown by an open Version Control panel. Balanced mode uses five minutes, Performance uses one minute, and Battery saver disables it.
+
+Automatic all-remotes refreshes follow the shared Background Activity rules for locked hosts,
+low-power mode, battery state, and active clients. Set the all-remotes interval to `0` to prevent
+opening, focusing, or leaving the Version Control panel open from fetching remotes. The panel still
+refreshes local repository state, and its explicit **Fetch** action remains available.
+
 ## Getting Started
 
 ### For GitHub (Recommended for most users)

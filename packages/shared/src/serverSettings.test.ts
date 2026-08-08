@@ -18,16 +18,17 @@ import {
 } from "./serverSettings.ts";
 
 describe("serverSettings helpers", () => {
-  it("resolves the customized default as balanced policy with a five-minute Git override", () => {
+  it("resolves balanced defaults with a five-minute panel all-remotes interval", () => {
     const resolved = resolveServerBackgroundActivitySettings(DEFAULT_SERVER_SETTINGS);
 
     expect(resolved.profile).toBe("balanced");
-    expect(Duration.toMillis(resolved.automaticGitFetchInterval)).toBe(300_000);
+    expect(Duration.toMillis(resolved.automaticGitFetchInterval)).toBe(30_000);
+    expect(Duration.toMillis(resolved.sourceControlAllRemotesFetchInterval)).toBe(300_000);
     expect(Duration.toMillis(resolved.providerHealthRefreshInterval)).toBe(300_000);
     expect(resolved.pauseWhenHostLowPower).toBe(true);
   });
 
-  it("keeps upstream's explicit balanced preset at thirty seconds", () => {
+  it("keeps an explicit balanced preset at thirty seconds for upstream status", () => {
     const resolved = resolveServerBackgroundActivitySettings({
       ...DEFAULT_SERVER_SETTINGS,
       backgroundActivity: {
@@ -39,6 +40,38 @@ describe("serverSettings helpers", () => {
 
     expect(resolved.profile).toBe("balanced");
     expect(Duration.toMillis(resolved.automaticGitFetchInterval)).toBe(30_000);
+    expect(Duration.toMillis(resolved.sourceControlAllRemotesFetchInterval)).toBe(300_000);
+  });
+
+  it("moves the previous five-minute default to the panel-specific balanced interval", () => {
+    const resolved = resolveServerBackgroundActivitySettings({
+      ...DEFAULT_SERVER_SETTINGS,
+      backgroundActivity: {
+        schemaVersion: 1,
+        profile: "custom",
+        baseProfile: "balanced",
+        overrides: {
+          automaticGitFetchInterval: Duration.minutes(5),
+        },
+      },
+    });
+
+    expect(resolved.profile).toBe("balanced");
+    expect(Duration.toMillis(resolved.automaticGitFetchInterval)).toBe(30_000);
+    expect(Duration.toMillis(resolved.sourceControlAllRemotesFetchInterval)).toBe(300_000);
+  });
+
+  it.each([
+    ["performance", 60_000],
+    ["balanced", 300_000],
+    ["battery-saver", 0],
+  ] as const)("resolves the %s all-remotes cadence", (profile, expectedMs) => {
+    const resolved = resolveServerBackgroundActivitySettings({
+      ...DEFAULT_SERVER_SETTINGS,
+      backgroundActivity: { schemaVersion: 1, profile, overrides: {} },
+    });
+
+    expect(Duration.toMillis(resolved.sourceControlAllRemotesFetchInterval)).toBe(expectedMs);
   });
 
   it("migrates a legacy thirty-second Git fetch interval", () => {

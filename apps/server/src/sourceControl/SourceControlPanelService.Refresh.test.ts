@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -462,9 +463,9 @@ describe("SourceControlPanelService", () => {
     return Effect.gen(function* () {
       const service = yield* SourceControlPanelService;
 
-      yield* service.fetchAllRemotes({ cwd: "/repo" });
-      yield* service.fetchAllRemotes({ cwd: "/repo-linked" });
-      yield* service.fetchAllRemotes({ cwd: "/repo", force: true });
+      assert.equal(yield* service.fetchAllRemotes({ cwd: "/repo" }), true);
+      assert.equal(yield* service.fetchAllRemotes({ cwd: "/repo-linked" }), false);
+      assert.equal(yield* service.fetchAllRemotes({ cwd: "/repo", force: true }), true);
 
       const fetchCalls = calls.filter((call) => call.operation === "vcs.panel.fetchAllRemotes");
       assert.equal(fetchCalls.length, 2);
@@ -479,6 +480,43 @@ describe("SourceControlPanelService", () => {
               ? success("/repo/.git\n")
               : success();
           }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("disables automatic fetch-all while preserving a forced fetch", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      assert.equal(yield* service.fetchAllRemotes({ cwd: "/repo" }), false);
+      assert.equal(yield* service.fetchAllRemotes({ cwd: "/repo", force: true }), true);
+
+      const fetchCalls = calls.filter((call) => call.operation === "vcs.panel.fetchAllRemotes");
+      assert.equal(fetchCalls.length, 1);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          (input) =>
+            Effect.sync(() => {
+              calls.push(input);
+              return input.operation === "vcs.panel.resolveGitCommonDir"
+                ? success("/repo/.git\n")
+                : success();
+            }),
+          {},
+          {},
+          {
+            backgroundActivity: {
+              schemaVersion: 1,
+              profile: "custom",
+              baseProfile: "balanced",
+              overrides: {
+                sourceControlAllRemotesFetchInterval: Duration.zero,
+              },
+            },
+          },
         ),
       ),
     );

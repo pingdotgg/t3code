@@ -511,7 +511,7 @@ export const SourceControlWritingStyleSettings = Schema.Struct({
 export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyleSettings.Type;
 
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
-export const DEFAULT_SOURCE_CONTROL_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.minutes(5);
+export const DEFAULT_SOURCE_CONTROL_ALL_REMOTES_FETCH_INTERVAL = Duration.minutes(5);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
 
 export const BackgroundActivityProfile = Schema.Literals([
@@ -532,6 +532,7 @@ export type BackgroundActivityProfileSelection = typeof BackgroundActivityProfil
 
 export const BackgroundActivityOverrides = Schema.Struct({
   automaticGitFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
+  sourceControlAllRemotesFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
   providerHealthRefreshInterval: Schema.optionalKey(Schema.DurationFromMillis),
   hostPowerMonitorActiveInterval: Schema.optionalKey(Schema.DurationFromMillis),
   hostPowerMonitorIdleInterval: Schema.optionalKey(Schema.DurationFromMillis),
@@ -545,13 +546,8 @@ export type BackgroundActivityOverrides = typeof BackgroundActivityOverrides.Typ
 
 const DEFAULT_BACKGROUND_ACTIVITY_SETTINGS_INPUT = {
   schemaVersion: 1,
-  profile: "custom",
-  baseProfile: DEFAULT_BACKGROUND_ACTIVITY_PROFILE,
-  overrides: {
-    automaticGitFetchInterval: Duration.toMillis(
-      DEFAULT_SOURCE_CONTROL_AUTOMATIC_GIT_FETCH_INTERVAL,
-    ),
-  },
+  profile: DEFAULT_BACKGROUND_ACTIVITY_PROFILE,
+  overrides: {},
 } as const;
 
 export const BackgroundActivitySettings = Schema.Struct({
@@ -580,7 +576,7 @@ export const ServerSettings = Schema.Struct({
   // consumers should resolve `backgroundActivity` instead.
   automaticGitFetchInterval: Schema.DurationFromMillis.pipe(
     Schema.withDecodingDefault(
-      Effect.succeed(Duration.toMillis(DEFAULT_SOURCE_CONTROL_AUTOMATIC_GIT_FETCH_INTERVAL)),
+      Effect.succeed(Duration.toMillis(DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL)),
     ),
   ),
   providerHealthRefreshInterval: Schema.DurationFromMillis.pipe(

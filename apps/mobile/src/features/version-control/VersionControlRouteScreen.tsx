@@ -7,17 +7,22 @@ import type {
   VcsRef,
   VcsStatusResult,
 } from "@t3tools/contracts";
-import { EnvironmentId } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, EnvironmentId } from "@t3tools/contracts";
+import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { panelBranchOperationCwd, panelBranchSyncState } from "@t3tools/shared/sourceControl";
+import { useAtomValue } from "@effect/atom-react";
+import * as Duration from "effect/Duration";
 import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Alert, RefreshControl, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { retainMobileBackgroundActivityScope } from "../../connection/background-activity-scopes";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useEnvironmentQuery } from "../../state/query";
+import { serverEnvironment } from "../../state/server";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadSelection } from "../../state/use-thread-selection";
@@ -50,7 +55,6 @@ import {
 import {
   retainPullRefreshIndicator,
   retryInterruptedVersionControlRequest,
-  runInitialRemoteFetch,
   VERSION_CONTROL_CHECKOUT_ACTION_OPTIONS,
 } from "./versionControlRequest";
 import {
@@ -89,6 +93,11 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const gitActions = useSelectedThreadGitActions();
   const api = useVersionControlPanelApi(environmentId);
+  const serverSettings =
+    useAtomValue(serverEnvironment.settingsValueAtom(environmentId)) ?? DEFAULT_SERVER_SETTINGS;
+  const sourceControlAllRemotesFetchIntervalMs = Duration.toMillis(
+    resolveServerBackgroundActivitySettings(serverSettings).sourceControlAllRemotesFetchInterval,
+  );
   const statusQuery = useEnvironmentQuery(
     selectedThreadCwd
       ? vcsEnvironment.status({
@@ -131,7 +140,6 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
   const [remoteName, setRemoteName] = useState("");
   const [remoteUrl, setRemoteUrl] = useState("");
   const [publishRequest, setPublishRequest] = useState<PublishRequest | null>(null);
-  const initiallyFetchedCwds = useRef(new Set<string>());
   const snapshotRequestId = useRef(0);
   const detailRequestIds = useRef(new Map<string, number>());
   const selectedThreadCwdRef = useRef(selectedThreadCwd);
@@ -145,6 +153,14 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
   useEffect(() => {
     expandedRowsRef.current = expandedRows;
   }, [expandedRows]);
+
+  useEffect(() => {
+    if (!selectedThreadCwd) return;
+    return retainMobileBackgroundActivityScope(environmentId, {
+      type: "git-refs",
+      cwd: selectedThreadCwd,
+    });
+  }, [environmentId, selectedThreadCwd]);
 
   const syncSelections = useCallback((nextSnapshot: VcsPanelSnapshotResult, cwd: string) => {
     const changeSets = panelChangeSets(nextSnapshot, cwd);
@@ -314,13 +330,21 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
       if (!selectedThreadCwd) return;
       const cwd = selectedThreadCwd;
       void refreshSnapshot();
-      void runInitialRemoteFetch({
-        cwd,
-        fetchedCwds: initiallyFetchedCwds.current,
-        fetch: () => api.fetchAllRemotes({ cwd }),
-        refresh: refreshSnapshot,
-      });
-    }, [api, refreshSnapshot, selectedThreadCwd]),
+      if (sourceControlAllRemotesFetchIntervalMs <= 0) return;
+
+      const refreshAllRemotes = () => {
+        void api
+          .fetchAllRemotes({ cwd })
+          .then(() => refreshSnapshot())
+          .catch(() => {
+            // The immediate local snapshot remains usable when automatic
+            // network refresh is unavailable or policy-gated.
+          });
+      };
+      refreshAllRemotes();
+      const interval = setInterval(refreshAllRemotes, sourceControlAllRemotesFetchIntervalMs);
+      return () => clearInterval(interval);
+    }, [api, refreshSnapshot, selectedThreadCwd, sourceControlAllRemotesFetchIntervalMs]),
   );
 
   const statusFingerprint = statusQuery.data ? JSON.stringify(statusQuery.data) : null;

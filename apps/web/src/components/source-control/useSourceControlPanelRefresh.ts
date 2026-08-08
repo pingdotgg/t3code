@@ -27,6 +27,7 @@ export function useSourceControlPanelRefresh(state: SourceControlPanelState) {
     setSnapshot,
     snapshotFingerprintRef,
     snapshotRef,
+    sourceControlAllRemotesFetchIntervalMs,
     syncChangedPathSelection,
     syncWorktreeChangedPathSelection,
     vcsStatus,
@@ -128,12 +129,16 @@ export function useSourceControlPanelRefresh(state: SourceControlPanelState) {
       const now = Date.now();
       if (now - lastFocusRefreshAtRef.current < 1_000) return;
       lastFocusRefreshAtRef.current = now;
+      if (!api || sourceControlAllRemotesFetchIntervalMs <= 0) {
+        void refresh();
+        return;
+      }
       void (async () => {
         try {
-          await api?.vcs.fetchAllRemotes({ cwd });
+          await api.vcs.fetchAllRemotes({ cwd });
         } catch {
           // Focus refresh still reconciles the local repository snapshot when
-          // an automatic network refresh is temporarily unavailable.
+          // an automatic network refresh is unavailable or policy-gated.
         } finally {
           await refresh();
         }
@@ -145,7 +150,7 @@ export function useSourceControlPanelRefresh(state: SourceControlPanelState) {
       window.removeEventListener("focus", refreshOnFocus);
       document.removeEventListener("visibilitychange", refreshOnFocus);
     };
-  }, [api, cwd, refresh]);
+  }, [api, cwd, refresh, sourceControlAllRemotesFetchIntervalMs]);
 
   return { refresh };
 }

@@ -91,6 +91,11 @@ describe("searchSettings", () => {
       to: "/settings/source-control",
       targetId: "source-control",
     });
+    expect(searchSettings("all remotes interval")[0]).toMatchObject({
+      id: "all-remotes-fetch-interval",
+      to: "/settings/source-control",
+      targetId: "source-control",
+    });
     expect(searchSettings("commit author avatars")[0]).toMatchObject({
       id: "commit-author-avatars",
       to: "/settings/source-control",

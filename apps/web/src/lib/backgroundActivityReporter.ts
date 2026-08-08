@@ -122,7 +122,10 @@ function scopeForSubscription(
   return typeof input.cwd === "string" ? { type: "vcs-status", cwd: input.cwd } : null;
 }
 
-function retainBackgroundScope(environmentId: EnvironmentId, scope: BackgroundScope): () => void {
+export function retainBackgroundActivityScope(
+  environmentId: EnvironmentId,
+  scope: BackgroundScope,
+): () => void {
   const key = stableScopeKey(environmentId, scope);
   const existing = retainedScopes.get(key);
   if (existing) {
@@ -151,7 +154,10 @@ export function observeBackgroundActivitySubscription(
     return Effect.succeed(Effect.void);
   }
   return Effect.sync(() => {
-    const release = retainBackgroundScope(observation.environmentId as EnvironmentId, scope);
+    const release = retainBackgroundActivityScope(
+      observation.environmentId as EnvironmentId,
+      scope,
+    );
     return Effect.sync(release);
   });
 }

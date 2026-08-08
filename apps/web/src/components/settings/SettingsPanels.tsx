@@ -662,6 +662,9 @@ function BackgroundActivityAdvancedDialog({
   const automaticGitFetchIntervalSeconds = durationToSeconds(
     resolvedBackgroundActivity.automaticGitFetchInterval,
   );
+  const sourceControlAllRemotesFetchIntervalSeconds = durationToSeconds(
+    resolvedBackgroundActivity.sourceControlAllRemotesFetchInterval,
+  );
   const providerHealthRefreshIntervalSeconds = durationToSeconds(
     resolvedBackgroundActivity.providerHealthRefreshInterval,
   );
@@ -760,6 +763,44 @@ function BackgroundActivityAdvancedDialog({
             </div>
 
             <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 space-y-1">
+                <div className="text-sm font-medium">Version Control all remotes interval</div>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Refresh every remote shown by an open Version Control panel.
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <NumberField
+                  value={sourceControlAllRemotesFetchIntervalSeconds}
+                  min={0}
+                  step={30}
+                  size="sm"
+                  className="w-32"
+                  onValueChange={(value) =>
+                    updateSettings(
+                      backgroundActivityOverrideSettings(
+                        settings.backgroundActivity,
+                        resolvedBackgroundActivity,
+                        {
+                          sourceControlAllRemotesFetchInterval: Duration.seconds(
+                            normalizeIntervalSeconds(value),
+                          ),
+                        },
+                      ),
+                    )
+                  }
+                >
+                  <NumberFieldGroup>
+                    <NumberFieldDecrement aria-label="Decrease all-remotes fetch interval" />
+                    <NumberFieldInput aria-label="All-remotes fetch interval in seconds" />
+                    <NumberFieldIncrement aria-label="Increase all-remotes fetch interval" />
+                  </NumberFieldGroup>
+                </NumberField>
+                <span className="text-xs text-muted-foreground">seconds</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 border-t px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0 space-y-1">
                 <div className="text-sm font-medium">Provider health interval</div>
                 <p className="text-xs leading-relaxed text-muted-foreground">

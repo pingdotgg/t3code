@@ -51,18 +51,15 @@ describe("ClientSettings glass opacity", () => {
 });
 
 describe("ServerSettings background activity defaults", () => {
-  it("keeps the customized conservative Git fetch cadence as a balanced override", () => {
+  it("uses the balanced profile with a conservative panel all-remotes cadence", () => {
     const settings = decodeServerSettings({});
 
     expect(settings.backgroundActivity).toEqual({
       schemaVersion: 1,
-      profile: "custom",
-      baseProfile: "balanced",
-      overrides: {
-        automaticGitFetchInterval: Duration.minutes(5),
-      },
+      profile: "balanced",
+      overrides: {},
     });
-    expect(Duration.toMillis(settings.automaticGitFetchInterval)).toBe(300_000);
+    expect(Duration.toMillis(settings.automaticGitFetchInterval)).toBe(30_000);
   });
 
   it("preserves an explicitly selected upstream balanced profile", () => {
@@ -89,7 +86,7 @@ describe("ServerSettings background activity defaults", () => {
       profile: "balanced",
       overrides: {},
     });
-    expect(Duration.toMillis(settings.automaticGitFetchInterval)).toBe(300_000);
+    expect(Duration.toMillis(settings.automaticGitFetchInterval)).toBe(30_000);
   });
 });
 
