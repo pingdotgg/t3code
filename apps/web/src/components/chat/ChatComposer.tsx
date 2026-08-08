@@ -2281,6 +2281,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // while a turn is running; otherwise the key falls through untouched.
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
+      // Interrupt is one-shot: key auto-repeat would spray concurrent
+      // interrupt requests that race each other for the same turn.
+      if (event.repeat) return;
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
           terminalFocus: getTerminalFocusOwner() !== null,
@@ -2293,13 +2296,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ) {
         return;
       }
+      // Overlays that dismiss on the same key keep their dismiss behavior;
+      // the model picker is excluded via the default binding's when clause.
+      if (isCommandPaletteOpen() || isStashMenuOpen) {
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       onInterrupt();
     };
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
-  }, [isComposerModelPickerOpen, keybindings, onInterrupt, phase, terminalOpen]);
+  }, [isComposerModelPickerOpen, isStashMenuOpen, keybindings, onInterrupt, phase, terminalOpen]);
 
   // ------------------------------------------------------------------
   // Callbacks: images
