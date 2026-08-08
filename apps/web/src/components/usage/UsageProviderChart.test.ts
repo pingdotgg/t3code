@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { niceScale } from "./UsageProviderChart";
+import { buildDayColumns, niceScale } from "./UsageProviderChart";
 
 describe("niceScale", () => {
   it("never puts the peak above the top of the scale", () => {
@@ -37,5 +37,55 @@ describe("niceScale", () => {
 
   it("degrades to a single zero tick with no data", () => {
     expect(niceScale(0, 4)).toEqual({ max: 0, ticks: [0] });
+  });
+});
+
+describe("buildDayColumns", () => {
+  const days = ["2026-08-01", "2026-08-02", "2026-08-03"];
+  const byDay = new Map([
+    [
+      "2026-08-01",
+      {
+        day: "2026-08-01",
+        costUsd: 30,
+        totalTokens: 300,
+        byProvider: new Map([
+          ["codex" as const, { costUsd: 10, totalTokens: 100 }],
+          ["claude" as const, { costUsd: 20, totalTokens: 200 }],
+        ]),
+      },
+    ],
+    // 2026-08-02 is deliberately absent: a day with no activity.
+    [
+      "2026-08-03",
+      {
+        day: "2026-08-03",
+        costUsd: 5,
+        totalTokens: 50,
+        byProvider: new Map([["claude" as const, { costUsd: 5, totalTokens: 50 }]]),
+      },
+    ],
+  ]);
+
+  it("plots each day on its own", () => {
+    expect(buildDayColumns(days, byDay, "cost").map((column) => column.total)).toEqual([30, 0, 5]);
+  });
+
+  it("reads the requested metric", () => {
+    expect(buildDayColumns(days, byDay, "tokens").map((column) => column.total)).toEqual([
+      300, 0, 50,
+    ]);
+  });
+
+  it("keeps the bands contiguous so the areas stay additive", () => {
+    for (const column of buildDayColumns(days, byDay, "cost")) {
+      let expectedBase = 0;
+      for (const band of column.bands) {
+        expect(band.base).toBeCloseTo(expectedBase, 9);
+        expect(band.top).toBeCloseTo(band.base + band.value, 9);
+        expectedBase = band.top;
+      }
+      expect(column.total).toBeCloseTo(expectedBase, 9);
+    }
   });
 });

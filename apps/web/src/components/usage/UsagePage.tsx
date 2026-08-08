@@ -1,3 +1,4 @@
+import type { UsageProviderKind } from "@t3tools/contracts";
 import { RefreshCwIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -14,7 +15,7 @@ import {
 } from "../../usage/usageFormat";
 import { ScrollArea } from "../ui/scroll-area";
 import { UsageChartLegend, UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
-import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_ORDER } from "./usageProviders";
+import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_MARK, PROVIDER_ORDER } from "./usageProviders";
 
 const WINDOW_OPTIONS = [
   { days: 7, label: "7 days" },
@@ -37,6 +38,15 @@ export function UsagePage() {
     [window.sinceDay, window.untilDay],
   );
   const recentDays = useMemo(() => merged.daily.toReversed().slice(0, 8), [merged.daily]);
+
+  // Ranked by whatever the toggle is showing, so the bars always descend.
+  const orderedProviders = useMemo(
+    () =>
+      merged.providers.toSorted((a, b) =>
+        metric === "cost" ? b.costUsd - a.costUsd : b.totalTokens - a.totalTokens,
+      ),
+    [merged.providers, metric],
+  );
 
   const activeDays = merged.daily.filter((day) => day.totalTokens > 0).length;
   const dailyAverage = activeDays === 0 ? 0 : merged.totalTokens / activeDays;
@@ -96,49 +106,57 @@ export function UsagePage() {
           <>
             {/* Cost first: the financial answer, then the provider split. */}
             <section className="grid gap-6 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+              {/* The summary follows the chart toggle, so the headline and the
+                  series are always reading the same units. */}
               <div className="flex flex-col gap-5">
                 <div className="flex flex-col gap-1">
                   <span className="text-xs tracking-wide text-muted-foreground uppercase">
-                    Raw token cost
+                    {metric === "cost" ? "Raw token cost" : "Processed tokens"}
                   </span>
                   <span className="text-4xl font-semibold text-foreground tabular-nums">
-                    {formatUsd(merged.costUsd)}
+                    {metric === "cost"
+                      ? formatUsd(merged.costUsd)
+                      : formatTokens(merged.totalTokens)}
                   </span>
                   <span className="text-xs text-muted-foreground">
-                    What these tokens would cost at API rates. Not what you were billed.
+                    {metric === "cost"
+                      ? "What these tokens would cost at API rates. Not what you were billed."
+                      : `Input, cache reads and output across ${formatCount(merged.sessions)} sessions.`}
                   </span>
                 </div>
 
-                {merged.providers.map((provider) => (
-                  <div key={provider.provider} className="flex flex-col gap-1.5">
-                    <div className="flex items-baseline justify-between">
-                      <span className="flex items-center gap-1.5 text-sm text-foreground">
-                        <span
-                          aria-hidden
-                          className="size-2 rounded-full"
-                          style={{ backgroundColor: PROVIDER_COLOR[provider.provider] }}
+                {orderedProviders.map((provider) => {
+                  const share = metric === "cost" ? provider.costShare : provider.tokenShare;
+                  return (
+                    <div key={provider.provider} className="flex flex-col gap-1.5">
+                      <div className="flex items-baseline justify-between">
+                        <span className="flex items-center gap-2 text-sm text-foreground">
+                          <ProviderMark provider={provider.provider} className="size-4" />
+                          {PROVIDER_LABEL[provider.provider]}
+                        </span>
+                        <span className="text-sm text-foreground tabular-nums">
+                          {metric === "cost"
+                            ? formatUsd(provider.costUsd)
+                            : formatTokens(provider.totalTokens)}
+                        </span>
+                      </div>
+                      <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full"
+                          style={{
+                            width: `${(share * 100).toFixed(1)}%`,
+                            backgroundColor: PROVIDER_COLOR[provider.provider],
+                          }}
                         />
-                        {PROVIDER_LABEL[provider.provider]}
-                      </span>
-                      <span className="text-sm text-foreground tabular-nums">
-                        {formatUsd(provider.costUsd)}
+                      </div>
+                      <span className="text-xs text-muted-foreground">
+                        {metric === "cost"
+                          ? `${formatPercent(share)} of cost · ${formatTokens(provider.totalTokens)} tokens`
+                          : `${formatPercent(share)} of tokens · ${formatUsd(provider.costUsd)}`}
                       </span>
                     </div>
-                    <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
-                      <div
-                        className="h-full"
-                        style={{
-                          width: `${(provider.costShare * 100).toFixed(1)}%`,
-                          backgroundColor: PROVIDER_COLOR[provider.provider],
-                        }}
-                      />
-                    </div>
-                    <span className="text-xs text-muted-foreground">
-                      {formatPercent(provider.costShare)} of cost ·{" "}
-                      {formatTokens(provider.totalTokens)} tokens
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               <div className="flex flex-col gap-3">
@@ -148,7 +166,7 @@ export function UsagePage() {
                   </h2>
                   <div className="flex items-center gap-4">
                     <div className="flex overflow-hidden rounded-md border border-border">
-                      {(["tokens", "cost"] as const).map((option) => (
+                      {(["cost", "tokens"] as const).map((option) => (
                         <button
                           key={option}
                           type="button"
@@ -246,12 +264,8 @@ export function UsagePage() {
                             className="border-b border-border/50"
                           >
                             <td className="py-2 text-foreground">
-                              <span className="flex items-center gap-1.5">
-                                <span
-                                  aria-hidden
-                                  className="size-1.5 shrink-0 rounded-full"
-                                  style={{ backgroundColor: PROVIDER_COLOR[model.provider] }}
-                                />
+                              <span className="flex items-center gap-2">
+                                <ProviderMark provider={model.provider} className="size-3.5" />
                                 {model.model}
                               </span>
                             </td>
@@ -343,6 +357,18 @@ export function UsagePage() {
       </div>
     </ScrollArea>
   );
+}
+
+/** Brand mark for the harness a row belongs to. */
+function ProviderMark({
+  provider,
+  className,
+}: {
+  readonly provider: UsageProviderKind;
+  readonly className: string;
+}) {
+  const Mark = PROVIDER_MARK[provider];
+  return <Mark className={cn("shrink-0", className)} aria-hidden />;
 }
 
 function Metric({

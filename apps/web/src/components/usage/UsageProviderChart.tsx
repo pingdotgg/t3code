@@ -3,7 +3,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 
 import type { DailyTotals } from "../../usage/usageMerge";
 import { formatDayShort, formatTokens, formatUsd } from "../../usage/usageFormat";
-import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_ORDER } from "./usageProviders";
+import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_MARK, PROVIDER_ORDER } from "./usageProviders";
 
 const VIEW_WIDTH = 960;
 const VIEW_HEIGHT = 260;
@@ -16,6 +16,17 @@ interface UsageProviderChartProps {
   readonly days: readonly string[];
   readonly daily: readonly DailyTotals[];
   readonly metric: UsageChartMetric;
+}
+
+/** One day's stacked bands, shared by the paths and the hover readout. */
+export interface DayColumn {
+  readonly bands: readonly {
+    readonly provider: UsageProviderKind;
+    readonly value: number;
+    readonly base: number;
+    readonly top: number;
+  }[];
+  readonly total: number;
 }
 
 interface Point {
@@ -127,35 +138,50 @@ export function niceScale(peak: number, count: number): { max: number; ticks: re
   return { max, ticks };
 }
 
+/**
+ * Turns the merged daily totals into stacked bands, one column per day.
+ *
+ * The chart paths and the hover readout both consume this, so the number under
+ * the cursor is by construction the number that was plotted rather than a
+ * second derivation that can drift from it.
+ */
+export function buildDayColumns(
+  days: readonly string[],
+  byDay: ReadonlyMap<string, DailyTotals>,
+  metric: UsageChartMetric,
+): readonly DayColumn[] {
+  return days.map((day) => {
+    const entry = byDay.get(day);
+    let stackTop = 0;
+    const bands = PROVIDER_ORDER.map((provider) => {
+      const value = valueFor(entry, provider, metric);
+      const base = stackTop;
+      stackTop += value;
+      return { provider, value, base, top: stackTop };
+    });
+    return { bands, total: stackTop };
+  });
+}
+
 export function UsageProviderChart({ days, daily, metric }: UsageProviderChartProps) {
   const byDay = useMemo(() => new Map(daily.map((entry) => [entry.day, entry])), [daily]);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const plotRef = useRef<HTMLDivElement | null>(null);
 
-  const { paths, ticks, stepX, toY } = useMemo(() => {
+  const { paths, ticks, stepX, toY, series } = useMemo(() => {
     if (days.length === 0) {
       return {
         paths: [],
         ticks: [0] as readonly number[],
         stepX: 0,
         toY: () => VIEW_HEIGHT,
+        series: [] as readonly DayColumn[],
       };
     }
 
-    const stacked = days.map((day) => {
-      const entry = byDay.get(day);
-      let running = 0;
-      return PROVIDER_ORDER.map((provider) => {
-        const base = running;
-        running += valueFor(entry, provider, metric);
-        return { base, top: running };
-      });
-    });
+    const stacked = buildDayColumns(days, byDay, metric);
 
-    const peak = stacked.reduce(
-      (max, columns) => Math.max(max, columns[columns.length - 1]?.top ?? 0),
-      0,
-    );
+    const peak = stacked.reduce((max, column) => Math.max(max, column.total), 0);
     const { max, ticks: tickValues } = niceScale(peak, TICK_COUNT);
     const step = days.length === 1 ? 0 : VIEW_WIDTH / (days.length - 1);
     // Reserve a sliver above the top gridline so the series stroke, which is
@@ -164,14 +190,14 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
       max === 0 ? VIEW_HEIGHT : VIEW_HEIGHT - (value / max) * (VIEW_HEIGHT - PLOT_TOP);
 
     const built = PROVIDER_ORDER.map((provider, providerIndex) => {
-      const top: Point[] = stacked.map((columns, dayIndex) => ({
+      const top: Point[] = stacked.map((column, dayIndex) => ({
         x: dayIndex * step,
-        y: toY(columns[providerIndex]?.top ?? 0),
+        y: toY(column.bands[providerIndex]?.top ?? 0),
       }));
       const bottom: Point[] = stacked
-        .map((columns, dayIndex) => ({
+        .map((column, dayIndex) => ({
           x: dayIndex * step,
-          y: toY(columns[providerIndex]?.base ?? 0),
+          y: toY(column.bands[providerIndex]?.base ?? 0),
         }))
         .toReversed();
 
@@ -182,7 +208,7 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
       };
     });
 
-    return { paths: built, ticks: tickValues, stepX: step, toY };
+    return { paths: built, ticks: tickValues, stepX: step, toY, series: stacked };
   }, [byDay, days, metric]);
 
   const format = metric === "tokens" ? formatTokens : formatUsd;
@@ -199,7 +225,7 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
   );
 
   const hoveredDay = hoverIndex === null ? undefined : days[hoverIndex];
-  const hoveredEntry = hoveredDay === undefined ? undefined : byDay.get(hoveredDay);
+  const hoveredColumn = hoverIndex === null ? undefined : series[hoverIndex];
   const hoverLeft = days.length <= 1 ? 0 : ((hoverIndex ?? 0) / (days.length - 1)) * 100;
 
   return (
@@ -284,29 +310,26 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
               }}
             >
               <div className="mb-1 text-muted-foreground">{formatDayShort(hoveredDay)}</div>
-              {PROVIDER_ORDER.map((provider) => (
-                <div key={provider} className="flex items-center justify-between gap-3">
-                  <span className="flex items-center gap-1.5 text-muted-foreground">
-                    <span
-                      aria-hidden
-                      className="size-1.5 rounded-full"
-                      style={{ backgroundColor: PROVIDER_COLOR[provider] }}
-                    />
-                    {PROVIDER_LABEL[provider]}
-                  </span>
-                  <span className="text-foreground tabular-nums">
-                    {format(valueFor(hoveredEntry, provider, metric))}
-                  </span>
-                </div>
-              ))}
+              {PROVIDER_ORDER.map((provider) => {
+                const Mark = PROVIDER_MARK[provider];
+                return (
+                  <div key={provider} className="flex items-center justify-between gap-3">
+                    <span className="flex items-center gap-1.5 text-muted-foreground">
+                      <Mark className="size-3 shrink-0" aria-hidden />
+                      {PROVIDER_LABEL[provider]}
+                    </span>
+                    <span className="text-foreground tabular-nums">
+                      {format(
+                        hoveredColumn?.bands.find((band) => band.provider === provider)?.value ?? 0,
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
               <div className="mt-1 flex items-center justify-between gap-3 border-t border-border pt-1">
                 <span className="text-muted-foreground">Total</span>
                 <span className="text-foreground tabular-nums">
-                  {format(
-                    metric === "tokens"
-                      ? (hoveredEntry?.totalTokens ?? 0)
-                      : (hoveredEntry?.costUsd ?? 0),
-                  )}
+                  {format(hoveredColumn?.total ?? 0)}
                 </span>
               </div>
             </div>
@@ -332,16 +355,17 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
 export function UsageChartLegend() {
   return (
     <div className="flex items-center gap-4">
-      {PROVIDER_ORDER.map((provider) => (
-        <span key={provider} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span
-            aria-hidden
-            className="size-2 rounded-full"
-            style={{ backgroundColor: PROVIDER_COLOR[provider] }}
-          />
-          {PROVIDER_LABEL[provider]}
-        </span>
-      ))}
+      {PROVIDER_ORDER.map((provider) => {
+        // The marks carry the same fills as the bands, so they key the chart
+        // just as a colour swatch would.
+        const Mark = PROVIDER_MARK[provider];
+        return (
+          <span key={provider} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Mark className="size-3.5 shrink-0" aria-hidden />
+            {PROVIDER_LABEL[provider]}
+          </span>
+        );
+      })}
     </div>
   );
 }
