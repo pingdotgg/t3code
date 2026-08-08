@@ -1,6 +1,9 @@
 import { cn } from "~/lib/utils";
 import { type ContextWindowSnapshot, formatContextWindowTokens } from "~/lib/contextWindow";
+import type { ServerProviderUsageLimits } from "@t3tools/contracts";
+import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { ProviderUsageRows } from "../providerUsage/ProviderUsageRows";
 
 function formatPercentage(value: number | null): string | null {
   if (value === null || !Number.isFinite(value)) {
@@ -15,6 +18,8 @@ function formatPercentage(value: number | null): string | null {
 export function ContextWindowMeter(props: {
   usage: ContextWindowSnapshot;
   providerDisplayName?: string | null;
+  providerUsageLimits?: ServerProviderUsageLimits | undefined;
+  timestampFormat: TimestampFormat;
 }) {
   const { usage, providerDisplayName } = props;
   const usedPercentage = formatPercentage(usage.usedPercentage);
@@ -84,7 +89,7 @@ export function ContextWindowMeter(props: {
         tooltipStyle
         side="top"
         align="end"
-        viewportClassName="p-0"
+        viewportClassName="overflow-y-auto p-0"
         className="w-64 max-w-none text-left whitespace-normal"
       >
         <div className="flex flex-col gap-2 p-[var(--floating-content-inset)]">
@@ -131,6 +136,16 @@ export function ContextWindowMeter(props: {
           {usage.compactsAutomatically ? (
             <div className="mt-1 text-pretty text-secondary-label text-[11px] font-medium">
               {providerDisplayName ?? "It"} automatically compacts its context when needed.
+            </div>
+          ) : null}
+          {props.providerUsageLimits ? (
+            <div className="mt-1 grid gap-2.5 border-t border-border/60 pt-2.5">
+              <div className="font-medium text-muted-foreground text-xs">Provider limits</div>
+              <ProviderUsageRows
+                usageLimits={props.providerUsageLimits}
+                timestampFormat={props.timestampFormat}
+                compact
+              />
             </div>
           ) : null}
         </div>

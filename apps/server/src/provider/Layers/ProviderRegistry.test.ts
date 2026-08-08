@@ -32,7 +32,7 @@ import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
-import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import { checkClaudeProviderStatus, probeClaudeUsageLimits } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
@@ -194,6 +194,7 @@ function recordingMockSpawnerLayer(
   const commands: Array<{
     readonly args: ReadonlyArray<string>;
     readonly env: NodeJS.ProcessEnv | undefined;
+    readonly cwd: string | undefined;
   }> = [];
   const layer = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
@@ -202,9 +203,10 @@ function recordingMockSpawnerLayer(
         args: ReadonlyArray<string>;
         options?: {
           readonly env?: NodeJS.ProcessEnv;
+          readonly cwd?: string;
         };
       };
-      commands.push({ args: cmd.args, env: cmd.options?.env });
+      commands.push({ args: cmd.args, env: cmd.options?.env, cwd: cmd.options?.cwd });
       return Effect.succeed(mockHandle(handler(cmd.args)));
     }),
   );
@@ -382,6 +384,28 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               displayName: "CI Debug",
               shortDescription: "Debug failing GitHub Actions checks",
             },
+          ]);
+        }),
+      );
+
+      it.effect("includes Codex subscription usage from the app-server snapshot", () =>
+        Effect.gen(function* () {
+          const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+            Effect.succeed(
+              makeCodexProbeSnapshot({
+                rateLimits: {
+                  rateLimits: {
+                    primary: { usedPercent: 20, windowDurationMins: 300 },
+                    secondary: { usedPercent: 40, windowDurationMins: 10_080 },
+                  },
+                },
+              }),
+            ),
+          );
+
+          assert.deepStrictEqual(status.usageLimits?.windows, [
+            { label: "Session", usedPercent: 20, windowDurationMins: 300 },
+            { label: "Weekly", usedPercent: 40, windowDurationMins: 10_080 },
           ]);
         }),
       );
@@ -1840,7 +1864,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(
             defaultClaudeSettings,
-            claudeCapabilities(),
+            claudeCapabilities({ email: "claude@example.com" }),
           );
           assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.installed, true);
@@ -1861,6 +1885,146 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           ),
         ),
       );
+
+      it.effect("includes best-effort Claude subscription usage", () =>
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse("2026-07-22T12:00:00.000Z"));
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({ email: "claude@example.com" }),
+          );
+          assert.strictEqual(status.status, "ready");
+          assert.deepStrictEqual(status.usageLimits?.windows, [
+            {
+              label: "Session",
+              usedPercent: 30,
+              windowDurationMins: 300,
+              resetsAt: "2026-07-23T06:30:00.000Z",
+            },
+          ]);
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.218\n", stderr: "", code: 0 };
+              if (joined.startsWith("--print /usage --output-format json")) {
+                return {
+                  stdout: JSON.stringify({
+                    result:
+                      "Current session: 30% used \u00b7 resets Jul 23, 1:30am (America/Chicago)",
+                  }),
+                  stderr: "",
+                  code: 0,
+                };
+              }
+              if (joined === "auth status --json") {
+                return {
+                  stdout: JSON.stringify({ email: "claude@example.com" }),
+                  stderr: "",
+                  code: 0,
+                };
+              }
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("runs the Claude usage probe from the configured workspace cwd", () => {
+        const recorded = recordingMockSpawnerLayer((args) => {
+          if (args.join(" ").startsWith("--print /usage --output-format json")) {
+            return {
+              stdout: JSON.stringify({
+                result: "Current session: 30% used \u00b7 resets Jul 23, 1:30am (America/Chicago)",
+              }),
+              stderr: "",
+              code: 0,
+            };
+          }
+          if (args.join(" ") === "auth status --json") {
+            return {
+              stdout: JSON.stringify({ email: "claude@example.com" }),
+              stderr: "",
+              code: 0,
+            };
+          }
+          throw new Error(`Unexpected args: ${args.join(" ")}`);
+        });
+
+        return Effect.gen(function* () {
+          const usageLimits = yield* probeClaudeUsageLimits(
+            defaultClaudeSettings,
+            undefined,
+            "/tmp/provider-usage-workspace",
+          );
+          assert.strictEqual(usageLimits?.usageLimits?.windows[0]?.usedPercent, 30);
+          assert.strictEqual(usageLimits?.accountIdentity, "claude@example.com");
+          assert.deepStrictEqual(
+            recorded.commands.map((command) => command.cwd),
+            ["/tmp/provider-usage-workspace", "/tmp/provider-usage-workspace"],
+          );
+        }).pipe(Effect.provide(recorded.layer));
+      });
+
+      it.effect("keeps successful Claude usage when live identity is unavailable", () => {
+        const spawner = mockSpawnerLayer((args) => {
+          const joined = args.join(" ");
+          if (joined === "--version") return { stdout: "2.1.218\n", stderr: "", code: 0 };
+          if (joined.startsWith("--print /usage --output-format json")) {
+            return {
+              stdout: JSON.stringify({
+                result: "Current session: 30% used \u00b7 resets Jul 23, 1:30am (America/Chicago)",
+              }),
+              stderr: "",
+              code: 0,
+            };
+          }
+          if (joined === "auth status --json") {
+            return { stdout: "", stderr: "temporary auth status failure", code: 1 };
+          }
+          throw new Error(`Unexpected args: ${joined}`);
+        });
+
+        return Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({ email: "claude@example.com" }),
+          );
+          assert.strictEqual(status.usageLimits?.windows[0]?.usedPercent, 30);
+        }).pipe(Effect.provide(spawner));
+      });
+
+      it.effect("omits Claude usage when live identity mismatches capabilities", () => {
+        const spawner = mockSpawnerLayer((args) => {
+          const joined = args.join(" ");
+          if (joined === "--version") return { stdout: "2.1.218\n", stderr: "", code: 0 };
+          if (joined.startsWith("--print /usage --output-format json")) {
+            return {
+              stdout: JSON.stringify({
+                result: "Current session: 30% used \u00b7 resets Jul 23, 1:30am (America/Chicago)",
+              }),
+              stderr: "",
+              code: 0,
+            };
+          }
+          if (joined === "auth status --json") {
+            return {
+              stdout: JSON.stringify({ email: "second@example.com" }),
+              stderr: "",
+              code: 0,
+            };
+          }
+          throw new Error(`Unexpected args: ${joined}`);
+        });
+
+        return Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({ email: "first@example.com" }),
+          );
+          assert.strictEqual(status.usageLimits, undefined);
+        }).pipe(Effect.provide(spawner));
+      });
 
       it.effect("returns ready and labels Bedrock-backed Claude as authenticated", () =>
         Effect.gen(function* () {
@@ -2194,7 +2358,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(status.status, "ready");
           assert.deepStrictEqual(
             recorded.commands.map((command) => command.env?.CLAUDE_CONFIG_DIR),
-            [claudeConfigDir],
+            [claudeConfigDir, claudeConfigDir],
           );
         }).pipe(Effect.provide(recorded.layer));
       });
@@ -2304,6 +2468,35 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   code: 0,
                 };
               throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("skips Claude subscription usage for API key auth", () =>
+        Effect.gen(function* () {
+          let usageProbeCalls = 0;
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({ tokenSource: "ANTHROPIC_AUTH_TOKEN" }),
+            undefined,
+            undefined,
+            () => {
+              usageProbeCalls += 1;
+              return Effect.void.pipe(Effect.as(undefined as ServerProvider["usageLimits"]));
+            },
+          );
+
+          assert.strictEqual(status.auth.type, "apiKey");
+          assert.strictEqual(status.usageLimits, undefined);
+          assert.strictEqual(usageProbeCalls, 0);
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              if (args.join(" ") === "--version") {
+                return { stdout: "2.1.218\n", stderr: "", code: 0 };
+              }
+              throw new Error(`Unexpected args: ${args.join(" ")}`);
             }),
           ),
         ),

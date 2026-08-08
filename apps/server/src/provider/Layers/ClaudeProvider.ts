@@ -4,6 +4,7 @@ import {
   type ModelSelection,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -42,6 +43,7 @@ import {
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
+import { parseClaudeUsageLimitsJson } from "../providerUsageLimits.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -571,6 +573,7 @@ function apiProviderAuthMetadata(
 // account info. The previous 8s budget expired mid-init, so the probe returned
 // `undefined` and left the provider unverified and unselectable in the picker.
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
+const USAGE_PROBE_TIMEOUT_MS = 4_000;
 
 /**
  * Keep workspace-scoped command discovery intact while isolating the periodic
@@ -776,6 +779,7 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   claudeSettings: ClaudeSettings,
   args: ReadonlyArray<string>,
   environment?: NodeJS.ProcessEnv,
+  options?: { readonly closeStdin?: boolean; readonly cwd?: string },
 ) {
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
   const spawnCommand = yield* resolveSpawnCommand(claudeSettings.binaryPath, args, {
@@ -784,8 +788,82 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
     env: claudeEnvironment,
     shell: spawnCommand.shell,
+    ...(options?.cwd ? { cwd: options.cwd } : {}),
+    ...(options?.closeStdin ? { stdin: "ignore" as const } : {}),
   });
   return yield* spawnAndCollect(claudeSettings.binaryPath, command);
+});
+
+export const probeClaudeUsageLimits = Effect.fn("probeClaudeUsageLimits")(function* (
+  claudeSettings: ClaudeSettings,
+  environment?: NodeJS.ProcessEnv,
+  cwd?: string,
+): Effect.fn.Return<
+  | {
+      readonly accountIdentity: string | undefined;
+      readonly usageLimits: ServerProviderUsageLimits | undefined;
+    }
+  | undefined,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner | Path.Path
+> {
+  const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  return yield* Effect.all(
+    [
+      runClaudeCommand(
+        claudeSettings,
+        [
+          "--print",
+          "/usage",
+          "--output-format",
+          "json",
+          "--permission-mode",
+          "plan",
+          "--strict-mcp-config",
+          "--mcp-config",
+          '{"mcpServers":{}}',
+        ],
+        {
+          ...(environment ?? process.env),
+          ENABLE_CLAUDEAI_MCP_SERVERS: "false",
+        },
+        { closeStdin: true, ...(cwd ? { cwd } : {}) },
+      ),
+      runClaudeCommand(claudeSettings, ["auth", "status", "--json"], environment, {
+        closeStdin: true,
+        ...(cwd ? { cwd } : {}),
+      }),
+    ],
+    { concurrency: "unbounded" },
+  ).pipe(
+    Effect.timeoutOption(USAGE_PROBE_TIMEOUT_MS),
+    Effect.map(
+      Option.map(([usageResult, authResult]) => {
+        let accountIdentity: string | undefined;
+        if (authResult.code === 0) {
+          try {
+            const decoded: unknown = JSON.parse(authResult.stdout);
+            const email =
+              typeof decoded === "object" && decoded !== null
+                ? (decoded as { email?: unknown }).email
+                : undefined;
+            accountIdentity = typeof email === "string" ? email.trim() || undefined : undefined;
+          } catch {
+            accountIdentity = undefined;
+          }
+        }
+        return {
+          accountIdentity,
+          usageLimits:
+            usageResult.code === 0
+              ? parseClaudeUsageLimitsJson(usageResult.stdout, checkedAt)
+              : undefined,
+        };
+      }),
+    ),
+    Effect.catchCause(() => Effect.succeed(Option.none())),
+    Effect.map(Option.getOrUndefined),
+  );
 });
 
 export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(function* (
@@ -795,6 +873,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   ) => Effect.Effect<ClaudeCapabilitiesProbe | undefined>,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
+  resolveUsage?: (
+    accountIdentity: string | undefined,
+  ) => Effect.Effect<ServerProviderUsageLimits | undefined>,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -937,6 +1018,24 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       subscriptionType: capabilities.subscriptionType,
       authMethod: capabilities.tokenSource,
     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
+  const usageLimits =
+    authMetadata?.type === "apiKey" || authMetadata?.type === "bedrock"
+      ? undefined
+      : yield* resolveUsage
+          ? resolveUsage(capabilities.email?.trim() || undefined).pipe(
+              Effect.catchCause(() => Effect.void),
+            )
+          : probeClaudeUsageLimits(claudeSettings, resolvedEnvironment, cwd).pipe(
+              Effect.map((result) => {
+                if (!result) return undefined;
+                const expectedIdentity = capabilities.email?.trim();
+                return result.accountIdentity &&
+                  expectedIdentity &&
+                  result.accountIdentity !== expectedIdentity
+                  ? undefined
+                  : result.usageLimits;
+              }),
+            );
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,
@@ -953,6 +1052,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         ...(capabilities.email ? { email: capabilities.email } : {}),
         ...(authMetadata ? authMetadata : {}),
       },
+      ...(usageLimits ? { usageLimits } : {}),
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
     },
   });

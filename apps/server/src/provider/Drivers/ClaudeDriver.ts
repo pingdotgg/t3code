@@ -17,6 +17,7 @@ import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -33,6 +34,7 @@ import {
   checkClaudeProviderStatus,
   makePendingClaudeProvider,
   probeClaudeCapabilities,
+  probeClaudeUsageLimits,
 } from "../Layers/ClaudeProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -162,12 +164,43 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           ),
       });
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
+      const usageProbeCache = yield* Cache.makeWith(
+        () =>
+          probeClaudeUsageLimits(effectiveConfig, processEnv, cwd).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provideService(Path.Path, path),
+          ),
+        {
+          capacity: 2,
+          timeToLive: Exit.match({
+            onSuccess: (result) =>
+              result?.accountIdentity && result?.usageLimits
+                ? CAPABILITIES_PROBE_TTL
+                : Duration.zero,
+            onFailure: () => Duration.zero,
+          }),
+        },
+      );
 
       const checkProvider = checkClaudeProviderStatus(
         effectiveConfig,
         () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
         processEnv,
         cwd,
+        (accountIdentity) =>
+          Cache.get(
+            usageProbeCache,
+            `${capabilitiesCacheKey}:${accountIdentity ?? "unknown"}`,
+          ).pipe(
+            Effect.map((result) => {
+              if (!result) return undefined;
+              return result.accountIdentity &&
+                accountIdentity &&
+                result.accountIdentity !== accountIdentity
+                ? undefined
+                : result.usageLimits;
+            }),
+          ),
       ).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
