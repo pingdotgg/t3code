@@ -669,9 +669,12 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         // patched @react-native-menu, see
         // patches/@react-native-menu__menu@2.0.0.patch — in long-press mode the
         // interaction is hosted by the component view and the underlying
-        // UIButton passes touches through, so row taps keep working). Android:
-        // ControlPillMenu injects onLongPress into the row and anchors the
-        // token-styled dropdown to it; taps and swipes are untouched.
+        // UIButton passes touches through, so row taps keep working). Because
+        // that interaction lives inside the RN view tree, RN never cancels the
+        // touch, so ControlPillMenu also injects a long-press handler into the
+        // row on iOS and Pressability drops the tap once the menu gesture
+        // fires. Android: the same injection opens the token-styled dropdown
+        // anchored to the row. Taps and swipes are untouched on both.
         <ControlPillMenu
           actions={THREAD_ROW_MENU_ACTIONS}
           onPressAction={handleMenuAction}

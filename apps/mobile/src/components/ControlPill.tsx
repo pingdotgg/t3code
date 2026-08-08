@@ -14,6 +14,7 @@ import { cn } from "../lib/cn";
 import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
 import { SymbolView } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
+import { longPressMenuChildProps } from "./longPressMenuChildProps";
 
 export function ControlPill(props: {
   readonly icon?: ComponentProps<typeof SymbolView>["name"];
@@ -132,10 +133,23 @@ export function ControlPillMenu(
     );
   }
 
-  const { className: _className, ...menuProps } = props;
+  const { className: _className, children, ...menuProps } = props;
+  // The patched context-menu interaction lives inside the React Native view
+  // tree, so RN never cancels the touch it is tracking: without an onLongPress
+  // the wrapped child fires onPress when the finger lifts and acts behind the
+  // open menu. Pressability skips onPress once a long press has fired, so the
+  // child gets one (see longPressMenuChildProps). The child is expected to be a
+  // Pressable; any other child silently ignores the injected props.
+  const child =
+    props.shouldOpenOnLongPress && isValidElement(children)
+      ? cloneElement(
+          children as ReactElement<typeof longPressMenuChildProps>,
+          longPressMenuChildProps,
+        )
+      : children;
   return (
     <MenuView {...menuProps} themeVariant={isDarkMode ? "dark" : "light"}>
-      {menuProps.children}
+      {child}
     </MenuView>
   );
 }
