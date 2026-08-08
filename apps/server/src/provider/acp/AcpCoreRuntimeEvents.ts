@@ -220,6 +220,7 @@ export function makeAcpContentDeltaEvent(input: {
   readonly turnId: TurnId | undefined;
   readonly itemId?: string;
   readonly text: string;
+  readonly streamKind?: "assistant_text" | "reasoning_text";
   readonly rawPayload: unknown;
 }): ProviderRuntimeEvent {
   return {
@@ -230,12 +231,74 @@ export function makeAcpContentDeltaEvent(input: {
     turnId: input.turnId,
     ...(input.itemId ? { itemId: RuntimeItemId.make(input.itemId) } : {}),
     payload: {
-      streamKind: "assistant_text",
+      streamKind: input.streamKind ?? "assistant_text",
       delta: input.text,
     },
     raw: {
       source: "acp.jsonrpc",
       method: "session/update",
+      payload: input.rawPayload,
+    },
+  };
+}
+
+export function makeAcpTokenUsageEvent(input: {
+  readonly stamp: AcpEventStamp;
+  readonly provider: ProviderDriverKind;
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId | undefined;
+  readonly usedTokens: number;
+  readonly maxTokens?: number;
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly cachedInputTokens?: number;
+  readonly reasoningOutputTokens?: number;
+  /**
+   * Only set when the agent/provider is known to auto-compact.
+   * Generic ACP (e.g. Cursor) often does not; omit when unknown so UI defaults to false.
+   */
+  readonly compactsAutomatically?: boolean;
+  readonly rawPayload: unknown;
+  readonly source?: AcpAdapterRawSource;
+  readonly method?: string;
+}): ProviderRuntimeEvent {
+  return {
+    type: "thread.token-usage.updated",
+    ...input.stamp,
+    provider: input.provider,
+    threadId: input.threadId,
+    turnId: input.turnId,
+    payload: {
+      usage: {
+        usedTokens: input.usedTokens,
+        lastUsedTokens: input.usedTokens,
+        ...(input.maxTokens !== undefined && input.maxTokens > 0
+          ? { maxTokens: input.maxTokens }
+          : {}),
+        ...(input.inputTokens !== undefined ? { inputTokens: input.inputTokens } : {}),
+        ...(input.outputTokens !== undefined ? { outputTokens: input.outputTokens } : {}),
+        ...(input.cachedInputTokens !== undefined
+          ? { cachedInputTokens: input.cachedInputTokens }
+          : {}),
+        ...(input.reasoningOutputTokens !== undefined
+          ? { reasoningOutputTokens: input.reasoningOutputTokens }
+          : {}),
+        ...(input.inputTokens !== undefined ? { lastInputTokens: input.inputTokens } : {}),
+        ...(input.outputTokens !== undefined ? { lastOutputTokens: input.outputTokens } : {}),
+        ...(input.cachedInputTokens !== undefined
+          ? { lastCachedInputTokens: input.cachedInputTokens }
+          : {}),
+        ...(input.reasoningOutputTokens !== undefined
+          ? { lastReasoningOutputTokens: input.reasoningOutputTokens }
+          : {}),
+        ...(input.compactsAutomatically !== undefined
+          ? { compactsAutomatically: input.compactsAutomatically }
+          : {}),
+      },
+    },
+    raw: {
+      source: input.source ?? "acp.jsonrpc",
+      method: input.method ?? "session/update",
       payload: input.rawPayload,
     },
   };
