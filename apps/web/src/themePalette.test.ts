@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  applyThemeColorPreview,
+  applyThemePalette,
   BUILT_IN_THEME_DEFINITIONS,
   getThemeColorsForMode,
   getThemeDefinition,
   getThemeModes,
+  getThemePreviewSidebarArtwork,
   getThemePreferenceMode,
   isKnownThemePreference,
   getCustomThemes,
@@ -16,6 +19,7 @@ import {
   resolveDesktopTheme,
   resolveThemeAppearance,
   serializeThemeFile,
+  subscribeToThemePreview,
   subscribeToCustomThemes,
   T3_CHAT_THEME,
   EMBER_THEME,
@@ -200,6 +204,49 @@ describe("theme files", () => {
       name: T3_CHAT_THEME.label,
       appearance: "light",
     });
+  });
+
+  it("keeps sidebar artwork opt-in through theme files", () => {
+    const withoutArtwork = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "Plain sidebar",
+      appearance: "light",
+      colors: { accent: "#5b6cff" },
+    });
+    const withArtwork = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "Art sidebar",
+      appearance: "light",
+      colors: { accent: "#5b6cff" },
+      sidebarArtwork: true,
+    });
+
+    expect(withoutArtwork.sidebarArtwork).toBeUndefined();
+    expect(withArtwork.sidebarArtwork).toBe(true);
+    expect(JSON.parse(serializeThemeFile(withArtwork)).sidebarArtwork).toBe(true);
+  });
+
+  it("publishes sidebar artwork changes from the live theme preview", () => {
+    const listener = vi.fn();
+    const unsubscribe = subscribeToThemePreview(listener);
+    vi.stubGlobal("document", {
+      documentElement: {
+        classList: { toggle: vi.fn() },
+        dataset: {},
+        style: { removeProperty: vi.fn(), setProperty: vi.fn() },
+      },
+    });
+
+    applyThemeColorPreview(T3_CHAT_THEME.colors, "light", true);
+    expect(getThemePreviewSidebarArtwork()).toBe(true);
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    applyThemePalette("system");
+    expect(getThemePreviewSidebarArtwork()).toBeNull();
+    expect(listener).toHaveBeenCalledTimes(2);
+
+    unsubscribe();
+    vi.unstubAllGlobals();
   });
 
   it("keeps optional light and dark palettes under one theme id", () => {
@@ -420,6 +467,7 @@ describe("theme files", () => {
         name: "Aurora",
         appearance: "light",
         colors: { canvas: "#f8fbff", accent: "#5b6cff" },
+        sidebarArtwork: true,
       }),
     );
     const updatedTheme = updateCustomTheme({
@@ -428,11 +476,17 @@ describe("theme files", () => {
       colors: { ...createdTheme.colors, accent: "#7c3aed" },
     });
 
-    expect(updatedTheme).toMatchObject({ id: "custom-aurora", label: "Aurora Night" });
+    expect(updatedTheme).toMatchObject({
+      id: "custom-aurora",
+      label: "Aurora Night",
+      sidebarArtwork: true,
+    });
+    invalidateCustomThemes();
     expect(getCustomThemes()).toEqual([updatedTheme]);
     expect(JSON.parse(stored.get(CUSTOM_THEMES_STORAGE_KEY) ?? "[]")[0]).toMatchObject({
       id: "custom-aurora",
       label: "Aurora Night",
+      sidebarArtwork: true,
     });
 
     vi.unstubAllGlobals();

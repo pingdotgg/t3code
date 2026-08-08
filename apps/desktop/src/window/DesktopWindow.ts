@@ -59,6 +59,8 @@ export type DesktopWindowError =
   | ElectronWindow.ElectronWindowCreateError
   | PreviewManager.PreviewManagerError;
 
+export type MainWindowZoomDirection = "in" | "out" | "reset";
+
 export class DesktopWindow extends Context.Service<
   DesktopWindow,
   {
@@ -85,6 +87,12 @@ export class DesktopWindow extends Context.Service<
     readonly handleBackendNotReady: Effect.Effect<void>;
     readonly flushMainWindowBounds: Effect.Effect<void>;
     readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
+    // Zooms the main window's own webContents. The Electron `zoomIn`/`zoomOut`
+    // menu roles act on whichever webContents has keyboard focus, so with an
+    // embedded preview WebContentsView (or DevTools) focused they zoom the
+    // guest page instead of the app UI. The menu routes here to always target
+    // the main window.
+    readonly zoomMain: (direction: MainWindowZoomDirection) => Effect.Effect<void>;
     readonly syncAppearance: (
       palette?: DesktopThemePalette,
       themeSource?: DesktopTheme,
@@ -948,6 +956,18 @@ export const make = Effect.gen(function* () {
       }
 
       send();
+    }),
+    zoomMain: Effect.fn("desktop.window.zoomMain")(function* (direction) {
+      yield* Effect.annotateCurrentSpan({ direction });
+      const window = yield* focusedMainWindow;
+      if (Option.isNone(window) || window.value.isDestroyed()) {
+        return;
+      }
+      const webContents = window.value.webContents;
+      // Same step size as the Electron zoomIn/zoomOut menu roles.
+      webContents.setZoomLevel(
+        direction === "reset" ? 0 : webContents.getZoomLevel() + (direction === "in" ? 0.5 : -0.5),
+      );
     }),
     syncAppearance: Effect.fn("desktop.window.syncAppearance")(function* (palette, themeSource) {
       const themePalette = yield* resolveThemePalette({ palette, themeSource });

@@ -88,6 +88,8 @@ export type ThemeDefinition = Readonly<{
   appearance: ThemeAppearance;
   colors: ThemeColors;
   variants?: ThemeVariants;
+  /** Allows fixed Dev/Nightly artwork to render over this theme's sidebar. */
+  sidebarArtwork?: boolean;
   managed?: boolean;
 }>;
 export type ThemeFile = Readonly<{
@@ -97,6 +99,7 @@ export type ThemeFile = Readonly<{
   appearance: ThemeAppearance;
   colors: ThemeColorOverrides;
   variants?: ThemeVariantOverrides;
+  sidebarArtwork?: boolean;
   managed?: boolean;
 }>;
 
@@ -251,8 +254,9 @@ function themeContrastRatio(first: ThemeRgbColor, second: ThemeRgbColor): number
   const firstLuminance = themeRelativeLuminance(first);
   const secondLuminance = themeRelativeLuminance(second);
   return (
-    Math.max(firstLuminance, secondLuminance) + 0.05
-  ) / (Math.min(firstLuminance, secondLuminance) + 0.05);
+    (Math.max(firstLuminance, secondLuminance) + 0.05) /
+    (Math.min(firstLuminance, secondLuminance) + 0.05)
+  );
 }
 
 function readableThemeForeground(background: ThemeRgbColor): ThemeRgbColor {
@@ -346,7 +350,9 @@ function themeOklchToRgb(color: ThemeOklch): ThemeRgbColor {
   let { C } = color;
   for (let step = 0; step < 12; step += 1) {
     const linear = oklchToRgbUnclamped({ ...color, C });
-    if ([linear.r, linear.g, linear.b].every((channel) => channel >= -0.0001 && channel <= 1.0001)) {
+    if (
+      [linear.r, linear.g, linear.b].every((channel) => channel >= -0.0001 && channel <= 1.0001)
+    ) {
       return {
         r: linearChannelToSrgb(linear.r),
         g: linearChannelToSrgb(linear.g),
@@ -389,8 +395,18 @@ function solveOklchLightness(
 }
 
 const STANDARD_STATUS_COLORS = {
-  light: { error: "#fb2c36", errorForeground: "#c10007", warning: "#fe9a00", warningForeground: "#bb4d00" },
-  dark: { error: "#fb414a", errorForeground: "#ff6467", warning: "#fe9a00", warningForeground: "#ffb900" },
+  light: {
+    error: "#fb2c36",
+    errorForeground: "#c10007",
+    warning: "#fe9a00",
+    warningForeground: "#bb4d00",
+  },
+  dark: {
+    error: "#fb414a",
+    errorForeground: "#ff6467",
+    warning: "#fe9a00",
+    warningForeground: "#ffb900",
+  },
 } as const;
 
 function standardStatusColors(canvas: ThemeRgbColor) {

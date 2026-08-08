@@ -104,6 +104,23 @@ export type ThemePreference = typeof ThemePreference.Type;
 const THEME_COLOR_ROLE_SET: ReadonlySet<string> = new Set(THEME_COLOR_ROLES);
 const customThemeListeners = new Set<() => void>();
 let customThemesSnapshot: ReadonlyArray<ThemeDefinition> | null = null;
+const themePreviewListeners = new Set<() => void>();
+let themePreviewSidebarArtwork: boolean | null = null;
+
+export function getThemePreviewSidebarArtwork(): boolean | null {
+  return themePreviewSidebarArtwork;
+}
+
+export function subscribeToThemePreview(listener: () => void): () => void {
+  themePreviewListeners.add(listener);
+  return () => themePreviewListeners.delete(listener);
+}
+
+function setThemePreviewSidebarArtwork(next: boolean | null): void {
+  if (themePreviewSidebarArtwork === next) return;
+  themePreviewSidebarArtwork = next;
+  for (const listener of themePreviewListeners) listener();
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -165,6 +182,7 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
     appearance: value.appearance,
     colors,
     ...(variants ? { variants } : {}),
+    ...(value.sidebarArtwork === true ? { sidebarArtwork: true } : {}),
     ...(value.managed === true ? { managed: true } : {}),
   };
 }
@@ -376,6 +394,7 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
     appearance,
     colors: { ...fallback, ...overrides },
     ...(Object.keys(variants).length > 0 ? { variants } : {}),
+    ...(value.sidebarArtwork === true ? { sidebarArtwork: true } : {}),
     ...(value.managed === true ? { managed: true } : {}),
   };
 }
@@ -388,6 +407,7 @@ export function serializeThemeFile(theme: ThemeDefinition): string {
     appearance: theme.appearance,
     colors: theme.colors,
     ...(theme.variants ? { variants: theme.variants } : {}),
+    ...(theme.sidebarArtwork ? { sidebarArtwork: true } : {}),
     ...(theme.managed ? { managed: true } : {}),
   };
   return `${JSON.stringify(file, null, 2)}\n`;
@@ -459,10 +479,21 @@ export function getThemeColorVariable(role: ThemeColorRole): string {
 
 export const THEME_PREVIEW_ID = "__preview";
 
-export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeAppearance): void {
+/**
+ * Paint a draft palette onto the live app without installing it, so the editor
+ * can be judged against the real interface instead of a miniature. Callers
+ * restore the stored theme (refreshTheme) when the draft goes away.
+ */
+export function applyThemeColorPreview(
+  colors: ThemeColors,
+  appearance: ThemeAppearance,
+  sidebarArtwork = false,
+): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   if (!root?.style) return;
+
+  setThemePreviewSidebarArtwork(sidebarArtwork);
   root.dataset.themeId = THEME_PREVIEW_ID;
   root.classList.toggle("dark", appearance === "dark");
   for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
@@ -474,6 +505,8 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   if (!root?.style) return;
+
+  setThemePreviewSidebarArtwork(null);
   const palette = getThemeDefinition(theme);
   if (palette) {
     root.dataset.themeId = palette.id;
