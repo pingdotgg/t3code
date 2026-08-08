@@ -1298,7 +1298,7 @@ function ThreadNavigationSidebarPane(
                 {
                   paddingBottom:
                     Platform.OS === "android"
-                      ? Math.max(insets.bottom, 16) + 88
+                      ? Math.max(insets.bottom, 16) + 88 - insets.bottom
                       : 16 + insets.bottom,
                   paddingTop: topListInset,
                 },
