@@ -1,8 +1,19 @@
-import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
+import { CheckpointRef, EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef } from "@legendapp/list/react";
+
+const assetUrlMocks = vi.hoisted(() => ({
+  useAssetUrlState: vi.fn(() => ({
+    _tag: "Success" as const,
+    url: "https://environment.test/api/assets/signed-token/result.png",
+  })),
+}));
+
+vi.mock("../../assets/assetUrls", () => ({
+  useAssetUrlState: assetUrlMocks.useAssetUrlState,
+}));
 
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
@@ -578,6 +589,40 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("t3code/apps/web/src/session-logic.ts");
     expect(markup).not.toContain("C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts");
+  });
+
+  it("renders Windows work-log image paths after Markdown URL sanitization", () => {
+    const imagePath = "C:\\Users\\mike\\dev-stuff\\t3code\\result.png";
+    assetUrlMocks.useAssetUrlState.mockClear();
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-image-view",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-image-view",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Viewed image",
+              tone: "tool",
+              itemType: "image_view",
+              imagePath,
+            },
+          },
+        ]}
+        workspaceRoot="C:\\Users\\mike\\dev-stuff\\t3code"
+      />,
+    );
+
+    expect(assetUrlMocks.useAssetUrlState).toHaveBeenCalledWith(ACTIVE_THREAD_ENVIRONMENT_ID, {
+      _tag: "workspace-file",
+      threadId: ThreadId.make("thread-1"),
+      path: imagePath,
+    });
+    expect(markup).toContain('src="https://environment.test/api/assets/signed-token/result.png"');
   });
 
   it("renders review comment contexts as structured cards instead of raw tags", () => {
