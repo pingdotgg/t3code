@@ -38,7 +38,7 @@ export const codegen = Command.make("codegen", {
     const files = yield* generator.discoverFiles(config.pattern, path.resolve(config.cwd))
 
     yield* Effect.forEach(files, (file) => generator.processFile(file), {
-      concurrency: "inherit",
+      concurrency: "unbounded",
       discard: true
     })
   })).pipe(Command.provide(CodegenLayer))

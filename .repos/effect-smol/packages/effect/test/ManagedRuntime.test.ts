@@ -47,6 +47,21 @@ describe("ManagedRuntime", () => {
     strictEqual(result, "test")
   })
 
+  test("supports await using", async () => {
+    let count = 0
+    const layer = Layer.effectDiscard(Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        count++
+      })
+    ))
+    {
+      await using runtime = ManagedRuntime.make(layer)
+      await runtime.runPromise(Effect.void)
+      strictEqual(count, 0)
+    }
+    strictEqual(count, 1)
+  })
+
   it("fibers are interrupted on dispose", async () => {
     const runtime = ManagedRuntime.make(Layer.empty)
     const fiber = runtime.runFork(Effect.never)

@@ -12,7 +12,6 @@
  * @module provider/Drivers/CursorDriver
  */
 import { CursorSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
-import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -22,6 +21,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { PtyAdapter } from "../../terminal/PtyAdapter.ts";
@@ -55,7 +55,6 @@ import {
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("cursor");
-const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
 const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
   resolve: (options) =>
     makeProviderMaintenanceCapabilities({
@@ -68,6 +67,7 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
 };
 
 export type CursorDriverEnv =
+  | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
@@ -169,8 +169,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
             publishSnapshot,
             stampIdentity,
             httpClient,
-          }),
-        refreshInterval: SNAPSHOT_REFRESH_INTERVAL,
+          }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
       }).pipe(
         Effect.mapError(
           (cause) =>

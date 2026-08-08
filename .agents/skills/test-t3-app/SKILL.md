@@ -13,12 +13,24 @@ Use this skill for the web client. For iOS Simulator, Android Emulator, or physi
 2. Choose a base directory that belongs only to the current worktree or test:
    - Use the repository's ignored `.t3` directory for reusable worktree-local state.
    - Use `mktemp -d /tmp/t3code-test.XXXXXX` for disposable state and retain the printed absolute path.
-3. Start the full web stack with `vp run dev --home-dir <base-dir>`.
+3. Start the full web stack with `vp run dev`. Add `--share` when the user needs to open it from another tailnet device. In a linked worktree it defaults to that worktree's gitignored `.t3`; pass `--home-dir <base-dir>` only when the test needs a different isolated directory.
 4. Keep the terminal session alive and read the selected server port, web port, base directory, and pairing URL from its output.
 
 Treat a base directory as disposable only when it was created or deliberately selected for the current test. Never delete or directly seed the shared `~/.t3` directory. Prefer starting with a new temporary base directory over clearing state of uncertain ownership.
 
+The worktree-local default deliberately outranks an ambient `T3CODE_HOME`; do not pass the shared home through to a worktree dev server.
+
+Ports are derived from the worktree path but can shift when occupied. Always read the actual values from the `[dev-runner]` line.
+
+Shared browser dev is single-origin: Vite proxies the backend paths, so never set `VITE_HTTP_URL` or `VITE_WS_URL` for `dev`/`dev:web`.
+
 The dev runner disables browser auto-open by default. Do not pass `--browser` during automated testing: an automatically opened page can consume the one-time bootstrap token before the controlled browser uses it.
+
+### Verify a shared environment before human handoff
+
+When another person will use the printed pairing URL, first open the shared origin without the pairing path or fragment in the controlled browser and confirm the T3 Code app loads. This browser navigation is required even when curl succeeds because browsers block some otherwise reachable ports before making a network request.
+
+Do not open the other person's complete pairing URL during this reachability check; doing so consumes its one-time token. If the agent also needs an authenticated browser, create and consume a separate pairing token, then leave a fresh token for the other person.
 
 ## Preserve the environment while iterating
 
@@ -28,7 +40,7 @@ Treat the overall testing or implementation loop—not an assistant turn or one 
 - Do not stop the server merely because one verification pass completed or because you are yielding a response to the user.
 - Before starting another environment, check whether the existing process and browser tab still serve the task. Reuse them when healthy instead of discarding useful state.
 - On a later turn, verify that the existing process is alive and reuse its printed ports and base directory. If it exited, restart with the same base directory; create a new pairing token only when the browser session is no longer valid.
-- Tell the user when a test environment remains available, including its non-secret web URL when useful. Never include a pairing token.
+- Tell the user when a test environment remains available, including its non-secret web URL when useful. Include a pairing token only when the user still needs to pair (see below).
 
 ## Authenticate the browser on the first navigation
 
@@ -38,24 +50,13 @@ Treat the overall testing or implementation loop—not an assistant turn or one 
 4. Wait for the pairing exchange and redirect to finish before navigating elsewhere.
 5. Continue in the same browser context so its stored bearer session remains available.
 
-Treat pairing URLs as secrets. Do not copy them into final responses, screenshots, committed files, or durable logs. A pairing token is short-lived and single-use; opening the URL in another browser or opening it twice can consume it.
+Keep pairing URLs out of screenshots, committed files, and durable logs. When the user asked for a shared environment, the deliverable IS the full pairing URL — paste it in your reply, token and all; a bare origin is useless to them. A pairing token is short-lived and single-use; opening the URL in another browser or opening it twice can consume it, so never open a URL you handed to the user.
 
 ## Recover a consumed or expired pairing token
 
-Create another token against the same database and web URL as the running dev server:
+Run `node apps/server/src/bin.ts pair` from the repository root. It discovers the running dev server (worktree `.t3` first, same precedence as the dev runner) and prints a fresh `Pair URL` against the server's current web origin, including a `--share` tailnet origin. Pass `--base-dir <base-dir>` only when the server was started with `--home-dir`, using the identical path.
 
-```bash
-T3CODE_PORT=<server-port> node apps/server/src/bin.ts auth pairing create \
-  --base-dir <base-dir> \
-  --dev-url <web-url> \
-  --base-url <web-url> \
-  --ttl 15m \
-  --label agent-ui-test
-```
-
-Use the `Pair URL` from this command once. Derive `<server-port>` and `<web-url>` from the current dev-runner output, including any automatically selected port offset. Setting `T3CODE_PORT` keeps the administrative CLI from probing for an unrelated free port.
-
-Always pass `--dev-url` for a dev-runner environment so the generated pairing URL uses the current web origin. An explicit base directory stores runtime state in `<base-dir>/userdata`; the `<base-dir>/dev` fallback is only used by an implicit dev home. Use `auth pairing list` to inspect active token metadata; it intentionally cannot reveal token secrets.
+Tokens from `pair` carry standard client scopes. The startup pairing URL carries admin scopes; if the user needs Settings → Connections management (`access:write`), restart the server and hand over the new startup URL instead.
 
 ## Inspect or seed SQLite state
 

@@ -986,7 +986,6 @@ export default function GitActionsControl({
     () => (activeThreadRef ? { threadRef: activeThreadRef } : undefined),
     [activeThreadRef],
   );
-  const activeServerThread = useThread(activeThreadRef);
   const activeDraftThread = useComposerDraftStore((store) =>
     draftId
       ? store.getDraftSession(draftId)
@@ -994,6 +993,9 @@ export default function GitActionsControl({
         ? store.getDraftThreadByRef(activeThreadRef)
         : null,
   );
+  const activeServerThread = useThread(activeThreadRef, {
+    waitForShell: activeDraftThread !== null,
+  });
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
@@ -1691,7 +1693,7 @@ export default function GitActionsControl({
                 render={
                   <Button
                     aria-disabled="true"
-                    className="cursor-not-allowed rounded-e-none border-e-0 opacity-64 before:rounded-e-none"
+                    className="cursor-not-allowed rounded-e-none border-e-0 ps-[8.5px] opacity-64 before:rounded-e-none"
                     size="xs"
                     variant="outline"
                   />
@@ -1713,6 +1715,7 @@ export default function GitActionsControl({
             <Button
               variant="outline"
               size="xs"
+              className="ps-[8.5px]"
               disabled={isGitActionRunning || quickAction.disabled}
               onClick={runQuickAction}
             >

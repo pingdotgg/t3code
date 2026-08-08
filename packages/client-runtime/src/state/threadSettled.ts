@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
 import type { OrchestrationThreadShell } from "@t3tools/contracts";
 
 export type ChangeRequestStateLike = "open" | "closed" | "merged";
@@ -215,27 +216,14 @@ export function threadWokeAt(
 }
 
 /**
- * A merged/closed change request settles its thread only once the thread has
- * been idle this long. Without the idle guard the merge signal is permanent:
- * sending a message to a merged-PR thread would un-settle the row only until
- * its turn completed, then the still-merged PR would snap it straight back
- * into the settled tail. An hour keeps the follow-up conversation visible
- * while it is warm; once the burst goes stale the merge signal settles it
- * again. Activity timestamps can originate on another device while `now` is
- * this caller's clock: skew shortens or stretches the window by its size,
- * the same exposure the inactivity auto-settle already accepts — worst case
- * is a row changing lists early or late, never lost work.
- */
-export const CHANGE_REQUEST_SETTLE_IDLE_MS = 60 * 60 * 1_000;
-
-/**
  * Settled resolution over the server-backed settled lifecycle. Activity
  * blockers (pending approval/user-input, a live session, an unadjudicated
  * queued turn) are checked first and hold a thread active regardless of any
  * override. Past the blockers, the explicit user override (thread.settle /
  * thread.unsettle commands, projected into settledOverride + settledAt)
  * wins in both directions; without one, a thread auto-settles on a
- * merged/closed PR (once idle) or inactivity past the window. The server
+ * merged/closed PR immediately or on inactivity past the window — except
+ * that an open PR blocks the inactivity path entirely. The server
  * un-settles on real activity (user message, session start, approval/
  * user-input request), so an override never goes stale silently.
  */
@@ -271,17 +259,13 @@ export function effectiveSettled(
   // until real activity clears it server-side.
   if (shell.settledOverride === "active") return false;
   if (options.changeRequestState === "merged" || options.changeRequestState === "closed") {
-    // Only an idle thread settles on the merge signal: the signal itself
-    // never clears, so without this guard fresh activity (a message sent in
-    // a settled thread) would re-settle the moment its turn completed.
-    const lastActivityAt = threadLastActivityAt(shell);
-    if (
-      lastActivityAt === null ||
-      Date.parse(lastActivityAt) < Date.parse(options.now) - CHANGE_REQUEST_SETTLE_IDLE_MS
-    ) {
-      return true;
-    }
+    return true;
   }
+  // An open PR is unfinished business regardless of how long the thread has
+  // been quiet: review can take days, and hiding the thread would bury the
+  // work waiting on it. Only merge/close (above) or an explicit user settle
+  // resolves it.
+  if (options.changeRequestState === "open") return false;
   if (options.autoSettleAfterDays === null) return false;
 
   const lastActivityAt = threadLastActivityAt(shell);
@@ -294,4 +278,101 @@ export function effectiveSettled(
   return (
     Date.parse(lastActivityAt) < Date.parse(options.now) - options.autoSettleAfterDays * DAY_MS
   );
+}
+
+const HOUR_MS = 60 * 60 * 1_000;
+const EVENING_HOUR = 18;
+const MORNING_HOUR = 9;
+
+export type SnoozePresetId = "hour" | "evening" | "tomorrow" | "next-week";
+
+export interface SnoozePreset {
+  readonly id: SnoozePresetId;
+  readonly label: string;
+  /** Menu-row time column. Complements the label instead of repeating it:
+      "Tomorrow" pairs with "9:00 AM", not "tomorrow 9:00 AM". */
+  readonly whenLabel: string;
+  /** ISO wake time. */
+  readonly snoozedUntil: string;
+}
+
+function snoozeTimeOfDayLabel(date: Date): string {
+  return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+function snoozeAtHour(base: Date, hour: number): Date {
+  const next = new Date(base);
+  next.setHours(hour, 0, 0, 0);
+  return next;
+}
+
+// Calendar-day advance instead of adding DAY_MS: fixed millisecond offsets
+// land on the wrong local day across DST transitions (a spring-forward day
+// is 23 hours, so 23:30 + 24h skips the whole next day).
+function addSnoozeDays(base: Date, days: number): Date {
+  const next = new Date(base);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+/**
+ * Shared "snooze until" choices for every client. "This evening" only
+ * appears while it is meaningfully before evening; after that the list
+ * starts at "Tomorrow".
+ */
+export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
+  const inAnHour = new Date(now.getTime() + HOUR_MS);
+  const presets: SnoozePreset[] = [
+    {
+      id: "hour",
+      label: "In 1 hour",
+      whenLabel: snoozeTimeOfDayLabel(inAnHour),
+      snoozedUntil: inAnHour.toISOString(),
+    },
+  ];
+
+  const evening = snoozeAtHour(now, EVENING_HOUR);
+  if (evening.getTime() - now.getTime() > HOUR_MS) {
+    presets.push({
+      id: "evening",
+      label: "This evening",
+      whenLabel: snoozeTimeOfDayLabel(evening),
+      snoozedUntil: evening.toISOString(),
+    });
+  }
+
+  const tomorrow = snoozeAtHour(addSnoozeDays(now, 1), MORNING_HOUR);
+  presets.push({
+    id: "tomorrow",
+    label: "Tomorrow",
+    whenLabel: snoozeTimeOfDayLabel(tomorrow),
+    snoozedUntil: tomorrow.toISOString(),
+  });
+
+  const daysUntilMonday = (1 - now.getDay() + 7) % 7 || 7;
+  const nextWeek = snoozeAtHour(addSnoozeDays(now, daysUntilMonday), MORNING_HOUR);
+  presets.push({
+    id: "next-week",
+    label: "Next week",
+    whenLabel: `${nextWeek.toLocaleDateString(undefined, { weekday: "short" })} ${snoozeTimeOfDayLabel(nextWeek)}`,
+    snoozedUntil: nextWeek.toISOString(),
+  });
+
+  return presets;
+}
+
+/**
+ * Compact "wakes in" label for snoozed rows: "2h", "18h", "3d". Minutes
+ * round up so a snooze never reads "0m" while still hidden. Shared by web
+ * and mobile so the same wake time never reads differently per client.
+ */
+export function snoozeWakeLabel(snoozedUntil: string, options: { readonly now: string }): string {
+  const wakeMs = Date.parse(snoozedUntil);
+  const nowMs = Date.parse(options.now);
+  if (Number.isNaN(wakeMs) || Number.isNaN(nowMs)) return "now";
+  const remainingMs = wakeMs - nowMs;
+  if (remainingMs <= 0) return "now";
+  if (remainingMs < HOUR_MS) return `${Math.max(1, Math.ceil(remainingMs / 60_000))}m`;
+  if (remainingMs < DAY_MS) return `${Math.ceil(remainingMs / HOUR_MS)}h`;
+  return `${Math.ceil(remainingMs / DAY_MS)}d`;
 }

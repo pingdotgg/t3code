@@ -38,7 +38,7 @@ export class OpenAiClientGenerated extends Context.Service<OpenAiClientGenerated
  * Options for configuring the generated OpenAI client.
  *
  * @since 4.0.0
- * @category models
+ * @category options
  */
 export type Options = {
   /**
@@ -73,6 +73,11 @@ const RedactedOpenAiHeaders = {
   OpenAiOrganization: "OpenAI-Organization",
   OpenAiProject: "OpenAI-Project"
 }
+
+const withRedactedHeaders = Effect.updateService(
+  Headers.CurrentRedactedNames,
+  Array.appendAll(Object.values(RedactedOpenAiHeaders))
+)
 
 // =============================================================================
 // Constructor
@@ -124,10 +129,7 @@ export const make = Effect.fnUntraced(
       })
     })
   },
-  Effect.updateService(
-    Headers.CurrentRedactedNames,
-    Array.appendAll(Object.values(RedactedOpenAiHeaders))
-  )
+  withRedactedHeaders
 )
 
 // =============================================================================

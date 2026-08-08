@@ -51,9 +51,12 @@ const StoredShellSnapshot = Schema.Struct({
 const StoredShellSnapshotJson = Schema.fromJsonString(StoredShellSnapshot);
 // v2 stores the snapshot sequence alongside the thread so a warm cache can
 // resume via `afterSequence` instead of re-downloading the full thread body.
-// Older v1 entries (no sequence) fail to decode and are treated as a cold cache.
+// v3 adds windowed (paginated) snapshots carrying `page` metadata. The bump
+// exists for rollback safety: a pre-pagination client would decode a windowed
+// v2 record, silently drop the unknown `page` field, and treat the partial
+// thread as complete forever. Older entries fail to decode → cold cache.
 const StoredThreadSnapshot = Schema.Struct({
-  schemaVersion: Schema.Literal(2),
+  schemaVersion: Schema.Literal(3),
   environmentId: EnvironmentId,
   threadId: ThreadId,
   snapshot: OrchestrationThreadDetailSnapshot,
@@ -105,6 +108,8 @@ function persistenceError(
     | "save-server-config"
     | "load-vcs-refs"
     | "save-vcs-refs"
+    | "remove-vcs-refs"
+    | "clear-vcs-refs"
     | "clear-environment",
   cause: unknown,
 ) {
@@ -559,7 +564,7 @@ export const connectionStorageLayer = Layer.effectContext(
       saveThread: (environmentId, snapshot) =>
         Effect.gen(function* () {
           const encoded = yield* encodeStoredThreadSnapshot({
-            schemaVersion: 2,
+            schemaVersion: 3,
             environmentId,
             threadId: snapshot.thread.id,
             snapshot,
@@ -619,6 +624,18 @@ export const connectionStorageLayer = Layer.effectContext(
               : persistenceError("save-vcs-refs", cause),
           ),
         ),
+      removeVcsRefs: (environmentId, cwd) =>
+        removeDatabaseValue(
+          database,
+          VCS_REFS_STORE_NAME,
+          vcsRefsCacheKey(environmentId, cwd),
+        ).pipe(Effect.mapError((cause) => persistenceError("remove-vcs-refs", cause))),
+      clearVcsRefs: (environmentId) =>
+        removeDatabaseValuesInRange(
+          database,
+          VCS_REFS_STORE_NAME,
+          IDBKeyRange.bound(`${environmentId}:`, `${environmentId}:\uffff`),
+        ).pipe(Effect.mapError((cause) => persistenceError("clear-vcs-refs", cause))),
       removeThread: (environmentId, threadId) =>
         removeDatabaseValue(
           database,

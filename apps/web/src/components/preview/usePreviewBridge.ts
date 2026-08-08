@@ -19,8 +19,12 @@ import { previewBridge } from "./previewBridge";
  * Mirrors low-latency desktop state into the store and reflects navigation
  * events back to the server. Webview lifetime is owned by ElectronBrowserHost.
  */
-export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: string }): void {
-  const { threadRef, tabId } = input;
+export function usePreviewBridge(input: {
+  threadRef: ScopedThreadRef;
+  tabId: string;
+  runtimeTabId: string;
+}): void {
+  const { threadRef, tabId, runtimeTabId } = input;
   const clearBrowserPointer = useBrowserPointerStore((state) => state.clear);
   const reportStatus = useAtomCommand(previewEnvironment.reportStatus, "preview status report");
   const bridge = previewBridge;
@@ -36,9 +40,9 @@ export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: str
     lastReportedKind.current = null;
     lastDesktopNavStatus.current = null;
     const unsubscribe = bridge.onStateChange((changedTabId, state) => {
-      if (changedTabId !== tabId) return;
+      if (changedTabId !== runtimeTabId) return;
       if (shouldClearBrowserPointer(lastDesktopNavStatus.current, state.navStatus)) {
-        clearBrowserPointer(tabId);
+        clearBrowserPointer(runtimeTabId);
       }
       lastDesktopNavStatus.current = state.navStatus;
       applyPreviewDesktopState(threadRef, tabId, projectDesktopState(state));
@@ -58,7 +62,7 @@ export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: str
       });
     });
     return unsubscribe;
-  }, [bridge, clearBrowserPointer, reportStatus, tabId, threadRef]);
+  }, [bridge, clearBrowserPointer, reportStatus, runtimeTabId, tabId, threadRef]);
 }
 
 function shouldClearBrowserPointer(
@@ -73,10 +77,12 @@ function shouldClearBrowserPointer(
 
 function projectDesktopState(state: DesktopPreviewTabState): DesktopPreviewOverlay {
   return {
+    hasWebContents: state.webContentsId !== null,
     canGoBack: state.canGoBack,
     canGoForward: state.canGoForward,
     loading: state.navStatus.kind === "Loading",
     zoomFactor: state.zoomFactor,
+    pictureInPicture: state.pictureInPicture,
     colorScheme: state.colorScheme,
     controller: state.controller,
   };

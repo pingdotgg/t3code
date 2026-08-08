@@ -1,5 +1,4 @@
 import { GrokSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
-import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -9,6 +8,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { PtyAdapter } from "../../terminal/PtyAdapter.ts";
@@ -42,7 +42,6 @@ import {
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("grok");
-const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
 const UPDATE = makeStaticProviderMaintenanceResolver(
   makeManualOnlyProviderMaintenanceCapabilities({
     provider: DRIVER_KIND,
@@ -51,6 +50,7 @@ const UPDATE = makeStaticProviderMaintenanceResolver(
 );
 
 export type GrokDriverEnv =
+  | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
@@ -145,7 +145,6 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
             publishSnapshot,
             httpClient,
           }),
-        refreshInterval: SNAPSHOT_REFRESH_INTERVAL,
       }).pipe(
         Effect.mapError(
           (cause) =>

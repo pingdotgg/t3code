@@ -1,9 +1,29 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ServerProvider } from "./server.ts";
+import {
+  ServerConfig,
+  ServerProvider,
+  ServerProviders,
+  ServerUpsertKeybindingResult,
+} from "./server.ts";
 
 const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
+const decodeServerProviders = Schema.decodeUnknownSync(ServerProviders);
+const decodeUpsertKeybindingResult = Schema.decodeUnknownSync(ServerUpsertKeybindingResult);
+const decodeAvailableEditors = Schema.decodeUnknownSync(ServerConfig.fields.availableEditors);
+
+const baseProviderSnapshot = {
+  instanceId: "codex",
+  driver: "codex",
+  enabled: true,
+  installed: true,
+  version: "1.0.0",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-04-10T00:00:00.000Z",
+  models: [],
+};
 
 describe("ServerProvider", () => {
   it("defaults capability arrays when decoding provider snapshots", () => {

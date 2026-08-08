@@ -1,10 +1,6 @@
 import * as sqs from "@distilled.cloud/aws/sqs";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import * as Output from "../../Output.ts";
-import { isInstance } from "../EC2/Instance.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { Queue } from "./Queue.ts";
 
 export interface ReceiveMessageRequest extends Omit<
@@ -12,8 +8,36 @@ export interface ReceiveMessageRequest extends Omit<
   "QueueUrl"
 > {}
 
-export class ReceiveMessage extends Binding.Service<
+/**
+ * Runtime binding for `sqs:ReceiveMessage`.
+ *
+ * Bind this operation to a {@link Queue} inside a function runtime to poll
+ * messages on demand. The binding grants the host function
+ * `sqs:ReceiveMessage` on the queue. Provide the `ReceiveMessageHttp` layer
+ * on the Function to implement the binding.
+ *
+ * For push-based consumption (Lambda event-source mapping) use
+ * {@link consumeQueueMessages} instead of polling manually.
+ * @binding
+ * @section Receiving Messages
+ * @example Poll for Messages
+ * ```typescript
+ * // init (provide SQS.ReceiveMessageHttp on the Function)
+ * const receiveMessage = yield* SQS.ReceiveMessage(queue);
+ *
+ * // runtime: long-poll for up to 10 messages
+ * const result = yield* receiveMessage({
+ *   MaxNumberOfMessages: 10,
+ *   WaitTimeSeconds: 2,
+ * });
+ * for (const message of result.Messages ?? []) {
+ *   // message.Body, message.ReceiptHandle
+ * }
+ * ```
+ */
+export interface ReceiveMessage extends Binding.Service<
   ReceiveMessage,
+  "AWS.SQS.ReceiveMessage",
   (
     queue: Queue,
   ) => Effect.Effect<
@@ -21,48 +45,8 @@ export class ReceiveMessage extends Binding.Service<
       request: ReceiveMessageRequest,
     ) => Effect.Effect<sqs.ReceiveMessageResult, sqs.ReceiveMessageError>
   >
->()("AWS.SQS.ReceiveMessage") {}
+> {}
 
-export const ReceiveMessageLive = Layer.effect(
-  ReceiveMessage,
-  Effect.gen(function* () {
-    const Policy = yield* ReceiveMessagePolicy;
-    const receiveMessage = yield* sqs.receiveMessage;
-
-    return Effect.fn(function* (queue: Queue) {
-      const QueueUrl = yield* queue.queueUrl;
-      yield* Policy(queue);
-      return Effect.fn(function* (request: ReceiveMessageRequest) {
-        return yield* receiveMessage({
-          ...request,
-          QueueUrl: yield* QueueUrl,
-        });
-      });
-    });
-  }),
-);
-
-export class ReceiveMessagePolicy extends Binding.Policy<
-  ReceiveMessagePolicy,
-  (queue: Queue) => Effect.Effect<void>
->()("AWS.SQS.ReceiveMessage") {}
-
-export const ReceiveMessagePolicyLive = ReceiveMessagePolicy.layer.succeed(
-  Effect.fn(function* (host, queue) {
-    if (isFunction(host) || isInstance(host)) {
-      yield* host.bind`Allow(${host}, AWS.SQS.ReceiveMessage(${queue}))`({
-        policyStatements: [
-          {
-            Effect: "Allow",
-            Action: ["sqs:ReceiveMessage"],
-            Resource: [Output.interpolate`${queue.queueArn}`],
-          },
-        ],
-      });
-    } else {
-      return yield* Effect.die(
-        `ReceiveMessagePolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
+export const ReceiveMessage = Binding.Service<ReceiveMessage>(
+  "AWS.SQS.ReceiveMessage",
 );

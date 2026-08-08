@@ -8,7 +8,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { CloudEnvironmentRows } from "../connection/CloudEnvironmentRows";
 import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow";
 import { splitEnvironmentSections } from "../connection/environmentSections";
@@ -161,18 +160,19 @@ export function SettingsEnvironmentsRouteScreen() {
           </View>
         )}
 
-        {hasCloudPublicConfig() || SHOWCASE_ENABLED ? (
-          <CloudEnvironmentRows
-            connectedCloudEnvironments={connectedCloudEnvironments}
-            onReconnectEnvironment={onReconnectEnvironment}
-            {...(SHOWCASE_ENABLED
-              ? {
-                  showcaseAvailableEnvironments: SHOWCASE_AVAILABLE_CLOUD_ENVIRONMENTS,
-                  showcaseSignedIn: true,
-                }
-              : {})}
-          />
-        ) : null}
+        {/* Always mounted: already-connected relay environments must stay
+            visible (and removable) even when cloud config is missing or the
+            user is signed out — the component gates discovery itself. */}
+        <CloudEnvironmentRows
+          connectedCloudEnvironments={connectedCloudEnvironments}
+          onReconnectEnvironment={onReconnectEnvironment}
+          {...(SHOWCASE_ENABLED
+            ? {
+                showcaseAvailableEnvironments: SHOWCASE_AVAILABLE_CLOUD_ENVIRONMENTS,
+                showcaseSignedIn: true,
+              }
+            : {})}
+        />
       </ScrollView>
     </View>
   );

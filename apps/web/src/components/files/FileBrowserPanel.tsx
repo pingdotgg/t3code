@@ -3,12 +3,15 @@ import type {
   ContextMenuOpenContext as TreeContextMenuOpenContext,
 } from "@pierre/trees";
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
-import { FileTree, useFileTree } from "@pierre/trees/react";
+import { FileTree, useFileTree, useFileTreeSearch } from "@pierre/trees/react";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { RefreshCw, Search } from "lucide-react";
+import { RotateCw } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 
+import { Button } from "~/components/ui/button";
+import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
 import { toastManager } from "~/components/ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useTheme } from "~/hooks/useTheme";
@@ -23,6 +26,10 @@ interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
   projectName: string;
+  /** File currently open in the preview pane; revealed and selected in the tree. */
+  selectedPath: string | null;
+  /** Bumped when the same path should be revealed again (e.g. re-opened from search). */
+  selectedPathRevealId: number;
   onOpenFile: (relativePath: string) => void;
 }
 
@@ -42,10 +49,61 @@ function treePath(entry: ProjectEntry): string {
   return entry.kind === "directory" ? `${entry.path}/` : entry.path;
 }
 
+function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Refresh workspace files"
+            onClick={props.onRefresh}
+          />
+        }
+      >
+        <RotateCw className={cn(props.isPending && "animate-spin")} />
+      </TooltipTrigger>
+      <TooltipPopup>{props.isPending ? "Refreshing…" : "Refresh files"}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function FileSearchField(props: {
+  ariaLabel: string;
+  name: string;
+  onClose: () => void;
+  onValueChange: (value: string) => void;
+  value: string;
+}) {
+  return (
+    <InputGroup variant="ghost" className="h-7 min-w-0 flex-1 rounded-md">
+      <InputGroupInput
+        type="search"
+        name={props.name}
+        size="sm"
+        value={props.value}
+        aria-label={props.ariaLabel}
+        placeholder="Search files"
+        spellCheck={false}
+        onChange={(event) => props.onValueChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          props.onClose();
+          event.currentTarget.blur();
+        }}
+      />
+    </InputGroup>
+  );
+}
+
 export default function FileBrowserPanel({
   environmentId,
   cwd,
   projectName,
+  selectedPath,
+  selectedPathRevealId,
   onOpenFile,
 }: FileBrowserPanelProps) {
   const { resolvedTheme } = useTheme();
@@ -59,6 +117,9 @@ export default function FileBrowserPanel({
   const entryKindsRef = useRef<ReadonlyMap<string, ProjectEntry["kind"]>>(entryKinds);
   const treePaths = useMemo(() => entries.map(treePath), [entries]);
   const previousTreePathsRef = useRef<readonly string[]>([]);
+  const syncingSelectionRef = useRef(false);
+  const treeSelectionPathRef = useRef<string | null>(null);
+  const handledRevealRef = useRef<{ path: string; revealId: number } | null>(null);
 
   // The tree renders rows in shadow DOM and its anchor rect is unreliable, so
   // capture the right-click position ourselves; contextmenu is a composed
@@ -164,7 +225,12 @@ export default function FileBrowserPanel({
     initialExpansion: 1,
     icons: T3_PIERRE_ICONS,
     onSelectionChange: (selectedPaths) => {
+      // The drag controller's selection cache must track every change,
+      // including reveal-driven ones, or drags act on a stale selection.
       dragMention.handleSelectionChange(selectedPaths);
+      // Selection changes driven by the reveal sync below are echoes of an
+      // already-open file, not a request to open it again.
+      if (syncingSelectionRef.current) return;
       // Starting a drag selects the dragged row; that selection is a side
       // effect of the gesture, not a request to open the file.
       if (dragMention.isDragInProgress()) {
@@ -172,13 +238,22 @@ export default function FileBrowserPanel({
       }
       const selectedPath = selectedPaths.at(-1)?.replace(/\/$/, "");
       if (selectedPath && entryKindsRef.current.get(selectedPath) === "file") {
+        treeSelectionPathRef.current = selectedPath;
         onOpenFile(selectedPath);
       }
     },
     paths: [],
-    search: true,
+    search: false,
     unsafeCSS: TREE_UNSAFE_CSS,
   });
+  const search = useFileTreeSearch(model);
+  const handleSearchValueChange = (value: string) => {
+    if (value.trim().length === 0) {
+      search.close();
+      return;
+    }
+    search.setValue(value);
+  };
 
   useEffect(() => {
     if (previousTreePathsRef.current === treePaths) return;
@@ -187,10 +262,62 @@ export default function FileBrowserPanel({
     model.resetPaths(treePaths);
   }, [entryKinds, model, treePaths]);
 
-  const fileCount = useMemo(
-    () => entries.reduce((count, entry) => count + (entry.kind === "file" ? 1 : 0), 0),
-    [entries],
-  );
+  useEffect(() => {
+    if (!selectedPath) {
+      handledRevealRef.current = null;
+      return;
+    }
+    const revealRequest = { path: selectedPath, revealId: selectedPathRevealId };
+    const handledReveal = handledRevealRef.current;
+    // Entry refreshes rebuild treePaths while the same preview stays open.
+    // Replaying a handled reveal would close an active tree search and steal focus.
+    if (
+      handledReveal?.path === revealRequest.path &&
+      handledReveal.revealId === revealRequest.revealId
+    ) {
+      return;
+    }
+    if (entryKinds.get(selectedPath) !== "file") return;
+    const selectedItem = model.getItem(selectedPath);
+    if (!selectedItem) return;
+
+    // A selection that originated inside the tree (clicking a row, possibly
+    // in an active tree search) is already visible; re-revealing it would
+    // close the search and clobber the user's context. Only sync external
+    // opens (file picker, content search, chat links).
+    const selectedInTree = model
+      .getSelectedPaths()
+      .some((path) => path.replace(/\/$/, "") === selectedPath);
+    if (selectedInTree && treeSelectionPathRef.current === selectedPath) {
+      treeSelectionPathRef.current = null;
+      handledRevealRef.current = revealRequest;
+      return;
+    }
+    treeSelectionPathRef.current = null;
+    handledRevealRef.current = revealRequest;
+
+    syncingSelectionRef.current = true;
+    model.closeSearch();
+    for (const path of model.getSelectedPaths()) {
+      model.getItem(path)?.deselect();
+    }
+
+    // Directory rows are registered with a trailing slash (see treePath), so
+    // ancestor lookups must use the same form to expand them.
+    const segments = selectedPath.split("/");
+    let ancestorPath = "";
+    for (const segment of segments.slice(0, -1)) {
+      ancestorPath = ancestorPath ? `${ancestorPath}/${segment}` : segment;
+      const item = model.getItem(`${ancestorPath}/`) ?? model.getItem(ancestorPath);
+      if (item && "expand" in item) item.expand();
+    }
+
+    selectedItem.select();
+    model.scrollToPath(selectedPath, { focus: true, offset: "center" });
+    queueMicrotask(() => {
+      syncingSelectionRef.current = false;
+    });
+  }, [entryKinds, model, selectedPath, selectedPathRevealId, treePaths]);
 
   // Tag tree drags with the composer mention payload. The row is read from
   // the composed event path (the tree's shadow root is open), so this does
@@ -223,32 +350,15 @@ export default function FileBrowserPanel({
       className="flex min-h-0 flex-1 flex-col bg-background"
       data-file-browser-panel={`${environmentId}:${cwd}`}
     >
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border/60 px-3">
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-xs font-medium text-foreground">{projectName}</div>
-          <div className="truncate text-[10px] leading-none text-muted-foreground">
-            {entriesQuery.isPending && entriesQuery.data === null
-              ? "Indexing…"
-              : `${fileCount.toLocaleString()} files`}
-            {entriesQuery.data?.truncated ? " · partial" : ""}
-          </div>
-        </div>
-        <button
-          type="button"
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-          aria-label="Search workspace files"
-          onClick={() => model.openSearch()}
-        >
-          <Search className="size-3.5" />
-        </button>
-        <button
-          type="button"
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-          aria-label="Refresh workspace files"
-          onClick={entriesQuery.refresh}
-        >
-          <RefreshCw className={cn("size-3.5", entriesQuery.isPending && "animate-spin")} />
-        </button>
+      <div className="surface-subheader gap-1 px-2" data-surface-subheader>
+        <RefreshFilesButton isPending={entriesQuery.isPending} onRefresh={entriesQuery.refresh} />
+        <FileSearchField
+          name="project-files-search"
+          ariaLabel={`Search ${projectName} files`}
+          value={search.value}
+          onValueChange={handleSearchValueChange}
+          onClose={search.close}
+        />
       </div>
       {entriesQuery.error && entriesQuery.data === null ? (
         <div className="p-4 text-xs leading-relaxed text-destructive">{entriesQuery.error}</div>

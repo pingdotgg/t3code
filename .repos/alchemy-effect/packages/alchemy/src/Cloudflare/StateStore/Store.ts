@@ -7,25 +7,22 @@ import type {
   ResourceState,
 } from "../../State/ResourceState.ts";
 import { encodeState } from "../../State/StateEncoding.ts";
-import * as Secret from "../SecretsStore/Secret.ts";
-import { DurableObjectNamespace } from "../Workers/DurableObjectNamespace.ts";
+import * as Secret from "../SecretsStore/index.ts";
+import { DurableObject } from "../Workers/DurableObject.ts";
 import { DurableObjectState } from "../Workers/DurableObjectState.ts";
 import { EncryptionKey } from "./Token.ts";
 
-export default class Store extends DurableObjectNamespace<Store>()(
+export default class Store extends DurableObject<Store>()(
   "Store",
   Effect.gen(function* () {
     // Outer (class-level) phase — resolve the binding factory once.
     // The actual secret read happens inside each DO instance below,
     // since `SecretClient.get()` needs the per-instance worker env.
-    const encryptionSecret = yield* Secret.Secret.bind(EncryptionKey);
+    const encryptionSecret = yield* Secret.ReadSecret(EncryptionKey);
+    const state = yield* DurableObjectState;
+    const storage = state.storage;
 
     return Effect.gen(function* () {
-      // Inner (per-instance) phase — set up storage and the AES key.
-      // The key is imported once per DO boot and reused thereafter.
-      const doState = yield* DurableObjectState;
-      const storage = doState.storage;
-
       const keyHex = yield* encryptionSecret
         .get()
         .pipe(Effect.map(Redacted.value), Effect.orDie);
@@ -87,7 +84,7 @@ export default class Store extends DurableObjectNamespace<Store>()(
         /**
          * (Root DO only) List every stack name ever registered.
          */
-        listStacks: Effect.fnUntraced(function* () {
+        listStacks: Effect.fn(function* () {
           const entries = yield* storage.list<number>({
             prefix: STACK_INDEX_PREFIX,
           });
@@ -256,7 +253,7 @@ export default class Store extends DurableObjectNamespace<Store>()(
           ),
       };
     });
-  }),
+  }).pipe(Effect.provide(Secret.ReadSecretBinding)),
 ) {
   /**
    * Well-known DO name whose sole job is to track the set of stacks

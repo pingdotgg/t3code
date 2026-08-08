@@ -11,6 +11,7 @@
 # Keep entries sorted alphabetically.
 github:adityavardhansharma
 github:binbandit
+github:chrisdeeming
 github:chuks-qua
 github:cursoragent
 github:gbarros-dev
@@ -26,6 +27,7 @@ github:notkainoa
 github:PatrickBauer
 github:realAhmedRoach
 github:shiroyasha9
+github:StiensWout
 github:Yash-Singh1
 github:eggfriedrice24
 github:Ymit24

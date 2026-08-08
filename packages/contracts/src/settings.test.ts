@@ -49,11 +49,46 @@ describe("ClientSettings glass opacity", () => {
   });
 });
 
-describe("ClientSettings sidebar v2", () => {
-  it("defaults the beta off with a three-day auto-settle threshold", () => {
+describe("ClientSettings environment identification", () => {
+  it("defaults to artwork and accepts each presentation mode", () => {
+    expect(decodeClientSettings({}).environmentIdentificationMode).toBe("artwork");
+
+    for (const mode of ["artwork", "pill", "none"] as const) {
+      expect(
+        decodeClientSettingsPatch({ environmentIdentificationMode: mode })
+          .environmentIdentificationMode,
+      ).toBe(mode);
+    }
+  });
+
+  it("rejects unsupported presentation modes", () => {
+    expect(() => decodeClientSettings({ environmentIdentificationMode: "badge" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ environmentIdentificationMode: "badge" })).toThrow();
+  });
+});
+
+describe("ClientSettings sidebar", () => {
+  it("defaults to the current sidebar with a three-day auto-settle threshold", () => {
     const settings = decodeClientSettings({});
-    expect(settings.sidebarV2Enabled).toBe(false);
+    expect(settings.legacySidebarEnabled).toBe(false);
     expect(settings.sidebarAutoSettleAfterDays).toBe(3);
+  });
+
+  it("drops the retired sidebar v2 beta keys, resetting everyone to the default", () => {
+    const decoded = decodeClientSettings({
+      sidebarV2Enabled: false,
+      sidebarV2ConfiguredByUser: true,
+    });
+    expect(decoded.legacySidebarEnabled).toBe(false);
+    expect(decoded).not.toHaveProperty("sidebarV2Enabled");
+    expect(decoded).not.toHaveProperty("sidebarV2ConfiguredByUser");
+  });
+
+  it("preserves an explicit legacy sidebar opt-in", () => {
+    expect(decodeClientSettings({ legacySidebarEnabled: true }).legacySidebarEnabled).toBe(true);
+    expect(decodeClientSettingsPatch({ legacySidebarEnabled: true }).legacySidebarEnabled).toBe(
+      true,
+    );
   });
 
   it("allows auto-settle by inactivity to be disabled", () => {
@@ -69,6 +104,14 @@ describe("ClientSettings sidebar v2", () => {
 });
 
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
+  it("defaults text generation to Luna at low reasoning effort", () => {
+    expect(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection).toEqual({
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.6-luna",
+      options: [{ id: "reasoningEffort", value: "low" }],
+    });
+  });
+
   it("defaults to an empty record so legacy configs without the key still decode", () => {
     expect(DEFAULT_SERVER_SETTINGS.providerInstances).toEqual({});
   });
@@ -133,6 +176,33 @@ describe("ServerSettings worktree defaults", () => {
     expect(
       decodeServerSettingsPatch({ newWorktreesStartFromOrigin: false }).newWorktreesStartFromOrigin,
     ).toBe(false);
+  });
+});
+
+describe("ServerSettings.sourceControlWritingStyle", () => {
+  it("defaults all style settings for legacy configs", () => {
+    const settings = decodeServerSettings({});
+
+    expect(settings.sourceControlWritingStyle).toEqual({
+      mode: "repo_conventions",
+      customInstructions: "",
+      followChangeRequestTemplates: true,
+    });
+    expect(settings.sourceControlWriterModelSelection).toBeNull();
+  });
+
+  it("trims partial style updates", () => {
+    const patch = decodeServerSettingsPatch({
+      sourceControlWritingStyle: {
+        mode: "custom",
+        customInstructions: "  Prefer concise wording.  ",
+      },
+    });
+
+    expect(patch.sourceControlWritingStyle).toEqual({
+      mode: "custom",
+      customInstructions: "Prefer concise wording.",
+    });
   });
 });
 

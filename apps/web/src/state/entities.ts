@@ -152,10 +152,35 @@ export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadS
   );
 }
 
+export function resolveThreadDetailRef(
+  ref: ScopedThreadRef | null,
+  options: {
+    shellExists: boolean;
+    waitForShell: boolean;
+  },
+): ScopedThreadRef | null {
+  return ref !== null && (!options.waitForShell || options.shellExists) ? ref : null;
+}
+
 /** Detail collections composed with shell-authoritative thread/workspace metadata. */
-export function useThread(ref: ScopedThreadRef | null): EnvironmentThread | null {
+export function useThread(
+  ref: ScopedThreadRef | null,
+  options?: {
+    /**
+     * Client-reserved draft thread ids do not exist on the server until the
+     * first send. Waiting for the shell index avoids polling the detail
+     * endpoint for an intentionally missing thread during that window.
+     */
+    waitForShell?: boolean;
+  },
+): EnvironmentThread | null {
   const shell = useThreadShell(ref);
-  const detail = useThreadDetail(ref);
+  const detail = useThreadDetail(
+    resolveThreadDetailRef(ref, {
+      shellExists: shell !== null,
+      waitForShell: options?.waitForShell === true,
+    }),
+  );
   return useMemo(() => mergeEnvironmentThread(detail, shell), [detail, shell]);
 }
 
@@ -216,6 +241,33 @@ export function readEnvironmentSupportsSnooze(environmentId: EnvironmentId): boo
   );
 }
 
+/** Whether the environment's server understands thread.pin/unpin.
+    Same version-skew contract as settlement. */
+export function readEnvironmentSupportsPinning(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadPinning === true
+  );
+}
+
+/** Whether the environment's server understands thread title regeneration.
+    Same version-skew contract as settlement. */
+export function readEnvironmentSupportsTitleRegeneration(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadTitleRegeneration === true
+  );
+}
+
+/** Whether the environment's server understands thread.pin.reorder (and
+    orderKey on thread.pin). Same version-skew contract as settlement. */
+export function readEnvironmentSupportsPinReorder(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadPinReorder === true
+  );
+}
+
 export function readThreadDetail(ref: ScopedThreadRef): EnvironmentThread | null {
   return appAtomRegistry.get(environmentThreadDetails.detailAtom(ref));
 }
@@ -228,6 +280,10 @@ export function readEnvironmentThreadRefs(
 
 export function readThreadRefs(): ReadonlyArray<ScopedThreadRef> {
   return appAtomRegistry.get(environmentThreadShells.threadRefsAtom);
+}
+
+export function readThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
+  return appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
 }
 
 export function findThreadRef(threadId: ThreadId): ScopedThreadRef | null {

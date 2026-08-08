@@ -134,13 +134,13 @@ const SERVER_CONFIG: ServerConfigType = {
 };
 
 const RpcRequest = Schema.TaggedStruct("Request", {
-  id: Schema.String,
+  id: Schema.Union([Schema.String, Schema.Number]),
   payload: Schema.Unknown,
   tag: Schema.String,
 });
-const decodeJson = Schema.decodeUnknownSync(Schema.UnknownFromJsonString);
+const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeRpcRequest = Schema.decodeUnknownSync(RpcRequest);
-const encodeJson = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
+const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const encodeServerConfig = Schema.encodeSync(ServerConfig);
 const ENCODED_SERVER_CONFIG = encodeServerConfig(SERVER_CONFIG);
 const LEGACY_SERVER_CONFIG = {
@@ -284,6 +284,67 @@ describe("RpcSessionFactory", () => {
       );
 
       expect(sockets[0]?.readyState).toBe(TestWebSocket.CLOSED);
+    }),
+  );
+
+  it.effect("tolerates two missed pong windows before closing the session", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(session.ready);
+      const closedFiber = yield* Effect.forkChild(Effect.flip(session.closed));
+      const socket = yield* awaitSocket(sockets);
+
+      socket.open();
+      yield* completeInitialConfig(socket);
+      yield* Fiber.join(readyFiber);
+
+      yield* TestClock.adjust("15 seconds");
+      expect(closedFiber.pollUnsafe()).toBeUndefined();
+      expect(socket.sent.slice(1).map((request) => decodeJson(request))).toEqual([
+        { _tag: "Ping" },
+        { _tag: "Ping" },
+        { _tag: "Ping" },
+      ]);
+
+      yield* TestClock.adjust("5 seconds");
+      const error = yield* Fiber.join(closedFiber);
+      expect(error).toBeInstanceOf(ConnectionTransientError);
+      expect(error).toMatchObject({ reason: "transport" });
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("reaches ready when a newer server sends unknown config members", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(session.ready);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+
+      const shortcut = {
+        key: "p",
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        modKey: true,
+      };
+      yield* completeInitialConfig(socket, {
+        ...ENCODED_SERVER_CONFIG,
+        keybindings: [
+          { command: "someFuture.toggle", shortcut },
+          { command: "terminal.toggle", shortcut },
+        ],
+        issues: [{ kind: "keybindings.future-issue", message: "From a newer server" }],
+        availableEditors: ["some-future-editor", "zed"],
+      });
+      yield* Fiber.join(readyFiber);
+
+      const config = yield* session.initialConfig;
+      expect(config.keybindings).toEqual([{ command: "terminal.toggle", shortcut }]);
+      expect(config.issues).toEqual([]);
+      expect(config.availableEditors).toEqual(["zed"]);
     }),
   );
 

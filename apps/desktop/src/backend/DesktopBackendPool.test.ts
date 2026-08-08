@@ -5,11 +5,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
@@ -56,10 +58,21 @@ function makePoolLayer(
         Layer.succeed(DesktopObservability.DesktopBackendOutputLogFactory, {
           forInstance: () =>
             Effect.succeed({
-              writeSessionBoundary: () => Effect.void,
+              beginSession: () => Effect.void,
               writeOutputChunk: () => Effect.void,
+              persistFailureSnapshot: () => Effect.void,
+              persistFailure: () => Effect.void,
+              discardSession: Effect.void,
             } satisfies DesktopObservability.DesktopBackendOutputLogShape),
         } satisfies DesktopObservability.DesktopBackendOutputLogFactory["Service"]),
+        Layer.succeed(DesktopTelemetryPublisher.DesktopTelemetryPublisher, {
+          latest: Effect.succeed(Option.none()),
+          changes: Stream.empty,
+          encoded: Stream.empty,
+          handleControl: () => Effect.void,
+          handleControlForSource: () => Effect.void,
+          removeControlSource: () => Effect.void,
+        }),
         Layer.succeed(DesktopBackendConfiguration.DesktopBackendConfiguration, {
           resolvePrimary: Effect.die("unexpected primary config resolve"),
           resolvePrimaryLabel: Ref.get(labelRef),
@@ -78,6 +91,7 @@ function makePoolLayer(
           handleBackendNotReady: Effect.void,
           flushMainWindowBounds: Effect.void,
           dispatchMenuAction: () => Effect.die("unexpected menu action"),
+          zoomMain: () => Effect.die("unexpected zoom"),
           syncAppearance: Effect.void,
         } satisfies DesktopWindow.DesktopWindow["Service"]),
       ),

@@ -1,8 +1,10 @@
 import { Credentials } from "@distilled.cloud/planetscale/Credentials";
-import * as ops from "@distilled.cloud/planetscale/Operations";
+import * as planetscale from "@distilled.cloud/planetscale/Operations";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
 import { deepEqual, isResolved } from "../../Diff.ts";
+import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
 import type { Providers } from "../Providers.ts";
@@ -14,7 +16,6 @@ import {
 import type { PostgresBranch } from "./PostgresBranch.ts";
 import type { PostgresDatabase } from "./PostgresDatabase.ts";
 import type { PostgresOrigin } from "./PostgresOrigin.ts";
-import { createPhysicalName } from "../../PhysicalName.ts";
 
 /**
  * Built-in PostgreSQL roles that can be inherited from. Custom role names
@@ -112,8 +113,10 @@ export interface PostgresRoleAttributes {
   database: string;
   /** The Postgres database name inside the branch. */
   databaseName: string;
-  /** Parsed connection components ready to feed into Cloudflare Hyperdrive. */
+  /** Parsed direct (port 5432) connection components ready to feed into Cloudflare Hyperdrive. */
   origin: PostgresOrigin;
+  /** Parsed pooled (PSBouncer, port 6432) connection components, e.g. for a Hyperdrive `dev` origin. */
+  pooledOrigin: PostgresOrigin;
   /** Direct connection URL for the database (Redacted). */
   connectionUrl: Redacted.Redacted<string>;
   /** Pooled connection URL via PSBouncer (port 6432, Redacted). */
@@ -169,7 +172,268 @@ export type PostgresRole = Resource<
   Providers
 >;
 
+/** @resource */
 export const PostgresRole = Resource<PostgresRole>("Planetscale.PostgresRole");
+
+export const PostgresRoleProvider = () =>
+  Provider.succeed(PostgresRole, {
+    stables: ["id"],
+
+    diff: Effect.fn(function* ({ id, news, olds, output }) {
+      if (!isResolved(news)) return undefined;
+
+      // Successor is the only updatable property — everything else
+      // requires replacement.
+      if (news.ttl !== olds.ttl) {
+        return { action: "replace" } as const;
+      }
+      const newDb = resolveDatabaseName(news.database);
+      const oldDb = olds.database
+        ? resolveDatabaseName(olds.database)
+        : undefined;
+      if (oldDb && newDb !== oldDb) {
+        return { action: "replace" } as const;
+      }
+      const newBranch = resolveBranchName(news.branch);
+      const oldBranch = resolveBranchName(olds.branch);
+      if (newBranch !== oldBranch) {
+        return { action: "replace" } as const;
+      }
+      const newRoles = [...resolveInheritedRoles(news.inheritedRoles)].sort();
+      const oldRoles = [...(output?.inheritedRoles ?? [])].sort();
+      if (!deepEqual(newRoles, oldRoles)) {
+        return { action: "replace" } as const;
+      }
+      const oldName = output?.name ?? (yield* resolveName(id, olds?.name));
+      const newName = yield* resolveName(id, news.name);
+
+      if (newName !== oldName) {
+        return { action: "update" } as const;
+      }
+
+      return undefined;
+    }),
+
+    read: Effect.fn(function* ({ output }) {
+      if (!output?.id) return undefined;
+
+      return yield* planetscale
+        .getRole({
+          branch: output.branch,
+          database: output.database,
+          organization: output.organization,
+          id: output.id,
+        })
+        .pipe(
+          Effect.map((token) =>
+            buildAttributes(token, output.password, {
+              inheritedRoles: token.inherited_roles as InheritedRole[],
+              successor: output.successor,
+              organization: output.organization,
+              database: output.database,
+              branch: token.branch.name,
+            }),
+          ),
+          Effect.catchTag("Forbidden", () => Effect.succeed(undefined)),
+          Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
+        );
+    }),
+
+    reconcile: Effect.fn(function* ({ id, news, output }) {
+      const { organization: envOrg } = yield* yield* Credentials;
+      const organization = resolveDatabaseOrg(news.database) ?? envOrg;
+      const databaseName = resolveDatabaseName(news.database);
+      const branchName = resolveBranchName(news.branch);
+      const inheritedRoles = resolveInheritedRoles(news.inheritedRoles);
+      const successor = resolveSuccessorName(news.successor);
+      const desiredName = yield* resolveName(id, news.name);
+
+      // 1. Observe — fetch live state if we know the role id. Roles
+      //    can only be looked up by id; without a cached id there is
+      //    no way to find the live role, so we fall through to ensure.
+      const observed = output?.id
+        ? yield* planetscale
+            .getRole({
+              id: output.id,
+              branch: branchName,
+              organization,
+              database: databaseName,
+            })
+            .pipe(Effect.catchTag("NotFound", () => Effect.succeed(undefined)))
+        : undefined;
+
+      // 2. Ensure — create if missing. Single branch covers both
+      //    greenfield (no output) and out-of-band-deletion (output
+      //    cached but cloud lost it). The latter is structurally a
+      //    rotation: the new role has fresh id/host/username/plaintext
+      //    that propagate downstream through the dependency graph.
+      //    There is no path to recover the original plaintext, so
+      //    recreating is the only way to converge.
+      //
+      //    Planetscale returns the plaintext password value exactly
+      //    once on create; on an observe-hit we re-use the cached
+      //    plaintext from output (which is why adoption requires
+      //    pre-existing state — see `read`).
+      let live: planetscale.GetRoleOutput | planetscale.CreateRoleOutput;
+      let plaintext: Redacted.Redacted<string>;
+      if (observed) {
+        live = observed;
+        plaintext = output!.password;
+      } else {
+        const branchInfo = yield* planetscale.getBranch({
+          organization,
+          database: databaseName,
+          branch: branchName,
+        });
+        if (branchInfo.kind !== "postgresql") {
+          return yield* Effect.fail(
+            new PlanetscaleConflict({
+              message: `Cannot create a Role on MySQL database "${databaseName}". Roles are only supported on PostgreSQL. Use Password for MySQL.`,
+            }),
+          );
+        }
+        if (!branchInfo.ready) {
+          yield* waitForBranchReady(organization, databaseName, branchName);
+        }
+        const created = yield* planetscale.createRole({
+          name: desiredName,
+          branch: branchName,
+          organization,
+          database: databaseName,
+          ttl: news.ttl,
+          inherited_roles: inheritedRoles as SDKInheritedRole[],
+        });
+        if (!created.password) {
+          return yield* Effect.die(
+            `Planetscale did not return a password for Role "${desiredName}".`,
+          );
+        }
+        plaintext = created.password;
+        live = created;
+      }
+
+      // 3. Sync — only `name` is mutable in place; diff observed
+      //    against desired and skip the API call when nothing
+      //    changed. Everything else triggers a replace via diff().
+      if (live.name !== desiredName) {
+        live = yield* planetscale.updateRole({
+          id: live.id,
+          branch: branchName,
+          organization,
+          database: databaseName,
+          name: desiredName,
+        });
+      }
+
+      // 4. Return — fresh attrs sourced from observed cloud state,
+      //    with cached or freshly-issued plaintext.
+      return buildAttributes(live, plaintext, {
+        inheritedRoles: live.inherited_roles as InheritedRole[],
+        successor,
+        organization,
+        database: databaseName,
+        branch: branchName,
+      });
+    }),
+
+    delete: Effect.fn(function* ({ output }) {
+      yield* planetscale
+        .deleteRole({
+          organization: output.organization,
+          database: output.database,
+          branch: output.branch,
+          id: output.id,
+          successor: output.successor,
+        })
+        .pipe(
+          Effect.catchTag("NotFound", () => Effect.void),
+          // 422 (UnprocessableEntity): role is still referenced. Log a
+          // warning rather than failing — the role will be cleaned up
+          // when the database/branch is deleted.
+          Effect.catchIf(
+            isKnownError(
+              "UnprocessableEntity",
+              "Role is still referenced and cannot be dropped.",
+            ),
+            () => Effect.void,
+          ),
+        );
+    }),
+
+    list: Effect.fn(function* () {
+      const { organization } = yield* yield* Credentials;
+
+      const databases = yield* planetscale.listDatabases
+        .pages({ organization })
+        .pipe(
+          Stream.runCollect,
+          Effect.map((chunk) =>
+            Array.from(chunk).flatMap((page) =>
+              page.data.filter((db) => db.kind === "postgresql"),
+            ),
+          ),
+        );
+
+      const rows = yield* Effect.forEach(
+        databases,
+        (db) =>
+          planetscale.listBranches
+            .pages({ organization, database: db.name })
+            .pipe(
+              Stream.runCollect,
+              Effect.map((branchPages) =>
+                Array.from(branchPages).flatMap((page) =>
+                  page.data.filter((branch) => branch.kind === "postgresql"),
+                ),
+              ),
+              Effect.catchTag("NotFound", () =>
+                Effect.succeed([{ name: db.default_branch ?? "main" }]),
+              ),
+              Effect.flatMap((branches) =>
+                Effect.forEach(
+                  branches,
+                  (branch) =>
+                    planetscale.listRoles
+                      .pages({
+                        organization,
+                        database: db.name,
+                        branch: branch.name,
+                      })
+                      .pipe(
+                        Stream.runCollect,
+                        Effect.map((rolePages): PostgresRoleAttributes[] =>
+                          Array.from(rolePages).flatMap((page) =>
+                            page.data
+                              .filter((role) => !role.default)
+                              .map((role) =>
+                                buildAttributes(role, Redacted.make(""), {
+                                  inheritedRoles:
+                                    role.inherited_roles as InheritedRole[],
+                                  successor: "postgres",
+                                  organization,
+                                  database: db.name,
+                                  branch: branch.name,
+                                }),
+                              ),
+                          ),
+                        ),
+                        Effect.catchTag("NotFound", () =>
+                          Effect.succeed([] as PostgresRoleAttributes[]),
+                        ),
+                        Effect.catchTag("Forbidden", () =>
+                          Effect.succeed([] as PostgresRoleAttributes[]),
+                        ),
+                      ),
+                  { concurrency: 10 },
+                ).pipe(Effect.map((perBranch) => perBranch.flat())),
+              ),
+            ),
+        { concurrency: 10 },
+      );
+
+      return rows.flat();
+    }),
+  });
 
 // Structural shapes for runtime-resolved Resource references — see notes
 // in Password.ts.
@@ -270,200 +534,15 @@ const buildAttributes = (
       user: role.username,
       password,
     },
+    pooledOrigin: {
+      scheme: "postgres",
+      host: role.access_host_url,
+      port: 6432,
+      database: role.database_name,
+      user: role.username,
+      password,
+    },
     branch: context.branch,
     ttl: role.ttl,
   };
 };
-
-export const PostgresRoleProvider = () =>
-  Provider.effect(
-    PostgresRole,
-    Effect.gen(function* () {
-      const createRole = yield* ops.createRole;
-      const deleteRole = yield* ops.deleteRole;
-      const updateRole = yield* ops.updateRole;
-      const getRole = yield* ops.getRole;
-      const getBranch = yield* ops.getBranch;
-
-      return {
-        stables: ["id"],
-
-        diff: Effect.fn(function* ({ id, news, olds, output }) {
-          if (!isResolved(news)) return undefined;
-
-          // Successor is the only updatable property — everything else
-          // requires replacement.
-          if (news.ttl !== olds.ttl) {
-            return { action: "replace" } as const;
-          }
-          const newDb = resolveDatabaseName(news.database);
-          const oldDb = olds.database
-            ? resolveDatabaseName(olds.database)
-            : undefined;
-          if (oldDb && newDb !== oldDb) {
-            return { action: "replace" } as const;
-          }
-          const newBranch = resolveBranchName(news.branch);
-          const oldBranch = resolveBranchName(olds.branch);
-          if (newBranch !== oldBranch) {
-            return { action: "replace" } as const;
-          }
-          const newRoles = resolveInheritedRoles(news.inheritedRoles);
-          const oldRoles = output?.inheritedRoles ?? [];
-          if (!deepEqual(newRoles, oldRoles)) {
-            return { action: "replace" } as const;
-          }
-          const oldName = output?.name ?? (yield* resolveName(id, olds?.name));
-          const newName = yield* resolveName(id, news.name);
-
-          if (newName !== oldName) {
-            return { action: "update" } as const;
-          }
-
-          return undefined;
-        }),
-
-        read: Effect.fn(function* ({ output }) {
-          if (!output?.id) return undefined;
-
-          return yield* getRole({
-            branch: output.branch,
-            database: output.database,
-            organization: output.organization,
-            id: output.id,
-          }).pipe(
-            Effect.map((token) =>
-              buildAttributes(token, output.password, {
-                inheritedRoles: token.inherited_roles as InheritedRole[],
-                successor: output.successor,
-                organization: output.organization,
-                database: output.database,
-                branch: token.branch.name,
-              }),
-            ),
-            Effect.catchTag("Forbidden", () => Effect.succeed(undefined)),
-            Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
-          );
-        }),
-
-        reconcile: Effect.fn(function* ({ id, news, output }) {
-          const { organization: envOrg } = yield* Credentials;
-          const organization = resolveDatabaseOrg(news.database) ?? envOrg;
-          const databaseName = resolveDatabaseName(news.database);
-          const branchName = resolveBranchName(news.branch);
-          const inheritedRoles = resolveInheritedRoles(news.inheritedRoles);
-          const successor = resolveSuccessorName(news.successor);
-          const desiredName = yield* resolveName(id, news.name);
-
-          // 1. Observe — fetch live state if we know the role id. Roles
-          //    can only be looked up by id; without a cached id there is
-          //    no way to find the live role, so we fall through to ensure.
-          const observed = output?.id
-            ? yield* getRole({
-                id: output.id,
-                branch: branchName,
-                organization,
-                database: databaseName,
-              }).pipe(
-                Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
-              )
-            : undefined;
-
-          // 2. Ensure — create if missing. Single branch covers both
-          //    greenfield (no output) and out-of-band-deletion (output
-          //    cached but cloud lost it). The latter is structurally a
-          //    rotation: the new role has fresh id/host/username/plaintext
-          //    that propagate downstream through the dependency graph.
-          //    There is no path to recover the original plaintext, so
-          //    recreating is the only way to converge.
-          //
-          //    Planetscale returns the plaintext password value exactly
-          //    once on create; on an observe-hit we re-use the cached
-          //    plaintext from output (which is why adoption requires
-          //    pre-existing state — see `read`).
-          let live: ops.GetRoleOutput | ops.CreateRoleOutput;
-          let plaintext: Redacted.Redacted<string>;
-          if (observed) {
-            live = observed;
-            plaintext = output!.password;
-          } else {
-            const branchInfo = yield* getBranch({
-              organization,
-              database: databaseName,
-              branch: branchName,
-            });
-            if (branchInfo.kind !== "postgresql") {
-              return yield* Effect.fail(
-                new PlanetscaleConflict({
-                  message: `Cannot create a Role on MySQL database "${databaseName}". Roles are only supported on PostgreSQL. Use Password for MySQL.`,
-                }),
-              );
-            }
-            if (!branchInfo.ready) {
-              yield* waitForBranchReady(organization, databaseName, branchName);
-            }
-            const created = yield* createRole({
-              name: desiredName,
-              branch: branchName,
-              organization,
-              database: databaseName,
-              ttl: news.ttl,
-              inherited_roles: inheritedRoles as SDKInheritedRole[],
-            });
-            if (!created.password) {
-              return yield* Effect.die(
-                `Planetscale did not return a password for Role "${desiredName}".`,
-              );
-            }
-            plaintext = created.password;
-            live = created;
-          }
-
-          // 3. Sync — only `name` is mutable in place; diff observed
-          //    against desired and skip the API call when nothing
-          //    changed. Everything else triggers a replace via diff().
-          if (live.name !== desiredName) {
-            live = yield* updateRole({
-              id: live.id,
-              branch: branchName,
-              organization,
-              database: databaseName,
-              name: desiredName,
-            });
-          }
-
-          // 4. Return — fresh attrs sourced from observed cloud state,
-          //    with cached or freshly-issued plaintext.
-          return buildAttributes(live, plaintext, {
-            inheritedRoles: live.inherited_roles as InheritedRole[],
-            successor,
-            organization,
-            database: databaseName,
-            branch: branchName,
-          });
-        }),
-
-        delete: Effect.fn(function* ({ output }) {
-          yield* deleteRole({
-            organization: output.organization,
-            database: output.database,
-            branch: output.branch,
-            id: output.id,
-            successor: output.successor,
-          }).pipe(
-            Effect.catchTag("NotFound", () => Effect.void),
-            // 422 (UnprocessableEntity): role is still referenced. Log a
-            // warning rather than failing — the role will be cleaned up
-            // when the database/branch is deleted.
-            Effect.catchIf(
-              isKnownError(
-                "UnprocessableEntity",
-                "Role is still referenced and cannot be dropped.",
-              ),
-              () => Effect.void,
-            ),
-          );
-        }),
-      };
-    }),
-  );
