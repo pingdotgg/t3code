@@ -1,0 +1,839 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>T3 Code Skill Manager — Exploration & Implementation Plan</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #000;
+        --panel: #101010;
+        --panel2: #171717;
+        --line: #2b2b2b;
+        --text: #fff;
+        --muted: #aaa;
+        --dim: #777;
+        --pink: #f472d0;
+        --green: #68d391;
+        --yellow: #f6c85f;
+        --red: #ff7272;
+        --blue: #77bdfb;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          15px/1.55 ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+      a {
+        color: var(--blue);
+      }
+      code {
+        color: #eee;
+        background: #202020;
+        padding: 0.12rem 0.34rem;
+        border-radius: 4px;
+        font:
+          12px/1.4 ui-monospace,
+          SFMono-Regular,
+          Consolas,
+          monospace;
+      }
+      .shell {
+        max-width: 1180px;
+        margin: auto;
+        padding: 42px 22px 90px;
+      }
+      .eyebrow {
+        color: var(--pink);
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        font-size: 11px;
+        font-weight: 800;
+      }
+      h1 {
+        font-size: clamp(38px, 7vw, 72px);
+        line-height: 0.98;
+        letter-spacing: -0.055em;
+        max-width: 880px;
+        margin: 14px 0 24px;
+      }
+      h2 {
+        font-size: 28px;
+        letter-spacing: -0.025em;
+        margin: 0 0 14px;
+      }
+      h3 {
+        margin: 0 0 8px;
+        font-size: 17px;
+      }
+      p {
+        margin: 0 0 14px;
+      }
+      .lead {
+        max-width: 840px;
+        color: #d0d0d0;
+        font-size: 19px;
+      }
+      .verdict {
+        display: grid;
+        grid-template-columns: 160px 1fr;
+        gap: 20px;
+        border: 1px solid #28583a;
+        background: #07130b;
+        padding: 22px;
+        margin: 34px 0;
+        border-radius: 12px;
+      }
+      .score {
+        font-size: 42px;
+        font-weight: 850;
+        color: var(--green);
+        letter-spacing: -0.05em;
+      }
+      .score small {
+        display: block;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #8ecba4;
+      }
+      nav {
+        position: sticky;
+        top: 0;
+        z-index: 3;
+        background: rgba(0, 0, 0, 0.88);
+        backdrop-filter: blur(12px);
+        border-block: 1px solid var(--line);
+        margin: 34px -22px;
+        padding: 10px 22px;
+        display: flex;
+        gap: 18px;
+        overflow: auto;
+        white-space: nowrap;
+      }
+      nav a {
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 12px;
+      }
+      nav a:hover {
+        color: #fff;
+      }
+      section {
+        padding: 42px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(12, 1fr);
+        gap: 14px;
+      }
+      .card {
+        grid-column: span 4;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        padding: 18px;
+        border-radius: 10px;
+      }
+      .wide {
+        grid-column: span 6;
+      }
+      .full {
+        grid-column: 1/-1;
+      }
+      .card p,
+      .muted {
+        color: var(--muted);
+      }
+      .tag {
+        display: inline-block;
+        border: 1px solid var(--line);
+        background: #191919;
+        border-radius: 99px;
+        padding: 2px 8px;
+        color: #bbb;
+        font-size: 11px;
+        margin: 2px 3px 2px 0;
+      }
+      .yes {
+        color: var(--green);
+      }
+      .partial {
+        color: var(--yellow);
+      }
+      .no {
+        color: var(--red);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      th,
+      td {
+        padding: 11px 10px;
+        text-align: left;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      th {
+        color: #888;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      ul,
+      ol {
+        margin: 8px 0 0;
+        padding-left: 20px;
+      }
+      li {
+        margin: 5px 0;
+      }
+      .callout {
+        border-left: 3px solid var(--yellow);
+        background: #171307;
+        padding: 14px 16px;
+        color: #ddd;
+        margin: 16px 0;
+      }
+      .good {
+        border-left-color: var(--green);
+        background: #07130b;
+      }
+      .danger {
+        border-left-color: var(--red);
+        background: #180909;
+      }
+      .diagram {
+        overflow: auto;
+        padding: 24px;
+        background: #080808;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+      }
+      .flow {
+        min-width: 790px;
+        display: grid;
+        grid-template-columns: 1fr 60px 1fr 60px 1fr;
+        align-items: center;
+        gap: 8px;
+      }
+      .node {
+        border: 1px solid #3b3b3b;
+        border-radius: 9px;
+        padding: 16px;
+        background: #141414;
+        text-align: center;
+      }
+      .arrow {
+        text-align: center;
+        color: var(--pink);
+        font-size: 24px;
+      }
+      .mock {
+        border: 1px solid #333;
+        background: #090909;
+        border-radius: 12px;
+        overflow: hidden;
+      }
+      .mockbar {
+        padding: 12px 16px;
+        border-bottom: 1px solid #272727;
+        display: flex;
+        justify-content: space-between;
+      }
+      .machine {
+        margin: 12px;
+        border: 1px solid #292929;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .machine-head {
+        display: flex;
+        justify-content: space-between;
+        padding: 12px 14px;
+        background: #141414;
+      }
+      .harness {
+        padding: 12px 14px;
+        border-top: 1px solid #252525;
+      }
+      .skill {
+        display: grid;
+        grid-template-columns: minmax(150px, 1fr) minmax(220px, 2fr) auto;
+        gap: 12px;
+        padding: 9px 0;
+        border-top: 1px solid #1f1f1f;
+        align-items: center;
+      }
+      .button {
+        border: 1px solid #3b3b3b;
+        border-radius: 6px;
+        padding: 5px 8px;
+        color: #ccc;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      .phase {
+        grid-column: span 3;
+        position: relative;
+      }
+      .phase b {
+        color: var(--pink);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .checklist input {
+        accent-color: var(--pink);
+      }
+      footer {
+        padding-top: 28px;
+        color: var(--dim);
+        font-size: 12px;
+      }
+      @media (max-width: 760px) {
+        .card,
+        .wide,
+        .phase {
+          grid-column: 1/-1;
+        }
+        .verdict {
+          grid-template-columns: 1fr;
+        }
+        .skill {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <div class="eyebrow">Product exploration · July 2026</div>
+      <h1>A skill manager for every harness, on every computer.</h1>
+      <p class="lead">
+        A settings page that inventories skill installations across connected T3 environments,
+        explains which harnesses can use each one, copies remote paths, and eventually removes
+        installations with guardrails.
+      </p>
+
+      <div class="verdict">
+        <div class="score">High<small>technical viability</small></div>
+        <div>
+          <strong>The read-only manager is a natural extension of T3 Code’s architecture.</strong>
+          Every connected computer already runs a T3 environment server, and Codex/Claude provider
+          snapshots already carry skill metadata and absolute paths. The real work is extracting
+          this into a machine-level inventory service, adding adapters for the other harnesses, and
+          treating filesystem mutation as a separately gated capability.
+        </div>
+      </div>
+
+      <nav>
+        <a href="#shape">Product shape</a><a href="#findings">Findings</a
+        ><a href="#model">Data model</a><a href="#architecture">Architecture</a
+        ><a href="#safety">Removal safety</a><a href="#phases">Phases</a
+        ><a href="#testing">Testing</a><a href="#decisions">Decisions</a>
+      </nav>
+
+      <section id="shape">
+        <h2>Recommended product shape</h2>
+        <div class="grid">
+          <div class="card wide">
+            <h3>Default view: installation inventory</h3>
+            <p>
+              Group by computer, then show harness visibility beneath it. A concrete directory is
+              the primary record. If one directory is visible to multiple harnesses, render it once
+              with multiple harness badges—not as multiple independently deletable rows.
+            </p>
+          </div>
+          <div class="card wide">
+            <h3>Scope: global first</h3>
+            <p>
+              V1 should inventory user/global skills. Project skills depend on a working directory
+              and can only be complete for projects T3 knows about. Add a separate “Known projects”
+              filter later, explicitly labeled as non-exhaustive.
+            </p>
+          </div>
+          <div class="card full">
+            <div class="mock">
+              <div class="mockbar">
+                <strong>Skills</strong
+                ><span class="muted">Search skills or paths… &nbsp; Refresh all</span>
+              </div>
+              <div class="machine">
+                <div class="machine-head">
+                  <strong>bb-1 <span class="tag">Linux · online</span></strong
+                  ><span class="muted">14 installations · scanned just now</span>
+                </div>
+                <div class="harness">
+                  <strong>Codex</strong> <span class="tag">direct root</span>
+                  <div class="skill">
+                    <span><strong>html-planning</strong><br /><span class="tag">Codex</span></span
+                    ><code>~/.codex/skills/html-planning</code
+                    ><span
+                      ><span class="button">Copy path</span> <span class="button">•••</span></span
+                    >
+                  </div>
+                </div>
+                <div class="harness">
+                  <strong>Shared compatibility roots</strong> <span class="tag">deduplicated</span>
+                  <div class="skill">
+                    <span
+                      ><strong>repo-explorer</strong><br /><span class="tag">Codex</span
+                      ><span class="tag">OpenCode</span><span class="tag">Cursor</span></span
+                    ><code>~/.agents/skills/repo-explorer</code
+                    ><span
+                      ><span class="button">Copy path</span> <span class="button">•••</span></span
+                    >
+                  </div>
+                </div>
+              </div>
+              <div class="machine">
+                <div class="machine-head">
+                  <strong>MacBook Pro <span class="tag">offline</span></strong
+                  ><span class="muted">Last successful scan 2h ago</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="callout good">
+          <strong>Path behavior:</strong> “Copy path” copies the path meaningful on that computer.
+          “Reveal in Finder / Explorer” should only appear when the selected computer is the local
+          desktop host. Remote files cannot be opened locally without a future file-browser feature.
+        </div>
+      </section>
+
+      <section id="findings">
+        <h2>What already exists, and what does not</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Area</th>
+              <th>Today</th>
+              <th>Implication</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Multi-computer model</td>
+              <td class="yes">
+                Connected environments already have stable IDs, labels, platform, connection state,
+                and per-environment authenticated HTTP/WS sessions.
+              </td>
+              <td>
+                No central cloud indexer is required. Query each online environment and merge
+                client-side.
+              </td>
+            </tr>
+            <tr>
+              <td>Codex skills</td>
+              <td class="yes">
+                The server calls Codex app-server <code>skills/list</code> and maps name, path,
+                scope, and authoritative enablement when the harness exposes it.
+              </td>
+              <td>
+                Reuse parsing knowledge, but inventory independently of a session cwd and configured
+                provider status.
+              </td>
+            </tr>
+            <tr>
+              <td>Claude skills</td>
+              <td class="yes">
+                T3 already scans the effective Claude config root and project
+                <code>.claude/skills</code>, parsing <code>SKILL.md</code> frontmatter.
+              </td>
+              <td>
+                Refactor the scanner behind a shared inventory adapter rather than duplicating it.
+              </td>
+            </tr>
+            <tr>
+              <td>OpenCode skills</td>
+              <td class="partial">
+                No T3 inventory today. OpenCode supports native, Claude-compatible,
+                agent-compatible, configured local, and even HTTP catalog sources.
+              </td>
+              <td>
+                Filesystem roots are easy; config and remote catalogs need an OpenCode-specific
+                adapter and read-only/remote source types.
+              </td>
+            </tr>
+            <tr>
+              <td>Cursor skills</td>
+              <td class="partial">
+                Cursor is a provider in T3, but its provider snapshot does not expose skills.
+              </td>
+              <td>
+                Scan documented user/project roots. Treat vendor-managed/built-in entries as
+                non-removable unless ownership is proven.
+              </td>
+            </tr>
+            <tr>
+              <td>Grok</td>
+              <td class="no">
+                No supported local skill discovery contract was found in the current T3 driver.
+              </td>
+              <td>
+                Return an explicit “not supported by this harness” state; do not guess directories.
+              </td>
+            </tr>
+            <tr>
+              <td>Settings UI</td>
+              <td class="yes">
+                File-based settings routes and a sidebar make a new
+                <code>/settings/skills</code> page straightforward.
+              </td>
+              <td>Add a dedicated page rather than embedding this in Providers.</td>
+            </tr>
+            <tr>
+              <td>Mutation API</td>
+              <td class="no">
+                Provider skill paths are presentation data; there is no safe skill filesystem
+                mutation endpoint.
+              </td>
+              <td>
+                Build removal as a new capability with opaque IDs, root containment checks, and
+                recoverable trashing.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="callout">
+          <strong>Inventory caveat:</strong> “All skills” can only mean all discoverable skills on
+          connected computers. Offline computers show cached results, and project-scoped discovery
+          is bounded by known T3 projects—not every directory on disk.
+        </div>
+      </section>
+
+      <section id="model">
+        <h2>Model installations, roots, and visibility separately</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>Skill root</h3>
+            <p>
+              A harness-declared source: absolute path or remote catalog, scope, ownership,
+              mutability, and precedence. Examples: Codex user root, shared
+              <code>.agents</code> root, plugin cache.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Installation</h3>
+            <p>
+              One concrete skill directory/file with canonical path, real path, metadata, validation
+              state, modification time, and a stable scan-local ID.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Visibility</h3>
+            <p>
+              One or more harness instance IDs that consume the installation, plus
+              effective/overridden/disabled status where the harness can report it.
+            </p>
+          </div>
+          <div class="card wide">
+            <h3>Suggested contract</h3>
+            <p>
+              <code>SkillInventory { scannedAt, roots[], installations[], diagnostics[] }</code>.
+              Each installation includes <code>id</code>, <code>rootId</code>,
+              <code>relativePath</code>, display metadata, scope, source kind, consumers,
+              capabilities, and health. Keep absolute paths for display, but never accept them back
+              as mutation targets.
+            </p>
+          </div>
+          <div class="card wide">
+            <h3>Identity and deduplication</h3>
+            <p>
+              Canonicalize with <code>realpath</code> and filesystem identity when possible. One
+              symlinked installation can appear under several roots; retain aliases for explanation
+              but choose one physical-installation record. Logical name equality alone is not
+              deduplication.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="architecture">
+        <h2>Architecture</h2>
+        <div class="diagram">
+          <div class="flow">
+            <div class="node">
+              <strong>Settings / Skills</strong><br /><span class="muted"
+                >queries every connected environment<br />merges live + cached results</span
+              >
+            </div>
+            <div class="arrow">→</div>
+            <div class="node">
+              <strong>Environment HTTP API</strong><br /><code>GET /api/skills</code><br /><code
+                >POST /api/skills/:id/trash</code
+              >
+            </div>
+            <div class="arrow">→</div>
+            <div class="node">
+              <strong>SkillInventoryService</strong><br /><span class="muted"
+                >Codex · Claude · OpenCode · Cursor adapters<br />root validation · dedupe ·
+                diagnostics</span
+              >
+            </div>
+          </div>
+        </div>
+        <div class="grid" style="margin-top: 14px">
+          <div class="card wide">
+            <h3>Server and contracts</h3>
+            <ul>
+              <li>
+                Add schema-only inventory contracts in <code>packages/contracts</code> and a new
+                authenticated Environment HTTP API group.
+              </li>
+              <li>
+                Create <code>SkillInventoryService</code> in <code>apps/server</code>; adapters
+                resolve roots from provider-instance settings and process environment, then scan
+                best-effort with bounded concurrency.
+              </li>
+              <li>
+                Advertise <code>skillInventory</code> and later
+                <code>skillRemoval</code> environment capabilities for version skew.
+              </li>
+              <li>
+                Cache the latest successful inventory per server home so offline/error UI has useful
+                state; refresh manually and on relevant provider-settings changes.
+              </li>
+            </ul>
+          </div>
+          <div class="card wide">
+            <h3>Web client</h3>
+            <ul>
+              <li>
+                Add <code>/settings/skills</code>, sidebar entry, environment-scoped query atoms,
+                and an aggregate selector over the existing environment catalog.
+              </li>
+              <li>
+                Fetch only while the page is open; cap parallel environment requests and retain
+                per-machine loading/error states.
+              </li>
+              <li>
+                Search across name, description, path, computer, and harness. Filters:
+                online/offline, harness, scope, health, removable.
+              </li>
+              <li>
+                Use optimistic row removal only after the server reports the trash destination; then
+                rescan that environment.
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div class="callout">
+          <strong>Why not reuse <code>ServerProvider.skills</code> directly?</strong> It is a
+          runtime/provider snapshot, can depend on a cwd, omits unsupported harnesses and roots, may
+          collapse name collisions, and lacks source ownership or safe mutation identity. It can
+          seed adapters, but it is not an inventory contract.
+        </div>
+      </section>
+
+      <section id="safety">
+        <h2>Removal must be capability-based and recoverable</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>1 · Classify ownership</h3>
+            <p>
+              <span class="yes">User-managed</span> roots may be removed.
+              <span class="partial">Symlinked</span> entries need a distinct unlink action.
+              <span class="no">System, plugin-cache, HTTP catalog, and unknown</span> sources are
+              read-only.
+            </p>
+          </div>
+          <div class="card">
+            <h3>2 · Re-resolve server-side</h3>
+            <p>
+              Client sends an opaque installation ID and inventory revision. Server resolves the
+              registered root + relative path again, rejects traversal, root changes, unexpected
+              type changes, and escaping symlinks.
+            </p>
+          </div>
+          <div class="card">
+            <h3>3 · Trash, do not delete</h3>
+            <p>
+              Atomically move the whole skill installation to a T3-owned trash directory on that
+              computer, write a manifest, and expose “Undo” while retained. Permanent deletion is
+              unnecessary for V1.
+            </p>
+          </div>
+          <div class="card wide">
+            <h3>Confirmation language</h3>
+            <p>
+              Show computer, physical path, all harnesses affected, aliases/symlinks, and whether
+              another installation with the same skill name remains. Require a second confirmation
+              when scripts or executable files are present.
+            </p>
+          </div>
+          <div class="card wide">
+            <h3>Race and compatibility policy</h3>
+            <p>
+              Reject stale revisions with <code>409</code> and force a rescan. Old servers stay
+              read-only because the capability is absent. Active sessions need no forced restart,
+              but the UI should say the harness may not notice the change until its next
+              session/refresh.
+            </p>
+          </div>
+        </div>
+        <div class="callout danger">
+          <strong>Never implement removal as “DELETE this absolute path.”</strong> Remote clients
+          are untrusted input, and skill directories can contain symlinks, scripts, or
+          vendor-managed content. The server must own root registration, containment, and mutation
+          policy.
+        </div>
+      </section>
+
+      <section id="phases">
+        <h2>Phased implementation</h2>
+        <div class="grid">
+          <div class="card phase">
+            <b>Phase 0 · Spike</b>
+            <h3>Lock the discovery matrix</h3>
+            <p>
+              Fixture real harness configs; validate Codex/Claude custom homes, shared roots,
+              symlinks, collisions, OpenCode config sources, and Cursor roots. Decide V1’s exact
+              supported scopes.
+            </p>
+          </div>
+          <div class="card phase">
+            <b>Phase 1 · Read-only MVP</b>
+            <h3>Inventory global skills</h3>
+            <p>
+              Contracts, capabilities, server adapters for Codex + Claude, per-environment endpoint,
+              settings page, grouping, search, copy path, refresh, errors, and stale/offline
+              presentation.
+            </p>
+          </div>
+          <div class="card phase">
+            <b>Phase 2 · Coverage</b>
+            <h3>Add OpenCode + Cursor</h3>
+            <p>
+              Compatibility-root dedupe, configured OpenCode local sources, harness visibility
+              badges, validation diagnostics, and known-project scope behind a filter.
+            </p>
+          </div>
+          <div class="card phase">
+            <b>Phase 3 · Management</b>
+            <h3>Recoverable removal</h3>
+            <p>
+              Trash/undo service, ownership policy, stale-scan protection, confirmation UX, mutation
+              audit log, and capability-gated UI.
+            </p>
+          </div>
+        </div>
+        <p class="muted" style="margin-top: 16px">
+          Keep install/edit/sync out of the first project. Those require conflict resolution,
+          copying supporting files across computers, provenance, and potentially a canonical skill
+          registry—valuable, but a distinct product.
+        </p>
+      </section>
+
+      <section id="testing">
+        <h2>Verification strategy</h2>
+        <div class="grid checklist">
+          <div class="card wide">
+            <h3>Backend focused tests</h3>
+            <ul>
+              <li>Per-adapter fixture trees and custom-home resolution</li>
+              <li>
+                Malformed frontmatter and unreadable roots remain diagnostics, not request failures
+              </li>
+              <li>Precedence, duplicate names, canonical-path dedupe, and symlink aliases</li>
+              <li>Containment, stale revision, read-only roots, trash manifest, and undo</li>
+              <li>Windows path semantics and cross-device move fallback</li>
+            </ul>
+          </div>
+          <div class="card wide">
+            <h3>Frontend and integrated tests</h3>
+            <ul>
+              <li>
+                Aggregate online, offline, unsupported, old-server, empty, and partial-failure
+                environments
+              </li>
+              <li>Grouping/search/filter behavior and copy-path fidelity</li>
+              <li>Removal confirmation lists every affected harness</li>
+              <li>Run focused component/logic tests, targeted formatting/lint/type checks</li>
+              <li>
+                Complete one isolated <code>test-t3-app</code> browser verification of the settings
+                flow after implementation
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section id="decisions">
+        <h2>Decisions to make before implementation</h2>
+        <ol>
+          <li>
+            <strong>Does V1 mean global/user skills only?</strong> Recommended: yes. Add
+            known-project discovery after the global model is sound.
+          </li>
+          <li>
+            <strong
+              >Should shared physical installations appear under every harness or once?</strong
+            >
+            Recommended: once per machine, with consumer badges and optional “group by harness”
+            presentation.
+          </li>
+          <li>
+            <strong>Is removal permanent?</strong> Recommended: no. “Move to trash” with undo is the
+            only initial mutation.
+          </li>
+          <li>
+            <strong>Do we support only configured provider instances?</strong> Recommended: scan
+            roots for configured harness instances, plus recognized shared roots; do not probe
+            arbitrary software installations.
+          </li>
+          <li>
+            <strong>How long should offline inventory persist?</strong> Recommended: cache the last
+            successful scan until the environment is unlinked, with a prominent timestamp.
+          </li>
+        </ol>
+        <div class="callout good">
+          <strong>Suggested go/no-go:</strong> proceed with a narrow read-only MVP for Codex and
+          Claude. It delivers most of the immediate value, proves the cross-computer aggregation
+          model, and creates the safe foundation needed for broader harness coverage and removal.
+        </div>
+      </section>
+
+      <section>
+        <h2>Likely implementation touchpoints</h2>
+        <p>
+          <code>packages/contracts/src/skillInventory.ts</code> ·
+          <code>packages/contracts/src/environmentHttp.ts</code> ·
+          <code>apps/server/src/provider/Drivers/ClaudeSkills.ts</code> ·
+          <code>apps/server/src/provider/Layers/CodexProvider.ts</code> · new
+          <code>apps/server/src/skills/</code> service/adapters and HTTP handler ·
+          <code>apps/server/src/server.ts</code> ·
+          <code>packages/client-runtime/src/state/skillInventoryHttp.ts</code> ·
+          <code>apps/web/src/components/settings/SettingsSidebarNav.tsx</code> · new
+          <code>apps/web/src/routes/settings.skills.tsx</code> and settings components.
+        </p>
+      </section>
+
+      <footer>
+        Evidence base: current T3 Code source and local harness layouts; official OpenCode skill
+        discovery/API docs, Anthropic Claude Code skill docs, Cursor documentation/announcements,
+        and the vendored/current Codex app-server integration. Computer inventory file was not
+        present at its documented location, so no claims in this plan depend on a fixed personal
+        machine list.
+      </footer>
+    </main>
+  </body>
+</html>

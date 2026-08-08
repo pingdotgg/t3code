@@ -99,6 +99,10 @@
       "types": "./src/state/runtime.ts",
       "default": "./src/state/runtime.ts"
     },
+    "./state/skills": {
+      "types": "./src/state/skillInventoryHttp.ts",
+      "default": "./src/state/skillInventoryHttp.ts"
+    },
     "./state/server": {
       "types": "./src/state/server.ts",
       "default": "./src/state/server.ts"
