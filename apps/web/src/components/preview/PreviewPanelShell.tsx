@@ -34,7 +34,7 @@ export function PreviewPanelShell(props: {
   const isInline = props.mode === "inline";
   const open = props.open ?? true;
   const maxWidth = useViewportClampedMaxWidth();
-  const { width, handlers } = useResizableWidth({
+  const { width, isResizing, handlers } = useResizableWidth({
     storageKey: PREVIEW_PANEL_WIDTH_STORAGE_KEY,
     defaultWidth: PREVIEW_PANEL_DEFAULT_WIDTH,
     minWidth: PREVIEW_PANEL_MIN_WIDTH,
@@ -58,6 +58,7 @@ export function PreviewPanelShell(props: {
         data-preview-panel-mode={props.mode}
         data-preview-panel-maximized="false"
         data-right-panel-open={open ? "true" : "false"}
+        data-right-panel-resizing={isResizing ? "true" : undefined}
         aria-hidden={open ? undefined : true}
         inert={open ? undefined : true}
         onTransitionEnd={(event) => {

@@ -424,6 +424,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     transition: width 200ms linear;
   }
 
+  .right-panel-inline-gap[data-right-panel-resizing="true"] {
+    transition: none;
+  }
+
   .right-panel-inline-surface {
     translate: 0;
     transition: translate 200ms linear;

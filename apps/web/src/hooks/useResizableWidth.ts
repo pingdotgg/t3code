@@ -37,6 +37,7 @@ export interface ResizableWidthHandlers {
  */
 export function useResizableWidth(options: UseResizableWidthOptions): {
   readonly width: number;
+  readonly isResizing: boolean;
   readonly handlers: ResizableWidthHandlers;
 } {
   const { storageKey, defaultWidth, minWidth, maxWidth, edge } = options;
@@ -62,6 +63,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
   });
 
   const clampedWidth = clamp(width);
+  const [isResizing, setIsResizing] = useState(false);
 
   const dragStateRef = useRef<{
     pointerId: number;
@@ -88,6 +90,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     document.body.style.removeProperty("cursor");
     document.body.style.removeProperty("user-select");
     dragStateRef.current = null;
+    setIsResizing(false);
   }, []);
 
   const onPointerDown = useCallback(
@@ -103,6 +106,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
       }
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
+      setIsResizing(true);
       dragStateRef.current = {
         pointerId: event.pointerId,
         startX: event.clientX,
@@ -163,6 +167,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
 
   return {
     width: clampedWidth,
+    isResizing,
     handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel },
   };
 }
