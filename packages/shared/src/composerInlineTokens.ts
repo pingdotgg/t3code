@@ -80,6 +80,30 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
   return matches;
 }
 
+/**
+ * Replace serialized file-link mentions ("[app.log](logs/app.log)") with
+ * their basename so prompt-derived text reads like the composer renders it.
+ * Used for thread-title seeds; @-mentions and skill tokens are already short
+ * and stay untouched.
+ */
+export function replaceComposerFileLinksWithBasenames(text: string): string {
+  // Tokens require trailing whitespace; the appended newline lets a mention
+  // at the end of trimmed text match without shifting any token offsets.
+  const tokens = collectComposerInlineTokens(`${text}\n`);
+  let result = "";
+  let cursor = 0;
+  for (const token of tokens) {
+    if (token.type !== "mention" || !token.source.startsWith("[") || token.start < cursor) {
+      continue;
+    }
+    result += text.slice(cursor, token.start);
+    const separatorIndex = Math.max(token.value.lastIndexOf("/"), token.value.lastIndexOf("\\"));
+    result += separatorIndex >= 0 ? token.value.slice(separatorIndex + 1) : token.value;
+    cursor = token.end;
+  }
+  return result + text.slice(cursor);
+}
+
 export function collectComposerInlineTokens(
   text: string,
   options: CollectComposerInlineTokensOptions = {},

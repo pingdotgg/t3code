@@ -1,6 +1,7 @@
 import type {
   ApprovalRequestId,
   EnvironmentId,
+  ExecutionEnvironmentPlatformOs,
   ModelSelection,
   PreviewAnnotationPayload,
   ProviderApprovalDecision,
@@ -46,6 +47,12 @@ import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
 } from "./composerMentionDrag";
+import {
+  composerMentionPathFromAbsolute,
+  hostPathUsableOnPlatform,
+  partitionDroppedComposerFiles,
+  resolveOsDroppedFilePath,
+} from "./composerFileDrop";
 import {
   type ComposerImageAttachment,
   type DraftId,
@@ -557,6 +564,8 @@ export interface ChatComposerProps {
   keybindings: ResolvedKeybindingsConfig;
   terminalOpen: boolean;
   gitCwd: string | null;
+  canResolveHostFilePaths: boolean;
+  environmentPlatformOs: ExecutionEnvironmentPlatformOs | null;
 
   // Refs the parent needs kept in sync
   promptRef: React.RefObject<string>;
@@ -643,6 +652,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     keybindings,
     terminalOpen,
     gitCwd,
+    canResolveHostFilePaths,
+    environmentPlatformOs,
     promptRef,
     composerRef,
     composerImagesRef,
@@ -2371,13 +2382,44 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Callbacks: paste / drag
   // ------------------------------------------------------------------
+  const resolveDroppedFileAbsolutePath = useCallback(
+    (file: File): string | null => {
+      if (!canResolveHostFilePaths) return null;
+      const absolutePath = resolveOsDroppedFilePath(file);
+      if (absolutePath === null) return null;
+      return hostPathUsableOnPlatform(absolutePath, environmentPlatformOs) ? absolutePath : null;
+    },
+    [canResolveHostFilePaths, environmentPlatformOs],
+  );
+
+  // Pasted non-image files become mention chips at the cursor (handled inside
+  // the editor's paste command); this resolves the path they are mentioned by.
+  const resolvePastedFilePath = useCallback(
+    (file: File): string | null => {
+      const absolutePath = resolveDroppedFileAbsolutePath(file);
+      if (absolutePath === null) return null;
+      return composerMentionPathFromAbsolute(absolutePath, gitCwd);
+    },
+    [gitCwd, resolveDroppedFileAbsolutePath],
+  );
+
   const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
     const files = Array.from(event.clipboardData.files);
     if (files.length === 0) return;
-    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
-    if (imageFiles.length === 0) return;
     event.preventDefault();
-    void addComposerImages(imageFiles);
+    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+    if (imageFiles.length > 0) {
+      void addComposerImages(imageFiles);
+    }
+    const firstUnresolved = files.find(
+      (file) => !file.type.startsWith("image/") && resolveDroppedFileAbsolutePath(file) === null,
+    );
+    if (firstUnresolved !== undefined && activeThreadId) {
+      setThreadError(
+        activeThreadId,
+        `'${firstUnresolved.name}' can't be mentioned in this environment. Only image files can be attached.`,
+      );
+    }
   };
 
   const onComposerDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
@@ -2410,8 +2452,38 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     event.preventDefault();
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
-    const files = Array.from(event.dataTransfer.files);
-    void addComposerImages(files);
+    // Images keep the attachment flow; other files become path mentions so
+    // the agent reads them where they already live on disk.
+    const dropped = partitionDroppedComposerFiles(
+      Array.from(event.dataTransfer.files),
+      resolveDroppedFileAbsolutePath,
+      gitCwd,
+    );
+    if (dropped.imageFiles.length > 0) {
+      void addComposerImages(dropped.imageFiles);
+    }
+    // After addComposerImages: its synchronous validation clears the thread
+    // error, and this message must survive a mixed drop.
+    const firstUnresolved = dropped.unresolvedFileNames[0];
+    if (firstUnresolved !== undefined && activeThreadId) {
+      setThreadError(
+        activeThreadId,
+        `'${firstUnresolved}' can't be mentioned in this environment. Only image files can be attached.`,
+      );
+    }
+    if (dropped.mentionText !== null) {
+      // No focusComposer() here: the insert path focuses on the next frame,
+      // and focusing synchronously during the drop would sync stale editor
+      // state back over the inserted mention.
+      if (!insertComposerTextAtEnd(dropped.mentionText, { ensureLeadingBoundary: true })) {
+        toastManager.add({
+          type: "error",
+          title: "Unable to add to chat",
+          description: "The composer is busy; try again once it is ready.",
+        });
+      }
+      return;
+    }
     focusComposer();
   };
 
@@ -3038,6 +3110,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 onChange={onPromptChange}
                 onCommandKeyDown={onComposerCommandKey}
                 onPaste={onComposerPaste}
+                resolvePastedFilePath={resolvePastedFilePath}
                 placeholder={
                   isComposerApprovalState
                     ? (activePendingApproval?.detail ?? "Resolve this approval request to continue")

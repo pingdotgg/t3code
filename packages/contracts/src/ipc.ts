@@ -1037,6 +1037,12 @@ export interface DesktopBridge {
   setWslOnly: (enabled: boolean) => Promise<DesktopWslState>;
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
   /**
+   * Resolve the on-disk path of a File dropped from the OS. Electron >= 32
+   * removed `File.path`, so the renderer has no other way to learn where a
+   * dropped file lives. Optional: absent on web builds and older shells.
+   */
+  getPathForFile?: (file: File) => string;
+  /**
    * Multi-select JSON file picker that opens in the VS Code extensions
    * directory when one exists. Optional: older desktop builds lack it, and
    * web callers fall back to a plain file input.
