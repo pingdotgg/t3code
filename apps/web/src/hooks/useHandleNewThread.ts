@@ -4,11 +4,12 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { DEFAULT_RUNTIME_MODE, type ScopedProjectRef } from "@t3tools/contracts";
+import { DEFAULT_RUNTIME_MODE, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import {
   markPromotedDraftThreadByRef,
+  type DraftId,
   type DraftThreadEnvMode,
   type DraftThreadState,
   useComposerDraftStore,
@@ -52,7 +53,10 @@ export function useNewThreadHandler() {
         startFromOrigin?: boolean;
         replace?: boolean;
       },
-    ): Promise<void> => {
+      // Which draft the thread ended up in, so a caller that has something to put in it — a
+      // prepared checkout, a task to write — addresses that one rather than looking the project
+      // up again and finding whichever draft it happens to hold.
+    ): Promise<{ draftId: DraftId; threadId: ThreadId }> => {
       const {
         getComposerDraft,
         getDraftSessionByLogicalProjectKey,
@@ -195,17 +199,22 @@ export function useNewThreadHandler() {
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             },
           );
+          const opened = {
+            draftId: reusableStoredDraftThread.draftId,
+            threadId: reusableStoredDraftThread.threadId,
+          };
           if (
             currentRouteTarget?.kind === "draft" &&
             currentRouteTarget.draftId === reusableStoredDraftThread.draftId
           ) {
-            return;
+            return opened;
           }
           await router.navigate({
             to: "/draft/$draftId",
             params: { draftId: reusableStoredDraftThread.draftId },
             replace: options?.replace ?? false,
           });
+          return opened;
         })();
       }
 
@@ -238,7 +247,10 @@ export function useNewThreadHandler() {
           ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
           ...(hasStartFromOriginOption ? { startFromOrigin: options?.startFromOrigin } : {}),
         });
-        return Promise.resolve();
+        return Promise.resolve({
+          draftId: currentRouteTarget.draftId,
+          threadId: latestActiveDraftThread.threadId,
+        });
       }
 
       const draftId = newDraftId();
@@ -276,6 +288,7 @@ export function useNewThreadHandler() {
           params: { draftId },
           replace: options?.replace ?? false,
         });
+        return { draftId, threadId };
       })();
     },
     [getCurrentRouteTarget, primaryServerSettings, projectGroupingSettings, projects, router],

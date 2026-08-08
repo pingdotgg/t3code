@@ -1,6 +1,15 @@
-import type { ContextMenuItem, PreviewSessionSnapshot } from "@t3tools/contracts";
+import type { ContextMenuItem, PreviewSessionSnapshot, PullRequestState } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
-import { Bot, FileDiff, Files, Globe2, Plus, TerminalSquare, X } from "lucide-react";
+import {
+  Bot,
+  FileDiff,
+  Files,
+  GitPullRequest,
+  Globe2,
+  Plus,
+  TerminalSquare,
+  X,
+} from "lucide-react";
 import {
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
@@ -44,17 +53,33 @@ interface RightPanelTabsProps {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
+  onAddPullRequest: () => void;
   onAddAgents: () => void;
   browserAvailable: boolean;
+  terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
+  pullRequestAvailable: boolean;
+  agentsAvailable: boolean;
+  pullRequestStatuses?: Readonly<Record<string, PullRequestTabStatus>>;
   children: ReactNode;
+}
+
+export interface PullRequestTabStatus {
+  projectId: string;
+  repository: string;
+  number: number;
+  state: PullRequestState;
+  isDraft: boolean;
 }
 
 const SURFACE_DISABLED_REASONS = {
   browser: "Browser previews are only available in the T3 Code desktop app.",
+  terminal: "Terminal surfaces are only available from a project thread.",
   files: "Files are only available when a project is open.",
   diff: "Diff is only available for server threads in Git repositories.",
+  pullRequest: "This thread's branch has no pull request yet.",
+  agents: "Agents are only available from a thread.",
 } as const;
 
 type TabContextMenuAction = "copy-path" | "close" | "close-others" | "close-to-right" | "close-all";
@@ -92,10 +117,14 @@ function RightPanelEmptyState(props: {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
+  onAddPullRequest: () => void;
   onAddAgents: () => void;
   browserAvailable: boolean;
+  terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
+  pullRequestAvailable: boolean;
+  agentsAvailable: boolean;
 }) {
   const actions = [
     {
@@ -104,14 +133,16 @@ function RightPanelEmptyState(props: {
       icon: Globe2,
       available: props.browserAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.browser,
+      centered: false,
       onClick: props.onAddBrowser,
     },
     {
       label: "Terminal",
       description: "Start a shell in this workspace.",
       icon: TerminalSquare,
-      available: true,
-      disabledReason: null,
+      available: props.terminalAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.terminal,
+      centered: false,
       onClick: props.onAddTerminal,
     },
     {
@@ -120,6 +151,7 @@ function RightPanelEmptyState(props: {
       icon: Files,
       available: props.filesAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.files,
+      centered: false,
       onClick: props.onAddFiles,
     },
     {
@@ -128,14 +160,25 @@ function RightPanelEmptyState(props: {
       icon: FileDiff,
       available: props.diffAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.diff,
+      centered: false,
       onClick: props.onAddDiff,
+    },
+    {
+      label: "Pull request",
+      description: "Open the pull request for this thread's branch.",
+      icon: GitPullRequest,
+      available: props.pullRequestAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.pullRequest,
+      centered: true,
+      onClick: props.onAddPullRequest,
     },
     {
       label: "Agents",
       description: "Watch subagents and workflows run.",
       icon: Bot,
-      available: true,
-      disabledReason: null,
+      available: props.agentsAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.agents,
+      centered: false,
       onClick: props.onAddAgents,
     },
   ] as const;
@@ -152,6 +195,9 @@ function RightPanelEmptyState(props: {
         <div className="grid grid-cols-2 gap-2">
           {actions.map((action) => {
             const Icon = action.icon;
+            const placementClass = action.centered
+              ? "col-span-2 w-[calc(50%-0.25rem)] justify-self-center"
+              : undefined;
             const content = (
               <>
                 <Icon className="mb-3 size-5" />
@@ -167,7 +213,10 @@ function RightPanelEmptyState(props: {
                   key={action.label}
                   type="button"
                   onClick={action.onClick}
-                  className="flex min-h-28 w-full flex-col items-start rounded-lg border border-border/80 bg-card p-4 text-left transition hover:border-border hover:bg-accent/60 dark:border-transparent dark:shadow-none dark:inset-ring-1 dark:inset-ring-white/5"
+                  className={cn(
+                    "flex min-h-28 w-full flex-col items-start rounded-lg border border-border/80 bg-card p-4 text-left transition hover:border-border hover:bg-accent/60 dark:border-transparent dark:shadow-none dark:inset-ring-1 dark:inset-ring-white/5",
+                    placementClass,
+                  )}
                 >
                   {content}
                 </button>
@@ -176,7 +225,10 @@ function RightPanelEmptyState(props: {
             const disabledCard = (
               <button
                 type="button"
-                className="flex min-h-28 w-full cursor-not-allowed flex-col items-start rounded-lg border border-border/80 bg-card p-4 text-left opacity-40 dark:border-transparent dark:shadow-none dark:inset-ring-1 dark:inset-ring-white/5"
+                className={cn(
+                  "flex min-h-28 w-full cursor-not-allowed flex-col items-start rounded-lg border border-border/80 bg-card p-4 text-left opacity-40 dark:border-transparent dark:shadow-none dark:inset-ring-1 dark:inset-ring-white/5",
+                  placementClass,
+                )}
                 aria-disabled="true"
               >
                 {content}
@@ -213,6 +265,8 @@ function surfaceTitle(
         terminalLabelsById.get(surface.activeTerminalId) ??
         getTerminalLabel(surface.activeTerminalId)
       );
+    case "pull-request":
+      return `#${surface.number}`;
     case "agents":
       return "Agents";
     case "preview": {
@@ -248,10 +302,12 @@ function SurfaceIcon({
   surface,
   sessions,
   theme,
+  pullRequestStatuses,
 }: {
   surface: RightPanelSurface;
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>;
   theme: "light" | "dark";
+  pullRequestStatuses: Readonly<Record<string, PullRequestTabStatus>> | undefined;
 }) {
   switch (surface.kind) {
     case "preview": {
@@ -274,6 +330,20 @@ function SurfaceIcon({
       );
     case "terminal":
       return <TerminalSquare className="size-3 shrink-0" />;
+    case "pull-request": {
+      const status = pullRequestStatuses?.[surface.id] ?? null;
+      const toneClassName =
+        status?.state === "merged"
+          ? "text-violet-600 dark:text-violet-300/90"
+          : status?.state === "closed"
+            ? "text-red-600 dark:text-red-300/90"
+            : status?.isDraft
+              ? "text-zinc-500 dark:text-zinc-400/80"
+              : status?.state === "open"
+                ? "text-emerald-600 dark:text-emerald-300/90"
+                : "text-muted-foreground";
+      return <GitPullRequest className={cn("size-3 shrink-0", toneClassName)} />;
+    }
     case "agents":
       return <Bot className="size-3 shrink-0" />;
   }
@@ -369,7 +439,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         className={cn(
           "workspace-topbar gap-1 pl-2",
           props.mode !== "inline" && "[--workspace-topbar-height:--spacing(11)]",
-          props.mode === "inline" ? "pr-28" : "pr-3",
+          props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3",
           ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
@@ -412,6 +482,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                         surface={surface}
                         sessions={props.previewSessions}
                         theme={resolvedTheme}
+                        pullRequestStatuses={props.pullRequestStatuses}
                       />
                       {pending ? (
                         <span
@@ -456,7 +527,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     <Globe2 />
                     Browser
                   </SurfaceMenuItem>
-                  <SurfaceMenuItem available onClick={props.onAddTerminal}>
+                  <SurfaceMenuItem
+                    available={props.terminalAvailable}
+                    disabledReason={SURFACE_DISABLED_REASONS.terminal}
+                    onClick={props.onAddTerminal}
+                  >
                     <TerminalSquare />
                     Terminal
                   </SurfaceMenuItem>
@@ -476,7 +551,19 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     <FileDiff />
                     Diff
                   </SurfaceMenuItem>
-                  <SurfaceMenuItem available onClick={props.onAddAgents}>
+                  <SurfaceMenuItem
+                    available={props.pullRequestAvailable}
+                    disabledReason={SURFACE_DISABLED_REASONS.pullRequest}
+                    onClick={props.onAddPullRequest}
+                  >
+                    <GitPullRequest />
+                    Pull request
+                  </SurfaceMenuItem>
+                  <SurfaceMenuItem
+                    available={props.agentsAvailable}
+                    disabledReason={SURFACE_DISABLED_REASONS.agents}
+                    onClick={props.onAddAgents}
+                  >
                     <Bot />
                     Agents
                   </SurfaceMenuItem>
@@ -494,10 +581,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddTerminal={props.onAddTerminal}
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
+            onAddPullRequest={props.onAddPullRequest}
             onAddAgents={props.onAddAgents}
             browserAvailable={props.browserAvailable}
+            terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}
+            pullRequestAvailable={props.pullRequestAvailable}
+            agentsAvailable={props.agentsAvailable}
           />
         ) : (
           props.children
