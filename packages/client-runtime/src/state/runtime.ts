@@ -74,6 +74,11 @@ export interface AtomCommandOptions {
   readonly reportDefect?: boolean;
 }
 
+export interface AtomQueryOptions extends AtomCommandOptions {
+  /** Re-run a retained query before reading it, even while its cached value is still fresh. */
+  readonly refresh?: boolean;
+}
+
 export interface AtomCommandReporter {
   readonly warn: (message: string, cause: Cause.Cause<unknown>) => void;
   readonly error: (message: string, cause: Cause.Cause<unknown>) => void;
@@ -329,9 +334,12 @@ export async function executeAtomCommand<A, E>(
 export async function executeAtomQuery<A, E>(
   registry: AtomRegistry.AtomRegistry,
   atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
-  options: AtomCommandOptions = {},
+  options: AtomQueryOptions = {},
   reporter: AtomCommandReporter = console,
 ): Promise<AtomCommandResult<A, E>> {
+  if (options.refresh) {
+    registry.refresh(atom);
+  }
   const query = Effect.scoped(
     Effect.gen(function* () {
       yield* AtomRegistry.mount(registry, atom);

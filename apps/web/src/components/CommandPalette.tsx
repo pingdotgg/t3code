@@ -568,6 +568,7 @@ function OpenCommandPaletteDialog(props: {
   const loadBrowsePath = useAtomQueryRunner(filesystemEnvironment.browse, {
     reportFailure: false,
     reportDefect: false,
+    refresh: true,
   });
   const cloneRepository = useAtomCommand(sourceControlEnvironment.cloneRepository, {
     reportFailure: false,

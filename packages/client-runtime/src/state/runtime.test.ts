@@ -296,6 +296,36 @@ describe("executeAtomQuery", () => {
 
     registry.dispose();
   });
+
+  it("can refresh a retained query while its cached value is still fresh", async () => {
+    let value = "before";
+    const atom = Atom.make(Effect.sync(() => value)).pipe(
+      Atom.swr({ staleTime: 60_000, revalidateOnMount: true }),
+      Atom.setIdleTTL(60_000),
+    );
+    const registry = AtomRegistry.make();
+
+    const initial = await executeAtomQuery(registry, atom);
+    expect(initial._tag).toBe("Success");
+    if (initial._tag === "Success") {
+      expect(initial.value).toBe("before");
+    }
+
+    value = "after";
+    const cached = await executeAtomQuery(registry, atom);
+    expect(cached._tag).toBe("Success");
+    if (cached._tag === "Success") {
+      expect(cached.value).toBe("before");
+    }
+
+    const refreshed = await executeAtomQuery(registry, atom, { refresh: true });
+    expect(refreshed._tag).toBe("Success");
+    if (refreshed._tag === "Success") {
+      expect(refreshed.value).toBe("after");
+    }
+
+    registry.dispose();
+  });
 });
 
 describe("runtime command runner", () => {
