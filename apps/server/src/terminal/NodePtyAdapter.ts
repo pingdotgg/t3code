@@ -148,7 +148,7 @@ export const make = Effect.fn("NodePtyAdapter.make")(function* (
             cols: input.cols,
             rows: input.rows,
             env: input.env,
-            name: platform === "win32" ? "xterm-color" : "xterm-256color",
+            name: "xterm-256color",
           }),
         catch: (cause) =>
           new PtyAdapter.PtySpawnError({
