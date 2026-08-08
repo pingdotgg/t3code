@@ -145,7 +145,11 @@ import {
   sortSettledThreadsForSidebar,
   sortThreadsForSidebar,
 } from "./Sidebar.logic";
-import { SidebarSettledDivider, SidebarSettledLifecycleControls } from "./SidebarArchiveControls";
+import {
+  SIDEBAR_LIFECYCLE_BUTTON_SURFACE_CLASS_NAME,
+  SidebarSettledDivider,
+  SidebarSettledLifecycleControls,
+} from "./SidebarArchiveControls";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
   prStatusIndicator,
@@ -197,8 +201,6 @@ const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> =
   separate: "Keep separate",
 };
 
-const SIDEBAR_LIFECYCLE_BUTTON_SURFACE_CLASS_NAME =
-  "cursor-pointer rounded-md bg-transparent text-muted-foreground hover:text-foreground";
 const SIDEBAR_ROW_LIFECYCLE_BUTTON_CLASS_NAME = cn(
   "-mr-1 inline-flex h-full items-center gap-1 px-1.5 text-xs",
   SIDEBAR_LIFECYCLE_BUTTON_SURFACE_CLASS_NAME,

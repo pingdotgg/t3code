@@ -4,7 +4,7 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import { cn } from "~/lib/utils";
 import { shouldRenderSidebarArchiveAll } from "./Sidebar.logic";
 
-const SIDEBAR_LIFECYCLE_BUTTON_SURFACE_CLASS_NAME =
+export const SIDEBAR_LIFECYCLE_BUTTON_SURFACE_CLASS_NAME =
   "cursor-pointer rounded-md bg-transparent text-muted-foreground hover:text-foreground";
 const SIDEBAR_ICON_LIFECYCLE_BUTTON_CLASS_NAME = cn(
   "inline-flex size-6 items-center justify-center",
