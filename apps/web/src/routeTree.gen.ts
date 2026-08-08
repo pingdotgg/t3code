@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as UsageRouteImport } from './routes/usage'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PairRouteImport } from './routes/pair'
 import { Route as ConnectRouteImport } from './routes/connect'
@@ -20,13 +21,17 @@ import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybi
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
-import { Route as SettingsBetaRouteImport } from './routes/settings.beta'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
+const UsageRoute = UsageRouteImport.update({
+  id: '/usage',
+  path: '/usage',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -81,11 +86,6 @@ const SettingsConnectionsRoute = SettingsConnectionsRouteImport.update({
   path: '/connections',
   getParentRoute: () => SettingsRoute,
 } as any)
-const SettingsBetaRoute = SettingsBetaRouteImport.update({
-  id: '/beta',
-  path: '/beta',
-  getParentRoute: () => SettingsRoute,
-} as any)
 const SettingsArchivedRoute = SettingsArchivedRouteImport.update({
   id: '/archived',
   path: '/archived',
@@ -118,10 +118,10 @@ export interface FileRoutesByFullPath {
   '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/usage': typeof UsageRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
-  '/settings/beta': typeof SettingsBetaRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -135,10 +135,10 @@ export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/usage': typeof UsageRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
-  '/settings/beta': typeof SettingsBetaRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -155,10 +155,10 @@ export interface FileRoutesById {
   '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/usage': typeof UsageRoute
   '/connect_/callback': typeof ConnectCallbackRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
-  '/settings/beta': typeof SettingsBetaRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -176,10 +176,10 @@ export interface FileRouteTypes {
     | '/connect'
     | '/pair'
     | '/settings'
+    | '/usage'
     | '/connect/callback'
     | '/settings/appearance'
     | '/settings/archived'
-    | '/settings/beta'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
@@ -193,10 +193,10 @@ export interface FileRouteTypes {
     | '/connect'
     | '/pair'
     | '/settings'
+    | '/usage'
     | '/connect/callback'
     | '/settings/appearance'
     | '/settings/archived'
-    | '/settings/beta'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
@@ -212,10 +212,10 @@ export interface FileRouteTypes {
     | '/connect'
     | '/pair'
     | '/settings'
+    | '/usage'
     | '/connect_/callback'
     | '/settings/appearance'
     | '/settings/archived'
-    | '/settings/beta'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
@@ -232,11 +232,19 @@ export interface RootRouteChildren {
   ConnectRoute: typeof ConnectRoute
   PairRoute: typeof PairRoute
   SettingsRoute: typeof SettingsRouteWithChildren
+  UsageRoute: typeof UsageRoute
   ConnectCallbackRoute: typeof ConnectCallbackRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/usage': {
+      id: '/usage'
+      path: '/usage'
+      fullPath: '/usage'
+      preLoaderRoute: typeof UsageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings': {
       id: '/settings'
       path: '/settings'
@@ -314,13 +322,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsConnectionsRouteImport
       parentRoute: typeof SettingsRoute
     }
-    '/settings/beta': {
-      id: '/settings/beta'
-      path: '/beta'
-      fullPath: '/settings/beta'
-      preLoaderRoute: typeof SettingsBetaRouteImport
-      parentRoute: typeof SettingsRoute
-    }
     '/settings/archived': {
       id: '/settings/archived'
       path: '/archived'
@@ -376,7 +377,6 @@ const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 interface SettingsRouteChildren {
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
   SettingsArchivedRoute: typeof SettingsArchivedRoute
-  SettingsBetaRoute: typeof SettingsBetaRoute
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
@@ -388,7 +388,6 @@ interface SettingsRouteChildren {
 const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsAppearanceRoute: SettingsAppearanceRoute,
   SettingsArchivedRoute: SettingsArchivedRoute,
-  SettingsBetaRoute: SettingsBetaRoute,
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
@@ -406,6 +405,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConnectRoute: ConnectRoute,
   PairRoute: PairRoute,
   SettingsRoute: SettingsRouteWithChildren,
+  UsageRoute: UsageRoute,
   ConnectCallbackRoute: ConnectCallbackRoute,
 }
 export const routeTree = rootRouteImport
