@@ -9,7 +9,7 @@
  * access is intentionally named as such so environment-sensitive consumers
  * cannot silently read the wrong server's settings.
  */
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -25,6 +25,17 @@ import {
   type UnifiedSettings,
 } from "@t3tools/contracts/settings";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import {
+  acknowledgePendingServerSettings,
+  applyPendingServerPatches,
+  getPendingServerPatches,
+  getPendingServerPatchForDispatch,
+  NO_PENDING_SERVER_PATCHES,
+  type PendingServerPatch,
+  retainPendingServerPatch,
+  settlePendingServerPatch,
+  subscribePendingServerPatches,
+} from "./pendingServerSettings";
 import { ensureLocalApi } from "~/localApi";
 import {
   getThemeDefinition,
@@ -48,6 +59,7 @@ let clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
 let clientSettingsHydrated = false;
 let clientSettingsHydrationPromise: Promise<void> | null = null;
 let clientSettingsHydrationGeneration = 0;
+const serverSettingsWriteQueueByEnvironment = new Map<EnvironmentId, Promise<void>>();
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -150,6 +162,17 @@ function persistClientSettings(settings: ClientSettings): void {
     });
 }
 
+function usePendingServerPatches(
+  environmentId: EnvironmentId | null,
+): ReadonlyArray<PendingServerPatch> {
+  const getSnapshot = useCallback(() => getPendingServerPatches(environmentId), [environmentId]);
+  return useSyncExternalStore(
+    subscribePendingServerPatches,
+    getSnapshot,
+    () => NO_PENDING_SERVER_PATCHES,
+  );
+}
+
 // ── Key sets for routing patches ─────────────────────────────────────
 
 const SERVER_SETTINGS_KEYS = new Set<string>(Struct.keys(ServerSettings.fields));
@@ -208,14 +231,26 @@ export function mergeEnvironmentSettings(
 }
 
 function useMergedSettings<T>(
+  environmentId: EnvironmentId | null,
   serverSettings: ServerSettings,
   selector: ((settings: UnifiedSettings) => T) | undefined,
 ): T {
   const clientSettings = useClientSettingsValue();
+  const pendingPatches = usePendingServerPatches(environmentId);
+  useEffect(() => {
+    if (environmentId) {
+      acknowledgePendingServerSettings(environmentId, serverSettings);
+    }
+  }, [environmentId, serverSettings]);
+
+  const optimisticServerSettings = useMemo<ServerSettings>(
+    () => applyPendingServerPatches(serverSettings, pendingPatches),
+    [pendingPatches, serverSettings],
+  );
 
   const merged = useMemo<UnifiedSettings>(
-    () => mergeEnvironmentSettings(serverSettings, clientSettings),
-    [clientSettings, serverSettings],
+    () => mergeEnvironmentSettings(optimisticServerSettings, clientSettings),
+    [clientSettings, optimisticServerSettings],
   );
 
   return useMemo(() => (selector ? selector(merged) : (merged as T)), [merged, selector]);
@@ -284,23 +319,27 @@ export function useEnvironmentSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
   const serverSettings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
-  return useMergedSettings(serverSettings ?? DEFAULT_SERVER_SETTINGS, selector);
+  return useMergedSettings(environmentId, serverSettings ?? DEFAULT_SERVER_SETTINGS, selector);
 }
 
 /** Primary-only settings access for the settings UI and other explicitly global surfaces. */
 export function usePrimarySettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
-  return useMergedSettings(useAtomValue(primaryServerSettingsAtom), selector);
+  const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  return useMergedSettings(environmentId, useAtomValue(primaryServerSettingsAtom), selector);
 }
 
 /**
  * Returns an updater that routes each key to the correct backing store.
  *
- * Server keys are optimistically patched in atom-backed server state, then
+ * Server keys are applied optimistically through `./pendingServerSettings` and
  * persisted via RPC. Client keys go through client persistence.
  */
-function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
+function useUpdateSettingsTarget(
+  environmentId: EnvironmentId | null,
+  serverSettings: ServerSettings,
+) {
   const persistServerSettings = useAtomCommand(
     serverEnvironment.updateSettings,
     "server settings update",
@@ -311,9 +350,40 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
 
       if (Object.keys(serverPatch).length > 0) {
         if (environmentId) {
-          void persistServerSettings({
+          const optimisticBase = applyPendingServerPatches(
+            serverSettings,
+            getPendingServerPatches(environmentId),
+          );
+          const pendingId = retainPendingServerPatch(
             environmentId,
-            input: { patch: serverPatch },
+            serverPatch,
+            optimisticBase,
+            serverSettings,
+          );
+          const previous =
+            serverSettingsWriteQueueByEnvironment.get(environmentId) ?? Promise.resolve();
+          const current = previous
+            .then(async () => {
+              const pendingPatch = getPendingServerPatchForDispatch(environmentId, pendingId);
+              if (!pendingPatch) return;
+              const result = await persistServerSettings({
+                environmentId,
+                input: { patch: pendingPatch },
+              });
+              settlePendingServerPatch(
+                environmentId,
+                pendingId,
+                result._tag === "Success" ? result.value : null,
+              );
+            })
+            .catch(() => {
+              settlePendingServerPatch(environmentId, pendingId, null);
+            });
+          serverSettingsWriteQueueByEnvironment.set(environmentId, current);
+          void current.finally(() => {
+            if (serverSettingsWriteQueueByEnvironment.get(environmentId) === current) {
+              serverSettingsWriteQueueByEnvironment.delete(environmentId);
+            }
           });
         }
       }
@@ -324,18 +394,24 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
         });
       }
     },
-    [environmentId, persistServerSettings],
+    [environmentId, persistServerSettings, serverSettings],
   );
 
   return updateSettings;
 }
 
 export function useUpdateEnvironmentSettings(environmentId: EnvironmentId) {
-  return useUpdateSettingsTarget(environmentId);
+  const serverSettings =
+    useAtomValue(serverEnvironment.settingsValueAtom(environmentId)) ?? DEFAULT_SERVER_SETTINGS;
+  return useUpdateSettingsTarget(environmentId, serverSettings);
 }
 
 export function useUpdatePrimarySettings() {
-  return useUpdateSettingsTarget(usePrimaryEnvironment()?.environmentId ?? null);
+  const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  return useUpdateSettingsTarget(
+    environmentId,
+    useAtomValue(primaryServerSettingsAtom),
+  );
 }
 
 export function useUpdateClientSettings() {
