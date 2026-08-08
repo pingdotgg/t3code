@@ -1375,6 +1375,7 @@ export default function Sidebar() {
     unpinThread,
     reorderPinnedThread,
     deleteThread,
+    archiveThread,
   } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -1934,6 +1935,39 @@ export default function Sidebar() {
   );
   const [settledShelfExpanded, setSettledShelfExpanded] = useState(true);
   const toggleSettledShelf = useCallback(() => setSettledShelfExpanded((value) => !value), []);
+  // Empties the whole shelf in one action. Archive, not delete: "clear" is
+  // about the sidebar, so every row stays recoverable from Settings → Archived.
+  const clearSettledThreads = useCallback(async () => {
+    const count = settledThreads.length;
+    if (count === 0) return;
+    const api = readLocalApi();
+    if (!api) return;
+    const confirmed = await settlePromise(() =>
+      api.dialogs.confirm(
+        [
+          `Clear ${count} settled thread${count === 1 ? "" : "s"} from the sidebar?`,
+          "They move to Archived and can be restored from Settings.",
+        ].join("\n"),
+      ),
+    );
+    if (confirmed._tag === "Failure" || !confirmed.value) return;
+    for (const thread of settledThreads) {
+      const result = await archiveThread(scopeThreadRef(thread.environmentId, thread.id));
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to clear settled threads",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+        return;
+      }
+    }
+  }, [archiveThread, settledThreads]);
   const renderedSettledThreads = useMemo(() => {
     if (settledShelfExpanded) return visibleSettledThreads;
     if (routeThreadKey === null) return [];
@@ -3447,14 +3481,14 @@ export default function Sidebar() {
                       <li
                         key="settled-shelf-header"
                         data-thread-selection-safe
-                        className="list-none"
+                        className="mb-1 mt-3 flex list-none items-center gap-2 px-2.5"
                       >
                         <button
                           type="button"
                           onClick={toggleSettledShelf}
                           aria-expanded={settledShelfExpanded}
                           data-testid="sidebar-settled-shelf-toggle"
-                          className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
+                          className="flex flex-1 cursor-pointer items-center gap-2 text-left"
                         >
                           <span className="text-xs font-medium text-muted-foreground/50">
                             {settledShelfExpanded
@@ -3469,6 +3503,14 @@ export default function Sidebar() {
                               settledShelfExpanded && "rotate-180",
                             )}
                           />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={clearSettledThreads}
+                          data-testid="sidebar-settled-clear-all"
+                          className="shrink-0 cursor-pointer text-xs font-medium text-muted-foreground/50 transition-colors hover:text-sidebar-foreground"
+                        >
+                          Clear all
                         </button>
                       </li>,
                     );
