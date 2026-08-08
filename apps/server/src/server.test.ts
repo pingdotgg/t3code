@@ -7224,6 +7224,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   refName: "t3code/bootstrap-refName",
                   path: "/tmp/bootstrap-worktree",
                 },
+                output: {
+                  stdout: "installed dependencies\n",
+                  stderr: "Preparing worktree\n",
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                },
               };
             }),
         );
@@ -7308,12 +7314,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           ),
         );
 
-        assert.equal(response.sequence, 5);
+        assert.equal(response.sequence, 7);
         assert.deepEqual(
           dispatchedCommands.map((command) => command.type),
           [
             "thread.create",
+            "thread.activity.append",
             "thread.meta.update",
+            "thread.activity.append",
             "thread.activity.append",
             "thread.activity.append",
             "thread.turn.start",
@@ -7349,15 +7357,28 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         });
         assert.deepEqual(refreshStatus.mock.calls[0]?.[0], "/tmp/bootstrap-worktree");
 
-        const setupActivities = dispatchedCommands.filter(
+        const bootstrapActivities = dispatchedCommands.filter(
           (command): command is Extract<OrchestrationCommand, { type: "thread.activity.append" }> =>
             command.type === "thread.activity.append",
         );
         assert.deepEqual(
-          setupActivities.map((command) => command.activity.kind),
-          ["setup-script.requested", "setup-script.started"],
+          bootstrapActivities.map((command) => command.activity.kind),
+          [
+            "worktree.requested",
+            "worktree.created",
+            "setup-script.requested",
+            "setup-script.started",
+          ],
         );
-        const finalCommand = dispatchedCommands[4];
+        const worktreeCreatedActivity = bootstrapActivities.find(
+          (command) => command.activity.kind === "worktree.created",
+        );
+        assert.deepEqual(worktreeCreatedActivity?.activity.payload, {
+          worktreePath: "/tmp/bootstrap-worktree",
+          refName: "t3code/bootstrap-refName",
+          detail: "stdout\ninstalled dependencies\n\nstderr\nPreparing worktree",
+        });
+        const finalCommand = dispatchedCommands[6];
         assertTrue(finalCommand?.type === "thread.turn.start");
         if (finalCommand?.type === "thread.turn.start") {
           assert.equal(finalCommand.bootstrap, undefined);
@@ -7556,14 +7577,22 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
 
-      assert.equal(response.sequence, 4);
+      assert.equal(response.sequence, 6);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
-        ["thread.create", "thread.meta.update", "thread.activity.append", "thread.turn.start"],
+        [
+          "thread.create",
+          "thread.activity.append",
+          "thread.meta.update",
+          "thread.activity.append",
+          "thread.activity.append",
+          "thread.turn.start",
+        ],
       );
       const setupFailureActivity = dispatchedCommands.find(
         (command): command is Extract<OrchestrationCommand, { type: "thread.activity.append" }> =>
-          command.type === "thread.activity.append",
+          command.type === "thread.activity.append" &&
+          command.activity.kind === "setup-script.failed",
       );
       assert.equal(setupFailureActivity?.activity.kind, "setup-script.failed");
       assert.deepEqual(setupFailureActivity?.activity.payload, {
@@ -7677,10 +7706,17 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
 
-      assert.equal(response.sequence, 4);
+      assert.equal(response.sequence, 6);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
-        ["thread.create", "thread.meta.update", "thread.activity.append", "thread.turn.start"],
+        [
+          "thread.create",
+          "thread.activity.append",
+          "thread.meta.update",
+          "thread.activity.append",
+          "thread.activity.append",
+          "thread.turn.start",
+        ],
       );
       const setupActivities = dispatchedCommands.filter(
         (command): command is Extract<OrchestrationCommand, { type: "thread.activity.append" }> =>
@@ -7688,7 +7724,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       assert.deepEqual(
         setupActivities.map((command) => command.activity.kind),
-        ["setup-script.requested"],
+        ["worktree.requested", "worktree.created", "setup-script.requested"],
       );
       assertTrue(
         setupActivities.every((command) => command.activity.kind !== "setup-script.failed"),
@@ -7766,7 +7802,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.include(result.failure.message, "worktree exploded");
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
-        ["thread.create", "thread.delete"],
+        ["thread.create", "thread.activity.append", "thread.delete"],
       );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

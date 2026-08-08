@@ -2749,7 +2749,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
       : ["worktree", "add", worktreePath, input.refName];
 
-    yield* executeGit("GitVcsDriver.createWorktree", input.cwd, args, {
+    const output = yield* executeGit("GitVcsDriver.createWorktree", input.cwd, args, {
       fallbackErrorDetail: "git worktree add failed",
     });
 
@@ -2771,6 +2771,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       worktree: {
         path: worktreePath,
         refName: targetBranch,
+      },
+      output: {
+        stdout: output.stdout,
+        stderr: output.stderr,
+        stdoutTruncated: output.stdoutTruncated,
+        stderrTruncated: output.stderrTruncated,
       },
     };
   });
