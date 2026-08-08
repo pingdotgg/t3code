@@ -45,6 +45,13 @@ A user-visible log item attached to a thread. In [the contracts][1], activities 
 
 ### Thread lifecycle
 
+#### Settled
+
+A live thread that no longer needs attention in the active sidebar list. A thread can settle
+manually or automatically, remains available in the sidebar's **Settled** section, and returns to
+the active list when it is un-settled or new work begins. Settling does not archive the thread or
+remove its history. See [threadSettled.ts][26].
+
 #### Archive
 
 A reversible action that removes a thread from active thread lists without deleting its conversation
@@ -158,6 +165,7 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 - If you see `receipt`, think "async milestone signal, for tests".
 - If you see `checkpoint`, think "workspace snapshot for diff/restore".
 - If you see `quiesced`, think "all relevant follow-up work has gone idle".
+- If you see `settled`, think "live sidebar history that no longer needs active attention".
 - If you see `archive`, think "hide a thread from active lists without deleting its history".
 
 ## Related Docs
@@ -193,3 +201,4 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
 [25]: ../user/archive.md
+[26]: ../../packages/client-runtime/src/state/threadSettled.ts
