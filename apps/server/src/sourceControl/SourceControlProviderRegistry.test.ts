@@ -13,6 +13,7 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as BitbucketApi from "./BitbucketApi.ts";
+import * as ForgejoApi from "./ForgejoApi.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 import * as GitLabCli from "./GitLabCli.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
@@ -90,6 +91,7 @@ function makeRegistry(input: {
         processLayer,
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)({}),
+        Layer.mock(ForgejoApi.ForgejoApi)({}),
         Layer.mock(GitHubCli.GitHubCli)({}),
         Layer.mock(GitLabCli.GitLabCli)({}),
         ServerConfig.layerTest(process.cwd(), {
@@ -259,5 +261,41 @@ it.effect("falls back to a non-origin remote when origin is not configured", () 
     const provider = yield* registry.resolve({ cwd: "/repo" });
 
     assert.strictEqual(provider.kind, "azure-devops");
+  }),
+);
+
+it.effect("refineRemoteProvider refines a logged-in Forgejo remote on a non-origin upstream", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@github.com:pingdotgg/t3code.git" }],
+      process: {
+        run: (input) =>
+          input.command === "fj"
+            ? Effect.succeed(processOutput("pat-s@git.example.org"))
+            : Effect.succeed(processOutput("")),
+      },
+    });
+
+    const provider = yield* registry.refineRemoteProvider({
+      cwd: "/repo",
+      remoteName: "upstream",
+      remoteUrl: "git@git.example.org:owner/repo.git",
+    });
+
+    assert.strictEqual(provider?.kind, "forgejo");
+  }),
+);
+
+it.effect("refineRemoteProvider leaves a host with no matching login unrefined", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({ remotes: [] });
+
+    const provider = yield* registry.refineRemoteProvider({
+      cwd: "/repo",
+      remoteName: "origin",
+      remoteUrl: "git@git.example.org:owner/repo.git",
+    });
+
+    assert.strictEqual(provider?.kind, "unknown");
   }),
 );
