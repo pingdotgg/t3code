@@ -52,6 +52,14 @@ export const PROVIDER_OPTIONS: Array<{
     available: true,
     pickerSidebarBadge: "new",
   },
+  // T1 skeleton: the Aether adapter fails every session/turn operation until
+  // T3/T6 land, so the picker entry stays unavailable ("soon"), not live.
+  {
+    value: ProviderDriverKind.make("aether"),
+    label: "Aether",
+    available: false,
+    pickerSidebarBadge: "soon",
+  },
 ];
 
 export type WorkLogToolLifecycleStatus =

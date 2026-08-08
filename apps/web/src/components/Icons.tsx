@@ -663,6 +663,18 @@ export const OpenCodeIcon: Icon = (props) => (
   </svg>
 );
 
+export const AetherIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    preserveAspectRatio="xMidYMid"
+    viewBox="0 0 24 24"
+    className={cn("fill-[#6e72d6]", className)}
+  >
+    <path d="M12 2 22.5 21h-5.06L12 11.13 6.56 21H1.5L12 2Z" />
+    <path d="m12 15.4 3.1 5.6H8.9l3.1-5.6Z" />
+  </svg>
+);
+
 export const GithubCopilotIcon: Icon = ({ className, ...props }) => (
   <svg
     {...props}
