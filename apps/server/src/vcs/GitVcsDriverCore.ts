@@ -24,6 +24,7 @@ import {
   type ReviewDiffFileContentsInput,
   type ReviewDiffPreviewInput,
   type ReviewDiffPreviewSource,
+  type VcsProcessExitFailureKind,
   type VcsRef,
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3tools/shared/git";
@@ -395,6 +396,92 @@ function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string):
   const refName = trimmed.slice(prefix.length).trim();
   return refName.length > 0 ? refName : null;
 }
+
+/**
+ * Normalized category for a failing git command.
+ *
+ * Reuses the vocabulary `VcsProcess.classifyNonZeroExit` already established,
+ * so the reason a command failed survives as a bounded, non-secret-bearing
+ * value. Reading stderr to produce it is safe; keeping stderr is not, so the
+ * text is read here and goes no further.
+ */
+const classifyGitFailure = (stderr: string): VcsProcessExitFailureKind => {
+  const normalized = stderr.toLowerCase();
+  if (
+    normalized.includes("authentication failed") ||
+    normalized.includes("could not read username") ||
+    normalized.includes("could not read password") ||
+    normalized.includes("invalid username or password") ||
+    normalized.includes("authentication required") ||
+    // "...make sure you have the correct access rights and the repository exists."
+    normalized.includes("access rights") ||
+    // ssh names the methods it tried: "Permission denied (publickey)." A bare
+    // "permission denied" is a local filesystem error — `git init` into an
+    // unwritable directory reaches this function too, and telling someone to
+    // check their remote credentials would bury the actual problem.
+    normalized.includes("permission denied (") ||
+    // GitHub over https: "remote: Permission to owner/repo.git denied to user."
+    /remote:[^\n]*permission to [^\n]*denied/.test(normalized)
+  ) {
+    return "authentication";
+  }
+  if (normalized.includes("not found") || normalized.includes("does not exist")) {
+    return "not-found";
+  }
+  return "command-failed";
+};
+
+/**
+ * Caller-facing `detail` for a failing git command.
+ *
+ * Mirrors `VcsProcessExitError.fromProcessExit`: the classification is what
+ * makes the failure actionable, so it is turned into a fixed sentence rather
+ * than left for the caller to infer from an exit code. Every branch returns a
+ * constant — nothing derived from git's output crosses this boundary.
+ */
+const detailForGitFailure = (failureKind: VcsProcessExitFailureKind, fallback: string): string => {
+  switch (failureKind) {
+    case "authentication":
+      return "Git authentication failed. Check the credentials available to this host for the remote.";
+    case "not-found":
+      // Deliberately covers paths too: the match is broad enough to catch
+      // `path 'x' does not exist in 'HEAD'`, so the sentence must not promise
+      // the missing thing was a repository.
+      return "Git could not find something the command referred to — a repository, remote, ref, or path.";
+    case "command-failed":
+      return fallback;
+  }
+};
+
+/**
+ * Log annotation for a failing git command.
+ *
+ * Bounded and safe by construction — a category plus counts, never the output
+ * itself. Git echoes back its arguments and any hook output, so `stdout` and
+ * `stderr` can carry credentials and are capped only by `maxOutputBytes`
+ * (megabytes at some call sites); a log payload has to be as safe as a direct
+ * error attribute.
+ */
+const logFailedGitCommandOutput = (
+  command: {
+    readonly operation: string;
+    readonly cwd: string;
+    readonly args: ReadonlyArray<string>;
+  },
+  exitCode: number | null,
+  failureKind: VcsProcessExitFailureKind,
+  stdout: string,
+  stderr: string,
+): Effect.Effect<void> =>
+  Effect.logDebug(
+    `GitVcsDriver.commandFailed: ${command.operation} in ${command.cwd} ` +
+      `exited ${exitCode ?? "null"} (${command.args.length} arguments)`,
+    {
+      failureKind,
+      stdoutLength: stdout.length,
+      stderrLength: stderr.length,
+    },
+  );
 
 function isMissingGitCwdError(error: GitCommandError): boolean {
   if (!(error.cause instanceof PlatformError.PlatformError)) {
@@ -794,10 +881,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         yield* trace2Monitor.flush;
 
         if (!input.allowNonZeroExit && exitCode !== 0) {
+          const failureKind = classifyGitFailure(stderr.text);
+          yield* logFailedGitCommandOutput(
+            commandInput,
+            exitCode,
+            failureKind,
+            stdout.text,
+            stderr.text,
+          );
           return yield* new GitCommandError({
             ...gitCommandContext(commandInput),
-            detail: "Git command exited with a non-zero status.",
+            detail: detailForGitFailure(failureKind, "Git command exited with a non-zero status."),
             exitCode,
+            failureKind,
             stdoutLength: stdout.text.length,
             stderrLength: stderr.text.length,
           });
@@ -874,14 +970,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         if (options.allowNonZeroExit || result.exitCode === 0) {
           return Effect.succeed(result);
         }
-        return Effect.fail(
-          new GitCommandError({
-            ...gitCommandContext({ operation, cwd, args }),
-            detail: options.fallbackErrorDetail ?? "Git command exited with a non-zero status.",
-            ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
-            stdoutLength: result.stdout.length,
-            stderrLength: result.stderr.length,
-          }),
+        const failureKind = classifyGitFailure(result.stderr);
+        return logFailedGitCommandOutput(
+          { operation, cwd, args },
+          result.exitCode,
+          failureKind,
+          result.stdout,
+          result.stderr,
+        ).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new GitCommandError({
+                ...gitCommandContext({ operation, cwd, args }),
+                detail: detailForGitFailure(
+                  failureKind,
+                  options.fallbackErrorDetail ?? "Git command exited with a non-zero status.",
+                ),
+                ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+                failureKind,
+                stdoutLength: result.stdout.length,
+                stderrLength: result.stderr.length,
+              }),
+            ),
+          ),
         );
       }),
     );

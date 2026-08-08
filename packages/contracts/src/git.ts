@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceControl.ts";
-import { VcsDriverKind } from "./vcs.ts";
+import { VcsDriverKind, VcsProcessExitFailureKind } from "./vcs.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const GIT_LIST_BRANCHES_MAX_LIMIT = 200;
@@ -327,6 +327,7 @@ export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()(
   cwd: Schema.String,
   argumentCount: Schema.optional(Schema.Number),
   exitCode: Schema.optional(Schema.Number),
+  failureKind: Schema.optional(VcsProcessExitFailureKind),
   stdoutLength: Schema.optional(Schema.Number),
   stderrLength: Schema.optional(Schema.Number),
   outputLength: Schema.optional(Schema.Number),
