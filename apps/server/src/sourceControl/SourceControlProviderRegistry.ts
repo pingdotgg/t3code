@@ -81,6 +81,9 @@ function unsupportedProvider(
         reference: SourceControlProvider.transportSafeSourceControlErrorValue(input.reference),
         detail: `No ${kind} source control provider is registered.`,
       }),
+    // Absent CI status is a normal state (see the provider stubs), so an
+    // unregistered provider reports "no checks" rather than failing the lookup.
+    getChangeRequestChecks: () => Effect.succeed(null),
     createChangeRequest: (input) =>
       new SourceControlProviderError({
         provider: kind,
@@ -166,6 +169,11 @@ function bindProviderContext(
       }),
     getChangeRequest: (input) =>
       provider.getChangeRequest({
+        ...input,
+        context: input.context ?? context,
+      }),
+    getChangeRequestChecks: (input) =>
+      provider.getChangeRequestChecks({
         ...input,
         context: input.context ?? context,
       }),

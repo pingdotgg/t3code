@@ -11,6 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vite-plus/test";
@@ -28,6 +29,7 @@ import {
   TextGenerationError,
 } from "@t3tools/contracts";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import { decodeGitHubCheckRollupJson } from "../sourceControl/gitHubPullRequests.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -56,6 +58,8 @@ interface FakeGhScenario {
     headRepositoryNameWithOwner?: string | null;
     headRepositoryOwnerLogin?: string | null;
   };
+  /** Raw projected statusCheckRollup JSON returned by `pr view --json statusCheckRollup`. */
+  checkRollup?: string;
   repositoryCloneUrls?: Record<string, { url: string; sshUrl: string }>;
   failWith?: GitHubCli.GitHubCliError;
   /** Let this many gh calls succeed before failWith kicks in (default 0 = fail immediately). */
@@ -391,6 +395,12 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
       );
     }
 
+    // Must precede the general `pr view` branch: the checks lookup is also a
+    // `pr view`, but returns a rollup array rather than a PR object.
+    if (args[0] === "pr" && args[1] === "view" && args.includes("statusCheckRollup")) {
+      return Effect.succeed(fakeGhOutput((scenario.checkRollup ?? "[]") + "\n"));
+    }
+
     if (args[0] === "pr" && args[1] === "view") {
       const pullRequest: FakePullRequest = scenario.pullRequest ?? {
         number: 101,
@@ -555,6 +565,18 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
         }).pipe(
           Effect.map((result) => JSON.parse(result.stdout) as GitHubCli.GitHubPullRequestSummary),
         ),
+      getPullRequestChecks: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: ["pr", "view", input.reference, "--json", "statusCheckRollup", "--jq", "<rollup>"],
+        }).pipe(
+          Effect.map((result) => {
+            const raw = result.stdout.trim();
+            if (raw.length === 0) return null;
+            const decoded = decodeGitHubCheckRollupJson(raw);
+            return Result.isSuccess(decoded) ? decoded.success : null;
+          }),
+        ),
       getRepositoryCloneUrls: (input) =>
         execute({
           cwd: input.cwd,
@@ -715,7 +737,85 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseRef: "main",
         headRef: "feature/status-open-pr",
         state: "open",
+        checks: null,
       });
+    }),
+  );
+
+  it.effect("status carries the rolled-up CI state for an open PR", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/status-pr-checks"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-pr-checks"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 55,
+                title: "PR with failing checks",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/55",
+                baseRefName: "main",
+                headRefName: "feature/status-pr-checks",
+              },
+            ]),
+          ],
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          checkRollup: JSON.stringify([
+            { typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS", state: null },
+            { typename: "CheckRun", status: "COMPLETED", conclusion: "FAILURE", state: null },
+          ]),
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+      expect(status.pr?.checks).toEqual({
+        state: "failure",
+        total: 2,
+        passed: 1,
+        failed: 1,
+        pending: 0,
+      });
+    }),
+  );
+
+  it.effect("status leaves checks null for a settled PR without asking the provider", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/status-merged-no-checks"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-merged-no-checks"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 56,
+                title: "Merged PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/56",
+                baseRefName: "main",
+                headRefName: "feature/status-merged-no-checks",
+                state: "MERGED",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+      expect(status.pr?.state).toBe("merged");
+      expect(status.pr?.checks).toBeNull();
+      // CI on a settled PR isn't actionable, so it must not cost a provider call.
+      expect(ghCalls.some((call) => call.includes("statusCheckRollup"))).toBe(false);
     }),
   );
 
@@ -754,6 +854,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseRef: "main",
         headRef: "feature/status-trimmed-pr",
         state: "open",
+        checks: null,
       });
     }),
   );
@@ -806,6 +907,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseRef: "main",
         headRef: "feature/status-valid-pr-entry",
         state: "open",
+        checks: null,
       });
     }),
   );
@@ -856,6 +958,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseRef: "main",
         headRef: "feature/status-lowercase-state",
         state: "merged",
+        checks: null,
       });
     }),
   );
@@ -1119,6 +1222,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           baseRef: "main",
           headRef: "statemachine",
           state: "open",
+          checks: null,
         });
         expect(ghCalls).toContain(
           "pr list --head jasonLaster:statemachine --state all --limit 20 --json number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
@@ -1227,6 +1331,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           baseRef: "main",
           headRef: "effect-atom",
           state: "open",
+          checks: null,
         });
         expect(ghCalls.some((call) => call.includes("pr list --head upstream/effect-atom "))).toBe(
           false,
@@ -1278,6 +1383,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseRef: "main",
         headRef: "feature/status-merged-pr",
         state: "merged",
+        checks: null,
       });
     }),
   );
@@ -1357,6 +1463,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseRef: "main",
         headRef: "feature/status-open-over-merged",
         state: "open",
+        checks: null,
       });
     }),
   );

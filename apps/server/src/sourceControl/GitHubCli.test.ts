@@ -1,5 +1,6 @@
 import { assert, it, afterEach, describe, expect, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -108,6 +109,60 @@ describe("GitHubCli.layer", () => {
         cwd: "/repo",
         timeoutMs: 30_000,
       });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("rolls up check status and projects the rollup server-side", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              { typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS", state: null },
+              { typename: "CheckRun", status: "IN_PROGRESS", conclusion: null, state: null },
+              { typename: "StatusContext", status: null, conclusion: null, state: "SUCCESS" },
+            ]),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.getPullRequestChecks({ cwd: "/repo", reference: "42" });
+
+      assert.deepStrictEqual(result, {
+        state: "pending",
+        total: 3,
+        passed: 2,
+        failed: 0,
+        pending: 1,
+      });
+      // The --jq projection is what keeps a busy PR's rollup from crossing the
+      // process boundary at full size, so assert it is actually sent.
+      const call = mockRun.mock.calls[0]?.[0];
+      assert.include(call?.args ?? [], "--jq");
+      assert.include(call?.args ?? [], "statusCheckRollup");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("reports no check signal when a PR has an empty rollup", () =>
+    Effect.gen(function* () {
+      // `gh` prints nothing when the PR has no rollup at all.
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      assert.isNull(yield* gh.getPullRequestChecks({ cwd: "/repo", reference: "42" }));
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("surfaces a tagged error when the rollup payload is malformed", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("{not json")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const exit = yield* Effect.exit(gh.getPullRequestChecks({ cwd: "/repo", reference: "42" }));
+
+      assert.isTrue(Exit.isFailure(exit));
     }).pipe(Effect.provide(layer)),
   );
 

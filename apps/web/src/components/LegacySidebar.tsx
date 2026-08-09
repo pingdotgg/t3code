@@ -13,7 +13,8 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import {
-  ChangeRequestStatusIcon,
+  ChangeRequestStatusIconWithChecks,
+  prChecksIndicator,
   prStatusIndicator,
   PrStatusTooltipContent,
   resolveThreadPr,
@@ -453,6 +454,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     gitStatus: gitStatus.data,
   });
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
+  const prChecks = prChecksIndicator(pr);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isThreadRunning;
   const threadMetaClassName = isConfirmingArchive
@@ -683,16 +685,32 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                 render={
                   <button
                     type="button"
-                    aria-label={prStatus.tooltip}
+                    aria-label={
+                      prChecks ? `${prStatus.tooltip}. ${prChecks.label}` : prStatus.tooltip
+                    }
                     className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
                     onClick={handlePrClick}
                   >
-                    <ChangeRequestStatusIcon className="size-3" />
+                    <ChangeRequestStatusIconWithChecks
+                      checks={prChecks}
+                      className="size-3"
+                      // Mirrors resolveThreadRowClassName's surfaces so the
+                      // dot's ring matches whatever the row is painting. A
+                      // selected-but-inactive row uses row-selected, which is a
+                      // different color from row-active on several themes.
+                      ringClass={
+                        isActive
+                          ? "ring-sidebar-row-active"
+                          : isSelected
+                            ? "ring-sidebar-row-selected group-hover/menu-sub-item:ring-sidebar-row-active"
+                            : "ring-sidebar group-hover/menu-sub-item:ring-sidebar-row-hover"
+                      }
+                    />
                   </button>
                 }
               />
               <TooltipPopup side="top">
-                <PrStatusTooltipContent status={prStatus} />
+                <PrStatusTooltipContent status={prStatus} checks={prChecks} />
               </TooltipPopup>
             </Tooltip>
           )}

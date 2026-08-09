@@ -80,6 +80,8 @@ export const make = Effect.gen(function* () {
             }),
         ),
       ),
+    // Build status is not wired up for Bitbucket yet; null renders no indicator.
+    getChangeRequestChecks: () => Effect.succeed(null),
     createChangeRequest: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
       return bitbucket

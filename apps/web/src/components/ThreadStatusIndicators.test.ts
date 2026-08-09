@@ -2,6 +2,7 @@ import type { VcsStatusResult } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  prChecksIndicator,
   prStatusIndicator,
   resolveThreadPr,
   settledPrHoverColorClass,
@@ -86,6 +87,50 @@ describe("prStatusIndicator", () => {
     expect(prStatusIndicator({ ...closedPr, state: "closed" }, undefined)?.colorClass).toContain(
       "text-red-600",
     );
+  });
+});
+
+describe("prChecksIndicator", () => {
+  function prWithChecks(checks: NonNullable<VcsStatusResult["pr"]>["checks"]) {
+    const pr = status().pr;
+    if (!pr) throw new Error("Expected pull request fixture");
+    return { ...pr, checks };
+  }
+
+  it.each([
+    ["success", "bg-emerald-500", "Checks passing"],
+    ["failure", "bg-red-500", "Checks failing"],
+    ["pending", "bg-amber-500", "Checks running"],
+  ] as const)("maps %s to its dot color and label", (state, dotClass, label) => {
+    const indicator = prChecksIndicator(
+      prWithChecks({ state, total: 4, passed: 2, failed: 1, pending: 1 }),
+    );
+
+    expect(indicator?.dotClass).toContain(dotClass);
+    expect(indicator?.label).toBe(label);
+  });
+
+  it("summarizes counts against the total for the tooltip", () => {
+    expect(
+      prChecksIndicator(
+        prWithChecks({ state: "failure", total: 12, passed: 9, failed: 3, pending: 0 }),
+      )?.summary,
+    ).toBe("3 of 12 failed");
+  });
+
+  it("shows nothing when the server reports no check signal", () => {
+    expect(prChecksIndicator(prWithChecks(null))).toBeNull();
+  });
+
+  it("shows nothing when talking to a server that predates check status", () => {
+    // `checks` is an optional contract field, so an older server simply omits it.
+    const pr = status().pr;
+    if (!pr) throw new Error("Expected pull request fixture");
+    expect(prChecksIndicator(pr)).toBeNull();
+  });
+
+  it("shows nothing when there is no PR at all", () => {
+    expect(prChecksIndicator(null)).toBeNull();
   });
 });
 

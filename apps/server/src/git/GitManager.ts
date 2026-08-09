@@ -28,6 +28,7 @@ import {
   type VcsStatusRemoteResult,
   VcsStatusResult,
   ModelSelection,
+  type ChangeRequestChecks,
   type SourceControlWritingStyleSettings,
 } from "@t3tools/contracts";
 import {
@@ -527,13 +528,17 @@ function appendUnique(values: string[], next: string | null | undefined): void {
   values.push(trimmed);
 }
 
-function toStatusPr(pr: PullRequestInfo): {
+function toStatusPr(
+  pr: PullRequestInfo,
+  checks: ChangeRequestChecks | null = null,
+): {
   number: number;
   title: string;
   url: string;
   baseRef: string;
   headRef: string;
   state: "open" | "closed" | "merged";
+  checks: ChangeRequestChecks | null;
 } {
   return {
     number: pr.number,
@@ -542,6 +547,7 @@ function toStatusPr(pr: PullRequestInfo): {
     baseRef: pr.baseRefName,
     headRef: pr.headRefName,
     state: pr.state,
+    checks,
   };
 }
 
@@ -923,6 +929,29 @@ export const make = Effect.gen(function* () {
     prLookupFailureStreakByKey.set(key, streak);
     return prLookupFailureTtl(streak);
   };
+  /**
+   * CI status for a resolved PR. Only open PRs are asked about: checks on a
+   * merged or closed PR aren't actionable, and skipping them keeps settled
+   * threads from costing an extra provider call on every lookup refresh.
+   *
+   * Never fails. A checks lookup that errors (rate limit, provider without
+   * check support, malformed output) degrades to "no CI signal" rather than
+   * taking down the PR association the badge itself depends on.
+   */
+  const lookupPrChecks = Effect.fn("lookupPrChecks")(function* (
+    cwd: string,
+    pr: Pick<PullRequestInfo, "number" | "state">,
+  ) {
+    if (pr.state !== "open") {
+      return null;
+    }
+    return yield* sourceControlProvider(cwd).pipe(
+      Effect.flatMap((provider) =>
+        provider.getChangeRequestChecks({ cwd, reference: String(pr.number) }),
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+  });
   const prLookupCache = yield* Cache.makeWith(
     (key: string) => {
       const [cwd = "", branch = "", upstreamRef = ""] = key.split("\u0000");
@@ -935,10 +964,11 @@ export const make = Effect.gen(function* () {
         // Only skip when the branch is untracked as well: anything carrying an
         // upstream keeps the old behaviour.
         if (details.upstreamRef === null && (yield* isUnpublishedBranch(cwd, headContext))) {
-          return { latest: null, headContext };
+          return { latest: null, checks: null, headContext };
         }
         const latest = yield* findLatestPrForHeadContext(cwd, headContext);
-        return { latest, headContext };
+        const checks = latest === null ? null : yield* lookupPrChecks(cwd, latest);
+        return { latest, checks, headContext };
       });
     },
     {
@@ -1018,14 +1048,14 @@ export const make = Effect.gen(function* () {
     // `push -u`) must not orphan the fallback value for the same branch.
     const branchKey = `${cwd}\u0000${details.branch}`;
     return yield* Cache.get(prLookupCache, prLookupCacheKey(cwd, details)).pipe(
-      Effect.map(({ latest, headContext }) => {
+      Effect.map(({ latest, checks, headContext }) => {
         if (!latest) return { pr: null, headContext };
         // On the default branch, only surface open PRs.
         // Merged/closed matches are usually reverse-merge history, not the thread's PR context.
         if (details.isDefaultBranch && latest.state !== "open") {
           return { pr: null, headContext };
         }
-        return { pr: toStatusPr(latest), headContext };
+        return { pr: toStatusPr(latest, checks), headContext };
       }),
       Effect.tap(({ pr, headContext }) =>
         Effect.sync(() =>

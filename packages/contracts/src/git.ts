@@ -1,6 +1,10 @@
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceControl.ts";
+import {
+  ChangeRequestChecks,
+  SourceControlProviderError,
+  SourceControlProviderInfo,
+} from "./sourceControl.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
@@ -197,6 +201,11 @@ const VcsStatusChangeRequest = Schema.Struct({
   baseRef: TrimmedNonEmptyStringSchema,
   headRef: TrimmedNonEmptyStringSchema,
   state: VcsStatusChangeRequestState,
+  // Optional so a client can talk to a server that predates check status (and
+  // vice versa): an absent field must decode, never drop the whole PR badge.
+  // Null means "no CI signal" — provider can't report checks, none are
+  // configured, or the lookup failed.
+  checks: Schema.optional(Schema.NullOr(ChangeRequestChecks)),
 });
 
 const VcsStatusLocalShape = {

@@ -137,6 +137,8 @@ import {
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
+  ChangeRequestStatusIconWithChecks,
+  prChecksIndicator,
   prStatusIndicator,
   resolveThreadPr,
   settledPrHoverColorClass,
@@ -840,6 +842,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     currentGitBranch: gitStatus.data?.refName ?? null,
   });
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
+  const prChecks = prChecksIndicator(pr);
   const settledPrHoverClass = pr ? settledPrHoverColorClass(pr.state) : undefined;
   // Report the PR state up: the parent partitions rows with effectiveSettled,
   // and a merged/closed PR auto-settles a thread — data only rows have.
@@ -1022,6 +1025,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       "opacity-70 transition-opacity hover:opacity-100",
   );
 
+  // The CI dot punches out of whatever surface the row is currently painting,
+  // so the ring has to follow the same branches as rowSurfaceClassName above —
+  // otherwise the dot smears into the PR glyph on hover and selection.
+  const prChecksRingClass = cn(
+    props.isActive
+      ? "ring-sidebar-row-active"
+      : isSelected
+        ? "ring-sidebar-row-selected"
+        : "ring-sidebar group-hover/sidebar-row:ring-sidebar-row-hover",
+  );
+
   const title = isRenaming ? (
     <input
       autoFocus
@@ -1074,16 +1088,21 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         className={cn(
           // Sidebar chrome follows the interface font; tabular digits keep the
           // number from reflowing as PR states stream in.
-          "shrink-0 text-xs tabular-nums hover:underline",
+          "inline-flex shrink-0 items-center gap-1 text-xs tabular-nums hover:underline",
           variant === "slim" && variantAction === "unsettle"
             ? props.isActive
               ? "text-secondary-label"
               : cn("text-secondary-label transition-colors", settledPrHoverClass)
             : prStatus.colorClass,
         )}
-        aria-label={prStatus.tooltip}
+        aria-label={prChecks ? `${prStatus.tooltip}. ${prChecks.label}` : prStatus.tooltip}
       >
-        #{pr.number}
+        <ChangeRequestStatusIconWithChecks
+          checks={prChecks}
+          className="size-3"
+          ringClass={prChecksRingClass}
+        />
+        <span>#{pr.number}</span>
       </button>
     ) : null;
   const terminalStatusIcon = terminalStatus ? (

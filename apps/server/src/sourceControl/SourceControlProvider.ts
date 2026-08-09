@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type {
   ChangeRequest,
+  ChangeRequestChecks,
   ChangeRequestState,
   SourceControlProviderError,
   SourceControlProviderInfo,
@@ -96,6 +97,15 @@ export class SourceControlProvider extends Context.Service<
       readonly context?: SourceControlProviderContext;
       readonly reference: string;
     }) => Effect.Effect<ChangeRequest, SourceControlProviderError>;
+    /**
+     * Rolled-up CI state for a change request. Providers that cannot report
+     * checks return null, which renders as no indicator at all.
+     */
+    readonly getChangeRequestChecks: (input: {
+      readonly cwd: string;
+      readonly context?: SourceControlProviderContext;
+      readonly reference: string;
+    }) => Effect.Effect<ChangeRequestChecks | null, SourceControlProviderError>;
     readonly createChangeRequest: (input: {
       readonly cwd: string;
       readonly context?: SourceControlProviderContext;

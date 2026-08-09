@@ -205,6 +205,23 @@ export const make = Effect.gen(function* () {
             }),
         ),
       ),
+    getChangeRequestChecks: (input) =>
+      github.getPullRequestChecks(input).pipe(
+        Effect.mapError(
+          (error) =>
+            new SourceControlProviderError({
+              provider: "github",
+              operation: "getChangeRequestChecks",
+              command: error.command,
+              cwd: input.cwd,
+              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                input.reference,
+              ),
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
+      ),
     createChangeRequest: (input) =>
       github
         .createPullRequest({

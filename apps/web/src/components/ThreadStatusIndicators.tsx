@@ -96,16 +96,102 @@ export function prStatusIndicator(
   return null;
 }
 
-export function ChangeRequestStatusIcon({ className }: { className?: string }) {
+export interface PrChecksIndicator {
+  /** Background class for the dot itself. */
+  dotClass: string;
+  /** Short state description, e.g. "Checks failing". */
+  label: string;
+  /** Count breakdown for the tooltip, e.g. "3 failed of 12". */
+  summary: string;
+}
+
+/**
+ * CI rollup for a thread's PR, or null when there is no signal to show:
+ * a server that predates check status, a provider that cannot report it,
+ * a repo with no CI, or a settled PR (checks are only fetched while open).
+ */
+export function prChecksIndicator(pr: ThreadPr): PrChecksIndicator | null {
+  const checks = pr?.checks;
+  if (!checks) return null;
+
+  switch (checks.state) {
+    case "success":
+      return {
+        dotClass: "bg-emerald-500 dark:bg-emerald-400",
+        label: "Checks passing",
+        summary: `${checks.passed} of ${checks.total} passed`,
+      };
+    case "failure":
+      return {
+        dotClass: "bg-red-500 dark:bg-red-400",
+        label: "Checks failing",
+        summary: `${checks.failed} of ${checks.total} failed`,
+      };
+    case "pending":
+      // No animation: a dot that repaints forever in a list of them is noise,
+      // and it pegs the GPU on high-refresh displays.
+      return {
+        dotClass: "bg-amber-500 dark:bg-amber-400",
+        label: "Checks running",
+        summary: `${checks.pending} of ${checks.total} running`,
+      };
+  }
+}
+
+export function ChangeRequestStatusIcon({ className }: { className?: string | undefined }) {
   return <GitPullRequestIcon className={className} />;
 }
 
-export function PrStatusTooltipContent({ status }: { status: PrStatusIndicator }) {
+/**
+ * PR glyph with the CI rollup overlaid at its lower right. The dot carries a
+ * ring in the row's own background so it stays legible against the glyph
+ * strokes — callers pass the surface class matching the row state they render
+ * (see `Sidebar.tsx`'s rowSurfaceClassName), defaulting to the sidebar surface.
+ */
+export function ChangeRequestStatusIconWithChecks({
+  checks,
+  className,
+  ringClass = "ring-sidebar",
+}: {
+  checks: PrChecksIndicator | null;
+  className?: string | undefined;
+  ringClass?: string | undefined;
+}) {
+  if (checks === null) {
+    return <ChangeRequestStatusIcon className={className} />;
+  }
+
+  return (
+    <span className="relative inline-flex shrink-0">
+      <ChangeRequestStatusIcon className={className} />
+      <span
+        aria-hidden
+        className={`-right-px -bottom-px absolute size-[7px] rounded-full ring-2 ${checks.dotClass} ${ringClass}`}
+      />
+    </span>
+  );
+}
+
+export function PrStatusTooltipContent({
+  status,
+  checks = null,
+}: {
+  status: PrStatusIndicator;
+  checks?: PrChecksIndicator | null;
+}) {
   return (
     <span className="flex max-w-[min(34rem,calc(100vw-2rem))] items-stretch overflow-hidden whitespace-nowrap">
       <span className="shrink-0 pr-2 font-medium">{status.tooltipLead}</span>
       <span className="min-h-4 shrink-0 border-border/70 border-l" aria-hidden="true" />
       <span className="min-w-0 truncate pl-2">{status.tooltipTitle}</span>
+      {checks ? (
+        <>
+          <span className="min-h-4 shrink-0 border-border/70 border-l" aria-hidden="true" />
+          <span className="shrink-0 pl-2">
+            {checks.label} ({checks.summary})
+          </span>
+        </>
+      ) : null}
     </span>
   );
 }
@@ -255,6 +341,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     gitStatus: gitStatus.data,
   });
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
+  const prChecks = prChecksIndicator(pr);
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
@@ -273,15 +360,20 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
           <TooltipTrigger
             render={
               <span
-                aria-label={prStatus.tooltip}
+                aria-label={prChecks ? `${prStatus.tooltip}. ${prChecks.label}` : prStatus.tooltip}
                 className={`inline-flex items-center justify-center ${prStatus.colorClass}`}
               />
             }
           >
-            <ChangeRequestStatusIcon className="size-3" />
+            {/* Command palette rows sit on the popover surface, not a sidebar row. */}
+            <ChangeRequestStatusIconWithChecks
+              checks={prChecks}
+              className="size-3"
+              ringClass="ring-popover"
+            />
           </TooltipTrigger>
           <TooltipPopup side="top">
-            <PrStatusTooltipContent status={prStatus} />
+            <PrStatusTooltipContent status={prStatus} checks={prChecks} />
           </TooltipPopup>
         </Tooltip>
       ) : null}

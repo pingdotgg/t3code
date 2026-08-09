@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
 export const SourceControlProviderKind = Schema.Literals([
@@ -20,6 +20,27 @@ export type SourceControlProviderInfo = typeof SourceControlProviderInfo.Type;
 
 export const ChangeRequestState = Schema.Literals(["open", "closed", "merged"]);
 export type ChangeRequestState = typeof ChangeRequestState.Type;
+
+/**
+ * Rolled-up CI state for a change request. `pending` covers anything still
+ * running or queued; a single failure outranks any number of successes.
+ */
+export const ChangeRequestChecksState = Schema.Literals(["pending", "success", "failure"]);
+export type ChangeRequestChecksState = typeof ChangeRequestChecksState.Type;
+
+/**
+ * Counts are for the tooltip only; `state` is what the indicator renders.
+ * `total` includes neutral checks (skipped, neutral conclusions) that land in
+ * none of the three buckets, so passed + failed + pending can be under total.
+ */
+export const ChangeRequestChecks = Schema.Struct({
+  state: ChangeRequestChecksState,
+  total: NonNegativeInt,
+  passed: NonNegativeInt,
+  failed: NonNegativeInt,
+  pending: NonNegativeInt,
+});
+export type ChangeRequestChecks = typeof ChangeRequestChecks.Type;
 
 export const ChangeRequest = Schema.Struct({
   provider: SourceControlProviderKind,

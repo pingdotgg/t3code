@@ -7,17 +7,28 @@ import * as Schema from "effect/Schema";
 
 import {
   TrimmedNonEmptyString,
+  type ChangeRequestChecks,
   type SourceControlRepositoryVisibility,
   type VcsError,
 } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import {
+  decodeGitHubCheckRollupJson,
   decodeGitHubPullRequestJson,
   decodeGitHubPullRequestListJson,
 } from "./gitHubPullRequests.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+/**
+ * Projects `statusCheckRollup` down to the fields that decide a verdict.
+ * `CheckRun` entries carry status/conclusion, `StatusContext` entries carry
+ * state; keeping `__typename` lets the decoder tell an in-progress run from a
+ * completed one with no conclusion.
+ */
+const CHECK_ROLLUP_JQ =
+  "[.statusCheckRollup[]? | {typename: .__typename, status: .status, conclusion: .conclusion, state: .state}]";
 
 const gitHubCliFailureFields = {
   command: Schema.Literal("gh"),
@@ -122,6 +133,19 @@ export class GitHubPullRequestDecodeError extends Schema.TaggedErrorClass<GitHub
   }
 }
 
+export class GitHubPullRequestChecksDecodeError extends Schema.TaggedErrorClass<GitHubPullRequestChecksDecodeError>()(
+  "GitHubPullRequestChecksDecodeError",
+  gitHubCliDecodeFields,
+) {
+  get detail(): string {
+    return "GitHub CLI returned invalid check status JSON.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in getPullRequestChecks: ${this.detail}`;
+  }
+}
+
 export class GitHubRepositoryDecodeError extends Schema.TaggedErrorClass<GitHubRepositoryDecodeError>()(
   "GitHubRepositoryDecodeError",
   gitHubCliDecodeFields,
@@ -143,6 +167,7 @@ export const GitHubCliError = Schema.Union([
   GitHubPullRequestListDecodeError,
   GitHubChangeRequestListDecodeError,
   GitHubPullRequestDecodeError,
+  GitHubPullRequestChecksDecodeError,
   GitHubRepositoryDecodeError,
 ]);
 export type GitHubCliError = typeof GitHubCliError.Type;
@@ -215,6 +240,12 @@ export class GitHubCli extends Context.Service<
       readonly cwd: string;
       readonly reference: string;
     }) => Effect.Effect<GitHubPullRequestSummary, GitHubCliError>;
+
+    /** Rolled-up CI state for one PR, or null when the repo reports no checks. */
+    readonly getPullRequestChecks: (input: {
+      readonly cwd: string;
+      readonly reference: string;
+    }) => Effect.Effect<ChangeRequestChecks | null, GitHubCliError>;
 
     readonly getRepositoryCloneUrls: (input: {
       readonly cwd: string;
@@ -388,6 +419,42 @@ export const make = Effect.gen(function* () {
               );
             }),
           ),
+        ),
+      ),
+    getPullRequestChecks: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "pr",
+          "view",
+          input.reference,
+          "--json",
+          "statusCheckRollup",
+          // Project server-side: the raw rollup carries names, URLs, and
+          // timestamps for every check (~8 KB on a busy PR) and we only need
+          // the four fields that discriminate a verdict.
+          "--jq",
+          CHECK_ROLLUP_JQ,
+        ],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          // A PR with no rollup at all prints nothing rather than "[]".
+          raw.length === 0
+            ? Effect.succeed(null)
+            : Effect.sync(() => decodeGitHubCheckRollupJson(raw)).pipe(
+                Effect.flatMap((decoded) =>
+                  Result.isSuccess(decoded)
+                    ? Effect.succeed(decoded.success)
+                    : Effect.fail(
+                        new GitHubPullRequestChecksDecodeError({
+                          command: "gh",
+                          cwd: input.cwd,
+                          cause: decoded.failure,
+                        }),
+                      ),
+                ),
+              ),
         ),
       ),
     getRepositoryCloneUrls: (input) =>

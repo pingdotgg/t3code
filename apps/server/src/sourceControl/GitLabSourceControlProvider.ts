@@ -151,6 +151,8 @@ export const make = Effect.gen(function* () {
             }),
         ),
       ),
+    // Pipeline status is not wired up for GitLab yet; null renders no indicator.
+    getChangeRequestChecks: () => Effect.succeed(null),
     createChangeRequest: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
       return gitlab
