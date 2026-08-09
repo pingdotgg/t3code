@@ -24,6 +24,7 @@ vi.mock("../lib/runtime", async () => {
 
 import type { Preferences } from "../persistence/mobile-preferences";
 import {
+  awaitActiveTurnMessageBehavior,
   createMobilePreferencesState,
   MobilePreferencesLoadError,
   MobilePreferencesSaveError,
@@ -62,6 +63,32 @@ function makePreferencesState(
 }
 
 describe("mobile preferences state", () => {
+  it("waits for the persisted active-turn behavior before sending", async () => {
+    const pendingLoad = deferred<Preferences>();
+    const state = makePreferencesState({
+      load: Effect.promise(() => pendingLoad.promise),
+      savePatch: (patch) => Effect.succeed(patch),
+    });
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(state.preferencesAtom);
+
+    let settled = false;
+    const behaviorPromise = awaitActiveTurnMessageBehavior(registry, state.preferencesAtom).then(
+      (behavior) => {
+        settled = true;
+        return behavior;
+      },
+    );
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    pendingLoad.resolve({ activeTurnMessageBehavior: "queue" });
+    await expect(behaviorPromise).resolves.toBe("queue");
+
+    unmount();
+    registry.dispose();
+  });
+
   it.effect("shares one preference load across consumers", () =>
     Effect.gen(function* () {
       const load = vi.fn(() => Promise.resolve<Preferences>({ baseFontSize: 17 }));

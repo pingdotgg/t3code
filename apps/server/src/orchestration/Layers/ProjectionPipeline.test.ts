@@ -2538,6 +2538,103 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
         assert.deepEqual(pendingRows, []);
       }),
     );
+
+    it.effect("reconciles a steer with the already-running turn", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-steer-reaffirmed");
+        const turnId = TurnId.make("turn-steer-reaffirmed");
+        const initialMessageId = MessageId.make("message-steer-initial");
+        const steeredMessageId = MessageId.make("message-steer-follow-up");
+
+        const appendTurnStartRequested = (
+          eventSuffix: string,
+          messageId: MessageId,
+          createdAt: string,
+        ) =>
+          eventStore.append({
+            type: "thread.turn-start-requested",
+            eventId: EventId.make(`evt-steer-${eventSuffix}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: createdAt,
+            commandId: CommandId.make(`cmd-steer-${eventSuffix}`),
+            causationEventId: null,
+            correlationId: CorrelationId.make(`cmd-steer-${eventSuffix}`),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId,
+              runtimeMode: "full-access",
+              createdAt,
+            },
+          });
+
+        const appendRunningSession = (eventSuffix: string, updatedAt: string) =>
+          eventStore.append({
+            type: "thread.session-set",
+            eventId: EventId.make(`evt-steer-${eventSuffix}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: updatedAt,
+            commandId: CommandId.make(`cmd-steer-${eventSuffix}`),
+            causationEventId: null,
+            correlationId: CorrelationId.make(`cmd-steer-${eventSuffix}`),
+            metadata: {},
+            payload: {
+              threadId,
+              session: {
+                threadId,
+                status: "running",
+                providerName: "codex",
+                runtimeMode: "full-access",
+                activeTurnId: turnId,
+                lastError: null,
+                updatedAt,
+              },
+            },
+          });
+
+        yield* appendTurnStartRequested(
+          "initial-request",
+          initialMessageId,
+          "2026-02-26T15:00:00.000Z",
+        );
+        yield* appendRunningSession("initial-running", "2026-02-26T15:00:01.000Z");
+        yield* appendTurnStartRequested(
+          "follow-up-request",
+          steeredMessageId,
+          "2026-02-26T15:00:02.000Z",
+        );
+        // A successful Codex turn/steer reaffirms the same active turn id.
+        yield* appendRunningSession("steer-reaffirmed", "2026-02-26T15:00:03.000Z");
+
+        yield* projectionPipeline.bootstrap;
+
+        const turnRows = yield* sql<{
+          readonly turnId: string | null;
+          readonly pendingMessageId: string | null;
+          readonly state: string;
+        }>`
+          SELECT
+            turn_id AS "turnId",
+            pending_message_id AS "pendingMessageId",
+            state
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+          ORDER BY row_id
+        `;
+        assert.deepEqual(turnRows, [
+          {
+            turnId,
+            pendingMessageId: initialMessageId,
+            state: "running",
+          },
+        ]);
+      }),
+    );
   },
 );
 

@@ -32,6 +32,7 @@ import {
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxFailureAction,
   resolveQueuedThreadSettings,
+  shouldDeferConfirmedThreadOutboxDelivery,
   threadOutboxRetryDelayMs,
   type QueuedThreadCreation,
   type QueuedThreadMessage,
@@ -315,6 +316,8 @@ export function useThreadOutboxDrain(): void {
         shellStatus,
         environmentConnected: environment?.connectionState === "connected",
         threadBusy: thread?.session?.status === "running" || thread?.session?.status === "starting",
+        threadSteerable: thread?.session?.status === "running",
+        activeTurnMessageBehavior: nextQueuedMessage.activeTurnMessageBehavior,
       });
       if (deliveryAction === "wait") {
         continue;
@@ -375,7 +378,15 @@ export function useThreadOutboxDrain(): void {
         );
         const freshThreadBusy =
           freshThread?.session?.status === "running" || freshThread?.session?.status === "starting";
-        if (deliveryAction === "send" && creation === undefined && freshThreadBusy) {
+        if (
+          shouldDeferConfirmedThreadOutboxDelivery({
+            deliveryAction,
+            isCreation: creation !== undefined,
+            threadBusy: freshThreadBusy,
+            threadSteerable: freshThread?.session?.status === "running",
+            activeTurnMessageBehavior: nextQueuedMessage.activeTurnMessageBehavior,
+          })
+        ) {
           return true;
         }
         return deliveryAction === "remove"

@@ -4,7 +4,7 @@ import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe } from "vite-plus/test";
-import { DEFAULT_MODEL, ThreadId } from "@t3tools/contracts";
+import { DEFAULT_MODEL, ThreadId, TurnId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 
@@ -15,10 +15,13 @@ import {
 } from "../CodexDeveloperInstructions.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
+  buildTurnSteerParams,
   buildTurnStartParams,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
   openCodexThread,
+  resolveCodexSteerReconciliation,
+  resolveCodexSteeringTurnId,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
 
@@ -243,6 +246,71 @@ describe("buildTurnStartParams", () => {
         },
       ],
     });
+  });
+});
+
+describe("buildTurnSteerParams", () => {
+  it("reuses the active provider turn only while the session is running", () => {
+    const activeTurnId = TurnId.make("provider-turn-active");
+
+    NodeAssert.equal(resolveCodexSteeringTurnId({ status: "running", activeTurnId }), activeTurnId);
+    NodeAssert.equal(resolveCodexSteeringTurnId({ status: "ready", activeTurnId }), undefined);
+  });
+
+  it("targets the active turn and preserves text and image input", () => {
+    const activeTurnId = TurnId.make("provider-turn-active");
+
+    NodeAssert.deepStrictEqual(
+      buildTurnSteerParams({
+        threadId: "provider-thread-1",
+        activeTurnId,
+        prompt: "Change direction",
+        attachments: [
+          {
+            type: "image",
+            url: "data:image/png;base64,abc",
+          },
+        ],
+      }),
+      {
+        threadId: "provider-thread-1",
+        expectedTurnId: activeTurnId,
+        input: [
+          {
+            type: "text",
+            text: "Change direction",
+          },
+          {
+            type: "image",
+            url: "data:image/png;base64,abc",
+          },
+        ],
+      },
+    );
+  });
+
+  it("reconciles a steer without reviving a turn that settled during the request", () => {
+    const activeTurnId = TurnId.make("provider-turn-active");
+
+    NodeAssert.equal(
+      resolveCodexSteerReconciliation({ status: "running", activeTurnId }, activeTurnId),
+      "running",
+    );
+    NodeAssert.equal(
+      resolveCodexSteerReconciliation({ status: "ready", activeTurnId: undefined }, activeTurnId),
+      "ready",
+    );
+    NodeAssert.equal(
+      resolveCodexSteerReconciliation({ status: "error", activeTurnId: undefined }, activeTurnId),
+      "error",
+    );
+    NodeAssert.equal(
+      resolveCodexSteerReconciliation(
+        { status: "running", activeTurnId: TurnId.make("provider-turn-new") },
+        activeTurnId,
+      ),
+      "ignore",
+    );
   });
 });
 

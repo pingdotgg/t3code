@@ -17,6 +17,8 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  type ActiveTurnMessageBehavior,
+  DEFAULT_ACTIVE_TURN_MESSAGE_BEHAVIOR,
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
   type EnvironmentIdentificationMode,
@@ -459,6 +461,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
+      ...(settings.activeTurnMessageBehavior !== DEFAULT_UNIFIED_SETTINGS.activeTurnMessageBehavior
+        ? ["Messages while working"]
+        : []),
       ...(settings.sidebarThreadPreviewCount !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount
         ? ["Visible threads"]
         : []),
@@ -514,6 +519,8 @@ export function useSettingsRestore(onRestored?: () => void) {
     [
       isTextGenerationModelDirty,
       isBackgroundActivityDirty,
+      settings.autoOpenPlanSidebar,
+      settings.activeTurnMessageBehavior,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
@@ -605,6 +612,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     }
     updateSettings({
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+      activeTurnMessageBehavior: DEFAULT_UNIFIED_SETTINGS.activeTurnMessageBehavior,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
@@ -1722,6 +1730,52 @@ export function GeneralSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection title="General">
+        <SettingsRow
+          {...searchableSetting("messages-while-working")}
+          description="Steer adds the message to the active turn. Queue waits and sends messages one at a time after the current turn finishes."
+          resetAction={
+            settings.activeTurnMessageBehavior !== DEFAULT_ACTIVE_TURN_MESSAGE_BEHAVIOR ? (
+              <SettingResetButton
+                label="messages while working"
+                onClick={() =>
+                  updateSettings({
+                    activeTurnMessageBehavior: DEFAULT_ACTIVE_TURN_MESSAGE_BEHAVIOR,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.activeTurnMessageBehavior}
+              onValueChange={(value) => {
+                if (value === "steer" || value === "queue") {
+                  updateSettings({
+                    activeTurnMessageBehavior: value as ActiveTurnMessageBehavior,
+                  });
+                }
+              }}
+            >
+              <SelectTrigger
+                className="w-full sm:w-40"
+                aria-label="Messages sent while the agent is working"
+              >
+                <SelectValue>
+                  {settings.activeTurnMessageBehavior === "queue" ? "Queue" : "Steer"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="steer">
+                  Steer
+                </SelectItem>
+                <SelectItem hideIndicator value="queue">
+                  Queue
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
         <SettingsRow
           {...searchableSetting("project-grouping")}
           description="Combine matching repositories across environments."

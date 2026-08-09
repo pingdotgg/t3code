@@ -74,10 +74,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
-import {
-  collapseExpandedComposerCursor,
-  parseStandaloneComposerSlashCommand,
-} from "../composer-logic";
+import { parseStandaloneComposerSlashCommand } from "../composer-logic";
 import {
   derivePendingApprovals,
   derivePendingUserInputs,
@@ -171,7 +168,7 @@ import {
   nextProjectScriptId,
   projectScriptIdFromCommand,
 } from "~/projectScripts";
-import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
+import { newCommandId, newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { useBrowserHistoryStore } from "~/browserHistoryStore";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
@@ -180,6 +177,12 @@ import {
   useClientSettingsHydrated,
   useEnvironmentSettings,
 } from "../hooks/useSettings";
+import {
+  EMPTY_WEB_THREAD_OUTBOX_QUEUE,
+  shouldQueueWebThreadMessage,
+  useWebThreadOutboxStore,
+  webThreadOutboxKey,
+} from "../webThreadOutbox";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
@@ -1263,6 +1266,12 @@ function ChatViewContent(props: ChatViewProps) {
   }, [routeKind, routeThreadRef, routeThreadState]);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const settings = useEnvironmentSettings(environmentId);
+  const activeThreadOutboxQueue = useWebThreadOutboxStore(
+    (state) =>
+      state.queuesByThreadKey[webThreadOutboxKey(environmentId, props.threadId)] ??
+      EMPTY_WEB_THREAD_OUTBOX_QUEUE,
+  );
+  const pausedOutboxMessageIds = useWebThreadOutboxStore((state) => state.pausedMessageIds);
   // New-thread defaults live in the primary environment's settings.json (the
   // settings UI never writes to remote environments), so read them from the
   // primary server rather than the thread's environment.
@@ -1283,24 +1292,15 @@ function ChatViewContent(props: ChatViewProps) {
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
-  const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
-  const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
-  const setComposerDraftTerminalContexts = useComposerDraftStore(
-    (store) => store.setTerminalContexts,
-  );
-  const setComposerDraftElementContexts = useComposerDraftStore(
-    (store) => store.setElementContexts,
-  );
-  const setComposerDraftPreviewAnnotations = useComposerDraftStore(
-    (store) => store.setPreviewAnnotations,
-  );
-  const setComposerDraftReviewComments = useComposerDraftStore((store) => store.setReviewComments);
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
   );
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
+  const restoreComposerDraftContent = useComposerDraftStore(
+    (store) => store.restoreComposerContent,
+  );
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const getDraftSessionByLogicalProjectKey = useComposerDraftStore(
     (store) => store.getDraftSessionByLogicalProjectKey,
@@ -4800,9 +4800,21 @@ function ChatViewContent(props: ChatViewProps) {
         }),
       );
     };
+    if (!clientSettingsHydrated) {
+      notifyDirectAnnotationAttached();
+      return;
+    }
+    const shouldQueueCurrentMessage = shouldQueueWebThreadMessage({
+      activeTurnMessageBehavior: settings.activeTurnMessageBehavior,
+      hasQueuedMessages: activeThreadOutboxQueue.length > 0,
+      isSendBusy,
+      isServerThread,
+      phase,
+      threadStarting: activeThread?.session?.status === "starting",
+    });
     if (
       !activeThread ||
-      isSendBusy ||
+      (isSendBusy && !shouldQueueCurrentMessage) ||
       isConnecting ||
       threadDetailLoading ||
       sendInFlightRef.current
@@ -4954,23 +4966,110 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
 
-    sendInFlightRef.current = true;
-    if (isDraftHeroState && activeThreadKey) {
-      let resolveDockStarted: (() => void) | undefined;
-      const dockStarted = new Promise<void>((resolve) => {
-        resolveDockStarted = resolve;
+    if (shouldQueueCurrentMessage) {
+      sendInFlightRef.current = true;
+      const composerImagesSnapshot = [...composerImages];
+      const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
+      const composerElementContextsSnapshot = [...composerElementContexts];
+      const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
+      const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
+      const composerContentSnapshot = {
+        prompt: promptForSend,
+        images: composerImagesSnapshot,
+        terminalContexts: composerTerminalContextsSnapshot,
+        elementContexts: composerElementContextsSnapshot,
+        previewAnnotations: composerPreviewAnnotationsSnapshot,
+        reviewComments: composerReviewCommentsSnapshot,
+      };
+      const messageTextWithContexts = appendElementContextsToPrompt(
+        appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
+        composerElementContextsSnapshot,
+      );
+      const messageTextWithPreviewAnnotations = composerPreviewAnnotationsSnapshot.reduce(
+        (text, annotation) => appendPreviewAnnotationPrompt(text, annotation),
+        messageTextWithContexts,
+      );
+      const messageTextForSend = appendReviewCommentsToPrompt(
+        messageTextWithPreviewAnnotations,
+        composerReviewCommentsSnapshot,
+      );
+      const outgoingMessageText = formatOutgoingPrompt({
+        provider: ctxSelectedProvider,
+        model: ctxSelectedModel,
+        models: ctxSelectedProviderModels,
+        effort: ctxSelectedPromptEffort,
+        text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
       });
-      const dockTransition = runMobileComposerTransition(() => {
-        flushSync(() => {
-          captureDraftHeroComposerRect();
-          setDockedDraftHeroThreadKey(activeThreadKey);
-        });
-        resolveDockStarted?.();
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      const attachmentsResult = await settlePromise(() =>
+        Promise.all(
+          composerImagesSnapshot.map(async (image) => ({
+            type: "image" as const,
+            name: image.name,
+            mimeType: image.mimeType,
+            sizeBytes: image.sizeBytes,
+            dataUrl: await readFileAsDataUrl(image.file),
+          })),
+        ),
+      );
+      if (attachmentsResult._tag === "Failure") {
+        restoreComposerDraftContent(composerDraftTarget, composerContentSnapshot);
+        const error = squashAtomCommandFailure(attachmentsResult);
+        setThreadError(
+          threadIdForSend,
+          error instanceof Error ? error.message : "Failed to prepare the queued message.",
+        );
+        sendInFlightRef.current = false;
+        return;
+      }
+
+      const messageId = newMessageId();
+      const createdAt = new Date().toISOString();
+      const { durable } = useWebThreadOutboxStore.getState().enqueue({
+        environmentId,
+        threadId: threadIdForSend,
+        messageId,
+        commandId: newCommandId(),
+        text: outgoingMessageText,
+        attachments: attachmentsResult.value,
+        modelSelection: ctxSelectedModelSelection,
+        runtimeMode,
+        interactionMode,
+        activeTurnMessageBehavior: settings.activeTurnMessageBehavior,
+        createdAt,
       });
-      void dockTransition.catch(() => resolveDockStarted?.());
-      await dockStarted;
+      setThreadError(threadIdForSend, null);
+      if (expiredTerminalContextCount > 0) {
+        const toastCopy = buildExpiredTerminalContextToastCopy(
+          expiredTerminalContextCount,
+          "omitted",
+        );
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: toastCopy.title,
+            description: toastCopy.description,
+          }),
+        );
+      }
+      if (!durable) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Message queued for this session",
+            description:
+              "Browser storage could not save the queue, so this message will not survive a reload.",
+          }),
+        );
+      }
+      for (const image of composerImagesSnapshot) {
+        revokeBlobPreviewUrl(image.previewUrl);
+      }
+      sendInFlightRef.current = false;
+      return;
     }
-    beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
 
     const composerImagesSnapshot = [...composerImages];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
@@ -5015,6 +5114,26 @@ function ChatViewContent(props: ChatViewProps) {
       sizeBytes: image.sizeBytes,
       previewUrl: image.previewUrl,
     }));
+    promptRef.current = "";
+    clearComposerDraftContent(composerDraftTarget);
+    composerRef.current?.resetCursorState();
+    sendInFlightRef.current = true;
+    if (isDraftHeroState && activeThreadKey) {
+      let resolveDockStarted: (() => void) | undefined;
+      const dockStarted = new Promise<void>((resolve) => {
+        resolveDockStarted = resolve;
+      });
+      const dockTransition = runMobileComposerTransition(() => {
+        flushSync(() => {
+          captureDraftHeroComposerRect();
+          setDockedDraftHeroThreadKey(activeThreadKey);
+        });
+        resolveDockStarted?.();
+      });
+      void dockTransition.catch(() => resolveDockStarted?.());
+      await dockStarted;
+    }
+    beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
     // Sending always returns to the live edge. The new row becomes the
     // anchored end-space target so it lands near the top while the response
     // streams into the reserved space below it.
@@ -5057,10 +5176,6 @@ function ChatViewContent(props: ChatViewProps) {
         }),
       );
     }
-    promptRef.current = "";
-    clearComposerDraftContent(composerDraftTarget);
-    composerRef.current?.resetCursorState();
-
     let firstComposerImageName: string | null = null;
     if (composerImagesSnapshot.length > 0) {
       const firstComposerImage = composerImagesSnapshot[0];
@@ -5183,41 +5298,23 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     if (failure !== null) {
-      if (
-        promptRef.current.length === 0 &&
-        composerImagesRef.current.length === 0 &&
-        composerTerminalContextsRef.current.length === 0 &&
-        composerElementContextsRef.current.length === 0 &&
-        (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.previewAnnotations
-          .length ?? 0) === 0 &&
-        (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.reviewComments
-          .length ?? 0) === 0
-      ) {
-        setOptimisticUserMessages((existing) => {
-          const removed = existing.filter((message) => message.id === messageIdForSend);
-          for (const message of removed) {
-            revokeUserMessagePreviewUrls(message);
-          }
-          const next = existing.filter((message) => message.id !== messageIdForSend);
-          return next.length === existing.length ? existing : next;
-        });
-        promptRef.current = promptForSend;
-        const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
-        composerImagesRef.current = retryComposerImages;
-        composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
-        composerElementContextsRef.current = composerElementContextsSnapshot;
-        setComposerDraftPrompt(composerDraftTarget, promptForSend);
-        addComposerDraftImages(composerDraftTarget, retryComposerImages);
-        setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
-        setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
-        setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
-        setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
-        composerRef.current?.resetCursorState({
-          cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
-          prompt: promptForSend,
-          detectTrigger: true,
-        });
-      }
+      const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
+      restoreComposerDraftContent(composerDraftTarget, {
+        prompt: promptForSend,
+        images: retryComposerImages,
+        terminalContexts: composerTerminalContextsSnapshot,
+        elementContexts: composerElementContextsSnapshot,
+        previewAnnotations: composerPreviewAnnotationsSnapshot,
+        reviewComments: composerReviewCommentsSnapshot,
+      });
+      setOptimisticUserMessages((existing) => {
+        const removed = existing.filter((message) => message.id === messageIdForSend);
+        for (const message of removed) {
+          revokeUserMessagePreviewUrls(message);
+        }
+        const next = existing.filter((message) => message.id !== messageIdForSend);
+        return next.length === existing.length ? existing : next;
+      });
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);
         setThreadError(
@@ -5234,6 +5331,18 @@ function ChatViewContent(props: ChatViewProps) {
       resetLocalDispatch();
     }
   };
+
+  const nextQueuedMessage = activeThreadOutboxQueue[0] ?? null;
+  const queuedMessagePaused =
+    nextQueuedMessage !== null && Boolean(pausedOutboxMessageIds[nextQueuedMessage.messageId]);
+
+  const retryQueuedMessages = useCallback(() => {
+    if (!nextQueuedMessage) {
+      return;
+    }
+    useWebThreadOutboxStore.getState().retry(nextQueuedMessage.messageId);
+    setThreadError(nextQueuedMessage.threadId, null);
+  }, [nextQueuedMessage, setThreadError]);
 
   const onInterrupt = async () => {
     if (!activeThread) return;
@@ -6217,8 +6326,16 @@ function ChatViewContent(props: ChatViewProps) {
                             phase={phase}
                             isConnecting={isConnecting}
                             isSendBusy={isSendBusy}
-                            sendDisabledReason={threadDetailLoading ? "Messages loading" : null}
+                            sendDisabledReason={
+                              !clientSettingsHydrated
+                                ? "Settings loading"
+                                : threadDetailLoading
+                                  ? "Messages loading"
+                                  : null
+                            }
                             isPreparingWorktree={isPreparingWorktree}
+                            queuedMessageCount={activeThreadOutboxQueue.length}
+                            queuedMessagesPaused={queuedMessagePaused}
                             environmentUnavailable={activeEnvironmentUnavailableState}
                             activePendingApproval={activePendingApproval}
                             pendingApprovals={pendingApprovals}
@@ -6250,6 +6367,7 @@ function ChatViewContent(props: ChatViewProps) {
                             composerTerminalContextsRef={composerTerminalContextsRef}
                             composerElementContextsRef={composerElementContextsRef}
                             onSend={onSend}
+                            onRetryQueuedMessages={retryQueuedMessages}
                             onInterrupt={onInterrupt}
                             onImplementPlanInNewThread={onImplementPlanInNewThread}
                             onRespondToApproval={onRespondToApproval}

@@ -6,6 +6,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
+import type { ActiveTurnMessageBehavior } from "@t3tools/contracts/settings";
 
 import * as MobileDatabase from "./mobile-database";
 import * as MobileSecureStorage from "./mobile-secure-storage";
@@ -15,6 +16,7 @@ const PREFERENCES_KEY = "t3code.preferences";
 const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
 
 export interface Preferences {
+  readonly activeTurnMessageBehavior?: ActiveTurnMessageBehavior;
   readonly liveActivitiesEnabled?: boolean;
   readonly baseFontSize?: number;
   readonly terminalFontSize?: number | null;
@@ -75,6 +77,7 @@ export class MobilePreferencesStore extends Context.Service<
 
 function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
+    activeTurnMessageBehavior?: ActiveTurnMessageBehavior;
     liveActivitiesEnabled?: boolean;
     baseFontSize?: number;
     terminalFontSize?: number | null;
@@ -88,6 +91,12 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     legacyThreadListEnabled?: boolean;
   } = {};
 
+  if (
+    parsed.activeTurnMessageBehavior === "steer" ||
+    parsed.activeTurnMessageBehavior === "queue"
+  ) {
+    preferences.activeTurnMessageBehavior = parsed.activeTurnMessageBehavior;
+  }
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
     preferences.liveActivitiesEnabled = parsed.liveActivitiesEnabled;
   }

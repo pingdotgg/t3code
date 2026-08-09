@@ -96,6 +96,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "messages-while-working",
+    title: "Messages while working",
+    to: "/settings/general",
+  },
+  {
     id: "project-grouping",
     title: "Project grouping",
     to: "/settings/general",

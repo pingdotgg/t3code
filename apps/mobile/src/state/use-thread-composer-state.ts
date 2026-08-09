@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo } from "react";
+import { AsyncResult } from "effect/unstable/reactivity";
 
 import {
   CommandId,
@@ -10,6 +11,7 @@ import {
   type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
+import { DEFAULT_ACTIVE_TURN_MESSAGE_BEHAVIOR } from "@t3tools/contracts/settings";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
 
@@ -41,6 +43,7 @@ import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
+import { awaitActiveTurnMessageBehavior, mobilePreferencesAtom } from "./preferences";
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -78,6 +81,10 @@ export function useThreadComposerState() {
   const selectedThreadDetail = useSelectedThreadDetail();
   const composerDrafts = useAtomValue(composerDraftsAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const activeTurnMessageBehavior = AsyncResult.isSuccess(preferencesResult)
+    ? (preferencesResult.value.activeTurnMessageBehavior ?? DEFAULT_ACTIVE_TURN_MESSAGE_BEHAVIOR)
+    : DEFAULT_ACTIVE_TURN_MESSAGE_BEHAVIOR;
 
   useEffect(() => {
     ensureComposerDraftsLoaded();
@@ -138,6 +145,10 @@ export function useThreadComposerState() {
       return null;
     }
 
+    const sendBehaviorPromise = awaitActiveTurnMessageBehavior(
+      appAtomRegistry,
+      mobilePreferencesAtom,
+    );
     const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
     const draft = getComposerDraftSnapshot(threadKey);
     const thread = selectedThreadDetail ?? selectedThreadShell;
@@ -149,11 +160,22 @@ export function useThreadComposerState() {
 
     const metadata = makeQueuedMessageMetadata();
     const messageId = MessageId.make(metadata.messageId);
+    clearComposerDraftContent(threadKey);
+    let sendBehavior;
+    try {
+      sendBehavior = await sendBehaviorPromise;
+    } catch (error) {
+      void mergeComposerDraftContent(threadKey, { text, attachments: [] });
+      appendComposerDraftAttachments(threadKey, attachments);
+      setPendingConnectionError(
+        error instanceof Error ? error.message : "Failed to load message behavior settings.",
+      );
+      return null;
+    }
     // Enqueue publishes the queued atom synchronously (the durable write
-    // happens behind it), so clearing the draft here gives send feedback on
-    // the tap frame instead of after file I/O. If the write fails the message
-    // is rolled out of the queue and the content is merged back into the
-    // draft, preserving anything typed since.
+    // happens behind it). The draft was captured and cleared before awaiting
+    // settings, so edits made after the tap belong to the next message. If the
+    // write fails, merge the captured content back without replacing them.
     const enqueuePromise = enqueueThreadOutboxMessage({
       environmentId: selectedThreadShell.environmentId,
       threadId: selectedThreadShell.id,
@@ -164,9 +186,9 @@ export function useThreadComposerState() {
       modelSelection: draft.modelSelection ?? thread.modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
       interactionMode: draft.interactionMode ?? thread.interactionMode,
+      activeTurnMessageBehavior: sendBehavior,
       createdAt: metadata.createdAt,
     });
-    clearComposerDraftContent(threadKey);
     enqueuePromise.catch((error: unknown) => {
       // Restore text via merge (idempotent) but attachments via the uncapped
       // append: the merge path slots existing attachments first and truncates
@@ -308,6 +330,7 @@ export function useThreadComposerState() {
     modelSelection,
     runtimeMode,
     interactionMode,
+    activeTurnMessageBehavior,
     activeThreadBusy,
     onChangeDraftMessage,
     onPickDraftImages,
