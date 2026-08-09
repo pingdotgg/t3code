@@ -245,4 +245,53 @@ describe("CodexSessionRuntime collab integration", () => {
       yield* runtime.close;
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  it.live("Stop targets the active turn when Codex has accepted a queued follow-up", () =>
+    Effect.gen(function* () {
+      const activeTurnId = "019fe3e8-f908-7f31-8d51-283f4a47897a";
+      const queuedTurnId = "019fe3eb-8faf-7de3-a85b-ac64c7f9c8c3";
+      const script = {
+        rootThreadId: ROOT,
+        holdTurnOpen: true,
+        onlyFirstTurnStarts: true,
+        turnIds: [activeTurnId, queuedTurnId],
+        expectedActiveTurnId: activeTurnId,
+        notifications: [],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      const interruptsPath = `${scriptPath}.interrupts`;
+      NodeFS.rmSync(interruptsPath, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(interruptsPath, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-codex-queued-stop"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "keep working" });
+      yield* runtime.sendTurn({ input: "queued follow-up" });
+      yield* runtime.interruptTurn();
+
+      const interrupts = NodeFS.readFileSync(interruptsPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { threadId?: string; turnId?: string });
+      assert.deepEqual(interrupts.at(-1), {
+        threadId: ROOT,
+        turnId: activeTurnId,
+      });
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
