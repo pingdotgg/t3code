@@ -151,10 +151,117 @@ export interface CodexScanState {
   model: string;
   sessionId: string;
   lastUsageSignature: string | null;
+  hasCanonicalSessionMeta: boolean;
+  fork: {
+    readonly childSessionId: string;
+    readonly childSessionStartedAtMs: number | null;
+    readonly childHistoryStartOrdinal: number | null;
+    readonly isUserFork: boolean;
+    readonly taskStartedTurnIds: Set<string>;
+    waitingForOwnTurn: boolean;
+  } | null;
 }
 
 export function initialCodexScanState(): CodexScanState {
-  return { model: "", sessionId: "", lastUsageSignature: null };
+  return {
+    model: "",
+    sessionId: "",
+    lastUsageSignature: null,
+    hasCanonicalSessionMeta: false,
+    fork: null,
+  };
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function nonNegativeInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function codexForkParentId(payload: Record<string, unknown>): string | null {
+  const direct = nonEmptyString(payload["forked_from_id"] ?? payload["parent_thread_id"]);
+  if (direct !== null) return direct;
+
+  const source = payload["source"];
+  if (typeof source !== "object" || source === null) return null;
+  const subagent = (source as Record<string, unknown>)["subagent"];
+  if (typeof subagent !== "object" || subagent === null) return null;
+  const threadSpawn = (subagent as Record<string, unknown>)["thread_spawn"];
+  if (typeof threadSpawn !== "object" || threadSpawn === null) return null;
+  return nonEmptyString((threadSpawn as Record<string, unknown>)["parent_thread_id"]);
+}
+
+/** UUID-v7's first 48 bits are its Unix millisecond timestamp. */
+function codexUuidV7Timestamp(id: string): string | null {
+  const parts = id.split("-");
+  if (
+    parts.length !== 5 ||
+    parts[0]?.length !== 8 ||
+    parts[1]?.length !== 4 ||
+    parts[2]?.length !== 4 ||
+    parts[3]?.length !== 4 ||
+    parts[4]?.length !== 12 ||
+    !parts[2].startsWith("7") ||
+    !parts.every((part) => /^[0-9a-f]+$/i.test(part))
+  ) {
+    return null;
+  }
+  return `${parts[0]}${parts[1]}`.toLowerCase();
+}
+
+function taskStartsAtOrAfterFork(
+  state: NonNullable<CodexScanState["fork"]>,
+  turnId: string,
+  startedAt: unknown,
+): boolean {
+  const childTimestamp = codexUuidV7Timestamp(state.childSessionId);
+  const turnTimestamp = codexUuidV7Timestamp(turnId);
+  if (childTimestamp !== null && turnTimestamp !== null) {
+    return turnTimestamp >= childTimestamp;
+  }
+
+  const childStartedAtMs =
+    childTimestamp === null ? state.childSessionStartedAtMs : Number.parseInt(childTimestamp, 16);
+  if (childStartedAtMs === null) return false;
+  if (turnTimestamp !== null) return Number.parseInt(turnTimestamp, 16) >= childStartedAtMs;
+
+  const startedAtSeconds = nonNegativeInteger(startedAt);
+  // Whole-second equality cannot prove the task started after the child's
+  // sub-second session timestamp, so keep treating it as inherited history.
+  return startedAtSeconds !== null && startedAtSeconds > Math.floor(childStartedAtMs / 1000);
+}
+
+function turnStartsForkedSession(
+  state: NonNullable<CodexScanState["fork"]>,
+  turnId: string | null,
+): boolean {
+  if (turnId === null) return false;
+
+  const childTimestamp = codexUuidV7Timestamp(state.childSessionId);
+  if (childTimestamp === null) return state.taskStartedTurnIds.has(turnId);
+  const turnTimestamp = codexUuidV7Timestamp(turnId);
+  if (turnTimestamp === null) return state.taskStartedTurnIds.has(turnId);
+  if (turnTimestamp > childTimestamp) return true;
+  if (turnTimestamp < childTimestamp) return false;
+  // The remaining UUID bits are random. Subagents identify a same-millisecond
+  // child turn with task_started; human forks do not emit that event.
+  return state.isUserFork || state.taskStartedTurnIds.has(turnId);
+}
+
+function rememberIgnoredUsageSignature(
+  state: CodexScanState,
+  payload: Record<string, unknown>,
+): void {
+  // Codex may echo the parent's final count after the child boundary. Remember
+  // the final suppressed signature so that handoff echo remains suppressed.
+  if (payload["type"] !== "token_count") return;
+  const info = payload["info"];
+  if (typeof info !== "object" || info === null) return;
+  const last = (info as Record<string, unknown>)["last_token_usage"];
+  if (typeof last !== "object" || last === null) return;
+  state.lastUsageSignature = JSON.stringify(last);
 }
 
 /**
@@ -181,9 +288,57 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
   const payloadType = payloadRecord["type"];
 
   if (record["type"] === "session_meta") {
-    const id = payloadRecord["id"] ?? payloadRecord["session_id"];
-    if (typeof id === "string") state.sessionId = id;
+    const id = nonEmptyString(payloadRecord["id"] ?? payloadRecord["session_id"]);
+    // The first session_meta belongs to this rollout. Forks may copy later
+    // session_meta records from their parent history.
+    if (!state.hasCanonicalSessionMeta && id !== null) {
+      state.hasCanonicalSessionMeta = true;
+      state.sessionId = id;
+      const parentId = codexForkParentId(payloadRecord);
+      if (parentId !== null && parentId !== id) {
+        state.fork = {
+          childSessionId: id,
+          childSessionStartedAtMs: parseTimestampMs(record["timestamp"]),
+          childHistoryStartOrdinal: nonNegativeInteger(
+            payloadRecord["subagent_history_start_ordinal"],
+          ),
+          isUserFork: payloadRecord["thread_source"] === "user",
+          taskStartedTurnIds: new Set(),
+          waitingForOwnTurn: true,
+        };
+      }
+    }
     return null;
+  }
+
+  const fork = state.fork;
+  if (fork?.waitingForOwnTurn) {
+    const ordinal = nonNegativeInteger(record["ordinal"]);
+    if (fork.childHistoryStartOrdinal !== null) {
+      if (ordinal === null || ordinal < fork.childHistoryStartOrdinal) {
+        rememberIgnoredUsageSignature(state, payloadRecord);
+        return null;
+      }
+      fork.waitingForOwnTurn = false;
+      fork.taskStartedTurnIds.clear();
+    } else {
+      if (record["type"] === "event_msg" && payloadType === "task_started") {
+        const turnId = nonEmptyString(payloadRecord["turn_id"]);
+        if (turnId !== null && taskStartsAtOrAfterFork(fork, turnId, payloadRecord["started_at"])) {
+          fork.taskStartedTurnIds.add(turnId);
+        }
+        return null;
+      }
+
+      if (record["type"] !== "turn_context") {
+        rememberIgnoredUsageSignature(state, payloadRecord);
+        return null;
+      }
+      if (!turnStartsForkedSession(fork, nonEmptyString(payloadRecord["turn_id"]))) return null;
+
+      fork.waitingForOwnTurn = false;
+      fork.taskStartedTurnIds.clear();
+    }
   }
 
   if (record["type"] === "turn_context") {
@@ -199,10 +354,10 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
   if (typeof last !== "object" || last === null) return null;
   const lastRecord = last as Record<string, unknown>;
 
-  // Only an event that is otherwise eligible may consume the duplicate
-  // signature. A token_count arriving before its turn_context (no model yet)
-  // must not poison it, or the re-emitted copy after the model is known would
-  // be skipped as a duplicate and those tokens never counted.
+  // Outside fork-history suppression, only an event that is otherwise eligible
+  // may consume the duplicate signature. A token_count arriving before its
+  // turn_context (no model yet) must not poison it, or the re-emitted copy after
+  // the model is known would be skipped as a duplicate and never counted.
   const timestampMs = parseTimestampMs(record["timestamp"]);
   if (timestampMs === null) return null;
   if (state.model.length === 0) return null;
@@ -238,7 +393,8 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
     totals,
     // Codex does not report cost in the rollout.
     reportedCostUsd: null,
-    // Rollout files are unique per session, so events need no global dedup.
+    // Fork replay is filtered before records are emitted; the surviving
+    // per-session events need no global deduplication.
     dedupeKey: null,
   };
 }

@@ -120,7 +120,8 @@ export async function readTranscriptRecords(
         if (
           !mightCarryUsage(line, provider) &&
           !line.includes('"turn_context"') &&
-          !line.includes('"session_meta"')
+          !line.includes('"session_meta"') &&
+          !line.includes('"task_started"')
         ) {
           continue;
         }
