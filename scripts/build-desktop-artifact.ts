@@ -1502,12 +1502,18 @@ export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
   return resolveWebAssetBrandForChannel(resolveDesktopUpdateChannel(version));
 }
 
-export function resolveDesktopBuildIconAssets(_version: string): DesktopBuildIconAssets {
-  return {
-    macIconPng: "apps/desktop/resources/icon.png",
-    linuxIconPng: "apps/desktop/resources/icon.png",
-    windowsIconIco: "apps/desktop/resources/icon.ico",
-  };
+export function resolveDesktopBuildIconAssets(
+  _version: string,
+  distributionProfile?: DesktopDistributionProfile,
+): DesktopBuildIconAssets {
+  // fork: branded distributions can override icons without changing upstream defaults.
+  return (
+    distributionProfile?.iconAssets ?? {
+      macIconPng: "apps/desktop/resources/icon.png",
+      linuxIconPng: "apps/desktop/resources/icon.png",
+      windowsIconIco: "apps/desktop/resources/icon.ico",
+    }
+  );
 }
 
 export function resolveMockUpdateServerUrl(mockUpdateServerPort: number | undefined): string {
@@ -1832,7 +1838,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const appVersion = options.version ?? serverPackageJson.version;
   // fork: a distribution profile changes packaging identity only; the embedded server stays upstream-versioned.
   const distributionProfile = resolveDesktopDistributionProfile(options.distribution);
-  const iconAssets = resolveDesktopBuildIconAssets(appVersion);
+  const iconAssets = resolveDesktopBuildIconAssets(appVersion, distributionProfile);
   const commitHash = yield* resolveGitCommitHash(repoRoot);
   const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
   const stageRoot = yield* mkdir({

@@ -1,4 +1,10 @@
+// @effect-diagnostics nodeBuiltinImport:off - the legacy artwork regression pins binary asset bytes.
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeURL from "node:url";
+
 import { assert, it } from "@effect/vitest";
+import { PNG } from "pngjs";
 
 import {
   DESKTOP_DISTRIBUTIONS,
@@ -23,6 +29,12 @@ it("defines the legacy-compatible 2code production identity", () => {
       mac: "2code-${version}-${arch}-mac.${ext}",
       dmg: "2code-${version}-${arch}.${ext}",
     },
+    iconAssets: {
+      macIconPng: "distributions/2code/assets/icon.png",
+      linuxIconPng: "distributions/2code/assets/icon.png",
+      windowsIconIco: "distributions/2code/assets/icon.ico",
+    },
+    iconSourceSha256: "f899498a11e4cd418b11f779fc02db00b7d53f2469720b05f22c9f65cd6f5e9e",
     description: "2code desktop build",
     protocols: {
       name: "2code",
@@ -50,6 +62,25 @@ it("keeps distribution and embedded runtime versions separate", () => {
     t3codeDistribution: "2code-production",
     t3codeRuntimeVersion: "0.0.32",
   });
+});
+
+it("pins the legacy 2code application artwork", () => {
+  const sha256 = (path: string) =>
+    NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(path)).digest("hex");
+  const pngPath = NodeURL.fileURLToPath(
+    new URL("../../distributions/2code/assets/icon.png", import.meta.url),
+  );
+
+  assert.equal(sha256(pngPath), "f899498a11e4cd418b11f779fc02db00b7d53f2469720b05f22c9f65cd6f5e9e");
+  const png = PNG.sync.read(NodeFS.readFileSync(pngPath));
+  assert.equal(png.width, 1024);
+  assert.equal(png.height, 1024);
+  assert.equal(
+    sha256(
+      NodeURL.fileURLToPath(new URL("../../distributions/2code/assets/icon.ico", import.meta.url)),
+    ),
+    "65f6e202c855158175f4acbe0170f3f5cae86726c9c15d39f36d361cfcfd72be",
+  );
 });
 
 it("renders the non-App-Sandbox entitlements used by the existing 2code signature", () => {

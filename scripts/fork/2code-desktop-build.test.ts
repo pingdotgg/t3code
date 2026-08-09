@@ -4,9 +4,23 @@ import * as Effect from "effect/Effect";
 
 import {
   createBuildConfig,
+  resolveDesktopBuildIconAssets,
   shouldResolveMacPasskeySigningConfiguration,
 } from "../build-desktop-artifact.ts";
 import { TWO_CODE_PRODUCTION_PROFILE } from "./2code-desktop-distribution.ts";
+
+it("uses the legacy 2code icon assets only for the production distribution", () => {
+  assert.deepStrictEqual(resolveDesktopBuildIconAssets("1.0.109", TWO_CODE_PRODUCTION_PROFILE), {
+    macIconPng: "distributions/2code/assets/icon.png",
+    linuxIconPng: "distributions/2code/assets/icon.png",
+    windowsIconIco: "distributions/2code/assets/icon.ico",
+  });
+  assert.deepStrictEqual(resolveDesktopBuildIconAssets("1.0.109"), {
+    macIconPng: "apps/desktop/resources/icon.png",
+    linuxIconPng: "apps/desktop/resources/icon.png",
+    windowsIconIco: "apps/desktop/resources/icon.ico",
+  });
+});
 
 it.effect("builds a legacy-compatible 2code updater configuration", () =>
   Effect.gen(function* () {

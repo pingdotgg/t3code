@@ -14,6 +14,12 @@ export interface DesktopDistributionProfile {
     readonly mac: string;
     readonly dmg: string;
   };
+  readonly iconAssets: {
+    readonly macIconPng: string;
+    readonly linuxIconPng: string;
+    readonly windowsIconIco: string;
+  };
+  readonly iconSourceSha256: string;
   readonly description: string;
   readonly protocols: {
     readonly name: string;
@@ -40,6 +46,14 @@ export const TWO_CODE_PRODUCTION_PROFILE: DesktopDistributionProfile = {
     mac: "2code-${version}-${arch}-mac.${ext}",
     dmg: "2code-${version}-${arch}.${ext}",
   },
+  // Keep legacy artwork out of upstream-owned desktop resources so the two
+  // distributions can evolve their branding independently.
+  iconAssets: {
+    macIconPng: "distributions/2code/assets/icon.png",
+    linuxIconPng: "distributions/2code/assets/icon.png",
+    windowsIconIco: "distributions/2code/assets/icon.ico",
+  },
+  iconSourceSha256: "f899498a11e4cd418b11f779fc02db00b7d53f2469720b05f22c9f65cd6f5e9e",
   description: "2code desktop build",
   protocols: {
     name: "2code",

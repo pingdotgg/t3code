@@ -94,7 +94,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "2code (Nightly)");
   });
 
-  it("uses the 2code desktop icon for every release channel", () => {
+  it("uses the default desktop icon for every release channel", () => {
     assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17"), {
       macIconPng: "apps/desktop/resources/icon.png",
       linuxIconPng: "apps/desktop/resources/icon.png",
