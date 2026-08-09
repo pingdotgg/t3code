@@ -938,6 +938,7 @@ private struct NewTaskProjectPicker: View {
                                 }
                             }
                             .frame(minHeight: 34)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .accessibilityAddTraits(
