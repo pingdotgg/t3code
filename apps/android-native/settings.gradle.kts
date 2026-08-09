@@ -15,4 +15,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "t3-android-native"
-include(":app", ":protocol", ":terminal-renderer")
+include(":app", ":protocol", ":terminal-renderer", ":review-renderer")

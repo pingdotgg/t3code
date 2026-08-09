@@ -7,6 +7,8 @@ import com.t3tools.android.protocol.ModelSelection
 import com.t3tools.android.protocol.GitActionProgressEvent
 import com.t3tools.android.protocol.GitStackedAction
 import com.t3tools.android.protocol.ProjectChoice
+import com.t3tools.android.protocol.ReviewCheckpoint
+import com.t3tools.android.protocol.ReviewDiffSource
 import com.t3tools.android.protocol.StartCommand
 import com.t3tools.android.protocol.TerminalAttachEvent
 import com.t3tools.android.protocol.TerminalBufferState
@@ -111,6 +113,35 @@ private data class GitTarget(
   val worktreePath: String?,
 )
 
+private data class ReviewTarget(
+  val environmentId: String,
+  val threadId: String,
+  val cwd: String,
+) {
+  val key get() = "$environmentId:$threadId:$cwd"
+}
+
+data class ReviewUiState(
+  val environmentId: String? = null,
+  val threadId: String? = null,
+  val cwd: String? = null,
+  val checkpoints: List<ReviewCheckpoint> = emptyList(),
+  val gitSources: List<ReviewDiffSource> = emptyList(),
+  val turnDiffs: Map<String, String> = emptyMap(),
+  val sections: List<ReviewSection> = emptyList(),
+  val selectedSectionId: String? = null,
+  val parsed: ParsedReviewDiff = ParsedReviewDiff.Empty,
+  val expandedFileIds: Set<String> = emptySet(),
+  val viewedFileIds: Set<String> = emptySet(),
+  val revealedLargeFileIds: Set<String> = emptySet(),
+  val selection: ReviewSelection? = null,
+  val loading: Boolean = false,
+  val error: String? = null,
+) {
+  val selectedSection get() = sections.firstOrNull { it.id == selectedSectionId }
+  val targetKey get() = listOfNotNull(environmentId, threadId, cwd).joinToString(":")
+}
+
 class AppViewModel(
   private val repository: OnlineChatRepository,
   private val draftStore: DraftStore,
@@ -138,6 +169,9 @@ class AppViewModel(
   private val mutableTerminalState = MutableStateFlow(TerminalUiState())
   val terminalState = mutableTerminalState.asStateFlow()
 
+  private val mutableReviewState = MutableStateFlow(ReviewUiState())
+  val reviewState = mutableReviewState.asStateFlow()
+
   private val mutableTerminalRenderCommands = MutableSharedFlow<TerminalRenderCommand>(
     extraBufferCapacity = 256,
   )
@@ -158,10 +192,15 @@ class AppViewModel(
   private var terminalWriteJob: Job? = null
   private var terminalResizeJob: Job? = null
   private var terminalLifecycleJob: Job? = null
+  private var reviewPreviewJob: Job? = null
+  private var reviewTurnJob: Job? = null
   private var terminalWrites: Channel<String>? = null
   private var terminalBuffer = TerminalBufferState()
   private var terminalMetadata = emptyList<com.t3tools.android.protocol.TerminalSummary>()
   private var terminalExitReported = false
+  private val reviewExpandedBySection = mutableMapOf<String, Set<String>>()
+  private val reviewViewedBySection = mutableMapOf<String, Set<String>>()
+  private val reviewRevealedBySection = mutableMapOf<String, Set<String>>()
 
   private var retryable: RetryableDispatch? = null
 
@@ -791,6 +830,246 @@ class AppViewModel(
     GitStackedAction.CreatePr -> "pull request"
     GitStackedAction.CommitPush -> "commit and push"
     GitStackedAction.CommitPushPr -> "commit, push and pull request"
+  }
+
+  fun openReview(threadId: String, force: Boolean = false) {
+    val target = resolveReviewTarget(threadId) ?: return
+    val current = mutableReviewState.value
+    if (!force && current.targetKey == target.key && current.sections.isNotEmpty()) return
+    reviewPreviewJob?.cancel()
+    reviewTurnJob?.cancel()
+    val detail = runtime.value.thread.detail?.takeIf { it.summary.id == threadId }
+    val retained = current.takeIf { it.targetKey == target.key }
+    mutableReviewState.value = ReviewUiState(
+      environmentId = target.environmentId,
+      threadId = target.threadId,
+      cwd = target.cwd,
+      checkpoints = detail?.checkpoints.orEmpty(),
+      gitSources = retained?.gitSources.orEmpty(),
+      turnDiffs = retained?.turnDiffs.orEmpty(),
+      selectedSectionId = retained?.selectedSectionId,
+      parsed = retained?.parsed ?: ParsedReviewDiff.Empty,
+      expandedFileIds = retained?.expandedFileIds.orEmpty(),
+      viewedFileIds = retained?.viewedFileIds.orEmpty(),
+      revealedLargeFileIds = retained?.revealedLargeFileIds.orEmpty(),
+      loading = true,
+    )
+    rebuildReviewSections(target)
+    loadSelectedReviewTurn(target)
+    reviewPreviewJob = viewModelScope.launch {
+      runCatching { repository.reviewDiffPreview(target.environmentId, target.cwd) }
+        .onSuccess { preview ->
+          mutableReviewState.update { state ->
+            if (state.targetKey != target.key) state else state.copy(
+              gitSources = preview.sources,
+              loading = false,
+              error = null,
+            )
+          }
+          rebuildReviewSections(target)
+        }
+        .onFailure { error ->
+          if (error !is CancellationException) {
+            mutableReviewState.update { state ->
+              if (state.targetKey != target.key) state
+              else state.copy(loading = false, error = error.safeMessage())
+            }
+          }
+        }
+    }
+  }
+
+  fun syncReviewCheckpoints(threadId: String) {
+    val target = currentReviewTarget()?.takeIf { it.threadId == threadId } ?: return
+    val checkpoints = runtime.value.thread.detail
+      ?.takeIf { it.summary.id == threadId }
+      ?.checkpoints
+      ?: return
+    if (checkpoints == mutableReviewState.value.checkpoints) return
+    mutableReviewState.update { state ->
+      if (state.targetKey != target.key) state else state.copy(checkpoints = checkpoints)
+    }
+    rebuildReviewSections(target)
+    loadSelectedReviewTurn(target)
+  }
+
+  fun selectReviewSection(sectionId: String) {
+    val state = mutableReviewState.value
+    if (state.sections.none { it.id == sectionId }) return
+    mutableReviewState.update { it.copy(selectedSectionId = sectionId, selection = null, error = null) }
+    applySelectedReviewSection()
+    currentReviewTarget()?.let(::loadSelectedReviewTurn)
+  }
+
+  fun refreshReview() {
+    val target = currentReviewTarget() ?: return
+    if (mutableReviewState.value.selectedSection?.kind == ReviewSectionKind.Turn) {
+      loadSelectedReviewTurn(target, force = true)
+    } else {
+      openReview(target.threadId, force = true)
+    }
+  }
+
+  fun toggleReviewFile(fileId: String) {
+    val state = mutableReviewState.value
+    val scopeKey = reviewSectionScopeKey(state) ?: return
+    val next = state.expandedFileIds.toMutableSet().apply {
+      if (!add(fileId)) remove(fileId)
+    }
+    reviewExpandedBySection[scopeKey] = next
+    mutableReviewState.update { it.copy(expandedFileIds = next, selection = null) }
+  }
+
+  fun toggleReviewViewed(fileId: String) {
+    val state = mutableReviewState.value
+    val scopeKey = reviewSectionScopeKey(state) ?: return
+    val nextViewed = state.viewedFileIds.toMutableSet().apply {
+      if (!add(fileId)) remove(fileId)
+    }
+    val nextExpanded = if (fileId in nextViewed) state.expandedFileIds - fileId
+    else state.expandedFileIds
+    reviewViewedBySection[scopeKey] = nextViewed
+    reviewExpandedBySection[scopeKey] = nextExpanded
+    mutableReviewState.update {
+      it.copy(viewedFileIds = nextViewed, expandedFileIds = nextExpanded, selection = null)
+    }
+  }
+
+  fun revealLargeReviewFile(fileId: String) {
+    val state = mutableReviewState.value
+    val scopeKey = reviewSectionScopeKey(state) ?: return
+    val next = state.revealedLargeFileIds + fileId
+    reviewRevealedBySection[scopeKey] = next
+    mutableReviewState.update { it.copy(revealedLargeFileIds = next) }
+  }
+
+  fun selectReviewLine(rowId: String, extend: Boolean) {
+    val state = mutableReviewState.value
+    val section = state.selectedSection ?: return
+    val files = (state.parsed as? ParsedReviewDiff.Files)?.files ?: return
+    val file = files.firstOrNull { candidate -> candidate.lines.any { it.id == rowId } } ?: return
+    val line = file.lines.first { it.id == rowId }
+    mutableReviewState.update {
+      it.copy(selection = updateReviewSelection(it.selection, section, file, line.lineIndex, extend))
+    }
+  }
+
+  fun clearReviewSelection() {
+    mutableReviewState.update { it.copy(selection = null) }
+  }
+
+  fun appendReviewComment(comment: String) {
+    val state = mutableReviewState.value
+    val environmentId = state.environmentId ?: return
+    val threadId = state.threadId ?: return
+    val selection = state.selection ?: return
+    if (comment.isBlank()) return
+    val key = DraftStore.threadKey(environmentId, threadId)
+    val draft = draftStore.load(key)
+    val context = formatReviewComment(selection, comment)
+    val text = listOf(draft.text.trimEnd(), context).filter(String::isNotBlank).joinToString("\n\n")
+    draftStore.save(key, draft.copy(text = text))
+    mutableDraftRevision.value += 1
+    mutableReviewState.update { it.copy(selection = null) }
+  }
+
+  fun stopReviewRoute(targetKey: String) {
+    if (mutableReviewState.value.targetKey != targetKey) return
+    reviewPreviewJob?.cancel()
+    reviewTurnJob?.cancel()
+  }
+
+  private fun rebuildReviewSections(target: ReviewTarget) {
+    mutableReviewState.update { state ->
+      if (state.targetKey != target.key) return@update state
+      val sections = buildReviewSections(state.checkpoints, state.gitSources, state.turnDiffs)
+      val selectedId = state.selectedSectionId?.takeIf { id -> sections.any { it.id == id } }
+        ?: sections.firstOrNull()?.id
+      state.copy(sections = sections, selectedSectionId = selectedId)
+    }
+    applySelectedReviewSection()
+  }
+
+  private fun applySelectedReviewSection() {
+    mutableReviewState.update { state ->
+      val section = state.selectedSection ?: return@update state.copy(parsed = ParsedReviewDiff.Empty)
+      val source = state.gitSources.firstOrNull { "git:${it.kind.wireValue}" == section.id }
+      val parsed = parseReviewDiff(section.diff, source?.truncated == true)
+      val files = (parsed as? ParsedReviewDiff.Files)?.files.orEmpty()
+      val scopeKey = reviewSectionScopeKey(state) ?: return@update state.copy(parsed = parsed)
+      val validIds = files.map(ReviewFile::id).toSet()
+      val expanded = reviewExpandedBySection[scopeKey]?.intersect(validIds) ?: validIds
+      val viewed = reviewViewedBySection[scopeKey].orEmpty().intersect(validIds)
+      val revealed = reviewRevealedBySection[scopeKey].orEmpty().intersect(validIds)
+      state.copy(
+        parsed = parsed,
+        expandedFileIds = expanded,
+        viewedFileIds = viewed,
+        revealedLargeFileIds = revealed,
+        selection = null,
+      )
+    }
+  }
+
+  private fun loadSelectedReviewTurn(target: ReviewTarget, force: Boolean = false) {
+    val state = mutableReviewState.value
+    val section = state.selectedSection?.takeIf { it.kind == ReviewSectionKind.Turn } ?: return
+    if (!force && section.diff != null) return
+    val checkpoint = state.checkpoints.firstOrNull { "turn:${it.turnId}" == section.id } ?: return
+    reviewTurnJob?.cancel()
+    reviewTurnJob = viewModelScope.launch {
+      mutableReviewState.update { current ->
+        if (current.targetKey != target.key) current else current.copy(loading = true, error = null)
+      }
+      runCatching {
+        repository.reviewTurnDiff(
+          target.environmentId,
+          target.threadId,
+          (checkpoint.checkpointTurnCount - 1).coerceAtLeast(0),
+          checkpoint.checkpointTurnCount,
+        )
+      }.onSuccess { result ->
+        mutableReviewState.update { current ->
+          if (current.targetKey != target.key) current else current.copy(
+            turnDiffs = current.turnDiffs + (section.id to result.diff),
+            loading = false,
+            error = null,
+          )
+        }
+        rebuildReviewSections(target)
+      }.onFailure { error ->
+        if (error !is CancellationException) {
+          mutableReviewState.update { current ->
+            if (current.targetKey != target.key) current
+            else current.copy(loading = false, error = error.safeMessage())
+          }
+        }
+      }
+    }
+  }
+
+  private fun resolveReviewTarget(threadId: String): ReviewTarget? {
+    val state = runtime.value
+    val environmentId = state.environment?.environmentId ?: return null
+    val summary = state.shell.threads[threadId]
+      ?: state.thread.detail?.summary?.takeIf { it.id == threadId }
+      ?: return null
+    val project = state.shell.projects[summary.projectId] ?: return null
+    return ReviewTarget(environmentId, threadId, summary.worktreePath ?: project.workspaceRoot)
+  }
+
+  private fun currentReviewTarget(): ReviewTarget? {
+    val state = mutableReviewState.value
+    return ReviewTarget(
+      state.environmentId ?: return null,
+      state.threadId ?: return null,
+      state.cwd ?: return null,
+    )
+  }
+
+  private fun reviewSectionScopeKey(state: ReviewUiState): String? {
+    val sectionId = state.selectedSectionId ?: return null
+    return "${state.targetKey}:$sectionId"
   }
 
   fun openTerminalRoute(threadId: String, terminalId: String) {

@@ -57,6 +57,7 @@ import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Terminal
+import androidx.compose.material.icons.rounded.RateReview
 import androidx.compose.material.icons.rounded.Unarchive
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -134,6 +135,7 @@ private const val THREAD_GIT = "thread/{threadId}/git"
 private const val THREAD_GIT_COMMIT = "thread/{threadId}/git/commit"
 private const val THREAD_GIT_BRANCHES = "thread/{threadId}/git/branches"
 private const val THREAD_TERMINAL = "thread/{threadId}/terminal/{terminalId}"
+private const val THREAD_REVIEW = "thread/{threadId}/review"
 
 @Composable
 fun T3NativeApp(viewModel: AppViewModel) {
@@ -259,6 +261,7 @@ fun T3NativeApp(viewModel: AppViewModel) {
         },
         onFiles = { navController.navigate("thread/$threadId/files") },
         onGit = { navController.navigate("thread/$threadId/git") },
+        onReview = { navController.navigate("thread/$threadId/review") },
         onTerminal = {
           navController.navigate("thread/$threadId/terminal/$DEFAULT_TERMINAL_ID")
         },
@@ -287,6 +290,7 @@ fun T3NativeApp(viewModel: AppViewModel) {
         onBack = { navController.popBackStack() },
         onCommit = { navController.navigate("thread/$threadId/git/commit") },
         onBranches = { navController.navigate("thread/$threadId/git/branches") },
+        onReview = { navController.navigate("thread/$threadId/review") },
       )
     }
     composable(
@@ -307,6 +311,17 @@ fun T3NativeApp(viewModel: AppViewModel) {
       GitBranchesScreen(
         threadId = requireNotNull(entry.arguments?.getString("threadId")),
         state = gitState,
+        viewModel = viewModel,
+        onBack = { navController.popBackStack() },
+      )
+    }
+    composable(
+      route = THREAD_REVIEW,
+      arguments = listOf(navArgument("threadId") { type = NavType.StringType }),
+    ) { entry ->
+      ReviewScreen(
+        threadId = requireNotNull(entry.arguments?.getString("threadId")),
+        connectionPhase = runtime.connectionPhase,
         viewModel = viewModel,
         onBack = { navController.popBackStack() },
       )
@@ -1614,6 +1629,7 @@ private fun ThreadScreen(
   onBack: () -> Unit,
   onFiles: () -> Unit,
   onGit: () -> Unit,
+  onReview: () -> Unit,
   onTerminal: () -> Unit,
 ) {
   val detail = runtime.thread.detail
@@ -1651,6 +1667,9 @@ private fun ThreadScreen(
           }
         },
         actions = {
+          IconButton(onClick = onReview, enabled = detail != null) {
+            Icon(Icons.Rounded.RateReview, contentDescription = "Review changes")
+          }
           IconButton(onClick = onTerminal, enabled = detail != null) {
             Icon(Icons.Rounded.Terminal, contentDescription = "Open terminal")
           }
@@ -1741,7 +1760,7 @@ private fun ThreadFeed(
           color = if (message.role == "user") Color(0xFF172554) else MaterialTheme.colorScheme.surface,
           modifier = Modifier.fillMaxWidth(),
         ) {
-          Text(message.text, modifier = Modifier.padding(14.dp))
+          UserMessageContent(message.text, modifier = Modifier.padding(14.dp))
         }
       }
     }
@@ -1756,6 +1775,21 @@ private fun ThreadFeed(
             Text(activity.summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
           }
         }
+      }
+    }
+  }
+}
+
+@Composable
+private fun UserMessageContent(text: String, modifier: Modifier = Modifier) {
+  val segments = remember(text) { parseReviewMessageSegments(text) }
+  Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    segments.forEach { segment ->
+      when (segment) {
+        is ReviewMessageSegment.Text -> segment.value.trim().takeIf(String::isNotEmpty)?.let {
+          Text(it)
+        }
+        is ReviewMessageSegment.Comment -> ReviewCommentCard(segment.value)
       }
     }
   }
@@ -1895,10 +1929,21 @@ private fun ChatComposerArea(
           .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
       ) {
+        val reviewComments = remember(draft.text) { parseReviewComments(draft.text) }
+        reviewComments.forEach { comment ->
+          ReviewCommentCard(
+            comment = comment,
+            onRemove = {
+              onDraftUpdate(draft.copy(text = removeReviewComment(draft.text, comment.id)))
+            },
+          )
+        }
         // Message input text field with minimal internal margins on all sides
         BasicTextField(
-          value = draft.text,
-          onValueChange = { onDraftUpdate(draft.copy(text = it)) },
+          value = plainReviewMessageText(draft.text),
+          onValueChange = {
+            onDraftUpdate(draft.copy(text = replacePlainReviewMessageText(draft.text, it)))
+          },
           minLines = 2,
           maxLines = 6,
           textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),

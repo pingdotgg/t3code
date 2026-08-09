@@ -1,12 +1,13 @@
-# T3 Code Native Android — Phase 3C
+# T3 Code Native Android — Phase 3D
 
-Independent native Android client for T3 Code. Phase 3C adds durable Ghostty-backed terminal sessions to the project, files, and Git journeys from Phases 3A–3B.
+Independent native Android client for T3 Code. Phase 3D adds review navigation and contextual comments to the project, files, Git, and terminal journeys from Phases 3A–3C.
 
 ## Modules
 
-- `:protocol` — pairing, bearer authentication, Effect RPC WebSocket transport, typed shell/thread/workspace/Git/terminal models, sequence-aware reducers, commands, and the headless proof harness.
+- `:protocol` — pairing, bearer authentication, Effect RPC WebSocket transport, typed shell/thread/workspace/Git/terminal/review models, sequence-aware reducers, commands, and the headless proof harness.
 - `:terminal-renderer` — the shared Ghostty VT/JNI and Canvas renderer compiled from the RN terminal module's plain Android sources.
-- `:app` — Compose UI, multi-environment supervisors, SQLite catalog/outbox/cache, project/files/Git/terminal UI, T3 Connect client, and Android Keystore-backed credentials.
+- `:review-renderer` — the shared virtualized Canvas diff renderer compiled from the RN review module's Expo-free Android surface.
+- `:app` — Compose UI, multi-environment supervisors, SQLite catalog/outbox/cache, project/files/Git/terminal/review UI, T3 Connect client, and Android Keystore-backed credentials.
 
 The Kotlin implementation targets the current matching T3 server revision. Broader server-version compatibility is not promised until versioned wire artifacts exist.
 
@@ -86,11 +87,11 @@ T3_NATIVE_PROMPT='Count slowly from one to twenty, one number per line.' \
 
 It must exit 0 after pairing, loading the shell, creating one task with atomic `thread.turn.start`, recovering an uncertain retry by deterministic thread id, streaming assistant output, dispatching `thread.turn.interrupt`, reconnecting from the saved bearer credential, probing the server, and resuming shell/thread streams without duplicate sequences.
 
-## Phase 3C boundaries
+## Phase 3D boundaries
 
-Terminal rendering, input, resize, history replay, reconnect, multiple sessions, clear, restart, close, and the RN Android accessory controls are in scope. Desktop split panes, project-script launch UI, review UI, file editing, and attachment picker/upload remain outside Phase 3C. Performance benchmarking remains deferred until Phase 3 is complete.
+Turn, working-tree, and base-branch review sections; file navigation; collapse/viewed state; large and non-text notices; contextual review comments; and refresh are in scope. Review comments use the existing durable composer draft and outbox. File editing, attachments, and attachment picker/upload remain outside Phase 3D. Performance benchmarking remains deferred until Phase 3E is complete.
 
-The Phase 3C capability matrix and device acceptance steps live in [`docs/PHASE3C.md`](docs/PHASE3C.md). Earlier evidence remains in [`docs/PHASE3B.md`](docs/PHASE3B.md), [`docs/PHASE3A.md`](docs/PHASE3A.md), and [`docs/PHASE2.md`](docs/PHASE2.md).
+The Phase 3D capability matrix and device acceptance steps live in [`docs/PHASE3D.md`](docs/PHASE3D.md). Earlier evidence remains in [`docs/PHASE3C.md`](docs/PHASE3C.md), [`docs/PHASE3B.md`](docs/PHASE3B.md), [`docs/PHASE3A.md`](docs/PHASE3A.md), and [`docs/PHASE2.md`](docs/PHASE2.md).
 
 ### Atomic bootstrap retry caveat
 

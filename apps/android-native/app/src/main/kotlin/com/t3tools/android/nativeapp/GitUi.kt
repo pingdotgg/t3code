@@ -71,6 +71,7 @@ fun GitOverviewScreen(
   onBack: () -> Unit,
   onCommit: () -> Unit,
   onBranches: () -> Unit,
+  onReview: () -> Unit,
 ) {
   LaunchedEffect(threadId) { viewModel.observeGit(threadId) }
   val status = state.status
@@ -185,6 +186,13 @@ fun GitOverviewScreen(
                 onClick = viewModel::pullGit,
               )
             }
+            HorizontalDivider()
+            GitActionRow(
+              title = "Review changes",
+              detail = "Inspect turn, working tree, and branch diffs",
+              enabled = !busy,
+              onClick = onReview,
+            )
             HorizontalDivider()
             GitActionRow(
               title = "Branches & worktrees",

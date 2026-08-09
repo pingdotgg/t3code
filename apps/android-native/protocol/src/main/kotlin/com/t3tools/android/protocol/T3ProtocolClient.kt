@@ -213,6 +213,49 @@ class T3ProtocolClient(
     path: String,
   ) = session.unary("assets.createUrl", workspaceAssetPayload(threadId, path)).toWorkspaceAssetUrl()
 
+  suspend fun reviewDiffPreview(
+    session: EffectRpcSession,
+    cwd: String,
+    baseRef: String? = null,
+    ignoreWhitespace: Boolean = false,
+  ) = session.unary(
+    "review.getDiffPreview",
+    reviewDiffPreviewPayload(cwd, baseRef, ignoreWhitespace),
+  ).toReviewDiffPreview()
+
+  suspend fun reviewDiffFileContents(
+    session: EffectRpcSession,
+    cwd: String,
+    sourceKind: ReviewSourceKind,
+    changeType: String,
+    baseRef: String?,
+    headRef: String?,
+    oldPath: String,
+    newPath: String,
+  ) = session.unary(
+    "review.getDiffFileContents",
+    reviewDiffFileContentsPayload(
+      cwd,
+      sourceKind,
+      changeType,
+      baseRef,
+      headRef,
+      oldPath,
+      newPath,
+    ),
+  ).toReviewDiffFileContents()
+
+  suspend fun reviewTurnDiff(
+    session: EffectRpcSession,
+    threadId: String,
+    fromTurnCount: Int,
+    toTurnCount: Int,
+    ignoreWhitespace: Boolean = false,
+  ) = session.unary(
+    "orchestration.getTurnDiff",
+    reviewTurnDiffPayload(threadId, fromTurnCount, toTurnCount, ignoreWhitespace),
+  ).toReviewTurnDiff()
+
   fun vcsStatus(session: EffectRpcSession, cwd: String): Flow<VcsStatusEvent> =
     session.stream("subscribeVcsStatus", vcsStatusPayload(cwd)).mapNotNull { value ->
       value.toVcsStatusEvent()

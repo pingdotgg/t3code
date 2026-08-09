@@ -129,6 +129,7 @@ data class ThreadDetail(
   val summary: ThreadSummary,
   val messages: List<ChatMessage>,
   val activities: List<ThreadActivity>,
+  val checkpoints: List<ReviewCheckpoint> = emptyList(),
 ) {
   val approvals: List<PendingApproval> get() = derivePendingApprovals(activities)
   val userInputs: List<PendingUserInput> get() = derivePendingUserInputs(activities)

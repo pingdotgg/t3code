@@ -13,6 +13,7 @@ import com.t3tools.android.protocol.ConnectedEnvironment
 import com.t3tools.android.protocol.FilesystemBrowseResult
 import com.t3tools.android.protocol.GitActionProgressEvent
 import com.t3tools.android.protocol.GitStackedAction
+import com.t3tools.android.protocol.ReviewSourceKind
 import com.t3tools.android.protocol.ShellState
 import com.t3tools.android.protocol.StartCommand
 import com.t3tools.android.protocol.T3ProtocolClient
@@ -514,6 +515,53 @@ class OnlineChatRepository(
     val relative = asset.relativeUrl
     if (relative.startsWith("http://") || relative.startsWith("https://")) relative
     else URI("$base/").resolve(relative.removePrefix("/")).toString()
+  }
+
+  suspend fun reviewDiffPreview(
+    environmentId: String,
+    cwd: String,
+    baseRef: String? = null,
+  ) = withContext(Dispatchers.IO) {
+    val runtime = connectedRuntime(environmentId)
+    client.reviewDiffPreview(requireNotNull(runtime.connection).session, cwd, baseRef)
+  }
+
+  suspend fun reviewDiffFileContents(
+    environmentId: String,
+    cwd: String,
+    sourceKind: ReviewSourceKind,
+    changeType: String,
+    baseRef: String?,
+    headRef: String?,
+    oldPath: String,
+    newPath: String,
+  ) = withContext(Dispatchers.IO) {
+    val runtime = connectedRuntime(environmentId)
+    client.reviewDiffFileContents(
+      requireNotNull(runtime.connection).session,
+      cwd,
+      sourceKind,
+      changeType,
+      baseRef,
+      headRef,
+      oldPath,
+      newPath,
+    )
+  }
+
+  suspend fun reviewTurnDiff(
+    environmentId: String,
+    threadId: String,
+    fromTurnCount: Int,
+    toTurnCount: Int,
+  ) = withContext(Dispatchers.IO) {
+    val runtime = connectedRuntime(environmentId)
+    client.reviewTurnDiff(
+      requireNotNull(runtime.connection).session,
+      threadId,
+      fromTurnCount,
+      toTurnCount,
+    )
   }
 
   @OptIn(ExperimentalCoroutinesApi::class)

@@ -14,7 +14,7 @@ android {
     minSdk = 26
     targetSdk = 35
     versionCode = 1
-    versionName = "0.3.0-phase3c"
+    versionName = "0.4.0-phase3d"
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
@@ -49,6 +49,7 @@ kotlin {
 dependencies {
   implementation(project(":protocol"))
   implementation(project(":terminal-renderer"))
+  implementation(project(":review-renderer"))
   implementation(platform("androidx.compose:compose-bom:2024.12.01"))
   implementation("androidx.activity:activity-compose:1.10.0")
   implementation("androidx.compose.foundation:foundation")

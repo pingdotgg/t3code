@@ -87,6 +87,17 @@ private fun ThreadState.reduceThreadEvent(event: JsonObject): ThreadState {
         interactionMode = payload.text("interactionMode") ?: current.summary.interactionMode,
       ),
     )
+    "thread.turn-diff-completed" -> payload.toReviewCheckpoint()?.let { checkpoint ->
+      val existing = current.checkpoints.firstOrNull { it.turnId == checkpoint.turnId }
+      if (existing != null && existing.status != "missing" && checkpoint.status == "missing") {
+        current
+      } else {
+        current.copy(
+          checkpoints = (current.checkpoints.filterNot { it.turnId == checkpoint.turnId } + checkpoint)
+            .sortedBy(ReviewCheckpoint::checkpointTurnCount),
+        )
+      }
+    } ?: current
     "thread.archived" -> current.copy(
       summary = current.summary.copy(archivedAt = payload.text("archivedAt")),
     )
@@ -226,6 +237,9 @@ private fun JsonObject.toThreadDetail(): ThreadDetail? {
     summary = summary,
     messages = array("messages").orEmpty().mapNotNull { (it as? JsonObject)?.toMessage() },
     activities = array("activities").orEmpty().mapNotNull { (it as? JsonObject)?.toActivity() },
+    checkpoints = array("checkpoints").orEmpty()
+      .mapNotNull { (it as? JsonObject)?.toReviewCheckpoint() }
+      .sortedBy(ReviewCheckpoint::checkpointTurnCount),
   )
 }
 
