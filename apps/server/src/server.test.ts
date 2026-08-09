@@ -7084,6 +7084,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       if (sessionStopCommand?.type === "thread.session.stop") {
         assert.equal(sessionStopCommand.threadId, threadId);
         assert.equal(sessionStopCommand.commandId, "session-stop-for-settle:cmd-thread-settle");
+        assert.equal(sessionStopCommand.onlyIfSettled, true);
       }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

@@ -1080,6 +1080,12 @@ const makeWsRpcLayer = (
                       ),
                       threadId: parkingCommand.threadId,
                       createdAt: yield* nowIso,
+                      // A settled thread can be re-engaged before this stop is
+                      // decided; the decider then drops the stop instead of
+                      // killing the new session. Archive stops stay
+                      // unconditional: turn starts on archived threads are
+                      // rejected, so there is no new session to protect.
+                      ...(parkingKind === "settle" ? { onlyIfSettled: true } : {}),
                     });
 
                     yield* dispatchNormalizedCommand(stopCommand);
