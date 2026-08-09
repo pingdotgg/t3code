@@ -74,6 +74,7 @@ export function buildHomeProjectScopes(input: {
 }
 
 export function sortHomeProjectScopes(input: {
+  readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly scopes: ReadonlyArray<HomeProjectScope>;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
@@ -87,32 +88,52 @@ export function sortHomeProjectScopes(input: {
       ),
     ),
   );
+  const physicalProjectKeyByProjectRefKey = new Map(
+    input.projects.map((project) => [
+      scopedProjectKey(project.environmentId, project.id),
+      derivePhysicalProjectKey(project),
+    ] as const),
+  );
   const latestActivityByScope = new Map<string, number>();
-  const recordActivity = (scopeKey: string | undefined, timestamp: number) => {
-    if (!scopeKey || !Number.isFinite(timestamp)) return;
-    latestActivityByScope.set(
-      scopeKey,
-      Math.max(latestActivityByScope.get(scopeKey) ?? Number.NEGATIVE_INFINITY, timestamp),
-    );
+  const latestActivityByProjectKey = new Map<string, number>();
+  const recordActivity = (scopeKey: string | undefined, projectKey: string | undefined, timestamp: number) => {
+    if (!Number.isFinite(timestamp)) return;
+    if (scopeKey) {
+      latestActivityByScope.set(
+        scopeKey,
+        Math.max(latestActivityByScope.get(scopeKey) ?? Number.NEGATIVE_INFINITY, timestamp),
+      );
+    }
+    if (projectKey) {
+      latestActivityByProjectKey.set(
+        projectKey,
+        Math.max(latestActivityByProjectKey.get(projectKey) ?? Number.NEGATIVE_INFINITY, timestamp),
+      );
+    }
   };
 
   for (const thread of input.threads) {
     if (thread.archivedAt !== null) continue;
+    const projectRefKey = scopedProjectKey(thread.environmentId, thread.projectId);
     recordActivity(
-      scopeKeyByProjectRef.get(scopedProjectKey(thread.environmentId, thread.projectId)),
+      scopeKeyByProjectRef.get(projectRefKey),
+      physicalProjectKeyByProjectRefKey.get(projectRefKey),
       getThreadSortTimestamp(thread, input.projectSortOrder),
     );
   }
   for (const pendingTask of input.pendingTasks) {
+    const projectRefKey = scopedProjectKey(
+      pendingTask.message.environmentId,
+      pendingTask.creation.projectId,
+    );
     recordActivity(
-      scopeKeyByProjectRef.get(
-        scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
-      ),
+      scopeKeyByProjectRef.get(projectRefKey),
+      physicalProjectKeyByProjectRefKey.get(projectRefKey),
       Date.parse(pendingTask.message.createdAt),
     );
   }
 
-  return Arr.sort(
+  const sortedScopes = Arr.sort(
     input.scopes,
     Order.mapInput(
       Order.Struct({
@@ -133,6 +154,17 @@ export function sortHomeProjectScopes(input: {
       }),
     ),
   );
+
+  return sortedScopes.map((scope) => ({
+    ...scope,
+    projects: Arr.sort(
+      scope.projects,
+      Order.mapInput(Order.flip(Order.Number), (project) =>
+        latestActivityByProjectKey.get(derivePhysicalProjectKey(project)) ??
+        getProjectSortTimestamp(project, input.projectSortOrder),
+      ),
+    ),
+  }));
 }
 
 /**
