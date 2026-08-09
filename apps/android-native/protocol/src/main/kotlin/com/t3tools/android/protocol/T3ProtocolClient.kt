@@ -258,6 +258,99 @@ class T3ProtocolClient(
     gitActionPayload(actionId, cwd, action, commitMessage, featureBranch, filePaths),
   ).mapNotNull { value -> value.toGitActionProgressEvent() }
 
+  fun terminalMetadata(session: EffectRpcSession): Flow<TerminalMetadataEvent> =
+    session.stream("subscribeTerminalMetadata")
+      .mapNotNull { value -> value.toTerminalMetadataEvent() }
+
+  fun attachTerminal(
+    session: EffectRpcSession,
+    threadId: String,
+    terminalId: String,
+    cwd: String,
+    worktreePath: String?,
+    cols: Int,
+    rows: Int,
+    restartIfNotRunning: Boolean = false,
+  ): Flow<TerminalAttachEvent> = session.stream(
+    "terminal.attach",
+    terminalAttachPayload(
+      threadId,
+      terminalId,
+      cwd,
+      worktreePath,
+      cols,
+      rows,
+      restartIfNotRunning,
+    ),
+  ).mapNotNull { value -> value.toTerminalAttachEvent() }
+
+  suspend fun openTerminal(
+    session: EffectRpcSession,
+    threadId: String,
+    terminalId: String,
+    cwd: String,
+    worktreePath: String?,
+    cols: Int,
+    rows: Int,
+  ) = session.unary(
+    "terminal.open",
+    terminalOpenPayload(threadId, terminalId, cwd, worktreePath, cols, rows),
+  ).toTerminalSnapshot()
+
+  suspend fun writeTerminal(
+    session: EffectRpcSession,
+    threadId: String,
+    terminalId: String,
+    data: String,
+  ) {
+    session.unary("terminal.write", terminalWritePayload(threadId, terminalId, data))
+  }
+
+  suspend fun resizeTerminal(
+    session: EffectRpcSession,
+    threadId: String,
+    terminalId: String,
+    cols: Int,
+    rows: Int,
+  ) {
+    session.unary("terminal.resize", terminalResizePayload(threadId, terminalId, cols, rows))
+  }
+
+  suspend fun clearTerminal(session: EffectRpcSession, threadId: String, terminalId: String) {
+    session.unary("terminal.clear", terminalSessionPayload(threadId, terminalId))
+  }
+
+  suspend fun restartTerminal(
+    session: EffectRpcSession,
+    threadId: String,
+    terminalId: String,
+    cwd: String,
+    worktreePath: String?,
+    cols: Int,
+    rows: Int,
+  ) = session.unary(
+    "terminal.restart",
+    terminalRestartPayload(threadId, terminalId, cwd, worktreePath, cols, rows),
+  ).toTerminalSnapshot()
+
+  suspend fun closeTerminal(
+    session: EffectRpcSession,
+    threadId: String,
+    terminalId: String,
+    deleteHistory: Boolean = false,
+  ) {
+    session.unary(
+      "terminal.close",
+      JsonObject(
+        buildMap {
+          put("threadId", JsonPrimitive(threadId))
+          put("terminalId", JsonPrimitive(terminalId))
+          if (deleteHistory) put("deleteHistory", JsonPrimitive(true))
+        },
+      ),
+    )
+  }
+
   private suspend fun connect(
     descriptor: EnvironmentDescriptor,
     credential: SavedCredential,

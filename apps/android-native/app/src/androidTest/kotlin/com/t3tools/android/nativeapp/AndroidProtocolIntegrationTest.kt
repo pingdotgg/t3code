@@ -7,6 +7,7 @@ import coil.request.ErrorResult
 import coil.request.ImageRequest
 import coil.request.SuccessResult
 import com.t3tools.android.protocol.T3ProtocolClient
+import com.t3tools.android.protocol.TerminalAttachEvent
 import com.t3tools.android.protocol.toShellSnapshot
 import java.net.URI
 import kotlinx.coroutines.flow.first
@@ -30,6 +31,8 @@ class AndroidProtocolIntegrationTest {
     val cloneRemoteUrl = InstrumentationRegistry.getArguments().getString("cloneRemoteUrl")
     val cloneDestination = InstrumentationRegistry.getArguments().getString("cloneDestination")
     val gitCwd = InstrumentationRegistry.getArguments().getString("gitCwd")
+    val terminalCwd = InstrumentationRegistry.getArguments().getString("terminalCwd")
+    val terminalThreadId = InstrumentationRegistry.getArguments().getString("terminalThreadId")
     assumeTrue("pairingUrl instrumentation argument is required", !pairingUrl.isNullOrBlank())
 
     val store = AndroidCredentialStore(instrumentation.targetContext)
@@ -91,6 +94,52 @@ class AndroidProtocolIntegrationTest {
         assertTrue(streamed is com.t3tools.android.protocol.VcsStatusEvent.Snapshot)
         assertTrue(refs.isRepo)
         assertTrue(refs.refs.any { it.current })
+      }
+      if (!terminalCwd.isNullOrBlank() && !terminalThreadId.isNullOrBlank()) {
+        val terminalId = "term-android-integration"
+        client.openTerminal(
+          connected.session,
+          terminalThreadId,
+          terminalId,
+          terminalCwd,
+          null,
+          80,
+          24,
+        )
+        client.writeTerminal(
+          connected.session,
+          terminalThreadId,
+          terminalId,
+          "printf 'phase-three-charlie\\n'\r",
+        )
+        val output = client.attachTerminal(
+          connected.session,
+          terminalThreadId,
+          terminalId,
+          terminalCwd,
+          null,
+          80,
+          24,
+        ).first { event ->
+          when (event) {
+            is TerminalAttachEvent.Snapshot -> "phase-three-charlie" in event.snapshot.history
+            is TerminalAttachEvent.Output -> "phase-three-charlie" in event.data
+            else -> false
+          }
+        }
+        assertNotNull(output)
+        client.resizeTerminal(connected.session, terminalThreadId, terminalId, 100, 30)
+        client.clearTerminal(connected.session, terminalThreadId, terminalId)
+        client.restartTerminal(
+          connected.session,
+          terminalThreadId,
+          terminalId,
+          terminalCwd,
+          null,
+          100,
+          30,
+        )
+        client.closeTerminal(connected.session, terminalThreadId, terminalId, deleteHistory = true)
       }
     } finally {
       connected.session.close()

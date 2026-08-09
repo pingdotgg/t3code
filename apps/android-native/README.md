@@ -1,11 +1,12 @@
-# T3 Code Native Android — Phase 3B
+# T3 Code Native Android — Phase 3C
 
-Independent native Android client for T3 Code. Phase 3B adds environment-scoped Git status, commits, pull/push, pull-request creation, branches, and worktrees to the project and read-only workspace flows from Phase 3A.
+Independent native Android client for T3 Code. Phase 3C adds durable Ghostty-backed terminal sessions to the project, files, and Git journeys from Phases 3A–3B.
 
 ## Modules
 
-- `:protocol` — pairing, bearer authentication, Effect RPC WebSocket transport, typed shell/thread/workspace/Git models, sequence-aware reducers, commands, and the headless proof harness.
-- `:app` — Compose UI, multi-environment supervisors, SQLite catalog/outbox/cache, project/files/Git UI, T3 Connect client, and Android Keystore-backed credentials.
+- `:protocol` — pairing, bearer authentication, Effect RPC WebSocket transport, typed shell/thread/workspace/Git/terminal models, sequence-aware reducers, commands, and the headless proof harness.
+- `:terminal-renderer` — the shared Ghostty VT/JNI and Canvas renderer compiled from the RN terminal module's plain Android sources.
+- `:app` — Compose UI, multi-environment supervisors, SQLite catalog/outbox/cache, project/files/Git/terminal UI, T3 Connect client, and Android Keystore-backed credentials.
 
 The Kotlin implementation targets the current matching T3 server revision. Broader server-version compatibility is not promised until versioned wire artifacts exist.
 
@@ -85,11 +86,11 @@ T3_NATIVE_PROMPT='Count slowly from one to twenty, one number per line.' \
 
 It must exit 0 after pairing, loading the shell, creating one task with atomic `thread.turn.start`, recovering an uncertain retry by deterministic thread id, streaming assistant output, dispatching `thread.turn.interrupt`, reconnecting from the saved bearer credential, probing the server, and resuming shell/thread streams without duplicate sequences.
 
-## Phase 3B boundaries
+## Phase 3C boundaries
 
-Git status, refresh, selective commit, pull, push, pull-request creation, branch switching/creation, and worktree creation are in scope. Git initialization, worktree deletion, force operations, terminal sessions, review UI, file editing, and attachment picker/upload remain outside Phase 3B. Performance benchmarking remains deferred until Phase 3 is complete.
+Terminal rendering, input, resize, history replay, reconnect, multiple sessions, clear, restart, close, and the RN Android accessory controls are in scope. Desktop split panes, project-script launch UI, review UI, file editing, and attachment picker/upload remain outside Phase 3C. Performance benchmarking remains deferred until Phase 3 is complete.
 
-The Phase 3B capability matrix and device acceptance steps live in [`docs/PHASE3B.md`](docs/PHASE3B.md). Earlier evidence remains in [`docs/PHASE3A.md`](docs/PHASE3A.md) and [`docs/PHASE2.md`](docs/PHASE2.md).
+The Phase 3C capability matrix and device acceptance steps live in [`docs/PHASE3C.md`](docs/PHASE3C.md). Earlier evidence remains in [`docs/PHASE3B.md`](docs/PHASE3B.md), [`docs/PHASE3A.md`](docs/PHASE3A.md), and [`docs/PHASE2.md`](docs/PHASE2.md).
 
 ### Atomic bootstrap retry caveat
 

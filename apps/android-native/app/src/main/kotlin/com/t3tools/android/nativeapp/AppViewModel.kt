@@ -8,6 +8,10 @@ import com.t3tools.android.protocol.GitActionProgressEvent
 import com.t3tools.android.protocol.GitStackedAction
 import com.t3tools.android.protocol.ProjectChoice
 import com.t3tools.android.protocol.StartCommand
+import com.t3tools.android.protocol.TerminalAttachEvent
+import com.t3tools.android.protocol.TerminalBufferState
+import com.t3tools.android.protocol.TerminalMetadataEvent
+import com.t3tools.android.protocol.TerminalStatus
 import com.t3tools.android.protocol.WorktreeBootstrap
 import com.t3tools.android.protocol.WorkspaceContentMatch
 import com.t3tools.android.protocol.WorkspaceEntry
@@ -24,13 +28,17 @@ import com.t3tools.android.protocol.toJsonObject
 import com.t3tools.android.protocol.turnStartCommand
 import com.t3tools.android.protocol.userInputResponseCommand
 import com.t3tools.android.protocol.reduceVcsStatus
+import com.t3tools.android.protocol.reduceTerminalBuffer
+import com.t3tools.android.protocol.reduceTerminalMetadata
 import com.t3tools.android.protocol.updateThreadGitContextCommand
 import java.net.URI
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -127,6 +135,17 @@ class AppViewModel(
   private val mutableGitState = MutableStateFlow(GitUiState())
   val gitState = mutableGitState.asStateFlow()
 
+  private val mutableTerminalState = MutableStateFlow(TerminalUiState())
+  val terminalState = mutableTerminalState.asStateFlow()
+
+  private val mutableTerminalRenderCommands = MutableSharedFlow<TerminalRenderCommand>(
+    extraBufferCapacity = 256,
+  )
+  val terminalRenderCommands = mutableTerminalRenderCommands.asSharedFlow()
+
+  private val mutableTerminalEvents = MutableSharedFlow<TerminalUiEvent>(extraBufferCapacity = 2)
+  val terminalEvents = mutableTerminalEvents.asSharedFlow()
+
   private var browseProjectJob: Job? = null
   private var addProjectJob: Job? = null
   private var workspaceEntriesJob: Job? = null
@@ -134,6 +153,15 @@ class AppViewModel(
   private var workspaceFileJob: Job? = null
   private var gitStatusJob: Job? = null
   private var gitMutationJob: Job? = null
+  private var terminalMetadataJob: Job? = null
+  private var terminalAttachJob: Job? = null
+  private var terminalWriteJob: Job? = null
+  private var terminalResizeJob: Job? = null
+  private var terminalLifecycleJob: Job? = null
+  private var terminalWrites: Channel<String>? = null
+  private var terminalBuffer = TerminalBufferState()
+  private var terminalMetadata = emptyList<com.t3tools.android.protocol.TerminalSummary>()
+  private var terminalExitReported = false
 
   private var retryable: RetryableDispatch? = null
 
@@ -763,6 +791,285 @@ class AppViewModel(
     GitStackedAction.CreatePr -> "pull request"
     GitStackedAction.CommitPush -> "commit and push"
     GitStackedAction.CommitPushPr -> "commit, push and pull request"
+  }
+
+  fun openTerminalRoute(threadId: String, terminalId: String) {
+    val target = resolveTerminalTarget(threadId, terminalId) ?: return
+    if (mutableTerminalState.value.target == target && terminalAttachJob?.isActive == true) return
+    if (mutableTerminalState.value.target?.environmentId != target.environmentId) {
+      terminalMetadata = emptyList()
+    }
+    stopTerminalJobs()
+    terminalExitReported = false
+    terminalBuffer = TerminalBufferState()
+    val retainedSessions = terminalSessionsForThread(terminalMetadata, threadId)
+    mutableTerminalState.value = TerminalUiState(
+      target = target,
+      sessions = retainedSessions,
+      loading = true,
+    )
+
+    val writes = Channel<String>(Channel.UNLIMITED)
+    terminalWrites = writes
+    terminalWriteJob = viewModelScope.launch {
+      for (data in writes) {
+        runCatching {
+          repository.writeTerminal(
+            target.environmentId,
+            target.threadId,
+            target.terminalId,
+            data,
+          )
+        }.onFailure { error ->
+          if (error !is CancellationException) updateTerminalError(target.key, error.safeMessage())
+        }
+      }
+    }
+
+    terminalMetadataJob = viewModelScope.launch {
+      try {
+        repository.observeTerminalMetadata(target.environmentId).collect { event ->
+          terminalMetadata = reduceTerminalMetadata(terminalMetadata, event)
+          val sessions = terminalSessionsForThread(terminalMetadata, target.threadId)
+          val active = sessions.firstOrNull { it.terminalId == target.terminalId }
+          mutableTerminalState.update { current ->
+            if (current.target?.key != target.key) current else current.copy(
+              sessions = sessions,
+              status = active?.status ?: current.status,
+              label = active?.label ?: current.label,
+              hasRunningSubprocess = active?.hasRunningSubprocess ?: false,
+              target = active?.let {
+                current.target.copy(cwd = it.cwd, worktreePath = it.worktreePath)
+              } ?: current.target,
+            )
+          }
+        }
+      } catch (error: Throwable) {
+        if (error is CancellationException) throw error
+        updateTerminalError(target.key, error.safeMessage())
+      }
+    }
+
+    terminalAttachJob = viewModelScope.launch {
+      try {
+        repository.attachTerminal(
+          environmentId = target.environmentId,
+          threadId = target.threadId,
+          terminalId = target.terminalId,
+          cwd = target.cwd,
+          worktreePath = target.worktreePath,
+          cols = mutableTerminalState.value.cols,
+          rows = mutableTerminalState.value.rows,
+          restartIfNotRunning = true,
+        ).collect { event -> handleTerminalAttachEvent(target.key, event) }
+      } catch (error: Throwable) {
+        if (error is CancellationException) throw error
+        updateTerminalError(target.key, error.safeMessage())
+      }
+    }
+  }
+
+  fun stopTerminalRoute(targetKey: String) {
+    if (mutableTerminalState.value.target?.key != targetKey) return
+    stopTerminalJobs()
+    mutableTerminalState.value = TerminalUiState()
+    terminalBuffer = TerminalBufferState()
+  }
+
+  fun terminalReplayBuffer(targetKey: String): String =
+    terminalBuffer.buffer.takeIf { mutableTerminalState.value.target?.key == targetKey }.orEmpty()
+
+  fun writeTerminal(data: String) {
+    if (data.isNotEmpty()) terminalWrites?.trySend(data)
+  }
+
+  fun resizeTerminal(cols: Int, rows: Int) {
+    val safeCols = cols.coerceIn(1, 1000)
+    val safeRows = rows.coerceIn(1, 500)
+    val current = mutableTerminalState.value
+    val target = current.target ?: return
+    if (current.cols == safeCols && current.rows == safeRows) return
+    mutableTerminalState.update { state ->
+      if (state.target?.key == target.key) state.copy(cols = safeCols, rows = safeRows) else state
+    }
+    if (current.loading || current.status !in setOf(TerminalStatus.Starting, TerminalStatus.Running)) return
+    resizeTerminalNow(target, safeCols, safeRows)
+  }
+
+  fun clearTerminal() = runTerminalLifecycle("Clearing") { target ->
+    repository.clearTerminal(target.environmentId, target.threadId, target.terminalId)
+  }
+
+  fun restartTerminal() = runTerminalLifecycle("Restarting") { target ->
+    val state = mutableTerminalState.value
+    repository.restartTerminal(
+      target.environmentId,
+      target.threadId,
+      target.terminalId,
+      target.cwd,
+      target.worktreePath,
+      state.cols,
+      state.rows,
+    )
+  }
+
+  fun closeTerminal(deleteHistory: Boolean = false) = runTerminalLifecycle("Closing") { target ->
+    repository.closeTerminal(
+      target.environmentId,
+      target.threadId,
+      target.terminalId,
+      deleteHistory,
+    )
+    reportTerminalEnded(target)
+  }
+
+  fun retryTerminal() {
+    val target = mutableTerminalState.value.target ?: return
+    stopTerminalJobs()
+    openTerminalRoute(target.threadId, target.terminalId)
+  }
+
+  fun updateTerminalFontSize(value: Float) {
+    updateSettings(runtime.value.settings.copy(terminalFontSize = value.coerceIn(6f, 14f)))
+  }
+
+  private fun resolveTerminalTarget(threadId: String, terminalId: String): TerminalTarget? {
+    val state = runtime.value
+    val environmentId = state.environment?.environmentId ?: return null
+    val summary = state.shell.threads[threadId]
+      ?: state.thread.detail?.summary?.takeIf { it.id == threadId }
+      ?: return null
+    val project = state.shell.projects[summary.projectId] ?: return null
+    val known = terminalMetadata.firstOrNull {
+      it.threadId == threadId && it.terminalId == terminalId
+    }
+    return TerminalTarget(
+      environmentId = environmentId,
+      threadId = threadId,
+      terminalId = terminalId,
+      cwd = known?.cwd ?: summary.worktreePath ?: project.workspaceRoot,
+      worktreePath = known?.worktreePath ?: summary.worktreePath,
+    )
+  }
+
+  private suspend fun handleTerminalAttachEvent(targetKey: String, event: TerminalAttachEvent) {
+    val current = mutableTerminalState.value
+    val target = current.target ?: return
+    if (target.key != targetKey) return
+    val previousStatus = terminalBuffer.status
+    terminalBuffer = reduceTerminalBuffer(terminalBuffer, event)
+    when (event) {
+      is TerminalAttachEvent.Snapshot -> {
+        mutableTerminalRenderCommands.emit(TerminalRenderCommand.Reset(targetKey, terminalBuffer.buffer))
+        updateTerminalSnapshot(targetKey, event.snapshot)
+        resizeTerminalNow(target, current.cols, current.rows)
+      }
+      is TerminalAttachEvent.Restarted -> {
+        mutableTerminalRenderCommands.emit(TerminalRenderCommand.Reset(targetKey, terminalBuffer.buffer))
+        updateTerminalSnapshot(targetKey, event.snapshot)
+      }
+      is TerminalAttachEvent.Output -> {
+        mutableTerminalRenderCommands.emit(TerminalRenderCommand.Append(targetKey, event.data))
+      }
+      TerminalAttachEvent.Cleared -> {
+        mutableTerminalRenderCommands.emit(TerminalRenderCommand.Clear(targetKey))
+      }
+      is TerminalAttachEvent.Exited -> {
+        mutableTerminalState.update { it.copy(status = TerminalStatus.Exited, loading = false) }
+        if (previousStatus in setOf(TerminalStatus.Starting, TerminalStatus.Running)) {
+          reportTerminalEnded(target)
+        }
+      }
+      TerminalAttachEvent.Closed -> {
+        mutableTerminalState.update { it.copy(status = TerminalStatus.Closed, loading = false) }
+        if (previousStatus in setOf(TerminalStatus.Starting, TerminalStatus.Running)) {
+          reportTerminalEnded(target)
+        }
+      }
+      is TerminalAttachEvent.Error -> mutableTerminalState.update {
+        it.copy(status = TerminalStatus.Error, loading = false, error = event.message)
+      }
+      is TerminalAttachEvent.Activity -> mutableTerminalState.update {
+        it.copy(label = event.label, hasRunningSubprocess = event.hasRunningSubprocess)
+      }
+    }
+  }
+
+  private fun updateTerminalSnapshot(
+    targetKey: String,
+    snapshot: com.t3tools.android.protocol.TerminalSnapshot,
+  ) {
+    mutableTerminalState.update { current ->
+      val target = current.target ?: return@update current
+      if (target.key != targetKey) current else current.copy(
+        target = target.copy(cwd = snapshot.cwd, worktreePath = snapshot.worktreePath),
+        status = snapshot.status,
+        label = snapshot.label,
+        loading = false,
+        error = null,
+      )
+    }
+  }
+
+  private fun resizeTerminalNow(target: TerminalTarget, cols: Int, rows: Int) {
+    terminalResizeJob?.cancel()
+    terminalResizeJob = viewModelScope.launch {
+      runCatching {
+        repository.resizeTerminal(
+          target.environmentId,
+          target.threadId,
+          target.terminalId,
+          cols,
+          rows,
+        )
+      }.onFailure { error ->
+        if (error !is CancellationException) updateTerminalError(target.key, error.safeMessage())
+      }
+    }
+  }
+
+  private fun runTerminalLifecycle(
+    label: String,
+    block: suspend (TerminalTarget) -> Unit,
+  ) {
+    if (terminalLifecycleJob?.isActive == true) return
+    val target = mutableTerminalState.value.target ?: return
+    terminalLifecycleJob = viewModelScope.launch {
+      mutableTerminalState.update { it.copy(operation = label, error = null) }
+      runCatching { block(target) }.onFailure { error ->
+        if (error !is CancellationException) updateTerminalError(target.key, error.safeMessage())
+      }
+      mutableTerminalState.update { current ->
+        if (current.target?.key == target.key) current.copy(operation = null) else current
+      }
+    }
+  }
+
+  private fun reportTerminalEnded(target: TerminalTarget) {
+    if (terminalExitReported) return
+    terminalExitReported = true
+    mutableTerminalEvents.tryEmit(TerminalUiEvent.SessionEnded(target.threadId, target.terminalId))
+  }
+
+  private fun updateTerminalError(targetKey: String, message: String) {
+    mutableTerminalState.update { current ->
+      if (current.target?.key == targetKey) current.copy(loading = false, error = message) else current
+    }
+  }
+
+  private fun stopTerminalJobs() {
+    terminalWrites?.close()
+    terminalWrites = null
+    terminalMetadataJob?.cancel()
+    terminalAttachJob?.cancel()
+    terminalWriteJob?.cancel()
+    terminalResizeJob?.cancel()
+    terminalLifecycleJob?.cancel()
+    terminalMetadataJob = null
+    terminalAttachJob = null
+    terminalWriteJob = null
+    terminalResizeJob = null
+    terminalLifecycleJob = null
   }
 
   fun loadDraft(key: String) = draftStore.load(key)

@@ -56,6 +56,7 @@ import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.Unarchive
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -114,6 +115,8 @@ import com.t3tools.android.protocol.Project
 import com.t3tools.android.protocol.ProviderModel
 import com.t3tools.android.protocol.ThreadDetail
 import com.t3tools.android.protocol.ThreadSummary
+import com.t3tools.android.protocol.DEFAULT_TERMINAL_ID
+import com.t3tools.android.protocol.nextTerminalId
 import io.noties.markwon.Markwon
 import kotlinx.coroutines.flow.collectLatest
 
@@ -130,6 +133,7 @@ private const val THREAD_FILES = "thread/{threadId}/files"
 private const val THREAD_GIT = "thread/{threadId}/git"
 private const val THREAD_GIT_COMMIT = "thread/{threadId}/git/commit"
 private const val THREAD_GIT_BRANCHES = "thread/{threadId}/git/branches"
+private const val THREAD_TERMINAL = "thread/{threadId}/terminal/{terminalId}"
 
 @Composable
 fun T3NativeApp(viewModel: AppViewModel) {
@@ -255,6 +259,9 @@ fun T3NativeApp(viewModel: AppViewModel) {
         },
         onFiles = { navController.navigate("thread/$threadId/files") },
         onGit = { navController.navigate("thread/$threadId/git") },
+        onTerminal = {
+          navController.navigate("thread/$threadId/terminal/$DEFAULT_TERMINAL_ID")
+        },
       )
     }
     composable(
@@ -303,6 +310,53 @@ fun T3NativeApp(viewModel: AppViewModel) {
         viewModel = viewModel,
         onBack = { navController.popBackStack() },
       )
+    }
+    composable(
+      route = THREAD_TERMINAL,
+      arguments = listOf(
+        navArgument("threadId") { type = NavType.StringType },
+        navArgument("terminalId") { type = NavType.StringType },
+      ),
+    ) { entry ->
+      val threadId = requireNotNull(entry.arguments?.getString("threadId"))
+      val terminalId = requireNotNull(entry.arguments?.getString("terminalId"))
+      val environment = runtime.environment
+      val terminalState by viewModel.terminalState.collectAsState()
+
+      fun replaceTerminal(nextTerminalId: String) {
+        navController.navigate(
+          "thread/$threadId/terminal/${Uri.encode(nextTerminalId)}",
+        ) {
+          popUpTo(entry.destination.id) { inclusive = true }
+        }
+      }
+
+      LaunchedEffect(threadId, terminalId) {
+        viewModel.terminalEvents.collectLatest { event ->
+          if (event !is TerminalUiEvent.SessionEnded || event.threadId != threadId ||
+            event.terminalId != terminalId
+          ) return@collectLatest
+          val fallback = previousLiveTerminalId(viewModel.terminalState.value.sessions, terminalId)
+          if (fallback == null) navController.popBackStack() else replaceTerminal(fallback)
+        }
+      }
+
+      if (environment != null) {
+        TerminalScreen(
+          threadId = threadId,
+          terminalId = terminalId,
+          environmentId = environment.environmentId,
+          environmentLabel = environment.label,
+          connectionPhase = runtime.connectionPhase,
+          fontSize = runtime.settings.terminalFontSize,
+          viewModel = viewModel,
+          onBack = { navController.popBackStack() },
+          onSelectTerminal = ::replaceTerminal,
+          onNewTerminal = {
+            replaceTerminal(nextTerminalId(terminalState.sessions.map { it.terminalId }))
+          },
+        )
+      }
     }
     }
     GitProgressOverlay(gitState.progress, viewModel::dismissGitProgress)
@@ -1560,6 +1614,7 @@ private fun ThreadScreen(
   onBack: () -> Unit,
   onFiles: () -> Unit,
   onGit: () -> Unit,
+  onTerminal: () -> Unit,
 ) {
   val detail = runtime.thread.detail
   val focusManager = LocalFocusManager.current
@@ -1596,6 +1651,9 @@ private fun ThreadScreen(
           }
         },
         actions = {
+          IconButton(onClick = onTerminal, enabled = detail != null) {
+            Icon(Icons.Rounded.Terminal, contentDescription = "Open terminal")
+          }
           TextButton(onClick = onGit, enabled = detail != null) {
             Icon(Icons.Rounded.AccountTree, contentDescription = null)
             Spacer(Modifier.width(5.dp))

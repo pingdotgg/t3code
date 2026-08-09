@@ -16,6 +16,9 @@ import com.t3tools.android.protocol.GitStackedAction
 import com.t3tools.android.protocol.ShellState
 import com.t3tools.android.protocol.StartCommand
 import com.t3tools.android.protocol.T3ProtocolClient
+import com.t3tools.android.protocol.TerminalAttachEvent
+import com.t3tools.android.protocol.TerminalMetadataEvent
+import com.t3tools.android.protocol.TerminalSnapshot
 import com.t3tools.android.protocol.ThreadState
 import com.t3tools.android.protocol.WorkspaceContentMatches
 import com.t3tools.android.protocol.WorkspaceEntries
@@ -588,6 +591,142 @@ class OnlineChatRepository(
       featureBranch,
       filePaths,
     ).collect(::emit)
+  }
+
+  @OptIn(ExperimentalCoroutinesApi::class)
+  fun observeTerminalMetadata(environmentId: String): Flow<TerminalMetadataEvent> = mutableState
+    .map { state ->
+      state.environment?.environmentId == environmentId &&
+        state.connectionPhase == ConnectionPhase.Connected
+    }
+    .distinctUntilChanged()
+    .flatMapLatest { connected ->
+      if (!connected) emptyFlow() else flow {
+        val runtime = connectedRuntime(environmentId)
+        client.terminalMetadata(requireNotNull(runtime.connection).session).collect(::emit)
+      }
+    }
+
+  @OptIn(ExperimentalCoroutinesApi::class)
+  fun attachTerminal(
+    environmentId: String,
+    threadId: String,
+    terminalId: String,
+    cwd: String,
+    worktreePath: String?,
+    cols: Int,
+    rows: Int,
+    restartIfNotRunning: Boolean,
+  ): Flow<TerminalAttachEvent> = mutableState
+    .map { state ->
+      state.environment?.environmentId == environmentId &&
+        state.connectionPhase == ConnectionPhase.Connected
+    }
+    .distinctUntilChanged()
+    .flatMapLatest { connected ->
+      if (!connected) emptyFlow() else flow {
+        val runtime = connectedRuntime(environmentId)
+        client.attachTerminal(
+          requireNotNull(runtime.connection).session,
+          threadId,
+          terminalId,
+          cwd,
+          worktreePath,
+          cols,
+          rows,
+          restartIfNotRunning,
+        ).collect(::emit)
+      }
+    }
+
+  suspend fun openTerminal(
+    environmentId: String,
+    threadId: String,
+    terminalId: String,
+    cwd: String,
+    worktreePath: String?,
+    cols: Int,
+    rows: Int,
+  ): TerminalSnapshot = withContext(Dispatchers.IO) {
+    val runtime = connectedRuntime(environmentId)
+    client.openTerminal(
+      requireNotNull(runtime.connection).session,
+      threadId,
+      terminalId,
+      cwd,
+      worktreePath,
+      cols,
+      rows,
+    )
+  }
+
+  suspend fun writeTerminal(
+    environmentId: String,
+    threadId: String,
+    terminalId: String,
+    data: String,
+  ) = withContext(Dispatchers.IO) {
+    val runtime = connectedRuntime(environmentId)
+    client.writeTerminal(requireNotNull(runtime.connection).session, threadId, terminalId, data)
+  }
+
+  suspend fun resizeTerminal(
+    environmentId: String,
+    threadId: String,
+    terminalId: String,
+    cols: Int,
+    rows: Int,
+  ) = withContext(Dispatchers.IO) {
+    val runtime = connectedRuntime(environmentId)
+    client.resizeTerminal(
+      requireNotNull(runtime.connection).session,
+      threadId,
+      terminalId,
+      cols,
+      rows,
+    )
+  }
+
+  suspend fun clearTerminal(environmentId: String, threadId: String, terminalId: String) =
+    withContext(Dispatchers.IO) {
+      val runtime = connectedRuntime(environmentId)
+      client.clearTerminal(requireNotNull(runtime.connection).session, threadId, terminalId)
+    }
+
+  suspend fun restartTerminal(
+    environmentId: String,
+    threadId: String,
+    terminalId: String,
+    cwd: String,
+    worktreePath: String?,
+    cols: Int,
+    rows: Int,
+  ): TerminalSnapshot = withContext(Dispatchers.IO) {
+    val runtime = connectedRuntime(environmentId)
+    client.restartTerminal(
+      requireNotNull(runtime.connection).session,
+      threadId,
+      terminalId,
+      cwd,
+      worktreePath,
+      cols,
+      rows,
+    )
+  }
+
+  suspend fun closeTerminal(
+    environmentId: String,
+    threadId: String,
+    terminalId: String,
+    deleteHistory: Boolean = false,
+  ) = withContext(Dispatchers.IO) {
+    val runtime = connectedRuntime(environmentId)
+    client.closeTerminal(
+      requireNotNull(runtime.connection).session,
+      threadId,
+      terminalId,
+      deleteHistory,
+    )
   }
 
   suspend fun dispatchAtomicStart(start: StartCommand): AtomicStartResult = withContext(Dispatchers.IO) {
