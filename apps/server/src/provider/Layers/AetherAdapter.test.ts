@@ -91,9 +91,17 @@ const fakeGitExecute: AetherSessionGit["execute"] = ({ args }) => {
 const gitWith = (
   status: GitStatusDetails,
   originUrl: string | null = "git@github.com:acme/aether.git",
+  ghMergeBase: string | null = null,
 ): AetherSessionGit => ({
   statusDetails: () => Effect.succeed(status),
-  readConfigValue: (_cwd, key) => Effect.succeed(key === "remote.origin.url" ? originUrl : null),
+  readConfigValue: (_cwd, key) =>
+    Effect.succeed(
+      key === "remote.origin.url"
+        ? originUrl
+        : status.branch !== null && key === `branch.${status.branch}.gh-merge-base`
+          ? ghMergeBase
+          : null,
+    ),
   execute: fakeGitExecute,
 });
 
@@ -370,13 +378,19 @@ describe("AetherAdapter startSession", () => {
           // The worktree's temp branch is dirty (mirror output from a prior
           // turn) and has no upstream (git worktree add -b makes a local-only
           // branch) — both would fail the shared-checkout preflight.
-          git: gitWith({
-            ...cleanStatus,
-            hasWorkingTreeChanges: true,
-            hasUpstream: false,
-            upstreamRef: null,
-            aheadCount: 4,
-          }),
+          git: gitWith(
+            {
+              ...cleanStatus,
+              hasWorkingTreeChanges: true,
+              hasUpstream: false,
+              upstreamRef: null,
+              aheadCount: 4,
+            },
+            "git@github.com:acme/aether.git",
+            // createWorktree records the fork base; the driver bases the cloud
+            // task on it instead of the local-only worktree branch.
+            "main",
+          ),
           restClient: { ...unusedRestClient, listProjects: () => Effect.succeed([project()]) },
         },
         (adapter) =>
@@ -388,6 +402,34 @@ describe("AetherAdapter startSession", () => {
             expect(session.cwd).toBe("/worktrees/thread-1");
           }),
       ),
+  );
+
+  it.effect(
+    "fails loudly when a managed worktree has no recorded base branch (gh-merge-base)",
+    () =>
+      Effect.gen(function* () {
+        const error = yield* withAdapter(
+          {
+            // A managed worktree whose fork base was never recorded. Its branch
+            // is local-only, so sending it as base_branch is what 404s cloud
+            // startup — better to fail here with a clear message.
+            git: gitWith(
+              { ...cleanStatus, branch: "t3code/abc123", hasUpstream: false, upstreamRef: null },
+              "git@github.com:acme/aether.git",
+              null,
+            ),
+            restClient: { ...unusedRestClient, listProjects: () => Effect.succeed([project()]) },
+          },
+          (adapter) =>
+            Effect.flip(
+              adapter.startSession(
+                startInput({ cwd: "/worktrees/thread-1", managedWorktree: true }),
+              ),
+            ),
+        );
+        expect(error._tag).toBe("ProviderAdapterValidationError");
+        expect(error.message).toContain("no recorded base branch");
+      }),
   );
 
   it.effect(
@@ -431,7 +473,11 @@ describe("AetherAdapter startSession", () => {
     const registeredCwds: Array<string> = [];
     return withAdapter(
       {
-        git: gitWith({ ...cleanStatus, hasUpstream: false, upstreamRef: null }),
+        git: gitWith(
+          { ...cleanStatus, hasUpstream: false, upstreamRef: null },
+          "git@github.com:acme/aether.git",
+          "main",
+        ),
         restClient: { ...unusedRestClient, listProjects: () => Effect.succeed([project()]) },
         mirrorRegistry: {
           register: (cwd) =>
@@ -576,6 +622,42 @@ describe("AetherAdapter startSession", () => {
       );
       expect(requestedTaskIds).toEqual(["task-1"]);
     }),
+  );
+
+  it.effect(
+    "resumes a managed worktree whose recorded base branch is missing (base_branch is only for new tasks)",
+    () =>
+      Effect.gen(function* () {
+        yield* withAdapter(
+          {
+            // A managed worktree with NO gh-merge-base — an old thread or a
+            // repaired checkout. Resume reattaches to an existing task and never
+            // sends base_branch, so the missing base must NOT block startSession.
+            git: gitWith(
+              { ...cleanStatus, branch: "t3code/abc123", hasUpstream: false, upstreamRef: null },
+              "git@github.com:acme/aether.git",
+              null,
+            ),
+            restClient: {
+              ...unusedRestClient,
+              listProjects: () => Effect.succeed([project()]),
+              getTask: () => Effect.succeed(processingTask),
+              getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
+            },
+          },
+          (adapter) =>
+            Effect.gen(function* () {
+              const session = yield* adapter.startSession(
+                startInput({
+                  cwd: "/worktrees/thread-1",
+                  managedWorktree: true,
+                  resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 7 },
+                }),
+              );
+              expect(session.resumeCursor).toMatchObject({ taskId: "task-1" });
+            }),
+        );
+      }),
   );
 
   it.effect("fails with session-not-found when the resumed task is gone", () =>
@@ -2016,6 +2098,63 @@ describe("AetherAdapter turn lifecycle", () => {
 
               // The mirror guard owned the cwd from startSession.
               expect(registrations).toEqual(["+/repo"]);
+            }),
+        );
+      }),
+  );
+
+  it.effect(
+    "bases the managed-worktree task on the recorded fork branch, not the local scratch branch",
+    () =>
+      Effect.gen(function* () {
+        const createRequests: Array<unknown> = [];
+        const deltas = scriptedDeltas([
+          delta({
+            task: processingTask,
+            messages: [userRow("u1", 1)],
+            activeMessageId: "u1",
+            latestSequence: 1,
+          }),
+          delta({
+            task: messageIdleTask,
+            messages: [userRow("u1", 1), assistantRow("a1", 2)],
+            latestSequence: 2,
+          }),
+        ]);
+        yield* withAdapter(
+          {
+            // Driver-owned worktree on a local-only scratch branch; its fork
+            // base ("main") is recorded in branch.<head>.gh-merge-base.
+            git: gitWith(
+              { ...cleanStatus, branch: "t3code/abc123", hasUpstream: false, upstreamRef: null },
+              "git@github.com:acme/aether.git",
+              "main",
+            ),
+            restClient: {
+              ...unusedRestClient,
+              listProjects: () => Effect.succeed([project()]),
+              createTask: (request) =>
+                Effect.sync(() => {
+                  createRequests.push(request);
+                }).pipe(Effect.as({ id: "task-9", name: "n" })),
+              getConversationDelta: deltas.getConversationDelta,
+            },
+          },
+          (adapter) =>
+            Effect.gen(function* () {
+              yield* adapter.streamEvents.pipe(
+                Stream.take(3),
+                Stream.runCollect,
+                Effect.forkScoped,
+              );
+              const session = yield* adapter.startSession(
+                startInput({ cwd: "/worktrees/thread-1", managedWorktree: true }),
+              );
+              yield* adapter.sendTurn({ threadId: session.threadId, input: "fix the bug" });
+              expect(createRequests).toHaveLength(1);
+              // base_branch is the recorded fork base — NOT "t3code/abc123",
+              // which exists only locally and would 404 cloud startup.
+              expect(createRequests[0]).toMatchObject({ base_branch: "main" });
             }),
         );
       }),

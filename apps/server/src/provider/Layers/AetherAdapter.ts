@@ -1482,6 +1482,31 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
         issue,
       });
     }
+    // (1b) Task base branch — the ref a NEW cloud task clones and fetches. Only
+    // the first send (non-resume) creates a task and sends base_branch; a resume
+    // reattaches to an existing task and never sends it, so the requirement below
+    // is gated on !isResume (else a resumed managed worktree whose config is
+    // missing — an old thread or a repaired checkout — would fail to reattach).
+    // For "Current checkout" the local branch IS the pushed base (preflight
+    // enforces it), so status.branch is correct. A driver-owned worktree instead
+    // sits on a LOCAL scratch branch that was never pushed; the cloud must base
+    // on the branch it was FORKED from, which createWorktree recorded in
+    // `branch.<head>.gh-merge-base`. Passing the scratch branch is exactly what
+    // fails cloud startup with remote_ref_missing (404).
+    let baseBranch = status.branch ?? undefined;
+    if (!isResume && input.managedWorktree === true && status.branch !== null) {
+      const recordedBase = (yield* options.git
+        .readConfigValue(cwd, `branch.${status.branch}.gh-merge-base`)
+        .pipe(Effect.mapError(toGitRequestError("startSession"))))?.trim();
+      if (!recordedBase) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "startSession",
+          issue: `The Aether worktree branch '${status.branch}' has no recorded base branch (branch.${status.branch}.gh-merge-base). The cloud task needs a base that exists on the remote — recreate the thread so its worktree records a fork base.`,
+        });
+      }
+      baseBranch = recordedBase;
+    }
     // The mirror baseline: for a never-synced thread the expected pre-sync
     // state is "clean tree at this HEAD".
     const baselineHeadSha = yield* options.git
@@ -1598,7 +1623,7 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       },
       cwd,
       projectId: project.id,
-      baseBranch: status.branch ?? undefined,
+      baseBranch,
       taskId,
       latestSequence,
       turnLedger,
