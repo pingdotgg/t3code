@@ -636,7 +636,7 @@ export function ArchivedThreadsPanel() {
                     if (projectHasInFlightAction) return;
                     void (async () => {
                       const result = await settlePromise(() =>
-                        handleArchivedProjectContextMenu(project.name, projectThreads, bulkScope, {
+                        handleArchivedProjectContextMenu(project.title, projectThreads, bulkScope, {
                           x: event.clientX,
                           y: event.clientY,
                         }),
@@ -659,11 +659,11 @@ export function ArchivedThreadsPanel() {
                     )}
                     <ProjectFavicon
                       environmentId={project.environmentId}
-                      cwd={project.cwd}
+                      cwd={project.workspaceRoot}
                       faviconPath={project.faviconPath}
                     />
                     <span className="truncate text-[13px] font-semibold text-foreground group-hover:text-foreground/85">
-                      {project.name}
+                      {project.title}
                     </span>
                     {environmentLabel ? (
                       <span
@@ -700,13 +700,13 @@ export function ArchivedThreadsPanel() {
                           type="button"
                           variant="ghost"
                           size="icon-xs"
-                          aria-label={`Project actions for ${project.name}`}
+                          aria-label={`Project actions for ${project.title}`}
                           className="size-6 rounded-md justify-self-end"
                           disabled={projectHasInFlightAction}
                           onClick={(event) => {
                             event.stopPropagation();
                             void handleArchivedProjectMenuButton(
-                              project.name,
+                              project.title,
                               projectThreads,
                               bulkScope,
                               event.currentTarget,

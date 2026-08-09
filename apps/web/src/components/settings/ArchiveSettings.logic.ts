@@ -43,13 +43,9 @@ export type ArchivedProjectBulkFailure = Extract<
   { readonly _tag: "Failure" }
 >;
 
-export interface ArchivedThreadGroupProject {
-  readonly id: OrchestrationProjectShell["id"];
+export type ArchivedThreadGroupProject = OrchestrationProjectShell & {
   readonly environmentId: EnvironmentId;
-  readonly name: string;
-  readonly cwd: string;
-  readonly faviconPath: OrchestrationProjectShell["faviconPath"];
-}
+};
 
 export type ArchivedThreadGroupThread = OrchestrationThreadShell & {
   readonly environmentId: EnvironmentId;
@@ -430,11 +426,8 @@ export function buildArchivedThreadGroups(input: {
       const key = archivedProjectGroupKey(environmentId, project.id);
       // Later snapshots for the same environment/project replace older project metadata.
       projectsByEnvironmentAndId.set(key, {
-        id: project.id,
+        ...project,
         environmentId,
-        name: project.title,
-        cwd: project.workspaceRoot,
-        faviconPath: project.faviconPath,
       });
     }
 
@@ -490,7 +483,7 @@ export function buildArchivedThreadGroups(input: {
     ? groups.toSorted(
         (left, right) =>
           left.searchScore - right.searchScore ||
-          left.project.name.localeCompare(right.project.name),
+          left.project.title.localeCompare(right.project.title),
       )
     : groups;
 }

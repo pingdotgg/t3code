@@ -374,15 +374,15 @@ describe("buildArchivedThreadGroups", () => {
     });
 
     expect(result).toHaveLength(2);
-    expect(result.map((group) => `${group.project.environmentId}:${group.project.name}`)).toEqual([
+    expect(result.map((group) => `${group.project.environmentId}:${group.project.title}`)).toEqual([
       "environment-1:Latest Local Project",
       "environment-2:Remote Project",
     ]);
-    expect(result.map((group) => group.project.cwd)).toEqual([
+    expect(result.map((group) => group.project.workspaceRoot)).toEqual([
       "/workspaces/latest-local",
       "/workspaces/remote",
     ]);
-    expect(result[0]?.project.faviconPath).toBe("icons/latest-local.png");
+    expect(result[0]?.project).toEqual({ ...latestProject, environmentId });
     expect(result.flatMap((group) => group.threads.map((thread) => thread.id))).toEqual([
       "thread-local",
       "thread-remote",
