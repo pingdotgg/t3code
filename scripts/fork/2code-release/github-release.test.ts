@@ -6,6 +6,7 @@ import {
   emptyDraftRetargetCommands,
   findReleaseInPaginatedListing,
   githubReleaseAssetNames,
+  retryCreatedReleaseLookup,
 } from "./github-release.ts";
 
 describe("2code GitHub release", () => {
@@ -79,6 +80,75 @@ describe("2code GitHub release", () => {
         assets: [],
       },
     );
+  });
+
+  it("retries discovery while a newly created draft is not yet visible", async () => {
+    const release = { id: 42 };
+    const waits: number[] = [];
+    let attempts = 0;
+
+    const result = await retryCreatedReleaseLookup(
+      () => {
+        attempts += 1;
+        return attempts === 3 ? release : undefined;
+      },
+      (delayMs) => {
+        waits.push(delayMs);
+        return Promise.resolve();
+      },
+      [0, 1_000, 2_000, 4_000],
+    );
+
+    assert.strictEqual(result, release);
+    assert.strictEqual(attempts, 3);
+    assert.deepStrictEqual(waits, [1_000, 2_000]);
+  });
+
+  it("stops retrying after the bounded draft discovery window", async () => {
+    const waits: number[] = [];
+    let attempts = 0;
+
+    const result = await retryCreatedReleaseLookup(
+      () => {
+        attempts += 1;
+        return undefined;
+      },
+      (delayMs) => {
+        waits.push(delayMs);
+        return Promise.resolve();
+      },
+      [0, 1_000, 2_000],
+    );
+
+    assert.strictEqual(result, undefined);
+    assert.strictEqual(attempts, 3);
+    assert.deepStrictEqual(waits, [1_000, 2_000]);
+  });
+
+  it("does not retry failures other than temporary draft absence", async () => {
+    let waits = 0;
+    let failure: unknown;
+
+    try {
+      await retryCreatedReleaseLookup(
+        () => {
+          throw new Error("GitHub authorization failed");
+        },
+        () => {
+          waits += 1;
+          return Promise.resolve();
+        },
+        [0, 1_000, 2_000],
+      );
+    } catch (error: unknown) {
+      failure = error;
+    }
+
+    assert.strictEqual(
+      failure instanceof Error ? failure.message : undefined,
+      "GitHub authorization failed",
+    );
+    assert.strictEqual(waits, 0);
   });
 
   it("allows retargeting only an empty draft", () => {

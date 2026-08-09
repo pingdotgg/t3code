@@ -6,6 +6,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeTimersPromises from "node:timers/promises";
 
 import {
   digestFile,
@@ -28,6 +29,23 @@ interface ReleaseResponse {
   readonly tagName: string;
   readonly targetCommitish: string;
   readonly assets: readonly ReleaseAsset[];
+}
+
+const CREATED_RELEASE_LOOKUP_DELAYS_MS = [0, 1_000, 2_000, 4_000, 8_000, 15_000] as const;
+
+const wait = (delayMs: number): Promise<void> => NodeTimersPromises.setTimeout(delayMs);
+
+export async function retryCreatedReleaseLookup<T>(
+  lookup: () => T | undefined,
+  pause: (delayMs: number) => Promise<void> = wait,
+  delays: readonly number[] = CREATED_RELEASE_LOOKUP_DELAYS_MS,
+): Promise<T | undefined> {
+  for (const delay of delays) {
+    if (delay > 0) await pause(delay);
+    const release = lookup();
+    if (release !== undefined) return release;
+  }
+  return undefined;
 }
 
 function run(
@@ -291,7 +309,8 @@ async function prepareDraft(
       `2code desktop release built from ${plan.sourceCommit}. The legacy R2 feed remains the authoritative updater channel.`,
       "--draft",
     ]);
-    release = getRelease(config);
+    // fork: GitHub can briefly omit a newly created draft from both tag lookup and listings.
+    release = await retryCreatedReleaseLookup(() => getRelease(config));
   }
   if (!release) throw new Error(`Draft GitHub release ${plan.tag} could not be created.`);
   if (release.tagName !== plan.tag) {
