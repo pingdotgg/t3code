@@ -825,11 +825,21 @@ export function deriveAgentPanelModel({
   let idleCount = 0;
   let settledCount = 0;
   let totalTokens = 0;
+  let liveCount = 0;
   for (const agent of source) {
+    const live =
+      agent.status === "running" || agent.status === "pending" || agent.status === "waiting";
     if (agent.status === "running" || agent.status === "pending") runningCount += 1;
     else if (agent.status === "waiting") waitingCount += 1;
     else if (agent.status === "idle") idleCount += 1;
     else settledCount += 1;
+    // A coordinator is the workflow itself, not a worker: counting it would
+    // report one more agent than is doing work ("2 agents working" for a
+    // single running member). Same exclusion rule as totalTokens below —
+    // a coordinator with no members is still its own unit of live work.
+    if (live && (agent.kind !== "workflow" || (members.get(agent.id) ?? []).length === 0)) {
+      liveCount += 1;
+    }
     // Workflow coordinators aggregate member usage upstream in some providers;
     // avoid double counting by only summing leaf agents when members exist.
     if (agent.kind !== "workflow" || (members.get(agent.id) ?? []).length === 0) {
@@ -850,7 +860,7 @@ export function deriveAgentPanelModel({
     settledCount,
     totalTokens,
     hasAgents: true,
-    liveCount: runningCount + waitingCount,
+    liveCount,
   };
 }
 

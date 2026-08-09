@@ -390,6 +390,28 @@ describe("deriveAgentPanelModel", () => {
     );
   });
 
+  it("excludes the workflow coordinator from the live count", () => {
+    // The composer banner and the panel footer read liveCount. A workflow
+    // running one member must read "1 agent working", not 2 — the
+    // coordinator is the workflow itself, not a worker.
+    const model = deriveAgentPanelModel({ agents: roster });
+    // wf-1 (coordinator) + wf-1:wf:1 (member) are both live in the tally...
+    expect(model.runningCount).toBe(2);
+    // ...but only the member is an agent doing work.
+    expect(model.liveCount).toBe(1);
+  });
+
+  it("counts a memberless workflow coordinator as its own live work", () => {
+    // Dynamic spawns mean a coordinator can be live before its first member
+    // exists; dropping it outright would report zero agents mid-run.
+    const model = deriveAgentPanelModel({
+      agents: fold([
+        activity("task.started", { taskId: "wf-2", taskType: "local_workflow", title: "solo" }),
+      ]),
+    });
+    expect(model.liveCount).toBe(1);
+  });
+
   it("keeps direct spawns in first-seen order as their activity changes", () => {
     const directRoster = fold([
       activity("task.started", { taskId: "direct-a", title: "First" }, "2026-08-01T11:00:00.000Z"),
