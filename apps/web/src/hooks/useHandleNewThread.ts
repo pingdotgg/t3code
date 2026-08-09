@@ -151,7 +151,10 @@ export function useNewThreadHandler() {
             ? {
                 ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
                 ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
-                ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
+                // An explicit envMode is a deliberate workspace choice, so mark
+                // it user-set: a provider default (Aether worktree) must not
+                // later override it.
+                ...(hasEnvModeOption ? { envMode: options?.envMode, envModeUserSet: true } : {}),
                 ...(hasStartFromOriginOption ? { startFromOrigin: options?.startFromOrigin } : {}),
               }
             : isDraftAlreadyOpen
@@ -160,6 +163,11 @@ export function useNewThreadHandler() {
                   branch: null,
                   worktreePath: null,
                   envMode: defaultEnvMode,
+                  // Resurrecting to defaults makes the mode the auto/default
+                  // value again, so clear the user-set flag: otherwise a stale
+                  // `true` (from a prior explicit pick) would suppress the
+                  // Aether worktree default on a draft the user sees as fresh.
+                  envModeUserSet: false,
                   startFromOrigin: resolveNewDraftStartFromOrigin({
                     envMode: defaultEnvMode,
                     newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
@@ -224,7 +232,7 @@ export function useNewThreadHandler() {
           setDraftThreadContext(currentRouteTarget.draftId, {
             ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
             ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
-            ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
+            ...(hasEnvModeOption ? { envMode: options?.envMode, envModeUserSet: true } : {}),
             ...(hasStartFromOriginOption ? { startFromOrigin: options?.startFromOrigin } : {}),
           });
         }
@@ -252,6 +260,10 @@ export function useNewThreadHandler() {
           branch: options?.branch ?? null,
           worktreePath: options?.worktreePath ?? null,
           envMode: initialEnvMode,
+          // Only an explicitly-passed envMode is a deliberate choice; the
+          // server-default fallback stays overlay-eligible (envModeUserSet
+          // false) so a fresh Aether draft can still default to a worktree.
+          envModeUserSet: hasEnvModeOption,
           startFromOrigin:
             options?.startFromOrigin ??
             resolveNewDraftStartFromOrigin({

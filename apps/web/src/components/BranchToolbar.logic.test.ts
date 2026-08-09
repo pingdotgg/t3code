@@ -16,6 +16,7 @@ import {
   resolveLocalCheckoutBranchMismatch,
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
+  resolveProviderDefaultsToWorktree,
   shouldIncludeBranchPickerItem,
   shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
@@ -115,7 +116,7 @@ describe("resolveDraftEnvModeAfterBranchChange", () => {
       resolveDraftEnvModeAfterBranchChange({
         nextWorktreePath: null,
         currentWorktreePath: "/repo/.t3/worktrees/feature-a",
-        effectiveEnvMode: "worktree",
+        stickyEnvMode: "worktree",
       }),
     ).toBe("local");
   });
@@ -125,7 +126,7 @@ describe("resolveDraftEnvModeAfterBranchChange", () => {
       resolveDraftEnvModeAfterBranchChange({
         nextWorktreePath: null,
         currentWorktreePath: null,
-        effectiveEnvMode: "worktree",
+        stickyEnvMode: "worktree",
       }),
     ).toBe("worktree");
   });
@@ -135,9 +136,23 @@ describe("resolveDraftEnvModeAfterBranchChange", () => {
       resolveDraftEnvModeAfterBranchChange({
         nextWorktreePath: "/repo/.t3/worktrees/feature-a",
         currentWorktreePath: null,
-        effectiveEnvMode: "local",
+        stickyEnvMode: "local",
       }),
     ).toBe("worktree");
+  });
+
+  it("does not persist a worktree overlay: a sticky-local draft stays local after a base-ref change", () => {
+    // Regression: the Aether provider default makes the *effective* mode
+    // "worktree" without changing the persisted (sticky) mode. Seeding the base
+    // branch must not bake that overlay into persistence, or switching to a
+    // non-worktree provider could never flip the draft back to local.
+    expect(
+      resolveDraftEnvModeAfterBranchChange({
+        nextWorktreePath: null,
+        currentWorktreePath: null,
+        stickyEnvMode: "local",
+      }),
+    ).toBe("local");
   });
 });
 
@@ -473,6 +488,92 @@ describe("resolveEffectiveEnvMode", () => {
         draftThreadEnvMode: "worktree",
       }),
     ).toBe("worktree");
+  });
+
+  it("defaults an untouched draft to worktree when the driver prefers one (Aether)", () => {
+    expect(
+      resolveEffectiveEnvMode({
+        activeWorktreePath: null,
+        hasServerThread: false,
+        draftThreadEnvMode: "local",
+        providerDefaultsToWorktree: true,
+      }),
+    ).toBe("worktree");
+  });
+
+  it("keeps a fresh draft local for drivers that do not prefer a worktree", () => {
+    expect(
+      resolveEffectiveEnvMode({
+        activeWorktreePath: null,
+        hasServerThread: false,
+        draftThreadEnvMode: "local",
+        providerDefaultsToWorktree: false,
+      }),
+    ).toBe("local");
+  });
+
+  it("honors an explicit local pick even when the driver prefers a worktree", () => {
+    // Once the user has picked a mode the caller stops passing
+    // providerDefaultsToWorktree, so the seeded/explicit value wins.
+    expect(
+      resolveEffectiveEnvMode({
+        activeWorktreePath: null,
+        hasServerThread: false,
+        draftThreadEnvMode: "local",
+      }),
+    ).toBe("local");
+  });
+
+  it("is byte-identical for non-worktree callers that omit the driver hint", () => {
+    expect(
+      resolveEffectiveEnvMode({
+        activeWorktreePath: null,
+        hasServerThread: false,
+        draftThreadEnvMode: undefined,
+      }),
+    ).toBe("local");
+  });
+});
+
+describe("resolveProviderDefaultsToWorktree", () => {
+  it("defaults an untouched local Aether draft to a worktree", () => {
+    expect(
+      resolveProviderDefaultsToWorktree({
+        isLocalDraftThread: true,
+        envModeUserSet: false,
+        isAetherProvider: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not override a draft whose mode was explicitly set (reviewer #2: explicit-local stays local)", () => {
+    expect(
+      resolveProviderDefaultsToWorktree({
+        isLocalDraftThread: true,
+        envModeUserSet: true,
+        isAetherProvider: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not fire for a non-Aether provider (bidirectional flip back to current checkout)", () => {
+    expect(
+      resolveProviderDefaultsToWorktree({
+        isLocalDraftThread: true,
+        envModeUserSet: false,
+        isAetherProvider: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("never fires for a started server thread", () => {
+    expect(
+      resolveProviderDefaultsToWorktree({
+        isLocalDraftThread: false,
+        envModeUserSet: false,
+        isAetherProvider: true,
+      }),
+    ).toBe(false);
   });
 });
 
