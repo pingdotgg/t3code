@@ -36,6 +36,8 @@ import {
   LinkIcon,
   MessageSquareIcon,
   PaletteIcon,
+  PinIcon,
+  PinOffIcon,
   SettingsIcon,
   SquarePenIcon,
   TextSearchIcon,
@@ -59,6 +61,7 @@ import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstra
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useClientSettings } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
+import { useThreadActions } from "../hooks/useThreadActions";
 import { readLocalApi } from "../localApi";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment } from "../state/filesystem";
@@ -68,7 +71,7 @@ import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { useProjects, useThreadShells } from "../state/entities";
+import { readEnvironmentSupportsPinning, useProjects, useThreadShells } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
@@ -578,6 +581,7 @@ function OpenCommandPaletteDialog(props: {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
+  const { pinThread, unpinThread } = useThreadActions();
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
@@ -1405,6 +1409,40 @@ function OpenCommandPaletteDialog(props: {
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
+    });
+  }
+
+  // Pin is contextual to the thread being read, and hidden on servers that
+  // predate thread.pin/unpin — same version-skew contract as the sidebar and
+  // chat-header menus. Drafts never get here: activeThread is null for them.
+  if (activeThread && readEnvironmentSupportsPinning(activeThread.environmentId)) {
+    const pinTargetRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    const isPinned = activeThread.pinnedAt != null;
+    actionItems.push({
+      kind: "action",
+      value: isPinned ? "action:unpin-thread" : "action:pin-thread",
+      searchTerms: isPinned
+        ? ["unpin thread", "unpin current thread"]
+        : ["pin thread", "pin current thread"],
+      title: isPinned ? "Unpin current thread" : "Pin current thread",
+      icon: isPinned ? (
+        <PinOffIcon className={ITEM_ICON_CLASS} />
+      ) : (
+        <PinIcon className={ITEM_ICON_CLASS} />
+      ),
+      run: async () => {
+        const result = isPinned ? await unpinThread(pinTargetRef) : await pinThread(pinTargetRef);
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: isPinned ? "Failed to unpin thread" : "Failed to pin thread",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+      },
     });
   }
 
