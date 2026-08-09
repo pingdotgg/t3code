@@ -398,12 +398,16 @@ function ProjectDetail({
   // ----- favicon -----
   const [faviconPickerOpen, setFaviconPickerOpen] = useState(false);
   const [isSavingFavicon, setIsSavingFavicon] = useState(false);
+  const savingFaviconRef = useRef(false);
   const setFaviconPath = useCallback(
     async (faviconPath: string | null) => {
+      if (savingFaviconRef.current) return;
+      savingFaviconRef.current = true;
       setIsSavingFavicon(true);
       try {
         await updateAllMembers({ faviconPath }, "Failed to update project icon");
       } finally {
+        savingFaviconRef.current = false;
         setIsSavingFavicon(false);
       }
     },
