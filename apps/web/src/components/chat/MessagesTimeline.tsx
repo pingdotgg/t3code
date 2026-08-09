@@ -104,7 +104,12 @@ import {
 } from "~/lib/previewAnnotation";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
+import { isPreviewSupportedInRuntime } from "~/previewStateStore";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { useUiStateStore } from "~/uiStateStore";
+import { previewEnvironment } from "../../state/preview";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { openPreviewSession } from "../preview/openPreviewSession";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatShortTimestamp } from "../../timestampFormat";
 
@@ -2213,18 +2218,37 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: Time
 });
 
 const PortPreviewCtaRow = memo(function PortPreviewCtaRow(props: { workEntry: TimelineWorkEntry }) {
+  const ctx = use(TimelineRowCtx);
+  const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const preview = props.workEntry.portPreview;
   if (!preview) {
     return null;
   }
+  const threadRef = ctx.threadRef;
+  const openPortPreview = () => {
+    // Desktop: open the workspace preview in the in-app embedded browser (right
+    // panel), matching how discovered local ports open. Web (or a missing
+    // thread ref): fall back to the system browser / a new tab.
+    if (isPreviewSupportedInRuntime() && threadRef) {
+      void (async () => {
+        const result = await openPreviewSession({ openPreview, threadRef, url: preview.url });
+        if (result._tag === "Failure") {
+          // Embedded preview failed (disconnected environment, unsupported
+          // server, invalid URL) — preserve the CTA's always-open behavior by
+          // opening the preview externally instead of silently no-opping.
+          void readLocalApi()?.shell.openExternal(preview.url);
+          return;
+        }
+        useRightPanelStore.getState().openBrowser(threadRef, result.value.tabId);
+      })();
+      return;
+    }
+    void readLocalApi()?.shell.openExternal(preview.url);
+  };
   return (
     <button
       type="button"
-      onClick={() => {
-        // Best-effort open: the embedded browser on desktop, a new tab on web
-        // (localApi.shell.openExternal handles the platform split).
-        void readLocalApi()?.shell.openExternal(preview.url);
-      }}
+      onClick={openPortPreview}
       className="-mx-1 flex w-full items-center gap-2 rounded-md border border-border/60 bg-card/50 px-2.5 py-1.5 text-left text-[13px] transition hover:bg-accent/50"
     >
       <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-info" />
