@@ -1997,7 +1997,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             new ProviderAdapterRequestError({
               provider: PROVIDER,
               method: "thread/list",
-              detail: cause.message,
+              detail: "Failed to list persisted Codex threads.",
               cause,
             }),
         ),

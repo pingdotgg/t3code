@@ -29,6 +29,7 @@ import {
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   scheduleEnvironmentReconnectWarning,
+  shouldPrepareWorktreeForSend,
   startNewThreadForProject,
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
@@ -379,6 +380,24 @@ describe("resolveSendEnvMode", () => {
   it("keeps worktree mode only for git repositories", () => {
     expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: true })).toBe("worktree");
     expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: false })).toBe("local");
+  });
+});
+
+describe("shouldPrepareWorktreeForSend", () => {
+  it("prepares a selected worktree whenever the thread does not have one yet", () => {
+    expect(shouldPrepareWorktreeForSend({ sendEnvMode: "worktree", worktreePath: null })).toBe(
+      true,
+    );
+  });
+
+  it("does not prepare a worktree for local mode or an existing worktree", () => {
+    expect(shouldPrepareWorktreeForSend({ sendEnvMode: "local", worktreePath: null })).toBe(false);
+    expect(
+      shouldPrepareWorktreeForSend({
+        sendEnvMode: "worktree",
+        worktreePath: "/workspace/project/.worktrees/existing",
+      }),
+    ).toBe(false);
   });
 });
 

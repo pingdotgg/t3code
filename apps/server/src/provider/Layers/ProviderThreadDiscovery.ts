@@ -22,6 +22,7 @@ import * as Stream from "effect/Stream";
 import type { OrchestrationDispatchError } from "../../orchestration/Errors.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { forkParked } from "../../serverActivation.ts";
 import type {
   ProviderRuntimeBinding,
   ProviderSessionDirectoryWriteError,
@@ -286,55 +287,53 @@ export const synchronizeDiscoveredProviderThreads = Effect.fn(
         const providerChanged = isNewerTimestamp(discovered.updatedAt, metadata.providerUpdatedAt);
         if (!needsSessionRepair && !providerChanged) continue;
 
-        if (
-          providerChanged &&
-          linkedThread.title === metadata.providerTitle &&
-          title !== metadata.providerTitle
-        ) {
+        const providerOwnsTitle = linkedThread.title === metadata.providerTitle;
+        if (providerChanged) {
           yield* input.dispatch({
             type: "thread.meta.update",
             commandId: commandId(
-              "title",
+              "refresh",
               source.discoveryKey,
               discovered.providerThreadId,
               discovered.updatedAt,
-              title,
             ),
             threadId: linkedThread.id,
-            title,
+            ...(providerOwnsTitle && title !== metadata.providerTitle ? { title } : {}),
           });
-          linkedThread.title = title;
+          if (providerOwnsTitle && title !== metadata.providerTitle) {
+            linkedThread.title = title;
+          }
+          linkedThread.updatedAt = discovered.updatedAt;
         }
 
         const targetInstanceId = linkedBinding.providerInstanceId ?? source.instanceId;
-        const session = makeImportedSession({
-          thread: linkedThread,
-          source,
-          instanceId: targetInstanceId,
-          updatedAt: discovered.updatedAt,
-        });
-        yield* input.dispatch({
-          type: "thread.session.set",
-          commandId: commandId(
-            "refresh",
-            source.discoveryKey,
-            discovered.providerThreadId,
-            discovered.updatedAt,
-          ),
-          threadId: linkedThread.id,
-          session,
-          createdAt: discovered.updatedAt,
-        });
-        linkedThread.session = session;
-        linkedThread.updatedAt = discovered.updatedAt;
+        if (needsSessionRepair) {
+          const session = makeImportedSession({
+            thread: linkedThread,
+            source,
+            instanceId: targetInstanceId,
+            updatedAt: discovered.updatedAt,
+          });
+          yield* input.dispatch({
+            type: "thread.session.set",
+            commandId: commandId(
+              "session-repair",
+              source.discoveryKey,
+              discovered.providerThreadId,
+              discovered.updatedAt,
+            ),
+            threadId: linkedThread.id,
+            session,
+            createdAt: discovered.updatedAt,
+          });
+          linkedThread.session = session;
+        }
 
         const nextMetadata = importedThreadMetadata({ source, thread: discovered, title });
         const nextBinding: ThreadDiscoveryBinding = {
           threadId: linkedThread.id,
           provider: source.driverKind,
           providerInstanceId: targetInstanceId,
-          status: linkedBinding.status ?? "stopped",
-          runtimeMode: linkedThread.runtimeMode,
           resumeCursor: { threadId: discovered.providerThreadId },
           runtimePayload: makeRuntimePayload({
             cwd: discovered.cwd,
@@ -519,6 +518,18 @@ const makeProviderThreadDiscovery = Effect.gen(function* () {
       const sources = yield* buildDiscoverySources(instances);
       if (sources.length === 0) return;
 
+      // Provider discovery can require a process spawn and multiple pages.
+      // Complete it before sampling T3 state so reconciliation works from the
+      // freshest available projection and active-session view.
+      const discoveredSources = yield* Effect.forEach(sources, (source) =>
+        source.listThreads().pipe(
+          Effect.map((threads) => ({
+            ...source,
+            listThreads: () => Effect.succeed(threads),
+          })),
+        ),
+      );
+
       const [readModel, persistedBindings] = yield* Effect.all([
         projectionSnapshotQuery.getCommandReadModel(),
         directory.listBindings(),
@@ -545,9 +556,12 @@ const makeProviderThreadDiscovery = Effect.gen(function* () {
       ).pipe(Effect.map((groups) => groups.flat()));
 
       const result = yield* synchronizeDiscoveredProviderThreads({
-        sources,
+        sources: discoveredSources,
         readModel,
-        bindings: [...persistedBindings, ...activeBindings],
+        // The synchronizer keeps the first binding for a provider thread.
+        // Prefer the live adapter view so a persisted stopped binding cannot
+        // mask a follow-up that became active while discovery was running.
+        bindings: [...activeBindings, ...persistedBindings],
         dispatch: (command) => orchestrationEngine.dispatch(command),
         upsertBinding: (binding) => directory.upsert(binding),
       });
@@ -567,13 +581,9 @@ const makeProviderThreadDiscovery = Effect.gen(function* () {
     ),
   );
 
-  yield* synchronizeSafely.pipe(
-    Effect.repeat(Schedule.spaced(DISCOVERY_INTERVAL)),
-    Effect.forkScoped,
-  );
-  yield* Stream.fromSubscription(instanceChanges).pipe(
-    Stream.runForEach(() => synchronizeSafely),
-    Effect.forkScoped,
+  yield* forkParked(synchronizeSafely.pipe(Effect.repeat(Schedule.spaced(DISCOVERY_INTERVAL))));
+  yield* forkParked(
+    Stream.fromSubscription(instanceChanges).pipe(Stream.runForEach(() => synchronizeSafely)),
   );
 });
 

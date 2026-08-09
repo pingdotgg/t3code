@@ -28,6 +28,20 @@ Log in with Codex normally:
 codex login
 ```
 
+## Existing Codex Threads
+
+T3 Code discovers non-archived conversations from each enabled Codex home and adds them to the
+thread list automatically. Discovery runs when the environment becomes active, when provider
+settings change, and periodically while T3 Code is running, so recent Codex conversations should
+appear within about 30 seconds.
+
+Opening one of these threads continues the original Codex conversation. T3 Code stores the thread
+metadata and continuation link, but it does not copy the existing message history into T3. If you
+delete an imported thread from T3 Code, discovery will not add it again.
+
+Providers that share the same `CODEX_HOME path` also share one discovered thread catalog, so the
+same conversation is not added twice for work and personal accounts.
+
 ## I Want Work And Personal Codex Accounts
 
 Use one real Codex home and one shadow home.

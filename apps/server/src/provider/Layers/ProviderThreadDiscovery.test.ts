@@ -200,7 +200,7 @@ it.effect("does not duplicate a Codex thread that already belongs to a T3 thread
   }),
 );
 
-it.effect("refreshes imported thread metadata from a newer Codex thread/list result", () =>
+it.effect("refreshes imported metadata without replacing the projected session state", () =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project-imported");
     const threadId = ThreadId.make("thread-imported");
@@ -302,10 +302,14 @@ it.effect("refreshes imported thread metadata from a newer Codex thread/list res
     NodeAssert.deepEqual(result, { discovered: 1, imported: 0, refreshed: 1 });
     NodeAssert.deepEqual(
       commands.map((command) => command.type),
-      ["thread.meta.update", "thread.session.set"],
+      ["thread.meta.update"],
     );
-    const sessionCommand = commands.find((command) => command.type === "thread.session.set");
-    NodeAssert.equal(sessionCommand?.createdAt, updatedAt);
+    NodeAssert.equal(
+      commands[0]?.type === "thread.meta.update" && commands[0].title,
+      "Fresh Codex title",
+    );
+    NodeAssert.equal(bindings[0]?.status, undefined);
+    NodeAssert.equal(bindings[0]?.runtimeMode, undefined);
     NodeAssert.equal(readModel.threads[0]?.title, originalTitle);
 
     const metadata = (
