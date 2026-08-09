@@ -1,4 +1,11 @@
+import * as NodeURL from "node:url";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import {
   CLI_EXTERNAL_PACKAGE_PREFIXES,
@@ -6,6 +13,14 @@ import {
   CLI_RUNTIME_EXTERNAL_PREFIXES,
   shouldBundleCliDependency,
 } from "./cli-external-packages.ts";
+
+// Only the field this test cares about; decoding ignores everything else.
+const PackageManifest = Schema.Struct({
+  dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+});
+type PackageManifest = typeof PackageManifest.Type;
+
+const decodeManifest = Schema.decodeUnknownSync(Schema.fromJsonString(PackageManifest));
 
 describe("shouldBundleCliDependency", () => {
   it("bundles ordinary runtime dependencies", () => {
@@ -74,46 +89,101 @@ describe("CLI_EXTERNAL_PACKAGE_UNPACK_GLOBS", () => {
 //
 // Found the hard way: node-gyp-build-optional-packages requires detect-libc,
 // which was bundled. Windows was fine; WSL got MODULE_NOT_FOUND.
-describe("external package dependency closure", () => {
-  // Must be runtime-external specifically: the dependency has to exist on disk.
-  const isExternal = (name: string) =>
-    CLI_RUNTIME_EXTERNAL_PREFIXES.some((prefix) => name.startsWith(prefix));
+it.layer(NodeServices.layer)("external package dependency closure", (it) => {
+  // Read manifests off disk from the pnpm store rather than resolving them.
+  // `require("<name>/package.json")` cannot do this job: under pnpm isolation a
+  // transitive package (detect-libc, msgpackr-extract, ffi-rs) is not reachable
+  // by name from this file at all, and an `exports` map can refuse the
+  // `/package.json` subpath outright (@ff-labs/fff-node). Both surface as "not
+  // installed", which would let this test skip everything and pass while
+  // checking nothing. The store is also what asarUnpack globs target, so this
+  // reads the same tree the build packages.
+  const readInstalledPackages = Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const storeDir = path.resolve(
+      path.dirname(NodeURL.fileURLToPath(import.meta.url)),
+      "../../node_modules/.pnpm",
+    );
 
-  it("keeps every runtime dependency of an external package external too", async () => {
-    const { createRequire } = await import("node:module");
-    const require = createRequire(import.meta.url);
+    const installed = new Map<string, PackageManifest>();
+    if (!(yield* fileSystem.exists(storeDir))) return installed;
 
-    const violations: string[] = [];
-    const seen = new Set<string>();
-    // Only the runtime-external set. The build-only entries resolve `bun:*`
-    // and are never loaded by Node, so their closure is irrelevant here.
-    const queue: string[] = CLI_RUNTIME_EXTERNAL_PREFIXES.filter((prefix) => !prefix.endsWith("/"));
+    for (const entry of yield* fileSystem.readDirectory(storeDir)) {
+      const modulesDir = path.join(storeDir, entry, "node_modules");
+      if (!(yield* fileSystem.exists(modulesDir))) continue;
 
-    for (const name of queue) {
-      if (seen.has(name)) continue;
-      seen.add(name);
+      for (const owner of yield* fileSystem.readDirectory(modulesDir)) {
+        const names = owner.startsWith("@")
+          ? (yield* fileSystem.readDirectory(path.join(modulesDir, owner))).map(
+              (scoped) => `${owner}/${scoped}`,
+            )
+          : [owner];
 
-      let manifest: { dependencies?: Record<string, string> };
-      try {
-        manifest = require(`${name}/package.json`);
-      } catch {
-        // Not installed on this platform (or reached only by prefix); nothing
-        // to check. The globs still cover it if it does get installed.
-        continue;
-      }
-
-      for (const dependency of Object.keys(manifest.dependencies ?? {})) {
-        if (!isExternal(dependency)) {
-          violations.push(`${name} -> ${dependency}`);
+        for (const name of names) {
+          if (installed.has(name)) continue;
+          const manifestPath = path.join(modulesDir, name, "package.json");
+          if (!(yield* fileSystem.exists(manifestPath))) continue;
+          installed.set(name, decodeManifest(yield* fileSystem.readFileString(manifestPath)));
         }
-        if (!seen.has(dependency)) queue.push(dependency);
       }
     }
+    return installed;
+  }).pipe(Effect.cached, Effect.runSync);
 
-    assert.deepStrictEqual(
-      violations,
-      [],
-      `these dependencies of external packages would be bundled away, and fail to resolve under WSL: ${violations.join(", ")}`,
-    );
-  });
+  // Runtime-external only. The build-only entries resolve `bun:*` and are never
+  // loaded by Node, so their closure genuinely does not need to be external.
+  const isRuntimeExternal = (name: string) =>
+    CLI_RUNTIME_EXTERNAL_PREFIXES.some((prefix) => name.startsWith(prefix));
+
+  it.effect("finds the runtime-external packages on disk", () =>
+    Effect.gen(function* () {
+      const installed = yield* readInstalledPackages;
+      const found = [...installed.keys()].filter(isRuntimeExternal);
+
+      // Without this the closure check below can pass vacuously: if nothing is
+      // read, nothing is checked. These are the packages whose closure actually
+      // broke WSL, so require them by name.
+      for (const required of ["node-pty", "node-gyp-build-optional-packages", "detect-libc"]) {
+        assert.ok(
+          found.includes(required),
+          `expected ${required} in the pnpm store; the closure check is only meaningful if it can read these (found ${found.length})`,
+        );
+      }
+    }),
+  );
+
+  it.effect("keeps every runtime dependency of an external package external too", () =>
+    Effect.gen(function* () {
+      const installed = yield* readInstalledPackages;
+      const violations: string[] = [];
+      const seen = new Set<string>();
+      // Seeded from what is actually installed and matches a prefix, so scoped
+      // prefixes like "@yuuang/" and "@ff-labs/" are covered too. Seeding from
+      // the prefix strings themselves would skip every scoped entry, since a
+      // prefix is not a package name.
+      const queue = [...installed.keys()].filter(isRuntimeExternal);
+
+      for (const name of queue) {
+        if (seen.has(name)) continue;
+        seen.add(name);
+
+        const manifest = installed.get(name);
+        if (!manifest) continue;
+
+        for (const dependency of Object.keys(manifest.dependencies ?? {})) {
+          if (!isRuntimeExternal(dependency)) {
+            violations.push(`${name} -> ${dependency}`);
+          }
+          if (!seen.has(dependency)) queue.push(dependency);
+        }
+      }
+
+      assert.deepStrictEqual(
+        violations,
+        [],
+        `these dependencies of external packages would be bundled away and fail to resolve under WSL: ${violations.join(", ")}`,
+      );
+    }),
+  );
 });
