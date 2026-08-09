@@ -68,6 +68,10 @@ describe("searchSettings", () => {
   it("serves anchor props to panels from the catalog", () => {
     expect(searchableSetting("word-wrap")).toEqual({ id: "word-wrap", title: "Word wrap" });
     expect(searchableSetting("archive")).toEqual({ id: "archive", title: "Archived threads" });
+    expect(searchableSetting("auto-settle-completed-pull-requests")).toEqual({
+      id: "auto-settle-completed-pull-requests",
+      title: "Auto-settle completed pull requests",
+    });
   });
 
   it("routes appearance settings to their current section", () => {
