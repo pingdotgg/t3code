@@ -2054,7 +2054,7 @@ private fun ThreadFeed(
   }
   SideEffect {
     if (entries.isNotEmpty() && followBottom && !isFeedDragged) {
-      state.requestScrollToItem(entries.lastIndex)
+      state.requestScrollToItem(entries.lastIndex, Int.MAX_VALUE)
     }
   }
   LazyColumn(
@@ -2066,7 +2066,7 @@ private fun ThreadFeed(
           layoutAnchor[0] = constraints.maxHeight
           layoutAnchor[1] = bottomAnchorKey
           if (entries.isNotEmpty() && followBottom && !isFeedDragged) {
-            state.requestScrollToItem(entries.lastIndex)
+            state.requestScrollToItem(entries.lastIndex, Int.MAX_VALUE)
           }
         }
         val placeable = measurable.measure(constraints)
