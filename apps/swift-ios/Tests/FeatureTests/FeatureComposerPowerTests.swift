@@ -1,4 +1,7 @@
+import Foundation
 import Testing
+import UIKit
+import UniformTypeIdentifiers
 @testable import T3Code
 
 @Suite("Composer power features")
@@ -38,6 +41,77 @@ struct FeatureComposerPowerTests {
             with: "[App](Sources/App) "
         )
         #expect(result == "Review [App](Sources/App)  please")
+    }
+
+    @Test
+    func replacementCursorLandsAfterInsertedTextInUTF16() {
+        let original = "🧪 Use $dep please"
+        let range = 6..<10
+        let replacement = "$dependency "
+
+        #expect(
+            FeatureComposerTextSelectionPolicy.cursorLocation(
+                afterReplacing: range,
+                in: original,
+                with: replacement
+            ) == "🧪 Use $dependency ".utf16.count
+        )
+    }
+
+    @Test
+    func mixedPasteReadsPlainTextLazilyFromUIPasteboard() {
+        let pasteboard = UIPasteboard.withUniqueName()
+        defer { UIPasteboard.remove(withName: pasteboard.name) }
+        pasteboard.items = [
+            [
+                UTType.png.identifier: Data([0x89]),
+                UTType.plainText.identifier: "image metadata",
+            ],
+            [UTType.utf8PlainText.identifier: Data("first".utf8)],
+            [
+                UTType.html.identifier: Data("<b>second</b>".utf8),
+                UTType.utf8PlainText.identifier: "second",
+            ],
+        ]
+
+        #expect(
+            FeatureComposerPasteTextPolicy.text(from: pasteboard)
+                == "first\nsecond"
+        )
+    }
+
+    @Test @MainActor
+    func imageCapableComposerAdvertisesImagesToTheNativePasteMenu() {
+        let textView = FeatureComposerUITextView()
+
+        textView.acceptsImages = true
+
+        #expect(
+            textView.pasteConfiguration?.acceptableTypeIdentifiers.contains(
+                UTType.image.identifier
+            ) == true
+        )
+        #expect(
+            textView.pasteConfiguration?.acceptableTypeIdentifiers.contains(
+                UTType.text.identifier
+            ) == true
+        )
+
+        textView.acceptsImages = false
+
+        #expect(textView.pasteConfiguration == nil)
+    }
+
+    @Test
+    func nativePasteDetectionUsesImageTypeConformance() {
+        let pasteboard = UIPasteboard.withUniqueName()
+        defer { UIPasteboard.remove(withName: pasteboard.name) }
+        pasteboard.items = [
+            [UTType.heic.identifier: Data([0x00])],
+        ]
+
+        #expect(!pasteboard.hasImages)
+        #expect(FeatureComposerPasteboardPolicy.containsImage(in: pasteboard))
     }
 
     @Test
