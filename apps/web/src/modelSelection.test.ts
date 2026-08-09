@@ -320,4 +320,29 @@ describe("instance-scoped model selection", () => {
       model: "openai/gpt-5.5",
     });
   });
+
+  it("keeps a selection whose probe snapshot has not caught up with settings", () => {
+    // The probe still reports the just-enabled instance as disabled. Model
+    // pickers overlay settings before listing it, so the resolver must too,
+    // or it discards the user's pick for a fallback they never chose.
+    const providers = [
+      provider({ instanceId: "claudeAgent", models: ["claude-sonnet-4-6"] }),
+      {
+        ...provider({ instanceId: "claude_openrouter", models: ["claude-sonnet-4-6"] }),
+        enabled: false,
+      },
+    ];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      textGenerationModelSelection: {
+        instanceId: ProviderInstanceId.make("claude_openrouter"),
+        model: "openai/gpt-5.5",
+      },
+    };
+
+    expect(resolveAppModelSelectionState(settings, providers)).toEqual({
+      instanceId: ProviderInstanceId.make("claude_openrouter"),
+      model: "openai/gpt-5.5",
+    });
+  });
 });
