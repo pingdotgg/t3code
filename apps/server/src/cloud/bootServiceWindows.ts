@@ -68,6 +68,8 @@ const STOP_REQUEST_TIMEOUT = Duration.seconds(30);
 /** Windows only. How often the CLI re-checks whether the launcher has gone. */
 const STOP_REQUEST_ACK_POLL = Duration.millis(250);
 const POWERSHELL_TIMEOUT = Duration.seconds(30);
+/** Windows only. Must match the launcher's own staleness rule for its pid record. */
+const PID_RECORD_STALE_AFTER_MS = 90_000;
 
 /**
  * Windows only. The absolute interpreter path, rather than trusting PATH.
@@ -433,15 +435,33 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
    * start a second server on the same database.
    */
   const requestStop = Effect.gen(function* () {
-    const recorded = yield* fs.readFileString(pidPath).pipe(Effect.option);
+    // Only a confirmed absence means no launcher. A transient read error, say a
+    // sharing violation while the launcher rewrites its record, must not be
+    // read as proof the launcher is gone, or the install writes over a live one.
+    const recorded = yield* fs.readFileString(pidPath).pipe(
+      Effect.map(Option.some),
+      Effect.catch((error) =>
+        error.reason._tag === "NotFound"
+          ? Effect.succeed(Option.none<string>())
+          : Effect.fail(new BootService.BootServiceInstallError({ cause: error })),
+      ),
+    );
     if (Option.isNone(recorded)) return false;
     const presence = decodeServiceLauncherPresence(recorded.value);
     // Only trust the process id while the record is from this boot. Ids are
     // recycled across reboots, so an old file can name an unrelated live
     // process, and waiting on that would never finish.
+    const recordAge = yield* fs.stat(pidPath).pipe(
+      Effect.map((info) => Option.map(info.mtime, (mtime) => mtime.getTime())),
+      Effect.orElseSucceed(() => Option.none<number>()),
+    );
+    const nowMs = yield* DateTime.now.pipe(Effect.map(DateTime.toEpochMillis));
+    const refreshedRecently =
+      Option.isSome(recordAge) && nowMs - recordAge.value <= PID_RECORD_STALE_AFTER_MS;
     const live =
       presence !== undefined &&
       serviceLauncherPresenceIsFromThisBoot(presence, yield* currentBootTimeMs) &&
+      refreshedRecently &&
       (yield* processIsAlive(presence.pid));
     if (!live || presence === undefined) {
       // No launcher is listening. Clear the request too: leaving one behind
@@ -572,19 +592,20 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
     const installed = yield* fs
       .exists(unitPath)
       .pipe(Effect.mapError((cause) => new BootService.BootServiceInstallError({ cause })));
+    // Before anything is stopped. This guard exists to protect an in-flight
+    // remote update, and terminating the launcher first would interrupt the
+    // very thing it is guarding.
+    const previousStateText = yield* fs.readFileString(statePath).pipe(Effect.option);
+    if (Option.isSome(previousStateText) && serviceStateHasPendingUpdate(previousStateText.value)) {
+      return yield* new BootService.BootServiceUpdatePendingError();
+    }
+
     // Keyed on the pid file, never on the shortcut. A launcher outlives a
     // manually deleted shortcut, and starting a second one alongside it would
     // put two servers on the same database.
     const stopped = yield* requestStop;
 
     yield* Effect.gen(function* () {
-      const previousStateText = yield* fs.readFileString(statePath).pipe(Effect.option);
-      if (
-        Option.isSome(previousStateText) &&
-        serviceStateHasPendingUpdate(previousStateText.value)
-      ) {
-        return yield* new BootService.BootServiceUpdatePendingError();
-      }
       yield* writeDurably(launcherPath, launcherSource);
       yield* writeDurably(
         statePath,

@@ -422,6 +422,46 @@ it.layer(NodeServices.layer)("windows boot service", (it) => {
     }).pipe(TestClock.withLive),
   );
 
+  it.effect("refuses to reinstall while a remote update is still pending", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, pidPath } = yield* makeHarness();
+      yield* service.install;
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed launcher-owned test document.
+      const pendingState = JSON.stringify({
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        activeVersion: "1.2.3",
+        update: {
+          id: "u",
+          fromVersion: "1.2.3",
+          targetVersion: "1.2.4",
+          dbPath: "C:\\state.sqlite",
+          status: "pending",
+        },
+      });
+      yield* fs.writeFileString(statePath, pendingState);
+
+      const error = yield* service.install.pipe(Effect.flip);
+      expect(error._tag).toBe("BootServiceUpdatePendingError");
+      // The guard protects the in-flight update, so it must refuse before
+      // anything is terminated. A surviving pid record proves nothing stopped.
+      expect(yield* fs.exists(pidPath)).toBe(true);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("ignores a pid record nobody has refreshed", () =>
+    Effect.gen(function* () {
+      const { service, fs, pidPath } = yield* makeHarness();
+      yield* service.install;
+      // Same boot and a live process id, but the launcher stopped refreshing
+      // it. Within one boot that is the only way to tell a recycled id apart.
+      const longAgo = 1_577_836_800_000; // 2020-01-01
+      yield* fs.utimes(pidPath, longAgo, longAgo);
+
+      yield* service.install;
+      expect((yield* service.status).current).toBe(true);
+    }).pipe(TestClock.withLive),
+  );
+
   it.effect("fails closed off Windows", () =>
     Effect.gen(function* () {
       const { service } = yield* makeHarness("linux");

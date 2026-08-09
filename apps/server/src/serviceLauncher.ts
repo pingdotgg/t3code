@@ -70,6 +70,18 @@ const isSelfSupervising = (): boolean => process.env[SERVICE_SELF_SUPERVISE_ENV]
 const currentBootTimeMs = (): number => Date.now() - NodeOS.uptime() * 1_000;
 
 /**
+ * Windows only. How often a running launcher refreshes its pid record.
+ *
+ * The boot stamp catches a record left by an earlier boot, but not one left by
+ * a launcher that crashed during this boot whose id has since been handed to an
+ * unrelated process. A record that stops being refreshed is proof of death on
+ * its own, whoever holds that id now.
+ */
+const PID_HEARTBEAT_MS = 15_000;
+/** Generous against a paused or heavily loaded machine, still far below a reboot. */
+const PID_RECORD_STALE_AFTER_MS = 90_000;
+
+/**
  * Windows only. Signal 0 asks the kernel whether a process exists without
  * touching it. A permission error means it exists but is not ours, which still
  * counts as running.
@@ -320,6 +332,16 @@ const stopRequestPath = (baseDir: string) =>
 /** Windows only. Present exactly while a self-supervising launcher is running. */
 const pidFilePath = (baseDir: string) => NodePath.join(baseDir, "runtime", SERVICE_PID_FILE);
 
+/** Windows only. A record nobody has refreshed lately belongs to a dead launcher. */
+async function pidRecordIsStale(target: string): Promise<boolean> {
+  try {
+    const stats = await NodeFSP.stat(target);
+    return Date.now() - stats.mtimeMs > PID_RECORD_STALE_AFTER_MS;
+  } catch {
+    return true;
+  }
+}
+
 export interface LauncherOptions {
   /**
    * Windows only. Whether this launcher must restart its own child and watch
@@ -355,6 +377,7 @@ export class Launcher {
    * child would then read "a replacement server is coming" while none is.
    */
   #recovered = false;
+  #pidHeartbeat: NodeJS.Timeout | undefined;
   #stopWatcher: NodeFS.FSWatcher | undefined;
   #stopPoll: NodeJS.Timeout | undefined;
   /** Windows only. Lets a stop cut a restart backoff short instead of queueing behind it. */
@@ -392,6 +415,7 @@ export class Launcher {
           process.stderr.write("[service-launcher] another launcher is already running\n");
           return;
         }
+        this.#startPidHeartbeat();
         this.#watchStopRequest();
       }
       this.#enqueue(() => this.#recover());
@@ -403,6 +427,8 @@ export class Launcher {
       process.off("SIGTERM", onSigterm);
       process.off("SIGINT", onSigint);
       this.#stopWatchingStopRequest();
+      clearInterval(this.#pidHeartbeat);
+      this.#pidHeartbeat = undefined;
       if (owned) {
         // Removing these before run() returns is how the CLI learns the stop
         // finished. Doing it after would race the process exiting.
@@ -419,41 +445,74 @@ export class Launcher {
    */
   async #claimPidFile(): Promise<boolean> {
     const target = pidFilePath(this.#baseDir);
-    const bootTimeMs = currentBootTimeMs();
     await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true, mode: 0o700 });
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        const handle = await NodeFSP.open(target, "wx", 0o600);
-        try {
-          await handle.writeFile(
-            encodeServiceLauncherPresence({ pid: process.pid, bootTimeMs }),
-            "utf8",
-          );
-          await handle.sync();
-        } finally {
-          await handle.close();
-        }
-        return true;
-      } catch (cause) {
-        if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
-        const owner = await this.#readPidFile();
-        // A live owner wins, even when it is this very process. Two Launcher
-        // instances sharing a process would still be two servers on one
-        // database, so there is nothing to exempt. But only trust the process
-        // id while the file is from this boot: ids are recycled across reboots,
-        // and believing a stranger would keep the service down indefinitely.
-        if (
-          owner !== undefined &&
-          serviceLauncherPresenceIsFromThisBoot(owner, bootTimeMs) &&
-          processIsAlive(owner.pid)
-        ) {
-          return false;
-        }
-        // Leftover, from a dead owner or an earlier boot. Clear it and retry.
-        await NodeFSP.rm(target, { force: true });
-      }
+    if (await this.#writePidFileExclusive(target)) return true;
+
+    if (await this.#pidFileHolderIsAlive()) return false;
+
+    // The record is leftover. Clearing it and creating our own is two steps, so
+    // two launchers racing here could both delete and both claim. An exclusive
+    // takeover file decides a single winner; everyone else loses and exits.
+    const takeover = `${target}.takeover`;
+    try {
+      await (await NodeFSP.open(takeover, "wx", 0o600)).close();
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
+      return false;
     }
-    return false;
+    try {
+      // Re-check under the takeover: the previous holder may have revived.
+      if (await this.#pidFileHolderIsAlive()) return false;
+      await NodeFSP.rm(target, { force: true });
+      return await this.#writePidFileExclusive(target);
+    } finally {
+      await NodeFSP.rm(takeover, { force: true }).catch(() => undefined);
+    }
+  }
+
+  async #writePidFileExclusive(target: string): Promise<boolean> {
+    try {
+      const handle = await NodeFSP.open(target, "wx", 0o600);
+      try {
+        await handle.writeFile(
+          encodeServiceLauncherPresence({
+            pid: process.pid,
+            bootTimeMs: currentBootTimeMs(),
+          }),
+          "utf8",
+        );
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      return true;
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
+      return false;
+    }
+  }
+
+  /**
+   * Windows only. True only for a record from this boot, naming a live process,
+   * and still being refreshed. A live owner wins even when it is this very
+   * process: two Launcher instances in one process are still two servers on one
+   * database, so there is nothing to exempt.
+   */
+  async #pidFileHolderIsAlive(): Promise<boolean> {
+    const owner = await this.#readPidFile();
+    if (owner === undefined) return false;
+    if (!serviceLauncherPresenceIsFromThisBoot(owner, currentBootTimeMs())) return false;
+    if (!processIsAlive(owner.pid)) return false;
+    return !(await pidRecordIsStale(pidFilePath(this.#baseDir)));
+  }
+
+  /** Windows only. Keeps this launcher's record demonstrably fresh. */
+  #startPidHeartbeat(): void {
+    const target = pidFilePath(this.#baseDir);
+    this.#pidHeartbeat = setInterval(() => {
+      void NodeFSP.utimes(target, new Date(), new Date()).catch(() => undefined);
+    }, PID_HEARTBEAT_MS);
+    this.#pidHeartbeat.unref();
   }
 
   async #readPidFile(): Promise<ServiceLauncherPresence | undefined> {
@@ -828,11 +887,17 @@ export class Launcher {
     // Windows only. Nothing supervises a Startup folder entry, so the launcher
     // does what Restart=always does on Linux, and gives up on the same terms.
     // Without the flag this still throws, so the Linux path is unchanged.
-    if (this.#selfSupervise && this.#recordRestartAttempt()) {
+    while (this.#selfSupervise && this.#recordRestartAttempt()) {
       await this.#waitBeforeRestart();
       if (this.#stopping || this.#done || this.#stopRequested) return;
-      await this.#startChild(this.#state.activeVersion, "active", this.#state.update);
-      return;
+      try {
+        await this.#startChild(this.#state.activeVersion, "active", this.#state.update);
+        return;
+      } catch {
+        // A start can fail transiently, and letting that escape would reach
+        // #fatal and kill the launcher outright. Spend another attempt from the
+        // same burst instead, so the supervisor survives what it exists for.
+      }
     }
     throw new Error(`Active child exited unexpectedly (${String(code ?? signal ?? "unknown")}).`);
   }

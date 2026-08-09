@@ -492,3 +492,46 @@ it("round-trips a pid record and rejects a malformed one", () => {
   // The old format carried a bare pid, and believing it would drop the guard.
   assert.isUndefined(decodeServiceLauncherPresence("4321\n"));
 });
+
+it.layer(NodeServices.layer)("self-supervising start failures", (it) => {
+  it.effect("spends another burst attempt when a start fails, instead of dying", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launcher-startfail-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const versionDir = path.join(root, "runtime", "versions", "1.0.0");
+      const entryPath = path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs");
+      yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fs.writeFileString(entryPath, "process.exit(1);\n");
+      yield* fs.writeFileString(path.join(versionDir, ".install-complete"), "1.0.0\n");
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        { selfSupervise: true, restartDelayMs: 5 },
+      );
+      const running = launcher.run();
+      // Remove the runtime mid-flight, so the next start throws rather than
+      // producing a child that exits. That used to reach #fatal and kill the
+      // launcher outright, defeating the supervisor over a transient failure.
+      yield* Effect.sleep("40 millis");
+      yield* fs.remove(versionDir, { recursive: true, force: true });
+
+      // It still ends by exhausting the burst, not by an unhandled start error.
+      const outcome = yield* Effect.promise(() =>
+        running.then(
+          () => "completed" as const,
+          (cause: unknown) => String(cause),
+        ),
+      );
+      assert.include(outcome, "Active child exited unexpectedly");
+    }).pipe(TestClock.withLive),
+  );
+});
