@@ -144,6 +144,9 @@ describe("WSL runtime cache", () => {
     expect(script).toContain('  [ -f "$runtime_root/node_modules/effect/package.json" ]');
     expect(script).toContain("if runtime_is_ready; then");
     expect(script).toContain('printf \'%s\\n\' "$$" > "$runtime_lock_candidate/pid"');
+    expect(script).toContain("trap cleanup_runtime_lock_candidate EXIT");
+    expect(script).toContain("trap 'exit 1' HUP INT TERM");
+    expect(script).not.toContain("trap cleanup_runtime_lock_candidate EXIT HUP INT TERM");
     expect(script).toContain(
       'while ! mv -T "$runtime_lock_candidate" "$runtime_lock" 2>/dev/null; do',
     );
