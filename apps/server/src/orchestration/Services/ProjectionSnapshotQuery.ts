@@ -59,6 +59,15 @@ export interface ProjectionFullThreadDiffContext {
  */
 export interface ProjectionSnapshotQueryShape {
   /**
+   * Read only active project roots and thread worktrees for infrastructure
+   * that needs workspace-aware behavior without hydrating the shell.
+   */
+  readonly getActiveWorkspaceCwds?: () => Effect.Effect<
+    ReadonlyArray<string>,
+    ProjectionRepositoryError
+  >;
+
+  /**
    * Read the lightweight command snapshot used to bootstrap the in-memory
    * orchestration engine without hydrating message/activity/checkpoint bodies.
    */

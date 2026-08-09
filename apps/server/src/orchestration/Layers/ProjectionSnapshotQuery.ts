@@ -2080,6 +2080,58 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         }),
       );
 
+  const getActiveWorkspaceCwds: NonNullable<
+    ProjectionSnapshotQueryShape["getActiveWorkspaceCwds"]
+  > = () =>
+    sql
+      .withTransaction(
+        Effect.all([
+          listProjectRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getActiveWorkspaceCwds:listProjects:query",
+                "ProjectionSnapshotQuery.getActiveWorkspaceCwds:listProjects:decodeRows",
+              ),
+            ),
+          ),
+          listActiveThreadRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getActiveWorkspaceCwds:listThreads:query",
+                "ProjectionSnapshotQuery.getActiveWorkspaceCwds:listThreads:decodeRows",
+              ),
+            ),
+          ),
+        ]),
+      )
+      .pipe(
+        Effect.map(([projectRows, threadRows]) => {
+          const paths = new Set<string>();
+          for (const project of projectRows) {
+            if (project.deletedAt === null && project.workspaceRoot.trim().length > 0) {
+              paths.add(project.workspaceRoot);
+            }
+          }
+          for (const thread of threadRows) {
+            if (
+              thread.deletedAt === null &&
+              thread.worktreePath !== null &&
+              thread.worktreePath.trim().length > 0
+            ) {
+              paths.add(thread.worktreePath);
+            }
+          }
+          return [...paths];
+        }),
+        Effect.mapError((error) =>
+          isPersistenceError(error)
+            ? error
+            : toPersistenceSqlError("ProjectionSnapshotQuery.getActiveWorkspaceCwds:transaction")(
+                error,
+              ),
+        ),
+      );
+
   const getArchivedShellSnapshot: ProjectionSnapshotQueryShape["getArchivedShellSnapshot"] = () =>
     sql
       .withTransaction(
@@ -2812,6 +2864,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       );
 
   return {
+    getActiveWorkspaceCwds,
     getCommandReadModel,
     getSnapshot,
     getShellSnapshot,

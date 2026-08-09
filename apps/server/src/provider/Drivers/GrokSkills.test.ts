@@ -19,7 +19,7 @@ const writeSkill = Effect.fn(function* (
 });
 
 it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
-  it.effect("discovers .agents and .grok skills at the project root", () =>
+  it.effect("discovers Claude-compatible and native skills at the project root", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -28,7 +28,7 @@ it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
       yield* fs.makeDirectory(path.join(workspace, ".git"), { recursive: true });
 
       yield* writeSkill(
-        path.join(workspace, ".agents", "skills"),
+        path.join(workspace, ".claude", "skills"),
         "gray-horizon-godot-loop",
         "---\nname: gray-horizon-godot-loop\ndescription: Godot loop skill.\n---\n",
       );
@@ -59,7 +59,7 @@ it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
       yield* fs.makeDirectory(nested, { recursive: true });
 
       yield* writeSkill(
-        path.join(workspace, ".agents", "skills"),
+        path.join(workspace, ".claude", "skills"),
         "root-skill",
         "---\nname: root-skill\ndescription: From git root.\n---\n",
       );
@@ -80,12 +80,12 @@ it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
       yield* fs.makeDirectory(nested, { recursive: true });
 
       yield* writeSkill(
-        path.join(workspace, ".agents", "skills"),
+        path.join(workspace, ".claude", "skills"),
         "shared",
         "---\nname: shared\ndescription: From git root.\n---\n",
       );
       yield* writeSkill(
-        path.join(nested, ".agents", "skills"),
+        path.join(nested, ".claude", "skills"),
         "shared",
         "---\nname: shared\ndescription: From nested cwd.\n---\n",
       );
@@ -97,7 +97,7 @@ it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
     }),
   );
 
-  it.effect("prefers native .grok over .agents at the same directory tier", () =>
+  it.effect("prefers native .grok over Claude compatibility at the same directory tier", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -106,9 +106,9 @@ it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
       yield* fs.makeDirectory(path.join(workspace, ".git"), { recursive: true });
 
       yield* writeSkill(
-        path.join(workspace, ".agents", "skills"),
+        path.join(workspace, ".claude", "skills"),
         "shared",
-        "---\nname: shared\ndescription: From agents compat.\n---\n",
+        "---\nname: shared\ndescription: From Claude compatibility.\n---\n",
       );
       yield* writeSkill(
         path.join(workspace, ".grok", "skills"),

@@ -258,16 +258,21 @@ function appendCustomCodexModels(
   return customEntries.length === 0 ? models : [...models, ...customEntries];
 }
 
-function parseCodexSkillsListResponse(
+export function parseCodexSkillsListResponse(
   response: CodexSchema.V2SkillsListResponse,
-  cwd: string,
+  cwd: string | ReadonlyArray<string>,
 ): ReadonlyArray<ServerProviderSkill> {
-  const matchingEntry = response.data.find((entry) => entry.cwd === cwd);
-  const skills = matchingEntry
-    ? matchingEntry.skills
-    : response.data.flatMap((entry) => entry.skills);
+  const cwdList = typeof cwd === "string" ? [cwd] : [...cwd];
+  let rawSkills = cwdList.flatMap(
+    (entryCwd) => response.data.find((entry) => entry.cwd === entryCwd)?.skills ?? [],
+  );
+  if (rawSkills.length === 0) {
+    rawSkills = response.data.flatMap((entry) => entry.skills);
+  }
 
-  return skills.map((skill) => {
+  // Later entries win on name collision (later workspace paths override earlier).
+  const skillsByName = new Map<string, ServerProviderSkill>();
+  for (const skill of rawSkills) {
     const shortDescription =
       skill.shortDescription ?? skill.interface?.shortDescription ?? undefined;
 
@@ -290,8 +295,10 @@ function parseCodexSkillsListResponse(
       parsedSkill.shortDescription = shortDescription;
     }
 
-    return parsedSkill;
-  });
+    skillsByName.set(skill.name, parsedSkill);
+  }
+
+  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
 const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
@@ -329,7 +336,13 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   readonly binaryPath: string;
   readonly homePath?: string;
   readonly launchArgs?: string;
+  /** Process cwd for the app-server spawn (typically ServerConfig.cwd). */
   readonly cwd: string;
+  /**
+   * Workspace paths for `skills/list` (project roots + worktrees). Defaults to
+   * `[cwd]` when omitted.
+   */
+  readonly skillCwds?: ReadonlyArray<string>;
   readonly customModels?: ReadonlyArray<string>;
   readonly environment?: NodeJS.ProcessEnv;
 }) {
@@ -401,10 +414,12 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
+  const skillCwds =
+    input.skillCwds && input.skillCwds.length > 0 ? [...input.skillCwds] : [input.cwd];
   const [skillsResponse, models] = yield* Effect.all(
     [
       client.request("skills/list", {
-        cwds: [input.cwd],
+        cwds: skillCwds,
       }),
       requestAllCodexModels(client),
     ],
@@ -417,7 +432,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     models: applyPreferredCodexDefaultModel(
       appendCustomCodexModels(models, input.customModels ?? []),
     ),
-    skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
+    skills: parseCodexSkillsListResponse(skillsResponse, skillCwds),
   } satisfies CodexAppServerProviderSnapshot;
 });
 
@@ -513,6 +528,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     readonly homePath?: string;
     readonly launchArgs?: string;
     readonly cwd: string;
+    readonly skillCwds?: ReadonlyArray<string>;
     readonly customModels: ReadonlyArray<string>;
     readonly environment?: NodeJS.ProcessEnv;
   }) => Effect.Effect<
@@ -522,11 +538,10 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   > = probeCodexAppServerProvider,
   environment?: NodeJS.ProcessEnv,
   /**
-   * Workspace for `skills/list` (typically ServerConfig.cwd). Defaults to
-   * process.cwd() for callers that omit it. Snapshot skills are server-cwd
-   * scoped, not per-thread worktree — multi-project pickers need a follow-up.
+   * Workspace paths for `skills/list` (project roots + worktrees). Spawn uses
+   * the first path (or process.cwd()). Defaults to [process.cwd()].
    */
-  cwd: string = process.cwd(),
+  skillCwds: ReadonlyArray<string> = [process.cwd()],
 ): Effect.fn.Return<
   ServerProviderDraft,
   ServerSettingsError,
@@ -535,6 +550,8 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const emptyModels = emptyCodexModelsFromSettings(codexSettings);
+  const resolvedSkillCwds = skillCwds.length > 0 ? [...skillCwds] : [process.cwd()];
+  const spawnCwd = resolvedSkillCwds[0] ?? process.cwd();
 
   if (!codexSettings.enabled) {
     return buildServerProvider({
@@ -557,7 +574,8 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     binaryPath: codexSettings.binaryPath,
     homePath: codexSettings.homePath,
     launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
-    cwd,
+    cwd: spawnCwd,
+    skillCwds: resolvedSkillCwds,
     customModels: codexSettings.customModels,
     environment: resolvedEnvironment,
   }).pipe(

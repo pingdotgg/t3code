@@ -1,13 +1,12 @@
 /**
  * Grok skill discovery for the `$` picker.
  *
- * Mirrors Grok Build user-guide skill locations, including `.agents/skills`
- * (and other compat roots) at each tier and a walk from cwd up to the repo
- * root. Within a tier, native `.grok/skills` is listed last so it wins name
- * collisions over compat directories.
+ * Mirrors Grok Build skill locations: native `.grok/skills`, Claude-compatible
+ * `.claude/skills`, and user-level `.agents/skills`. Project directories are
+ * walked from each workspace cwd up to its repo root. Within a tier, native
+ * `.grok/skills` is listed last so it wins name collisions.
  *
- * Callers pass a workspace cwd (typically ServerConfig.cwd). Snapshot skills
- * are process/server-cwd scoped — not per-thread worktree.
+ * `cwd` may be one path or many (registered project roots + worktrees).
  *
  * @module provider/Drivers/GrokSkills
  */
@@ -21,39 +20,44 @@ import * as Path from "effect/Path";
 import {
   discoverSkillsFromRoots,
   listAncestorPaths,
+  normalizeSkillWorkspaceCwds,
   resolveGitRootPath,
   type SkillDiscoveryRoot,
 } from "./SkillDiscovery.ts";
 
-/** Compat roots first, native `.grok` last — later wins in discoverSkillsFromRoots. */
-const GROK_SKILL_DIR_NAMES = [".cursor", ".claude", ".agents", ".grok"] as const;
+const GROK_USER_SKILL_DIR_NAMES = [".claude", ".agents", ".grok"] as const;
+const GROK_PROJECT_SKILL_DIR_NAMES = [".claude", ".grok"] as const;
 
 function skillRootsForDir(
-  pathApi: Path.Path["Service"],
+  pathApi: Path.Path,
   dir: string,
   scope: SkillDiscoveryRoot["scope"],
 ): SkillDiscoveryRoot[] {
-  return GROK_SKILL_DIR_NAMES.map((name) => ({
+  const names = scope === "user" ? GROK_USER_SKILL_DIR_NAMES : GROK_PROJECT_SKILL_DIR_NAMES;
+  return names.map((name) => ({
     directory: pathApi.join(dir, name, "skills"),
     scope,
   }));
 }
 
 export const discoverGrokSkills = Effect.fn("discoverGrokSkills")(function* (
-  cwd: string,
+  cwd: string | ReadonlyArray<string>,
 ): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
   const path = yield* Path.Path;
   const home = NodeOS.homedir();
-  const gitRoot = yield* resolveGitRootPath(cwd);
+  const projectCwds = normalizeSkillWorkspaceCwds(path, cwd);
 
-  // User roots first (compat → native), then project ancestors git root → cwd.
-  // Later roots win so nearer-to-cwd project skills override user skills.
-  const roots: SkillDiscoveryRoot[] = [
-    ...skillRootsForDir(path, home, "user"),
-    ...listAncestorPaths(path, cwd, gitRoot).flatMap((dir) =>
-      skillRootsForDir(path, dir, "project"),
-    ),
-  ];
+  // User roots first (compat → native), then project ancestors for each workspace.
+  const roots: SkillDiscoveryRoot[] = [...skillRootsForDir(path, home, "user")];
+
+  for (const projectCwd of projectCwds) {
+    const gitRoot = yield* resolveGitRootPath(projectCwd);
+    roots.push(
+      ...listAncestorPaths(path, projectCwd, gitRoot).flatMap((dir) =>
+        skillRootsForDir(path, dir, "project"),
+      ),
+    );
+  }
 
   return yield* discoverSkillsFromRoots(roots);
 });

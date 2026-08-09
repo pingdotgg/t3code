@@ -4,7 +4,47 @@ import {
   applyPreferredCodexDefaultModel,
   isLegacyCodexModel,
   mapCodexModelCapabilities,
+  parseCodexSkillsListResponse,
 } from "./CodexProvider.ts";
+
+it("merges skills from every requested workspace and lets later workspaces win", () => {
+  const skill = (name: string, description: string, path: string) => ({
+    name,
+    description,
+    path,
+    scope: "repo" as const,
+    enabled: true,
+  });
+  const skills = parseCodexSkillsListResponse(
+    {
+      data: [
+        {
+          cwd: "/workspace/a",
+          errors: [],
+          skills: [
+            skill("a-only", "A only", "/workspace/a/.agents/skills/a-only/SKILL.md"),
+            skill("shared", "From A", "/workspace/a/.agents/skills/shared/SKILL.md"),
+          ],
+        },
+        {
+          cwd: "/workspace/b",
+          errors: [],
+          skills: [
+            skill("b-only", "B only", "/workspace/b/.agents/skills/b-only/SKILL.md"),
+            skill("shared", "From B", "/workspace/b/.agents/skills/shared/SKILL.md"),
+          ],
+        },
+      ],
+    },
+    ["/workspace/a", "/workspace/b"],
+  );
+
+  assert.deepStrictEqual(
+    skills.map((entry) => entry.name),
+    ["a-only", "b-only", "shared"],
+  );
+  assert.strictEqual(skills.find((entry) => entry.name === "shared")?.description, "From B");
+});
 
 it("keeps current Codex models out of legacy models", () => {
   assert.deepStrictEqual(

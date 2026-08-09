@@ -327,7 +327,11 @@ export const makePendingOpenCodeProvider = (
 
 export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatus")(function* (
   openCodeSettings: OpenCodeSettings,
-  cwd: string,
+  /**
+   * Workspace path(s) for skill discovery and OpenCode SDK directory (first
+   * path). Prefer registered project roots + worktrees.
+   */
+  cwd: string | ReadonlyArray<string>,
   environment?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<
   ServerProviderDraft,
@@ -339,8 +343,10 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const customModels = openCodeSettings.customModels;
   const isExternalServer = openCodeSettings.serverUrl.trim().length > 0;
+  const skillCwds = typeof cwd === "string" ? [cwd] : [...cwd];
+  const primaryCwd = skillCwds[0] ?? process.cwd();
   // Filesystem skills for the `$` picker (snapshot → web/mobile).
-  const skills = yield* discoverOpenCodeSkills(cwd);
+  const skills = yield* discoverOpenCodeSkills(skillCwds);
 
   const fallback = (cause: unknown, version: string | null = null) => {
     const failure = formatOpenCodeProbeError({
@@ -441,7 +447,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
             return yield* openCodeRuntime.loadOpenCodeInventory(
               openCodeRuntime.createOpenCodeSdkClient({
                 baseUrl: server.url,
-                directory: cwd,
+                directory: primaryCwd,
                 ...(openCodeSettings.serverPassword
                   ? { serverPassword: openCodeSettings.serverPassword }
                   : {}),

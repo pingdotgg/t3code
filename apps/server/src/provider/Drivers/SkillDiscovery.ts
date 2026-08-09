@@ -49,6 +49,8 @@ export type SkillDiscoveryScope = NonNullable<ServerProviderSkill["scope"]>;
 export interface SkillDiscoveryRoot {
   readonly directory: string;
   readonly scope: SkillDiscoveryScope;
+  /** Cursor permits organizational directories below a skills root. */
+  readonly recursive?: boolean;
 }
 
 /**
@@ -81,7 +83,7 @@ export const resolveGitRootPath = Effect.fn("resolveGitRootPath")(function* (
  * Used by harnesses that scan skill dirs at every monorepo package level.
  */
 export function listAncestorPaths(
-  pathApi: Path.Path["Service"],
+  pathApi: Path.Path,
   startDir: string,
   gitRoot: string,
 ): ReadonlyArray<string> {
@@ -103,6 +105,28 @@ export function listAncestorPaths(
 }
 
 /**
+ * Normalize a single workspace path or list into absolute unique paths.
+ * Empty / whitespace entries are dropped.
+ */
+export function normalizeSkillWorkspaceCwds(
+  pathApi: Path.Path,
+  cwd: string | ReadonlyArray<string> | undefined,
+): ReadonlyArray<string> {
+  if (cwd === undefined) {
+    return [];
+  }
+  const values = typeof cwd === "string" ? [cwd] : [...cwd];
+  const resolved = new Set<string>();
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (trimmed.length > 0) {
+      resolved.add(pathApi.resolve(trimmed));
+    }
+  }
+  return [...resolved];
+}
+
+/**
  * Collect skills from ordered roots. Later roots override earlier ones on name
  * collision (callers should list user roots first, then project roots, so
  * project wins — matching Claude/OpenCode "most specific wins").
@@ -116,11 +140,16 @@ export const discoverSkillsFromRoots = Effect.fn("discoverSkillsFromRoots")(func
 
   for (const root of roots) {
     const entries = yield* fileSystem
-      .readDirectory(root.directory)
+      .readDirectory(root.directory, { recursive: root.recursive ?? false })
       .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
 
     for (const entry of [...entries].sort()) {
-      const skillPath = path.join(root.directory, entry, "SKILL.md");
+      if (root.recursive && path.basename(entry) !== "SKILL.md") {
+        continue;
+      }
+      const skillPath = root.recursive
+        ? path.join(root.directory, entry)
+        : path.join(root.directory, entry, "SKILL.md");
       const contents = yield* fileSystem
         .readFileString(skillPath)
         .pipe(Effect.orElseSucceed(() => undefined));
@@ -133,7 +162,8 @@ export const discoverSkillsFromRoots = Effect.fn("discoverSkillsFromRoots")(func
         continue;
       }
 
-      const name = (frontmatter.kind === "parsed" ? frontmatter.name : undefined) ?? entry.trim();
+      const directoryName = root.recursive ? path.basename(path.dirname(entry)) : entry.trim();
+      const name = (frontmatter.kind === "parsed" ? frontmatter.name : undefined) ?? directoryName;
       if (!name) {
         continue;
       }

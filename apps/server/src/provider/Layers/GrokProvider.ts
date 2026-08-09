@@ -165,11 +165,10 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
   /**
-   * Workspace used for project-scoped skill discovery (typically ServerConfig.cwd).
-   * Snapshot skills are process/server-cwd scoped — not per-project workspaceRoot
-   * or per-thread worktree. Multi-project pickers need a follow-up discovery path.
+   * Workspace path(s) for project-scoped skill discovery: registered project
+   * roots, thread worktrees, and server cwd (see resolveSkillWorkspaceCwds).
    */
-  cwd: string = process.cwd(),
+  cwd: string | ReadonlyArray<string> = process.cwd(),
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,

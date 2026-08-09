@@ -4,11 +4,10 @@
  * Mirrors OpenCode's documented roots and hierarchy:
  * - Global: `~/.claude/skills`, `~/.agents/skills`, `~/.config/opencode/skills`
  *   (native opencode last so it wins collisions)
- * - Project: at every directory from git root down to the workspace cwd —
+ * - Project: at every directory from git root down to each workspace cwd —
  *   `.claude/skills`, `.agents/skills`, `.opencode/skills` (native last)
  *
- * Callers pass a workspace cwd (typically ServerConfig.cwd). Snapshot skills
- * are process/server-cwd scoped — not per-thread worktree.
+ * `cwd` may be one path or many (registered project roots + worktrees).
  *
  * @module provider/Drivers/OpenCodeSkills
  */
@@ -22,35 +21,44 @@ import * as Path from "effect/Path";
 import {
   discoverSkillsFromRoots,
   listAncestorPaths,
+  normalizeSkillWorkspaceCwds,
   resolveGitRootPath,
   type SkillDiscoveryRoot,
 } from "./SkillDiscovery.ts";
 
-/** Compat roots first, native `.opencode` last — later wins in discoverSkillsFromRoots. */
-const OPENCODE_PROJECT_SKILL_DIR_NAMES = [".claude", ".agents", ".opencode"] as const;
-
-function projectSkillRootsForDir(pathApi: Path.Path["Service"], dir: string): SkillDiscoveryRoot[] {
-  return OPENCODE_PROJECT_SKILL_DIR_NAMES.map((name) => ({
-    directory: pathApi.join(dir, name, "skills"),
-    scope: "project" as const,
-  }));
+function projectSkillRootsForDir(pathApi: Path.Path, dir: string): SkillDiscoveryRoot[] {
+  return [
+    { directory: pathApi.join(dir, ".claude", "skills"), scope: "project" },
+    { directory: pathApi.join(dir, ".agents", "skills"), scope: "project" },
+    { directory: pathApi.join(dir, ".opencode", "skill"), scope: "project" },
+    { directory: pathApi.join(dir, ".opencode", "skills"), scope: "project" },
+  ];
 }
 
 export const discoverOpenCodeSkills = Effect.fn("discoverOpenCodeSkills")(function* (
-  cwd: string,
+  cwd: string | ReadonlyArray<string>,
 ): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
   const path = yield* Path.Path;
   const home = NodeOS.homedir();
-  const gitRoot = yield* resolveGitRootPath(cwd);
+  const projectCwds = normalizeSkillWorkspaceCwds(path, cwd);
 
   // User: lower-priority globals first, native opencode config last.
-  // Project: every monorepo level from git root → cwd; native .opencode last per tier.
+  // Project: every monorepo level from git root → each workspace cwd.
   const roots: SkillDiscoveryRoot[] = [
     { directory: path.join(home, ".claude", "skills"), scope: "user" },
     { directory: path.join(home, ".agents", "skills"), scope: "user" },
+    { directory: path.join(home, ".config", "opencode", "skill"), scope: "user" },
     { directory: path.join(home, ".config", "opencode", "skills"), scope: "user" },
-    ...listAncestorPaths(path, cwd, gitRoot).flatMap((dir) => projectSkillRootsForDir(path, dir)),
   ];
+
+  for (const projectCwd of projectCwds) {
+    const gitRoot = yield* resolveGitRootPath(projectCwd);
+    roots.push(
+      ...listAncestorPaths(path, projectCwd, gitRoot).flatMap((dir) =>
+        projectSkillRootsForDir(path, dir),
+      ),
+    );
+  }
 
   return yield* discoverSkillsFromRoots(roots);
 });

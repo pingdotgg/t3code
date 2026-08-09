@@ -301,4 +301,84 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       assert.deepEqual(skills, []);
     }),
   );
+
+  it.effect("discovers project skills from git root when cwd is nested", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const repo = path.join(tempDir, "repo");
+      const nested = path.join(repo, "packages", "app");
+      yield* fs.makeDirectory(path.join(repo, ".git"), { recursive: true });
+      yield* fs.makeDirectory(nested, { recursive: true });
+
+      yield* writeSkill(
+        path.join(repo, ".claude", "skills"),
+        "root-skill",
+        ["---", "name: root-skill", "description: From project root.", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, nested);
+      assert.ok(skills.some((skill) => skill.name === "root-skill"));
+      assert.equal(skills.find((skill) => skill.name === "root-skill")?.scope, "project");
+    }),
+  );
+
+  it.effect("prefers nearer-cwd project skill over git-root skill on name collision", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const repo = path.join(tempDir, "repo");
+      const nested = path.join(repo, "packages", "app");
+      yield* fs.makeDirectory(path.join(repo, ".git"), { recursive: true });
+      yield* fs.makeDirectory(nested, { recursive: true });
+
+      yield* writeSkill(
+        path.join(repo, ".claude", "skills"),
+        "shared",
+        ["---", "name: shared", "description: From git root.", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(nested, ".claude", "skills"),
+        "shared",
+        ["---", "name: shared", "description: From nested cwd.", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, nested);
+      const shared = skills.find((skill) => skill.name === "shared");
+      assert.equal(shared?.description, "From nested cwd.");
+      assert.ok(shared?.path.includes(`${path.sep}packages${path.sep}app${path.sep}`));
+    }),
+  );
+
+  it.effect("discovers project skills across multiple workspace roots", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const projectA = path.join(tempDir, "project-a");
+      const projectB = path.join(tempDir, "project-b");
+      yield* fs.makeDirectory(path.join(projectA, ".git"), { recursive: true });
+      yield* fs.makeDirectory(path.join(projectB, ".git"), { recursive: true });
+
+      yield* writeSkill(
+        path.join(projectA, ".claude", "skills"),
+        "skill-a",
+        ["---", "name: skill-a", "description: From project A.", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(projectB, ".claude", "skills"),
+        "skill-b",
+        ["---", "name: skill-b", "description: From project B.", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, [projectA, projectB]);
+      assert.ok(skills.some((skill) => skill.name === "skill-a"));
+      assert.ok(skills.some((skill) => skill.name === "skill-b"));
+    }),
+  );
 });

@@ -45,6 +45,23 @@ it.layer(NodeServices.layer)("discoverOpenCodeSkills", (it) => {
     }),
   );
 
+  it.effect("discovers the native singular skill directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-skills-" });
+      yield* fs.makeDirectory(path.join(workspace, ".git"), { recursive: true });
+      yield* writeSkill(
+        path.join(workspace, ".opencode", "skill"),
+        "singular-native",
+        "---\nname: singular-native\ndescription: Singular native root.\n---\n",
+      );
+
+      const skills = yield* discoverOpenCodeSkills(workspace);
+      assert.equal(skills.find((skill) => skill.name === "singular-native")?.scope, "project");
+    }),
+  );
+
   it.effect("prefers native .opencode over .agents on name collision", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

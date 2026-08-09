@@ -1,13 +1,17 @@
 /**
  * ClaudeSkills — filesystem discovery of Claude Code skills for the `$` picker.
  *
- * Claude Code loads skills from `<config dir>/skills` (user scope), then
- * `<cwd>/.agents/skills` and `<cwd>/.claude/skills` (project scope), one
- * directory per skill with a `SKILL.md` carrying YAML frontmatter. Later roots
- * win on name collisions, so precedence is user, `.agents`, then `.claude`.
- * The Agent SDK init handshake surfaces skills only as slash commands without
- * their filesystem paths, so the provider snapshot scans the same locations
+ * Claude Code loads skills from `<config dir>/skills` (user scope), then from
+ * `.agents/skills` and `.claude/skills` in the workspace and parent
+ * directories up to the repo root (project scope), one directory per skill
+ * with a `SKILL.md` carrying YAML frontmatter. Later roots win on name
+ * collisions, so precedence is user, `.agents`, then `.claude`. The Agent SDK
+ * init handshake surfaces skills only as slash commands without their
+ * filesystem paths, so the provider snapshot scans the same locations
  * directly, mirroring how the Codex app-server reports its skills.
+ *
+ * `cwd` may be one path or many (registered project roots + worktrees). User
+ * skills are loaded once; project roots from every workspace are scanned.
  *
  * @module provider/Drivers/ClaudeSkills
  */
@@ -17,44 +21,15 @@ import type { ClaudeSettings, ServerProviderSkill } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { parse as parseYamlDocument } from "yaml";
 
 import { expandHomePath } from "../../pathExpansion.ts";
-
-type ClaudeSkillScope = "user" | "project";
-
-const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
-
-type SkillFrontmatter =
-  | { readonly kind: "missing" }
-  | { readonly kind: "malformed" }
-  | { readonly kind: "parsed"; readonly name?: string; readonly description?: string };
-
-function parseSkillFrontmatter(contents: string): SkillFrontmatter {
-  const match = FRONTMATTER_PATTERN.exec(contents);
-  if (!match) {
-    return { kind: "missing" };
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = parseYamlDocument(match[1] ?? "");
-  } catch {
-    return { kind: "malformed" };
-  }
-  if (typeof parsed !== "object" || parsed === null) {
-    return { kind: "malformed" };
-  }
-
-  const record = parsed as Record<string, unknown>;
-  const name = typeof record.name === "string" ? record.name.trim() : "";
-  const description = typeof record.description === "string" ? record.description.trim() : "";
-  return {
-    kind: "parsed",
-    ...(name ? { name } : {}),
-    ...(description ? { description } : {}),
-  };
-}
+import {
+  discoverSkillsFromRoots,
+  listAncestorPaths,
+  normalizeSkillWorkspaceCwds,
+  resolveGitRootPath,
+  type SkillDiscoveryRoot,
+} from "./SkillDiscovery.ts";
 
 /**
  * Resolve the Claude config directory the CLI would use, matching the
@@ -85,71 +60,40 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
 });
 
 /**
- * Enumerate Claude Code skills from the user config dir, workspace
- * `.agents/skills`, and workspace `.claude/skills`, in that order. Discovery
- * is best-effort: unreadable roots and malformed skill entries are skipped so
- * a broken skill never degrades the provider snapshot. On name collisions,
- * later roots win: `.agents` beats user and `.claude` beats `.agents`, matching
- * Claude Code's resolution.
+ * Enumerate Claude Code skills from the user config dir, then project
+ * `.agents/skills` and `.claude/skills` dirs for each workspace cwd
+ * (git root → cwd). Discovery is best-effort: unreadable roots and malformed
+ * skill entries are skipped so a broken skill never degrades the provider
+ * snapshot. On name collisions, later roots win: `.agents` beats user and
+ * `.claude` beats `.agents`, matching Claude Code's resolution.
  */
 export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* (
   config: Pick<ClaudeSettings, "homePath">,
-  cwd?: string,
+  cwd?: string | ReadonlyArray<string>,
   environment?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
-  const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const configDirPath = yield* resolveClaudeConfigDirPath(config, environment ?? process.env, cwd);
+  const resolvedEnvironment = environment ?? process.env;
+  const projectCwds = normalizeSkillWorkspaceCwds(path, cwd);
+  const configDirPath = yield* resolveClaudeConfigDirPath(
+    config,
+    resolvedEnvironment,
+    projectCwds[0],
+  );
 
-  const roots: ReadonlyArray<{ directory: string; scope: ClaudeSkillScope }> = [
+  const roots: SkillDiscoveryRoot[] = [
     { directory: path.join(configDirPath, "skills"), scope: "user" },
-    ...(cwd
-      ? [
-          { directory: path.join(cwd, ".agents", "skills"), scope: "project" as const },
-          { directory: path.join(cwd, ".claude", "skills"), scope: "project" as const },
-        ]
-      : []),
   ];
 
-  const skillsByName = new Map<string, ServerProviderSkill>();
-  for (const root of roots) {
-    const entries = yield* fileSystem
-      .readDirectory(root.directory)
-      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-
-    for (const entry of [...entries].sort()) {
-      const skillPath = path.join(root.directory, entry, "SKILL.md");
-      const contents = yield* fileSystem
-        .readFileString(skillPath)
-        .pipe(Effect.orElseSucceed(() => undefined));
-      if (contents === undefined) {
-        continue;
-      }
-
-      const frontmatter = parseSkillFrontmatter(contents);
-      // Malformed frontmatter means the skill won't load in Claude Code
-      // either — skip it rather than surfacing a broken entry under its
-      // directory name.
-      if (frontmatter.kind === "malformed") {
-        continue;
-      }
-
-      const name = (frontmatter.kind === "parsed" ? frontmatter.name : undefined) ?? entry.trim();
-      if (!name) {
-        continue;
-      }
-
-      skillsByName.set(name, {
-        name,
-        path: skillPath,
-        enabled: true,
-        scope: root.scope,
-        ...(frontmatter.kind === "parsed" && frontmatter.description
-          ? { description: frontmatter.description }
-          : {}),
-      });
+  for (const projectCwd of projectCwds) {
+    const gitRoot = yield* resolveGitRootPath(projectCwd);
+    for (const dir of listAncestorPaths(path, projectCwd, gitRoot)) {
+      roots.push(
+        { directory: path.join(dir, ".agents", "skills"), scope: "project" },
+        { directory: path.join(dir, ".claude", "skills"), scope: "project" },
+      );
     }
   }
 
-  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+  return yield* discoverSkillsFromRoots(roots);
 });
