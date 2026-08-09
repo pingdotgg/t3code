@@ -1,5 +1,13 @@
-import { describe, expect, it } from "vite-plus/test";
-import { getAnchoredTurnMetrics, getRowBottom } from "./timelineScrollAnchoring";
+import { describe, expect, it, vi } from "vite-plus/test";
+import {
+  clearTimelineAnchor,
+  getAnchoredTurnEndRevealOffset,
+  getAnchoredTurnMetrics,
+  getRowBottom,
+  resolveTimelineRouteEpoch,
+  resolveTimelineLiveFollowEnabled,
+  updateTimelineLiveFollowState,
+} from "./timelineScrollAnchoring";
 
 function buildState({
   positions,
@@ -22,6 +30,62 @@ function buildState({
 }
 
 describe("timeline scroll anchoring", () => {
+  it("invalidates a deferred reveal when switching routes, including switching back", () => {
+    const threadA = "environment-local:thread-a";
+    const threadB = "environment-local:thread-b";
+    const firstThreadAEpoch = { threadKey: threadA };
+    let currentEpoch = firstThreadAEpoch;
+    const reveal = vi.fn();
+    const deferredReveal = () => {
+      if (currentEpoch === firstThreadAEpoch) {
+        reveal();
+      }
+    };
+
+    expect(resolveTimelineRouteEpoch(currentEpoch, threadA)).toBe(firstThreadAEpoch);
+    currentEpoch = resolveTimelineRouteEpoch(currentEpoch, threadB);
+    deferredReveal();
+    currentEpoch = resolveTimelineRouteEpoch(currentEpoch, threadA);
+    deferredReveal();
+
+    expect(reveal).not.toHaveBeenCalled();
+    expect(currentEpoch).not.toBe(firstThreadAEpoch);
+  });
+
+  it("clears send-time anchoring when ordinary bottom-follow resumes", () => {
+    const anchored = {
+      threadKey: "environment-local:thread-a",
+      messageId: "message-a",
+    };
+    const alreadyCleared = {
+      threadKey: anchored.threadKey,
+      messageId: null,
+    };
+
+    expect(clearTimelineAnchor(anchored)).toEqual({
+      threadKey: anchored.threadKey,
+      messageId: null,
+    });
+    expect(clearTimelineAnchor(alreadyCleared)).toBe(alreadyCleared);
+  });
+
+  it("starts a different thread at the live edge before its reset effect runs", () => {
+    const previousThreadState = {
+      threadKey: "environment-local:thread-a",
+      enabled: false,
+    };
+    const nextThreadKey = "environment-local:thread-b";
+
+    expect(
+      resolveTimelineLiveFollowEnabled(previousThreadState, previousThreadState.threadKey),
+    ).toBe(false);
+    expect(resolveTimelineLiveFollowEnabled(previousThreadState, nextThreadKey)).toBe(true);
+    expect(updateTimelineLiveFollowState(previousThreadState, nextThreadKey, true)).toEqual({
+      threadKey: nextThreadKey,
+      enabled: true,
+    });
+  });
+
   it("measures row bottoms from LegendList row position and size", () => {
     const state = buildState({
       positions: [0, 120],
@@ -110,6 +174,29 @@ describe("timeline scroll anchoring", () => {
     expect(metrics?.lastBottom).toBe(1540);
     expect(metrics?.visibleUsableBottom).toBe(1464);
     expect(metrics?.scrollDeltaToRevealEnd).toBe(76);
+  });
+
+  it("recomputes the reveal target after a buffered assistant row receives its real height", () => {
+    const estimatedState = buildState({
+      positions: [0, 120],
+      sizes: [80, 90],
+      scroll: 0,
+      scrollLength: 700,
+    });
+    const measuredState = buildState({
+      positions: [0, 120],
+      sizes: [80, 1_800],
+      scroll: 0,
+      scrollLength: 700,
+    });
+    const input = {
+      anchorIndex: 0,
+      composerOverlayHeight: 180,
+      anchorOffset: 16,
+    };
+
+    expect(getAnchoredTurnEndRevealOffset({ ...input, state: estimatedState })).toBeNull();
+    expect(getAnchoredTurnEndRevealOffset({ ...input, state: measuredState })).toBe(1_416);
   });
 
   it("subtracts composer height from usable viewport height", () => {

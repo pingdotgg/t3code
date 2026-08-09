@@ -1,5 +1,49 @@
 export type TimelineScrollMode = "following-end" | "anchoring-new-turn" | "free-scrolling";
 
+export interface TimelineLiveFollowState {
+  readonly threadKey: string;
+  readonly enabled: boolean;
+}
+
+export interface TimelineRouteEpoch {
+  readonly threadKey: string;
+}
+
+export interface TimelineAnchorState<Message> {
+  readonly threadKey: string | null;
+  readonly messageId: Message | null;
+}
+
+export function clearTimelineAnchor<Message>(
+  state: TimelineAnchorState<Message>,
+): TimelineAnchorState<Message> {
+  return state.messageId === null ? state : { ...state, messageId: null };
+}
+
+export function resolveTimelineRouteEpoch(
+  current: TimelineRouteEpoch,
+  threadKey: string,
+): TimelineRouteEpoch {
+  return current.threadKey === threadKey ? current : { threadKey };
+}
+
+export function resolveTimelineLiveFollowEnabled(
+  state: TimelineLiveFollowState,
+  threadKey: string,
+): boolean {
+  return state.threadKey === threadKey ? state.enabled : true;
+}
+
+export function updateTimelineLiveFollowState(
+  state: TimelineLiveFollowState,
+  threadKey: string,
+  enabled: boolean,
+): TimelineLiveFollowState {
+  return state.threadKey === threadKey && state.enabled === enabled
+    ? state
+    : { threadKey, enabled };
+}
+
 export interface TimelineListMeasurementState {
   readonly data: readonly unknown[];
   readonly scroll: number;
@@ -75,4 +119,13 @@ export function getAnchoredTurnMetrics({
     targetScrollToRevealEnd,
     scrollDeltaToRevealEnd,
   };
+}
+
+export function getAnchoredTurnEndRevealOffset(
+  input: Parameters<typeof getAnchoredTurnMetrics>[0],
+): number | null {
+  const metrics = getAnchoredTurnMetrics(input);
+  return metrics && metrics.scrollDeltaToRevealEnd > 1
+    ? input.state.scroll + metrics.scrollDeltaToRevealEnd
+    : null;
 }
