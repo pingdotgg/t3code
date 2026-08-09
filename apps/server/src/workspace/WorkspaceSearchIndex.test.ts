@@ -54,9 +54,12 @@ it.effect("filters image searches before applying the result limit", () =>
       vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
       const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project");
-      const result = yield* searchIndex.search("", 200, "file", true);
+      const resultWithoutKind = yield* searchIndex.search("", 200, undefined, true);
+      const resultWithDirectoryKind = yield* searchIndex.search("", 200, "directory", true);
 
-      expect(result.entries).toEqual([{ kind: "file", path: "public/icon.svg" }]);
+      expect(resultWithoutKind.entries).toEqual([{ kind: "file", path: "public/icon.svg" }]);
+      expect(resultWithDirectoryKind.entries).toEqual([{ kind: "file", path: "public/icon.svg" }]);
+      expect(fileSearch).toHaveBeenCalledTimes(2);
       expect(fileSearch).toHaveBeenCalledWith("", { pageSize: 25_002 });
     }),
   ),
