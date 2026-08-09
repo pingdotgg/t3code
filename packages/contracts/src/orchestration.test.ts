@@ -541,6 +541,40 @@ it.effect("decodes a correlated turn-start delivery marker on session events", (
   }),
 );
 
+it.effect("decodes provider delivery acknowledgement commands and events", () =>
+  Effect.gen(function* () {
+    const command = yield* decodeOrchestrationCommand({
+      type: "thread.turn-start.delivery-acknowledge",
+      commandId: "cmd-delivery-acknowledge",
+      threadId: "thread-1",
+      messageId: "message-1",
+      requestSequence: 42,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    const event = yield* decodeOrchestrationEvent({
+      sequence: 43,
+      eventId: "event-delivery-acknowledged",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      commandId: "cmd-delivery-acknowledge",
+      causationEventId: null,
+      correlationId: "cmd-delivery-acknowledge",
+      metadata: {},
+      type: "thread.turn-start-delivery-acknowledged",
+      payload: {
+        threadId: "thread-1",
+        messageId: "message-1",
+        requestSequence: 42,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+
+    assert.strictEqual(command.type, "thread.turn-start.delivery-acknowledge");
+    assert.strictEqual(event.type, "thread.turn-start-delivery-acknowledged");
+  }),
+);
+
 it.effect("decodes correlated pending turn-start recovery failure commands and events", () =>
   Effect.gen(function* () {
     const command = yield* decodeOrchestrationCommand({

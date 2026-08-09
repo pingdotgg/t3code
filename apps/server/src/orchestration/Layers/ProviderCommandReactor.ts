@@ -440,6 +440,22 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const acknowledgePendingTurnStartDelivery = Effect.fnUntraced(function* (input: {
+    readonly threadId: ThreadId;
+    readonly messageId: MessageId;
+    readonly requestSequence: number;
+    readonly createdAt: string;
+  }) {
+    yield* orchestrationEngine.dispatch({
+      type: "thread.turn-start.delivery-acknowledge",
+      commandId: yield* serverCommandId("provider-turn-start-delivery-acknowledge"),
+      threadId: input.threadId,
+      messageId: input.messageId,
+      requestSequence: input.requestSequence,
+      createdAt: input.createdAt,
+    });
+  });
+
   const resolveProject = Effect.fnUntraced(function* (projectId: ProjectId) {
     return yield* projectionSnapshotQuery
       .getProjectShellById(projectId)
@@ -1137,12 +1153,12 @@ const make = Effect.gen(function* () {
 
     const message = thread.messages.find((entry) => entry.id === event.payload.messageId);
     if (!message || message.role !== "user") {
-      yield* appendProviderFailureActivity({
+      const detail = `User message '${event.payload.messageId}' was not found for turn start request.`;
+      yield* settlePendingTurnStartFailure({
         threadId: event.payload.threadId,
-        kind: "provider.turn.start.failed",
-        summary: "Provider turn start failed",
-        detail: `User message '${event.payload.messageId}' was not found for turn start request.`,
-        turnId: null,
+        messageId: event.payload.messageId,
+        requestSequence: event.sequence,
+        detail,
         createdAt: event.payload.createdAt,
       });
       return;
@@ -1181,6 +1197,10 @@ const make = Effect.gen(function* () {
     const attemptCreatedAt = isRecoveryReplay
       ? DateTime.formatIso(yield* DateTime.now)
       : event.payload.createdAt;
+    const runningTurnIdBeforeDelivery =
+      thread.session?.status === "running" && thread.session.activeTurnId !== null
+        ? thread.session.activeTurnId
+        : null;
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
       messageId: event.payload.messageId,
@@ -1236,9 +1256,38 @@ const make = Effect.gen(function* () {
       }
     }
 
-    yield* providerService
-      .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
+    yield* providerService.sendTurn(sendTurnRequest.value).pipe(
+      Effect.tap((turn) => {
+        if (
+          runningTurnIdBeforeDelivery === null ||
+          turn.turnId !== runningTurnIdBeforeDelivery
+        ) {
+          return Effect.void;
+        }
+        return acknowledgePendingTurnStartDelivery({
+          threadId: event.payload.threadId,
+          messageId: event.payload.messageId,
+          requestSequence: event.sequence,
+          createdAt: attemptCreatedAt,
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.failCause(cause)
+              : Effect.logWarning(
+                  "provider command reactor failed to acknowledge an accepted same-turn steer",
+                  {
+                    threadId: event.payload.threadId,
+                    messageId: event.payload.messageId,
+                    requestSequence: event.sequence,
+                    cause: Cause.pretty(cause),
+                  },
+                ),
+          ),
+        );
+      }),
+      Effect.catchCause(recoverTurnStartFailure),
+      Effect.forkScoped,
+    );
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
@@ -1513,8 +1562,21 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    if (pending.deliverySequence !== null) {
-      if (sessionMayStillBeLive) {
+    const verifiedPending = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
+      threadId: pending.threadId,
+    });
+    if (
+      Option.isNone(verifiedPending) ||
+      verifiedPending.value.messageId !== pending.messageId ||
+      verifiedPending.value.requestSequence !== pending.requestSequence
+    ) {
+      return;
+    }
+
+    if (verifiedPending.value.deliverySequence !== null) {
+      const currentThread = yield* resolveThread(pending.threadId);
+      const currentSessionStatus = currentThread?.session?.status;
+      if (currentSessionStatus === "starting" || currentSessionStatus === "running") {
         // ProviderRuntimeIngestion owns active-session liveness recovery.
         return;
       }

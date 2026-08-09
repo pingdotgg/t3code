@@ -2542,7 +2542,7 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
     );
 
     it.effect(
-      "marks delivery on a running session without assigning the message to its old turn",
+      "settles an acknowledged same-turn steer without assigning the message to its old turn",
       () =>
         Effect.gen(function* () {
           const projectionPipeline = yield* OrchestrationProjectionPipeline;
@@ -2552,6 +2552,30 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
           const messageId = MessageId.make("message-running-delivery-marker");
           const requestedAt = "2026-02-26T14:10:00.000Z";
 
+          const oldTurn = TurnId.make("old-running-turn");
+          yield* eventStore.append({
+            type: "thread.session-set",
+            eventId: EventId.make("evt-running-delivery-existing-turn"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: requestedAt,
+            commandId: CommandId.make("cmd-running-delivery-existing-turn"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-running-delivery-existing-turn"),
+            metadata: {},
+            payload: {
+              threadId,
+              session: {
+                threadId,
+                status: "running",
+                providerName: "codex",
+                runtimeMode: "approval-required",
+                activeTurnId: oldTurn,
+                lastError: null,
+                updatedAt: requestedAt,
+              },
+            },
+          });
           const request = yield* eventStore.append({
             type: "thread.turn-start-requested",
             eventId: EventId.make("evt-running-delivery-request"),
@@ -2570,7 +2594,7 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
               createdAt: requestedAt,
             },
           });
-          const marker = yield* eventStore.append({
+          yield* eventStore.append({
             type: "thread.session-set",
             eventId: EventId.make("evt-running-delivery-marker"),
             aggregateKind: "thread",
@@ -2587,7 +2611,7 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
                 status: "running",
                 providerName: "codex",
                 runtimeMode: "approval-required",
-                activeTurnId: TurnId.make("old-running-turn"),
+                activeTurnId: oldTurn,
                 lastError: null,
                 updatedAt: requestedAt,
               },
@@ -2597,26 +2621,43 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
               },
             },
           });
+          yield* eventStore.append({
+            type: "thread.turn-start-delivery-acknowledged",
+            eventId: EventId.make("evt-running-delivery-acknowledged"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: requestedAt,
+            commandId: CommandId.make("cmd-running-delivery-acknowledged"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-running-delivery-acknowledged"),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId,
+              requestSequence: request.sequence,
+              createdAt: requestedAt,
+            },
+          });
 
           yield* projectionPipeline.bootstrap;
 
           const rows = yield* sql<{
             readonly turnId: string | null;
-            readonly requestSequence: number | null;
-            readonly deliverySequence: number | null;
+            readonly pendingMessageId: string | null;
+            readonly state: string;
           }>`
           SELECT
             turn_id AS "turnId",
-            request_sequence AS "requestSequence",
-            delivery_sequence AS "deliverySequence"
+            pending_message_id AS "pendingMessageId",
+            state
           FROM projection_turns
           WHERE thread_id = ${threadId}
         `;
           assert.deepEqual(rows, [
             {
-              turnId: null,
-              requestSequence: request.sequence,
-              deliverySequence: marker.sequence,
+              turnId: oldTurn,
+              pendingMessageId: null,
+              state: "running",
             },
           ]);
         }),

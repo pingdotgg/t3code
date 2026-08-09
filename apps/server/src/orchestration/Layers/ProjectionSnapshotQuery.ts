@@ -725,13 +725,17 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     Result: ProjectionThreadIdLookupRowSchema,
     execute: () =>
       sql`
-        SELECT DISTINCT thread_id AS "threadId"
-        FROM projection_turns
-        WHERE turn_id IS NULL
-          AND state = 'pending'
-          AND pending_message_id IS NOT NULL
-          AND checkpoint_turn_count IS NULL
-        ORDER BY thread_id ASC
+        SELECT DISTINCT turns.thread_id AS "threadId"
+        FROM projection_turns AS turns
+        INNER JOIN projection_threads AS threads
+          ON threads.thread_id = turns.thread_id
+        WHERE turns.turn_id IS NULL
+          AND turns.state = 'pending'
+          AND turns.pending_message_id IS NOT NULL
+          AND turns.checkpoint_turn_count IS NULL
+          AND threads.deleted_at IS NULL
+          AND threads.archived_at IS NULL
+        ORDER BY turns.thread_id ASC
       `,
   });
 

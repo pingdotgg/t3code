@@ -29,6 +29,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { it as effectIt } from "@effect/vitest";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -94,7 +95,10 @@ async function waitFor(
 
 describe("ProviderCommandReactor", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderCommandReactor | ProjectionSnapshotQuery,
+    | OrchestrationEngineService
+    | ProviderCommandReactor
+    | ProjectionSnapshotQuery
+    | SqlClient.SqlClient,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -153,7 +157,9 @@ describe("ProviderCommandReactor", () => {
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly turnStartBeforeStart?: "recoverable" | "legacy" | "protocol-one" | "delivery-marked";
     readonly replacePendingDuringRecoveryRead?: boolean;
+    readonly markPendingDeliveredDuringRecoveryRead?: boolean;
     readonly replacePendingBeforeRecoveryFailureDispatch?: boolean;
+    readonly startReactor?: boolean;
     readonly providerInfoBarrier?: Effect.Effect<void>;
     readonly startSessionEffect?: (
       session: ProviderSession,
@@ -178,6 +184,7 @@ describe("ProviderCommandReactor", () => {
     }> = [];
     let replacementTurnStartSequence: number | null = null;
     let replacementTurnStartInjected = false;
+    let deliveryMarkerDuringRecoveryReadInjected = false;
     let replacementBeforeRecoveryFailureInjected = false;
     let nextSessionIndex = 1;
     const runtimeSessions: Array<ProviderSession> = [];
@@ -400,6 +407,36 @@ describe("ProviderCommandReactor", () => {
             engine.readEvents(fromSequenceExclusive, limit).pipe(
               Stream.tap((event) => {
                 if (
+                  input?.markPendingDeliveredDuringRecoveryRead === true &&
+                  !deliveryMarkerDuringRecoveryReadInjected &&
+                  event.type === "thread.turn-start-requested" &&
+                  event.commandId === "cmd-turn-start-before-reactor"
+                ) {
+                  deliveryMarkerDuringRecoveryReadInjected = true;
+                  return engine
+                    .dispatch({
+                      type: "thread.session.set",
+                      commandId: CommandId.make("cmd-delivery-marker-during-recovery-read"),
+                      threadId: event.payload.threadId,
+                      session: {
+                        threadId: event.payload.threadId,
+                        status: "starting",
+                        providerName: "codex",
+                        providerInstanceId: modelSelection.instanceId,
+                        runtimeMode: "approval-required",
+                        activeTurnId: null,
+                        lastError: null,
+                        updatedAt: "2026-01-01T00:00:02.000Z",
+                      },
+                      turnStartDelivery: {
+                        messageId: event.payload.messageId,
+                        requestSequence: event.sequence,
+                      },
+                      createdAt: "2026-01-01T00:00:02.000Z",
+                    })
+                    .pipe(Effect.orDie, Effect.asVoid);
+                }
+                if (
                   input?.replacePendingDuringRecoveryRead !== true ||
                   replacementTurnStartInjected ||
                   event.type !== "thread.turn-start-requested" ||
@@ -553,6 +590,7 @@ describe("ProviderCommandReactor", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
+    const sql = await runtime.runPromise(Effect.service(SqlClient.SqlClient));
     const runEffect = <A, E>(effect: Effect.Effect<A, E>) => runtime!.runPromise(effect);
 
     await Effect.runPromise(
@@ -660,7 +698,10 @@ describe("ProviderCommandReactor", () => {
     }
 
     scope = await Effect.runPromise(Scope.make("sequential"));
-    await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
+    const startReactor = () => Effect.runPromise(reactor.start().pipe(Scope.provide(scope!)));
+    if (input?.startReactor !== false) {
+      await startReactor();
+    }
     const drain = () => Effect.runPromise(reactor.drain);
 
     return {
@@ -681,6 +722,23 @@ describe("ProviderCommandReactor", () => {
       stateDir,
       drain,
       runEffect,
+      startReactor,
+      removeProjectedMessage: (threadId: ThreadId, messageId: MessageId) =>
+        Effect.runPromise(sql`
+          DELETE FROM projection_thread_messages
+          WHERE thread_id = ${threadId}
+            AND message_id = ${messageId}
+        `),
+      readPendingTurnStartCount: (threadId: ThreadId) =>
+        Effect.runPromise(
+          sql<{ readonly count: number }>`
+            SELECT COUNT(*) AS count
+            FROM projection_turns
+            WHERE thread_id = ${threadId}
+              AND turn_id IS NULL
+              AND state = 'pending'
+          `,
+        ).then((rows) => rows[0]?.count ?? 0),
       startReactorAgain: () => reactor.start().pipe(Scope.provide(scope!)),
       get replacementTurnStartSequence() {
         return replacementTurnStartSequence;
@@ -817,6 +875,57 @@ describe("ProviderCommandReactor", () => {
         deliverySequence: secondRequest.sequence + 1,
       },
     });
+  });
+
+  it("settles a successful same-turn steer without attaching its message to the old turn", async () => {
+    const harness = await createHarness();
+    const threadId = ThreadId.make("thread-1");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-same-turn-steer-existing-session"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: "2026-01-01T00:00:01.000Z",
+        },
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-same-turn-steer"),
+        threadId,
+        message: {
+          messageId: asMessageId("same-turn-steer-message"),
+          role: "user",
+          text: "Continue the current turn with this correction.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await harness.drain();
+    const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    expect(thread?.latestTurn?.turnId).toBe(asTurnId("turn-1"));
+    expect(
+      thread?.messages.find((message) => message.id === asMessageId("same-turn-steer-message"))
+        ?.turnId,
+    ).toBeNull();
+    expect(await harness.readPendingTurnStartCount(threadId)).toBe(0);
   });
 
   effectIt.effect("skips an overtaken queued request whose delivery marker did not persist", () =>
@@ -1049,6 +1158,57 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.status).toBe("starting");
     expect(thread?.messages.at(-1)?.text).toBe("Recover this committed message after restart");
+  });
+
+  it("does not replay when delivery is marked during recovery event verification", async () => {
+    const harness = await createHarness({
+      turnStartBeforeStart: "recoverable",
+      markPendingDeliveredDuringRecoveryRead: true,
+    });
+
+    await harness.drain();
+    expect(harness.startSession).not.toHaveBeenCalled();
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    expect(await harness.readPendingTurnStartCount(ThreadId.make("thread-1"))).toBe(1);
+    const thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === ThreadId.make("thread-1"),
+    );
+    expect(thread?.session?.status).toBe("starting");
+  });
+
+  it("settles a pending start when its user message is no longer projected", async () => {
+    const harness = await createHarness({ startReactor: false });
+    const threadId = ThreadId.make("thread-1");
+    const messageId = asMessageId("missing-user-message");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-missing-user-message"),
+        threadId,
+        message: {
+          messageId,
+          role: "user",
+          text: "This message is removed before provider delivery.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+    await harness.removeProjectedMessage(threadId, messageId);
+    await harness.startReactor();
+
+    await waitFor(async () => {
+      const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+      return (
+        thread?.activities.some((activity) => activity.kind === "provider.turn.start.failed") ??
+        false
+      );
+    });
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    expect(await harness.readPendingTurnStartCount(threadId)).toBe(0);
   });
 
   effectIt.effect("projects starting before a slow provider session finishes", () =>

@@ -1203,6 +1203,15 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "thread.turn-start-delivery-acknowledged": {
+          yield* projectionTurnRepository.settlePendingTurnStartIfMatches({
+            threadId: event.payload.threadId,
+            messageId: event.payload.messageId,
+            requestSequence: event.payload.requestSequence,
+          });
+          return;
+        }
+
         case "thread.session-set": {
           const turnStartDelivery = event.payload.turnStartDelivery;
           if (turnStartDelivery !== undefined) {

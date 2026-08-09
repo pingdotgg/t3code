@@ -488,6 +488,34 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
     }),
   );
 
+  it.effect("emits a correlated provider delivery acknowledgement event", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.turn-start.delivery-acknowledge",
+          commandId: CommandId.make("cmd-turn-start-delivery-acknowledge"),
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("message-delivery-acknowledge"),
+          requestSequence: 42,
+          createdAt: NOW,
+        },
+        readModel: makeReadModel("active"),
+      });
+      const events = Array.isArray(result) ? result : [result];
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        type: "thread.turn-start-delivery-acknowledged",
+        payload: {
+          threadId: "thread-1",
+          messageId: "message-delivery-acknowledge",
+          requestSequence: 42,
+          createdAt: NOW,
+        },
+      });
+    }),
+  );
+
   it.effect("does not unsettle for session stop/error status writes", () =>
     Effect.gen(function* () {
       for (const status of ["stopped", "error", "ready", "idle"] as const) {

@@ -1028,6 +1028,15 @@ const ThreadTurnStartRecoveryFailCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadTurnStartDeliveryAcknowledgeCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn-start.delivery-acknowledge"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  requestSequence: NonNegativeInt,
+  createdAt: IsoDateTime,
+});
+
 const ThreadRevertCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.revert.complete"),
   commandId: CommandId,
@@ -1052,6 +1061,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadTurnStartRecoveryFailCommand,
+  ThreadTurnStartDeliveryAcknowledgeCommand,
   ThreadRevertCompleteCommand,
   ThreadTitleRegenerationCompleteCommand,
 ]);
@@ -1094,6 +1104,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.turn-diff-completed",
   "thread.activity-appended",
   "thread.turn-start-recovery-failed",
+  "thread.turn-start-delivery-acknowledged",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1348,6 +1359,13 @@ export const ThreadTurnStartRecoveryFailedPayload = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+export const ThreadTurnStartDeliveryAcknowledgedPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  requestSequence: NonNegativeInt,
+  createdAt: IsoDateTime,
+});
+
 export const OrchestrationEventMetadata = Schema.Struct({
   providerTurnId: Schema.optional(TrimmedNonEmptyString),
   providerItemId: Schema.optional(ProviderItemId),
@@ -1519,6 +1537,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.turn-start-recovery-failed"),
     payload: ThreadTurnStartRecoveryFailedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-start-delivery-acknowledged"),
+    payload: ThreadTurnStartDeliveryAcknowledgedPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
