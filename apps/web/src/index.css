@@ -1156,6 +1156,37 @@ html[data-theme-id] body {
   color: var(--foreground);
 }
 
+/* Theme wallpaper (ThemeWallpaper in themePalette.ts): the image rides the
+   body's chrome paint as a background-image stack. A scrim of the chrome color
+   layered on top ghosts the image down to the theme's chosen opacity, so no
+   extra element or stacking-context games are needed. */
+html[data-wallpaper] body {
+  --theme-wallpaper-scrim: color-mix(
+    in srgb,
+    var(--app-chrome-background) calc(100% - var(--theme-wallpaper-opacity) * 100%),
+    transparent
+  );
+
+  background-image:
+    linear-gradient(var(--theme-wallpaper-scrim), var(--theme-wallpaper-scrim)),
+    var(--theme-wallpaper-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+
+/* The main canvas normally repaints the same --background the body already
+   carries; while a wallpaper is active those duplicate coats would cover it
+   (even translucent ones compound), so they stand down and the body paint
+   shows through. Component surfaces — cards, popovers, glass — keep their own
+   paints; theme authors decide how much the wallpaper reads through them (and
+   the sidebar) with 8-digit hex color roles. */
+html[data-wallpaper] [data-slot="sidebar-inset"],
+html[data-wallpaper] [data-slot="sidebar-inset"] > .bg-background {
+  background-color: transparent;
+}
+
 /* Theme-token dependency probes are restored synchronously, before paint. Keep
    transitions from observing the temporary sentinel color in between. */
 html[data-theme-token-probe],

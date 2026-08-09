@@ -674,6 +674,7 @@ export function ThemeEditorPanel({
               ...mergeTarget.variants,
               ...Object.fromEntries(editedModes.map((mode) => [mode, colorsForSave[mode]])),
             },
+            ...(mergeTarget.wallpaper ? { wallpaper: mergeTarget.wallpaper } : {}),
             ...(sidebarArtwork ? { sidebarArtwork: true } : {}),
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
@@ -705,6 +706,9 @@ export function ThemeEditorPanel({
             ...(getThemeModes(editingTheme).length > 1
               ? { variants: { [variantAppearance]: colorsForSave[variantAppearance] } }
               : {}),
+            // The editor has no wallpaper controls; an imported wallpaper
+            // survives edits untouched.
+            ...(editingTheme.wallpaper ? { wallpaper: editingTheme.wallpaper } : {}),
             ...(sidebarArtwork ? { sidebarArtwork: true } : {}),
             ...(isAdvanced ? {} : { managed: true }),
           }),
@@ -732,6 +736,7 @@ export function ThemeEditorPanel({
               ...mergeTarget.variants,
               [activeAppearance]: colorsForSave[activeAppearance],
             },
+            ...(mergeTarget.wallpaper ? { wallpaper: mergeTarget.wallpaper } : {}),
             ...(sidebarArtwork ? { sidebarArtwork: true } : {}),
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),

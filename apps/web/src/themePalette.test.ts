@@ -30,6 +30,8 @@ import {
   createManagedThemeColors,
   createVividThemeColors,
   getDefaultThemeColors,
+  DEFAULT_THEME_WALLPAPER_OPACITY,
+  MAX_THEME_WALLPAPER_IMAGE_LENGTH,
   THEME_FILE_VERSION,
 } from "./themePalette";
 
@@ -222,6 +224,102 @@ describe("theme files", () => {
     expect(withoutArtwork.sidebarArtwork).toBeUndefined();
     expect(withArtwork.sidebarArtwork).toBe(true);
     expect(JSON.parse(serializeThemeFile(withArtwork)).sidebarArtwork).toBe(true);
+  });
+
+  it("keeps wallpapers opt-in through theme files", () => {
+    const wallpaper = { image: "data:image/png;base64,aGVsbG8=", opacity: 0.2 };
+    const plain = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "Plain chrome",
+      appearance: "light",
+      colors: { accent: "#5b6cff" },
+    });
+    const wallpapered = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "Misty chrome",
+      appearance: "light",
+      colors: { accent: "#5b6cff" },
+      wallpaper,
+    });
+
+    expect(plain.wallpaper).toBeUndefined();
+    expect(wallpapered.wallpaper).toEqual(wallpaper);
+    expect(JSON.parse(serializeThemeFile(wallpapered)).wallpaper).toEqual(wallpaper);
+  });
+
+  it("rejects wallpapers that are not small embedded images", () => {
+    const base = {
+      version: THEME_FILE_VERSION,
+      name: "Wallpapered",
+      appearance: "light",
+      colors: { accent: "#5b6cff" },
+    } as const;
+
+    expect(() =>
+      parseThemeFile({ ...base, wallpaper: { image: "https://example.com/bg.png" } }),
+    ).toThrow(/data: URIs/);
+    expect(() =>
+      parseThemeFile({
+        ...base,
+        wallpaper: { image: `data:image/png;base64,${"a".repeat(MAX_THEME_WALLPAPER_IMAGE_LENGTH)}` },
+      }),
+    ).toThrow(/192 KB/);
+    expect(() =>
+      parseThemeFile({
+        ...base,
+        wallpaper: { image: "data:image/png;base64,aGVsbG8=", opacity: 2 },
+      }),
+    ).toThrow(/between 0 and 1/);
+  });
+
+  it("paints and clears the wallpaper hook with the active theme", () => {
+    const stored = new Map<string, string>();
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => stored.get(key) ?? null,
+        setItem: (key: string, value: string) => stored.set(key, value),
+      },
+    });
+    const documentElement = {
+      classList: { toggle: vi.fn() },
+      dataset: {} as Record<string, string>,
+      style: { removeProperty: vi.fn(), setProperty: vi.fn() },
+    };
+    vi.stubGlobal("document", { documentElement });
+
+    invalidateCustomThemes();
+    installCustomTheme(
+      parseThemeFile({
+        version: THEME_FILE_VERSION,
+        id: "misty",
+        name: "Misty",
+        appearance: "light",
+        colors: { accent: "#5b6cff" },
+        wallpaper: { image: "data:image/png;base64,aGVsbG8=" },
+      }),
+    );
+
+    // Drop the in-memory snapshot so the apply re-reads the stored JSON,
+    // covering the tolerant localStorage parse of the wallpaper.
+    invalidateCustomThemes();
+    applyThemePalette("misty");
+    expect(documentElement.dataset.wallpaper).toBe("");
+    expect(documentElement.style.setProperty).toHaveBeenCalledWith(
+      "--theme-wallpaper-image",
+      'url("data:image/png;base64,aGVsbG8=")',
+    );
+    expect(documentElement.style.setProperty).toHaveBeenCalledWith(
+      "--theme-wallpaper-opacity",
+      String(DEFAULT_THEME_WALLPAPER_OPACITY),
+    );
+
+    applyThemePalette(T3_CHAT_THEME.id);
+    expect(documentElement.dataset.wallpaper).toBeUndefined();
+    expect(documentElement.style.removeProperty).toHaveBeenCalledWith("--theme-wallpaper-image");
+    expect(documentElement.style.removeProperty).toHaveBeenCalledWith("--theme-wallpaper-opacity");
+
+    vi.unstubAllGlobals();
+    invalidateCustomThemes();
   });
 
   it("publishes sidebar artwork changes from the live theme preview", () => {
