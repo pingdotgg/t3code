@@ -274,11 +274,13 @@ export function useNewThreadHandler() {
           readThreadShell(scopeThreadRef(racedDraft.environmentId, racedDraft.threadId)) === null
         ) {
           // Same remap the reuse paths above perform: point the draft at the
-          // caller's project member and apply any explicit workspace options.
-          // Env mode and startFromOrigin come from this invocation's resolved
-          // values — the winner may target a different project member with
-          // different defaults. The winner already applied carry state, and
-          // both invocations derive it from the same viewed thread.
+          // caller's project member and apply explicit workspace options if
+          // the caller passed any. Without explicit options the winner's
+          // context stands untouched — the winner's navigation is landing,
+          // which is the isDraftAlreadyOpen "leave it alone" case. Writing
+          // this invocation's defaults here instead would clobber the
+          // winner's explicit picks and could pair its worktreePath with a
+          // contradictory envMode.
           setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, racedDraft.draftId, {
             threadId: racedDraft.threadId,
             createdAt: racedDraft.createdAt,
@@ -286,13 +288,8 @@ export function useNewThreadHandler() {
             interactionMode: racedDraft.interactionMode,
             ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
             ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
-            envMode: initialEnvMode,
-            startFromOrigin:
-              options?.startFromOrigin ??
-              resolveNewDraftStartFromOrigin({
-                envMode: initialEnvMode,
-                newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
-              }),
+            ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
+            ...(hasStartFromOriginOption ? { startFromOrigin: options?.startFromOrigin } : {}),
           });
           await router.navigate({
             to: "/draft/$draftId",
