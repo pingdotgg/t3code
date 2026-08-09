@@ -91,12 +91,13 @@ export class MigrateDevDbDestinationBusyError extends Schema.TaggedErrorClass<Mi
   },
 ) {
   override get message(): string {
+    if (this.reason === "server-running") {
+      return `Dev database at '${this.databasePath}' is open by a running server (pid ${this.pid ?? "unknown"} per server-runtime.json). Stop that server first; if that pid is not actually a T3 server (stale descriptor, reused pid), delete the server-runtime.json next to the database and retry.`;
+    }
     const detail =
-      this.reason === "server-running"
-        ? `a running server has it open (pid ${this.pid ?? "unknown"} per server-runtime.json)`
-        : this.reason === "write-locked"
-          ? "the database is write-locked"
-          : "another connection is holding its WAL";
+      this.reason === "write-locked"
+        ? "the database is write-locked"
+        : "another connection is holding its WAL";
     return `Dev database at '${this.databasePath}' looks in use (${detail}). Stop the dev server first; if none is running, delete the -wal/-shm files next to it.`;
   }
 }
