@@ -43,6 +43,7 @@ import {
   listTranscriptFiles,
   readDirectoryVolumeId,
   readTranscriptRecords,
+  type TranscriptReadResult,
 } from "./usageTranscriptReader.ts";
 import {
   decodeScanCache,
@@ -51,7 +52,6 @@ import {
   pruneScanCache,
   type ScanCache,
 } from "./usageScanCache.ts";
-import type { UsageRecord } from "./usageTranscripts.ts";
 
 const LITELLM_RATES_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
@@ -257,12 +257,12 @@ export const make = Effect.gen(function* () {
   });
 
   /** Parses one transcript, reusing the cached result when it is unchanged. */
-  const readFileRecords = (
+  const readFileUsage = (
     filePath: string,
     size: number,
     mtimeMs: number,
     provider: UsageProviderKind,
-  ): Effect.Effect<readonly UsageRecord[]> =>
+  ): Effect.Effect<TranscriptReadResult> =>
     Effect.gen(function* () {
       const cached = fileCache.get(filePath);
       // Provider is part of the identity: if both providers were ever pointed
@@ -273,20 +273,29 @@ export const make = Effect.gen(function* () {
         cached.mtimeMs === mtimeMs &&
         cached.provider === provider
       ) {
-        return cached.records;
+        return {
+          records: cached.records,
+          malformedRecords: cached.malformedRecords,
+        };
       }
 
       const parsed = yield* Effect.promise(() => readTranscriptRecords(filePath, provider));
       // A read failure is not an empty transcript: caching it under this
       // (size, mtime) would silently drop the file's usage until it changes.
-      if (parsed === null) return [];
+      if (parsed === null) return { records: [], malformedRecords: 0 };
       // Stored already de-duplicated within the file, which is 99% of all
       // duplicates. The aggregator still runs the cross-file dedupe pass.
-      const records = dedupeWithinFile(parsed);
+      const records = dedupeWithinFile(parsed.records);
 
-      fileCache.set(filePath, { size, mtimeMs, provider, records });
+      fileCache.set(filePath, {
+        size,
+        mtimeMs,
+        provider,
+        records,
+        malformedRecords: parsed.malformedRecords,
+      });
       cacheDirty = true;
-      return records;
+      return { records, malformedRecords: parsed.malformedRecords };
     });
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
@@ -348,13 +357,16 @@ export const make = Effect.gen(function* () {
       const files = yield* Effect.promise(() => listTranscriptFiles(dir, windowStartMs));
       let scannedFiles = 0;
       let skippedFiles = 0;
+      let malformedRecords = 0;
       // Distinct per directory. Buckets carry per-cell session counts, but a
       // session spans days and models, so clients total this figure instead.
       const sessionIds = new Set<string>();
 
       for (const file of files) {
         livePaths.add(file.path);
-        const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
+        const fileUsage = yield* readFileUsage(file.path, file.size, file.mtimeMs, provider);
+        malformedRecords += fileUsage.malformedRecords;
+        const { records } = fileUsage;
         if (records.length === 0) {
           skippedFiles += 1;
           continue;
@@ -369,14 +381,18 @@ export const make = Effect.gen(function* () {
         }
       }
 
+      const hasMalformedRecords = malformedRecords > 0;
+
       sources.push({
         fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-        status: "ok",
+        status: hasMalformedRecords ? "partial" : "ok",
         scannedFiles,
         skippedFiles,
-        malformedRecords: 0,
+        malformedRecords,
         distinctSessions: sessionIds.size,
-        message: null,
+        message: hasMalformedRecords
+          ? `Skipped ${malformedRecords} malformed or inconsistent usage ${malformedRecords === 1 ? "record" : "records"}.`
+          : null,
       });
     }
 

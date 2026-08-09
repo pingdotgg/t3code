@@ -150,20 +150,137 @@ export function parseClaudeLine(line: string): UsageRecord | null {
 export interface CodexScanState {
   model: string;
   sessionId: string;
-  lastUsageSignature: string | null;
+  /** Last cumulative checkpoint, used to validate the next per-request increment. */
+  cumulativeUsage: CodexUsageCounters | null;
+  /** Counter sequences that could not be reconciled without guessing. */
+  malformedRecords: number;
 }
 
 export function initialCodexScanState(): CodexScanState {
-  return { model: "", sessionId: "", lastUsageSignature: null };
+  return { model: "", sessionId: "", cumulativeUsage: null, malformedRecords: 0 };
+}
+
+type CodexUsageCounters = readonly [
+  inputTokens: number,
+  cachedInputTokens: number,
+  cacheWriteInputTokens: number,
+  outputTokens: number,
+  reasoningOutputTokens: number,
+  totalTokens: number,
+];
+
+function codexCounter(
+  record: Record<string, unknown>,
+  key: string,
+  optional = false,
+): number | null {
+  const value = record[key];
+  if (optional && value === undefined) return 0;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function codexUsageCounters(record: Record<string, unknown>): CodexUsageCounters | null {
+  const inputTokens = codexCounter(record, "input_tokens");
+  const cachedInputTokens = codexCounter(record, "cached_input_tokens");
+  // Older Codex rollouts predate this counter; Serde defaults it to zero.
+  const cacheWriteInputTokens = codexCounter(record, "cache_write_input_tokens", true);
+  const outputTokens = codexCounter(record, "output_tokens");
+  const reasoningOutputTokens = codexCounter(record, "reasoning_output_tokens");
+  const totalTokens = codexCounter(record, "total_tokens");
+  if (
+    inputTokens === null ||
+    cachedInputTokens === null ||
+    cacheWriteInputTokens === null ||
+    outputTokens === null ||
+    reasoningOutputTokens === null ||
+    totalTokens === null
+  ) {
+    return null;
+  }
+  return [
+    inputTokens,
+    cachedInputTokens,
+    cacheWriteInputTokens,
+    outputTokens,
+    reasoningOutputTokens,
+    totalTokens,
+  ];
+}
+
+function sameCounters(a: CodexUsageCounters, b: CodexUsageCounters): boolean {
+  return a.every((value, index) => value === b[index]);
+}
+
+function advancesBy(
+  previous: CodexUsageCounters,
+  current: CodexUsageCounters,
+  increment: CodexUsageCounters,
+): boolean {
+  return current.every((value, index) => value - (previous[index] ?? 0) === increment[index]);
+}
+
+function containsAtLeast(total: CodexUsageCounters, part: CodexUsageCounters): boolean {
+  return total.every((value, index) => value >= (part[index] ?? 0));
+}
+
+function hasValidSubsets(counters: CodexUsageCounters): boolean {
+  const [inputTokens, cachedInputTokens, cacheWriteInputTokens, outputTokens, reasoningTokens] =
+    counters;
+  return (
+    cachedInputTokens + cacheWriteInputTokens <= inputTokens && reasoningTokens <= outputTokens
+  );
+}
+
+function hasValidFirstCheckpoint(total: CodexUsageCounters, last: CodexUsageCounters): boolean {
+  if (!containsAtLeast(total, last)) return false;
+  const impliedPrior: CodexUsageCounters = [
+    total[0] - last[0],
+    total[1] - last[1],
+    total[2] - last[2],
+    total[3] - last[3],
+    total[4] - last[4],
+    total[5] - last[5],
+  ];
+  // The first visible checkpoint may include earlier requests (including a
+  // total-only context-window residue), but its measured residue must still
+  // obey the same subset relationships as every other usage vector.
+  return hasValidSubsets(impliedPrior);
+}
+
+function hasValidLastTotal(counters: CodexUsageCounters): boolean {
+  const [
+    inputTokens,
+    cachedInputTokens,
+    cacheWriteInputTokens,
+    outputTokens,
+    reasoningTokens,
+    total,
+  ] = counters;
+  const hasMeasuredUsage =
+    inputTokens + cachedInputTokens + cacheWriteInputTokens + outputTokens + reasoningTokens > 0;
+  return !hasMeasuredUsage || total === inputTokens + outputTokens;
+}
+
+function isContextWindowCheckpoint(
+  previous: CodexUsageCounters,
+  total: CodexUsageCounters,
+  last: CodexUsageCounters,
+): boolean {
+  return (
+    total.slice(0, 5).every((value) => value === 0) &&
+    last.slice(0, 5).every((value) => value === 0) &&
+    last[5] === Math.max(total[5] - previous[5], 0)
+  );
 }
 
 /**
  * Feeds one line of a Codex rollout into `state`, returning a record when the
  * line was a usage event.
  *
- * Deltas come from `last_token_usage`. Summing those across a session
- * reconciles with the session's final `total_token_usage`, provided
- * consecutive duplicate events are dropped, which this does.
+ * Codex constructs `total_token_usage` by adding each real
+ * `last_token_usage` element-wise. An unchanged cumulative checkpoint is a
+ * re-emission, while an advancing checkpoint must advance by exactly the last
+ * usage. Ambiguous events are skipped and counted in `malformedRecords`.
  */
 export function parseCodexLine(line: string, state: CodexScanState): UsageRecord | null {
   let parsed: unknown;
@@ -195,28 +312,61 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
 
   const info = payloadRecord["info"];
   if (typeof info !== "object" || info === null) return null;
-  const last = (info as Record<string, unknown>)["last_token_usage"];
-  if (typeof last !== "object" || last === null) return null;
+  const infoRecord = info as Record<string, unknown>;
+  const total = infoRecord["total_token_usage"];
+  const last = infoRecord["last_token_usage"];
+  if (typeof total !== "object" || total === null || typeof last !== "object" || last === null) {
+    state.malformedRecords += 1;
+    return null;
+  }
+  const totalRecord = total as Record<string, unknown>;
   const lastRecord = last as Record<string, unknown>;
 
-  // Only an event that is otherwise eligible may consume the duplicate
-  // signature. A token_count arriving before its turn_context (no model yet)
-  // must not poison it, or the re-emitted copy after the model is known would
-  // be skipped as a duplicate and those tokens never counted.
+  // Only an otherwise eligible event may advance the checkpoint. A
+  // token_count before its turn_context must not hide the re-emitted copy that
+  // arrives after its model is known.
   const timestampMs = parseTimestampMs(record["timestamp"]);
   if (timestampMs === null) return null;
   if (state.model.length === 0) return null;
 
-  // Codex re-emits an unchanged token_count on some stream boundaries. Summing
-  // those would double count, so identical consecutive payloads are skipped.
-  const signature = JSON.stringify(lastRecord);
-  if (signature === state.lastUsageSignature) return null;
-  state.lastUsageSignature = signature;
-
-  const inputTokens = int(lastRecord["input_tokens"]);
-  const cachedInputTokens = int(lastRecord["cached_input_tokens"]);
-  const cacheCreationTokens = int(lastRecord["cache_write_input_tokens"]);
-  const outputTokens = int(lastRecord["output_tokens"]);
+  const cumulativeUsage = codexUsageCounters(totalRecord);
+  const lastUsage = codexUsageCounters(lastRecord);
+  if (cumulativeUsage === null || lastUsage === null) {
+    state.malformedRecords += 1;
+    return null;
+  }
+  if (
+    !hasValidSubsets(cumulativeUsage) ||
+    !hasValidSubsets(lastUsage) ||
+    !hasValidLastTotal(lastUsage)
+  ) {
+    state.malformedRecords += 1;
+    return null;
+  }
+  if (state.cumulativeUsage !== null && sameCounters(cumulativeUsage, state.cumulativeUsage)) {
+    return null;
+  }
+  const previousCumulativeUsage = state.cumulativeUsage;
+  state.cumulativeUsage = cumulativeUsage;
+  if (
+    (previousCumulativeUsage === null && !hasValidFirstCheckpoint(cumulativeUsage, lastUsage)) ||
+    (previousCumulativeUsage !== null &&
+      !advancesBy(previousCumulativeUsage, cumulativeUsage, lastUsage))
+  ) {
+    // `fill_to_context_window` deliberately replaces the component totals
+    // with a total-only checkpoint. It carries no billable usage but is the
+    // correct baseline for the next request.
+    if (
+      previousCumulativeUsage !== null &&
+      isContextWindowCheckpoint(previousCumulativeUsage, cumulativeUsage, lastUsage)
+    ) {
+      return null;
+    }
+    state.malformedRecords += 1;
+    return null;
+  }
+  const [inputTokens, cachedInputTokens, cacheCreationTokens, outputTokens, reasoningTokens] =
+    lastUsage;
 
   const totals: UsageTokenTotals = {
     // Codex reports `input_tokens` inclusive of the cached portion.
@@ -225,7 +375,7 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
     cacheCreationTokens,
     outputTokens,
     // Reported inside output_tokens, surfaced separately for the token mix.
-    reasoningTokens: Math.min(outputTokens, int(lastRecord["reasoning_output_tokens"])),
+    reasoningTokens,
   };
 
   if (totalTokens(totals) === 0) return null;
