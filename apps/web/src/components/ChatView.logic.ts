@@ -173,6 +173,37 @@ export function rightPanelSurfacesRemovedAfterExit<T extends { id: string }>(
   return exitingSurfaces.filter((surface) => !currentSurfaceIds.has(surface.id));
 }
 
+export function previewTabIdsForRightPanelReconcile(
+  sessionTabIds: ReadonlyArray<string>,
+  deferredSurfaces: ReadonlyArray<{
+    id: string;
+    kind: string;
+    resourceId?: string | null;
+  }>,
+  currentSurfaces: ReadonlyArray<{ id: string }>,
+): string[] {
+  const reopenedSurfaceIds = new Set(currentSurfaces.map((surface) => surface.id));
+  const closingTabIds = new Set(
+    deferredSurfaces.flatMap((surface) =>
+      surface.kind === "preview" && surface.resourceId && !reopenedSurfaceIds.has(surface.id)
+        ? [surface.resourceId]
+        : [],
+    ),
+  );
+  return sessionTabIds.filter((tabId) => !closingTabIds.has(tabId));
+}
+
+export function shouldDeferRightPanelTerminalClose(input: {
+  usesSheet: boolean;
+  panelOpen: boolean;
+  surfaceCount: number;
+  terminalCount: number;
+}): boolean {
+  return (
+    !input.usesSheet && input.panelOpen && input.surfaceCount === 1 && input.terminalCount === 1
+  );
+}
+
 export function reconcileRetainedMountedThreadIds(input: {
   currentThreadIds: ReadonlyArray<string>;
   openThreadIds: ReadonlyArray<string>;

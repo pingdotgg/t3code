@@ -298,12 +298,14 @@ import {
   cloneComposerImageForRetry,
   deriveLockedProvider,
   readFileAsDataUrl,
+  previewTabIdsForRightPanelReconcile,
   reconcileMountedTerminalThreadIds,
   rightPanelSurfacesRemovedAfterExit,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
+  shouldDeferRightPanelTerminalClose,
   shouldWriteThreadErrorToCurrentServerThread,
   startNewThreadForProject,
   waitForStartedServerThread,
@@ -1223,6 +1225,11 @@ type InlineRightPanelSnapshot = {
   activeSurfaceId: string | null;
   content: ReactNode;
   maximized: boolean;
+};
+
+type DeferredRightPanelCleanup = {
+  threadRef: ScopedThreadRef;
+  surfaces: readonly RightPanelSurface[];
   previewSessions: Readonly<Record<string, PreviewSessionSnapshot>>;
 };
 
@@ -1642,6 +1649,79 @@ function ChatViewContent(props: ChatViewProps) {
   const activeFileSurface =
     selectedRightPanelSurface?.kind === "file" ? selectedRightPanelSurface : null;
   const activePreviewState = useThreadPreviewState(activeThreadRef);
+  const cleanupRightPanelSurfaces = useCallback(
+    (
+      threadRef: ScopedThreadRef,
+      surfaces: readonly RightPanelSurface[],
+      previewSessions: Readonly<Record<string, PreviewSessionSnapshot>>,
+    ) => {
+      for (const surface of surfaces) {
+        if (surface.kind === "preview" && surface.resourceId) {
+          void closePreviewSession({
+            closePreview,
+            snapshot: previewSessions[surface.resourceId] ?? null,
+            tabId: surface.resourceId,
+            threadRef,
+          });
+        }
+        if (surface.kind === "terminal") {
+          for (const terminalId of surface.terminalIds) {
+            storeCloseTerminal(threadRef, terminalId);
+            void closeTerminalMutation({
+              environmentId: threadRef.environmentId,
+              input: { threadId: threadRef.threadId, terminalId, deleteHistory: true },
+            });
+          }
+        }
+      }
+    },
+    [closePreview, closeTerminalMutation, storeCloseTerminal],
+  );
+  const deferredRightPanelCleanupRef = useRef<DeferredRightPanelCleanup | null>(null);
+  const runDeferredRightPanelCleanup = useCallback(
+    (pending: DeferredRightPanelCleanup) => {
+      const currentSurfaces = selectThreadRightPanelState(
+        useRightPanelStore.getState().byThreadKey,
+        pending.threadRef,
+      ).surfaces;
+      cleanupRightPanelSurfaces(
+        pending.threadRef,
+        rightPanelSurfacesRemovedAfterExit(pending.surfaces, currentSurfaces),
+        pending.previewSessions,
+      );
+    },
+    [cleanupRightPanelSurfaces],
+  );
+  const deferRightPanelCleanup = useCallback(
+    (
+      threadRef: ScopedThreadRef,
+      surfaces: readonly RightPanelSurface[],
+      previewSessions: Readonly<Record<string, PreviewSessionSnapshot>>,
+    ) => {
+      const pending = deferredRightPanelCleanupRef.current;
+      if (pending && scopedThreadKey(pending.threadRef) !== scopedThreadKey(threadRef)) {
+        deferredRightPanelCleanupRef.current = null;
+        runDeferredRightPanelCleanup(pending);
+      }
+      const pendingForThread =
+        pending && scopedThreadKey(pending.threadRef) === scopedThreadKey(threadRef)
+          ? pending
+          : null;
+      deferredRightPanelCleanupRef.current = {
+        threadRef,
+        surfaces: [
+          ...new Map(
+            [...(pendingForThread?.surfaces ?? []), ...surfaces].map((surface) => [
+              surface.id,
+              surface,
+            ]),
+          ).values(),
+        ],
+        previewSessions: { ...pendingForThread?.previewSessions, ...previewSessions },
+      };
+    },
+    [runDeferredRightPanelCleanup],
+  );
   const activePreviewMiniPlayer = usePreviewMiniPlayerStore((state) =>
     selectThreadPreviewMiniPlayer(state.byThreadKey, activeThreadRef),
   );
@@ -1667,10 +1747,38 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(() => {
     if (!activeThreadRef) return;
+    const pendingCleanup = deferredRightPanelCleanupRef.current;
+    const deferredSurfaces =
+      pendingCleanup &&
+      scopedThreadKey(pendingCleanup.threadRef) === scopedThreadKey(activeThreadRef)
+        ? pendingCleanup.surfaces
+        : [];
+    const currentSurfaces = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      activeThreadRef,
+    ).surfaces;
     useRightPanelStore
       .getState()
-      .reconcileBrowserSurfaces(activeThreadRef, Object.keys(activePreviewState.sessions));
+      .reconcileBrowserSurfaces(
+        activeThreadRef,
+        previewTabIdsForRightPanelReconcile(
+          Object.keys(activePreviewState.sessions),
+          deferredSurfaces,
+          currentSurfaces,
+        ),
+      );
   }, [activePreviewState.sessions, activeThreadRef]);
+
+  useEffect(() => {
+    const pendingCleanup = deferredRightPanelCleanupRef.current;
+    if (!pendingCleanup) return;
+    const pendingThreadIsActive =
+      activeThreadRef !== null &&
+      scopedThreadKey(pendingCleanup.threadRef) === scopedThreadKey(activeThreadRef);
+    if (pendingThreadIsActive && !rightPanelOpen) return;
+    deferredRightPanelCleanupRef.current = null;
+    runDeferredRightPanelCleanup(pendingCleanup);
+  }, [activeThreadRef, rightPanelOpen, rightPanelState.surfaces, runDeferredRightPanelCleanup]);
 
   useEffect(() => {
     if (!activeThreadRef || !activePreviewMiniPlayer) return;
@@ -3409,17 +3517,36 @@ function ChatViewContent(props: ChatViewProps) {
   const closePanelTerminal = useCallback(
     (terminalId: string) => {
       if (!activeThreadRef || activeRightPanelSurface?.kind !== "terminal") return;
-      void closeTerminalMutation({
-        environmentId: activeThreadRef.environmentId,
-        input: { threadId: activeThreadRef.threadId, terminalId, deleteHistory: true },
+      const deferCleanup = shouldDeferRightPanelTerminalClose({
+        usesSheet: shouldUseRightPanelSheet,
+        panelOpen: rightPanelOpen,
+        surfaceCount: rightPanelState.surfaces.length,
+        terminalCount: activeRightPanelSurface.terminalIds.length,
       });
-      storeCloseTerminal(activeThreadRef, terminalId);
+      if (deferCleanup) {
+        deferRightPanelCleanup(activeThreadRef, [activeRightPanelSurface], {});
+      } else {
+        void closeTerminalMutation({
+          environmentId: activeThreadRef.environmentId,
+          input: { threadId: activeThreadRef.threadId, terminalId, deleteHistory: true },
+        });
+        storeCloseTerminal(activeThreadRef, terminalId);
+      }
       useRightPanelStore
         .getState()
         .closeTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId);
       setTerminalFocusRequestId((value) => value + 1);
     },
-    [activeRightPanelSurface, activeThreadRef, closeTerminalMutation, storeCloseTerminal],
+    [
+      activeRightPanelSurface,
+      activeThreadRef,
+      closeTerminalMutation,
+      deferRightPanelCleanup,
+      rightPanelOpen,
+      rightPanelState.surfaces.length,
+      shouldUseRightPanelSheet,
+      storeCloseTerminal,
+    ],
   );
   const activateRightPanelSurface = useCallback(
     (surface: RightPanelSurface) => {
@@ -3451,47 +3578,19 @@ function ChatViewContent(props: ChatViewProps) {
       threadKey === routeThreadKey ? null : routeThreadKey,
     );
   }, [canMaximizeRightPanel, routeThreadKey]);
-  const cleanupRightPanelSurfaces = useCallback(
-    (
-      threadRef: ScopedThreadRef,
-      surfaces: readonly RightPanelSurface[],
-      previewSessions: Readonly<Record<string, PreviewSessionSnapshot>>,
-    ) => {
-      for (const surface of surfaces) {
-        if (surface.kind === "preview" && surface.resourceId) {
-          void closePreviewSession({
-            closePreview,
-            snapshot: previewSessions[surface.resourceId] ?? null,
-            tabId: surface.resourceId,
-            threadRef,
-          });
-        }
-        if (surface.kind === "terminal") {
-          for (const terminalId of surface.terminalIds) {
-            storeCloseTerminal(threadRef, terminalId);
-            void closeTerminalMutation({
-              environmentId: threadRef.environmentId,
-              input: { threadId: threadRef.threadId, terminalId, deleteHistory: true },
-            });
-          }
-        }
-      }
-    },
-    [closePreview, closeTerminalMutation, storeCloseTerminal],
-  );
   const handleInlineRightPanelExitComplete = useCallback(
     (snapshot: InlineRightPanelSnapshot) => {
-      const currentSurfaces = selectThreadRightPanelState(
-        useRightPanelStore.getState().byThreadKey,
-        snapshot.threadRef,
-      ).surfaces;
-      cleanupRightPanelSurfaces(
-        snapshot.threadRef,
-        rightPanelSurfacesRemovedAfterExit(snapshot.surfaces, currentSurfaces),
-        snapshot.previewSessions,
-      );
+      const pendingCleanup = deferredRightPanelCleanupRef.current;
+      if (
+        !pendingCleanup ||
+        scopedThreadKey(pendingCleanup.threadRef) !== scopedThreadKey(snapshot.threadRef)
+      ) {
+        return;
+      }
+      deferredRightPanelCleanupRef.current = null;
+      runDeferredRightPanelCleanup(pendingCleanup);
     },
-    [cleanupRightPanelSurfaces],
+    [runDeferredRightPanelCleanup],
   );
   const syncActivePreviewSurface = useCallback(() => {
     if (!activeThreadRef) return;
@@ -3508,7 +3607,9 @@ function ChatViewContent(props: ChatViewProps) {
       if (!activeThreadRef) return;
       const deferCleanup =
         !shouldUseRightPanelSheet && rightPanelOpen && rightPanelState.surfaces.length === 1;
-      if (!deferCleanup) {
+      if (deferCleanup) {
+        deferRightPanelCleanup(activeThreadRef, [surface], activePreviewState.sessions);
+      } else {
         cleanupRightPanelSurfaces(activeThreadRef, [surface], activePreviewState.sessions);
       }
       useRightPanelStore.getState().closeSurface(activeThreadRef, surface.id);
@@ -3518,6 +3619,7 @@ function ChatViewContent(props: ChatViewProps) {
       activePreviewState.sessions,
       activeThreadRef,
       cleanupRightPanelSurfaces,
+      deferRightPanelCleanup,
       rightPanelOpen,
       rightPanelState.surfaces.length,
       shouldUseRightPanelSheet,
@@ -3561,7 +3663,13 @@ function ChatViewContent(props: ChatViewProps) {
   const closeAllRightPanelSurfaces = useCallback(() => {
     if (!activeThreadRef) return;
     const deferCleanup = !shouldUseRightPanelSheet && rightPanelOpen;
-    if (!deferCleanup) {
+    if (deferCleanup) {
+      deferRightPanelCleanup(
+        activeThreadRef,
+        rightPanelState.surfaces,
+        activePreviewState.sessions,
+      );
+    } else {
       cleanupRightPanelSurfaces(
         activeThreadRef,
         rightPanelState.surfaces,
@@ -3573,6 +3681,7 @@ function ChatViewContent(props: ChatViewProps) {
     activePreviewState.sessions,
     activeThreadRef,
     cleanupRightPanelSurfaces,
+    deferRightPanelCleanup,
     rightPanelOpen,
     rightPanelState.surfaces,
     shouldUseRightPanelSheet,
@@ -6533,7 +6642,6 @@ function ChatViewContent(props: ChatViewProps) {
             activeSurfaceId: selectedRightPanelSurface?.id ?? null,
             content: rightPanelContent,
             maximized: rightPanelMaximized,
-            previewSessions: activePreviewState.sessions,
           }}
         >
           {(snapshot, onExitComplete) => (
