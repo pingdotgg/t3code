@@ -10,25 +10,23 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
-  type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
+import {
+  deriveUsageDisplay,
+  type DeviceUsageOption,
+  type EnvironmentUsageStatus,
+  type MergedUsage,
+} from "@t3tools/shared/usageMerge";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 
-import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
 
-export interface EnvironmentUsageStatus {
-  readonly environmentId: EnvironmentId;
-  readonly label: string;
-  readonly isPending: boolean;
-  readonly error: string | null;
-  readonly summary: UsageSummary | null;
-}
+export type { EnvironmentUsageStatus } from "@t3tools/shared/usageMerge";
 
 /**
  * Reads every environment's summary for one window.
@@ -48,6 +46,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
       statuses.push({
         environmentId,
         label: presentation.entry.target.label,
+        isConnected: presentation.connection.phase === "connected",
         isPending: result.waiting,
         error: result._tag === "Failure" ? "This environment could not report usage." : null,
         summary: Option.getOrNull(AsyncResult.value(result)),
@@ -60,6 +59,9 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
 export interface UsageView {
   readonly merged: MergedUsage;
   readonly environments: readonly EnvironmentUsageStatus[];
+  readonly selectedEnvironmentId: EnvironmentId | null;
+  readonly shouldResetRequestedEnvironment: boolean;
+  readonly deviceOptions: readonly DeviceUsageOption[];
   /** True until at least one environment has answered. */
   readonly isPending: boolean;
   /**
@@ -71,7 +73,10 @@ export interface UsageView {
   readonly refresh: () => void;
 }
 
-export function useUsage(input: UsageSummaryInput): UsageView {
+export function useUsage(
+  input: UsageSummaryInput,
+  requestedEnvironmentId: EnvironmentId | null = null,
+): UsageView {
   const windowKey = useMemo(
     () =>
       JSON.stringify({
@@ -96,31 +101,19 @@ export function useUsage(input: UsageSummaryInput): UsageView {
     }
   }, [environments, windowKey]);
 
-  const merged = useMemo(() => {
-    const answered: EnvironmentUsage[] = environments.flatMap((environment) =>
-      environment.summary === null
-        ? []
-        : [
-            {
-              environmentId: environment.environmentId,
-              label: environment.label,
-              summary: environment.summary,
-            },
-          ],
-    );
-    return mergeUsage(answered, USAGE_CONTRACT_VERSION);
-  }, [environments]);
-
-  const answeredCount = environments.filter((environment) => environment.summary !== null).length;
-  const stillReporting = environments.filter(
-    (environment) => environment.summary === null && environment.error === null,
-  ).length;
+  const display = useMemo(
+    () => deriveUsageDisplay(environments, requestedEnvironmentId, USAGE_CONTRACT_VERSION),
+    [environments, requestedEnvironmentId],
+  );
 
   return {
-    merged,
+    merged: display.merged,
     environments,
-    isPending: answeredCount === 0 && stillReporting > 0,
-    isPartial: answeredCount > 0 && stillReporting > 0,
+    selectedEnvironmentId: display.selectedEnvironmentId,
+    shouldResetRequestedEnvironment: display.shouldResetRequestedEnvironment,
+    deviceOptions: display.deviceOptions,
+    isPending: display.isPending,
+    isPartial: display.isPartial,
     refresh,
   };
 }
