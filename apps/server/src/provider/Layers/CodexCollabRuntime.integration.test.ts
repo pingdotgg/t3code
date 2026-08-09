@@ -73,6 +73,39 @@ function buildScript() {
 const scriptPath = NodePath.join(import.meta.dirname, "../testFixtures/.collab-script.json");
 const peerPath = NodePath.join(import.meta.dirname, "../testFixtures/codexCollabMockPeer.sh");
 
+/** Append-only sidecars the mock peer writes so tests can assert what the
+ * runtime actually put on the wire. */
+const SIDECARS = ["starts", "steers", "interrupts"] as const;
+
+function readSidecar(path: string): ReadonlyArray<unknown> {
+  if (!NodeFS.existsSync(path)) {
+    return [];
+  }
+  const raw = NodeFS.readFileSync(path, "utf8").trim();
+  return raw.length === 0 ? [] : raw.split("\n").map((line) => JSON.parse(line) as unknown);
+}
+
+/** Writes the script, clears stale sidecars, and registers cleanup. */
+const useScript = Effect.fnUntraced(function* (script: unknown) {
+  // @effect-diagnostics-next-line preferSchemaOverJson:off
+  NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+  const paths = Object.fromEntries(
+    SIDECARS.map((name) => [name, `${scriptPath}.${name}`]),
+  ) as Record<(typeof SIDECARS)[number], string>;
+  for (const path of Object.values(paths)) {
+    NodeFS.rmSync(path, { force: true });
+  }
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      NodeFS.rmSync(scriptPath, { force: true });
+      for (const path of Object.values(paths)) {
+        NodeFS.rmSync(path, { force: true });
+      }
+    }),
+  );
+  return paths;
+});
+
 describe("CodexSessionRuntime collab integration", () => {
   it.effect("replays the captured fan-out into synthetic agent events without child leaks", () =>
     Effect.gen(function* () {
@@ -246,26 +279,30 @@ describe("CodexSessionRuntime collab integration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.live("Stop targets the active turn when Codex has accepted a queued follow-up", () =>
+  it.live("folds a mid-turn send into the running turn and keeps Stop pointed at it", () =>
     Effect.gen(function* () {
       const activeTurnId = "019fe3e8-f908-7f31-8d51-283f4a47897a";
-      const queuedTurnId = "019fe3eb-8faf-7de3-a85b-ac64c7f9c8c3";
       const script = {
         rootThreadId: ROOT,
         holdTurnOpen: true,
-        onlyFirstTurnStarts: true,
-        turnIds: [activeTurnId, queuedTurnId],
+        // A single scripted turn id: a second turn/start would answer with the
+        // fixture's own id, so the assertions below catch a regression to
+        // queueing a follow-up turn.
+        turnIds: [activeTurnId],
         expectedActiveTurnId: activeTurnId,
         notifications: [],
       };
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
       const interruptsPath = `${scriptPath}.interrupts`;
+      const steersPath = `${scriptPath}.steers`;
       NodeFS.rmSync(interruptsPath, { force: true });
+      NodeFS.rmSync(steersPath, { force: true });
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           NodeFS.rmSync(scriptPath, { force: true });
           NodeFS.rmSync(interruptsPath, { force: true });
+          NodeFS.rmSync(steersPath, { force: true });
         }),
       );
 
@@ -278,9 +315,25 @@ describe("CodexSessionRuntime collab integration", () => {
       });
 
       yield* runtime.start();
-      yield* runtime.sendTurn({ input: "keep working" });
-      yield* runtime.sendTurn({ input: "queued follow-up" });
+      const started = yield* runtime.sendTurn({ input: "keep working" });
+      const steered = yield* runtime.sendTurn({ input: "follow-up while running" });
       yield* runtime.interruptTurn();
+
+      assert.equal(started.turnId, activeTurnId);
+      // The follow-up steers the turn that is already running rather than
+      // queueing a second one, so it reports the same turn id back.
+      assert.equal(steered.turnId, activeTurnId);
+      const steers = NodeFS.readFileSync(steersPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as unknown);
+      assert.deepEqual(steers, [
+        {
+          threadId: ROOT,
+          expectedTurnId: activeTurnId,
+          input: [{ type: "text", text: "follow-up while running" }],
+        },
+      ]);
 
       const interrupts = NodeFS.readFileSync(interruptsPath, "utf8")
         .trim()
@@ -290,6 +343,312 @@ describe("CodexSessionRuntime collab integration", () => {
         threadId: ROOT,
         turnId: activeTurnId,
       });
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("rejects a message typed after Stop until terminal lifecycle arrives", () =>
+    Effect.gen(function* () {
+      const activeTurnId = "019fe3e8-f908-7f31-8d51-283f4a47897a";
+      const script = {
+        rootThreadId: ROOT,
+        holdTurnOpen: true,
+        turnIds: [activeTurnId],
+        expectedActiveTurnId: activeTurnId,
+        notifications: [],
+      };
+      const paths = yield* useScript(script);
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-codex-stop-then-type"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "keep working" });
+      yield* runtime.interruptTurn();
+      const afterStop = yield* runtime
+        .sendTurn({ input: "actually, do this instead" })
+        .pipe(Effect.flip);
+
+      assert.equal(afterStop._tag, "CodexSessionRuntimeTurnSteerRejectedError");
+      if (afterStop._tag !== "CodexSessionRuntimeTurnSteerRejectedError") {
+        return;
+      }
+      assert.equal(afterStop.reason, "turn-interrupting");
+      assert.equal(afterStop.retryable, true);
+      assert.deepEqual(readSidecar(paths.steers), []);
+      assert.deepEqual(
+        readSidecar(paths.starts).map((entry) => (entry as { input?: unknown }).input),
+        [[{ type: "text", text: "keep working" }]],
+      );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("rolls back interrupting when the parent interrupt RPC fails", () =>
+    Effect.gen(function* () {
+      const activeTurnId = "019fe3e8-f908-7f31-8d51-283f4a47897a";
+      const script = {
+        rootThreadId: ROOT,
+        holdTurnOpen: true,
+        turnIds: [activeTurnId],
+        failInterruptFor: ROOT,
+        notifications: [],
+      };
+      const paths = yield* useScript(script);
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-codex-interrupt-rollback"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "keep working" });
+      yield* runtime.interruptTurn().pipe(Effect.flip);
+      const afterFailure = yield* runtime.sendTurn({ input: "still add this" });
+
+      assert.equal(afterFailure.steered, true);
+      assert.equal(afterFailure.turnId, activeTurnId);
+      assert.deepEqual(
+        readSidecar(paths.starts).map((entry) => (entry as { turnId?: string }).turnId),
+        [activeTurnId],
+      );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("does not start a phantom turn when a no-active refusal outruns lifecycle", () =>
+    Effect.gen(function* () {
+      const activeTurnId = "019fe3e8-f908-7f31-8d51-283f4a47897a";
+      const nextTurnId = "019fe3eb-8faf-7de3-a85b-ac64c7f9c8c3";
+      const script = {
+        rootThreadId: ROOT,
+        holdTurnOpen: true,
+        turnIds: [activeTurnId, nextTurnId],
+        notifications: [],
+        // The turn ended just before the steer landed. Quoted verbatim from
+        // a captured transcript (codex-cli 0.147.0): a bare `-32600` with no
+        // `data` and no structured error info to key on.
+        steerRejection: {
+          code: -32600,
+          message: "no active turn to steer",
+        },
+      };
+      const paths = yield* useScript(script);
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-codex-steer-race"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "keep working" });
+      const raced = yield* runtime.sendTurn({ input: "one more thing" }).pipe(Effect.flip);
+
+      assert.equal(raced._tag, "CodexSessionRuntimeTurnSteerRejectedError");
+      assert.equal(readSidecar(paths.steers).length, 1);
+      assert.deepEqual(
+        readSidecar(paths.starts).map((entry) => (entry as { input?: unknown }).input),
+        [[{ type: "text", text: "keep working" }]],
+      );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("serializes concurrent sends so an end-of-turn race starts exactly one fallback", () =>
+    Effect.gen(function* () {
+      const activeTurnId = "019fe3e8-f908-7f31-8d51-283f4a47897a";
+      const fallbackTurnId = "019fe3eb-8faf-7de3-a85b-ac64c7f9c8c3";
+      const script = {
+        rootThreadId: ROOT,
+        holdTurnOpen: true,
+        turnIds: [activeTurnId, fallbackTurnId],
+        endTurnBeforeFirstSteer: true,
+        deferStaleSteerResponses: true,
+        notifications: [],
+      };
+      const paths = yield* useScript(script);
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-codex-concurrent-steer-race"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "keep working" });
+      const results = yield* Effect.all(
+        [
+          runtime.sendTurn({ input: "first follow-up" }),
+          runtime.sendTurn({ input: "second follow-up" }),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      assert.deepEqual(
+        readSidecar(paths.starts).map((entry) => (entry as { turnId?: string }).turnId),
+        [activeTurnId, fallbackTurnId],
+      );
+      assert.equal(
+        results.filter((result) => result.steered === false).length,
+        1,
+        "only one concurrent send may own the stale-steer fallback",
+      );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("reconciles rather than starting when a steer reports another active turn", () =>
+    Effect.gen(function* () {
+      const responseTurnId = "019fe4ff-f18b-76f2-b132-c93f3a6c5bfb";
+      const notifiedTurnId = "019fe4ff-f223-7401-8ef3-930a168477a8";
+      const nextTurnId = "019fe3eb-8faf-7de3-a85b-ac64c7f9c8c3";
+      const script = {
+        rootThreadId: ROOT,
+        holdTurnOpen: true,
+        turnIds: [responseTurnId, nextTurnId],
+        turnStartedBeforeResponse: true,
+        startedTurnIdOverride: notifiedTurnId,
+        notifications: [],
+        // Captured `/review` behaviour: the notification publishes one id
+        // while the server accepts only the response id. This refusal proves
+        // the found id is still active, so the runtime must reconcile it and
+        // must not fall back to a mid-turn turn/start. Verbatim from
+        // review-steer.attempt-2.jsonl.
+        steerRejection: {
+          code: -32600,
+          message: `expected active turn id \`${notifiedTurnId}\` but found \`${responseTurnId}\``,
+        },
+      };
+      const paths = yield* useScript(script);
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-codex-review-split"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "keep working" });
+      const rejected = yield* runtime.sendTurn({ input: "and also this" }).pipe(Effect.flip);
+
+      assert.equal(rejected._tag, "CodexSessionRuntimeTurnSteerRejectedError");
+      assert.equal(readSidecar(paths.steers).length, 1);
+      assert.deepEqual(
+        readSidecar(paths.starts).map((entry) => (entry as { input?: unknown }).input),
+        [[{ type: "text", text: "keep working" }]],
+      );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("tracks the start response's turn id when turn/started names another", () =>
+    Effect.gen(function* () {
+      const responseTurnId = "019fe3e8-f908-7f31-8d51-283f4a47897a";
+      const notifiedTurnId = "019fe3eb-8faf-7de3-a85b-ac64c7f9c8c3";
+      const script = {
+        rootThreadId: ROOT,
+        holdTurnOpen: true,
+        turnIds: [responseTurnId],
+        // `turn/started` wins the race and publishes a different id. A
+        // captured `/review` shows exactly this split, with the server
+        // accepting only the id it returned in the response.
+        turnStartedBeforeResponse: true,
+        startedTurnIdOverride: notifiedTurnId,
+        expectedActiveTurnId: responseTurnId,
+        notifications: [],
+      };
+      const paths = yield* useScript(script);
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-codex-started-race"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      yield* runtime.start();
+      const started = yield* runtime.sendTurn({ input: "keep working" });
+      const steered = yield* runtime.sendTurn({ input: "and also this" });
+      yield* runtime.interruptTurn();
+
+      assert.equal(started.turnId, responseTurnId);
+      // Both the follow-up steer and Stop address the id the server accepts.
+      assert.equal(steered.steered, true);
+      assert.deepEqual(
+        readSidecar(paths.steers).map(
+          (entry) => (entry as { expectedTurnId?: string }).expectedTurnId,
+        ),
+        [responseTurnId],
+      );
+      assert.deepEqual(readSidecar(paths.interrupts).at(-1), {
+        threadId: ROOT,
+        turnId: responseTurnId,
+      });
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("projects one authoritative lifecycle when turn/started names a split review id", () =>
+    Effect.gen(function* () {
+      const responseTurnId = "019fe4ff-f18b-76f2-b132-c93f3a6c5bfb";
+      const notifiedTurnId = "019fe4ff-f223-7401-8ef3-930a168477a8";
+      const script = {
+        rootThreadId: ROOT,
+        turnIds: [responseTurnId],
+        turnStartedBeforeResponse: true,
+        startedTurnIdOverride: notifiedTurnId,
+        notifications: [],
+      };
+      yield* useScript(script);
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-codex-review-projection"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const eventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.method === "turn/completed"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "review this" });
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const started = events.find((event) => event.method === "turn/started");
+      const completed = events.find((event) => event.method === "turn/completed");
+
+      assert.equal(started?.turnId, responseTurnId);
+      assert.equal(
+        (started?.payload as { turn?: { id?: string } } | undefined)?.turn?.id,
+        responseTurnId,
+      );
+      assert.equal(completed?.turnId, responseTurnId);
 
       yield* runtime.close;
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
