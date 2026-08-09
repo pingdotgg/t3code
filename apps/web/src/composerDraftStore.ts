@@ -1856,11 +1856,34 @@ function migratePersistedComposerDraftStoreState(
 function partializeComposerDraftStoreState(
   state: ComposerDraftStoreState,
 ): PersistedComposerDraftStoreState {
+  // Draft sessions worth persisting: mapped (a new-thread flow targets
+  // them), promoting (mid-send), or holding real user content (they back a
+  // sidebar row). Everything else is a zombie — and its composer blob must
+  // be dropped WITH it, or model/mode-only entries would persist forever
+  // keyed to a session that no longer exists.
+  const mappedDraftKeys = new Set(
+    Object.values(state.logicalProjectDraftThreadKeyByLogicalProjectKey),
+  );
+  const keptSessionKeys = new Set(
+    Object.entries(state.draftThreadsByThreadKey)
+      .filter(
+        ([threadKey, draftThread]) =>
+          mappedDraftKeys.has(threadKey) ||
+          isDraftThreadPromoting(draftThread) ||
+          composerDraftHasUserContent(state.draftsByThreadKey[threadKey]),
+      )
+      .map(([threadKey]) => threadKey),
+  );
   const persistedDraftsByThreadKey: DeepMutable<
     PersistedComposerDraftStoreState["draftsByThreadKey"]
   > = {};
   for (const [threadKey, draft] of Object.entries(state.draftsByThreadKey)) {
     if (typeof threadKey !== "string" || threadKey.length === 0) {
+      continue;
+    }
+    // Composer content keyed to a dropped draft session goes with it.
+    // Server-thread keys have no session entry and are unaffected.
+    if (state.draftThreadsByThreadKey[threadKey] !== undefined && !keptSessionKeys.has(threadKey)) {
       continue;
     }
     const hasModelData =
@@ -1936,24 +1959,11 @@ function partializeComposerDraftStoreState(
     };
     persistedDraftsByThreadKey[threadKey] = persistedDraft;
   }
-  // Unmapped sessions exist only to back a sidebar draft row, so a session
-  // that is neither mapped, nor promoting, nor backed by real user content
-  // has nothing left to resume — drop it instead of persisting a zombie.
-  // The user-content predicate matters: a persisted composer entry can hold
-  // only ambient model/mode data, which is not a reason to keep a session
-  // no row will ever show.
-  const mappedDraftKeys = new Set(
-    Object.values(state.logicalProjectDraftThreadKeyByLogicalProjectKey),
-  );
   const persistedDraftThreadsByThreadKey: DeepMutable<
     PersistedComposerDraftStoreState["draftThreadsByThreadKey"]
   > = {};
   for (const [threadKey, draftThread] of Object.entries(state.draftThreadsByThreadKey)) {
-    if (
-      !mappedDraftKeys.has(threadKey) &&
-      !isDraftThreadPromoting(draftThread) &&
-      !composerDraftHasUserContent(state.draftsByThreadKey[threadKey])
-    ) {
+    if (!keptSessionKeys.has(threadKey)) {
       continue;
     }
     persistedDraftThreadsByThreadKey[threadKey] = draftThread;
