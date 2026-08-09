@@ -15,6 +15,7 @@ import {
   USAGE_CURRENCY_RATES_STORAGE_KEY,
   USAGE_CURRENCY_RATES_TTL_MS,
   USAGE_CURRENCY_STORAGE_KEY,
+  UsageCurrencyRatesFetchError,
   writeStoredUsageCurrencyRates,
   type UsageCurrencyRatesCache,
 } from "./usageCurrencies";
@@ -118,6 +119,11 @@ describe("formatCurrency", () => {
     expect(formatCurrency(8.6, "EUR")).toBe("€8.60");
   });
 
+  it("formats zero-decimal currencies without cents", () => {
+    expect(formatCurrency(1234, "JPY")).toBe("¥1,234");
+    expect(formatCurrency(1234, "KRW")).toBe("₩1,234");
+  });
+
   it("compacts large currency amounts for chart axes", () => {
     expect(formatCurrencyCompact(2_395_896, "BIF")).toMatch(/BIF\s*2(\.4)?M/i);
   });
@@ -215,33 +221,56 @@ describe("fetchUsageCurrencyRates", () => {
   });
 
   it("throws when the network request fails", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const offline = new Error("offline");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(offline));
 
-    await expect(fetchUsageCurrencyRates()).rejects.toThrow("Frankfurter rates request failed");
+    const error = await fetchUsageCurrencyRates().catch((cause) => cause);
+    expect(error).toBeInstanceOf(UsageCurrencyRatesFetchError);
+    expect(error).toMatchObject({
+      _tag: "UsageCurrencyRatesFetchError",
+      stage: "request",
+      cause: offline,
+      message: "Frankfurter rates request step failed.",
+    });
   });
 
   it("throws when Frankfurter responds with a non-OK status", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("nope", { status: 503 })));
 
-    await expect(fetchUsageCurrencyRates()).rejects.toThrow(
-      "Frankfurter rates request failed (503)",
-    );
+    const error = await fetchUsageCurrencyRates().catch((cause) => cause);
+    expect(error).toBeInstanceOf(UsageCurrencyRatesFetchError);
+    expect(error).toMatchObject({
+      _tag: "UsageCurrencyRatesFetchError",
+      stage: "status",
+      status: 503,
+      message: "Frankfurter rates request failed (503).",
+    });
   });
 
   it("throws when the response body is not JSON", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("not-json", { status: 200 })));
 
-    await expect(fetchUsageCurrencyRates()).rejects.toThrow(
-      "Frankfurter rates response was not valid JSON",
-    );
+    const error = await fetchUsageCurrencyRates().catch((cause) => cause);
+    expect(error).toBeInstanceOf(UsageCurrencyRatesFetchError);
+    expect(error).toMatchObject({
+      _tag: "UsageCurrencyRatesFetchError",
+      stage: "json",
+      message: "Frankfurter rates json step failed.",
+    });
+    expect(error.cause).toBeDefined();
   });
 
   it("throws when the response shape is unexpected", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ rates: { EUR: 0.9 } })));
 
-    await expect(fetchUsageCurrencyRates()).rejects.toThrow(
-      "Frankfurter rates response did not match the expected shape",
-    );
+    const error = await fetchUsageCurrencyRates().catch((cause) => cause);
+    expect(error).toBeInstanceOf(UsageCurrencyRatesFetchError);
+    expect(error).toMatchObject({
+      _tag: "UsageCurrencyRatesFetchError",
+      stage: "decode",
+      message: "Frankfurter rates decode step failed.",
+    });
+    expect(error.cause).toBeDefined();
   });
 });
 

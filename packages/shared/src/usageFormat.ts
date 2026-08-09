@@ -15,11 +15,11 @@ const compactCurrencyFormatters = new Map<string, Intl.NumberFormat>();
 export function formatCurrency(value: number, currency = "USD"): string {
   let formatter = currencyFormatters.get(currency);
   if (formatter === undefined) {
+    // Omit fraction-digit overrides so Intl uses the currency's ISO default
+    // (0 for JPY/KRW, 2 for USD/EUR, 3 for some Gulf dinars, etc.).
     formatter = new Intl.NumberFormat("en-US", {
       style: "currency",
       currency,
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
     });
     currencyFormatters.set(currency, formatter);
   }

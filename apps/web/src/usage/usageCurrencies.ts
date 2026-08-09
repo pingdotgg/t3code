@@ -102,6 +102,22 @@ const FrankfurterRateRowSchema = Schema.Struct({
 
 const FrankfurterRatesResponseSchema = Schema.Array(FrankfurterRateRowSchema);
 
+/** Diagnostics-only failure from the Frankfurter FX rates fetch path. */
+export class UsageCurrencyRatesFetchError extends Schema.TaggedErrorClass<UsageCurrencyRatesFetchError>()(
+  "UsageCurrencyRatesFetchError",
+  {
+    stage: Schema.Literals(["request", "status", "json", "decode"]),
+    status: Schema.optional(Schema.Number),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return this.stage === "status"
+      ? `Frankfurter rates request failed (${this.status ?? 0}).`
+      : `Frankfurter rates ${this.stage} step failed.`;
+  }
+}
+
 export function isUsageCurrencyCode(value: string): value is UsageCurrencyCode {
   return MAJOR_CURRENCY_CODE_SET.has(value);
 }
@@ -193,25 +209,25 @@ export async function fetchUsageCurrencyRates(now = new Date()): Promise<UsageCu
   try {
     response = await fetch(`${FRANKFURTER_RATES_URL}&quotes=${quotes}`);
   } catch (cause) {
-    throw new Error("Frankfurter rates request failed", { cause });
+    throw new UsageCurrencyRatesFetchError({ stage: "request", cause });
   }
 
   if (!response.ok) {
-    throw new Error(`Frankfurter rates request failed (${response.status})`);
+    throw new UsageCurrencyRatesFetchError({ stage: "status", status: response.status });
   }
 
   let body: unknown;
   try {
     body = await response.json();
   } catch (cause) {
-    throw new Error("Frankfurter rates response was not valid JSON", { cause });
+    throw new UsageCurrencyRatesFetchError({ stage: "json", cause });
   }
 
   let rows;
   try {
     rows = Schema.decodeUnknownSync(FrankfurterRatesResponseSchema)(body);
   } catch (cause) {
-    throw new Error("Frankfurter rates response did not match the expected shape", { cause });
+    throw new UsageCurrencyRatesFetchError({ stage: "decode", cause });
   }
 
   const rates: Record<string, number> = { USD: 1 };
