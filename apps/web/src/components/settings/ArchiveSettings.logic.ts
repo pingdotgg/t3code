@@ -48,6 +48,7 @@ export interface ArchivedThreadGroupProject {
   readonly environmentId: EnvironmentId;
   readonly name: string;
   readonly cwd: string;
+  readonly faviconPath: OrchestrationProjectShell["faviconPath"];
 }
 
 export type ArchivedThreadGroupThread = OrchestrationThreadShell & {
@@ -433,6 +434,7 @@ export function buildArchivedThreadGroups(input: {
         environmentId,
         name: project.title,
         cwd: project.workspaceRoot,
+        faviconPath: project.faviconPath,
       });
     }
 

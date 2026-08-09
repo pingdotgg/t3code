@@ -657,7 +657,11 @@ export function ArchivedThreadsPanel() {
                     ) : (
                       <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/70" />
                     )}
-                    <ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />
+                    <ProjectFavicon
+                      environmentId={project.environmentId}
+                      cwd={project.cwd}
+                      faviconPath={project.faviconPath}
+                    />
                     <span className="truncate text-[13px] font-semibold text-foreground group-hover:text-foreground/85">
                       {project.name}
                     </span>

@@ -517,6 +517,7 @@ function ProjectGroupHeader(props: {
           />
           <ProjectFavicon
             environmentId={props.group.project.environmentId}
+            faviconPath={props.group.project.faviconPath}
             projectTitle={props.group.project.title}
             size={18}
             workspaceRoot={props.group.project.workspaceRoot}
