@@ -6,17 +6,43 @@
  */
 import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
 
-const CURRENCY = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
-
 const INTEGER = new Intl.NumberFormat("en-US");
 
+const currencyFormatters = new Map<string, Intl.NumberFormat>();
+const compactCurrencyFormatters = new Map<string, Intl.NumberFormat>();
+
+/** Formats a monetary amount in the given ISO 4217 currency. */
+export function formatCurrency(value: number, currency = "USD"): string {
+  let formatter = currencyFormatters.get(currency);
+  if (formatter === undefined) {
+    formatter = new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    currencyFormatters.set(currency, formatter);
+  }
+  return formatter.format(value);
+}
+
 export function formatUsd(value: number): string {
-  return CURRENCY.format(value);
+  return formatCurrency(value, "USD");
+}
+
+/** Short chart-axis form (`$1.2K`, `BIF 2.4M`) so wide currencies stay readable. */
+export function formatCurrencyCompact(value: number, currency = "USD"): string {
+  let formatter = compactCurrencyFormatters.get(currency);
+  if (formatter === undefined) {
+    formatter = new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+      notation: "compact",
+      maximumFractionDigits: 1,
+    });
+    compactCurrencyFormatters.set(currency, formatter);
+  }
+  return formatter.format(value);
 }
 
 export function formatCount(value: number): string {
