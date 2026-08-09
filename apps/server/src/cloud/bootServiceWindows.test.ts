@@ -133,12 +133,20 @@ const makeHarness = Effect.fn("test.make_windows_boot_service_harness")(function
   const pidPath = path.join(runtimeDir, SERVICE_PID_FILE);
   const stopRequestPath = path.join(runtimeDir, ".service-stop-request");
   const commands: string[] = [];
+  const powershell = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+  const expectedArguments = BootServiceWindows.expectedShortcutArguments({
+    ...plan,
+    startupScriptPath,
+  });
   const control = {
     shell: "True",
     disabled: "False",
     failCommand: undefined as string | undefined,
     /** Set to false to model a launcher that never answers the stop request. */
     launcherStopsOnRequest: true,
+    /** What the fake shortcut currently points at, so drift can be modelled. */
+    shortcutTarget: powershell,
+    shortcutArguments: expectedArguments,
   };
   // The fake stands in for PowerShell: creating and removing the shortcut is a
   // plain file write here, which is all the module observes.
@@ -166,7 +174,10 @@ const makeHarness = Effect.fn("test.make_windows_boot_service_harness")(function
         return {
           stdout:
             action === "Probe"
-              ? `shell=${control.shell}\ndisabled=${control.disabled}\n`
+              ? `shell=${control.shell}\ndisabled=${control.disabled}\n` +
+                ((yield* fs.exists(shortcutPath).pipe(Effect.orElseSucceed(() => false)))
+                  ? `target=${control.shortcutTarget}\narguments=${control.shortcutArguments}\n`
+                  : "")
               : input.args[1] === "--version"
                 ? "t3 v1.2.3\n"
                 : "",
@@ -192,7 +203,9 @@ const makeHarness = Effect.fn("test.make_windows_boot_service_harness")(function
         Layer.succeed(HostProcessPlatform, platform),
         Layer.succeed(HostProcessExecutablePath, "C:\\node.exe"),
         Layer.succeed(HostProcessArguments, ["C:\\node.exe", path.join(home, "bin.mjs")]),
-        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { APPDATA: appData } })),
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { APPDATA: appData, SystemRoot: "C:\\Windows" } }),
+        ),
       ),
     ),
   );
@@ -313,6 +326,32 @@ it.layer(NodeServices.layer)("windows boot service", (it) => {
 
       expect(yield* service.uninstall).toBe(true);
       expect(yield* fs.exists(shortcutPath)).toBe(false);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("goes stale when the shortcut itself is edited, not just the script", () =>
+    Effect.gen(function* () {
+      const { service, control } = yield* makeHarness();
+      yield* service.install;
+      expect((yield* service.status).current).toBe(true);
+
+      // The generated scripts still match. Only the .lnk was tampered with, and
+      // that is the thing sign-in actually runs.
+      control.shortcutArguments = "-File C:\\somewhere\\else.ps1";
+      expect((yield* service.status).current).toBe(false);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("stops a running launcher even when the shortcut was deleted by hand", () =>
+    Effect.gen(function* () {
+      const { service, fs, shortcutPath, pidPath } = yield* makeHarness();
+      yield* service.install;
+      // A launcher outlives its shortcut, so keying the stop on the shortcut
+      // would leave a server running with nothing left to manage it.
+      yield* fs.remove(shortcutPath, { force: true });
+
+      expect(yield* service.uninstall).toBe(true);
+      expect(yield* fs.exists(pidPath)).toBe(false);
     }).pipe(TestClock.withLive),
   );
 

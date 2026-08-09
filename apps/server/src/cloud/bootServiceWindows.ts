@@ -125,6 +125,14 @@ export interface WindowsBootServicePlan extends BootServicePlan {
 export interface WindowsPreflight {
   readonly shellRunning: boolean;
   readonly entryDisabled: boolean;
+  /** Absent when no shortcut exists yet. */
+  readonly shortcutTarget?: string;
+  readonly shortcutArguments?: string;
+}
+
+/** Windows only. What the shortcut must point at for the service to work. */
+export function expectedShortcutArguments(plan: WindowsBootServicePlan): string {
+  return `-NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${plan.startupScriptPath}"`;
 }
 
 /**
@@ -197,9 +205,7 @@ export function renderShortcutScript(plan: WindowsBootServicePlan): string {
     "$shell = New-Object -ComObject WScript.Shell",
     "$shortcut = $shell.CreateShortcut($shortcutPath)",
     "$shortcut.TargetPath = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'",
-    `$shortcut.Arguments = ${quotePowerShellLiteral(
-      `-NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${plan.startupScriptPath}"`,
-    )}`,
+    `$shortcut.Arguments = ${quotePowerShellLiteral(expectedShortcutArguments(plan))}`,
     "$shortcut.WorkingDirectory = $env:USERPROFILE",
     `$shortcut.Description = ${quotePowerShellLiteral(`${SHORTCUT_NAME}, started at sign-in`)}`,
     "# Minimized, because PowerShell paints a console before it hides itself.",
@@ -222,11 +228,18 @@ export function parseProbeOutput(stdout: string): WindowsPreflight | undefined {
     const match = new RegExp(`^${key}=(True|False)\\s*$`, "im").exec(stdout)?.[1];
     return match === undefined ? undefined : match === "True";
   };
+  const readText = (key: string) => new RegExp(`^${key}=(.*)$`, "im").exec(stdout)?.[1]?.trim();
   const shellRunning = read("shell");
   const entryDisabled = read("disabled");
-  return shellRunning === undefined || entryDisabled === undefined
-    ? undefined
-    : { shellRunning, entryDisabled };
+  if (shellRunning === undefined || entryDisabled === undefined) return undefined;
+  const shortcutTarget = readText("target");
+  const shortcutArguments = readText("arguments");
+  return {
+    shellRunning,
+    entryDisabled,
+    ...(shortcutTarget === undefined ? {} : { shortcutTarget }),
+    ...(shortcutArguments === undefined ? {} : { shortcutArguments }),
+  };
 }
 
 export interface WindowsBootServiceInput {
@@ -409,21 +422,20 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
    */
   const requestStop = Effect.gen(function* () {
     const recordedPid = yield* fs.readFileString(pidPath).pipe(Effect.option);
-    if (Option.isNone(recordedPid)) return;
+    if (Option.isNone(recordedPid)) return false;
     const pid = Number.parseInt(recordedPid.value.trim(), 10);
     if (!Number.isInteger(pid) || pid <= 0 || !(yield* processIsAlive(pid))) {
       // The launcher died without cleaning up. Nothing to wait for.
       yield* fs.remove(pidPath, { force: true }).pipe(Effect.ignore);
-      return;
+      return false;
     }
 
-    // A missing runtime directory must not block an uninstall: the shortcut is
-    // the thing the user asked to remove, and it lives elsewhere.
-    const requested = yield* fs.writeFileString(stopRequestPath, "").pipe(
-      Effect.as(true),
-      Effect.orElseSucceed(() => false),
-    );
-    if (!requested) return;
+    // A launcher is confirmed alive, so a failed write must fail the whole
+    // operation. Swallowing it would let the caller carry on and start a second
+    // server against the same database.
+    yield* fs
+      .writeFileString(stopRequestPath, "")
+      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
 
     const timeoutMs = Duration.toMillis(input.stopRequestTimeout ?? STOP_REQUEST_TIMEOUT);
     const pollMs = Math.min(timeoutMs, Duration.toMillis(STOP_REQUEST_ACK_POLL));
@@ -431,7 +443,7 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       yield* Effect.sleep(Duration.millis(pollMs));
       const stillRunning = yield* fs.exists(pidPath).pipe(Effect.orElseSucceed(() => true));
-      if (!stillRunning) return;
+      if (!stillRunning) return true;
     }
     // Refusing here is the whole point. Carrying on would write over a launcher
     // we could not confirm dead.
@@ -543,19 +555,18 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
     const installed = yield* fs
       .exists(unitPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-    if (installed) {
-      yield* requestStop;
-    }
+    // Keyed on the pid file, never on the shortcut. A launcher outlives a
+    // manually deleted shortcut, and starting a second one alongside it would
+    // put two servers on the same database.
+    const stopped = yield* requestStop;
 
     yield* Effect.gen(function* () {
-      if (installed) {
-        const previousStateText = yield* fs.readFileString(statePath).pipe(Effect.option);
-        if (
-          Option.isSome(previousStateText) &&
-          serviceStateHasPendingUpdate(previousStateText.value)
-        ) {
-          return yield* new BootServiceUpdatePendingError();
-        }
+      const previousStateText = yield* fs.readFileString(statePath).pipe(Effect.option);
+      if (
+        Option.isSome(previousStateText) &&
+        serviceStateHasPendingUpdate(previousStateText.value)
+      ) {
+        return yield* new BootServiceUpdatePendingError();
       }
       yield* writeDurably(launcherPath, launcherSource);
       yield* writeDurably(
@@ -577,7 +588,7 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
       yield* runPowerShellScript("starting the service", startupScriptPath);
     }).pipe(
       Effect.tapError(() =>
-        installed
+        installed || stopped
           ? runPowerShellScript(
               "restarting the service after a failed update",
               startupScriptPath,
@@ -590,14 +601,16 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
 
   const uninstall: BootService["Service"]["uninstall"] = Effect.gen(function* () {
     yield* requireWindows;
-    if (
-      !(yield* fs
-        .exists(unitPath)
-        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause }))))
-    )
-      return false;
+    const installed = yield* fs
+      .exists(unitPath)
+      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
 
-    yield* requestStop;
+    // Stop first, and decide that on the pid file rather than the shortcut. A
+    // launcher survives someone deleting the shortcut by hand, and leaving it
+    // running is exactly what the user asked us not to do.
+    const stopped = yield* requestStop;
+    if (!installed && !stopped) return false;
+
     // A shortcut is an ordinary file, so removing it needs no PowerShell. That
     // also means a missing or broken generated script cannot strand the entry.
     yield* fs
@@ -632,6 +645,18 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
       fs.readFileString(statePath).pipe(Effect.option),
     ]);
     const state = Option.isSome(stateText) ? parseServiceState(stateText.value) : undefined;
+    // Read the shortcut itself back, because the script that wrote it matching
+    // proves nothing about the .lnk someone may have edited or replaced since.
+    const shortcut = yield* runShortcutScript(
+      "checking the Windows Startup shortcut",
+      "Probe",
+    ).pipe(
+      Effect.map((probe) => parseProbeOutput(probe.stdout)),
+      Effect.orElseSucceed(() => undefined),
+    );
+    const shortcutMatches =
+      shortcut?.shortcutTarget === powershell &&
+      shortcut.shortcutArguments === expectedShortcutArguments(plan);
     // Duplicated from the Linux status. The runtime and state checks are the
     // same, but the Linux copy also compares the systemd unit, so it cannot be
     // shared without changing the Linux path.
@@ -639,6 +664,7 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
       supported: true,
       installed: true,
       current:
+        shortcutMatches &&
         Option.isSome(startupScript) &&
         startupScript.value === renderStartupScript(plan) &&
         // The shortcut script embeds the shortcut path, the interpreter and the

@@ -61,6 +61,20 @@ const STOP_REQUEST_GRACE_MS = 5_000;
 /** Windows only. Set by the generated logon script. systemd never sets it. */
 const isSelfSupervising = (): boolean => process.env[SERVICE_SELF_SUPERVISE_ENV] === "1";
 
+/**
+ * Windows only. Signal 0 asks the kernel whether a process exists without
+ * touching it. A permission error means it exists but is not ours, which still
+ * counts as running.
+ */
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (cause) {
+    return (cause as NodeJS.ErrnoException | undefined)?.code === "EPERM";
+  }
+}
+
 type TerminalStatus = "committed" | "rolled-back" | "failed";
 type ChildRole = "active" | "trial";
 
@@ -353,20 +367,23 @@ export class Launcher {
     process.once("SIGTERM", onSigterm);
     process.once("SIGINT", onSigint);
     const supervising = this.#selfSupervise;
+    let owned = false;
     this.#startedAt = Date.now();
     // The first start counts toward the burst, the way systemd counts it.
     this.#restartAttempts = [this.#startedAt];
     try {
       if (supervising) {
-        // Written before anything else, so the CLI can never see a running
-        // launcher as absent and rewrite the runtime underneath it.
-        await NodeFSP.mkdir(NodePath.dirname(pidFilePath(this.#baseDir)), {
-          recursive: true,
-          mode: 0o700,
-        }).catch(() => undefined);
-        await NodeFSP.writeFile(pidFilePath(this.#baseDir), `${process.pid}\n`, {
-          mode: 0o600,
-        }).catch(() => undefined);
+        // Claimed before anything else, and never swallowed on failure. The CLI
+        // reads an absent pid file as proof nothing is running, so a live
+        // launcher without one would let an install rewrite the runtime
+        // underneath it and start a second server on the same database.
+        owned = await this.#claimPidFile();
+        if (!owned) {
+          // Another launcher is already running, which happens when the Startup
+          // shortcut fires twice. Leave it alone and exit.
+          process.stderr.write("[service-launcher] another launcher is already running\n");
+          return;
+        }
         this.#watchStopRequest();
       }
       this.#enqueue(() => this.#recover());
@@ -378,13 +395,57 @@ export class Launcher {
       process.off("SIGTERM", onSigterm);
       process.off("SIGINT", onSigint);
       this.#stopWatchingStopRequest();
-      if (supervising) {
+      if (owned) {
         // Removing these before run() returns is how the CLI learns the stop
         // finished. Doing it after would race the process exiting.
         await NodeFSP.rm(stopRequestPath(this.#baseDir), { force: true }).catch(() => undefined);
-        await NodeFSP.rm(pidFilePath(this.#baseDir), { force: true }).catch(() => undefined);
+        await this.#releasePidFile();
       }
     }
+  }
+
+  /**
+   * Windows only. Claims the pid file exclusively. Returns false when another
+   * live launcher already owns it, which is what stops a Startup shortcut that
+   * fires twice from running two servers against one database.
+   */
+  async #claimPidFile(): Promise<boolean> {
+    const target = pidFilePath(this.#baseDir);
+    await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true, mode: 0o700 });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const handle = await NodeFSP.open(target, "wx", 0o600);
+        try {
+          await handle.writeFile(`${process.pid}\n`, "utf8");
+          await handle.sync();
+        } finally {
+          await handle.close();
+        }
+        return true;
+      } catch (cause) {
+        if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
+        // A live owner wins, even when it is this very process. Two Launcher
+        // instances sharing a process would still be two servers on one
+        // database, so there is nothing to exempt.
+        const owner = await this.#readPidFile();
+        if (owner !== undefined && processIsAlive(owner)) return false;
+        // The recorded owner is gone, so the file is leftover. Clear and retry.
+        await NodeFSP.rm(target, { force: true });
+      }
+    }
+    return false;
+  }
+
+  async #readPidFile(): Promise<number | undefined> {
+    const contents = await NodeFSP.readFile(pidFilePath(this.#baseDir), "utf8").catch(() => "");
+    const pid = Number.parseInt(contents.trim(), 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+  }
+
+  /** Windows only. Only clears the file if this process still owns it. */
+  async #releasePidFile(): Promise<void> {
+    if ((await this.#readPidFile()) !== process.pid) return;
+    await NodeFSP.rm(pidFilePath(this.#baseDir), { force: true }).catch(() => undefined);
   }
 
   /**

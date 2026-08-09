@@ -11,6 +11,7 @@ import {
   decodeServiceState,
   isExactServiceVersion,
   SERVICE_LAUNCHER_PROTOCOL,
+  SERVICE_PID_FILE,
   SERVICE_STOP_MARKER_FILE,
   SERVICE_STOP_REQUEST_FILE,
 } from "./cloud/serviceProtocol.ts";
@@ -424,6 +425,46 @@ process.exit(1);
 
       yield* Effect.promise(() => launcher.stop("SIGTERM"));
       yield* Effect.promise(() => running);
+    }).pipe(TestClock.withLive),
+  );
+});
+
+it.layer(NodeServices.layer)("self-supervising pid ownership", (it) => {
+  it.effect("a second launcher exits rather than running a second server", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launcher-pid-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const versionDir = path.join(root, "runtime", "versions", "1.0.0");
+      const entryPath = path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs");
+      yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fs.writeFileString(entryPath, "setInterval(() => {}, 1_000);\n");
+      yield* fs.writeFileString(path.join(versionDir, ".install-complete"), "1.0.0\n");
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+      const state = yield* Effect.promise(() => readServiceState(statePath));
+
+      const first = new Launcher(root, state, { selfSupervise: true, restartDelayMs: 5 });
+      const firstRunning = first.run();
+      yield* Effect.sleep("100 millis");
+      const pidPath = path.join(root, "runtime", SERVICE_PID_FILE);
+      assert.isTrue(yield* fs.exists(pidPath));
+
+      // The Startup shortcut firing twice must not put two servers on one
+      // database. The second launcher sees a live owner and gives up.
+      const second = new Launcher(root, state, { selfSupervise: true, restartDelayMs: 5 });
+      yield* Effect.promise(() => second.run());
+      // It also must not take the first launcher's pid file with it on the way out.
+      assert.isTrue(yield* fs.exists(pidPath));
+
+      yield* Effect.promise(() => first.stop("SIGTERM"));
+      yield* Effect.promise(() => firstRunning);
+      assert.isFalse(yield* fs.exists(pidPath));
     }).pipe(TestClock.withLive),
   );
 });
