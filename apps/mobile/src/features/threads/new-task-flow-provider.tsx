@@ -371,6 +371,15 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     t3ProjectFileDefaultMode ??
     selectedEnvironmentServerConfig?.settings.defaultThreadEnvMode ??
     "local";
+  // While the t3.json read is in flight the resolved default is provisional.
+  // Nothing may write it into the draft during that window (the auto-branch
+  // effect does), or the frozen interim value beats the file's default once
+  // it loads. Explicit draft picks and the project setting outrank the file,
+  // so those settle the mode immediately.
+  const defaultWorkspaceModeSettled =
+    selectedProjectDraft.workspaceSelection?.mode !== undefined ||
+    selectedProject?.defaultThreadEnvMode != null ||
+    !t3ProjectFileQuery.isPending;
   const workspaceMode = selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode;
   const selectedBranchName = selectedProjectDraft.workspaceSelection?.branch ?? null;
   const selectedWorktreePath = selectedProjectDraft.workspaceSelection?.worktreePath ?? null;
@@ -640,7 +649,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   }, [refreshBranches, selectedProject]);
 
   useEffect(() => {
-    if (workspaceMode !== "worktree" || selectedBranchName !== null) {
+    if (
+      !defaultWorkspaceModeSettled ||
+      workspaceMode !== "worktree" ||
+      selectedBranchName !== null
+    ) {
       return;
     }
     // The default may only exist as origin/<default> (isRemote), which
@@ -652,7 +665,14 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     if (preferredBranch) {
       selectBranch(preferredBranch);
     }
-  }, [allBranchRefs, availableBranches, selectBranch, selectedBranchName, workspaceMode]);
+  }, [
+    allBranchRefs,
+    availableBranches,
+    defaultWorkspaceModeSettled,
+    selectBranch,
+    selectedBranchName,
+    workspaceMode,
+  ]);
 
   const setRuntimeMode = useCallback(
     (value: RuntimeMode) => {
