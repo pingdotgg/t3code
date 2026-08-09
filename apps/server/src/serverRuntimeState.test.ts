@@ -116,6 +116,104 @@ describe("serverRuntimeState", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("preserves replacement state written before ownership capture", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-runtime-state-race-test-",
+      });
+      const statePath = path.join(root, "server.json");
+      const stoppingState: ServerRuntimeState.PersistedServerRuntimeState = {
+        version: 1,
+        pid: 123,
+        port: 3_773,
+        origin: "http://127.0.0.1:3773",
+        startedAt: "2026-08-09T05:09:57.000Z",
+      };
+      const replacementState: ServerRuntimeState.PersistedServerRuntimeState = {
+        version: 1,
+        pid: 456,
+        port: 3_773,
+        origin: "http://127.0.0.1:3773",
+        startedAt: "2026-08-09T05:10:06.000Z",
+      };
+
+      yield* ServerRuntimeState.persistServerRuntimeState({
+        path: statePath,
+        state: stoppingState,
+      });
+      const racingFileSystem = {
+        ...fileSystem,
+        rename: (from: string, to: string) =>
+          from === statePath
+            ? fileSystem
+                .writeFileString(statePath, `${JSON.stringify(replacementState)}\n`)
+                .pipe(Effect.andThen(fileSystem.rename(from, to)))
+            : fileSystem.rename(from, to),
+      } satisfies FileSystem.FileSystem;
+
+      yield* ServerRuntimeState.clearPersistedServerRuntimeStateIfOwned({
+        path: statePath,
+        state: stoppingState,
+      }).pipe(Effect.provideService(FileSystem.FileSystem, racingFileSystem));
+
+      const preserved = yield* ServerRuntimeState.readPersistedServerRuntimeState(statePath);
+      assert.deepEqual(Option.getOrThrow(preserved), replacementState);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("preserves replacement state written after ownership capture", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-runtime-state-race-test-",
+      });
+      const statePath = path.join(root, "server.json");
+      const stoppingState: ServerRuntimeState.PersistedServerRuntimeState = {
+        version: 1,
+        pid: 123,
+        port: 3_773,
+        origin: "http://127.0.0.1:3773",
+        startedAt: "2026-08-09T05:09:57.000Z",
+      };
+      const replacementState: ServerRuntimeState.PersistedServerRuntimeState = {
+        version: 1,
+        pid: 456,
+        port: 3_773,
+        origin: "http://127.0.0.1:3773",
+        startedAt: "2026-08-09T05:10:06.000Z",
+      };
+
+      yield* ServerRuntimeState.persistServerRuntimeState({
+        path: statePath,
+        state: stoppingState,
+      });
+      const racingFileSystem = {
+        ...fileSystem,
+        rename: (from: string, to: string) =>
+          from === statePath
+            ? fileSystem
+                .rename(from, to)
+                .pipe(
+                  Effect.andThen(
+                    fileSystem.writeFileString(statePath, `${JSON.stringify(replacementState)}\n`),
+                  ),
+                )
+            : fileSystem.rename(from, to),
+      } satisfies FileSystem.FileSystem;
+
+      yield* ServerRuntimeState.clearPersistedServerRuntimeStateIfOwned({
+        path: statePath,
+        state: stoppingState,
+      }).pipe(Effect.provideService(FileSystem.FileSystem, racingFileSystem));
+
+      const preserved = yield* ServerRuntimeState.readPersistedServerRuntimeState(statePath);
+      assert.deepEqual(Option.getOrThrow(preserved), replacementState);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("preserves malformed state decode failures", () => {
     const logs: CapturedLog[] = [];
     const logger = Logger.make(({ fiber, message }) => {

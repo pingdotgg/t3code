@@ -204,7 +204,12 @@ describe("ssh tunnel scripts", () => {
       buildRemoteLaunchScript(),
       "if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port))",
     );
-    assert.include(buildRemoteLaunchScript(), 'PID_TO_STOP="${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"');
+    assert.include(buildRemoteLaunchScript(), '[ "$DEFAULT_RUNTIME_PID" = "$REMOTE_PID" ]');
+    assert.include(
+      buildRemoteLaunchScript(),
+      '[ "$PREVIOUS_REMOTE_PORT" != "$DEFAULT_REMOTE_PORT" ]',
+    );
+    assert.notInclude(buildRemoteLaunchScript(), "PID_TO_STOP");
     assert.include(buildRemoteLaunchScript(), 'REMOTE_PORT="$DEFAULT_REMOTE_PORT"');
     assert.include(buildRemoteLaunchScript(), "DEFAULT_RUNTIME_IS_MANAGED=1");
     assert.include(buildRemoteLaunchScript(), '[ "$DEFAULT_RUNTIME_IS_MANAGED" -eq 0 ]');
@@ -483,6 +488,101 @@ server.listen(0, "127.0.0.1", () => process.stdout.write(String(server.address()
         assert.equal(
           yield* fileSystem.readFileString(path.join(stateDir, "port")),
           `${externalPort}\n`,
+        );
+        assert.isFalse(yield* fileSystem.exists(path.join(stateDir, "pid")));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.effect("does not adopt or signal a reused managed PID on the external runtime port", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        if ((yield* HostProcessPlatform) === "win32") return;
+
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const executablePath = yield* HostProcessExecutablePath;
+        const home = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-ssh-pid-reuse-test-",
+        });
+        const stateKey = "pid-reuse";
+        const stateDir = path.join(home, ".t3", "ssh-launch", stateKey);
+        const runtimeDir = path.join(home, ".t3", "userdata");
+
+        const externalServer = yield* spawner.spawn(
+          ChildProcess.make(
+            executablePath,
+            [
+              "-e",
+              `const http = require("node:http");
+const server = http.createServer((_request, response) => {
+  response.writeHead(200);
+  response.end("ok");
+});
+server.listen(0, "127.0.0.1", () => process.stdout.write(String(server.address().port) + "\\n"));`,
+            ],
+            { detached: false },
+          ),
+        );
+        const unrelatedProcess = yield* spawner.spawn(
+          ChildProcess.make(executablePath, ["-e", "setInterval(() => {}, 1_000)"], {
+            detached: false,
+          }),
+        );
+        yield* Effect.addFinalizer(() =>
+          externalServer.kill().pipe(Effect.catchCause(() => Effect.void)),
+        );
+        yield* Effect.addFinalizer(() =>
+          unrelatedProcess.kill().pipe(Effect.catchCause(() => Effect.void)),
+        );
+
+        const portLine = yield* externalServer.stdout.pipe(
+          Stream.decodeText(),
+          Stream.splitLines,
+          Stream.runHead,
+        );
+        const port = Number.parseInt(Option.getOrThrow(portLine), 10);
+        assert.isTrue(Number.isInteger(port));
+
+        yield* fileSystem.makeDirectory(stateDir, { recursive: true });
+        yield* fileSystem.makeDirectory(runtimeDir, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(stateDir, "managed"), "managed\n");
+        yield* fileSystem.writeFileString(path.join(stateDir, "pid"), `${unrelatedProcess.pid}\n`);
+        yield* fileSystem.writeFileString(path.join(stateDir, "port"), `${port}\n`);
+        yield* fileSystem.writeFileString(
+          path.join(stateDir, "run-t3.sh"),
+          `${buildRemoteT3RunnerScript()}\n`,
+        );
+        yield* fileSystem.writeFileString(
+          path.join(runtimeDir, "server-runtime.json"),
+          `{"version":1,"pid":${externalServer.pid},"port":${port},"origin":"http://127.0.0.1:${port}","startedAt":"2026-08-09T05:10:06.000Z"}\n`,
+        );
+
+        const shell = yield* spawner.spawn(
+          ChildProcess.make("sh", ["-s", "--", stateKey], {
+            detached: false,
+            env: { HOME: home },
+            extendEnv: true,
+            stdin: Stream.make(new TextEncoder().encode(buildRemoteLaunchScript())),
+          }),
+        );
+        const [stdout, stderr, exitCode] = yield* Effect.all(
+          [
+            Stream.mkString(Stream.decodeText(shell.stdout)),
+            Stream.mkString(Stream.decodeText(shell.stderr)),
+            shell.exitCode,
+          ],
+          { concurrency: "unbounded" },
+        );
+
+        assert.equal(exitCode, 0, stderr);
+        assert.include(stdout, `{"remotePort":${port},"serverKind":"external"}`);
+        assert.isTrue(yield* externalServer.isRunning);
+        assert.isTrue(yield* unrelatedProcess.isRunning);
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(stateDir, "managed")),
+          "external\n",
         );
         assert.isFalse(yield* fileSystem.exists(path.join(stateDir, "pid")));
       }).pipe(Effect.provide(NodeServices.layer)),
