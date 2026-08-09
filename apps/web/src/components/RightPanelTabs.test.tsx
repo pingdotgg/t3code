@@ -18,6 +18,7 @@ function actionProps() {
     diffAvailable: false,
     filesAvailable: true,
     sourceControlAvailable: true,
+    liveAgentCount: 3,
   };
 }
 
@@ -54,5 +55,12 @@ describe("RightPanelTabs add-surface actions", () => {
     expect(unavailableSourceControl?.disabledReason).toBe(
       "Version Control is only available when a project is open in a Git repository.",
     );
+  });
+
+  it("preserves the live agent badge in the customized action model", () => {
+    const actions = buildAddSurfaceActions(actionProps());
+
+    expect(actions.find((action) => action.id === "agents")?.badgeCount).toBe(3);
+    expect(actions.find((action) => action.id === "source-control")?.badgeCount).toBe(0);
   });
 });
