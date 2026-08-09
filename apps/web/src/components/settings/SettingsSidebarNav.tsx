@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
 
+import { usePrimarySettingsWritable } from "../../state/environments";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Kbd } from "../ui/kbd";
@@ -37,7 +38,9 @@ import {
 import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../clerk/T3ConnectSidebarSignIn";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
+  PRIMARY_ONLY_SETTINGS_PATHS,
   searchSettings,
+  SETTINGS_SEARCH_ITEMS,
   SETTINGS_SECTION_LABELS,
   type SettingsPath,
   type SettingsSearchItem,
@@ -79,7 +82,22 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeResultIndex, setActiveResultIndex] = useState(0);
-  const results = useMemo(() => searchSettings(query), [query]);
+  // Sections with no backing store here are dropped from both the nav and the
+  // search index, so neither route can be reached from inside settings.
+  const primarySettingsWritable = usePrimarySettingsWritable();
+  const isPathVisible = useCallback(
+    (to: SettingsPath) => primarySettingsWritable || !PRIMARY_ONLY_SETTINGS_PATHS.has(to),
+    [primarySettingsWritable],
+  );
+  const navItems = useMemo(
+    () => SETTINGS_NAV_ITEMS.filter((item) => isPathVisible(item.to)),
+    [isPathVisible],
+  );
+  const searchItems = useMemo(
+    () => SETTINGS_SEARCH_ITEMS.filter((item) => isPathVisible(item.to)),
+    [isPathVisible],
+  );
+  const results = useMemo(() => searchSettings(query, searchItems), [query, searchItems]);
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
 
@@ -279,7 +297,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))
-              : SETTINGS_NAV_ITEMS.map((item) => {
+              : navItems.map((item) => {
                   const Icon = item.icon;
                   // Prefix match keeps the section active on nested routes
                   // like /settings/projects/$projectKey.

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  PRIMARY_ONLY_SETTINGS_PATHS,
   searchableSetting,
   searchSettings,
   SETTINGS_SEARCH_ITEMS,
+  SETTINGS_SECTION_LABELS,
   type SettingsSearchItem,
 } from "./settingsSearch";
 
@@ -68,6 +70,27 @@ describe("searchSettings", () => {
   it("serves anchor props to panels from the catalog", () => {
     expect(searchableSetting("word-wrap")).toEqual({ id: "word-wrap", title: "Word wrap" });
     expect(searchableSetting("archive")).toEqual({ id: "archive", title: "Archived threads" });
+  });
+
+  it("routes the text generation model to the per-device providers section", () => {
+    expect(searchSettings("text generation")[0]).toMatchObject({
+      id: "text-generation-model",
+      to: "/settings/providers",
+    });
+  });
+
+  it("gates only sections that exist as settings paths", () => {
+    for (const path of PRIMARY_ONLY_SETTINGS_PATHS) {
+      expect(SETTINGS_SECTION_LABELS[path]).toBeDefined();
+    }
+  });
+
+  it("drops gated sections from the search index", () => {
+    const ungated = SETTINGS_SEARCH_ITEMS.filter(
+      (item) => !PRIMARY_ONLY_SETTINGS_PATHS.has(item.to),
+    );
+    expect(searchSettings("source control", ungated)).toEqual([]);
+    expect(searchSettings("source control").map((item) => item.id)).toEqual(["source-control"]);
   });
 
   it("routes appearance settings to their current section", () => {
