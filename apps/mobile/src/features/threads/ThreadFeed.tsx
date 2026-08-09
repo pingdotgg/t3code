@@ -4,6 +4,7 @@ import { type LegendListRef } from "@legendapp/list/react-native";
 import type { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { SymbolView } from "../../components/AppSymbol";
 import { HeaderHeightContext } from "@react-navigation/elements";
 import { useNavigation } from "@react-navigation/native";
@@ -272,7 +273,7 @@ const MarkdownExternalLink = memo(function MarkdownExternalLink(props: {
     <NativeText
       className="font-sans"
       onPress={() => {
-        void Linking.openURL(props.href);
+        void tryOpenExternalUrl(props.href, "markdown-link");
       }}
       style={{
         color: props.color,
@@ -602,7 +603,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
             onPress={
               linkHref
                 ? () => {
-                    void Linking.openURL(linkHref);
+                    void tryOpenExternalUrl(linkHref, "markdown-link");
                   }
                 : undefined
             }
@@ -1414,7 +1415,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       }
 
       if (presentation.href) {
-        void Linking.openURL(presentation.href);
+        void tryOpenExternalUrl(presentation.href, "markdown-link");
       }
     },
     [props.environmentId, props.threadId, props.workspaceRoot, navigation],
