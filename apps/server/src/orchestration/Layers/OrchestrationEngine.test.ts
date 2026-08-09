@@ -55,22 +55,30 @@ async function createOrchestrationSystem(
     readonly decorateEventStore?: (
       eventStore: OrchestrationEventStoreShape,
     ) => OrchestrationEventStoreShape;
+    readonly eventStore?: OrchestrationEventStoreShape;
+    readonly projectionPipeline?: OrchestrationProjectionPipelineShape;
   } = {},
 ) {
   const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-orchestration-engine-test-",
   });
   const eventStoreLayer =
-    options.decorateEventStore === undefined
-      ? OrchestrationEventStoreLive
-      : Layer.effect(
-          OrchestrationEventStore,
-          Effect.map(OrchestrationEventStore, options.decorateEventStore),
-        ).pipe(Layer.provide(OrchestrationEventStoreLive));
+    options.eventStore !== undefined
+      ? Layer.succeed(OrchestrationEventStore, options.eventStore)
+      : options.decorateEventStore === undefined
+        ? OrchestrationEventStoreLive
+        : Layer.effect(
+            OrchestrationEventStore,
+            Effect.map(OrchestrationEventStore, options.decorateEventStore),
+          ).pipe(Layer.provide(OrchestrationEventStoreLive));
+  const projectionPipelineLayer =
+    options.projectionPipeline === undefined
+      ? OrchestrationProjectionPipelineLive
+      : Layer.succeed(OrchestrationProjectionPipeline, options.projectionPipeline);
   const orchestrationLayer = Layer.mergeAll(
     OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-      Layer.provide(OrchestrationProjectionPipelineLive),
+      Layer.provide(projectionPipelineLayer),
     ),
     OrchestrationProjectionSnapshotQueryLive,
   ).pipe(
@@ -1142,24 +1150,13 @@ describe("OrchestrationEngine", () => {
       },
     };
 
-    const runtime = ManagedRuntime.make(
-      OrchestrationEngineLive.pipe(
-        Layer.provide(TurnAdmissionGate.layer),
-        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-        Layer.provide(ThreadBackgroundLiveness.layer),
-        Layer.provide(ThreadPlanProgress.layer),
-        Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, flakyProjectionPipeline)),
-        Layer.provide(OrchestrationEventStoreLive),
-        Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-        Layer.provide(RepositoryIdentityResolver.layer),
-        Layer.provide(SqlitePersistenceMemory),
-        Layer.provide(NodeServices.layer),
-      ),
-    );
-    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    const system = await createOrchestrationSystem({
+      projectionPipeline: flakyProjectionPipeline,
+    });
+    const { engine } = system;
     const createdAt = now();
 
-    await runtime.runPromise(
+    await system.run(
       engine.dispatch({
         type: "project.create",
         commandId: CommandId.make("cmd-project-atomic-create"),
@@ -1173,7 +1170,7 @@ describe("OrchestrationEngine", () => {
         createdAt,
       }),
     );
-    await runtime.runPromise(
+    await system.run(
       engine.dispatch({
         type: "thread.create",
         commandId: CommandId.make("cmd-thread-atomic-create"),
@@ -1207,11 +1204,11 @@ describe("OrchestrationEngine", () => {
       createdAt,
     };
 
-    await expect(runtime.runPromise(engine.dispatch(turnStartCommand))).rejects.toThrow(
+    await expect(system.run(engine.dispatch(turnStartCommand))).rejects.toThrow(
       "projection failed",
     );
 
-    const eventsAfterFailure = await runtime.runPromise(
+    const eventsAfterFailure = await system.run(
       Stream.runCollect(engine.readEvents(0)).pipe(
         Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
       ),
@@ -1221,10 +1218,10 @@ describe("OrchestrationEngine", () => {
       "thread.created",
     ]);
 
-    const retryResult = await runtime.runPromise(engine.dispatch(turnStartCommand));
+    const retryResult = await system.run(engine.dispatch(turnStartCommand));
     expect(retryResult.sequence).toBe(4);
 
-    const eventsAfterRetry = await runtime.runPromise(
+    const eventsAfterRetry = await system.run(
       Stream.runCollect(engine.readEvents(0)).pipe(
         Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
       ),
@@ -1239,7 +1236,7 @@ describe("OrchestrationEngine", () => {
       eventsAfterRetry.filter((event) => event.commandId === turnStartCommand.commandId),
     ).toHaveLength(2);
 
-    await runtime.dispose();
+    await system.dispose();
   });
 
   it("reconciles command state when append persists but projection fails", async () => {
@@ -1288,24 +1285,14 @@ describe("OrchestrationEngine", () => {
       },
     };
 
-    const runtime = ManagedRuntime.make(
-      OrchestrationEngineLive.pipe(
-        Layer.provide(TurnAdmissionGate.layer),
-        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-        Layer.provide(ThreadBackgroundLiveness.layer),
-        Layer.provide(ThreadPlanProgress.layer),
-        Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, flakyProjectionPipeline)),
-        Layer.provide(Layer.succeed(OrchestrationEventStore, nonTransactionalStore)),
-        Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-        Layer.provide(RepositoryIdentityResolver.layer),
-        Layer.provide(SqlitePersistenceMemory),
-        Layer.provide(NodeServices.layer),
-      ),
-    );
-    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    const system = await createOrchestrationSystem({
+      eventStore: nonTransactionalStore,
+      projectionPipeline: flakyProjectionPipeline,
+    });
+    const { engine } = system;
     const createdAt = now();
 
-    await runtime.runPromise(
+    await system.run(
       engine.dispatch({
         type: "project.create",
         commandId: CommandId.make("cmd-project-sync-create"),
@@ -1319,7 +1306,7 @@ describe("OrchestrationEngine", () => {
         createdAt,
       }),
     );
-    await runtime.runPromise(
+    await system.run(
       engine.dispatch({
         type: "thread.create",
         commandId: CommandId.make("cmd-thread-sync-create"),
@@ -1339,7 +1326,7 @@ describe("OrchestrationEngine", () => {
     );
 
     await expect(
-      runtime.runPromise(
+      system.run(
         engine.dispatch({
           type: "thread.archive",
           commandId: CommandId.make("cmd-thread-archive-sync-fail"),
@@ -1349,7 +1336,7 @@ describe("OrchestrationEngine", () => {
     ).rejects.toThrow("projection failed");
 
     await expect(
-      runtime.runPromise(
+      system.run(
         engine.dispatch({
           type: "thread.archive",
           commandId: CommandId.make("cmd-thread-archive-sync-retry"),
@@ -1358,7 +1345,7 @@ describe("OrchestrationEngine", () => {
       ),
     ).rejects.toThrow("already archived");
 
-    await runtime.dispose();
+    await system.dispose();
   });
 
   it("fails command dispatch when command invariants are violated", async () => {
