@@ -31,6 +31,11 @@ export interface TranscriptFile {
   readonly mtimeMs: number;
 }
 
+export interface TranscriptReadResult {
+  readonly records: readonly UsageRecord[];
+  readonly malformedRecords: number;
+}
+
 /**
  * Lists `.jsonl` transcripts under `root` last modified at or after `sinceMs`.
  *
@@ -90,8 +95,8 @@ export async function readDirectoryVolumeId(path: string): Promise<string> {
 }
 
 /**
- * Streams one transcript and returns the usage records it contains, or `null`
- * when the file could not be read.
+ * Streams one transcript and returns its usage records and parser diagnostics,
+ * or `null` when the file could not be read.
  *
  * The distinction matters to the caller's cache: a genuinely empty transcript
  * is a stable fact worth memoising, while a transient read failure memoised
@@ -105,7 +110,7 @@ export async function readDirectoryVolumeId(path: string): Promise<string> {
 export async function readTranscriptRecords(
   filePath: string,
   provider: UsageProviderKind,
-): Promise<readonly UsageRecord[] | null> {
+): Promise<TranscriptReadResult | null> {
   const records: UsageRecord[] = [];
   const codexState = initialCodexScanState();
 
@@ -137,5 +142,10 @@ export async function readTranscriptRecords(
     return null;
   }
 
-  return records;
+  return {
+    records,
+    // Claude reports independent per-request counters, so this cumulative
+    // integrity diagnostic only applies to Codex token-count checkpoints.
+    malformedRecords: provider === "codex" ? codexState.malformedRecords : 0,
+  };
 }

@@ -28,10 +28,18 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
   };
 }
 
-function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][]): ScanCache {
+function cacheWith(
+  entries: readonly [string, number, readonly UsageRecord[], malformedRecords?: number][],
+): ScanCache {
   const cache: ScanCache = new Map();
-  for (const [path, mtimeMs, records] of entries) {
-    cache.set(path, { size: records.length * 10, mtimeMs, provider: "claude", records });
+  for (const [path, mtimeMs, records, malformedRecords = 0] of entries) {
+    cache.set(path, {
+      size: records.length * 10,
+      mtimeMs,
+      provider: "claude",
+      records,
+      malformedRecords,
+    });
   }
   return cache;
 }
@@ -50,6 +58,25 @@ describe("scan cache round trip", () => {
     expect(restored.get("/b.jsonl")).toEqual(original.get("/b.jsonl"));
   });
 
+  it("restores per-file malformed record diagnostics", () => {
+    const original: ScanCache = new Map([
+      [
+        "/codex.jsonl",
+        {
+          size: 10,
+          mtimeMs: 100,
+          provider: "codex",
+          records: [record({ provider: "codex" })],
+          malformedRecords: 2,
+        },
+      ],
+    ]);
+
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(original))));
+
+    expect(restored.get("/codex.jsonl")?.malformedRecords).toBe(2);
+  });
+
   it("interns repeated model and session strings", () => {
     const encoded = encodeScanCache(
       cacheWith([["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:" }), record()]]]),
@@ -66,6 +93,19 @@ describe("scan cache round trip", () => {
     expect(decodeScanCache({ version: 999, models: [], sessions: [], files: {} }).size).toBe(0);
   });
 
+  it("uses a distinct cache revision for Codex reconciliation diagnostics", () => {
+    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
+
+    expect(encoded.version).toBe(4);
+  });
+
+  it("invalidates v2 and v3 caches that lack reconciliation diagnostics", () => {
+    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
+
+    expect(decodeScanCache({ ...encoded, version: 2 }).size).toBe(0);
+    expect(decodeScanCache({ ...encoded, version: 3 }).size).toBe(0);
+  });
+
   it("skips malformed file entries but keeps good ones", () => {
     const encoded = encodeScanCache(cacheWith([["/good.jsonl", 100, [record()]]]));
     const withJunk = {
@@ -75,6 +115,24 @@ describe("scan cache round trip", () => {
 
     const restored = decodeScanCache(JSON.parse(JSON.stringify(withJunk)));
     expect([...restored.keys()]).toEqual(["/good.jsonl"]);
+  });
+
+  it("invalidates a file entry whose diagnostic count is missing or malformed", () => {
+    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]])) as {
+      readonly version: number;
+      readonly models: readonly string[];
+      readonly sessions: readonly string[];
+      readonly files: Readonly<Record<string, object>>;
+    };
+    const entry = encoded.files["/a.jsonl"]!;
+
+    const missing = { ...encoded, files: { "/a.jsonl": { ...entry, e: undefined } } };
+    const negative = { ...encoded, files: { "/a.jsonl": { ...entry, e: -1 } } };
+    const fractional = { ...encoded, files: { "/a.jsonl": { ...entry, e: 0.5 } } };
+
+    expect(decodeScanCache(JSON.parse(JSON.stringify(missing))).has("/a.jsonl")).toBe(false);
+    expect(decodeScanCache(JSON.parse(JSON.stringify(negative))).has("/a.jsonl")).toBe(false);
+    expect(decodeScanCache(JSON.parse(JSON.stringify(fractional))).has("/a.jsonl")).toBe(false);
   });
 
   it("rejects the whole cache when an intern table holds a non-string", () => {

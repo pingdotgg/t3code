@@ -18,13 +18,14 @@ import type { UsageProviderKind } from "@t3tools/contracts";
 
 import type { UsageRecord } from "./usageTranscripts.ts";
 
-export const USAGE_SCAN_CACHE_VERSION = 1 as const;
+export const USAGE_SCAN_CACHE_VERSION = 4 as const;
 
 export interface CachedFile {
   readonly size: number;
   readonly mtimeMs: number;
   readonly provider: UsageProviderKind;
   readonly records: readonly UsageRecord[];
+  readonly malformedRecords: number;
 }
 
 export type ScanCache = Map<string, CachedFile>;
@@ -51,6 +52,8 @@ interface SerializedFile {
   readonly s: number;
   readonly m: number;
   readonly p: UsageProviderKind;
+  /** Number of parser-rejected counter records in this file. */
+  readonly e: number;
   readonly r: readonly SerializedRecord[];
 }
 
@@ -83,6 +86,7 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
       s: entry.size,
       m: entry.mtimeMs,
       p: entry.provider,
+      e: entry.malformedRecords,
       r: entry.records.map((record) => [
         record.timestampMs,
         intern(models, modelIndex, record.model),
@@ -133,6 +137,7 @@ export function decodeScanCache(document: unknown): ScanCache {
     const entry = raw as Partial<SerializedFile>;
     if (typeof entry.s !== "number" || typeof entry.m !== "number") continue;
     if (entry.p !== "claude" && entry.p !== "codex") continue;
+    if (typeof entry.e !== "number" || !Number.isSafeInteger(entry.e) || entry.e < 0) continue;
     if (!isRecordArray(entry.r)) continue;
 
     const provider: UsageProviderKind = entry.p;
@@ -192,7 +197,13 @@ export function decodeScanCache(document: unknown): ScanCache {
     }
 
     if (corrupt) continue;
-    cache.set(path, { size: entry.s, mtimeMs: entry.m, provider, records });
+    cache.set(path, {
+      size: entry.s,
+      mtimeMs: entry.m,
+      provider,
+      records,
+      malformedRecords: entry.e,
+    });
   }
 
   return cache;
