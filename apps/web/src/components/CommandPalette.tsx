@@ -33,6 +33,7 @@ import {
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
+  LaptopIcon,
   LinkIcon,
   MessageSquareIcon,
   PaletteIcon,
@@ -62,12 +63,18 @@ import { useTheme } from "../hooks/useTheme";
 import { readLocalApi } from "../localApi";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment } from "../state/filesystem";
+import { mirrorEnvironment } from "../state/mirror";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
+import { readPreparedConnection } from "../state/session";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
-import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
+import {
+  type EnvironmentPresentation,
+  useEnvironments,
+  usePrimaryEnvironmentId,
+} from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
@@ -362,6 +369,32 @@ function errorMessage(error: unknown): string {
   return "An error occurred.";
 }
 
+/**
+ * Project mirroring follows the threadSettlement version-skew contract: the
+ * feature stays hidden unless both peers advertise the capability.
+ */
+function environmentAdvertisesProjectMirroring(
+  environment: EnvironmentPresentation | null | undefined,
+): boolean {
+  return environment?.serverConfig?.environment.capabilities.projectMirroring === true;
+}
+
+function isMirrorNotARepositoryError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    (error as { readonly _tag: unknown })._tag === "MirrorNotARepositoryError"
+  );
+}
+
+interface AddProjectMirrorFlow {
+  /** Environment the project (and its agents) will live on. */
+  readonly hostEnvironmentId: EnvironmentId;
+  /** Environment whose filesystem holds the mirrored folder. */
+  readonly originEnvironmentId: EnvironmentId;
+}
+
 const OVERLAY_MODE_BY_COMMAND = {
   "commandPalette.toggle": "command",
   "filePicker.toggle": "files",
@@ -573,6 +606,12 @@ function OpenCommandPaletteDialog(props: {
   const cloneRepository = useAtomCommand(sourceControlEnvironment.cloneRepository, {
     reportFailure: false,
   });
+  const createMirrorPeerCredential = useAtomCommand(mirrorEnvironment.createPeerCredential, {
+    reportFailure: false,
+  });
+  const attachMirrorOrigin = useAtomCommand(mirrorEnvironment.attach, {
+    reportFailure: false,
+  });
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -619,8 +658,12 @@ function OpenCommandPaletteDialog(props: {
   );
   const [isPickingProjectFolder, setIsPickingProjectFolder] = useState(false);
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
+  const [addProjectMirrorFlow, setAddProjectMirrorFlow] = useState<AddProjectMirrorFlow | null>(
+    null,
+  );
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
+  const [isMirrorProjectLinking, setIsMirrorProjectLinking] = useState(false);
   const projectGroupingSettings = useMemo(
     () => selectProjectGroupingSettings(clientSettings),
     [clientSettings],
@@ -1062,6 +1105,7 @@ function OpenCommandPaletteDialog(props: {
   function popView(): void {
     browseNavigation.invalidate();
     setAddProjectCloneFlow(null);
+    setAddProjectMirrorFlow(null);
     if (viewStack.length <= 1) {
       setAddProjectEnvironmentId(null);
     }
@@ -1098,6 +1142,7 @@ function OpenCommandPaletteDialog(props: {
         () => {
           setAddProjectEnvironmentId(environmentId);
           setAddProjectCloneFlow(null);
+          setAddProjectMirrorFlow(null);
           pushPaletteView(view);
         },
       );
@@ -1111,9 +1156,84 @@ function OpenCommandPaletteDialog(props: {
     ],
   );
 
+  const startAddProjectMirrorBrowse = useCallback(
+    async (hostEnvironmentId: EnvironmentId, originEnvironmentId: EnvironmentId): Promise<void> => {
+      const initialQuery = getAddProjectInitialQueryForEnvironment(originEnvironmentId);
+      const initialBrowsePath = getBrowseDirectoryPath(initialQuery);
+      const view: CommandPaletteView = {
+        addonIcon: <LaptopIcon className={ADDON_ICON_CLASS} />,
+        groups: [],
+        initialQuery,
+      };
+
+      await browseNavigation.run(
+        () =>
+          initialBrowsePath.length > 0
+            ? prefetchBrowsePath(initialBrowsePath, originEnvironmentId, null)
+            : Promise.resolve(),
+        () => {
+          // Browse the origin's filesystem; the project itself is created on
+          // the host, which the mirror flow keeps track of.
+          setAddProjectEnvironmentId(originEnvironmentId);
+          setAddProjectCloneFlow(null);
+          setAddProjectMirrorFlow({ hostEnvironmentId, originEnvironmentId });
+          pushPaletteView(view);
+        },
+      );
+    },
+    [
+      browseNavigation,
+      getAddProjectInitialQueryForEnvironment,
+      prefetchBrowsePath,
+      pushPaletteView,
+    ],
+  );
+
+  const getMirrorOriginEnvironments = useCallback(
+    (hostEnvironmentId: EnvironmentId) =>
+      environments.filter(
+        (environment) =>
+          environment.environmentId !== hostEnvironmentId &&
+          canCreateProjectInEnvironment(environment.connection.phase) &&
+          environmentAdvertisesProjectMirroring(environment),
+      ),
+    [environments],
+  );
+
+  const startAddProjectMirrorOriginSelection = useCallback(
+    (hostEnvironmentId: EnvironmentId): void => {
+      const originItems: CommandPaletteActionItem[] = getMirrorOriginEnvironments(
+        hostEnvironmentId,
+      ).map((environment) => ({
+        kind: "action",
+        value: `action:add-project:mirror:${hostEnvironmentId}:${environment.environmentId}`,
+        searchTerms: [environment.label, environment.environmentId],
+        title: environment.label,
+        description: environment.environmentId,
+        icon: <LaptopIcon className={ITEM_ICON_CLASS} />,
+        keepOpen: true,
+        run: async () => {
+          await startAddProjectMirrorBrowse(hostEnvironmentId, environment.environmentId);
+        },
+      }));
+      pushPaletteView({
+        addonIcon: <LaptopIcon className={ADDON_ICON_CLASS} />,
+        groups: [
+          {
+            value: `mirror-origins:${hostEnvironmentId}`,
+            label: "Machine with the files",
+            items: originItems,
+          },
+        ],
+      });
+    },
+    [getMirrorOriginEnvironments, pushPaletteView, startAddProjectMirrorBrowse],
+  );
+
   const startAddProjectClone = useCallback(
     (environmentId: EnvironmentId, source: AddProjectRemoteSource): void => {
       setAddProjectEnvironmentId(environmentId);
+      setAddProjectMirrorFlow(null);
       setAddProjectCloneFlow({ step: "repository", environmentId, source });
       pushPaletteView({
         addonIcon: remoteProjectSourceIcon(source, ADDON_ICON_CLASS),
@@ -1148,6 +1268,28 @@ function OpenCommandPaletteDialog(props: {
           },
         },
       ];
+
+      // Mirrored projects need the capability on both peers: this environment
+      // (the host) and at least one other connected environment (the origin).
+      if (
+        environmentAdvertisesProjectMirroring(
+          environments.find((candidate) => candidate.environmentId === environmentId),
+        ) &&
+        getMirrorOriginEnvironments(environmentId).length > 0
+      ) {
+        sourceItems.push({
+          kind: "action",
+          value: `action:add-project:${environmentId}:mirror`,
+          searchTerms: ["mirror", "remote", "machine", "device", "laptop", "sync", "origin"],
+          title: "Files live on another machine",
+          description: "Mirror a git repository from another environment",
+          icon: <LaptopIcon className={ITEM_ICON_CLASS} />,
+          keepOpen: true,
+          run: async () => {
+            startAddProjectMirrorOriginSelection(environmentId);
+          },
+        });
+      }
 
       const orderedSources: ReadonlyArray<AddProjectRemoteSource> = [
         "url",
@@ -1220,7 +1362,14 @@ function OpenCommandPaletteDialog(props: {
 
       return [{ value: `sources:${environmentId}`, label: "Sources", items: sourceItems }];
     },
-    [openSourceControlSettings, startAddProjectBrowse, startAddProjectClone],
+    [
+      environments,
+      getMirrorOriginEnvironments,
+      openSourceControlSettings,
+      startAddProjectBrowse,
+      startAddProjectClone,
+      startAddProjectMirrorOriginSelection,
+    ],
   );
 
   const startAddProjectSourceSelection = useCallback(
@@ -1240,6 +1389,7 @@ function OpenCommandPaletteDialog(props: {
       }
       setAddProjectEnvironmentId(environmentId);
       setAddProjectCloneFlow(null);
+      setAddProjectMirrorFlow(null);
       pushPaletteView({
         addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
         groups: buildAddProjectSourceGroups(
@@ -1702,6 +1852,162 @@ function OpenCommandPaletteDialog(props: {
     ],
   );
 
+  /**
+   * Mirrored-project setup sequence: create the project on the host (with
+   * `origin` set so the server derives its own mirror workspace root), mint a
+   * mirror:sync bearer on the host, then attach the origin folder so its
+   * MirrorAgent can reach back to the host over HTTP.
+   */
+  const handleAddMirroredProject = useCallback(
+    async (rawPath: string) => {
+      const flow = addProjectMirrorFlow;
+      if (!flow || isMirrorProjectLinking) return;
+      const hostEnvironment = environments.find(
+        (candidate) => candidate.environmentId === flow.hostEnvironmentId,
+      );
+      const originEnvironment = environments.find(
+        (candidate) => candidate.environmentId === flow.originEnvironmentId,
+      );
+      const hostConnected = canCreateProjectInEnvironment(hostEnvironment?.connection.phase);
+      if (!hostConnected || !canCreateProjectInEnvironment(originEnvironment?.connection.phase)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Environment unavailable",
+            description: `${
+              (hostConnected ? originEnvironment?.label : hostEnvironment?.label) ??
+              "The selected environment"
+            } is not connected.`,
+          }),
+        );
+        return;
+      }
+
+      const rootPath = resolveProjectPathForDispatch(rawPath, null);
+      if (rootPath.length === 0) return;
+
+      const hostUrl = readPreparedConnection(flow.hostEnvironmentId)?.httpBaseUrl ?? null;
+      if (hostUrl === null) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to add project",
+            description: "No HTTP endpoint is known for the host environment yet.",
+          }),
+        );
+        return;
+      }
+
+      setIsMirrorProjectLinking(true);
+      try {
+        const projectId = newProjectId();
+        const hostProviders =
+          hostEnvironment?.serverConfig?.providers ??
+          (flow.hostEnvironmentId === primaryEnvironmentId ? providers : []);
+        const createResult = await createProject({
+          environmentId: flow.hostEnvironmentId,
+          input: {
+            projectId,
+            title: inferProjectTitleFromPath(rootPath),
+            // The server derives the host-side mirror root itself; the origin
+            // path only rides along as a placeholder.
+            workspaceRoot: rootPath,
+            createWorkspaceRootIfMissing: false,
+            defaultModelSelection: resolveDefaultProviderModelSelection(hostProviders, null),
+            origin: {
+              environmentId: flow.originEnvironmentId,
+              rootPath,
+              label: originEnvironment?.label ?? null,
+            },
+          },
+        });
+        if (createResult._tag === "Failure") {
+          if (!isAtomCommandInterrupted(createResult)) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to add project",
+                description: errorMessage(squashAtomCommandFailure(createResult)),
+              }),
+            );
+          }
+          return;
+        }
+
+        const credentialResult = await createMirrorPeerCredential({
+          environmentId: flow.hostEnvironmentId,
+          input: { projectId, originEnvironmentId: flow.originEnvironmentId },
+        });
+        if (credentialResult._tag === "Failure") {
+          if (!isAtomCommandInterrupted(credentialResult)) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to link machines",
+                description: errorMessage(squashAtomCommandFailure(credentialResult)),
+              }),
+            );
+          }
+          return;
+        }
+
+        const attachResult = await attachMirrorOrigin({
+          environmentId: flow.originEnvironmentId,
+          input: {
+            projectId,
+            hostUrl,
+            token: credentialResult.value.token,
+            localRootPath: rootPath,
+          },
+        });
+        if (attachResult._tag === "Failure") {
+          if (!isAtomCommandInterrupted(attachResult)) {
+            const error = squashAtomCommandFailure(attachResult);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: isMirrorNotARepositoryError(error)
+                  ? "Folder is not a git repository"
+                  : "Failed to link machines",
+                description: errorMessage(error),
+              }),
+            );
+          }
+          return;
+        }
+
+        const navigationResult = await settlePromise(() =>
+          handleNewThread(scopeProjectRef(flow.hostEnvironmentId, projectId)),
+        );
+        if (navigationResult._tag === "Failure") {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to open project",
+              description: errorMessage(squashAtomCommandFailure(navigationResult)),
+            }),
+          );
+          return;
+        }
+        setOpen(false);
+      } finally {
+        setIsMirrorProjectLinking(false);
+      }
+    },
+    [
+      addProjectMirrorFlow,
+      attachMirrorOrigin,
+      createMirrorPeerCredential,
+      createProject,
+      environments,
+      handleNewThread,
+      isMirrorProjectLinking,
+      primaryEnvironmentId,
+      providers,
+      setOpen,
+    ],
+  );
+
   function getDefaultCloneParentPath(environmentId: EnvironmentId): string {
     return getAddProjectInitialQueryForEnvironment(environmentId);
   }
@@ -1937,13 +2243,16 @@ function OpenCommandPaletteDialog(props: {
   const useMetaForMod = isMacPlatform(navigator.platform);
   const submitModifierLabel = useMetaForMod ? "\u2318" : "Ctrl";
   const isCloneDestinationStep = addProjectCloneFlow?.step === "confirm";
+  const isMirrorBrowseStep = addProjectMirrorFlow !== null;
   const submitActionLabel = isCloneDestinationStep
     ? willCreateProjectPath
       ? "Create & Clone"
       : "Clone"
-    : willCreateProjectPath
-      ? "Create & Add"
-      : "Add";
+    : isMirrorBrowseStep
+      ? "Mirror"
+      : willCreateProjectPath
+        ? "Create & Add"
+        : "Add";
   const addShortcutLabel = hasHighlightedBrowseItem ? `${submitModifierLabel} Enter` : "Enter";
   const remoteProjectButtonLabel = addProjectCloneFlow
     ? addProjectCloneFlow.source === "url"
@@ -2029,6 +2338,8 @@ function OpenCommandPaletteDialog(props: {
       event.preventDefault();
       if (isCloneDestinationStep) {
         void submitAddProjectCloneFlow(resolvedAddProjectPath);
+      } else if (isMirrorBrowseStep) {
+        void handleAddMirroredProject(resolvedAddProjectPath);
       } else {
         void handleAddProject(resolvedAddProjectPath);
       }
@@ -2221,7 +2532,8 @@ function OpenCommandPaletteDialog(props: {
               disabled={
                 !canCreateProjectInEnvironment(browseEnvironment?.connection.phase) ||
                 relativePathNeedsActiveProject ||
-                (isCloneDestinationStep && isRemoteProjectPending)
+                (isCloneDestinationStep && isRemoteProjectPending) ||
+                (isMirrorBrowseStep && isMirrorProjectLinking)
               }
               onMouseDown={(event) => {
                 event.preventDefault();
@@ -2232,6 +2544,8 @@ function OpenCommandPaletteDialog(props: {
                 }
                 if (isCloneDestinationStep) {
                   void submitAddProjectCloneFlow(resolvedAddProjectPath);
+                } else if (isMirrorBrowseStep) {
+                  void handleAddMirroredProject(resolvedAddProjectPath);
                 } else {
                   void handleAddProject(resolvedAddProjectPath);
                 }
@@ -2240,7 +2554,11 @@ function OpenCommandPaletteDialog(props: {
           }
         >
           <span>
-            {isCloneDestinationStep && isRemoteProjectPending ? "Cloning" : submitActionLabel}
+            {isCloneDestinationStep && isRemoteProjectPending
+              ? "Cloning"
+              : isMirrorBrowseStep && isMirrorProjectLinking
+                ? "Linking"
+                : submitActionLabel}
           </span>
           <KbdGroup className="pointer-events-none -me-0.5 items-center gap-1">
             <Kbd>{hasHighlightedBrowseItem ? `${submitModifierLabel} Enter` : "Enter"}</Kbd>
@@ -2354,7 +2672,9 @@ function OpenCommandPaletteDialog(props: {
               ? { emptyStateMessage: "Relative paths require an active project." }
               : willCreateProjectPath
                 ? {
-                    emptyStateMessage: "Press Enter to create this folder and add it as a project.",
+                    emptyStateMessage: isMirrorBrowseStep
+                      ? "Mirrored folders must be existing git repositories on the other machine."
+                      : "Press Enter to create this folder and add it as a project.",
                   }
                 : threadSearch.isPending
                   ? { emptyStateMessage: "Searching thread messages…" }

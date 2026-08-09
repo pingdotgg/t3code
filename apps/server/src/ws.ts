@@ -50,6 +50,8 @@ import {
   AssetWorkspaceContextResolutionError,
   RpcClientId,
   EnvironmentAuthorizationError,
+  AuthMirrorSyncScope,
+  MirrorProjectNotMirroredError,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -86,6 +88,8 @@ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as MirrorService from "./mirror/MirrorService.ts";
+import * as MirrorAgent from "./mirror/MirrorAgent.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -395,6 +399,8 @@ const makeWsRpcLayer = (
         ),
       );
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const mirrorService = yield* MirrorService.MirrorService;
+      const mirrorAgentManager = yield* MirrorAgent.MirrorAgentManager;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map(
@@ -2046,6 +2052,60 @@ const makeWsRpcLayer = (
             WS_METHODS.previewAutomationFocusHost,
             previewAutomationBroker.focusHost(input),
             { "rpc.aggregate": "preview-automation" },
+          ),
+        [WS_METHODS.mirrorCreatePeerCredential]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mirrorCreatePeerCredential,
+            Effect.gen(function* () {
+              const isMirrored = yield* mirrorService.isMirroredProject(input.projectId);
+              if (!isMirrored) {
+                return yield* new MirrorProjectNotMirroredError({ projectId: input.projectId });
+              }
+              const issued = yield* serverAuth
+                .issueSession({
+                  subject: `mirror-peer:${input.projectId}`,
+                  scopes: [AuthMirrorSyncScope],
+                  label: `Mirror peer (${input.originEnvironmentId})`,
+                  ttl: Duration.days(365),
+                })
+                .pipe(Effect.orDie);
+              return { token: issued.token };
+            }),
+            { "rpc.aggregate": "mirror" },
+          ),
+        [WS_METHODS.mirrorAttach]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mirrorAttach,
+            mirrorAgentManager.attach(input).pipe(Effect.as({ projectId: input.projectId })),
+            {
+              "rpc.aggregate": "mirror",
+            },
+          ),
+        [WS_METHODS.mirrorDetach]: (input) =>
+          observeRpcEffect(WS_METHODS.mirrorDetach, mirrorAgentManager.detach(input), {
+            "rpc.aggregate": "mirror",
+          }),
+        [WS_METHODS.mirrorConnect]: (input) =>
+          observeRpcStreamEffect(WS_METHODS.mirrorConnect, mirrorService.connect(input), {
+            "rpc.aggregate": "mirror",
+          }),
+        [WS_METHODS.mirrorRespond]: (input) =>
+          observeRpcEffect(WS_METHODS.mirrorRespond, mirrorService.respond(input), {
+            "rpc.aggregate": "mirror",
+          }),
+        [WS_METHODS.mirrorRequestSync]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mirrorRequestSync,
+            mirrorService.requestSync(input.projectId),
+            {
+              "rpc.aggregate": "mirror",
+            },
+          ),
+        [WS_METHODS.subscribeMirrorStatus]: (input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.subscribeMirrorStatus,
+            mirrorService.statusStream(input.projectId),
+            { "rpc.aggregate": "mirror" },
           ),
         [WS_METHODS.subscribePreviewEvents]: (_input) =>
           observeRpcStream(WS_METHODS.subscribePreviewEvents, previewManager.events, {

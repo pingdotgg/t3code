@@ -1,6 +1,8 @@
 import {
   type EnvironmentId,
   type EditorId,
+  type ProjectId,
+  type ProjectOrigin,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
   type ThreadId,
@@ -29,6 +31,7 @@ import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
+import { MirrorStatusChip } from "./MirrorStatusChip";
 import { OpenInPicker } from "./OpenInPicker";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
@@ -48,8 +51,11 @@ interface ChatHeaderProps {
   /** PR state feeding the settled classification, resolved by ChatView. */
   changeRequestState: ChangeRequestStateLike | null;
   activeProjectName: string | undefined;
+  activeProjectId: ProjectId | null;
   activeProjectCwd: string | null;
   activeProjectFaviconPath: string | null;
+  /** Non-null when the project is mirrored from another environment. */
+  activeProjectOrigin: ProjectOrigin | null;
   openInCwd: string | null;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
@@ -101,8 +107,10 @@ export const ChatHeader = memo(function ChatHeader({
   isServerThread,
   changeRequestState,
   activeProjectName,
+  activeProjectId,
   activeProjectCwd,
   activeProjectFaviconPath,
+  activeProjectOrigin,
   openInCwd,
   activeProjectScripts,
   preferredScriptId,
@@ -238,6 +246,13 @@ export const ChatHeader = memo(function ChatHeader({
               </TooltipTrigger>
               <TooltipPopup side="top">New thread in {activeProjectName}</TooltipPopup>
             </Tooltip>
+            {activeProjectId && activeProjectOrigin ? (
+              <MirrorStatusChip
+                environmentId={activeThreadEnvironmentId}
+                projectId={activeProjectId}
+                origin={activeProjectOrigin}
+              />
+            ) : null}
             <span aria-hidden className="text-icon-muted">
               /
             </span>

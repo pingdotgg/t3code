@@ -1,0 +1,40 @@
+/**
+ * mirrorInclude - the t3.json `mirror.include` allowlist.
+ *
+ * Git-based sync never transfers ignored files, so paths an agent needs
+ * anyway (.env and friends) must be declared in t3.json. Both sides read
+ * the list from their own copy of the workspace root; a malformed or
+ * missing t3.json simply means no extra paths.
+ */
+import { T3_PROJECT_FILE_NAME, T3ProjectFile } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import type * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import type * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+
+const decodeProjectFile = Schema.decodeUnknownOption(Schema.fromJsonString(T3ProjectFile));
+
+export const readMirrorIncludePaths = (services: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly path: Path.Path;
+}) =>
+  Effect.fn("mirror.readMirrorIncludePaths")(function* (
+    workspaceRoot: string,
+  ): Effect.fn.Return<ReadonlyArray<string>> {
+    const { fileSystem, path } = services;
+    const contents = yield* fileSystem
+      .readFileString(path.join(workspaceRoot, T3_PROJECT_FILE_NAME))
+      .pipe(Effect.option);
+    if (Option.isNone(contents)) return [];
+    const parsed = decodeProjectFile(contents.value);
+    if (Option.isNone(parsed)) return [];
+    const include = parsed.value.mirror?.include ?? [];
+    // Containment: entries are workspace-relative; anything absolute or
+    // escaping upward is dropped rather than force-added.
+    return include.filter(
+      (entry) =>
+        !path.isAbsolute(entry) &&
+        !entry.split(/[\\/]/).some((segment) => segment === ".." || segment.includes("\0")),
+    );
+  });

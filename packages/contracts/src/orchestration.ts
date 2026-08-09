@@ -9,6 +9,7 @@ import {
   ApprovalRequestId,
   CheckpointRef,
   CommandId,
+  EnvironmentId,
   EventId,
   IsoDateTime,
   MessageId,
@@ -217,11 +218,28 @@ export const ProjectFaviconPath = TrimmedNonEmptyString.check(
 );
 export type ProjectFaviconPath = typeof ProjectFaviconPath.Type;
 
+/**
+ * Where a mirrored project's files actually live: another T3 environment
+ * plus an absolute folder path on that machine. When set, the project's
+ * `workspaceRoot` is a host-local mirror directory kept in sync with the
+ * origin by the mirror sync protocol (see mirror.ts).
+ */
+export const ProjectOrigin = Schema.Struct({
+  environmentId: EnvironmentId,
+  rootPath: TrimmedNonEmptyString,
+  // Origin environment's display label captured at link time, so clients
+  // can name the peer even while it is offline.
+  label: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+});
+export type ProjectOrigin = typeof ProjectOrigin.Type;
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
+  // Optional on the wire so cached snapshots from older servers still decode.
+  origin: Schema.optional(Schema.NullOr(ProjectOrigin)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   // Per-project override for where new threads start. Null/absent means
   // "no override": clients fall back to t3.json, then the global setting.
@@ -421,6 +439,8 @@ export const OrchestrationProjectShell = Schema.Struct({
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
+  // Optional on the wire so cached snapshots from older servers still decode.
+  origin: Schema.optional(Schema.NullOr(ProjectOrigin)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   // Optional on the wire so cached snapshots from older servers still decode.
@@ -627,6 +647,10 @@ export const ProjectCreateCommand = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  // Mirrored project: files live on `origin`; the server derives
+  // `workspaceRoot` as a local mirror directory and rejects a
+  // client-supplied root (see Normalizer).
+  origin: Schema.optional(Schema.NullOr(ProjectOrigin)),
   createdAt: IsoDateTime,
 });
 
@@ -1083,6 +1107,8 @@ export const ProjectCreatedPayload = Schema.Struct({
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
+  // Optional so persisted events from older servers still decode.
+  origin: Schema.optional(Schema.NullOr(ProjectOrigin)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   // Optional so persisted events from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),

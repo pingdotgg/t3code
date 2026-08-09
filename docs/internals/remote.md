@@ -220,13 +220,57 @@ right action without making the transport responsible for process management. Th
 supervisor owns the resulting disconnect and reconnect like any other involuntary close. See
 [server-updates.md](./server-updates.md).
 
+## Project mirroring
+
+Project mirroring lets a project's files live on one environment (the "origin", typically a laptop)
+while agents execute on another (the "host", typically an always-on machine). It does not split the
+runtime boundary above: the host remains the single runtime for the thread — providers, terminals,
+git, search, and checkpoints all operate on a real local directory — and the origin participates
+purely at the connection layer as a _file replica agent_, never as a second orchestrator.
+
+The mechanism is a host-local mirror plus git-native sync:
+
+- A mirrored project's `workspaceRoot` is a host-local directory under `<baseDir>/mirrors/<projectId>`;
+  the project record carries an `origin` descriptor (`ProjectOrigin` in
+  [orchestration.ts](../../packages/contracts/src/orchestration.ts)).
+- The origin runs a `MirrorAgent` ([MirrorAgent.ts](../../apps/server/src/mirror/MirrorAgent.ts))
+  holding an outbound `mirror.connect` stream to the host — matching reachability: the laptop can
+  reach the host, never the reverse. Directives flow host→origin on the stream; answers return via
+  `mirror.respond` (the previewAutomation pattern).
+- Working-tree state travels as hook-free _snapshot commits_ (the checkpoint temp-index technique)
+  shipped in git bundles over single-use HMAC-signed HTTP URLs (`/api/mirror/bundle`, the asset-access
+  pattern). Bundle bytes never cross the RPC WebSocket. Gitignored files are excluded by
+  construction; the `mirror.include` allowlist in `t3.json` force-includes declared exceptions
+  (.env and friends).
+- Sync is turn-driven, not continuous. `MirrorService.ensureFresh`
+  ([MirrorService.ts](../../apps/server/src/mirror/MirrorService.ts)) gates turn start in the
+  provider command reactor: the origin pushes an incremental bundle (or answers no-change with one
+  WS round-trip), the host applies it to the mirror with a three-way merge against the last-synced
+  snapshot, so host-side edits made between turns merge instead of being clobbered. After the
+  post-turn checkpoint, an apply-back ships the mirror's state to the origin, non-blocking; the
+  origin fetches into its `.git` first (durability before any working-tree change), then applies
+  with local preference — a user's mid-turn edits always win on their own machine, conflicted paths
+  are surfaced, and the agent's version stays reachable in the origin's `.git`.
+- Offline behavior fails visible: an unreachable origin fails turn start with an actionable error,
+  and resending within ten minutes explicitly runs against the last-synced mirror. Queued
+  apply-backs persist in `mirror_sync_runtime` and replay when the agent reconnects.
+- The peer link is an ordinary bearer session scoped to the dedicated `mirror:sync` scope, minted by
+  `mirror.createPeerCredential` and stored on the origin in the secret store. Capability negotiation
+  uses `projectMirroring` in `ExecutionEnvironmentCapabilities`.
+
+v1 excludes: continuous watch-based sync, non-git origin folders, browser/mobile as the file-owning
+side, multiple origins per project, and proxied git push through the origin (push/PR actions run on
+the host mirror and need credentials there).
+
 ## Future work
 
 These remain unbuilt and are listed to keep the model honest:
 
 - third-party tunnel products as additional endpoint providers;
 - a relay-hosted OAuth callback broker (see [t3-connect.md](./t3-connect.md));
-- richer multi-environment UI beyond the current connections list.
+- richer multi-environment UI beyond the current connections list;
+- project mirroring: continuous background sync, a conflict-resolution UX beyond the path list, and
+  proxying git pushes through the origin so the host never needs remote credentials.
 
 [model]: ../../packages/client-runtime/src/connection/model.ts
 [onboarding]: ../../packages/client-runtime/src/connection/onboarding.ts

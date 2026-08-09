@@ -24,6 +24,14 @@ The top-level workspace record in the app. In [the orchestration contracts][1], 
 
 The root filesystem path for a project. In [the orchestration model][1], it is the base directory for branches and optional worktrees. See [workspace-layout.md][2].
 
+#### Mirrored project
+
+A project whose files live on another environment (the **origin**) while agents execute here (the **host**). The project's `workspaceRoot` is a host-local mirror directory kept in sync by the mirror protocol; the `origin` field on `OrchestrationProject` names the file-owning environment and folder. See [remote.md](./remote.md#project-mirroring) and `apps/server/src/mirror/`.
+
+#### MirrorAgent
+
+The origin-side runtime of project mirroring: one outbound connection per mirror link that answers the host's sync directives and moves git bundles over signed HTTP URLs. See [MirrorAgent.ts](../../apps/server/src/mirror/MirrorAgent.ts).
+
 #### Worktree
 
 A Git worktree used as an isolated workspace for a thread. If a thread has a `worktreePath` in [the contracts][1], it runs there instead of in the main working tree. Git operations live behind the VCS driver contract in `apps/server/src/vcs/VcsDriver.ts`, implemented by [GitVcsDriverCore.ts][3].

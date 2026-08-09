@@ -71,6 +71,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server can stream self-update progress before acknowledging the
       restart. Clients fall back to server.updateServer when absent. */
   serverSelfUpdateProgress: Schema.optionalKey(Schema.Boolean),
+  /** Server understands project mirroring (mirror.* RPCs, projects with an
+      origin). Same version-skew contract as threadSettlement: clients hide
+      the feature unless both environments advertise it. */
+  projectMirroring: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

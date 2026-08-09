@@ -80,6 +80,27 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
         );
 
     if (canonicalCommand.type === "project.create") {
+      // Mirrored project: files live on the origin environment. The
+      // workspace root is always a server-derived mirror directory; any
+      // client-supplied root is ignored so a client can never point a
+      // mirror at an arbitrary host path.
+      if (canonicalCommand.origin != null) {
+        const mirrorRoot = path.join(serverConfig.mirrorsDir, canonicalCommand.projectId);
+        yield* fileSystem.makeDirectory(mirrorRoot, { recursive: true }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationDispatchCommandError({
+                message: `Failed to create mirror directory: ${cause.message}`,
+              }),
+          ),
+        );
+        return {
+          ...canonicalCommand,
+          workspaceRoot: mirrorRoot,
+          createWorkspaceRootIfMissing: false,
+        } satisfies OrchestrationCommand;
+      }
+
       return {
         ...canonicalCommand,
         workspaceRoot: yield* normalizeProjectWorkspaceRootForCreate(
