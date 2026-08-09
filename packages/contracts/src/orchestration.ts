@@ -1018,6 +1018,16 @@ const ThreadActivityAppendCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadTurnStartRecoveryFailCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn-start.recovery-fail"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  requestSequence: Schema.NullOr(NonNegativeInt),
+  detail: Schema.String,
+  createdAt: IsoDateTime,
+});
+
 const ThreadRevertCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.revert.complete"),
   commandId: CommandId,
@@ -1041,6 +1051,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
+  ThreadTurnStartRecoveryFailCommand,
   ThreadRevertCompleteCommand,
   ThreadTitleRegenerationCompleteCommand,
 ]);
@@ -1082,6 +1093,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "thread.turn-start-recovery-failed",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1328,6 +1340,14 @@ export const ThreadActivityAppendedPayload = Schema.Struct({
   activity: OrchestrationThreadActivity,
 });
 
+export const ThreadTurnStartRecoveryFailedPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  requestSequence: Schema.NullOr(NonNegativeInt),
+  detail: Schema.String,
+  createdAt: IsoDateTime,
+});
+
 export const OrchestrationEventMetadata = Schema.Struct({
   providerTurnId: Schema.optional(TrimmedNonEmptyString),
   providerItemId: Schema.optional(ProviderItemId),
@@ -1494,6 +1514,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-start-recovery-failed"),
+    payload: ThreadTurnStartRecoveryFailedPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;

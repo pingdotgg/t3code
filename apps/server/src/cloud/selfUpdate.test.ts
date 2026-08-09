@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import { ThreadId } from "@t3tools/contracts";
 import { HostProcessExecutablePath } from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -32,6 +33,11 @@ interface HarnessOptions {
     | "unsafe-collab-wait";
   readonly activeWorkByCheck?: ReadonlyArray<number>;
   readonly activeLatestTurnByCheck?: ReadonlyArray<boolean>;
+  readonly pendingTurnStartsByCheck?: ReadonlyArray<number>;
+  readonly afterPreflight?: () => void;
+  readonly getShellSnapshot?: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]["getShellSnapshot"];
+  readonly getCounts?: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]["getCounts"];
+  readonly getUpdateAdmissionSnapshot?: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]["getUpdateAdmissionSnapshot"];
   readonly requestUpdate?: ServiceLauncherClient.ServiceLauncherClient["Service"]["requestUpdate"];
   readonly commitUpdateHandoff?: TurnAdmissionGate.TurnAdmissionGate["Service"]["commitUpdateHandoff"];
 }
@@ -81,6 +87,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
           options.preflight === "blocked"
             ? { status: "blocked", version: "1.1.0", reason: "local update required" }
             : readyResult;
+        options.afterPreflight?.();
         return {
           // @effect-diagnostics-next-line preferSchemaOverJson:off - fake child-process stdout.
           stdout: JSON.stringify(result),
@@ -106,27 +113,46 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
   const config = yield* ServerConfig.ServerConfig.pipe(
     Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
   );
-  let activeWorkCheck = 0;
+  let admissionCheck = 0;
   const projectionSnapshotQuery = {
-    getShellSnapshot: () => {
-      const configured = options.activeWorkByCheck ?? [0];
-      const activeWorkCount = configured[Math.min(activeWorkCheck, configured.length - 1)] ?? 0;
-      const latestTurnConfigured = options.activeLatestTurnByCheck ?? [false];
-      const hasActiveLatestTurn =
-        latestTurnConfigured[Math.min(activeWorkCheck, latestTurnConfigured.length - 1)] ?? false;
-      activeWorkCheck += 1;
-      return Effect.succeed({
-        threads: Array.from(
-          { length: Math.max(activeWorkCount, hasActiveLatestTurn ? 1 : 0) },
-          (_, index) => ({
-            id: `thread-${index}`,
-            session: { status: index < activeWorkCount ? "running" : "ready" },
-            latestTurn: hasActiveLatestTurn ? { state: "running" } : null,
-            backgroundLiveness: null,
-          }),
-        ),
-      });
-    },
+    getShellSnapshot:
+      options.getShellSnapshot ??
+      (() =>
+        Effect.succeed({
+          threads: [],
+          projects: [],
+          snapshotSequence: 0,
+          updatedAt: "1970-01-01T00:00:00.000Z",
+        })),
+    getCounts: options.getCounts ?? (() => Effect.succeed({ projectCount: 0, threadCount: 0 })),
+    getUpdateAdmissionSnapshot:
+      options.getUpdateAdmissionSnapshot ??
+      (() => {
+        const activeThreadIds = new Set<ThreadId>();
+        const activeWorkConfigured = options.activeWorkByCheck ?? [0];
+        const activeWorkCount =
+          activeWorkConfigured[Math.min(admissionCheck, activeWorkConfigured.length - 1)] ?? 0;
+        for (let index = 0; index < activeWorkCount; index += 1) {
+          activeThreadIds.add(ThreadId.make(`thread-${index}`));
+        }
+        const latestTurnConfigured = options.activeLatestTurnByCheck ?? [false];
+        if (
+          latestTurnConfigured[Math.min(admissionCheck, latestTurnConfigured.length - 1)] ??
+          false
+        ) {
+          activeThreadIds.add(ThreadId.make("thread-0"));
+        }
+        const pendingTurnStartsConfigured = options.pendingTurnStartsByCheck ?? [0];
+        const pendingTurnStartCount =
+          pendingTurnStartsConfigured[
+            Math.min(admissionCheck, pendingTurnStartsConfigured.length - 1)
+          ] ?? 0;
+        for (let index = 0; index < pendingTurnStartCount; index += 1) {
+          activeThreadIds.add(ThreadId.make(`thread-${index}`));
+        }
+        admissionCheck += 1;
+        return Effect.succeed({ activeThreadIds: Array.from(activeThreadIds) });
+      }),
   } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"];
   const baseTurnAdmissionGate = yield* TurnAdmissionGate.make;
   const turnAdmissionGate = TurnAdmissionGate.TurnAdmissionGate.of({
@@ -214,6 +240,99 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         "T3 Code cannot update while 1 thread is still working. Let the work finish or stop it, then retry.",
       );
       expect(order).toEqual([]);
+    }),
+  );
+
+  it.effect("refuses the handoff when only a durable pending turn start exists", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order } = yield* makeHarness({
+        activeWorkByCheck: [0, 0],
+        activeLatestTurnByCheck: [false, false],
+        pendingTurnStartsByCheck: [0, 1],
+      });
+      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
+        "T3 Code cannot update while 1 thread is still working. Let the work finish or stop it, then retry.",
+      );
+      expect(order).toEqual(["install", "preflight", "gate"]);
+    }),
+  );
+
+  it.effect("uses one coherent admission read across the pending-to-running transition", () =>
+    Effect.gen(function* () {
+      let phase: "idle" | "pending" | "running" = "pending";
+      const shellCaptured = yield* Deferred.make<void>();
+      const transitionCompleted = yield* Deferred.make<void>();
+
+      // Reproduce the old torn boundary: the shell transaction captures the
+      // ready session, then the reactor projects running and removes pending
+      // before the separate pending-count read.
+      const legacySplit = yield* Effect.all(
+        {
+          shell: Deferred.succeed(shellCaptured, undefined).pipe(
+            Effect.andThen(Deferred.await(transitionCompleted)),
+            Effect.as({ activeThreadCount: 0 }),
+          ),
+          pending: Deferred.await(shellCaptured).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                phase = "running";
+              }),
+            ),
+            Effect.andThen(Deferred.succeed(transitionCompleted, undefined)),
+            Effect.as({ pendingTurnStartCount: 0 }),
+          ),
+        },
+        { concurrency: "unbounded" },
+      );
+      expect(legacySplit).toEqual({
+        shell: { activeThreadCount: 0 },
+        pending: { pendingTurnStartCount: 0 },
+      });
+      expect(phase).toBe("running");
+
+      phase = "idle";
+      let coherentAdmissionReads = 0;
+      let legacyAdmissionReads = 0;
+      const { selfUpdate, order } = yield* makeHarness({
+        afterPreflight: () => {
+          phase = "pending";
+        },
+        getUpdateAdmissionSnapshot: () =>
+          Effect.sync(() => {
+            coherentAdmissionReads += 1;
+            return {
+              activeThreadIds: phase === "idle" ? [] : [ThreadId.make("thread-pending-to-running")],
+            };
+          }),
+        getShellSnapshot: () =>
+          Effect.sync(() => {
+            legacyAdmissionReads += 1;
+            if (phase === "pending") phase = "running";
+            return {
+              threads: [],
+              projects: [],
+              snapshotSequence: 0,
+              updatedAt: "1970-01-01T00:00:00.000Z",
+            };
+          }),
+        getCounts: () =>
+          Effect.sync(() => {
+            legacyAdmissionReads += 1;
+            return {
+              projectCount: 0,
+              threadCount: 0,
+              pendingTurnStartCount: phase === "pending" ? 1 : 0,
+            };
+          }),
+      });
+
+      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
+        "T3 Code cannot update while 1 thread is still working. Let the work finish or stop it, then retry.",
+      );
+      expect(order).toEqual(["install", "preflight", "gate"]);
+      expect(coherentAdmissionReads).toBe(2);
+      expect(legacyAdmissionReads).toBe(0);
+      expect(phase).toBe("pending");
     }),
   );
 

@@ -116,9 +116,21 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
           SELECT
             activity.thread_id AS "threadId",
             json_extract(activity.payload_json, '$.taskId') AS "taskId",
-            json_extract(activity.payload_json, '$.taskType') AS "taskType",
-            json_extract(activity.payload_json, '$.status') AS "status",
-            json_extract(activity.payload_json, '$.agentId') AS "agentId",
+            CASE
+              WHEN json_type(activity.payload_json, '$.taskType') = 'text'
+              THEN json_extract(activity.payload_json, '$.taskType')
+              ELSE NULL
+            END AS "taskType",
+            CASE
+              WHEN json_type(activity.payload_json, '$.status') = 'text'
+              THEN json_extract(activity.payload_json, '$.status')
+              ELSE NULL
+            END AS "status",
+            CASE
+              WHEN json_type(activity.payload_json, '$.agentId') = 'text'
+              THEN json_extract(activity.payload_json, '$.agentId')
+              ELSE NULL
+            END AS "agentId",
             activity.kind,
             ROW_NUMBER() OVER (
               PARTITION BY

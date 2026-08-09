@@ -37,6 +37,11 @@ export interface ProjectionSnapshotSequence {
   readonly snapshotSequence: number;
 }
 
+export interface ProjectionUpdateAdmissionSnapshot {
+  /** Unique threads with durable or in-memory work that makes restart unsafe. */
+  readonly activeThreadIds: ReadonlyArray<ThreadId>;
+}
+
 export interface ProjectionThreadCheckpointContext {
   readonly threadId: ThreadId;
   readonly projectId: ProjectId;
@@ -118,6 +123,15 @@ export interface ProjectionSnapshotQueryShape {
    * Read aggregate projection counts without hydrating the full read model.
    */
   readonly getCounts: () => Effect.Effect<ProjectionSnapshotCounts, ProjectionRepositoryError>;
+
+  /**
+   * Read the complete update-admission state in one coherent projection
+   * transaction, including durable pending turn starts.
+   */
+  readonly getUpdateAdmissionSnapshot: () => Effect.Effect<
+    ProjectionUpdateAdmissionSnapshot,
+    ProjectionRepositoryError
+  >;
 
   /**
    * Read the active project for an exact workspace root match.

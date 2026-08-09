@@ -458,6 +458,36 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
     }),
   );
 
+  it.effect("emits a correlated pending turn-start recovery failure event", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.turn-start.recovery-fail",
+          commandId: CommandId.make("cmd-turn-start-recovery-fail"),
+          threadId: ThreadId.make("thread-missing-from-read-model"),
+          messageId: MessageId.make("message-recovery-fail"),
+          requestSequence: 42,
+          detail: "Provider delivery could not be proven.",
+          createdAt: NOW,
+        },
+        readModel: makeReadModel(null),
+      });
+      const events = Array.isArray(result) ? result : [result];
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        type: "thread.turn-start-recovery-failed",
+        payload: {
+          threadId: "thread-missing-from-read-model",
+          messageId: "message-recovery-fail",
+          requestSequence: 42,
+          detail: "Provider delivery could not be proven.",
+          createdAt: NOW,
+        },
+      });
+    }),
+  );
+
   it.effect("does not unsettle for session stop/error status writes", () =>
     Effect.gen(function* () {
       for (const status of ["stopped", "error", "ready", "idle"] as const) {

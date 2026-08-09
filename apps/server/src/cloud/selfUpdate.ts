@@ -64,30 +64,20 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     cause === undefined
       ? new ServerSelfUpdateError({ reason })
       : new ServerSelfUpdateError({ reason, cause });
+  const refuseActiveWork = (activeWorkCount: number) =>
+    Effect.fail(
+      failWith(
+        `T3 Code cannot update while ${activeWorkCount} ${activeWorkCount === 1 ? "thread is" : "threads are"} still working. Let the work finish or stop it, then retry.`,
+      ),
+    );
   const ensureNoActiveWork = () =>
-    projectionSnapshotQuery.getShellSnapshot().pipe(
+    projectionSnapshotQuery.getUpdateAdmissionSnapshot().pipe(
       Effect.mapError((cause) =>
         failWith("Could not verify that every thread is idle before updating T3 Code.", cause),
       ),
-      Effect.flatMap((snapshot) => {
-        const activeWorkCount = snapshot.threads.filter((thread) => {
-          const status = thread.session?.status;
-          return (
-            status === "starting" ||
-            status === "running" ||
-            thread.latestTurn?.state === "running" ||
-            thread.backgroundLiveness === "working" ||
-            thread.backgroundLiveness === "monitoring"
-          );
-        }).length;
-        return activeWorkCount === 0
-          ? Effect.void
-          : Effect.fail(
-              failWith(
-                `T3 Code cannot update while ${activeWorkCount} ${activeWorkCount === 1 ? "thread is" : "threads are"} still working. Let the work finish or stop it, then retry.`,
-              ),
-            );
-      }),
+      Effect.flatMap(({ activeThreadIds }) =>
+        activeThreadIds.length === 0 ? Effect.void : refuseActiveWork(activeThreadIds.length),
+      ),
     );
 
   const update: ServerSelfUpdate["Service"]["update"] = Effect.fn(

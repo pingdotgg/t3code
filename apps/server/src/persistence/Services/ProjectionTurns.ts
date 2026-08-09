@@ -105,6 +105,14 @@ export const MarkProjectionPendingTurnDeliveryInput = Schema.Struct({
 export type MarkProjectionPendingTurnDeliveryInput =
   typeof MarkProjectionPendingTurnDeliveryInput.Type;
 
+export const SettleProjectionPendingTurnStartInput = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  requestSequence: Schema.NullOr(NonNegativeInt),
+});
+export type SettleProjectionPendingTurnStartInput =
+  typeof SettleProjectionPendingTurnStartInput.Type;
+
 export const DeleteProjectionTurnsByThreadInput = Schema.Struct({
   threadId: ThreadId,
 });
@@ -156,6 +164,14 @@ export interface ProjectionTurnRepositoryShape {
   readonly markPendingTurnDeliveryStarted: (
     input: MarkProjectionPendingTurnDeliveryInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
+
+  /**
+   * Deletes the pending-start placeholder only when all correlation fields
+   * still match. Returns false when a newer request has replaced it.
+   */
+  readonly settlePendingTurnStartIfMatches: (
+    input: SettleProjectionPendingTurnStartInput,
+  ) => Effect.Effect<boolean, ProjectionRepositoryError>;
 
   /**
    * Deletes only pending-start placeholder rows (`turnId = null`) for a thread and leaves concrete turn rows untouched.

@@ -7,7 +7,11 @@ export const PROVIDER_LIFECYCLE_RECOVERY_REQUIRED_REASON =
 export const EMPTY_COLLAB_WAIT_RECOVERY_PROTOCOL = 1 as const;
 export const EMPTY_COLLAB_WAIT_RECOVERY_REQUIRED_REASON =
   "This T3 Code release does not include the required empty collaboration-wait recovery. The current server was kept running.";
-export const PENDING_TURN_RECOVERY_PROTOCOL = 2 as const;
+// Protocol 3 requires exact-request settlement and delivery correlation at the
+// projection boundary. Protocol 2 could still let a stale recovery race erase
+// a newer pending turn, so it must never pass an upgrade preflight as if it
+// carried the complete recovery contract.
+export const PENDING_TURN_RECOVERY_PROTOCOL = 3 as const;
 export const PENDING_TURN_RECOVERY_REQUIRED_REASON =
   "This T3 Code release does not include the required durable pending-turn recovery. The current server was kept running.";
 

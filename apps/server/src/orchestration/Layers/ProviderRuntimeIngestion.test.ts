@@ -102,6 +102,7 @@ function createProviderServiceHarness() {
   const runtimeSessions: ProviderSession[] = [];
   let listSessionsCallCount = 0;
   const beforeListSessionsCall = new Map<number, () => void>();
+  const afterListSessionsCall = new Map<number, () => void>();
 
   const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
   const service: ProviderServiceShape = {
@@ -119,7 +120,13 @@ function createProviderServiceHarness() {
           beforeListSessionsCall.delete(listSessionsCallCount);
           hook();
         }
-        return [...runtimeSessions];
+        const observedSessions = [...runtimeSessions];
+        const afterHook = afterListSessionsCall.get(listSessionsCallCount);
+        if (afterHook !== undefined) {
+          afterListSessionsCall.delete(listSessionsCallCount);
+          afterHook();
+        }
+        return observedSessions;
       }),
     getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
     getInstanceInfo: (instanceId) => {
@@ -142,7 +149,11 @@ function createProviderServiceHarness() {
   };
 
   const setSession = (session: ProviderSession): void => {
-    const existingIndex = runtimeSessions.findIndex((entry) => entry.threadId === session.threadId);
+    const existingIndex = runtimeSessions.findIndex(
+      (entry) =>
+        entry.threadId === session.threadId &&
+        entry.providerInstanceId === session.providerInstanceId,
+    );
     if (existingIndex >= 0) {
       runtimeSessions[existingIndex] = session;
       return;
@@ -151,9 +162,10 @@ function createProviderServiceHarness() {
   };
 
   const clearSession = (threadId: ThreadId): void => {
-    const existingIndex = runtimeSessions.findIndex((entry) => entry.threadId === threadId);
-    if (existingIndex >= 0) {
-      runtimeSessions.splice(existingIndex, 1);
+    for (let index = runtimeSessions.length - 1; index >= 0; index -= 1) {
+      if (runtimeSessions[index]?.threadId === threadId) {
+        runtimeSessions.splice(index, 1);
+      }
     }
   };
 
@@ -184,6 +196,9 @@ function createProviderServiceHarness() {
     getListSessionsCallCount: () => listSessionsCallCount,
     beforeListSessionsCall: (callNumber: number, hook: () => void) => {
       beforeListSessionsCall.set(callNumber, hook);
+    },
+    afterListSessionsCall: (callNumber: number, hook: () => void) => {
+      afterListSessionsCall.set(callNumber, hook);
     },
   };
 }
@@ -254,6 +269,7 @@ describe("ProviderRuntimeIngestion", () => {
     initialSession?: {
       status: "ready" | "starting" | "running";
       activeTurnId: TurnId | null;
+      providerInstanceId?: ProviderInstanceId;
     };
     providerSessionStatus?: ProviderSession["status"] | null;
     persistedBackgroundTask?: "active" | "completed";
@@ -390,6 +406,9 @@ describe("ProviderRuntimeIngestion", () => {
         threadId: ThreadId.make("thread-1"),
         status: initialSession.status,
         providerName: "codex",
+        ...(initialSession.providerInstanceId !== undefined
+          ? { providerInstanceId: initialSession.providerInstanceId }
+          : {}),
         runtimeMode: "approval-required",
         activeTurnId: initialSession.activeTurnId,
         updatedAt: createdAt,
@@ -403,6 +422,9 @@ describe("ProviderRuntimeIngestion", () => {
         status:
           options?.providerSessionStatus ??
           (initialSession.status === "starting" ? "connecting" : initialSession.status),
+        ...(initialSession.providerInstanceId !== undefined
+          ? { providerInstanceId: initialSession.providerInstanceId }
+          : {}),
         runtimeMode: "approval-required",
         threadId: ThreadId.make("thread-1"),
         createdAt,
@@ -422,6 +444,7 @@ describe("ProviderRuntimeIngestion", () => {
       clearProviderSession: provider.clearSession,
       getListSessionsCallCount: provider.getListSessionsCallCount,
       beforeListSessionsCall: provider.beforeListSessionsCall,
+      afterListSessionsCall: provider.afterListSessionsCall,
       recordBackgroundTask: () =>
         backgroundLiveness.recordTaskLiveness({
           threadId: "thread-1",
@@ -645,6 +668,78 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread?.latestTurn?.state).toBe("running");
   });
 
+  it("restores authoritative provider state when it becomes live after the final inventory read", async () => {
+    const turnId = asTurnId("turn-provider-after-final-read");
+    const providerInstanceId = ProviderInstanceId.make("codex_work");
+    const harness = await createHarness({
+      initialSession: { status: "running", activeTurnId: turnId, providerInstanceId },
+      providerSessionStatus: "running",
+      initialPlanProgress: true,
+    });
+    harness.recordBackgroundTask();
+
+    const firstRecoveryCall = harness.getListSessionsCallCount() + 1;
+    harness.clearProviderSession(asThreadId("thread-1"));
+    harness.afterListSessionsCall(firstRecoveryCall + 2, () => {
+      // A stale instance can still be draining while the replacement is live.
+      // Put it first to prove recovery does not select by inventory order.
+      harness.setProviderSession({
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex_personal"),
+        status: "running",
+        runtimeMode: "approval-required",
+        threadId: asThreadId("thread-1"),
+        activeTurnId: asTurnId("turn-stale-instance"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:06.000Z",
+      });
+      harness.setProviderSession({
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId,
+        status: "running",
+        runtimeMode: "approval-required",
+        threadId: asThreadId("thread-1"),
+        activeTurnId: turnId,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:07.000Z",
+      });
+      // This lifecycle event is published after recovery captured the empty
+      // final inventory snapshot but before it dispatches the interruption.
+      // session.started alone cannot recover the active turn; the authoritative
+      // ProviderSession correction below must retain it.
+      harness.emit({
+        type: "session.started",
+        eventId: asEventId("evt-provider-after-final-read-started"),
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId,
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:08.000Z",
+        payload: {},
+      });
+    });
+
+    const deadline = (await Effect.runPromise(Clock.currentTimeMillis)) + 10_000;
+    while (harness.getListSessionsCallCount() < firstRecoveryCall + 3) {
+      if ((await Effect.runPromise(Clock.currentTimeMillis)) >= deadline) {
+        throw new Error("Timed out waiting for the post-mutation provider inventory check");
+      }
+      await Effect.runPromise(Effect.sleep("10 millis"));
+    }
+    await harness.drain();
+
+    const thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === asThreadId("thread-1"),
+    );
+    expect(thread?.session?.status).toBe("running");
+    expect(thread?.session?.providerInstanceId).toBe(providerInstanceId);
+    expect(thread?.session?.activeTurnId).toBe(turnId);
+    expect(thread?.session?.lastError).toBeNull();
+    expect(thread?.session?.updatedAt).toBe("2026-01-01T00:00:08.000Z");
+    expect(thread?.latestTurn?.state).toBe("running");
+    expect(harness.getBackgroundLiveness()).toBe("working");
+    expect(harness.getPlanProgress()?.step).toBe("Interrupted step");
+  });
+
   it("clears orphaned background work when its provider disappears", async () => {
     const harness = await createHarness({
       initialSession: { status: "ready", activeTurnId: null },
@@ -705,6 +800,167 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
+  });
+
+  it("ignores delayed lifecycle events from a replaced provider instance", async () => {
+    const staleInstanceId = ProviderInstanceId.make("codex_personal");
+    const currentInstanceId = ProviderInstanceId.make("codex_work");
+    const turnId = asTurnId("turn-current-instance");
+    const harness = await createHarness({
+      initialSession: {
+        status: "running",
+        activeTurnId: turnId,
+        providerInstanceId: currentInstanceId,
+      },
+      providerSessionStatus: "running",
+    });
+
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-current-instance-task-started"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: currentInstanceId,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-01-01T00:00:01.000Z",
+      payload: {
+        taskId: "current-instance-task",
+        taskType: "local_agent",
+        status: "running",
+      },
+    });
+    harness.emit({
+      type: "turn.plan.updated",
+      eventId: asEventId("evt-current-instance-plan"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: currentInstanceId,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-01-01T00:00:02.000Z",
+      payload: {
+        plan: [{ step: "Keep replacement running", status: "inProgress" }],
+      },
+    });
+    await harness.drain();
+    expect(harness.getBackgroundLiveness()).toBe("working");
+    expect(harness.getPlanProgress()?.step).toBe("Keep replacement running");
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-stale-instance-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: staleInstanceId,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-01-01T00:00:03.000Z",
+      payload: { state: "completed" },
+    });
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-stale-instance-runtime-error"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: staleInstanceId,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-01-01T00:00:04.000Z",
+      payload: { message: "stale provider failed" },
+    });
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-stale-instance-session-error"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: staleInstanceId,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-01-01T00:00:04.500Z",
+      payload: { state: "error", reason: "stale session failed" },
+    });
+    harness.emit({
+      type: "task.completed",
+      eventId: asEventId("evt-stale-instance-task-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: staleInstanceId,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-01-01T00:00:05.000Z",
+      payload: {
+        taskId: "current-instance-task",
+        status: "completed",
+      },
+    });
+    harness.emit({
+      type: "turn.plan.updated",
+      eventId: asEventId("evt-stale-instance-plan"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: staleInstanceId,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-01-01T00:00:06.000Z",
+      payload: {
+        plan: [{ step: "Stale plan must not win", status: "inProgress" }],
+      },
+    });
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-stale-instance-session-exited"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: staleInstanceId,
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:07.000Z",
+      payload: {},
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-stale-instance-missing-id-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-01-01T00:00:07.100Z",
+      payload: { state: "completed" },
+    });
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-stale-instance-missing-id-session-exited"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:07.200Z",
+      payload: {},
+    });
+    await harness.drain();
+
+    let thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === asThreadId("thread-1"),
+    );
+    expect(thread?.session?.status).toBe("running");
+    expect(thread?.session?.providerInstanceId).toBe(currentInstanceId);
+    expect(thread?.session?.activeTurnId).toBe(turnId);
+    expect(thread?.session?.lastError).toBeNull();
+    expect(thread?.latestTurn?.state).toBe("running");
+    expect(harness.getBackgroundLiveness()).toBe("working");
+    expect(harness.getPlanProgress()?.step).toBe("Keep replacement running");
+    expect(
+      thread?.activities.some((activity) => activity.id.startsWith("evt-stale-instance-")),
+    ).toBe(false);
+
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-current-instance-session-exited"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: currentInstanceId,
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:08.000Z",
+      payload: {},
+    });
+    await harness.drain();
+
+    thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === asThreadId("thread-1"),
+    );
+    expect(thread?.session?.status).toBe("stopped");
+    expect(thread?.session?.providerInstanceId).toBe(currentInstanceId);
+    expect(thread?.session?.activeTurnId).toBeNull();
+    expect(harness.getBackgroundLiveness()).toBeNull();
+    expect(harness.getPlanProgress()).toBeNull();
   });
 
   it("applies provider session.state.changed transitions directly", async () => {

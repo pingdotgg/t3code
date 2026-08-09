@@ -422,30 +422,20 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const setThreadSessionErrorOnTurnStartFailure = Effect.fnUntraced(function* (input: {
+  const settlePendingTurnStartFailure = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
+    readonly messageId: MessageId;
+    readonly requestSequence: number | null;
     readonly detail: string;
     readonly createdAt: string;
   }) {
-    const thread = yield* resolveThread(input.threadId);
-    if (!thread) {
-      return;
-    }
-    const session = thread.session;
-    yield* setThreadSession({
+    yield* orchestrationEngine.dispatch({
+      type: "thread.turn-start.recovery-fail",
+      commandId: yield* serverCommandId("provider-turn-start-recovery-fail"),
       threadId: input.threadId,
-      session: {
-        ...(session ?? {
-          threadId: input.threadId,
-          providerName: null,
-          providerInstanceId: thread.modelSelection.instanceId,
-          runtimeMode: thread.runtimeMode,
-        }),
-        status: session?.status === "stopped" ? "stopped" : "error",
-        activeTurnId: null,
-        lastError: input.detail,
-        updatedAt: input.createdAt,
-      },
+      messageId: input.messageId,
+      requestSequence: input.requestSequence,
+      detail: input.detail,
       createdAt: input.createdAt,
     });
   });
@@ -576,7 +566,7 @@ const make = Effect.gen(function* () {
     const preferredProvider: ProviderDriverKind = desiredDriverKind;
     if (options?.pendingTurnStart !== undefined) {
       const runningSession = thread.session?.status === "running" ? thread.session : null;
-      yield* setThreadSession({
+      const deliveryMarker = yield* setThreadSession({
         threadId,
         session:
           runningSession === null
@@ -594,6 +584,26 @@ const make = Effect.gen(function* () {
         turnStartDelivery: options.pendingTurnStart,
         createdAt,
       });
+      const markedPendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
+        threadId,
+      });
+      if (
+        Option.isNone(markedPendingTurnStart) ||
+        markedPendingTurnStart.value.messageId !== options.pendingTurnStart.messageId ||
+        markedPendingTurnStart.value.requestSequence !== options.pendingTurnStart.requestSequence ||
+        markedPendingTurnStart.value.deliverySequence !== deliveryMarker.sequence
+      ) {
+        yield* Effect.logWarning(
+          "provider command reactor skipped a superseded turn start before provider delivery",
+          {
+            threadId,
+            messageId: options.pendingTurnStart.messageId,
+            requestSequence: options.pendingTurnStart.requestSequence,
+            deliverySequence: deliveryMarker.sequence,
+          },
+        );
+        return false;
+      }
     }
     if (thread.session !== null) {
       yield* rejectStartedThreadModelChangeIfRequired({
@@ -708,7 +718,7 @@ const make = Effect.gen(function* () {
         !shouldRestartForModelChange &&
         !shouldRestartForModelSelectionChange
       ) {
-        return existingSessionThreadId;
+        return true;
       }
 
       const resumeCursor = shouldRestartForModelChange
@@ -745,12 +755,12 @@ const make = Effect.gen(function* () {
         cwd: restartedSession.cwd,
       });
       yield* bindSessionToThread(restartedSession);
-      return restartedSession.threadId;
+      return true;
     }
 
     const startedSession = yield* startProviderSession(undefined);
     yield* bindSessionToThread(startedSession);
-    return startedSession.threadId;
+    return true;
   });
 
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
@@ -769,13 +779,16 @@ const make = Effect.gen(function* () {
         new Error(`Thread '${input.threadId}' was not found in read model.`),
       );
     }
-    yield* ensureSessionForThread(input.threadId, input.createdAt, {
+    const deliveryMarkerPersisted = yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       pendingTurnStart: {
         messageId: input.messageId,
         requestSequence: input.requestSequence,
       },
     });
+    if (!deliveryMarkerPersisted) {
+      return Option.none();
+    }
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }
@@ -809,13 +822,13 @@ const make = Effect.gen(function* () {
           : requestedModelSelection
         : input.modelSelection;
 
-    return {
+    return Option.some({
       threadId: input.threadId,
       ...(normalizedInput ? { input: normalizedInput } : {}),
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
-    };
+    });
   });
 
   const maybeGenerateAndRenameWorktreeBranchForFirstTurn = Effect.fn(
@@ -1097,7 +1110,8 @@ const make = Effect.gen(function* () {
   const processTurnStartRequested = Effect.fn("processTurnStartRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
   ) {
-    if (recoveredTurnStartSequences.delete(event.sequence)) {
+    const isRecoveryReplay = recoveredTurnStartSequences.delete(event.sequence);
+    if (isRecoveryReplay) {
       const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
         threadId: event.payload.threadId,
       });
@@ -1139,23 +1153,13 @@ const make = Effect.gen(function* () {
         return Effect.void;
       }
       const detail = formatFailureDetail(cause);
-      return setThreadSessionErrorOnTurnStartFailure({
+      return settlePendingTurnStartFailure({
         threadId: event.payload.threadId,
+        messageId: event.payload.messageId,
+        requestSequence: event.sequence,
         detail,
         createdAt: event.payload.createdAt,
-      }).pipe(
-        Effect.flatMap(() =>
-          appendProviderFailureActivity({
-            threadId: event.payload.threadId,
-            kind: "provider.turn.start.failed",
-            summary: "Provider turn start failed",
-            detail,
-            turnId: null,
-            createdAt: event.payload.createdAt,
-          }),
-        ),
-        Effect.asVoid,
-      );
+      });
     };
 
     const recoverTurnStartFailure = (cause: Cause.Cause<unknown>) =>
@@ -1170,6 +1174,13 @@ const make = Effect.gen(function* () {
         ),
       );
 
+    // Keep the durable event timestamp for event-derived messages and failure
+    // activity, but give a restart replay a fresh lifecycle timestamp. Runtime
+    // liveness uses `starting.updatedAt` as its grace-period boundary, so the
+    // historical request time must not make a newly replayed attempt stale.
+    const attemptCreatedAt = isRecoveryReplay
+      ? DateTime.formatIso(yield* DateTime.now)
+      : event.payload.createdAt;
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
       messageId: event.payload.messageId,
@@ -1180,9 +1191,8 @@ const make = Effect.gen(function* () {
         ? { modelSelection: event.payload.modelSelection }
         : {}),
       interactionMode: event.payload.interactionMode,
-      createdAt: event.payload.createdAt,
+      createdAt: attemptCreatedAt,
     }).pipe(
-      Effect.map(Option.some),
       Effect.catchCause((cause) => handleTurnStartFailure(cause).pipe(Effect.as(Option.none()))),
     );
 
@@ -1435,52 +1445,13 @@ const make = Effect.gen(function* () {
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
 
   const settleUnrecoverablePendingTurnStart = Effect.fn("settleUnrecoverablePendingTurnStart")(
-    function* (threadId: ThreadId, messageId: MessageId, detail: string) {
-      const currentPending = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
-        threadId,
-      });
-      if (Option.isNone(currentPending) || currentPending.value.messageId !== messageId) {
-        return;
-      }
-      const thread = yield* resolveThread(threadId);
-      if (!thread) {
-        // This is derived projection residue for a deleted/missing aggregate;
-        // there is no domain thread on which a recovery event can be recorded.
-        yield* projectionTurnRepository.deletePendingTurnStartByThreadId({ threadId });
-        return;
-      }
-      if (thread.session?.status === "starting" || thread.session?.status === "running") {
-        // ProviderRuntimeIngestion owns active-session liveness reconciliation.
-        // Never overwrite work that may still be live at this boundary.
-        return;
-      }
-      const updatedAt = DateTime.formatIso(yield* DateTime.now);
-      yield* setThreadSession({
-        threadId,
-        session: {
-          ...(thread.session ?? {
-            threadId,
-            providerName: null,
-            providerInstanceId: thread.modelSelection.instanceId,
-            runtimeMode: thread.runtimeMode,
-          }),
-          status:
-            thread.session?.status === "stopped" || thread.session?.status === "interrupted"
-              ? thread.session.status
-              : "error",
-          activeTurnId: null,
-          lastError: detail,
-          updatedAt,
-        },
-        createdAt: updatedAt,
-      });
-      yield* appendProviderFailureActivity({
-        threadId,
-        kind: "provider.turn.start.failed",
-        summary: "Provider turn start was recovered after restart",
+    function* (pending: ProjectionPendingTurnStart, detail: string) {
+      yield* settlePendingTurnStartFailure({
+        threadId: pending.threadId,
+        messageId: pending.messageId,
+        requestSequence: pending.requestSequence,
         detail,
-        turnId: null,
-        createdAt: updatedAt,
+        createdAt: DateTime.formatIso(yield* DateTime.now),
       });
     },
   );
@@ -1501,9 +1472,10 @@ const make = Effect.gen(function* () {
 
     const thread = yield* resolveThread(pending.threadId);
     if (!thread) {
-      yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
-        threadId: pending.threadId,
-      });
+      yield* settleUnrecoverablePendingTurnStart(
+        pending,
+        "The thread for this pending provider turn no longer exists.",
+      );
       return;
     }
     const sessionStatus = thread.session?.status;
@@ -1514,8 +1486,7 @@ const make = Effect.gen(function* () {
         return;
       }
       yield* settleUnrecoverablePendingTurnStart(
-        pending.threadId,
-        pending.messageId,
+        pending,
         "This message crossed an older server restart boundary and its provider delivery cannot be proven. It was not replayed automatically because doing so could duplicate provider actions. Retry the message.",
       );
       return;
@@ -1536,8 +1507,7 @@ const make = Effect.gen(function* () {
         return;
       }
       yield* settleUnrecoverablePendingTurnStart(
-        pending.threadId,
-        pending.messageId,
+        pending,
         "The durable provider turn-start record could not be verified after restart. It was not replayed automatically because doing so could duplicate provider actions. Retry the message.",
       );
       return;
@@ -1549,8 +1519,7 @@ const make = Effect.gen(function* () {
         return;
       }
       yield* settleUnrecoverablePendingTurnStart(
-        pending.threadId,
-        pending.messageId,
+        pending,
         "This message crossed a server restart after provider delivery began. It was not replayed automatically because doing so could duplicate provider actions. Retry the message if no response appears.",
       );
       return;
