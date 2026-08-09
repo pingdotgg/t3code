@@ -1067,6 +1067,34 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 
+  it("keeps a pre-shell draft discoverable by thread ref across workspace mode changes", () => {
+    const store = useComposerDraftStore.getState();
+    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      envMode: "local",
+      worktreePath: null,
+    });
+
+    store.setDraftThreadContext(draftId, {
+      envMode: "worktree",
+      worktreePath: null,
+    });
+    expect(useComposerDraftStore.getState().getDraftThreadByRef(threadRef)).toMatchObject({
+      envMode: "worktree",
+      worktreePath: null,
+    });
+
+    store.setDraftThreadContext(draftId, {
+      envMode: "local",
+      worktreePath: null,
+    });
+    expect(useComposerDraftStore.getState().getDraftThreadByRef(threadRef)).toMatchObject({
+      envMode: "local",
+      worktreePath: null,
+    });
+  });
+
   it("stores the start-from-origin choice with the draft thread", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, {
