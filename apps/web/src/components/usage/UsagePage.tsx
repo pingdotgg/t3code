@@ -1,5 +1,6 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
-import { RefreshCwIcon } from "lucide-react";
+import { useCanGoBack, useNavigate, useRouter } from "@tanstack/react-router";
+import { ArrowLeftIcon, RefreshCwIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { cn } from "../../lib/utils";
@@ -27,6 +28,9 @@ export function UsagePage() {
   const [windowDays, setWindowDays] = useState<number>(30);
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
   const [breakdown, setBreakdown] = useState<"model" | "day">("model");
+  const canGoBack = useCanGoBack();
+  const navigate = useNavigate();
+  const router = useRouter();
 
   // Recomputed only when the window length changes, so a re-render does not
   // shift the range and refetch every environment.
@@ -57,11 +61,27 @@ export function UsagePage() {
     <ScrollArea className="h-full">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-6">
         <header className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex flex-col gap-1">
-            <h1 className="text-2xl font-semibold text-foreground">Usage</h1>
-            <p className="text-sm text-muted-foreground">
-              {formatDayShort(window.sinceDay)} to {formatDayShort(window.untilDay)}
-            </p>
+          <div className="flex items-start gap-3">
+            <button
+              type="button"
+              aria-label="Back"
+              onClick={() => {
+                if (canGoBack) {
+                  router.history.back();
+                  return;
+                }
+                void navigate({ to: "/" });
+              }}
+              className="mt-1 cursor-pointer rounded-md border border-border p-2 text-muted-foreground hover:text-foreground"
+            >
+              <ArrowLeftIcon className="size-3.5" />
+            </button>
+            <div className="flex flex-col gap-1">
+              <h1 className="text-2xl font-semibold text-foreground">Usage</h1>
+              <p className="text-sm text-muted-foreground">
+                {formatDayShort(window.sinceDay)} to {formatDayShort(window.untilDay)}
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <div className="flex overflow-hidden rounded-md border border-border">
@@ -222,140 +242,116 @@ export function UsagePage() {
               />
             </section>
 
-            <section className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,18rem)]">
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center justify-between gap-3">
-                  <h2 className="text-sm font-medium text-foreground">Breakdown</h2>
-                  <div className="flex overflow-hidden rounded-md border border-border">
-                    {(["model", "day"] as const).map((option) => (
-                      <button
-                        key={option}
-                        type="button"
-                        onClick={() => setBreakdown(option)}
-                        className={cn(
-                          "cursor-pointer px-2.5 py-1 text-[10px] tracking-wide uppercase",
-                          option === breakdown
-                            ? "bg-muted text-foreground"
-                            : "text-muted-foreground hover:text-foreground",
-                        )}
-                      >
-                        {option}
-                      </button>
-                    ))}
-                  </div>
+            <section className="flex flex-col gap-3">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-sm font-medium text-foreground">Breakdown</h2>
+                <div className="flex overflow-hidden rounded-md border border-border">
+                  {(["model", "day"] as const).map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => setBreakdown(option)}
+                      className={cn(
+                        "cursor-pointer px-2.5 py-1 text-[10px] tracking-wide uppercase",
+                        option === breakdown
+                          ? "bg-muted text-foreground"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {option}
+                    </button>
+                  ))}
                 </div>
-
-                {breakdown === "model" ? (
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                        <th className="py-2 font-normal">Model</th>
-                        <th className="py-2 text-right font-normal">Cost</th>
-                        <th className="py-2 text-right font-normal">Share</th>
-                        <th className="py-2 text-right font-normal">Tokens</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {merged.models.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} className="py-6 text-center text-muted-foreground">
-                            No activity in this window.
-                          </td>
-                        </tr>
-                      ) : (
-                        merged.models.map((model) => (
-                          <tr
-                            key={`${model.provider}:${model.model}`}
-                            className="border-b border-border/50"
-                          >
-                            <td className="py-2 text-foreground">
-                              <span className="flex items-center gap-2">
-                                <ProviderMark provider={model.provider} className="size-3.5" />
-                                {model.model}
-                              </span>
-                            </td>
-                            <td className="py-2 text-right text-foreground tabular-nums">
-                              {formatUsd(model.costUsd)}
-                            </td>
-                            <td className="py-2 text-right text-muted-foreground tabular-nums">
-                              {formatPercent(model.costShare)}
-                            </td>
-                            <td className="py-2 text-right text-muted-foreground tabular-nums">
-                              {formatTokens(model.totalTokens)}
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                ) : (
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                        <th className="py-2 font-normal">Day</th>
-                        {PROVIDER_ORDER.map((provider) => (
-                          <th key={provider} className="py-2 text-right font-normal">
-                            {PROVIDER_LABEL[provider]}
-                          </th>
-                        ))}
-                        <th className="py-2 text-right font-normal">Total</th>
-                        <th className="py-2 text-right font-normal">Tokens</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {recentDays.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className="py-6 text-center text-muted-foreground">
-                            No activity in this window.
-                          </td>
-                        </tr>
-                      ) : (
-                        recentDays.map((day) => (
-                          <tr key={day.day} className="border-b border-border/50">
-                            <td className="py-2 text-foreground">{formatDayShort(day.day)}</td>
-                            {PROVIDER_ORDER.map((provider) => (
-                              <td
-                                key={provider}
-                                className="py-2 text-right text-muted-foreground tabular-nums"
-                              >
-                                {formatUsd(day.byProvider.get(provider)?.costUsd ?? 0)}
-                              </td>
-                            ))}
-                            <td className="py-2 text-right text-foreground tabular-nums">
-                              {formatUsd(day.costUsd)}
-                            </td>
-                            <td className="py-2 text-right text-muted-foreground tabular-nums">
-                              {formatTokens(day.totalTokens)}
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                )}
               </div>
 
-              <div className="flex flex-col gap-3">
-                <h2 className="text-sm font-medium text-foreground">Cost quality</h2>
-                <dl className="flex flex-col">
-                  <QualityRow
-                    label="Provider reported"
-                    value={formatPercent(merged.costQuality.providerReportedShare)}
-                  />
-                  <QualityRow
-                    label="Model priced"
-                    value={formatPercent(merged.costQuality.modelPricedShare)}
-                  />
-                  <QualityRow
-                    label="Unpriced"
-                    value={formatPercent(merged.costQuality.unpricedShare)}
-                  />
-                  <QualityRow
-                    label="Cache savings"
-                    value={formatUsd(merged.costQuality.cacheSavingsUsd)}
-                  />
-                </dl>
-              </div>
+              {breakdown === "model" ? (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                      <th className="py-2 font-normal">Model</th>
+                      <th className="py-2 text-right font-normal">Cost</th>
+                      <th className="py-2 text-right font-normal">Share</th>
+                      <th className="py-2 text-right font-normal">Tokens</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {merged.models.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="py-6 text-center text-muted-foreground">
+                          No activity in this window.
+                        </td>
+                      </tr>
+                    ) : (
+                      merged.models.map((model) => (
+                        <tr
+                          key={`${model.provider}:${model.model}`}
+                          className="border-b border-border/50"
+                        >
+                          <td className="py-2 text-foreground">
+                            <span className="flex items-center gap-2">
+                              <ProviderMark provider={model.provider} className="size-3.5" />
+                              {model.model}
+                            </span>
+                          </td>
+                          <td className="py-2 text-right text-foreground tabular-nums">
+                            {formatUsd(model.costUsd)}
+                          </td>
+                          <td className="py-2 text-right text-muted-foreground tabular-nums">
+                            {formatPercent(model.costShare)}
+                          </td>
+                          <td className="py-2 text-right text-muted-foreground tabular-nums">
+                            {formatTokens(model.totalTokens)}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                      <th className="py-2 font-normal">Day</th>
+                      {PROVIDER_ORDER.map((provider) => (
+                        <th key={provider} className="py-2 text-right font-normal">
+                          {PROVIDER_LABEL[provider]}
+                        </th>
+                      ))}
+                      <th className="py-2 text-right font-normal">Total</th>
+                      <th className="py-2 text-right font-normal">Tokens</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recentDays.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-6 text-center text-muted-foreground">
+                          No activity in this window.
+                        </td>
+                      </tr>
+                    ) : (
+                      recentDays.map((day) => (
+                        <tr key={day.day} className="border-b border-border/50">
+                          <td className="py-2 text-foreground">{formatDayShort(day.day)}</td>
+                          {PROVIDER_ORDER.map((provider) => (
+                            <td
+                              key={provider}
+                              className="py-2 text-right text-muted-foreground tabular-nums"
+                            >
+                              {formatUsd(day.byProvider.get(provider)?.costUsd ?? 0)}
+                            </td>
+                          ))}
+                          <td className="py-2 text-right text-foreground tabular-nums">
+                            {formatUsd(day.costUsd)}
+                          </td>
+                          <td className="py-2 text-right text-muted-foreground tabular-nums">
+                            {formatTokens(day.totalTokens)}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              )}
             </section>
           </>
         )}
@@ -390,15 +386,6 @@ function Metric({
       <span className="text-xs text-muted-foreground">{label}</span>
       <span className="text-lg text-foreground tabular-nums">{value}</span>
       <span className="text-xs text-muted-foreground">{detail}</span>
-    </div>
-  );
-}
-
-function QualityRow({ label, value }: { readonly label: string; readonly value: string }) {
-  return (
-    <div className="flex items-center justify-between border-b border-border/50 py-2 text-sm">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="text-foreground tabular-nums">{value}</dd>
     </div>
   );
 }
