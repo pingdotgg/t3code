@@ -63,6 +63,41 @@ describe("isPrivateHost", () => {
     expect(isPrivateHost("2606:4700:4700::1111")).toBe(false);
   });
 
+  it("detects IPv4-mapped IPv6 addresses in both spellings", () => {
+    for (const host of [
+      "::ffff:192.168.1.10",
+      "::ffff:10.0.0.1",
+      "::ffff:100.126.17.15",
+      "[::ffff:192.168.1.10]",
+      // c0a8:010a is 192.168.1.10, 0a00:0001 is 10.0.0.1.
+      "::ffff:c0a8:010a",
+      "::ffff:a00:1",
+    ]) {
+      expect(isPrivateHost(host), host).toBe(true);
+    }
+    expect(isPrivateHost("::ffff:8.8.8.8")).toBe(false);
+    expect(isPrivateHost("::ffff:808:808")).toBe(false);
+  });
+
+  it("ignores a trailing DNS root label", () => {
+    for (const host of [
+      "localhost.",
+      "printer.local.",
+      "api.internal.",
+      "box.tailnet.ts.net.",
+      "air.",
+    ]) {
+      expect(isPrivateHost(host), host).toBe(true);
+    }
+    expect(isPrivateHost("github.com.")).toBe(false);
+  });
+
+  it("detects names under .localhost", () => {
+    for (const host of ["app.localhost", "api.app.localhost", "APP.LOCALHOST"]) {
+      expect(isPrivateHost(host), host).toBe(true);
+    }
+  });
+
   it("treats an empty host as private", () => {
     expect(isPrivateHost("")).toBe(true);
     expect(isPrivateHost("   ")).toBe(true);

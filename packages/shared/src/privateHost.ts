@@ -8,7 +8,40 @@
  * import it.
  */
 
-const PRIVATE_HOST_SUFFIXES = [".local", ".internal", ".home.arpa", ".ts.net"];
+// RFC 6761 reserves every name under .localhost for the loopback interface.
+const PRIVATE_HOST_SUFFIXES = [".localhost", ".local", ".internal", ".home.arpa", ".ts.net"];
+
+const IPV4_MAPPED_PREFIX = /^::ffff:/;
+
+/**
+ * The IPv4 address inside an IPv4-mapped IPv6 address, or null.
+ *
+ * Accepts the dotted form `::ffff:192.168.1.10` and the hex form
+ * `::ffff:c0a8:010a`.
+ */
+function ipv4FromMappedIpv6(address: string): string | null {
+  if (!IPV4_MAPPED_PREFIX.test(address)) {
+    return null;
+  }
+  const tail = address.replace(IPV4_MAPPED_PREFIX, "");
+  if (tail.includes(".")) {
+    return tail;
+  }
+  const groups = tail.split(":");
+  if (groups.length !== 2) {
+    return null;
+  }
+  const [high, low] = groups;
+  if (high === undefined || low === undefined) {
+    return null;
+  }
+  if (!/^[0-9a-f]{1,4}$/.test(high) || !/^[0-9a-f]{1,4}$/.test(low)) {
+    return null;
+  }
+  const highValue = Number.parseInt(high, 16);
+  const lowValue = Number.parseInt(low, 16);
+  return [highValue >> 8, highValue & 0xff, lowValue >> 8, lowValue & 0xff].join(".");
+}
 
 function isPrivateIpv4(host: string): boolean {
   const parts = host.split(".");
@@ -52,7 +85,8 @@ function isPrivateIpv6(host: string): boolean {
  * sends it to a third party.
  */
 export function isPrivateHost(host: string): boolean {
-  const normalized = host.trim().toLowerCase();
+  // Drop a trailing DNS root label, so "printer.local." matches ".local".
+  const normalized = host.trim().toLowerCase().replace(/\.$/, "");
   if (normalized.length === 0) {
     return true;
   }
@@ -65,6 +99,11 @@ export function isPrivateHost(host: string): boolean {
   // A host with no dot and no colon cannot be a public domain.
   if (!normalized.includes(".") && !normalized.includes(":")) {
     return true;
+  }
+  const bare = normalized.replace(/^\[/, "").replace(/\]$/, "");
+  const mapped = ipv4FromMappedIpv6(bare);
+  if (mapped !== null) {
+    return isPrivateIpv4(mapped);
   }
   return isPrivateIpv4(normalized) || isPrivateIpv6(normalized);
 }
