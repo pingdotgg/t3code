@@ -1,5 +1,6 @@
 import {
   EventId,
+  TURN_START_DELIVERY_PROTOCOL,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -973,6 +974,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           messageId: command.message.messageId,
+          deliveryProtocol: TURN_START_DELIVERY_PROTOCOL,
           ...(command.modelSelection !== undefined
             ? { modelSelection: command.modelSelection }
             : {}),

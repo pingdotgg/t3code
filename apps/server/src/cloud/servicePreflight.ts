@@ -7,6 +7,9 @@ export const PROVIDER_LIFECYCLE_RECOVERY_REQUIRED_REASON =
 export const EMPTY_COLLAB_WAIT_RECOVERY_PROTOCOL = 1 as const;
 export const EMPTY_COLLAB_WAIT_RECOVERY_REQUIRED_REASON =
   "This T3 Code release does not include the required empty collaboration-wait recovery. The current server was kept running.";
+export const PENDING_TURN_RECOVERY_PROTOCOL = 1 as const;
+export const PENDING_TURN_RECOVERY_REQUIRED_REASON =
+  "This T3 Code release does not include the required durable pending-turn recovery. The current server was kept running.";
 
 export type ServicePreflightResult =
   | {
@@ -15,6 +18,7 @@ export type ServicePreflightResult =
       readonly launcherProtocol: typeof SERVICE_LAUNCHER_PROTOCOL;
       readonly providerLifecycleRecoveryProtocol: typeof PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL;
       readonly emptyCollabWaitRecoveryProtocol: typeof EMPTY_COLLAB_WAIT_RECOVERY_PROTOCOL;
+      readonly pendingTurnRecoveryProtocol: typeof PENDING_TURN_RECOVERY_PROTOCOL;
     }
   | {
       readonly status: "blocked";
@@ -44,6 +48,7 @@ export function runServicePreflight(input: {
     launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
     providerLifecycleRecoveryProtocol: PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL,
     emptyCollabWaitRecoveryProtocol: EMPTY_COLLAB_WAIT_RECOVERY_PROTOCOL,
+    pendingTurnRecoveryProtocol: PENDING_TURN_RECOVERY_PROTOCOL,
   };
 }
 
@@ -64,6 +69,13 @@ export function decodeServicePreflightResult(value: unknown): ServicePreflightRe
         reason: PROVIDER_LIFECYCLE_RECOVERY_REQUIRED_REASON,
       };
     }
+    if (record.pendingTurnRecoveryProtocol !== PENDING_TURN_RECOVERY_PROTOCOL) {
+      return {
+        status: "blocked",
+        version: record.version,
+        reason: PENDING_TURN_RECOVERY_REQUIRED_REASON,
+      };
+    }
     if (record.emptyCollabWaitRecoveryProtocol !== EMPTY_COLLAB_WAIT_RECOVERY_PROTOCOL) {
       return {
         status: "blocked",
@@ -77,6 +89,7 @@ export function decodeServicePreflightResult(value: unknown): ServicePreflightRe
       launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
       providerLifecycleRecoveryProtocol: PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL,
       emptyCollabWaitRecoveryProtocol: EMPTY_COLLAB_WAIT_RECOVERY_PROTOCOL,
+      pendingTurnRecoveryProtocol: PENDING_TURN_RECOVERY_PROTOCOL,
     };
   }
   if (

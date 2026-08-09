@@ -72,6 +72,7 @@ export type ProjectionTurnById = typeof ProjectionTurnById.Type;
 export const ProjectionPendingTurnStart = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
+  requestSequence: Schema.NullOr(NonNegativeInt),
   sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
   requestedAt: IsoDateTime,
@@ -127,6 +128,16 @@ export interface ProjectionTurnRepositoryShape {
   readonly getPendingTurnStartByThreadId: (
     input: GetProjectionPendingTurnStartInput,
   ) => Effect.Effect<Option.Option<ProjectionPendingTurnStart>, ProjectionRepositoryError>;
+
+  /**
+   * Lists every pending-start placeholder for durable provider-intent
+   * reconciliation. Rows are ordered by event sequence when available, with
+   * legacy rows first so they are terminalized deterministically.
+   */
+  readonly listPendingTurnStarts: () => Effect.Effect<
+    ReadonlyArray<ProjectionPendingTurnStart>,
+    ProjectionRepositoryError
+  >;
 
   /**
    * Deletes only pending-start placeholder rows (`turnId = null`) for a thread and leaves concrete turn rows untouched.

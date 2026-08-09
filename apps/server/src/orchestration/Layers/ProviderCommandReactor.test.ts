@@ -151,6 +151,7 @@ describe("ProviderCommandReactor", () => {
     readonly requiresNewThreadForModelChange?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
+    readonly turnStartBeforeStart?: "recoverable" | "legacy";
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -369,7 +370,20 @@ describe("ProviderCommandReactor", () => {
       Effect.gen(function* () {
         const engine = yield* OrchestrationEngineService;
         return {
-          readEvents: engine.readEvents,
+          readEvents: (fromSequenceExclusive, limit) =>
+            engine.readEvents(fromSequenceExclusive, limit).pipe(
+              Stream.map((event) => {
+                if (
+                  input?.turnStartBeforeStart !== "legacy" ||
+                  event.type !== "thread.turn-start-requested" ||
+                  event.commandId !== "cmd-turn-start-before-reactor"
+                ) {
+                  return event;
+                }
+                const { deliveryProtocol: _deliveryProtocol, ...payload } = event.payload;
+                return { ...event, payload };
+              }),
+            ),
           dispatch: (command) => {
             if (command.type === "thread.title.regeneration.complete") {
               titleRegenerationCompletionDispatchAttempts += 1;
@@ -417,6 +431,7 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(SqlitePersistenceMemory),
     );
     runtime = ManagedRuntime.make(layer);
 
@@ -486,6 +501,24 @@ describe("ProviderCommandReactor", () => {
         }),
       );
     }
+    if (input?.turnStartBeforeStart !== undefined) {
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-before-reactor"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-before-reactor"),
+            role: "user",
+            text: "Recover this committed message after restart",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:01.000Z",
+        }),
+      );
+    }
 
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
@@ -508,6 +541,7 @@ describe("ProviderCommandReactor", () => {
       stateDir,
       drain,
       runEffect,
+      startReactorAgain: () => reactor.start().pipe(Scope.provide(scope!)),
       get titleRegenerationCompletionDispatchAttempts() {
         return titleRegenerationCompletionDispatchAttempts;
       },
@@ -552,6 +586,40 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.status).toBe("starting");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("recovers a protocol-marked turn start committed before the reactor subscribed", async () => {
+    const harness = await createHarness({ turnStartBeforeStart: "recoverable" });
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.status).toBe("starting");
+    expect(thread?.messages.at(-1)?.text).toBe("Recover this committed message after restart");
+
+    await harness.runEffect(harness.startReactorAgain());
+    await harness.drain();
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails a legacy ambiguous pending start visibly instead of duplicating provider work", async () => {
+    const harness = await createHarness({ turnStartBeforeStart: "legacy" });
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return (
+        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.session
+          ?.status === "error"
+      );
+    });
+    expect(harness.startSession).not.toHaveBeenCalled();
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.lastError).toContain("not replayed automatically");
+    expect(thread?.messages.at(-1)?.text).toBe("Recover this committed message after restart");
   });
 
   effectIt.effect("projects starting before a slow provider session finishes", () =>

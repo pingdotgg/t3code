@@ -15,6 +15,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import {
   EMPTY_COLLAB_WAIT_RECOVERY_PROTOCOL,
+  PENDING_TURN_RECOVERY_PROTOCOL,
   PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL,
 } from "./servicePreflight.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
@@ -23,7 +24,12 @@ import * as ServerSelfUpdate from "./selfUpdate.ts";
 interface HarnessOptions {
   readonly mode?: "web" | "desktop";
   readonly managed?: boolean;
-  readonly preflight?: "ready" | "blocked" | "unsafe-lifecycle" | "unsafe-collab-wait";
+  readonly preflight?:
+    | "ready"
+    | "blocked"
+    | "unsafe-lifecycle"
+    | "unsafe-pending-turn"
+    | "unsafe-collab-wait";
   readonly activeWorkByCheck?: ReadonlyArray<number>;
   readonly activeLatestTurnByCheck?: ReadonlyArray<boolean>;
   readonly requestUpdate?: ServiceLauncherClient.ServiceLauncherClient["Service"]["requestUpdate"];
@@ -64,6 +70,9 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
           ...(options.preflight === "unsafe-lifecycle"
             ? {}
             : { providerLifecycleRecoveryProtocol: PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL }),
+          ...(options.preflight === "unsafe-pending-turn"
+            ? {}
+            : { pendingTurnRecoveryProtocol: PENDING_TURN_RECOVERY_PROTOCOL }),
           ...(options.preflight === "unsafe-collab-wait"
             ? {}
             : { emptyCollabWaitRecoveryProtocol: EMPTY_COLLAB_WAIT_RECOVERY_PROTOCOL }),
@@ -213,6 +222,16 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       const { selfUpdate, order } = yield* makeHarness({ preflight: "unsafe-lifecycle" });
       expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
         "This T3 Code release does not include the required automatic provider lifecycle recovery. The current server was kept running.",
+      );
+      expect(order).toEqual(["install", "preflight"]);
+    }),
+  );
+
+  it.effect("refuses an update that would remove durable pending-turn recovery", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order } = yield* makeHarness({ preflight: "unsafe-pending-turn" });
+      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
+        "This T3 Code release does not include the required durable pending-turn recovery. The current server was kept running.",
       );
       expect(order).toEqual(["install", "preflight"]);
     }),

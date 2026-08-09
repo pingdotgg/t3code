@@ -4,6 +4,8 @@ import {
   decodeServicePreflightResult,
   EMPTY_COLLAB_WAIT_RECOVERY_PROTOCOL,
   EMPTY_COLLAB_WAIT_RECOVERY_REQUIRED_REASON,
+  PENDING_TURN_RECOVERY_PROTOCOL,
+  PENDING_TURN_RECOVERY_REQUIRED_REASON,
   PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL,
   PROVIDER_LIFECYCLE_RECOVERY_REQUIRED_REASON,
   runServicePreflight,
@@ -31,6 +33,23 @@ it("requires the database-snapshot launcher protocol", () => {
     launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
     providerLifecycleRecoveryProtocol: PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL,
     emptyCollabWaitRecoveryProtocol: EMPTY_COLLAB_WAIT_RECOVERY_PROTOCOL,
+    pendingTurnRecoveryProtocol: PENDING_TURN_RECOVERY_PROTOCOL,
+  });
+});
+
+it("blocks a candidate that would remove durable pending-turn recovery", () => {
+  expect(
+    decodeServicePreflightResult({
+      status: "ready",
+      version: "1.2.4",
+      launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+      providerLifecycleRecoveryProtocol: PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL,
+      emptyCollabWaitRecoveryProtocol: EMPTY_COLLAB_WAIT_RECOVERY_PROTOCOL,
+    }),
+  ).toEqual({
+    status: "blocked",
+    version: "1.2.4",
+    reason: PENDING_TURN_RECOVERY_REQUIRED_REASON,
   });
 });
 
@@ -55,6 +74,7 @@ it("blocks a candidate that would remove empty collaboration-wait recovery", () 
       version: "1.2.4",
       launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
       providerLifecycleRecoveryProtocol: PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL,
+      pendingTurnRecoveryProtocol: PENDING_TURN_RECOVERY_PROTOCOL,
     }),
   ).toEqual({
     status: "blocked",
