@@ -7,17 +7,7 @@ export function buildThreadListMenuActions(input: {
   readonly titleRegenerationSupported: boolean;
 }): MenuAction[] {
   const regeneratingTitle = input.thread.titleRegeneration != null;
-  return [
-    ...(input.thread.branch
-      ? [
-          {
-            id: "new-thread-on-branch",
-            title: `New thread on ${input.thread.branch}`,
-            image: "plus",
-          } satisfies MenuAction,
-        ]
-      : []),
-    ...input.lifecycleActions,
+  const titleActions: MenuAction[] = [
     { id: "rename", title: "Rename thread", image: "square.and.pencil" },
     ...(input.titleRegenerationSupported
       ? [
@@ -29,6 +19,44 @@ export function buildThreadListMenuActions(input: {
           } satisfies MenuAction,
         ]
       : []),
-    { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
+  ];
+  const utilityActions: MenuAction[] = [
+    { id: "mark-unread", title: "Mark unread", image: "bell.badge" },
+    { id: "copy-path", title: "Copy path", image: "doc.on.doc" },
+    ...(input.thread.branch
+      ? [{ id: "copy-branch", title: "Copy branch", image: "arrow.branch" } satisfies MenuAction]
+      : []),
+  ];
+  return [
+    ...(input.thread.branch
+      ? [
+          {
+            id: "new-thread-on-branch",
+            title: `New thread on ${input.thread.branch}`,
+            image: "plus",
+          } satisfies MenuAction,
+        ]
+      : []),
+    ...input.lifecycleActions,
+    {
+      id: "thread-title-actions",
+      title: "",
+      displayInline: true,
+      subactions: titleActions,
+    },
+    {
+      id: "thread-utility-actions",
+      title: "",
+      displayInline: true,
+      subactions: utilityActions,
+    },
+    {
+      id: "thread-delete-actions",
+      title: "",
+      displayInline: true,
+      subactions: [
+        { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
+      ],
+    },
   ];
 }

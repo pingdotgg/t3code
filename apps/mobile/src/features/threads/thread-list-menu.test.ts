@@ -14,11 +14,20 @@ describe("buildThreadListMenuActions", () => {
     expect(actions.map((action) => action.id)).toEqual([
       "new-thread-on-branch",
       "settle",
-      "rename",
-      "regenerate-title",
-      "delete",
+      "thread-title-actions",
+      "thread-utility-actions",
+      "thread-delete-actions",
     ]);
     expect(actions[0]?.title).toBe("New thread on feature/mobile-menu");
+    expect(actions[2]?.subactions?.map((action) => action.id)).toEqual([
+      "rename",
+      "regenerate-title",
+    ]);
+    expect(actions[3]?.subactions?.map((action) => action.id)).toEqual([
+      "mark-unread",
+      "copy-path",
+      "copy-branch",
+    ]);
   });
 
   it("gates title regeneration and the branch action", () => {
@@ -28,7 +37,17 @@ describe("buildThreadListMenuActions", () => {
       titleRegenerationSupported: false,
     });
 
-    expect(actions.map((action) => action.id)).toEqual(["archive", "rename", "delete"]);
+    expect(actions.map((action) => action.id)).toEqual([
+      "archive",
+      "thread-title-actions",
+      "thread-utility-actions",
+      "thread-delete-actions",
+    ]);
+    expect(actions[1]?.subactions?.map((action) => action.id)).toEqual(["rename"]);
+    expect(actions[2]?.subactions?.map((action) => action.id)).toEqual([
+      "mark-unread",
+      "copy-path",
+    ]);
   });
 
   it("disables title regeneration while one is in flight", () => {
@@ -43,7 +62,9 @@ describe("buildThreadListMenuActions", () => {
       lifecycleActions: [],
       titleRegenerationSupported: true,
     });
-    const action = actions.find((candidate) => candidate.id === "regenerate-title");
+    const action = actions
+      .flatMap((candidate) => candidate.subactions ?? [])
+      .find((candidate) => candidate.id === "regenerate-title");
 
     expect(action?.title).toBe("Regenerating…");
     expect(action?.attributes?.disabled).toBe(true);

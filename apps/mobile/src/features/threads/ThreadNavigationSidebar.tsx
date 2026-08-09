@@ -1031,6 +1031,10 @@ function ThreadNavigationSidebarPane(
               onNewThreadOnBranch={props.onNewThreadOnBranch}
               variant="sidebar"
               thread={thread}
+              projectCwd={
+                projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId))
+                  ?.workspaceRoot ?? null
+              }
               hasQueuedMessages={queuedThreadKeys.has(`${thread.environmentId}:${thread.id}`)}
               environmentLabel={
                 savedConnectionsById[thread.environmentId]?.environmentLabel ?? null

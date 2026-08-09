@@ -1010,6 +1010,10 @@ export function HomeScreen(props: HomeScreenProps) {
               onNewThreadOnBranch={props.onNewThreadOnBranch}
               variant="compact"
               thread={thread}
+              projectCwd={
+                projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId))
+                  ?.workspaceRoot ?? null
+              }
               hasQueuedMessages={queuedThreadKeys.has(`${thread.environmentId}:${thread.id}`)}
               environmentLabel={
                 props.savedConnectionsById[thread.environmentId]?.environmentLabel ?? null
@@ -1051,6 +1055,7 @@ export function HomeScreen(props: HomeScreenProps) {
       handleSwipeableWillOpen,
       handleRegenerateThreadTitle,
       machineByEnvironmentId,
+      projectByKey,
       queuedThreadKeys,
       props.onArchiveThread,
       props.onDeletePendingTask,

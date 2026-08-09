@@ -8,7 +8,7 @@ import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useMemo, type ComponentProps } from "react";
-import { Pressable, useWindowDimensions, View } from "react-native";
+import { Alert, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import Svg, { Circle, Path } from "react-native-svg";
@@ -18,6 +18,7 @@ import { ControlPillMenu } from "../../components/ControlPill";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { cn } from "../../lib/cn";
+import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { HOME_HORIZONTAL_INSET } from "../../lib/layoutMetrics";
 import { relativeTime } from "../../lib/time";
 import { themeColorWithAlpha } from "../../lib/mobileTheme";
@@ -30,6 +31,7 @@ import { buildThreadListMenuActions } from "./thread-list-menu";
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { resolveThreadStatus } from "./threadPresentation";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
+import { useThreadReadState } from "./use-thread-read-state";
 
 /**
  * Shared presentation for the thread lists: the compact (phone) Home list and
@@ -436,6 +438,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly thread: EnvironmentThreadShell;
   readonly environmentLabel: string | null;
   readonly environmentMachine?: EnvironmentMachineKind;
+  readonly projectCwd: string | null;
   /** A message for this thread is waiting in the outbox. */
   readonly hasQueuedMessages?: boolean;
   readonly searchMatch?: EnvironmentThreadSearchMatch;
@@ -482,7 +485,20 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     onNewThreadOnBranch,
     onRenameThread,
   } = props;
-  const status = resolveThreadStatus(thread);
+  const { isUnread, markThreadUnread } = useThreadReadState(thread);
+  const status =
+    resolveThreadStatus(thread) ??
+    (isUnread
+      ? {
+          kind: "done",
+          label: "Done",
+          pillClassName: "bg-emerald-500/12 dark:bg-emerald-500/16",
+          textClassName: "text-emerald-700 dark:text-emerald-300",
+          iconColor: "#10b981",
+          iconBackground: "rgba(16,185,129,0.18)",
+          pulse: false,
+        }
+      : null);
   const pr = useThreadPr(thread);
   const timestamp = relativeTime(
     thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
@@ -518,6 +534,18 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     [onRegenerateThreadTitle, thread],
   );
   const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
+  const handleCopyPath = useCallback(() => {
+    const path = thread.worktreePath ?? props.projectCwd;
+    if (path === null) {
+      Alert.alert("Could not copy path", "This thread does not have a workspace path.");
+      return;
+    }
+    copyTextWithHaptic(path, { target: "thread path", feedback: "selection" });
+  }, [props.projectCwd, thread.worktreePath]);
+  const handleCopyBranch = useCallback(() => {
+    if (thread.branch === null) return;
+    copyTextWithHaptic(thread.branch, { target: "thread branch", feedback: "selection" });
+  }, [thread.branch]);
   const menuActions = useMemo<MenuAction[]>(
     () =>
       buildThreadListMenuActions({
@@ -542,13 +570,19 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       if (nativeEvent.event === "archive") handleArchive();
       if (nativeEvent.event === "rename") handleRename();
       if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
+      if (nativeEvent.event === "mark-unread") markThreadUnread();
+      if (nativeEvent.event === "copy-path") handleCopyPath();
+      if (nativeEvent.event === "copy-branch") handleCopyBranch();
       if (nativeEvent.event === "delete") handleDelete();
     },
     [
       handleArchive,
+      handleCopyBranch,
+      handleCopyPath,
       handleDelete,
       handleRegenerateTitle,
       handleRename,
+      markThreadUnread,
       onNewThreadOnBranch,
       thread,
     ],
