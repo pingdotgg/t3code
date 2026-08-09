@@ -52,8 +52,10 @@ const BENIGN_ERROR_LOG_SNIPPETS = [
   "state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
 ];
 const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds" as const;
-// A child can settle while a wait request is in flight. Two empty completions
-// absorb that race; a third with no live child is a provider liveness failure.
+// A child can settle while a wait request is in flight. Two consecutive empty
+// completions absorb that race; a third provider-confirmed empty result is a
+// liveness failure. Do not gate this on collabChildLiveTurnsRef: that map is a
+// deliberately conservative Stop target cache and can contain stale entries.
 const EMPTY_COLLAB_WAIT_INTERRUPT_THRESHOLD = 3;
 const EMPTY_COLLAB_WAIT_INTERRUPT_TIMEOUT = "5 seconds" as const;
 const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
@@ -1370,15 +1372,7 @@ export const makeCodexSessionRuntime = (
         const activeTurnId = childParentTurnId ?? route.turnId ?? session.activeTurnId ?? null;
         const providerThreadId = currentProviderThreadId(session);
         const completedEmptyCollabWait = isCompletedEmptyCollabWait(notification);
-        const hasLiveCollabChildren = completedEmptyCollabWait
-          ? (yield* Ref.get(collabChildLiveTurnsRef)).size > 0
-          : false;
-        if (
-          completedEmptyCollabWait &&
-          activeTurnId !== null &&
-          providerThreadId !== undefined &&
-          !hasLiveCollabChildren
-        ) {
+        if (completedEmptyCollabWait && activeTurnId !== null && providerThreadId !== undefined) {
           const shouldInterrupt = yield* Ref.modify(emptyCollabWaitGuardRef, (current) => {
             if (current.turnId === activeTurnId && current.interruptRequested) {
               return [false, current] as const;
