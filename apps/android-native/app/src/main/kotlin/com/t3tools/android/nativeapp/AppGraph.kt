@@ -4,10 +4,13 @@ import android.app.Application
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
+import coil.ImageLoader
+import coil.ImageLoaderFactory
+import coil.decode.SvgDecoder
 import com.clerk.api.Clerk
 import com.t3tools.android.protocol.T3ProtocolClient
 
-class NativeAndroidApplication : Application() {
+class NativeAndroidApplication : Application(), ImageLoaderFactory {
   lateinit var graph: AppGraph
     private set
 
@@ -16,6 +19,10 @@ class NativeAndroidApplication : Application() {
     Clerk.initialize(this, BuildConfig.T3_CLERK_PUBLISHABLE_KEY)
     graph = AppGraph(this)
   }
+
+  override fun newImageLoader() = ImageLoader.Builder(this)
+    .components { add(SvgDecoder.Factory()) }
+    .build()
 }
 
 class AppGraph(application: Application) {

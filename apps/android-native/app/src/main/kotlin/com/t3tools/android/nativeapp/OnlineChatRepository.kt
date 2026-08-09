@@ -8,16 +8,22 @@ import com.clerk.api.signin.sendCode
 import com.clerk.api.signin.verifyCode
 import com.clerk.api.sso.OAuthProvider
 import com.t3tools.android.protocol.AtomicStartResult
+import com.t3tools.android.protocol.ClonedRepository
 import com.t3tools.android.protocol.ConnectedEnvironment
+import com.t3tools.android.protocol.FilesystemBrowseResult
 import com.t3tools.android.protocol.ShellState
 import com.t3tools.android.protocol.StartCommand
 import com.t3tools.android.protocol.T3ProtocolClient
 import com.t3tools.android.protocol.ThreadState
+import com.t3tools.android.protocol.WorkspaceContentMatches
+import com.t3tools.android.protocol.WorkspaceEntries
+import com.t3tools.android.protocol.WorkspaceFile
 import com.t3tools.android.protocol.awaitingSynchronization
 import com.t3tools.android.protocol.editStartCommand
 import com.t3tools.android.protocol.parseProviderModels
 import com.t3tools.android.protocol.reduce
 import com.t3tools.android.protocol.startCommand
+import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -384,13 +390,14 @@ class OnlineChatRepository(
       val current = activeRuntimeLocked() ?: return
       if (current.selectedThreadId == threadId && activeThreadJob?.isActive == true) return
       activeThreadJob?.cancel()
+      activeThreadJob = null
       current.selectedThreadId = threadId
       current.thread = database.loadThread(current.environment.environmentId, threadId) ?: ThreadState()
       current.threadSyncPhase = if (current.thread.sequence >= 0) SyncPhase.Cached else SyncPhase.Synchronizing
       publishLocked()
-      current
+      current.takeIf { threadId in it.shell.threads }
     }
-    startThreadSubscription(runtime)
+    if (runtime != null) startThreadSubscription(runtime)
   }
 
   fun clearSelectedThread() {
@@ -414,6 +421,80 @@ class OnlineChatRepository(
   suspend fun dispatch(environmentId: String, command: JsonObject): Long = withContext(Dispatchers.IO) {
     val runtime = connectedRuntime(environmentId)
     client.dispatch(requireNotNull(runtime.connection).session, command)
+  }
+
+  suspend fun browseFilesystem(
+    environmentId: String,
+    partialPath: String,
+  ): FilesystemBrowseResult = withContext(Dispatchers.IO) {
+    val runtime = connectedRuntime(environmentId)
+    client.browseFilesystem(requireNotNull(runtime.connection).session, partialPath)
+  }
+
+  suspend fun listWorkspaceEntries(
+    environmentId: String,
+    cwd: String,
+  ): WorkspaceEntries = withContext(Dispatchers.IO) {
+    val runtime = connectedRuntime(environmentId)
+    client.listWorkspaceEntries(requireNotNull(runtime.connection).session, cwd)
+  }
+
+  suspend fun searchWorkspaceEntries(
+    environmentId: String,
+    cwd: String,
+    query: String,
+  ): WorkspaceEntries = withContext(Dispatchers.IO) {
+    val runtime = connectedRuntime(environmentId)
+    client.searchWorkspaceEntries(requireNotNull(runtime.connection).session, cwd, query)
+  }
+
+  suspend fun searchWorkspaceContents(
+    environmentId: String,
+    cwd: String,
+    query: String,
+  ): WorkspaceContentMatches = withContext(Dispatchers.IO) {
+    val runtime = connectedRuntime(environmentId)
+    client.searchWorkspaceContents(requireNotNull(runtime.connection).session, cwd, query)
+  }
+
+  suspend fun readWorkspaceFile(
+    environmentId: String,
+    cwd: String,
+    relativePath: String,
+  ): WorkspaceFile = withContext(Dispatchers.IO) {
+    val runtime = connectedRuntime(environmentId)
+    client.readWorkspaceFile(requireNotNull(runtime.connection).session, cwd, relativePath)
+  }
+
+  suspend fun cloneRepository(
+    environmentId: String,
+    remoteUrl: String,
+    destinationPath: String,
+  ): ClonedRepository = withContext(Dispatchers.IO) {
+    val runtime = connectedRuntime(environmentId)
+    client.cloneRepository(
+      requireNotNull(runtime.connection).session,
+      remoteUrl,
+      destinationPath,
+    )
+  }
+
+  suspend fun workspaceAssetUrl(
+    environmentId: String,
+    threadId: String,
+    cwd: String,
+    relativePath: String,
+  ): String = withContext(Dispatchers.IO) {
+    val runtime = connectedRuntime(environmentId)
+    val asset = client.createWorkspaceAssetUrl(
+      requireNotNull(runtime.connection).session,
+      threadId,
+      resolveWorkspaceFilePath(cwd, relativePath),
+    )
+    val base = runtime.environment.httpBaseUrl.trimEnd('/')
+    val relative = asset.relativeUrl
+    if (relative.startsWith("http://") || relative.startsWith("https://")) relative
+    else URI("$base/").resolve(relative.removePrefix("/")).toString()
   }
 
   suspend fun dispatchAtomicStart(start: StartCommand): AtomicStartResult = withContext(Dispatchers.IO) {
@@ -651,6 +732,11 @@ class OnlineChatRepository(
               }
               database.saveShell(environmentId, runtime.shell)
               publishLocked()
+              val selectedThreadId = runtime.selectedThreadId
+              if (activeEnvironmentId == environmentId && selectedThreadId != null &&
+                selectedThreadId in runtime.shell.threads && activeThreadJob?.isActive != true) {
+                startThreadSubscription(runtime)
+              }
               if (runtime.shell.synchronized) {
                 resolveProjectFavicons(environmentId, runtime, connected.session)
                 scheduleEnvironmentDrains(environmentId)

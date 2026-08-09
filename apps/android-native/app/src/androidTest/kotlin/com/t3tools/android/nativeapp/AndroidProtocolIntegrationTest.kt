@@ -2,11 +2,17 @@ package com.t3tools.android.nativeapp
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import coil.imageLoader
+import coil.request.ErrorResult
+import coil.request.ImageRequest
+import coil.request.SuccessResult
 import com.t3tools.android.protocol.T3ProtocolClient
 import com.t3tools.android.protocol.toShellSnapshot
+import java.net.URI
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.jsonPrimitive
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -19,6 +25,10 @@ class AndroidProtocolIntegrationTest {
   fun pairs_and_loads_shell_on_android() = runBlocking {
     val instrumentation = InstrumentationRegistry.getInstrumentation()
     val pairingUrl = InstrumentationRegistry.getArguments().getString("pairingUrl")
+    val workspaceCwd = InstrumentationRegistry.getArguments().getString("workspaceCwd")
+    val workspaceThreadId = InstrumentationRegistry.getArguments().getString("workspaceThreadId")
+    val cloneRemoteUrl = InstrumentationRegistry.getArguments().getString("cloneRemoteUrl")
+    val cloneDestination = InstrumentationRegistry.getArguments().getString("cloneDestination")
     assumeTrue("pairingUrl instrumentation argument is required", !pairingUrl.isNullOrBlank())
 
     val store = AndroidCredentialStore(instrumentation.targetContext)
@@ -37,6 +47,40 @@ class AndroidProtocolIntegrationTest {
       assertTrue(snapshotSeen)
       assertNotNull(connected.config["environment"])
       client.probe(connected.session)
+      if (!workspaceCwd.isNullOrBlank()) {
+        val entries = client.listWorkspaceEntries(connected.session, workspaceCwd)
+        assertTrue(entries.entries.any { it.path == "README.md" && it.kind == "file" })
+        assertTrue(client.searchWorkspaceEntries(connected.session, workspaceCwd, "README")
+          .entries.any { it.path == "README.md" })
+        assertTrue(client.searchWorkspaceContents(connected.session, workspaceCwd, "phase-three-alpha")
+          .matches.any { it.path == "README.md" })
+        assertEquals(
+          "# Phase 3A\n\nphase-three-alpha\n",
+          client.readWorkspaceFile(connected.session, workspaceCwd, "README.md").contents,
+        )
+        assertTrue(client.browseFilesystem(connected.session, "$workspaceCwd/")
+          .entries.any { it.name == "src" })
+        if (!workspaceThreadId.isNullOrBlank()) {
+          val asset = client.createWorkspaceAssetUrl(
+            connected.session,
+            workspaceThreadId,
+            "$workspaceCwd/assets/phase3a.svg",
+          )
+          val base = requireNotNull(pairingUrl).substringBefore("/pair").trimEnd('/')
+          val url = URI("$base/").resolve(asset.relativeUrl.removePrefix("/")).toString()
+          val result = instrumentation.targetContext.imageLoader.execute(
+            ImageRequest.Builder(instrumentation.targetContext).data(url).build(),
+          )
+          val detail = (result as? ErrorResult)?.throwable?.stackTraceToString() ?: result.toString()
+          assertTrue("Coil failed to decode the workspace asset: $detail", result is SuccessResult)
+        }
+      }
+      if (!cloneRemoteUrl.isNullOrBlank() && !cloneDestination.isNullOrBlank()) {
+        val cloned = client.cloneRepository(connected.session, cloneRemoteUrl, cloneDestination)
+        assertEquals(cloneDestination, cloned.cwd)
+        assertTrue(client.listWorkspaceEntries(connected.session, cloned.cwd)
+          .entries.any { it.path == "README.md" })
+      }
     } finally {
       connected.session.close()
       store.clear(connected.descriptor.environmentId)

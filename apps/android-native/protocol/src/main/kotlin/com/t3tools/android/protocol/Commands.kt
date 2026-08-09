@@ -171,6 +171,34 @@ fun stopSessionCommand(threadId: String, now: Instant = Instant.now()) = timesta
   now = now,
 )
 
+fun createProjectCommand(
+  workspaceRoot: String,
+  projectId: String = UUID.randomUUID().toString(),
+  commandId: String = UUID.randomUUID().toString(),
+  now: Instant = Instant.now(),
+): JsonObject {
+  val trimmedRoot = workspaceRoot.trim()
+  require(trimmedRoot.isNotEmpty()) { "Workspace root must not be blank." }
+  val normalizedRoot = if (trimmedRoot == "/" || WINDOWS_DRIVE_ROOT.matches(trimmedRoot)) {
+    trimmedRoot
+  } else {
+    trimmedRoot.trimEnd('/', '\\')
+  }
+  val title = normalizedRoot.substringAfterLast('/').substringAfterLast('\\').ifBlank { normalizedRoot }
+  return buildJsonObject(
+    "type" to JsonPrimitive("project.create"),
+    "commandId" to JsonPrimitive(commandId),
+    "projectId" to JsonPrimitive(projectId),
+    "title" to JsonPrimitive(title),
+    "workspaceRoot" to JsonPrimitive(normalizedRoot),
+    "createWorkspaceRootIfMissing" to JsonPrimitive(true),
+    "defaultModelSelection" to JsonNull,
+    "createdAt" to JsonPrimitive(now.toString()),
+  )
+}
+
+private val WINDOWS_DRIVE_ROOT = Regex("^[A-Za-z]:[\\\\/]$")
+
 fun threadActionCommand(
   type: String,
   threadId: String,

@@ -159,6 +159,57 @@ class T3ProtocolClient(
     res["relativeUrl"]?.jsonPrimitive?.content
   }.getOrNull()
 
+  suspend fun browseFilesystem(
+    session: EffectRpcSession,
+    partialPath: String,
+    cwd: String? = null,
+  ) = session.unary("filesystem.browse", filesystemBrowsePayload(partialPath, cwd))
+    .toFilesystemBrowseResult()
+
+  suspend fun listWorkspaceEntries(session: EffectRpcSession, cwd: String) =
+    session.unary("projects.listEntries", workspaceEntriesPayload(cwd)).toWorkspaceEntries()
+
+  suspend fun searchWorkspaceEntries(
+    session: EffectRpcSession,
+    cwd: String,
+    query: String,
+    limit: Int = 200,
+  ) = session.unary(
+    "projects.searchEntries",
+    workspaceEntrySearchPayload(cwd, query, limit),
+  ).toWorkspaceEntries()
+
+  suspend fun searchWorkspaceContents(
+    session: EffectRpcSession,
+    cwd: String,
+    query: String,
+    limit: Int = 200,
+  ) = session.unary(
+    "projects.searchContents",
+    workspaceContentSearchPayload(cwd, query, limit),
+  ).toWorkspaceContentMatches()
+
+  suspend fun readWorkspaceFile(
+    session: EffectRpcSession,
+    cwd: String,
+    relativePath: String,
+  ) = session.unary("projects.readFile", workspaceFilePayload(cwd, relativePath)).toWorkspaceFile()
+
+  suspend fun cloneRepository(
+    session: EffectRpcSession,
+    remoteUrl: String,
+    destinationPath: String,
+  ) = session.unary(
+    "sourceControl.cloneRepository",
+    cloneRepositoryPayload(remoteUrl, destinationPath),
+  ).toClonedRepository()
+
+  suspend fun createWorkspaceAssetUrl(
+    session: EffectRpcSession,
+    threadId: String,
+    path: String,
+  ) = session.unary("assets.createUrl", workspaceAssetPayload(threadId, path)).toWorkspaceAssetUrl()
+
   private suspend fun connect(
     descriptor: EnvironmentDescriptor,
     credential: SavedCredential,

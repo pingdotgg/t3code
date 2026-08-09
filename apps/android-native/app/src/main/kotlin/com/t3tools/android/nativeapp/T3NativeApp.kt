@@ -3,6 +3,7 @@
 package com.t3tools.android.nativeapp
 
 import android.os.Build
+import android.net.Uri
 import android.text.method.LinkMovementMethod
 import android.widget.TextView
 import androidx.activity.compose.BackHandler
@@ -45,9 +46,11 @@ import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Clear
+import androidx.compose.material.icons.rounded.CreateNewFolder
 import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.FilterList
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Shield
@@ -117,9 +120,12 @@ private const val ONBOARDING = "onboarding"
 private const val CONNECT = "connect"
 private const val HOME = "home"
 private const val NEW_TASK = "new-task"
+private const val NEW_TASK_ROUTE = "new-task?projectId={projectId}"
+private const val ADD_PROJECT = "add-project"
 private const val SETTINGS = "settings"
 private const val ARCHIVED_THREADS = "settings/archived"
 private const val THREAD = "thread/{threadId}"
+private const val THREAD_FILES = "thread/{threadId}/files"
 
 @Composable
 fun T3NativeApp(viewModel: AppViewModel) {
@@ -133,6 +139,12 @@ fun T3NativeApp(viewModel: AppViewModel) {
       when (event) {
         AppEvent.OpenHome -> navController.navigate(HOME) {
           popUpTo(ONBOARDING) { inclusive = true }
+        }
+        is AppEvent.OpenNewTask -> navController.navigate(
+          "$NEW_TASK?projectId=${Uri.encode(event.projectId)}",
+        ) {
+          popUpTo(ADD_PROJECT) { inclusive = true }
+          launchSingleTop = true
         }
         is AppEvent.OpenThread -> navController.navigate("thread/${event.threadId}")
       }
@@ -168,15 +180,34 @@ fun T3NativeApp(viewModel: AppViewModel) {
         dispatchState = dispatchState,
         viewModel = viewModel,
         onNewTask = { navController.navigate(NEW_TASK) },
+        onAddProject = { navController.navigate(ADD_PROJECT) },
         onOpenThread = { navController.navigate("thread/$it") },
         onAddEnvironment = { navController.navigate(ONBOARDING) },
         onSettings = { navController.navigate(SETTINGS) },
       )
     }
-    composable(NEW_TASK) {
+    composable(
+      route = NEW_TASK_ROUTE,
+      arguments = listOf(
+        navArgument("projectId") {
+          type = NavType.StringType
+          nullable = true
+          defaultValue = null
+        },
+      ),
+    ) { entry ->
       NewTaskScreen(
         runtime = runtime,
         dispatchState = dispatchState,
+        viewModel = viewModel,
+        initialProjectId = entry.arguments?.getString("projectId"),
+        onBack = { navController.popBackStack() },
+        onAddProject = { navController.navigate(ADD_PROJECT) },
+      )
+    }
+    composable(ADD_PROJECT) {
+      AddProjectScreen(
+        runtime = runtime,
         viewModel = viewModel,
         onBack = { navController.popBackStack() },
       )
@@ -189,6 +220,7 @@ fun T3NativeApp(viewModel: AppViewModel) {
         onBack = { navController.popBackStack() },
         onOpenConnect = { navController.navigate(CONNECT) },
         onAddEnvironment = { navController.navigate(ONBOARDING) },
+        onAddProject = { navController.navigate(ADD_PROJECT) },
         onOpenArchivedThreads = { navController.navigate(ARCHIVED_THREADS) },
       )
     }
@@ -214,6 +246,18 @@ fun T3NativeApp(viewModel: AppViewModel) {
           viewModel.clearSelectedThread()
           navController.popBackStack()
         },
+        onFiles = { navController.navigate("thread/$threadId/files") },
+      )
+    }
+    composable(
+      route = THREAD_FILES,
+      arguments = listOf(navArgument("threadId") { type = NavType.StringType }),
+    ) { entry ->
+      val threadId = requireNotNull(entry.arguments?.getString("threadId"))
+      WorkspaceFilesScreen(
+        threadId = threadId,
+        viewModel = viewModel,
+        onBack = { navController.popBackStack() },
       )
     }
   }
@@ -505,6 +549,7 @@ private fun HomeScreen(
   dispatchState: DispatchState,
   viewModel: AppViewModel,
   onNewTask: () -> Unit,
+  onAddProject: () -> Unit,
   onOpenThread: (String) -> Unit,
   onAddEnvironment: () -> Unit,
   onSettings: () -> Unit,
@@ -570,6 +615,13 @@ private fun HomeScreen(
           }
         },
         actions = {
+          IconButton(onClick = onAddProject) {
+            Icon(
+              imageVector = Icons.Rounded.CreateNewFolder,
+              contentDescription = "Add project",
+              tint = Color.White,
+            )
+          }
           IconButton(onClick = { showFilterSheet = true }) {
             Icon(
               imageVector = if (isFiltered) Icons.Rounded.FilterAlt else Icons.Rounded.FilterList,
@@ -1088,6 +1140,7 @@ private fun SettingsScreen(
   onBack: () -> Unit,
   onOpenConnect: () -> Unit,
   onAddEnvironment: () -> Unit,
+  onAddProject: () -> Unit,
   onOpenArchivedThreads: () -> Unit,
 ) {
   var showEditEnv by remember { mutableStateOf(false) }
@@ -1156,6 +1209,13 @@ private fun SettingsScreen(
             Text("Edit current")
           }
         }
+      }
+      HorizontalDivider()
+      Text("Projects", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+      OutlinedButton(onClick = onAddProject, modifier = Modifier.fillMaxWidth()) {
+        Icon(Icons.Rounded.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("Add project")
       }
       HorizontalDivider()
       Text("Appearance", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -1335,7 +1395,9 @@ private fun NewTaskScreen(
   runtime: OnlineChatState,
   dispatchState: DispatchState,
   viewModel: AppViewModel,
+  initialProjectId: String?,
   onBack: () -> Unit,
+  onAddProject: () -> Unit,
 ) {
   val environmentId = runtime.environment?.environmentId ?: return
   val draftRevision by viewModel.draftRevision.collectAsState()
@@ -1343,7 +1405,14 @@ private fun NewTaskScreen(
   var draft by remember(draftKey) { mutableStateOf(viewModel.loadDraft(draftKey)) }
   LaunchedEffect(draftRevision, draftKey) { draft = viewModel.loadDraft(draftKey) }
   val projects = runtime.shell.projects.values.sortedBy(Project::title)
-  var projectId by remember(projects) { mutableStateOf(projects.firstOrNull()?.id.orEmpty()) }
+  var projectId by remember(environmentId, initialProjectId) {
+    mutableStateOf(initialProjectId ?: projects.firstOrNull()?.id.orEmpty())
+  }
+  LaunchedEffect(projects, initialProjectId) {
+    val requested = projects.firstOrNull { it.id == initialProjectId }?.id
+    if (requested != null) projectId = requested
+    else if (projects.none { it.id == projectId }) projectId = projects.firstOrNull()?.id.orEmpty()
+  }
   var worktree by remember { mutableStateOf(false) }
   var baseBranch by remember { mutableStateOf("main") }
   var branch by remember { mutableStateOf("") }
@@ -1361,6 +1430,11 @@ private fun NewTaskScreen(
         options = projects.map { it.id to it.title },
         onSelect = { projectId = it },
       )
+      OutlinedButton(onClick = onAddProject, modifier = Modifier.fillMaxWidth()) {
+        Icon(Icons.Rounded.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("Add project")
+      }
       Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1437,6 +1511,7 @@ private fun ThreadScreen(
   dispatchState: DispatchState,
   viewModel: AppViewModel,
   onBack: () -> Unit,
+  onFiles: () -> Unit,
 ) {
   val detail = runtime.thread.detail
   val focusManager = LocalFocusManager.current
@@ -1454,7 +1529,32 @@ private fun ThreadScreen(
   var draft by remember(draftKey) { mutableStateOf(viewModel.loadDraft(draftKey)) }
   LaunchedEffect(draftRevision, draftKey) { draft = viewModel.loadDraft(draftKey) }
 
-  Scaffold(topBar = { BackTopBar(detail?.summary?.title ?: "Thread", onBack) }) { padding ->
+  Scaffold(
+    topBar = {
+      TopAppBar(
+        title = {
+          Text(
+            detail?.summary?.title ?: "Thread",
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+          )
+        },
+        navigationIcon = {
+          IconButton(onClick = onBack) {
+            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
+          }
+        },
+        actions = {
+          IconButton(onClick = onFiles, enabled = detail != null) {
+            Icon(Icons.Rounded.FolderOpen, contentDescription = "Files")
+          }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Black),
+      )
+    },
+  ) { padding ->
     Box(Modifier.fillMaxSize().padding(padding).imePadding()) {
       if (runtime.threadSyncPhase == SyncPhase.Synchronizing) {
         LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))

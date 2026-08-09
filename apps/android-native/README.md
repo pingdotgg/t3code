@@ -1,11 +1,11 @@
-# T3 Code Native Android — Phase 2
+# T3 Code Native Android — Phase 3A
 
-Independent native Android client for T3 Code. Phase 0 proved the wire protocol. Phase 1 delivered the online chat vertical slice. Phase 2 adds multi-environment supervision, SQLite persistence with a durable outbox, lifecycle reconnect policy, thread organization/settings, and public T3 Connect (Clerk + DPoP + relay).
+Independent native Android client for T3 Code. Phase 3A adds project registration and clone flows plus an environment-scoped, read-only workspace browser with file/path search, content search, and text, Markdown, and image previews.
 
 ## Modules
 
-- `:protocol` — pairing, bearer authentication, Effect RPC WebSocket transport, typed shell/thread models, sequence-aware reducers, commands, and the headless proof harness.
-- `:app` — Compose UI, multi-environment supervisors, SQLite catalog/outbox/cache, T3 Connect client, and Android Keystore-backed credentials.
+- `:protocol` — pairing, bearer authentication, Effect RPC WebSocket transport, typed shell/thread/workspace models, sequence-aware reducers, commands, and the headless proof harness.
+- `:app` — Compose UI, multi-environment supervisors, SQLite catalog/outbox/cache, project/files UI, T3 Connect client, and Android Keystore-backed credentials.
 
 The Kotlin implementation targets the current matching T3 server revision. Broader server-version compatibility is not promised until versioned wire artifacts exist.
 
@@ -83,11 +83,11 @@ T3_NATIVE_PROMPT='Count slowly from one to twenty, one number per line.' \
 
 It must exit 0 after pairing, loading the shell, creating one task with atomic `thread.turn.start`, recovering an uncertain retry by deterministic thread id, streaming assistant output, dispatching `thread.turn.interrupt`, reconnecting from the saved bearer credential, probing the server, and resuming shell/thread streams without duplicate sequences.
 
-## Phase 2 boundaries
+## Phase 3A boundaries
 
-Multi-environment supervision, cached shell/thread snapshots, durable text-turn outbox, and T3 Connect sign-in/relay discovery are in scope. Terminal, review, files, git, and attachment picker/upload remain Phase 3. Performance benchmarking is deferred until after Phase 3.
+Project registration/clone and read-only thread workspace browsing are in scope. File editing, terminal, review, git operations beyond clone, and attachment picker/upload remain later Phase 3 slices. Performance benchmarking remains deferred until Phase 3 is complete.
 
-Lifecycle ownership, SQLite schema, outbox semantics, credential boundaries, chaos checklist, and the Phase 2 scorecard live in [`docs/PHASE2.md`](docs/PHASE2.md).
+The Phase 3A capability matrix and device acceptance steps live in [`docs/PHASE3A.md`](docs/PHASE3A.md). Phase 2 architecture and evidence remain in [`docs/PHASE2.md`](docs/PHASE2.md).
 
 ### Atomic bootstrap retry caveat
 
