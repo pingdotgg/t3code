@@ -16,6 +16,7 @@ import * as Ref from "effect/Ref";
 
 import * as ServerConfig from "../config.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { TurnAdmissionGate } from "../orchestration/TurnAdmissionGate.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
@@ -54,6 +55,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const path = yield* Path.Path;
   const execPath = yield* HostProcessExecutablePath;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const turnAdmissionGate = yield* TurnAdmissionGate;
   const inFlight = yield* Ref.make(false);
 
   const capability: ServerSelfUpdateCapability | null =
@@ -73,6 +75,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
           return (
             status === "starting" ||
             status === "running" ||
+            thread.latestTurn?.state === "running" ||
             thread.backgroundLiveness === "working" ||
             thread.backgroundLiveness === "monitoring"
           );
@@ -198,19 +201,23 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
       yield* reportProgress("installing");
       // A new turn can begin while the candidate runtime is downloading, so
       // verify the handoff boundary as well as the initial update request.
-      yield* ensureNoActiveWork();
-      const updateId = yield* launcher
-        .requestUpdate({ targetVersion, dbPath: serverConfig.dbPath })
-        .pipe(
-          Effect.mapError((error) =>
-            failWith(
-              error._tag === "ServiceLauncherRejectedError"
-                ? error.reason
-                : "Could not ask the service launcher to activate the prepared update.",
-              error,
-            ),
-          ),
-        );
+      const updateId = yield* turnAdmissionGate.commitUpdateHandoff(
+        Effect.gen(function* () {
+          yield* ensureNoActiveWork();
+          return yield* launcher
+            .requestUpdate({ targetVersion, dbPath: serverConfig.dbPath })
+            .pipe(
+              Effect.mapError((error) =>
+                failWith(
+                  error._tag === "ServiceLauncherRejectedError"
+                    ? error.reason
+                    : "Could not ask the service launcher to activate the prepared update.",
+                  error,
+                ),
+              ),
+            );
+        }),
+      );
 
       yield* Effect.logInfo("Server update prepared; handing off to the service launcher.", {
         updateId,

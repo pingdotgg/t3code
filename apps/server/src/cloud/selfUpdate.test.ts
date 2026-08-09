@@ -10,6 +10,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 
 import * as ServerConfig from "../config.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as TurnAdmissionGate from "../orchestration/TurnAdmissionGate.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL } from "./servicePreflight.ts";
@@ -21,7 +22,9 @@ interface HarnessOptions {
   readonly managed?: boolean;
   readonly preflight?: "ready" | "blocked" | "unsafe";
   readonly activeWorkByCheck?: ReadonlyArray<number>;
+  readonly activeLatestTurnByCheck?: ReadonlyArray<boolean>;
   readonly requestUpdate?: ServiceLauncherClient.ServiceLauncherClient["Service"]["requestUpdate"];
+  readonly commitUpdateHandoff?: TurnAdmissionGate.TurnAdmissionGateShape["commitUpdateHandoff"];
 }
 
 const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
@@ -93,20 +96,35 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
     getShellSnapshot: () => {
       const configured = options.activeWorkByCheck ?? [0];
       const activeWorkCount = configured[Math.min(activeWorkCheck, configured.length - 1)] ?? 0;
+      const latestTurnConfigured = options.activeLatestTurnByCheck ?? [false];
+      const hasActiveLatestTurn =
+        latestTurnConfigured[Math.min(activeWorkCheck, latestTurnConfigured.length - 1)] ?? false;
       activeWorkCheck += 1;
       return Effect.succeed({
-        threads: Array.from({ length: activeWorkCount }, (_, index) => ({
-          id: `thread-${index}`,
-          session: { status: "running" },
-          backgroundLiveness: null,
-        })),
+        threads: Array.from(
+          { length: Math.max(activeWorkCount, hasActiveLatestTurn ? 1 : 0) },
+          (_, index) => ({
+            id: `thread-${index}`,
+            session: { status: index < activeWorkCount ? "running" : "ready" },
+            latestTurn: hasActiveLatestTurn ? { state: "running" } : null,
+            backgroundLiveness: null,
+          }),
+        ),
       });
     },
   } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"];
+  const baseTurnAdmissionGate = yield* TurnAdmissionGate.make;
+  const turnAdmissionGate = TurnAdmissionGate.TurnAdmissionGate.of({
+    ...baseTurnAdmissionGate,
+    commitUpdateHandoff:
+      options.commitUpdateHandoff ??
+      ((handoff) => Effect.sync(() => order.push("gate")).pipe(Effect.andThen(handoff))),
+  });
   const selfUpdate = yield* ServerSelfUpdate.make().pipe(
     Effect.provideService(ProcessRunner.ProcessRunner, runner),
     Effect.provideService(ServiceLauncherClient.ServiceLauncherClient, launcher),
     Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, projectionSnapshotQuery),
+    Effect.provideService(TurnAdmissionGate.TurnAdmissionGate, turnAdmissionGate),
     Effect.provideService(HostProcessExecutablePath, "/usr/bin/node"),
     Effect.provide(ServerConfig.layer({ ...config, mode: options.mode ?? "web" })),
   );
@@ -122,7 +140,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         method: "boot-service",
         updateId: "launcher-id",
       });
-      expect(order).toEqual(["install", "preflight", "accept"]);
+      expect(order).toEqual(["install", "preflight", "gate", "accept"]);
     }),
   );
 
@@ -165,7 +183,19 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
         "T3 Code cannot update while 1 thread is still working. Let the work finish or stop it, then retry.",
       );
-      expect(order).toEqual(["install", "preflight"]);
+      expect(order).toEqual(["install", "preflight", "gate"]);
+    }),
+  );
+
+  it.effect("treats a projected turn as active before the provider session catches up", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order } = yield* makeHarness({
+        activeLatestTurnByCheck: [true],
+      });
+      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
+        "T3 Code cannot update while 1 thread is still working. Let the work finish or stop it, then retry.",
+      );
+      expect(order).toEqual([]);
     }),
   );
 

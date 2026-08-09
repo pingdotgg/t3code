@@ -41,6 +41,7 @@ import { decideOrchestrationCommand } from "../decider.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import { TurnAdmissionGate } from "../TurnAdmissionGate.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -82,6 +83,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const commandReceiptRepository = yield* OrchestrationCommandReceiptRepository;
   const projectionPipeline = yield* OrchestrationProjectionPipeline;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const turnAdmissionGate = yield* TurnAdmissionGate;
   const crypto = yield* Crypto.Crypto;
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -309,7 +311,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const readEvents: OrchestrationEngineShape["readEvents"] = (fromSequenceExclusive, limit) =>
     eventStore.readFromSequence(fromSequenceExclusive, limit);
 
-  const dispatch: OrchestrationEngineShape["dispatch"] = (command) =>
+  const dispatchUnlocked: OrchestrationEngineShape["dispatch"] = (command) =>
     Effect.gen(function* () {
       const result = yield* Deferred.make<{ sequence: number }, OrchestrationDispatchError>();
       yield* Queue.offer(commandQueue, {
@@ -319,6 +321,20 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       });
       return yield* Deferred.await(result);
     });
+
+  const dispatch: OrchestrationEngineShape["dispatch"] = (command) => {
+    const admitted = dispatchUnlocked(command);
+    return command.type === "thread.turn.start"
+      ? turnAdmissionGate.admitTurn(
+          admitted,
+          () =>
+            new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: "The server is activating an update. Retry this message after reconnecting.",
+            }),
+        )
+      : admitted;
+  };
 
   return {
     readEvents,

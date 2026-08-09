@@ -47,6 +47,7 @@ import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
+import * as TurnAdmissionGate from "../TurnAdmissionGate.ts";
 import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
@@ -212,7 +213,8 @@ describe("ProviderRuntimeIngestion", () => {
     | OrchestrationEngineService
     | ProviderRuntimeIngestionService
     | ProjectionSnapshotQuery
-    | ThreadBackgroundLiveness.ThreadBackgroundLivenessService,
+    | ThreadBackgroundLiveness.ThreadBackgroundLivenessService
+    | ThreadPlanProgress.ThreadPlanProgressService,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -245,11 +247,14 @@ describe("ProviderRuntimeIngestion", () => {
       activeTurnId: TurnId | null;
     };
     providerSessionStatus?: ProviderSession["status"] | null;
+    persistedBackgroundTask?: "active" | "completed";
+    initialPlanProgress?: boolean;
   }) {
     const workspaceRoot = makeTempDir("t3-provider-project-");
     NodeFS.mkdirSync(NodePath.join(workspaceRoot, ".git"));
     const provider = createProviderServiceHarness();
     const orchestrationLayer = OrchestrationEngineLive.pipe(
+      Layer.provide(TurnAdmissionGate.layer),
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(OrchestrationProjectionPipelineLive),
       Layer.provide(OrchestrationEventStoreLive),
@@ -280,6 +285,9 @@ describe("ProviderRuntimeIngestion", () => {
     const ingestion = await runtime.runPromise(Effect.service(ProviderRuntimeIngestionService));
     const backgroundLiveness = await runtime.runPromise(
       Effect.service(ThreadBackgroundLiveness.ThreadBackgroundLivenessService),
+    );
+    const planProgress = await runtime.runPromise(
+      Effect.service(ThreadPlanProgress.ThreadPlanProgressService),
     );
     const dispatch = (command: OrchestrationCommand) => Effect.runPromise(engine.dispatch(command));
 
@@ -316,6 +324,55 @@ describe("ProviderRuntimeIngestion", () => {
       worktreePath: null,
       createdAt,
     });
+    if (options?.persistedBackgroundTask) {
+      await dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make("cmd-persisted-background-task-started"),
+        threadId: ThreadId.make("thread-1"),
+        activity: {
+          id: EventId.make("persisted-background-task-started"),
+          createdAt,
+          tone: "info",
+          kind: "task.started",
+          summary: "Background task started",
+          payload: {
+            taskId: "persisted-background-task",
+            taskType: "local_agent",
+            status: "running",
+          },
+          turnId: null,
+          sequence: 1,
+        },
+        createdAt,
+      });
+      if (options.persistedBackgroundTask === "completed") {
+        await dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("cmd-persisted-background-task-completed"),
+          threadId: ThreadId.make("thread-1"),
+          activity: {
+            id: EventId.make("persisted-background-task-completed"),
+            createdAt: "2026-01-01T00:00:01.000Z",
+            tone: "info",
+            kind: "task.completed",
+            summary: "Background task completed",
+            payload: {
+              taskId: "persisted-background-task",
+              taskType: "local_agent",
+              status: "completed",
+            },
+            turnId: null,
+            sequence: 2,
+          },
+          createdAt: "2026-01-01T00:00:01.000Z",
+        });
+      }
+    }
+    if (options?.initialPlanProgress) {
+      planProgress.recordPlanProgress("thread-1", [
+        { step: "Interrupted step", status: "inProgress" },
+      ]);
+    }
     await dispatch({
       type: "thread.session.set",
       commandId: CommandId.make("cmd-session-seed"),
@@ -364,6 +421,7 @@ describe("ProviderRuntimeIngestion", () => {
           kind: "started",
         }),
       getBackgroundLiveness: () => backgroundLiveness.getThreadBackgroundLiveness("thread-1"),
+      getPlanProgress: () => planProgress.getThreadPlanProgress("thread-1"),
       drain,
     };
   }
@@ -395,6 +453,50 @@ describe("ProviderRuntimeIngestion", () => {
       (entry) => entry.session?.status === "interrupted" && entry.session.activeTurnId === null,
     );
     expect(thread.session?.lastError).toContain("T3 Code was restarting");
+  });
+
+  it("interrupts a projected running session even when its active turn id was lost", async () => {
+    const harness = await createHarness({
+      initialSession: { status: "running", activeTurnId: null },
+      providerSessionStatus: null,
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "interrupted" && entry.session.activeTurnId === null,
+    );
+    expect(thread.session?.lastError).toContain("T3 Code was restarting");
+  });
+
+  it("rehydrates and clears persisted orphan background work after restart", async () => {
+    const harness = await createHarness({
+      initialSession: { status: "ready", activeTurnId: null },
+      providerSessionStatus: null,
+      persistedBackgroundTask: "active",
+      initialPlanProgress: true,
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "interrupted",
+    );
+    expect(thread.session?.lastError).toContain("T3 Code was restarting");
+    expect(harness.getBackgroundLiveness()).toBeNull();
+    expect(harness.getPlanProgress()).toBeNull();
+  });
+
+  it("does not revive completed persisted background work after restart", async () => {
+    const harness = await createHarness({
+      initialSession: { status: "ready", activeTurnId: null },
+      providerSessionStatus: null,
+      persistedBackgroundTask: "completed",
+    });
+
+    const thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === asThreadId("thread-1"),
+    );
+    expect(thread?.session?.status).toBe("ready");
+    expect(harness.getBackgroundLiveness()).toBeNull();
   });
 
   it("does not treat a closed provider inventory entry as a live session", async () => {

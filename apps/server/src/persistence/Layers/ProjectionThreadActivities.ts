@@ -13,6 +13,7 @@ import {
   ListProjectionThreadActivitiesInput,
   ProjectionThreadActivity,
   ProjectionThreadActivityRepository,
+  ProjectionTaskLiveness,
   type ProjectionThreadActivityRepositoryShape,
 } from "../Services/ProjectionThreadActivities.ts";
 
@@ -106,6 +107,52 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
       `,
   });
 
+  const listLatestTaskLivenessRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionTaskLiveness,
+    execute: () =>
+      sql`
+        WITH ranked_task_activity AS (
+          SELECT
+            activity.thread_id AS "threadId",
+            json_extract(activity.payload_json, '$.taskId') AS "taskId",
+            json_extract(activity.payload_json, '$.taskType') AS "taskType",
+            json_extract(activity.payload_json, '$.status') AS "status",
+            json_extract(activity.payload_json, '$.agentId') AS "agentId",
+            activity.kind,
+            ROW_NUMBER() OVER (
+              PARTITION BY
+                activity.thread_id,
+                json_extract(activity.payload_json, '$.taskId')
+              ORDER BY
+                CASE WHEN activity.sequence IS NULL THEN 0 ELSE 1 END DESC,
+                activity.sequence DESC,
+                activity.created_at DESC,
+                activity.activity_id DESC
+            ) AS task_rank
+          FROM projection_thread_activities AS activity
+          INNER JOIN projection_threads AS thread
+            ON thread.thread_id = activity.thread_id
+          WHERE
+            thread.deleted_at IS NULL
+            AND thread.archived_at IS NULL
+            AND activity.kind IN ('task.started', 'task.progress', 'task.updated', 'task.completed')
+            AND json_type(activity.payload_json, '$.taskId') = 'text'
+            AND COALESCE(json_extract(activity.payload_json, '$.usageSnapshot'), 0) != 1
+        )
+        SELECT
+          "threadId",
+          "taskId",
+          "taskType",
+          "status",
+          "agentId",
+          kind
+        FROM ranked_task_activity
+        WHERE task_rank = 1
+        ORDER BY "threadId" ASC, "taskId" ASC
+      `,
+  });
+
   const upsert: ProjectionThreadActivityRepositoryShape["upsert"] = (row) =>
     upsertProjectionThreadActivityRow(row).pipe(
       Effect.mapError(
@@ -139,6 +186,17 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
       ),
     );
 
+  const listLatestTaskLiveness: ProjectionThreadActivityRepositoryShape["listLatestTaskLiveness"] =
+    () =>
+      listLatestTaskLivenessRows(undefined).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionThreadActivityRepository.listLatestTaskLiveness:query",
+            "ProjectionThreadActivityRepository.listLatestTaskLiveness:decodeRows",
+          ),
+        ),
+      );
+
   const deleteByThreadId: ProjectionThreadActivityRepositoryShape["deleteByThreadId"] = (input) =>
     deleteProjectionThreadActivityRows(input).pipe(
       Effect.mapError(
@@ -149,6 +207,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
   return {
     upsert,
     listByThreadId,
+    listLatestTaskLiveness,
     deleteByThreadId,
   } satisfies ProjectionThreadActivityRepositoryShape;
 });

@@ -35,6 +35,8 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
+import { ProjectionThreadActivityRepository } from "../../persistence/Services/ProjectionThreadActivities.ts";
 import { isGitRepository } from "../../git/Utils.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ThreadBackgroundLivenessService } from "../ThreadBackgroundLiveness.ts";
@@ -884,6 +886,7 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
+  const projectionThreadActivityRepository = yield* ProjectionThreadActivityRepository;
   const serverSettingsService = yield* ServerSettingsService;
   const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
     crypto.randomUUIDv4.pipe(
@@ -2080,7 +2083,7 @@ const make = Effect.gen(function* () {
           observedAtMs - DateTime.toEpochMillis(DateTime.makeUnsafe(session.updatedAt)) >=
             Duration.toMillis(PROVIDER_STARTING_GRACE_PERIOD));
       const hasProjectedWork =
-        (session !== null && status === "running" && session.activeTurnId != null) ||
+        (session !== null && status === "running") ||
         staleStartingSession ||
         thread.backgroundLiveness != null;
       return hasProjectedWork && !liveThreadIds.has(thread.id);
@@ -2104,6 +2107,7 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             const session = thread.session;
             threadBackgroundLiveness.clearThreadLiveness(thread.id);
+            threadPlanProgress.clearThreadPlanProgress(thread.id);
             if (session === null) {
               return;
             }
@@ -2137,6 +2141,27 @@ const make = Effect.gen(function* () {
       interruptMissingActiveSessions(threads, RESTART_INTERRUPTION_DETAIL, "restart-recovery"),
     ),
   );
+
+  const rehydratePersistedTaskLiveness = Effect.gen(function* () {
+    const persistedTasks = yield* projectionThreadActivityRepository.listLatestTaskLiveness();
+    for (const task of persistedTasks) {
+      threadBackgroundLiveness.recordTaskLiveness({
+        threadId: task.threadId,
+        taskId: task.taskId,
+        taskType: task.taskType ?? undefined,
+        status: task.status ?? undefined,
+        agentId: task.agentId ?? undefined,
+        kind:
+          task.kind === "task.started"
+            ? "started"
+            : task.kind === "task.progress"
+              ? "progress"
+              : task.kind === "task.updated"
+                ? "updated"
+                : "completed",
+      });
+    }
+  });
 
   const reconcileInterruptedSessionsDuringRuntime = Effect.gen(function* () {
     const firstObservation = yield* readMissingActiveSessions("runtime");
@@ -2182,6 +2207,7 @@ const make = Effect.gen(function* () {
       // persisted read model after subscriptions are parked so a dead turn can
       // never remain "running" forever, while adapters that did retain a live
       // session stay untouched.
+      yield* rehydratePersistedTaskLiveness.pipe(Effect.orDie);
       yield* reconcileInterruptedSessionsAfterRestart.pipe(Effect.orDie);
       yield* forkParked(
         reconcileInterruptedSessionsDuringRuntime.pipe(
@@ -2207,4 +2233,7 @@ const make = Effect.gen(function* () {
 export const ProviderRuntimeIngestionLive = Layer.effect(
   ProviderRuntimeIngestionService,
   make,
-).pipe(Layer.provide(ProjectionTurnRepositoryLive));
+).pipe(
+  Layer.provide(ProjectionTurnRepositoryLive),
+  Layer.provide(ProjectionThreadActivityRepositoryLive),
+);

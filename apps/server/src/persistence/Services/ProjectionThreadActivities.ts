@@ -33,6 +33,16 @@ export const ProjectionThreadActivity = Schema.Struct({
 });
 export type ProjectionThreadActivity = typeof ProjectionThreadActivity.Type;
 
+export const ProjectionTaskLiveness = Schema.Struct({
+  threadId: ThreadId,
+  taskId: Schema.String,
+  taskType: Schema.NullOr(Schema.String),
+  status: Schema.NullOr(Schema.String),
+  agentId: Schema.NullOr(Schema.String),
+  kind: Schema.Literals(["task.started", "task.progress", "task.updated", "task.completed"]),
+});
+export type ProjectionTaskLiveness = typeof ProjectionTaskLiveness.Type;
+
 export const ListProjectionThreadActivitiesInput = Schema.Struct({
   threadId: ThreadId,
 });
@@ -66,6 +76,12 @@ export interface ProjectionThreadActivityRepositoryShape {
   readonly listByThreadId: (
     input: ListProjectionThreadActivitiesInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadActivity>, ProjectionRepositoryError>;
+
+  /** Latest persisted lifecycle state for each task on active threads. */
+  readonly listLatestTaskLiveness: () => Effect.Effect<
+    ReadonlyArray<ProjectionTaskLiveness>,
+    ProjectionRepositoryError
+  >;
 
   /**
    * Delete projected thread activity rows by thread.
