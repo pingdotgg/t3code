@@ -17,6 +17,7 @@ import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopInstallIntegrity from "./DesktopInstallIntegrity.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
 import * as DesktopObservability from "./DesktopObservability.ts";
@@ -282,6 +283,17 @@ const startup = Effect.gen(function* () {
     yield* logStartupInfo("safe storage ready", {
       backend: Option.getOrElse(selectedBackend, () => "unknown"),
     });
+  }
+  // Refuse to boot from a half-applied update (app.asar and
+  // app.asar.unpacked stamped by different builds) before anything loads
+  // from the mismatched halves — the alternative is an opaque
+  // ERR_MODULE_NOT_FOUND crash in the main process.
+  const downloadPageUrl = yield* DesktopInstallIntegrity.resolveDownloadPageUrl;
+  const installIntact = yield* DesktopInstallIntegrity.enforceInstallIntegrity({
+    downloadPageUrl,
+  });
+  if (!installIntact) {
+    return;
   }
   yield* appIdentity.configure;
   yield* applicationMenu.configure;

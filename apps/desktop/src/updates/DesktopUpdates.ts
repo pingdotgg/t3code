@@ -20,6 +20,7 @@ import * as Scope from "effect/Scope";
 
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
+import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
@@ -44,6 +45,12 @@ import {
 
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
 const AUTO_UPDATE_POLL_INTERVAL = "4 minutes";
+// Per-backend budget for a verified stop before an install. Unlike the
+// generic shutdown path, the install path must KNOW the child is gone —
+// a WSL backend that outlives this window still holds 9p handles into the
+// install directory and the NSIS apply would half-fail — so a timeout here
+// aborts the install instead of proceeding.
+const INSTALL_BACKEND_STOP_TIMEOUT = Duration.seconds(10);
 
 const AppUpdateYmlConfig = Schema.Record(Schema.String, Schema.String);
 type AppUpdateYmlConfig = typeof AppUpdateYmlConfig.Type;
@@ -247,6 +254,7 @@ function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean 
 export const make = Effect.gen(function* () {
   const config = yield* DesktopConfig.DesktopConfig;
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
+  const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const desktopState = yield* DesktopState.DesktopState;
   const electronUpdater = yield* ElectronUpdater.ElectronUpdater;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
@@ -451,6 +459,28 @@ export const make = Effect.gen(function* () {
     { discard: true },
   );
 
+  // The install cannot proceed: a backend process (or a Linux-side process
+  // holding /mnt handles into the install directory) survived teardown, so
+  // running the installer now would half-apply the update and corrupt the
+  // install. Restart the backends so the app stays usable, surface the
+  // failure through the update state machine, and leave the downloaded
+  // update in place so the user can retry.
+  const abortInstall = (
+    stoppedInstances: ReadonlyArray<DesktopBackendPool.DesktopBackendInstance>,
+    message: string,
+  ) =>
+    Effect.gen(function* () {
+      yield* logUpdaterError(message, { stage: "pre-install-teardown" });
+      yield* Effect.forEach(
+        stoppedInstances,
+        (instance) => instance.start.pipe(Effect.ignore),
+        { concurrency: "unbounded" },
+      );
+      yield* resetInstallAction;
+      yield* updateState((current) => reduceDesktopUpdateStateOnInstallFailure(current, message));
+      return { accepted: true, completed: false };
+    });
+
   const installDownloadedUpdate = Effect.gen(function* () {
     const state = yield* Ref.get(updateStateRef);
     if (
@@ -470,14 +500,74 @@ export const make = Effect.gen(function* () {
       // means quitAndInstall's app.quit() exits before the pool's
       // scope cascade has a chance to run its stop finalizer, so the
       // WSL child gets hard-killed by the OS instead of receiving
-      // SIGTERM + grace. Stops run concurrently with the same 5s
-      // budget the primary had on its own.
+      // SIGTERM + grace. Stops run concurrently, and each stop must
+      // report the child fully finalized — the installer replaces files
+      // the children hold open, so "probably stopped" is not enough.
       const instances = yield* pool.list;
-      yield* Effect.forEach(
+      const stopResults = yield* Effect.forEach(
         instances,
-        (instance) => instance.stop({ timeout: Duration.seconds(5) }),
+        (instance) =>
+          Effect.gen(function* () {
+            // Capture the config before stop so the WSL release check below
+            // still knows which distro the instance was running in.
+            const instanceConfig = yield* instance.currentConfig;
+            const finalized = yield* instance.stop({ timeout: INSTALL_BACKEND_STOP_TIMEOUT });
+            return { instance, instanceConfig, finalized };
+          }),
         { concurrency: "unbounded" },
       );
+
+      const unstopped = stopResults.filter((result) => !result.finalized);
+      if (unstopped.length > 0) {
+        return yield* abortInstall(
+          instances,
+          `Update install aborted: backend ${unstopped
+            .map((result) => `"${result.instance.id}"`)
+            .join(", ")} did not shut down in time. Try the update again.`,
+        );
+      }
+
+      // A stopped wsl.exe relay does not guarantee the Linux-side server
+      // (or helpers it spawned, e.g. cloudflared) exited with it — and any
+      // Linux process holding cwd/fd/mmap references under /mnt/c/<install
+      // dir> blocks file replacement on the Windows side, which is exactly
+      // how a half-applied update happens. Verify release instead of
+      // assuming it.
+      if (environment.isPackaged && environment.platform === "win32") {
+        const installDir = environment.path.dirname(environment.resourcesPath);
+        for (const result of stopResults) {
+          const instanceConfig = Option.getOrUndefined(result.instanceConfig);
+          if (instanceConfig?.executablePath !== "wsl.exe") {
+            continue;
+          }
+          const released = yield* wslEnvironment.ensureWindowsPathReleased({
+            distro: instanceConfig.runningDistro ?? null,
+            windowsPath: installDir,
+          });
+          if (released === "busy") {
+            return yield* abortInstall(
+              instances,
+              `Update install aborted: processes inside WSL (${result.instance.id}) still hold files under ${installDir}. Close them (or run "wsl --shutdown") and try the update again.`,
+            );
+          }
+          if (released === "unknown") {
+            // wsl.exe unavailable or the check timed out. An unreachable WSL
+            // VM cannot hold 9p handles open either, so proceed — but leave
+            // a trace in case an apply failure still follows.
+            yield* logUpdaterWarning(
+              "could not verify WSL released the install directory; proceeding with install",
+              { instanceId: result.instance.id, installDir },
+            );
+          } else {
+            yield* logUpdaterInfo("verified WSL released the install directory", {
+              instanceId: result.instance.id,
+              installDir,
+            });
+          }
+        }
+      }
+
+      yield* logUpdaterInfo("backends stopped and verified; handing off to installer");
       yield* electronWindow.destroyAll;
       yield* electronUpdater.quitAndInstall({
         isSilent: true,

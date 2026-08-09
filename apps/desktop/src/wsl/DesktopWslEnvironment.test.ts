@@ -9,8 +9,15 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import * as Option from "effect/Option";
+
 import {
+  buildEnsurePathReleasedScript,
   buildWslNodeEnvPreamble,
+  ensureWindowsPathReleasedImpl,
+  getDistroIpsImpl,
+  getNetworkingModeImpl,
+  readServerRuntimeStateImpl,
   DesktopWslDistroListError,
   formatMissingToolsReason,
   formatNodePtyProbeFailureReason,
@@ -257,5 +264,215 @@ describe("formatMissingToolsReason", () => {
     expect(reason).toContain("python3");
     expect(reason).toContain("build-essential");
     expect(reason).not.toContain("nvm");
+  });
+});
+
+const makeArgvSpawner = (
+  handler: (argv: readonly string[]) => { readonly stdout?: string; readonly exitCode?: number },
+) =>
+  ChildProcessSpawner.make((command) => {
+    const argv =
+      command._tag === "StandardCommand" ? [command.command, ...command.args] : [];
+    const result = handler(argv);
+    return Effect.succeed(
+      ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        exitCode:
+          result.exitCode === undefined
+            ? Effect.never
+            : Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode)),
+        isRunning: Effect.succeed(result.exitCode === undefined),
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.drain,
+        stdout: Stream.make(encoder.encode(result.stdout ?? "")),
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      }),
+    );
+  });
+
+describe("getDistroIpsImpl", () => {
+  it.effect("returns every IPv4 in reported order, including CGNAT and bridge addresses", () =>
+    Effect.gen(function* () {
+      // Tailscale-in-WSL regression shape: the CGNAT address comes first and
+      // the actually-reachable mirrored address second. All must be returned;
+      // selection is the caller's job.
+      const ips = yield* getDistroIpsImpl("Ubuntu");
+      expect(ips).toEqual(["100.108.4.21", "192.168.127.5", "172.17.0.1"]);
+    }).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        makeArgvSpawner(() => ({
+          stdout: "100.108.4.21 192.168.127.5 172.17.0.1 fd7c::1\n",
+          exitCode: 0,
+        })),
+      ),
+    ),
+  );
+
+  it.effect("returns an empty list when the command fails", () =>
+    Effect.gen(function* () {
+      const ips = yield* getDistroIpsImpl(null);
+      expect(ips).toEqual([]);
+    }).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        makeArgvSpawner(() => ({ exitCode: 1 })),
+      ),
+    ),
+  );
+});
+
+describe("getNetworkingModeImpl", () => {
+  const modeSpawner = (stdout: string | undefined, exitCode?: number) =>
+    makeArgvSpawner((argv) => {
+      expect(argv).toContain("wslinfo");
+      expect(argv).toContain("--networking-mode");
+      return exitCode === undefined && stdout === undefined
+        ? {}
+        : { stdout: stdout ?? "", exitCode: exitCode ?? 0 };
+    });
+
+  it.effect("parses mirrored mode", () =>
+    Effect.gen(function* () {
+      expect(yield* getNetworkingModeImpl("Ubuntu")).toEqual("mirrored");
+    }).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        modeSpawner("mirrored\n"),
+      ),
+    ),
+  );
+
+  it.effect("parses nat mode", () =>
+    Effect.gen(function* () {
+      expect(yield* getNetworkingModeImpl(null)).toEqual("nat");
+    }).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, modeSpawner("nat\n")),
+    ),
+  );
+
+  it.effect("reports unknown when wslinfo is missing or fails", () =>
+    Effect.gen(function* () {
+      expect(yield* getNetworkingModeImpl(null)).toEqual("unknown");
+    }).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        modeSpawner(undefined, 127),
+      ),
+    ),
+  );
+
+  it.effect("reports unknown for unrecognized output", () =>
+    Effect.gen(function* () {
+      expect(yield* getNetworkingModeImpl(null)).toEqual("unknown");
+    }).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        modeSpawner("bridged\n"),
+      ),
+    ),
+  );
+});
+
+describe("readServerRuntimeStateImpl", () => {
+  it.effect("parses the persisted runtime state", () =>
+    Effect.gen(function* () {
+      const state = yield* readServerRuntimeStateImpl("Ubuntu");
+      expect(Option.isSome(state)).toBe(true);
+      if (Option.isSome(state)) {
+        expect(state.value.port).toBe(3773);
+        expect(state.value.origin).toBe("http://127.0.0.1:3773");
+        expect(state.value.host).toBe("0.0.0.0");
+      }
+    }).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        makeArgvSpawner(() => ({
+          stdout:
+            '{"version":1,"pid":4242,"host":"0.0.0.0","port":3773,"origin":"http://127.0.0.1:3773","startedAt":"2026-08-09T17:15:00Z"}\n',
+          exitCode: 0,
+        })),
+      ),
+    ),
+  );
+
+  it.effect("returns none for a missing or unparsable file", () =>
+    Effect.gen(function* () {
+      expect(Option.isNone(yield* readServerRuntimeStateImpl(null))).toBe(true);
+    }).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        makeArgvSpawner(() => ({ stdout: "", exitCode: 0 })),
+      ),
+    ),
+  );
+});
+
+describe("ensureWindowsPathReleasedImpl", () => {
+  const releaseSpawner = (shOutput: { readonly stdout: string; readonly exitCode: number }) =>
+    makeArgvSpawner((argv) =>
+      argv.includes("wslpath")
+        ? { stdout: "/mnt/c/Users/test/AppData/Local/Programs/t3code\n", exitCode: 0 }
+        : shOutput,
+    );
+
+  it.effect("reports released when no Linux process holds the path", () =>
+    Effect.gen(function* () {
+      const result = yield* ensureWindowsPathReleasedImpl({
+        distro: "Ubuntu",
+        windowsPath: "C:\\Users\\test\\AppData\\Local\\Programs\\t3code",
+      });
+      expect(result).toBe("released");
+    }).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        releaseSpawner({ stdout: "RELEASED\n", exitCode: 0 }),
+      ),
+    ),
+  );
+
+  it.effect("reports busy when holders survive SIGTERM and SIGKILL", () =>
+    Effect.gen(function* () {
+      const result = yield* ensureWindowsPathReleasedImpl({
+        distro: "Ubuntu",
+        windowsPath: "C:\\Users\\test\\AppData\\Local\\Programs\\t3code",
+      });
+      expect(result).toBe("busy");
+    }).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        releaseSpawner({ stdout: "BUSY 4242 4243\n", exitCode: 1 }),
+      ),
+    ),
+  );
+
+  it.effect("reports unknown when the path cannot be translated", () =>
+    Effect.gen(function* () {
+      const result = yield* ensureWindowsPathReleasedImpl({
+        distro: null,
+        windowsPath: "C:\\install",
+      });
+      expect(result).toBe("unknown");
+    }).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        makeArgvSpawner((argv) =>
+          argv.includes("wslpath") ? { stdout: "", exitCode: 1 } : { stdout: "", exitCode: 0 },
+        ),
+      ),
+    ),
+  );
+
+  it("kills before scanning again and excludes itself from the holder scan", () => {
+    const script = buildEnsurePathReleasedScript("'/mnt/c/install dir'");
+    expect(script).toContain("cd /");
+    expect(script).toContain('[ "$pid" = "$self" ] && continue');
+    expect(script).toContain("kill $holders");
+    expect(script).toContain("kill -9 $holders");
+    expect(script.indexOf("kill $holders")).toBeLessThan(script.indexOf("kill -9 $holders"));
   });
 });
