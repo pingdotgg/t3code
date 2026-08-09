@@ -14,6 +14,9 @@ import {
 
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
 const NOOP_OPEN_AGENTS = () => {};
+const EMPTY_PENDING_USER_INPUT_DRAFTS: Readonly<
+  Record<string, Record<string, PendingUserInputDraftAnswer>>
+> = {};
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import {
   createContext,
@@ -38,6 +41,10 @@ import {
   workEntryIndicatesToolSuccess,
   workLogEntryIsToolLike,
 } from "../../session-logic";
+import {
+  resolvePendingUserInputAnswer,
+  type PendingUserInputDraftAnswer,
+} from "../../pendingUserInput";
 import { type TurnDiffSummary } from "../../types";
 import {
   getRenderablePatch,
@@ -144,6 +151,10 @@ interface TimelineRowSharedState {
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
   agentPanelModel: AgentPanelModel;
   onOpenAgents: () => void;
+  /** Live composer drafts so pending Q&A cards preview answers in real time. */
+  pendingUserInputDraftAnswersByRequestId: Readonly<
+    Record<string, Record<string, PendingUserInputDraftAnswer>>
+  >;
 }
 
 interface TimelineRowActivityState {
@@ -241,6 +252,10 @@ interface MessagesTimelineProps {
   topFadeEnabled?: boolean;
   /** Non-null when older turns exist beyond the loaded window. */
   loadEarlier?: { readonly loading: boolean; readonly onLoadEarlier: () => void } | null;
+  /** Live composer drafts so pending Q&A cards preview answers in real time. */
+  pendingUserInputDraftAnswersByRequestId?: Readonly<
+    Record<string, Record<string, PendingUserInputDraftAnswer>>
+  >;
 }
 
 // ---------------------------------------------------------------------------
@@ -280,6 +295,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
   loadEarlier = null,
+  pendingUserInputDraftAnswersByRequestId = EMPTY_PENDING_USER_INPUT_DRAFTS,
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
@@ -517,6 +533,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       agentPanelModel,
       onOpenAgents,
+      pendingUserInputDraftAnswersByRequestId,
     }),
     [
       timestampFormat,
@@ -533,6 +550,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       agentPanelModel,
       onOpenAgents,
+      pendingUserInputDraftAnswersByRequestId,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -934,7 +952,8 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         (row.kind === "message" && row.message.role === "assistant" && !row.showAssistantMeta) ||
           row.kind === "work" ||
           row.kind === "work-toggle" ||
-          row.kind === "turn-plan"
+          row.kind === "turn-plan" ||
+          row.kind === "user-input"
           ? "pb-2"
           : "pb-4",
         row.kind === "message" && row.message.role === "assistant" ? "group/assistant" : null,
@@ -953,6 +972,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       ) : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
       {row.kind === "turn-plan" ? <TurnPlanTimelineRow row={row} /> : null}
+      {row.kind === "user-input" ? <UserInputExchangeTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
     </div>
   );
@@ -2116,6 +2136,120 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
 }
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
+
+function formatUserInputAnswer(answer: string | ReadonlyArray<string> | undefined): string | null {
+  if (answer === undefined) {
+    return null;
+  }
+  return Array.isArray(answer) ? answer.join(", ") : (answer as string);
+}
+
+/**
+ * AskUserQuestion-style exchanges are first-class timeline rows (like
+ * proposed plans): a collapsible card listing each question bolded with its
+ * answer beneath, divider-separated, instead of the tool call's raw JSON.
+ */
+const UserInputExchangeTimelineRow = memo(function UserInputExchangeTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "user-input" }>;
+}) {
+  const exchange = row.userInputExchange;
+  const { pendingUserInputDraftAnswersByRequestId } = use(TimelineRowCtx);
+  const [expanded, setExpanded] = useState(true);
+  const label = exchange.resolved ? "User input submitted" : "User input requested";
+  // While the exchange is pending, preview the composer's draft answers in
+  // real time; submitted answers replace them once the exchange resolves.
+  const draftAnswers =
+    !exchange.resolved && exchange.requestId !== undefined
+      ? pendingUserInputDraftAnswersByRequestId[exchange.requestId]
+      : undefined;
+  const items =
+    exchange.questions.length > 0
+      ? exchange.questions.map((question) => {
+          const submitted =
+            exchange.answers?.[question.id] ?? exchange.answers?.[question.question];
+          const draft = draftAnswers
+            ? resolvePendingUserInputAnswer(question, draftAnswers[question.id])
+            : null;
+          return {
+            key: question.id,
+            question: question.question || question.header,
+            answer: formatUserInputAnswer(submitted ?? (draft === null ? undefined : draft)),
+          };
+        })
+      : Object.entries(exchange.answers ?? {}).map(([question, answer]) => ({
+          key: question,
+          question,
+          answer: formatUserInputAnswer(answer),
+        }));
+  if (items.length === 0) {
+    return null;
+  }
+  return (
+    <section className="-mx-1 px-1 py-0.5" aria-label={label}>
+      {/* Trigger hover tints the whole accordion (has-variant) — tinting only
+          the header strip while the card stays flat reads as a seam. */}
+      <div className="overflow-hidden rounded-md border border-border/60 bg-card/50 transition-colors has-[[role=button]:hover]:bg-accent/50">
+        <div
+          role="button"
+          tabIndex={0}
+          aria-label={label}
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+          onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setExpanded((v) => !v);
+            }
+          }}
+          className="flex cursor-pointer select-none items-center gap-1.5 px-2 py-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        >
+          <span className="flex size-5 shrink-0 items-center justify-center text-icon-muted">
+            <MessageCircleIcon
+              className="block size-3.5 shrink-0 stroke-[1.8] opacity-80"
+              aria-hidden
+            />
+          </span>
+          <p className="min-w-0 flex-1 truncate font-medium text-[12px] text-foreground leading-5">
+            {label}
+          </p>
+          <span className="flex size-4 shrink-0 items-center justify-center text-icon-muted">
+            <ChevronDownIcon
+              className={cn(
+                "size-3 shrink-0 opacity-70 transition-transform duration-200",
+                expanded && "rotate-180",
+              )}
+              aria-hidden
+            />
+          </span>
+        </div>
+        {expanded ? (
+          <div
+            className="m-2 mt-0 cursor-default rounded-md border border-border/60 bg-card/50 divide-y divide-border/45"
+            onClick={stopRowToggle}
+            onPointerDown={stopRowToggle}
+          >
+            {items.map((item) => (
+              <div key={item.key} className="px-3 py-2 text-[12px] leading-5">
+                <p className="font-semibold text-foreground select-text">{item.question}</p>
+                {item.answer !== null ? (
+                  <p className="mt-0.5 whitespace-pre-wrap break-words text-secondary-label select-text">
+                    {item.answer}
+                  </p>
+                ) : (
+                  <p className="mt-0.5 italic text-secondary-label">
+                    {exchange.resolved ? "No answer recorded" : "Waiting for your answer…"}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+});
 
 /**
  * A1 spawn CTA: one anchored row per workflow run (or per-turn direct-spawn

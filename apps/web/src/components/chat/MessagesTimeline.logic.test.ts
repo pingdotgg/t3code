@@ -541,6 +541,88 @@ describe("deriveMessagesTimelineRows", () => {
     ).toBeDefined();
   });
 
+  it("passes user-input exchanges through as standalone rows that never fold", () => {
+    const userInputExchange = {
+      id: "exchange-1",
+      createdAt: "2026-01-01T00:00:08Z",
+      turnId: "turn-1" as never,
+      questions: [
+        {
+          id: "Continue?",
+          header: "Approval",
+          question: "Continue?",
+          options: [{ label: "Yes", description: "Continue execution" }],
+          multiSelect: false,
+        },
+      ],
+      answers: { "Continue?": "Yes" },
+      resolved: true,
+    };
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-entry",
+          kind: "message" as const,
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-1" as never,
+            role: "user" as const,
+            text: "Build it",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "work-entry-tool",
+          kind: "work" as const,
+          createdAt: "2026-01-01T00:00:05Z",
+          entry: {
+            id: "work-tool",
+            createdAt: "2026-01-01T00:00:05Z",
+            turnId: "turn-1" as never,
+            label: "Ran command",
+            tone: "tool" as const,
+          },
+        },
+        {
+          id: "exchange-1",
+          kind: "user-input" as const,
+          createdAt: "2026-01-01T00:00:08Z",
+          userInputExchange,
+        },
+        {
+          id: "assistant-final-entry",
+          kind: "message" as const,
+          createdAt: "2026-01-01T00:00:20Z",
+          message: {
+            id: "assistant-final" as never,
+            role: "assistant" as const,
+            text: "Done",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:20Z",
+            updatedAt: "2026-01-01T00:00:22Z",
+            streaming: false,
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    // The settled turn folds its work rows, but the exchange keeps its
+    // chronological slot as a standalone row (same shape as proposed plans).
+    expect(rows.map((row) => row.id)).toEqual([
+      "user-entry",
+      "turn-fold:turn-1",
+      "exchange-1",
+      "assistant-final-entry",
+    ]);
+  });
+
   it("derives a sane duration for a steer-superseded turn with one instant commentary message", () => {
     // A steer ends the previous turn early: its only message completes the
     // instant it is created, and trailing work entries land after it. The
