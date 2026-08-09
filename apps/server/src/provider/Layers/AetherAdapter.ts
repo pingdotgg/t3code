@@ -93,6 +93,12 @@ import type {
   ProviderThreadSnapshot,
   ProviderThreadTurnSnapshot,
 } from "../Services/ProviderAdapter.ts";
+import {
+  CloudTerminalTransportError,
+  CloudTerminalUnavailableError,
+  type CloudTerminalConnectError,
+  type CloudTerminalConnector,
+} from "../CloudTerminalConnector.ts";
 import { AETHER_API_KEY_ENV_VAR } from "./AetherProvider.ts";
 import {
   makeAetherEventMapper,
@@ -115,6 +121,10 @@ import {
   type AetherAgentType,
 } from "./aether/vendored/catalog.ts";
 import { parseFileChanges } from "./aether/vendored/toolDisplay.ts";
+import {
+  openAetherTerminalConnection,
+  type AetherTerminalConnectError,
+} from "./aether/terminalConnection.ts";
 import {
   runAetherAgentStream,
   type AetherAgentConnection,
@@ -2467,8 +2477,40 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       yield* activateRespondedTurn(context, restClient, taskId, responded.message_id);
     });
 
+  // Cloud terminal: an interactive shell inside the task's VM, over its own
+  // tab-scoped workspace socket (independent of the turn engine's stream).
+  // Present only for a keyed instance — a keyless one fails loudly at the
+  // router instead of silently offering a broken shell. Captured into consts
+  // so the presence check narrows inside the closure.
+  const terminalRestClient = options.restClient;
+  const terminalSocket = options.socket;
+  const toCloudTerminalConnectError = (
+    error: AetherTerminalConnectError,
+  ): CloudTerminalConnectError =>
+    error._tag === "AetherTerminalWorkspaceUnavailableError"
+      ? new CloudTerminalUnavailableError({ reason: error.reason })
+      : new CloudTerminalTransportError({ detail: error.message });
+  const cloudTerminal: CloudTerminalConnector | undefined =
+    terminalRestClient !== undefined && terminalSocket !== undefined
+      ? {
+          openConnection: (input) =>
+            openAetherTerminalConnection({
+              restClient: terminalRestClient,
+              apiBaseUrl: terminalSocket.apiBaseUrl,
+              apiKey: terminalSocket.apiKey,
+              taskId: input.taskId,
+              sessionId: input.sessionId,
+              cols: input.cols,
+              rows: input.rows,
+              onOutput: input.onOutput,
+              onClosed: input.onClosed,
+            }).pipe(Effect.mapError(toCloudTerminalConnectError)),
+        }
+      : undefined;
+
   return {
     provider: PROVIDER,
+    ...(cloudTerminal ? { cloudTerminal } : {}),
     capabilities: {
       // "in-session", not restart-based: `PUT /tasks/{id}` replaces the
       // task's settings in place (apitypes/tasks.go UpdateTaskRequest), so a

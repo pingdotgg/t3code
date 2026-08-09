@@ -203,7 +203,7 @@ export interface AetherWebSocketLike {
 
 export type AetherWebSocketFactory = (url: string) => AetherWebSocketLike;
 
-const defaultWebSocketFactory: AetherWebSocketFactory = (url) =>
+export const defaultWebSocketFactory: AetherWebSocketFactory = (url) =>
   // Node >= 22 ships a spec-compliant global WebSocket (undici).
   new WebSocket(url) as unknown as AetherWebSocketLike;
 
@@ -271,7 +271,7 @@ export interface AetherStreamTiming {
   readonly requestTimeoutMs: number;
 }
 
-const DEFAULT_TIMING: AetherStreamTiming = {
+export const DEFAULT_TIMING: AetherStreamTiming = {
   pollInitialMs: 500,
   pollMaxMs: 10_000,
   reconnectInitialMs: 1_000,
@@ -508,7 +508,7 @@ export interface AetherAgentStreamOptions {
   readonly onDisconnected?: () => Effect.Effect<void>;
 }
 
-type SocketSignal =
+export type SocketSignal =
   | { readonly _tag: "message"; readonly data: string }
   | { readonly _tag: "closed"; readonly code: number; readonly reason: string };
 
@@ -533,7 +533,7 @@ const encodeUserActivityMessage = Schema.encodeSync(
   ),
 );
 
-const openSocket = (
+export const openSocket = (
   factory: AetherWebSocketFactory,
   url: string,
   openTimeoutMs: number,

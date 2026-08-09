@@ -40,6 +40,7 @@ import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as AetherMirrorRegistry from "./provider/AetherMirrorRegistry.ts";
+import * as AetherTerminalManager from "./terminal/AetherTerminalManager.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
@@ -252,7 +253,10 @@ const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
 // NDJSON writers and is provided at the outer runtime layer so both
 // `ProviderService` and the per-instance drivers read the same logger pair.
 const ProviderLayerLive = ProviderServiceLive.pipe(
-  Layer.provide(ProviderAdapterRegistryLive),
+  // provideMerge (not provide): the AetherTerminalManager resolves cloud
+  // shells through the SAME adapter registry the turn engine uses, so it must
+  // be exposed downstream, not consumed here.
+  Layer.provideMerge(ProviderAdapterRegistryLive),
   Layer.provideMerge(ProviderSessionDirectoryLayerLive),
 );
 
@@ -319,6 +323,11 @@ const TerminalLayerLive = TerminalManager.layer.pipe(
   Layer.provide(PortScannerLayerLive),
 );
 
+// Cloud-terminal sibling: routed to per thread in ws.ts. Its deps
+// (ProviderAdapterRegistry + ProviderSessionDirectory) are satisfied by
+// ProviderRuntimeLayerLive later in the runtime pipe.
+const AetherTerminalManagerLayerLive = AetherTerminalManager.layer;
+
 const PreviewLayerLive = Layer.empty.pipe(
   Layer.provideMerge(PreviewManager.layer),
   Layer.provideMerge(PortScannerLayerLive),
@@ -360,6 +369,13 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(OrchestrationLayerLive),
 );
 
+// AetherTerminalManager consumes the adapter registry + session directory that
+// ProviderRuntimeLayerLive exposes. Compose them into one layer so the runtime
+// pipe stays within the provideMerge arity cap.
+const ProviderRuntimeWithTerminalLive = AetherTerminalManagerLayerLive.pipe(
+  Layer.provideMerge(ProviderRuntimeLayerLive),
+);
+
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
   Layer.provideMerge(ServerSettingsLayerLive),
@@ -367,7 +383,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(VcsLayerLive),
-  Layer.provideMerge(ProviderRuntimeLayerLive),
+  Layer.provideMerge(ProviderRuntimeWithTerminalLive),
   Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive)),
   Layer.provideMerge(PersistenceLayerLive),
   Layer.provideMerge(Keybindings.layer),

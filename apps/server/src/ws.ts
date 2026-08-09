@@ -93,6 +93,7 @@ import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as AetherTerminalManager from "./terminal/AetherTerminalManager.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -394,6 +395,18 @@ const makeWsRpcLayer = (
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const terminalManager = yield* TerminalManager.TerminalManager;
+      const aetherTerminalManager = yield* AetherTerminalManager.AetherTerminalManager;
+      // Route each per-thread terminal RPC to the cloud-VM shell when the
+      // thread is Aether-backed, else the local PTY. `handles` caches per
+      // thread, so this is a plain in-memory check after the first call.
+      const routeTerminal = <A>(
+        threadId: string,
+        onAether: () => Effect.Effect<A, TerminalError>,
+        onLocal: () => Effect.Effect<A, TerminalError>,
+      ): Effect.Effect<A, TerminalError> =>
+        aetherTerminalManager
+          .handles(threadId)
+          .pipe(Effect.flatMap((useAether) => (useAether ? onAether() : onLocal())));
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
@@ -1085,32 +1098,48 @@ const makeWsRpcLayer = (
                       )
                   : false;
               const result = yield* dispatchNormalizedCommand(normalizedCommand);
-              if (normalizedCommand.type === "thread.archive") {
-                if (shouldStopSessionAfterArchive) {
-                  yield* Effect.gen(function* () {
-                    const stopCommand = yield* normalizeDispatchCommand({
-                      type: "thread.session.stop",
-                      commandId: CommandId.make(
-                        `session-stop-for-archive:${normalizedCommand.commandId}`,
-                      ),
-                      threadId: normalizedCommand.threadId,
-                      createdAt: yield* nowIso,
-                    });
-
-                    yield* dispatchNormalizedCommand(stopCommand);
-                  }).pipe(
-                    Effect.catchCause((cause) =>
-                      Effect.logWarning("failed to stop provider session during archive", {
-                        threadId: normalizedCommand.threadId,
-                        cause,
-                      }),
+              if (normalizedCommand.type === "thread.archive" && shouldStopSessionAfterArchive) {
+                yield* Effect.gen(function* () {
+                  const stopCommand = yield* normalizeDispatchCommand({
+                    type: "thread.session.stop",
+                    commandId: CommandId.make(
+                      `session-stop-for-archive:${normalizedCommand.commandId}`,
                     ),
-                  );
-                }
+                    threadId: normalizedCommand.threadId,
+                    createdAt: yield* nowIso,
+                  });
 
+                  yield* dispatchNormalizedCommand(stopCommand);
+                }).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("failed to stop provider session during archive", {
+                      threadId: normalizedCommand.threadId,
+                      cause,
+                    }),
+                  ),
+                );
+              }
+
+              if (
+                normalizedCommand.type === "thread.archive" ||
+                normalizedCommand.type === "thread.delete"
+              ) {
+                // Close BOTH managers: a thread is either local- or
+                // Aether-backed, and closing the one with no sessions is a
+                // no-op. Also on delete — otherwise a deleted cloud thread
+                // leaks its VM socket, and the terminal keep-alive would hold
+                // the VM warm indefinitely.
                 yield* terminalManager.close({ threadId: normalizedCommand.threadId }).pipe(
                   Effect.catch((error) =>
-                    Effect.logWarning("failed to close thread terminals after archive", {
+                    Effect.logWarning("failed to close thread terminals after archive/delete", {
+                      threadId: normalizedCommand.threadId,
+                      error: error.message,
+                    }),
+                  ),
+                );
+                yield* aetherTerminalManager.close({ threadId: normalizedCommand.threadId }).pipe(
+                  Effect.catch((error) =>
+                    Effect.logWarning("failed to close cloud terminals after archive/delete", {
                       threadId: normalizedCommand.threadId,
                       error: error.message,
                     }),
@@ -1963,40 +1992,93 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "review" },
           ),
         [WS_METHODS.terminalOpen]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalOpen,
+            routeTerminal(
+              input.threadId,
+              () => aetherTerminalManager.open(input),
+              () => terminalManager.open(input),
+            ),
+            {
+              "rpc.aggregate": "terminal",
+            },
+          ),
         [WS_METHODS.terminalAttach]: (input) =>
           observeRpcStream(
             WS_METHODS.terminalAttach,
             Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
               Effect.acquireRelease(
-                terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
+                routeTerminal(
+                  input.threadId,
+                  () =>
+                    aetherTerminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
+                  () => terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
+                ),
                 (unsubscribe) => Effect.sync(unsubscribe),
               ),
             ),
             { "rpc.aggregate": "terminal" },
           ),
         [WS_METHODS.terminalWrite]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalWrite, terminalManager.write(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalWrite,
+            routeTerminal(
+              input.threadId,
+              () => aetherTerminalManager.write(input),
+              () => terminalManager.write(input),
+            ),
+            {
+              "rpc.aggregate": "terminal",
+            },
+          ),
         [WS_METHODS.terminalResize]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalResize, terminalManager.resize(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalResize,
+            routeTerminal(
+              input.threadId,
+              () => aetherTerminalManager.resize(input),
+              () => terminalManager.resize(input),
+            ),
+            {
+              "rpc.aggregate": "terminal",
+            },
+          ),
         [WS_METHODS.terminalClear]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalClear, terminalManager.clear(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalClear,
+            routeTerminal(
+              input.threadId,
+              () => aetherTerminalManager.clear(input),
+              () => terminalManager.clear(input),
+            ),
+            {
+              "rpc.aggregate": "terminal",
+            },
+          ),
         [WS_METHODS.terminalRestart]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalRestart, terminalManager.restart(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalRestart,
+            routeTerminal(
+              input.threadId,
+              () => aetherTerminalManager.restart(input),
+              () => terminalManager.restart(input),
+            ),
+            {
+              "rpc.aggregate": "terminal",
+            },
+          ),
         [WS_METHODS.terminalClose]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalClose, terminalManager.close(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalClose,
+            routeTerminal(
+              input.threadId,
+              () => aetherTerminalManager.close(input),
+              () => terminalManager.close(input),
+            ),
+            {
+              "rpc.aggregate": "terminal",
+            },
+          ),
         [WS_METHODS.subscribeTerminalEvents]: (_input) =>
           observeRpcStream(
             WS_METHODS.subscribeTerminalEvents,
