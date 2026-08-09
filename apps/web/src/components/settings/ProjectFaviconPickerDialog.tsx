@@ -1,6 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { useMemo, useState } from "react";
 
 import { primaryServerKeybindingsAtom } from "~/state/server";
@@ -37,22 +36,21 @@ export function ProjectFaviconPickerDialog(props: {
     props.cwd,
     query,
     PROJECT_FILE_PICKER_RESULT_LIMIT,
+    { imageOnly: true },
   );
   const { resolvedTheme } = useTheme();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const items = useMemo<CommandPaletteActionItem[]>(
     () =>
-      getProjectFilePickerMatches(result.entries, result.matchedQuery)
-        .filter((match) => isWorkspaceImagePreviewPath(match.path))
-        .map((match) => ({
-          kind: "action",
-          value: `project-favicon:${match.path}`,
-          searchTerms: [match.name, match.path],
-          title: match.name,
-          description: match.path,
-          icon: <PierreEntryIcon pathValue={match.path} kind="file" theme={resolvedTheme} />,
-          run: async () => props.onSelect(match.path),
-        })),
+      getProjectFilePickerMatches(result.entries, result.matchedQuery).map((match) => ({
+        kind: "action",
+        value: `project-favicon:${match.path}`,
+        searchTerms: [match.name, match.path],
+        title: match.name,
+        description: match.path,
+        icon: <PierreEntryIcon pathValue={match.path} kind="file" theme={resolvedTheme} />,
+        run: async () => props.onSelect(match.path),
+      })),
     [props.onSelect, resolvedTheme, result.entries, result.matchedQuery],
   );
 

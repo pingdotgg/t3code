@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ThreadId } from "@t3tools/contracts";
+import { AssetPreviewTypeValidationError, ThreadId } from "@t3tools/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
@@ -279,10 +279,50 @@ describe("AssetAccess", () => {
 
       const result = yield* issueAssetUrl({
         resource: { _tag: "project-favicon", cwd: root, path: "brand/custom.svg" },
+        projectFaviconPath: "brand/custom.svg",
       });
 
       expect(result.sourcePath).toBe("brand/custom.svg");
       expect(result.relativeUrl).toMatch(/\/v[0-9a-f]{64}-custom\.svg$/);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("ignores a client favicon path hint", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-hint-",
+      });
+      yield* fileSystem.makeDirectory(path.join(root, "brand"));
+      yield* fileSystem.writeFileString(path.join(root, "brand", "hint.svg"), "<svg>hint</svg>");
+      yield* fileSystem.writeFileString(path.join(root, "brand", "saved.svg"), "<svg>saved</svg>");
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: root, path: "brand/hint.svg" },
+        projectFaviconPath: "brand/saved.svg",
+      });
+
+      expect(result.sourcePath).toBe("brand/saved.svg");
+      expect(result.relativeUrl).toMatch(/\/v[0-9a-f]{64}-saved\.svg$/);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects a resolved project favicon with a non-image extension", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-type-",
+      });
+      yield* fileSystem.writeFileString(path.join(root, "secret.txt"), "not an image");
+
+      const error = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: root },
+        projectFaviconPath: "secret.txt",
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(AssetPreviewTypeValidationError);
     }).pipe(Effect.provide(testLayer)),
   );
 

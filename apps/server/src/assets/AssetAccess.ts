@@ -169,6 +169,7 @@ const resolveCanonicalWorkspaceFileForRequest = (input: {
 export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (input: {
   readonly resource: AssetResource;
   readonly workspaceRoot?: string;
+  readonly projectFaviconPath?: string | null;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -289,7 +290,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       );
       const faviconResolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
       const faviconPath = yield* faviconResolver
-        .resolvePath(workspaceRoot, input.resource.path)
+        .resolvePath(workspaceRoot, input.projectFaviconPath ?? undefined)
         .pipe(
           Effect.mapError(
             (cause) =>
@@ -300,6 +301,9 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           ),
         );
       const relativePath = faviconPath ? path.relative(workspaceRoot, faviconPath) : null;
+      if (relativePath && !isWorkspaceImagePreviewPath(relativePath)) {
+        return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
+      }
       sourcePath = relativePath ?? undefined;
       const canonicalFaviconPath = relativePath
         ? yield* resolveCanonicalWorkspaceFile({ workspaceRoot, relativePath }).pipe(
