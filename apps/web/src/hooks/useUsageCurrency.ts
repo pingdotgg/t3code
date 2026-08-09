@@ -71,6 +71,15 @@ export function useUsageCurrency() {
   const rates = ratesCache.rates;
   const rate = getUsdRate(currency, rates);
 
+  // When the selected currency has no quote, keep plotting/formatting in USD
+  // rather than labeling unconverted amounts as another currency.
+  const displayCurrency: UsageCurrencyCode = rate === null ? "USD" : currency;
+
+  const toDisplayCost = useCallback(
+    (amountUsd: number) => convertFromUsd(amountUsd, currency, rates) ?? amountUsd,
+    [currency, rates],
+  );
+
   const formatCost = useCallback(
     (amountUsd: number) => {
       const converted = convertFromUsd(amountUsd, currency, rates);
@@ -91,15 +100,41 @@ export function useUsageCurrency() {
     [currency, rates],
   );
 
+  /** Formats an amount already converted into `displayCurrency`. */
+  const formatDisplayCost = useCallback(
+    (amount: number) => formatCurrency(amount, displayCurrency),
+    [displayCurrency],
+  );
+
+  const formatDisplayCostCompact = useCallback(
+    (amount: number) => formatCurrencyCompact(amount, displayCurrency),
+    [displayCurrency],
+  );
+
   return useMemo(
     () => ({
       currency,
       setCurrency,
       rate,
       rates,
+      displayCurrency,
+      toDisplayCost,
       formatCost,
       formatCostCompact,
+      formatDisplayCost,
+      formatDisplayCostCompact,
     }),
-    [currency, formatCost, formatCostCompact, rate, rates, setCurrency],
+    [
+      currency,
+      displayCurrency,
+      formatCost,
+      formatCostCompact,
+      formatDisplayCost,
+      formatDisplayCostCompact,
+      rate,
+      rates,
+      setCurrency,
+      toDisplayCost,
+    ],
   );
 }

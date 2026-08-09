@@ -91,7 +91,15 @@ export function UsagePage() {
   const [windowDays, setWindowDays] = useState<number>(30);
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
   const [breakdown, setBreakdown] = useState<"model" | "day">("model");
-  const { currency, setCurrency, formatCost, formatCostCompact } = useUsageCurrency();
+  const {
+    currency,
+    setCurrency,
+    formatCost,
+    formatCostCompact,
+    toDisplayCost,
+    formatDisplayCost,
+    formatDisplayCostCompact,
+  } = useUsageCurrency();
 
   // Recomputed only when the window length changes, so a re-render does not
   // shift the range and refetch every environment.

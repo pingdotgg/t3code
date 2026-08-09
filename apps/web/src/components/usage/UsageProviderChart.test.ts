@@ -94,4 +94,28 @@ describe("buildDayColumns", () => {
       expect(column.total).toBeCloseTo(sum, 9);
     }
   });
+
+  it("converts cost into display units before banding", () => {
+    // Regression: nicening in USD then FX-formatting ticks produced labels like
+    // €692.9 for an $800 gridline. Convert first so the scale is round in-currency.
+    expect(buildDayColumns(days, byDay, "cost", (usd) => usd * 0.5).map((c) => c.total)).toEqual([
+      15, 0, 2.5,
+    ]);
+  });
+
+  it("leaves token values unconverted", () => {
+    expect(buildDayColumns(days, byDay, "tokens", (usd) => usd * 0.5).map((c) => c.total)).toEqual([
+      300, 0, 50,
+    ]);
+  });
+});
+
+describe("currency-aware cost scale", () => {
+  it("nicens after conversion so axis ticks stay round", () => {
+    const peakUsd = 800;
+    const eurRate = 0.866;
+    // Converted USD ticks would be 692.8 / 519.6 / …; nicening in EUR first
+    // should land on a clean 1/2/5 step instead.
+    expect(niceScale(peakUsd * eurRate, 4).ticks).toEqual([0, 200, 400, 600, 800]);
+  });
 });
