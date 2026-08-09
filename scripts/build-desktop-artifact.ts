@@ -1729,9 +1729,9 @@ const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (
   );
 });
 
-export const buildWslRuntimeArchiveArgs = (archivePath: string): ReadonlyArray<string> => [
+export const buildWslRuntimeArchiveArgs = (): ReadonlyArray<string> => [
   "-czf",
-  archivePath,
+  WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE.from,
   "--exclude=node_modules/@anthropic-ai/claude-agent-sdk-*",
   "--exclude=node_modules/.pnpm/@anthropic-ai+claude-agent-sdk-*",
   "apps/server/dist",
@@ -1741,14 +1741,10 @@ export const buildWslRuntimeArchiveArgs = (archivePath: string): ReadonlyArray<s
 const stageWslRuntimeArchive = Effect.fn("stageWslRuntimeArchive")(function* (stageAppDir: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const archivePath = path.join(
-    stageAppDir,
-    "apps/desktop/prod-resources",
-    WSL_RUNTIME_ARCHIVE_NAME,
-  );
+  const archivePath = path.join(stageAppDir, WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE.from);
   yield* fs.makeDirectory(path.dirname(archivePath), { recursive: true });
   yield* runCommand(
-    ChildProcess.make("tar", buildWslRuntimeArchiveArgs(archivePath), {
+    ChildProcess.make("tar", buildWslRuntimeArchiveArgs(), {
       cwd: stageAppDir,
     }),
     { label: "tar WSL runtime", verbose: false },

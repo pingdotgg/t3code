@@ -589,9 +589,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       from: "apps/desktop/prod-resources/wsl-runtime.tar.gz",
       to: "wsl-runtime.tar.gz",
     });
-    assert.deepStrictEqual(buildWslRuntimeArchiveArgs("C:\\stage\\wsl-runtime.tar.gz"), [
+    assert.deepStrictEqual(buildWslRuntimeArchiveArgs(), [
       "-czf",
-      "C:\\stage\\wsl-runtime.tar.gz",
+      "apps/desktop/prod-resources/wsl-runtime.tar.gz",
       "--exclude=node_modules/@anthropic-ai/claude-agent-sdk-*",
       "--exclude=node_modules/.pnpm/@anthropic-ai+claude-agent-sdk-*",
       "apps/server/dist",
