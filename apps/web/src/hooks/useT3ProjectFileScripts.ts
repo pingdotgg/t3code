@@ -38,7 +38,11 @@ export function useT3ProjectFileState(
   const isPending = query.isPending;
   return useMemo(() => {
     if (contents === null) {
-      return { status: isPending ? "loading" : "missing", file: null, scripts: NO_SCRIPTS } as const;
+      return {
+        status: isPending ? "loading" : "missing",
+        file: null,
+        scripts: NO_SCRIPTS,
+      } as const;
     }
     const file = parseT3ProjectFile(contents);
     if (file === null) {
