@@ -28,15 +28,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import * as ProcessRunner from "../processRunner.ts";
-import {
-  BootService,
-  BootServiceCommandError,
-  BootServiceInstallError,
-  BootServiceUnsupportedError,
-  BootServiceUpdatePendingError,
-  type BootServiceHost,
-  type BootServicePlan,
-} from "./bootService.ts";
+import * as BootService from "./bootService.ts";
 import {
   ensurePinnedRuntimeInstalled,
   pinnedRuntimePaths,
@@ -116,7 +108,7 @@ export function quotePowerShellLiteral(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
-export interface WindowsBootServicePlan extends BootServicePlan {
+export interface WindowsBootServicePlan extends BootService.BootServicePlan {
   readonly startupScriptPath: string;
   readonly shortcutScriptPath: string;
 }
@@ -186,15 +178,25 @@ export function renderShortcutScript(plan: WindowsBootServicePlan): string {
     "  # deliberate choice, so this is reported and not treated as a failure.",
     "  $shell = @(Get-Process -Name 'explorer' -ErrorAction SilentlyContinue).Count -gt 0",
     "  # Windows records entries disabled through Settings here. The low bit of",
-    "  # the first byte is the disabled flag.",
+    "  # the first byte is the disabled flag. It only means anything while the",
+    "  # shortcut exists, because the value outlives the .lnk. Reporting a stale",
+    "  # one sends the user hunting for an entry Startup apps no longer shows.",
     "  $key = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\StartupFolder'",
     "  $disabled = $false",
-    "  if (Test-Path -LiteralPath $key) {",
+    "  $present = Test-Path -LiteralPath $shortcutPath",
+    "  if ($present -and (Test-Path -LiteralPath $key)) {",
     "    $value = (Get-ItemProperty -LiteralPath $key -Name $shortcutFile -ErrorAction SilentlyContinue).$shortcutFile",
     "    if ($null -ne $value -and $value.Length -gt 0) { $disabled = ($value[0] -band 1) -eq 1 }",
     "  }",
     '  Write-Output "shell=$shell"',
     '  Write-Output "disabled=$disabled"',
+    "  # Read the shortcut back. That the script which wrote it still matches",
+    "  # says nothing about a .lnk somebody edited or replaced since.",
+    "  if ($present) {",
+    "    $existing = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcutPath)",
+    '    Write-Output "target=$($existing.TargetPath)"',
+    '    Write-Output "arguments=$($existing.Arguments)"',
+    "  }",
     "  exit 0",
     "}",
     "",
@@ -246,7 +248,7 @@ export interface WindowsBootServiceInput {
   readonly baseDir: string;
   readonly logsDir: string;
   readonly cliVersion: string;
-  readonly host?: BootServiceHost;
+  readonly host?: BootService.BootServiceHost;
   /** Overridable so tests do not sit through the real wait. */
   readonly stopRequestTimeout?: Duration.Duration;
 }
@@ -310,11 +312,11 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
         yield* (yield* fs.open(tempPath, { flag: "r" })).sync;
         yield* fs.rename(tempPath, filePath);
       }),
-    ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+    ).pipe(Effect.mapError((cause) => new BootService.BootServiceInstallError({ cause })));
 
   const requireWindows = Effect.gen(function* () {
     if (platform !== "win32" || appData === "") {
-      return yield* new BootServiceUnsupportedError({ platform });
+      return yield* new BootService.BootServiceUnsupportedError({ platform });
     }
   });
 
@@ -328,11 +330,11 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
     options?: { readonly timeout?: Duration.Input },
   ) {
     return yield* runner.run({ command, args, timeout: options?.timeout }).pipe(
-      Effect.mapError((cause) => new BootServiceCommandError({ step, cause })),
+      Effect.mapError((cause) => new BootService.BootServiceCommandError({ step, cause })),
       Effect.filterOrFail(
         (result) => result.code === 0,
         (result) =>
-          new BootServiceCommandError({
+          new BootService.BootServiceCommandError({
             step,
             exitCode: Number(result.code),
             stdoutLength: result.stdout.length,
@@ -386,21 +388,23 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
    */
   const preflight: Effect.Effect<
     WindowsPreflight,
-    BootServiceUnsupportedError | BootServiceInstallError | BootServiceCommandError
+    | BootService.BootServiceUnsupportedError
+    | BootService.BootServiceInstallError
+    | BootService.BootServiceCommandError
   > = Effect.gen(function* () {
     yield* requireWindows;
     yield* fs
       .makeDirectory(startupDir, { recursive: true })
-      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+      .pipe(Effect.mapError((cause) => new BootService.BootServiceInstallError({ cause })));
     // Prove it is writable now, rather than failing halfway through an install.
     yield* Effect.scoped(
       fs.makeTempFileScoped({ directory: startupDir, prefix: ".t3-service-probe-" }),
-    ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+    ).pipe(Effect.mapError((cause) => new BootService.BootServiceInstallError({ cause })));
 
     const probe = yield* runShortcutScript("checking the Windows Startup folder", "Probe");
     const findings = parseProbeOutput(probe.stdout);
     if (findings === undefined) {
-      return yield* new BootServiceCommandError({
+      return yield* new BootService.BootServiceCommandError({
         step: "reading the Windows Startup folder check",
         stdoutLength: probe.stdout.length,
         stderrLength: probe.stderr.length,
@@ -435,7 +439,7 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
     // server against the same database.
     yield* fs
       .writeFileString(stopRequestPath, "")
-      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+      .pipe(Effect.mapError((cause) => new BootService.BootServiceInstallError({ cause })));
 
     const timeoutMs = Duration.toMillis(input.stopRequestTimeout ?? STOP_REQUEST_TIMEOUT);
     const pollMs = Math.min(timeoutMs, Duration.toMillis(STOP_REQUEST_ACK_POLL));
@@ -447,8 +451,10 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
     }
     // Refusing here is the whole point. Carrying on would write over a launcher
     // we could not confirm dead.
-    return yield* new BootServiceCommandError({
-      step: `stopping the running service (process ${pid} did not exit in ${Math.round(timeoutMs / 1000)}s)`,
+    return yield* new BootService.BootServiceCommandError({
+      step: "stopping the running service",
+      pid,
+      timeoutSeconds: Math.round(timeoutMs / 1000),
     });
   });
 
@@ -492,22 +498,22 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
   }).pipe(
     Effect.mapError((error) =>
       error._tag === "PinnedRuntimeInstallError"
-        ? new BootServiceCommandError({
+        ? new BootService.BootServiceCommandError({
             step: error.step,
             exitCode: error.exitCode,
             stdoutLength: error.stdoutLength,
             stderrLength: error.stderrLength,
             cause: error,
           })
-        : new BootServiceInstallError({ cause: error }),
+        : new BootService.BootServiceInstallError({ cause: error }),
     ),
   );
 
-  const install: BootService["Service"]["install"] = Effect.gen(function* () {
+  const install: BootService.BootService["Service"]["install"] = Effect.gen(function* () {
     yield* requireWindows;
     yield* fs
       .makeDirectory(input.logsDir, { recursive: true })
-      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+      .pipe(Effect.mapError((cause) => new BootService.BootServiceInstallError({ cause })));
 
     const percentIn = findPercentInPaths([
       ["the Node executable", plan.nodePath],
@@ -515,13 +521,7 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
       ["the log directory", plan.logPath],
     ]);
     if (percentIn !== undefined) {
-      return yield* new BootServiceInstallError({
-        cause: new Error(
-          `The path to ${percentIn} contains a percent sign, and the Windows command ` +
-            "shell would rewrite it before the service could start. Move T3 Code to a " +
-            "path without one, or set T3CODE_HOME to such a path, then run this again.",
-        ),
-      });
+      return yield* new BootService.BootServicePathHasPercentError({ pathLabel: percentIn });
     }
 
     // Write the shortcut script first so the preflight has something to run.
@@ -538,11 +538,8 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
       );
     }
     if (checks.entryDisabled) {
-      return yield* new BootServiceInstallError({
-        cause: new Error(
-          `"${SHORTCUT_NAME}" is switched off under Startup apps in Windows Settings. ` +
-            "Turn it back on, then run this again.",
-        ),
+      return yield* new BootService.BootServiceStartupEntryDisabledError({
+        shortcutName: SHORTCUT_NAME,
       });
     }
 
@@ -550,11 +547,11 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
     yield* installPinnedRuntime;
     const launcherSource = yield* fs
       .readFileString(launcherSourcePath)
-      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+      .pipe(Effect.mapError((cause) => new BootService.BootServiceInstallError({ cause })));
 
     const installed = yield* fs
       .exists(unitPath)
-      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+      .pipe(Effect.mapError((cause) => new BootService.BootServiceInstallError({ cause })));
     // Keyed on the pid file, never on the shortcut. A launcher outlives a
     // manually deleted shortcut, and starting a second one alongside it would
     // put two servers on the same database.
@@ -566,7 +563,7 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
         Option.isSome(previousStateText) &&
         serviceStateHasPendingUpdate(previousStateText.value)
       ) {
-        return yield* new BootServiceUpdatePendingError();
+        return yield* new BootService.BootServiceUpdatePendingError();
       }
       yield* writeDurably(launcherPath, launcherSource);
       yield* writeDurably(
@@ -596,14 +593,14 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
           : Effect.void,
       ),
     );
-    return plan satisfies BootServicePlan;
+    return plan satisfies BootService.BootServicePlan;
   }).pipe(Effect.withSpan("cloud.boot_service_windows.install"));
 
-  const uninstall: BootService["Service"]["uninstall"] = Effect.gen(function* () {
+  const uninstall: BootService.BootService["Service"]["uninstall"] = Effect.gen(function* () {
     yield* requireWindows;
     const installed = yield* fs
       .exists(unitPath)
-      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+      .pipe(Effect.mapError((cause) => new BootService.BootServiceInstallError({ cause })));
 
     // Stop first, and decide that on the pid file rather than the shortcut. A
     // launcher survives someone deleting the shortcut by hand, and leaving it
@@ -615,13 +612,13 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
     // also means a missing or broken generated script cannot strand the entry.
     yield* fs
       .remove(unitPath, { force: true })
-      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+      .pipe(Effect.mapError((cause) => new BootService.BootServiceInstallError({ cause })));
     yield* fs.remove(startupScriptPath, { force: true }).pipe(Effect.ignore);
     yield* fs.remove(shortcutScriptPath, { force: true }).pipe(Effect.ignore);
     return true;
   }).pipe(Effect.withSpan("cloud.boot_service_windows.uninstall"));
 
-  const status: BootService["Service"]["status"] = Effect.gen(function* () {
+  const status: BootService.BootService["Service"]["status"] = Effect.gen(function* () {
     const base = { kind: "win32-startup-shortcut", unitPath, logPath } as const;
     if (platform !== "win32" || appData === "") {
       return { supported: false, installed: false, current: false, ...base };
@@ -680,11 +677,12 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
       ...base,
     };
   }).pipe(
-    Effect.mapError((cause) => new BootServiceInstallError({ cause })),
+    Effect.mapError((cause) => new BootService.BootServiceInstallError({ cause })),
     Effect.withSpan("cloud.boot_service_windows.status"),
   );
 
-  return BootService.of({ install, uninstall, status });
+  return BootService.BootService.of({ install, uninstall, status });
 });
 
-export const layer = (input: WindowsBootServiceInput) => Layer.effect(BootService, make(input));
+export const layer = (input: WindowsBootServiceInput) =>
+  Layer.effect(BootService.BootService, make(input));

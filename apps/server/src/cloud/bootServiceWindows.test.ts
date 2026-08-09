@@ -73,6 +73,19 @@ it("points the shortcut at a hidden PowerShell running the startup script", () =
   expect(shortcut).toContain("$shortcut.WindowStyle = 7");
 });
 
+it("has the probe report the shortcut it finds, and the disabled flag only with it", () => {
+  // The harness fake produces these lines itself, so without this the real
+  // script could stop emitting them and every test would still pass while
+  // Windows reported "needs repair" forever.
+  const shortcut = BootServiceWindows.renderShortcutScript(plan);
+
+  expect(shortcut).toContain('Write-Output "target=$($existing.TargetPath)"');
+  expect(shortcut).toContain('Write-Output "arguments=$($existing.Arguments)"');
+  // A disabled flag outlives the shortcut, so it is only read alongside one.
+  expect(shortcut).toContain("$present = Test-Path -LiteralPath $shortcutPath");
+  expect(shortcut).toContain("if ($present -and (Test-Path -LiteralPath $key)) {");
+});
+
 it("reads both findings out of the probe output", () => {
   expect(BootServiceWindows.parseProbeOutput("shell=True\r\ndisabled=False\r\n")).toEqual({
     shellRunning: true,
@@ -105,6 +118,7 @@ it("spots a percent sign, which the command shell would rewrite silently", () =>
 
 const makeHarness = Effect.fn("test.make_windows_boot_service_harness")(function* (
   platform: NodeJS.Platform = "win32",
+  execPath = "C:\\node.exe",
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -194,7 +208,7 @@ const makeHarness = Effect.fn("test.make_windows_boot_service_harness")(function
     baseDir,
     logsDir: path.join(baseDir, "userdata", "logs"),
     cliVersion: "1.2.3",
-    host: { execPath: "C:\\node.exe", launcherSourcePath: sourceLauncher },
+    host: { execPath, launcherSourcePath: sourceLauncher },
     stopRequestTimeout: Duration.millis(30),
   }).pipe(
     Effect.provideService(ProcessRunner.ProcessRunner, runner),
@@ -285,8 +299,10 @@ it.layer(NodeServices.layer)("windows boot service", (it) => {
       control.disabled = "True";
 
       const error = yield* service.install.pipe(Effect.flip);
-      expect(error._tag).toBe("BootServiceInstallError");
-      expect(String(error.cause)).toContain("Startup apps");
+      // A dedicated tag, because the generic install error hides its cause and
+      // the CLI prints only `message`. The guidance has to reach the user.
+      expect(error._tag).toBe("BootServiceStartupEntryDisabledError");
+      expect(error.message).toContain("Startup apps in Windows Settings");
     }).pipe(TestClock.withLive),
   );
 
@@ -312,7 +328,7 @@ it.layer(NodeServices.layer)("windows boot service", (it) => {
 
       const error = yield* service.install.pipe(Effect.flip);
       expect(error._tag).toBe("BootServiceCommandError");
-      expect(error.message).toContain("did not exit");
+      expect(error.message).toContain("did not exit within");
     }).pipe(TestClock.withLive),
   );
 
@@ -352,6 +368,18 @@ it.layer(NodeServices.layer)("windows boot service", (it) => {
 
       expect(yield* service.uninstall).toBe(true);
       expect(yield* fs.exists(pidPath)).toBe(false);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("names the offending path when it holds a percent sign", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness("win32", "C:\\pct %TEMP% dir\\node.exe");
+
+      const error = yield* service.install.pipe(Effect.flip);
+      // The generic install error prints fixed text, so a dedicated tag is what
+      // gets the user told which path to move.
+      expect(error._tag).toBe("BootServicePathHasPercentError");
+      expect(error.message).toContain("percent sign");
     }).pipe(TestClock.withLive),
   );
 
