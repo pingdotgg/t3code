@@ -106,12 +106,19 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
       "../../node_modules/.pnpm",
     );
 
+    // The store holds regular files too (lock.yaml), so a path built under one
+    // raises ENOTDIR rather than reporting absence. That throws on Linux while
+    // Windows quietly returns false, which is exactly the kind of difference
+    // this test exists to catch, so treat any failure as "not there".
+    const isPresent = (candidate: string) =>
+      fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
+
     const installed = new Map<string, PackageManifest>();
-    if (!(yield* fileSystem.exists(storeDir))) return installed;
+    if (!(yield* isPresent(storeDir))) return installed;
 
     for (const entry of yield* fileSystem.readDirectory(storeDir)) {
       const modulesDir = path.join(storeDir, entry, "node_modules");
-      if (!(yield* fileSystem.exists(modulesDir))) continue;
+      if (!(yield* isPresent(modulesDir))) continue;
 
       for (const owner of yield* fileSystem.readDirectory(modulesDir)) {
         const names = owner.startsWith("@")
@@ -123,7 +130,7 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
         for (const name of names) {
           if (installed.has(name)) continue;
           const manifestPath = path.join(modulesDir, name, "package.json");
-          if (!(yield* fileSystem.exists(manifestPath))) continue;
+          if (!(yield* isPresent(manifestPath))) continue;
           installed.set(name, decodeManifest(yield* fileSystem.readFileString(manifestPath)));
         }
       }
