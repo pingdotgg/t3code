@@ -20,6 +20,32 @@ export interface EnvironmentUsage {
   readonly summary: UsageSummary;
 }
 
+/** One environment's query state, shared by the web and mobile usage views. */
+export interface EnvironmentUsageStatus {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly isConnected: boolean;
+  readonly isPending: boolean;
+  readonly error: string | null;
+  readonly summary: UsageSummary | null;
+}
+
+/** A device whose successful, current summary can be selected on its own. */
+export interface DeviceUsageOption {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+}
+
+export interface UsageDisplay {
+  readonly merged: MergedUsage;
+  readonly selectedEnvironmentId: EnvironmentId | null;
+  /** True only when a requested device cannot become selectable without a new user choice. */
+  readonly shouldResetRequestedEnvironment: boolean;
+  readonly deviceOptions: readonly DeviceUsageOption[];
+  readonly isPending: boolean;
+  readonly isPartial: boolean;
+}
+
 export interface ProviderTotals {
   readonly provider: UsageProviderKind;
   readonly costUsd: number;
@@ -349,5 +375,73 @@ export function mergeUsage(
     duplicateSources: duplicates,
     contributingEnvironments,
     staleEnvironments,
+  };
+}
+
+/**
+ * Resolves the effective device scope without changing global query progress.
+ * Invalid selections fall back to the existing all-environment merge.
+ */
+export function deriveUsageDisplay(
+  environments: readonly EnvironmentUsageStatus[],
+  requestedEnvironmentId: EnvironmentId | null,
+  expectedContractVersion: number,
+): UsageDisplay {
+  const answered: EnvironmentUsage[] = environments.flatMap((environment) =>
+    environment.summary === null
+      ? []
+      : [
+          {
+            environmentId: environment.environmentId,
+            label: environment.label,
+            summary: environment.summary,
+          },
+        ],
+  );
+  // AsyncResult can retain its previous summary while a refresh is waiting.
+  // Preserve that value in All devices, but do not present it as current data
+  // for an individually selectable device.
+  const available = environments.filter(
+    (environment): environment is EnvironmentUsageStatus & { readonly summary: UsageSummary } =>
+      environment.error === null &&
+      environment.isConnected &&
+      !environment.isPending &&
+      environment.summary !== null &&
+      environment.summary.contractVersion === expectedContractVersion,
+  );
+  const selectedStatus =
+    requestedEnvironmentId === null
+      ? undefined
+      : available.find((environment) => environment.environmentId === requestedEnvironmentId);
+  const requestedStatus =
+    requestedEnvironmentId === null
+      ? undefined
+      : environments.find((environment) => environment.environmentId === requestedEnvironmentId);
+  const shouldResetRequestedEnvironment =
+    requestedEnvironmentId !== null &&
+    (requestedStatus === undefined ||
+      !requestedStatus.isConnected ||
+      requestedStatus.error !== null ||
+      (!requestedStatus.isPending &&
+        (requestedStatus.summary === null ||
+          requestedStatus.summary.contractVersion !== expectedContractVersion)));
+  const selected = selectedStatus
+    ? {
+        environmentId: selectedStatus.environmentId,
+        label: selectedStatus.label,
+        summary: selectedStatus.summary,
+      }
+    : undefined;
+  const answeredCount = environments.filter((environment) => environment.summary !== null).length;
+  const stillReporting = environments.filter(
+    (environment) => environment.summary === null && environment.error === null,
+  ).length;
+  return {
+    merged: mergeUsage(selected ? [selected] : answered, expectedContractVersion),
+    selectedEnvironmentId: selected?.environmentId ?? null,
+    shouldResetRequestedEnvironment,
+    deviceOptions: available.map(({ environmentId, label }) => ({ environmentId, label })),
+    isPending: answeredCount === 0 && stillReporting > 0,
+    isPartial: answeredCount > 0 && stillReporting > 0,
   };
 }

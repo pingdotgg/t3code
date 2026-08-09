@@ -8,7 +8,12 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
+import {
+  deriveUsageDisplay,
+  mergeUsage,
+  type EnvironmentUsage,
+  type EnvironmentUsageStatus,
+} from "./usageMerge.ts";
 
 function bucket(overrides: Partial<UsageBucket> = {}): UsageBucket {
   return {
@@ -254,5 +259,241 @@ describe("mergeUsage", () => {
     const merged = mergeUsage([], USAGE_CONTRACT_VERSION);
     expect(merged.costUsd).toBe(0);
     expect(merged.daily).toHaveLength(0);
+  });
+});
+
+describe("deriveUsageDisplay", () => {
+  it("keeps the existing merged and deduplicated totals for All devices", () => {
+    const sharedSource = {
+      provider: "claude" as const,
+      hostId: "mac",
+      homePath: "/Users/theo/.claude",
+    };
+    const answered = [
+      environment("env-a", summary([bucket()], [sharedSource])),
+      environment("env-b", summary([bucket()], [sharedSource])),
+    ];
+    const environments: EnvironmentUsageStatus[] = answered.map((environmentUsage) => ({
+      ...environmentUsage,
+      isConnected: true,
+      isPending: false,
+      error: null,
+    }));
+
+    const display = deriveUsageDisplay(environments, null, USAGE_CONTRACT_VERSION);
+    const existingAggregate = mergeUsage(answered, USAGE_CONTRACT_VERSION);
+
+    expect(display.selectedEnvironmentId).toBeNull();
+    expect(display.merged).toEqual(existingAggregate);
+    expect(display.merged.costUsd).toBe(10);
+    expect(display.merged.duplicateSources).toHaveLength(1);
+  });
+
+  it("filters totals, models, days, and providers to one selected device", () => {
+    const environments: EnvironmentUsageStatus[] = [
+      {
+        ...environment(
+          "env-a",
+          summary(
+            [bucket({ day: "2026-08-06" as UsageDay })],
+            [{ provider: "claude", hostId: "mac-a", homePath: "/a/.claude" }],
+          ),
+        ),
+        isConnected: true,
+        isPending: false,
+        error: null,
+      },
+      {
+        ...environment(
+          "env-b",
+          summary(
+            [
+              bucket({
+                day: "2026-08-07" as UsageDay,
+                provider: "codex",
+                model: "gpt-5.6-sol",
+                costUsd: 4,
+              }),
+            ],
+            [{ provider: "codex", hostId: "mac-b", homePath: "/b/.codex" }],
+          ),
+        ),
+        isConnected: true,
+        isPending: false,
+        error: null,
+      },
+    ];
+
+    const display = deriveUsageDisplay(
+      environments,
+      "env-b" as EnvironmentId,
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(display.selectedEnvironmentId).toBe("env-b");
+    expect(display.merged.costUsd).toBe(4);
+    expect(display.merged.models.map((model) => model.model)).toEqual(["gpt-5.6-sol"]);
+    expect(display.merged.daily.map((day) => day.day)).toEqual(["2026-08-07"]);
+    expect(display.merged.providers.map((provider) => provider.provider)).toEqual(["codex"]);
+  });
+
+  it("falls back to All devices and offers only successful current summaries", () => {
+    const current = summary(
+      [bucket()],
+      [{ provider: "claude", hostId: "mac", homePath: "/current/.claude" }],
+    );
+    const environments: EnvironmentUsageStatus[] = [
+      {
+        ...environment("env-current", current),
+        isConnected: true,
+        isPending: false,
+        error: null,
+      },
+      {
+        ...environment(
+          "env-failed",
+          summary(
+            [bucket()],
+            [{ provider: "claude", hostId: "linux", homePath: "/failed/.claude" }],
+          ),
+        ),
+        isConnected: true,
+        isPending: false,
+        error: "This environment could not report usage.",
+      },
+      {
+        ...environment(
+          "env-old-server",
+          summary(
+            [bucket()],
+            [{ provider: "claude", hostId: "old", homePath: "/old/.claude" }],
+            USAGE_CONTRACT_VERSION - 1,
+          ),
+        ),
+        isConnected: true,
+        isPending: false,
+        error: null,
+      },
+      {
+        environmentId: "env-pending" as EnvironmentId,
+        label: "env-pending",
+        isConnected: true,
+        isPending: true,
+        error: null,
+        summary: null,
+      },
+      {
+        ...environment(
+          "env-refreshing",
+          summary(
+            [bucket()],
+            [{ provider: "claude", hostId: "refreshing", homePath: "/refreshing/.claude" }],
+          ),
+        ),
+        isConnected: true,
+        isPending: true,
+        error: null,
+      },
+      {
+        ...environment(
+          "env-disconnected",
+          summary(
+            [bucket()],
+            [{ provider: "claude", hostId: "offline", homePath: "/offline/.claude" }],
+          ),
+        ),
+        isConnected: false,
+        isPending: false,
+        error: null,
+      },
+    ];
+
+    const display = deriveUsageDisplay(
+      environments,
+      "env-failed" as EnvironmentId,
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(display.selectedEnvironmentId).toBeNull();
+    expect(display.shouldResetRequestedEnvironment).toBe(true);
+    expect(display.deviceOptions).toEqual([{ environmentId: "env-current", label: "env-current" }]);
+    expect(display.merged.costUsd).toBe(40);
+
+    const refreshingSelection = deriveUsageDisplay(
+      environments,
+      "env-refreshing" as EnvironmentId,
+      USAGE_CONTRACT_VERSION,
+    );
+    expect(refreshingSelection.selectedEnvironmentId).toBeNull();
+
+    const disconnectedSelection = deriveUsageDisplay(
+      environments,
+      "env-disconnected" as EnvironmentId,
+      USAGE_CONTRACT_VERSION,
+    );
+    expect(disconnectedSelection.selectedEnvironmentId).toBeNull();
+  });
+
+  it("keeps the global wait-for-all loading state when one device is selected", () => {
+    const environments: EnvironmentUsageStatus[] = [
+      {
+        ...environment(
+          "env-ready",
+          summary(
+            [bucket()],
+            [{ provider: "claude", hostId: "ready", homePath: "/ready/.claude" }],
+          ),
+        ),
+        isConnected: true,
+        isPending: false,
+        error: null,
+      },
+      {
+        environmentId: "env-scanning" as EnvironmentId,
+        label: "env-scanning",
+        isConnected: true,
+        isPending: true,
+        error: null,
+        summary: null,
+      },
+    ];
+
+    const display = deriveUsageDisplay(
+      environments,
+      "env-ready" as EnvironmentId,
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(display.isPending).toBe(false);
+    expect(display.isPartial).toBe(true);
+  });
+
+  it("preserves a requested device scope while that device refreshes", () => {
+    const ready: EnvironmentUsageStatus = {
+      ...environment(
+        "env-selected",
+        summary(
+          [bucket()],
+          [{ provider: "claude", hostId: "selected", homePath: "/selected/.claude" }],
+        ),
+      ),
+      isConnected: true,
+      isPending: false,
+      error: null,
+    };
+    const requestedEnvironmentId = "env-selected" as EnvironmentId;
+
+    const refreshing = deriveUsageDisplay(
+      [{ ...ready, isPending: true }],
+      requestedEnvironmentId,
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(refreshing.selectedEnvironmentId).toBeNull();
+    expect(refreshing.shouldResetRequestedEnvironment).toBe(false);
+    expect(
+      deriveUsageDisplay([ready], requestedEnvironmentId, USAGE_CONTRACT_VERSION)
+        .selectedEnvironmentId,
+    ).toBe(requestedEnvironmentId);
   });
 });

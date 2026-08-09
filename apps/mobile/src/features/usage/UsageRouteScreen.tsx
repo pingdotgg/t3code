@@ -1,5 +1,7 @@
 import { useNavigation } from "@react-navigation/native";
-import type { MergedUsage } from "@t3tools/shared/usageMerge";
+import type { MenuAction } from "@react-native-menu/menu";
+import type { EnvironmentId } from "@t3tools/contracts";
+import type { DeviceUsageOption, MergedUsage } from "@t3tools/shared/usageMerge";
 import {
   enumerateDays,
   formatCount,
@@ -9,12 +11,13 @@ import {
   formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
+import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { SettingsSection } from "../settings/components/SettingsSection";
@@ -29,17 +32,34 @@ const WINDOW_OPTIONS = [
 ] as const;
 
 const CHART_HEIGHT = 180;
+const ALL_DEVICES_VALUE = "all-devices";
 
 export function UsageRouteScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [windowDays, setWindowDays] = useState<number>(30);
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
+  const [requestedEnvironmentId, setRequestedEnvironmentId] = useState<EnvironmentId | null>(null);
 
   // Recomputed only when the window length changes, so a re-render does not
   // shift the range and refetch every environment.
   const window = useMemo(() => makeWindow(windowDays), [windowDays]);
-  const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
+  const {
+    merged,
+    environments,
+    selectedEnvironmentId,
+    shouldResetRequestedEnvironment,
+    deviceOptions,
+    isPending,
+    isPartial,
+    refresh,
+  } = useUsage(window, requestedEnvironmentId);
+
+  // Persist the derived fallback so a device that later reconnects does not
+  // silently reselect itself after it disappeared or returned stale data.
+  if (shouldResetRequestedEnvironment) {
+    setRequestedEnvironmentId(null);
+  }
 
   const days = useMemo(
     () => enumerateDays(window.sinceDay, window.untilDay),
@@ -67,6 +87,16 @@ export function UsageRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
       >
+        {!isPending &&
+        deviceOptions.length > 0 &&
+        (environments.length > 1 || selectedEnvironmentId !== null) ? (
+          <UsageDeviceMenu
+            options={deviceOptions}
+            selectedEnvironmentId={selectedEnvironmentId}
+            onSelect={setRequestedEnvironmentId}
+          />
+        ) : null}
+
         <SegmentedControl
           options={WINDOW_OPTIONS.map((option) => ({ value: option.days, label: option.label }))}
           selected={windowDays}
@@ -99,6 +129,60 @@ export function UsageRouteScreen() {
           </>
         )}
       </ScrollView>
+    </View>
+  );
+}
+
+function UsageDeviceMenu(props: {
+  readonly options: readonly DeviceUsageOption[];
+  readonly selectedEnvironmentId: EnvironmentId | null;
+  readonly onSelect: (environmentId: EnvironmentId | null) => void;
+}) {
+  const selectedLabel =
+    props.options.find((option) => option.environmentId === props.selectedEnvironmentId)?.label ??
+    "All devices";
+  const actions = useMemo<MenuAction[]>(
+    () => [
+      {
+        id: ALL_DEVICES_VALUE,
+        title: "All devices",
+        state: props.selectedEnvironmentId === null ? "on" : "off",
+      },
+      ...props.options.map((option) => ({
+        id: `device:${option.environmentId}`,
+        title: option.label,
+        state:
+          props.selectedEnvironmentId === option.environmentId ? ("on" as const) : ("off" as const),
+      })),
+    ],
+    [props.options, props.selectedEnvironmentId],
+  );
+  const handleAction = useCallback(
+    (event: { nativeEvent: { event: string } }) => {
+      const id = event.nativeEvent.event;
+      if (id === ALL_DEVICES_VALUE) {
+        props.onSelect(null);
+        return;
+      }
+      if (!id.startsWith("device:")) return;
+      const environmentId = id.slice("device:".length);
+      const selected = props.options.find((option) => option.environmentId === environmentId);
+      if (selected) props.onSelect(selected.environmentId);
+    },
+    [props],
+  );
+
+  return (
+    <View className="flex-row items-center justify-between gap-3">
+      <Text className="text-sm text-foreground-muted">Device</Text>
+      <ControlPillMenu actions={actions} isAnchoredToRight onPressAction={handleAction}>
+        <ControlPill
+          accessibilityLabel={`Usage device: ${selectedLabel}`}
+          icon="desktopcomputer"
+          label={selectedLabel}
+          variant="pill"
+        />
+      </ControlPillMenu>
     </View>
   );
 }
