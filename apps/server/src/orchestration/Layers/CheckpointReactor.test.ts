@@ -41,6 +41,7 @@ import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
+import * as TurnAdmissionGate from "../TurnAdmissionGate.ts";
 import { RuntimeReceiptBusLive } from "./RuntimeReceiptBus.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
@@ -295,6 +296,7 @@ describe("CheckpointReactor", () => {
       options?.providerName ?? ProviderDriverKind.make("codex"),
     );
     const orchestrationLayer = OrchestrationEngineLive.pipe(
+      Layer.provide(TurnAdmissionGate.layer),
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(ThreadBackgroundLiveness.layer),
       Layer.provide(ThreadPlanProgress.layer),

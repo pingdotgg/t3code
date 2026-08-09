@@ -10,12 +10,15 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -33,6 +36,7 @@ import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
+import * as TurnAdmissionGate from "../TurnAdmissionGate.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   OrchestrationProjectionPipeline,
@@ -57,6 +61,7 @@ async function createOrchestrationSystem() {
     ),
     OrchestrationProjectionSnapshotQueryLive,
   ).pipe(
+    Layer.provideMerge(TurnAdmissionGate.layer),
     Layer.provide(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),
     Layer.provide(OrchestrationEventStoreLive),
@@ -69,8 +74,12 @@ async function createOrchestrationSystem() {
   const runtime = ManagedRuntime.make(orchestrationLayer);
   const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
   const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
+  const turnAdmissionGate = await runtime.runPromise(
+    Effect.service(TurnAdmissionGate.TurnAdmissionGate),
+  );
   return {
     engine,
+    turnAdmissionGate,
     readModel: () => runtime.runPromise(snapshotQuery.getSnapshot()),
     run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
     dispose: () => runtime.dispose(),
@@ -174,6 +183,7 @@ describe("OrchestrationEngine", () => {
     let fullSnapshotReadCount = 0;
 
     const layer = OrchestrationEngineLive.pipe(
+      Layer.provide(TurnAdmissionGate.layer),
       Layer.provide(
         Layer.succeed(ProjectionSnapshotQuery, {
           getCommandReadModel: () => Effect.succeed(commandReadModel),
@@ -299,6 +309,100 @@ describe("OrchestrationEngine", () => {
     const readModelA = await system.readModel();
     const readModelB = await system.readModel();
     expect(readModelB).toEqual(readModelA);
+    await system.dispose();
+  });
+
+  it("serializes update handoff with turn admission and closes admission after acceptance", async () => {
+    const createdAt = now();
+    const system = await createOrchestrationSystem();
+    const { engine, turnAdmissionGate } = system;
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-project-update-gate-create"),
+        projectId: asProjectId("project-update-gate"),
+        title: "Update Gate Project",
+        workspaceRoot: "/tmp/project-update-gate",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-update-gate-create"),
+        threadId: ThreadId.make("thread-update-gate"),
+        projectId: asProjectId("project-update-gate"),
+        title: "Update Gate Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    await system.run(
+      Effect.gen(function* () {
+        const handoffEntered = yield* Deferred.make<void>();
+        const acceptHandoff = yield* Deferred.make<void>();
+        const handoffFiber = yield* Effect.forkChild(
+          turnAdmissionGate.commitUpdateHandoff(
+            Deferred.succeed(handoffEntered, undefined).pipe(
+              Effect.andThen(Deferred.await(acceptHandoff)),
+              Effect.as("launcher-id"),
+            ),
+          ),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(handoffEntered);
+
+        const turnFiber = yield* Effect.forkChild(
+          Effect.result(
+            engine.dispatch({
+              type: "thread.turn.start",
+              commandId: CommandId.make("cmd-turn-update-gate"),
+              threadId: ThreadId.make("thread-update-gate"),
+              message: {
+                messageId: asMessageId("msg-update-gate"),
+                role: "user",
+                text: "must not be admitted into the retiring process",
+                attachments: [],
+              },
+              interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+              runtimeMode: "approval-required",
+              createdAt,
+            }),
+          ),
+          { startImmediately: true },
+        );
+        yield* Effect.yieldNow;
+        expect(turnFiber.pollUnsafe()).toBeUndefined();
+
+        yield* Deferred.succeed(acceptHandoff, undefined);
+        expect(yield* Fiber.join(handoffFiber)).toBe("launcher-id");
+        const turnResult = yield* Fiber.join(turnFiber);
+        expect(Result.isFailure(turnResult)).toBe(true);
+        if (Result.isFailure(turnResult)) {
+          expect(turnResult.failure.message).toContain("activating an update");
+        }
+      }),
+    );
+
+    const events = await system.run(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(events.map((event) => event.type)).toEqual(["project.created", "thread.created"]);
     await system.dispose();
   });
 
@@ -820,6 +924,7 @@ describe("OrchestrationEngine", () => {
 
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
+        Layer.provide(TurnAdmissionGate.layer),
         Layer.provide(OrchestrationProjectionSnapshotQueryLive),
         Layer.provide(ThreadBackgroundLiveness.layer),
         Layer.provide(ThreadPlanProgress.layer),
@@ -927,6 +1032,7 @@ describe("OrchestrationEngine", () => {
 
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
+        Layer.provide(TurnAdmissionGate.layer),
         Layer.provide(OrchestrationProjectionSnapshotQueryLive),
         Layer.provide(ThreadBackgroundLiveness.layer),
         Layer.provide(ThreadPlanProgress.layer),
@@ -1072,6 +1178,7 @@ describe("OrchestrationEngine", () => {
 
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
+        Layer.provide(TurnAdmissionGate.layer),
         Layer.provide(OrchestrationProjectionSnapshotQueryLive),
         Layer.provide(ThreadBackgroundLiveness.layer),
         Layer.provide(ThreadPlanProgress.layer),
