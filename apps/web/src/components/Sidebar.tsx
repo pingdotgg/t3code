@@ -236,6 +236,7 @@ function SidebarThreadTooltip({
   thread,
   projectTitle,
   projectCwd,
+  projectFaviconPath,
   environmentLabel,
   driverKind,
   modelInstanceId,
@@ -247,6 +248,7 @@ function SidebarThreadTooltip({
   thread: SidebarThreadSummary;
   projectTitle: string | null;
   projectCwd: string | null;
+  projectFaviconPath: string | null;
   environmentLabel: string | null;
   driverKind: ProviderInstanceEntry["driverKind"] | null;
   modelInstanceId: string;
@@ -276,6 +278,7 @@ function SidebarThreadTooltip({
               <ProjectFavicon
                 environmentId={thread.environmentId}
                 cwd={projectCwd ?? ""}
+                faviconPath={projectFaviconPath}
                 className="size-3 shrink-0 stroke-muted-foreground"
               />
               <div className="min-w-0 truncate text-foreground/75">{projectTitle}</div>
@@ -423,6 +426,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   composer: ComposerThreadDraftState;
   projectTitle: string | null;
   projectCwd: string | null;
+  projectFaviconPath: string | null;
   isActive: boolean;
   onNavigate: (draftId: DraftId) => void;
   onDiscard: (draftId: DraftId) => void;
@@ -487,6 +491,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
             <ProjectFavicon
               environmentId={session.environmentId}
               cwd={props.projectCwd ?? ""}
+              faviconPath={props.projectFaviconPath}
               className="size-4 shrink-0"
             />
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
@@ -524,6 +529,7 @@ interface SidebarDraftRowData {
 const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   projectDisplayNameByKey: ReadonlyMap<string, string>;
   projectCwdByKey: ReadonlyMap<string, string>;
+  projectFaviconPathByKey: ReadonlyMap<string, string | null | undefined>;
   scopedProjectKeys: ReadonlySet<string> | null;
   routeDraftId: string | null;
   onNavigateToDraft: (draftId: DraftId) => void;
@@ -618,6 +624,7 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
             composer={composer}
             projectTitle={props.projectDisplayNameByKey.get(projectKey) ?? null}
             projectCwd={props.projectCwdByKey.get(projectKey) ?? null}
+            projectFaviconPath={props.projectFaviconPathByKey.get(projectKey) ?? null}
             isActive={draftId === props.routeDraftId}
             onNavigate={props.onNavigateToDraft}
             onDiscard={handleDiscard}
@@ -667,6 +674,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   currentEnvironmentId: string | null;
   environmentLabel: string | null;
   projectCwd: string | null;
+  projectFaviconPath: string | null;
   projectTitle: string | null;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   timestampFormat: TimestampFormat;
@@ -857,6 +865,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       thread={thread}
       projectTitle={props.projectTitle}
       projectCwd={props.projectCwd}
+      projectFaviconPath={props.projectFaviconPath}
       environmentLabel={props.environmentLabel}
       driverKind={driverKind}
       modelInstanceId={modelInstanceId}
@@ -1122,6 +1131,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               <ProjectFavicon
                 environmentId={thread.environmentId}
                 cwd={props.projectCwd ?? ""}
+                faviconPath={props.projectFaviconPath}
                 className="size-4"
                 fallbackIcon={MessageSquareIcon}
               />
@@ -1261,6 +1271,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               <ProjectFavicon
                 environmentId={thread.environmentId}
                 cwd={props.projectCwd ?? ""}
+                faviconPath={props.projectFaviconPath}
                 className="size-4 shrink-0"
               />
               {props.projectTitle ? (
@@ -1454,6 +1465,7 @@ function latestTurnDiff(
 const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   thread: SidebarThreadSummary;
   projectCwd: string | null;
+  projectFaviconPath: string | null;
   projectTitle: string | null;
   environmentLabel: string | null;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
@@ -1526,6 +1538,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           <ProjectFavicon
             environmentId={thread.environmentId}
             cwd={props.projectCwd ?? ""}
+            faviconPath={props.projectFaviconPath}
             className="size-4 shrink-0"
             fallbackIcon={MessageSquareIcon}
           />
@@ -1538,6 +1551,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           thread={thread}
           projectTitle={props.projectTitle}
           projectCwd={props.projectCwd}
+          projectFaviconPath={props.projectFaviconPath}
           environmentLabel={props.environmentLabel}
           driverKind={driverKind}
           modelInstanceId={modelInstanceId}
@@ -1711,6 +1725,13 @@ export default function Sidebar() {
           `${project.environmentId}:${project.id}`,
           project.workspaceRoot,
         ]),
+      ),
+    [projects],
+  );
+  const projectFaviconPathByKey = useMemo(
+    () =>
+      new Map(
+        projects.map((project) => [`${project.environmentId}:${project.id}`, project.faviconPath]),
       ),
     [projects],
   );
@@ -3230,6 +3251,7 @@ export default function Sidebar() {
                       <ProjectFavicon
                         environmentId={scopedProjectGroup.environmentId}
                         cwd={scopedProjectGroup.workspaceRoot}
+                        faviconPath={scopedProjectGroup.faviconPath}
                         className="size-4 shrink-0"
                       />
                     ) : (
@@ -3267,6 +3289,7 @@ export default function Sidebar() {
                             <ProjectFavicon
                               environmentId={project.environmentId}
                               cwd={project.workspaceRoot}
+                              faviconPath={project.faviconPath}
                               className="size-4 shrink-0"
                             />
                             <span className="min-w-0 truncate text-sm">{project.displayName}</span>
@@ -3338,6 +3361,11 @@ export default function Sidebar() {
                         thread={thread}
                         projectCwd={
                           projectCwdByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
+                        }
+                        projectFaviconPath={
+                          projectFaviconPathByKey.get(
+                            `${thread.environmentId}:${thread.projectId}`,
+                          ) ?? null
                         }
                         projectTitle={
                           projectDisplayNameByKey.get(
@@ -3442,6 +3470,11 @@ export default function Sidebar() {
                         projectCwd={
                           projectCwdByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
                         }
+                        projectFaviconPath={
+                          projectFaviconPathByKey.get(
+                            `${thread.environmentId}:${thread.projectId}`,
+                          ) ?? null
+                        }
                         projectTitle={
                           projectDisplayNameByKey.get(
                             `${thread.environmentId}:${thread.projectId}`,
@@ -3480,6 +3513,7 @@ export default function Sidebar() {
                       key="draft-sessions"
                       projectDisplayNameByKey={projectDisplayNameByKey}
                       projectCwdByKey={projectCwdByKey}
+                      projectFaviconPathByKey={projectFaviconPathByKey}
                       scopedProjectKeys={scopedProjectKeys}
                       routeDraftId={routeDraftIdForRows}
                       onNavigateToDraft={navigateToDraft}

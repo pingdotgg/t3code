@@ -24,13 +24,18 @@ export function ProjectFavicon(props: {
   readonly size?: number;
   readonly projectTitle: string;
   readonly workspaceRoot?: string | null;
+  readonly faviconPath?: string | null;
 }) {
   const size = props.size ?? 42;
   const faviconUrl = useAssetUrl(
     props.environmentId,
     props.workspaceRoot === null || props.workspaceRoot === undefined
       ? null
-      : { _tag: "project-favicon", cwd: props.workspaceRoot },
+      : {
+          _tag: "project-favicon",
+          cwd: props.workspaceRoot,
+          ...(props.faviconPath ? { path: props.faviconPath } : {}),
+        },
   );
   const renderableFaviconUrl = isProjectFaviconFallbackUrl(faviconUrl) ? null : faviconUrl;
   const cacheKey =

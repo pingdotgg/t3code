@@ -91,6 +91,7 @@ export class ProjectFaviconResolver extends Context.Service<
      */
     readonly resolvePath: (
       cwd: string,
+      faviconPath?: string,
     ) => Effect.Effect<string | null, ProjectFaviconResolutionError>;
   }
 >()("t3/project/ProjectFaviconResolver") {}
@@ -168,7 +169,7 @@ export const make = Effect.gen(function* () {
 
   const resolvePath: ProjectFaviconResolver["Service"]["resolvePath"] = Effect.fn(
     "ProjectFaviconResolver.resolvePath",
-  )(function* (cwd) {
+  )(function* (cwd, faviconPath) {
     const projectCwd = yield* workspacePaths.normalizeWorkspaceRoot(cwd).pipe(
       Effect.mapError(
         (cause) =>
@@ -179,6 +180,15 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
+    // A grouped project's saved path can be absent from one checkout. Use it
+    // where it exists and retain automatic discovery for the other checkouts.
+    if (faviconPath !== undefined) {
+      const existing = yield* findExistingFile(projectCwd, [faviconPath]);
+      if (existing) {
+        return existing;
+      }
+    }
+
     // A t3.json iconPath takes precedence over the well-known locations.
     const projectFile = yield* projectFileLoader.load(projectCwd);
     if (Option.isSome(projectFile) && projectFile.value.iconPath !== undefined) {

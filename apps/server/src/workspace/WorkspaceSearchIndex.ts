@@ -23,6 +23,7 @@ import type {
   ProjectSearchContentsResult,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
@@ -111,6 +112,7 @@ export class WorkspaceSearchIndex extends Context.Service<
       query: string,
       limit: number,
       kind?: ProjectEntryKind,
+      imageOnly?: boolean,
     ) => Effect.Effect<ProjectSearchEntriesResult, WorkspaceSearchIndexSearchFailed>;
     readonly searchContents: (
       input: Omit<ProjectSearchContentsInput, "cwd">,
@@ -157,15 +159,18 @@ function toDirectoryEntry(item: DirItem): ProjectEntry | null {
   return normalizedPath ? { path: normalizedPath, kind: "directory" } : null;
 }
 
-function mapFileSearchResult(result: SearchResult, limit: number): ProjectSearchEntriesResult {
+function mapFileSearchResult(
+  result: SearchResult,
+  limit: number,
+  imageOnly = false,
+): ProjectSearchEntriesResult {
+  const entries = result.items.flatMap((item) => {
+    const entry = toFileEntry(item);
+    return entry && (!imageOnly || isWorkspaceImagePreviewPath(entry.path)) ? [entry] : [];
+  });
   return {
-    entries: result.items
-      .flatMap((item) => {
-        const entry = toFileEntry(item);
-        return entry ? [entry] : [];
-      })
-      .slice(0, limit),
-    truncated: result.totalMatched > limit,
+    entries: entries.slice(0, limit),
+    truncated: entries.length > limit || result.totalMatched > result.items.length,
   };
 }
 
@@ -445,13 +450,13 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
 
   const search: WorkspaceSearchIndex["Service"]["search"] = Effect.fn(
     "WorkspaceSearchIndex.search",
-  )(function* (query, limit, kind) {
-    const pageSize = Math.max(1, limit + 1);
-    if (kind === "file") {
+  )(function* (query, limit, kind, imageOnly) {
+    const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, limit + 1);
+    if (kind === "file" || imageOnly) {
       const result = yield* runSearch(query, pageSize, "fileSearch", () =>
         finder.fileSearch(query, { pageSize }),
       );
-      return mapFileSearchResult(result, limit);
+      return mapFileSearchResult(result, limit, imageOnly);
     }
     if (kind === "directory") {
       const result = yield* runSearch(query, pageSize, "directorySearch", () =>

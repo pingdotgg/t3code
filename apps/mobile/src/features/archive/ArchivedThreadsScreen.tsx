@@ -368,6 +368,7 @@ function ProjectGroupLabel(props: {
     <View className="flex-row items-center gap-2.5 px-1 pb-2">
       <ProjectFavicon
         environmentId={props.project.environmentId}
+        faviconPath={props.project.faviconPath}
         projectTitle={props.project.title}
         size={18}
         workspaceRoot={props.project.workspaceRoot}
