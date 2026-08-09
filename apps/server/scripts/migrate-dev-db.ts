@@ -85,11 +85,16 @@ export class MigrateDevDbDestinationBusyError extends Schema.TaggedErrorClass<Mi
   "MigrateDevDbDestinationBusyError",
   {
     databasePath: Schema.String,
-    reason: Schema.String,
+    reason: Schema.Literals(["write-locked", "wal-held"]),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Dev database at '${this.databasePath}' looks in use (${this.reason}). Stop the dev server first; if none is running, delete the -wal/-shm files next to it.`;
+    const detail =
+      this.reason === "write-locked"
+        ? "the database is write-locked"
+        : "another connection is holding its WAL";
+    return `Dev database at '${this.databasePath}' looks in use (${detail}). Stop the dev server first; if none is running, delete the -wal/-shm files next to it.`;
   }
 }
 
@@ -168,17 +173,18 @@ const ensureNotInUse = Effect.fn("ensureDevDbNotInUse")(function* (databasePath:
   }).pipe(
     Effect.provide(NodeSqliteClient.layer({ filename: databasePath })),
     Effect.mapError(
-      () =>
+      (cause) =>
         new MigrateDevDbDestinationBusyError({
           databasePath,
-          reason: "the database is write-locked",
+          reason: "write-locked",
+          cause,
         }),
     ),
   );
   if (checkpoint[0] !== undefined && Number(checkpoint[0].busy) !== 0) {
     return yield* new MigrateDevDbDestinationBusyError({
       databasePath,
-      reason: "another connection is holding its WAL",
+      reason: "wal-held",
     });
   }
 });
@@ -408,11 +414,10 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
 
   yield* verifyMigrationSlots().pipe(
     Effect.provide(NodeSqliteClient.layer({ filename: databasePath })),
-    Effect.mapError((cause) =>
-      cause._tag === "MigrateDevDbSlotCollisionError"
-        ? cause
-        : new MigrateDevDbPhaseError({ phase: "verify", databasePath, cause }),
-    ),
+    Effect.catchTags({
+      SqlError: (cause) =>
+        Effect.fail(new MigrateDevDbPhaseError({ phase: "verify", databasePath, cause })),
+    }),
   );
 
   const size = (yield* fs.stat(databasePath)).size;
