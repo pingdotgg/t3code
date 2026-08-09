@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   buildBulkTitleRegenerationContextMenuItem,
-  buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
@@ -133,20 +132,6 @@ describe("buildBulkTitleRegenerationContextMenuItem", () => {
         actionableCount: 0,
       }),
     ).toBeNull();
-  });
-});
-
-describe("buildMultiSelectThreadContextMenuItems", () => {
-  it("offers bulk archive with the selected count", () => {
-    expect(
-      buildMultiSelectThreadContextMenuItems({ count: 3, hasArchiveBlockedThread: false }),
-    ).toContainEqual({ id: "archive", label: "Archive (3)", disabled: false });
-  });
-
-  it("disables bulk archive when a selected thread has active work", () => {
-    expect(
-      buildMultiSelectThreadContextMenuItems({ count: 2, hasArchiveBlockedThread: true }),
-    ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
   });
 });
 

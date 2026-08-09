@@ -1,3 +1,4 @@
+import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SidebarThreadSummary } from "../types";
 
 export function shouldRenderSidebarArchiveAll(input: {
@@ -11,6 +12,21 @@ export function formatArchiveSkippedDescription(skippedCount: number): string {
   return skippedCount === 1
     ? "1 thread was no longer eligible for this archive action and was skipped."
     : `${skippedCount} threads were no longer eligible for this archive action and were skipped.`;
+}
+
+export function buildMultiSelectThreadContextMenuItems(input: {
+  count: number;
+  hasArchiveBlockedThread: boolean;
+}): readonly ContextMenuItem<"mark-unread" | "archive" | "delete">[] {
+  return [
+    { id: "mark-unread", label: `Mark unread (${input.count})` },
+    {
+      id: "archive",
+      label: `Archive (${input.count})`,
+      disabled: input.hasArchiveBlockedThread,
+    },
+    { id: "delete", label: `Delete (${input.count})`, destructive: true },
+  ];
 }
 
 export async function archiveSelectedThreadEntries<

@@ -118,9 +118,11 @@ import { cn } from "~/lib/utils";
 import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
 import {
   buildBulkTitleRegenerationContextMenuItem,
+  filterArchivableSidebarThreads,
   formatWorkingDurationLabel,
   firstValidTimestampMs,
   hasUnseenCompletion,
+  isThreadArchiveBlocked,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   planPinnedReorder,
@@ -134,10 +136,6 @@ import {
   sortSettledThreadsForSidebar,
   sortThreadsForSidebar,
 } from "./Sidebar.logic";
-import {
-  filterArchivableSidebarThreads,
-  isThreadArchiveBlocked,
-} from "./SidebarArchiveControls.logic";
 import {
   SIDEBAR_LIFECYCLE_BUTTON_SURFACE_CLASS_NAME,
   SidebarSettledDivider,

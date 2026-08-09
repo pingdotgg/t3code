@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   archiveSelectedThreadEntries,
+  buildMultiSelectThreadContextMenuItems,
   canArchiveSettledSidebarThread,
   filterArchivableSidebarThreads,
   formatArchiveSkippedDescription,
@@ -20,6 +21,20 @@ describe("formatArchiveSkippedDescription", () => {
     expect(formatArchiveSkippedDescription(2)).toBe(
       "2 threads were no longer eligible for this archive action and were skipped.",
     );
+  });
+});
+
+describe("buildMultiSelectThreadContextMenuItems", () => {
+  it("offers bulk archive with the selected count", () => {
+    expect(
+      buildMultiSelectThreadContextMenuItems({ count: 3, hasArchiveBlockedThread: false }),
+    ).toContainEqual({ id: "archive", label: "Archive (3)", disabled: false });
+  });
+
+  it("disables bulk archive when a selected thread has active work", () => {
+    expect(
+      buildMultiSelectThreadContextMenuItems({ count: 2, hasArchiveBlockedThread: true }),
+    ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
   });
 });
 
