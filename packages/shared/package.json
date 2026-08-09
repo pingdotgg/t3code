@@ -266,6 +266,10 @@
     "./nodeSqliteClient": {
       "types": "./src/nodeSqliteClient.ts",
       "import": "./src/nodeSqliteClient.ts"
+    },
+    "./privateHost": {
+      "types": "./src/privateHost.ts",
+      "import": "./src/privateHost.ts"
     }
   },
   "scripts": {
