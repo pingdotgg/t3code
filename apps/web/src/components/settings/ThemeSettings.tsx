@@ -555,9 +555,8 @@ export function ThemeLibrary({
         <h3 className="text-sm font-medium tracking-[-0.005em] text-foreground">Themes</h3>
         <div className="flex flex-wrap items-center justify-end gap-3">
           <Button
-            className="h-7 rounded-md border border-border/70 bg-muted/30 px-2 text-xs font-medium text-foreground shadow-none hover:bg-accent/40"
             size="xs"
-            variant="ghost"
+            variant="outline"
             onClick={() =>
               openThemeEditor({
                 editingThemeId: null,
@@ -570,7 +569,7 @@ export function ThemeLibrary({
             <PlusIcon />
             Create theme
           </Button>
-          <Button size="xs" variant="ghost" onClick={() => onImportOpenChange(true)}>
+          <Button size="xs" variant="outline" onClick={() => onImportOpenChange(true)}>
             <UploadIcon />
             Import theme
           </Button>
