@@ -6,9 +6,6 @@ import android.content.ClipboardManager
 import android.content.ClipData
 import android.os.Build
 import android.net.Uri
-import android.text.Spanned
-import android.text.method.LinkMovementMethod
-import android.widget.TextView
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -127,7 +124,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -147,7 +143,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -166,14 +161,11 @@ import com.t3tools.android.protocol.ChatImageAttachment
 import com.t3tools.android.protocol.ChatMessage
 import com.t3tools.android.protocol.DEFAULT_TERMINAL_ID
 import com.t3tools.android.protocol.nextTerminalId
-import io.noties.markwon.Markwon
 import coil.compose.AsyncImage
 import java.io.File
 import java.time.Instant
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -196,13 +188,6 @@ private const val THREAD_GIT_BRANCHES = "thread/{threadId}/git/branches"
 private const val MESSAGE_ENTRY_MILLIS = 220
 private const val FRESH_MESSAGE_WINDOW_MILLIS = 3_000
 private const val PAGE_TRANSITION_MILLIS = 220
-
-private val markdownRenderDispatcher = Dispatchers.Default.limitedParallelism(1)
-
-private data class RenderedMarkdown(
-  val source: String,
-  val content: Spanned,
-)
 
 private data class NewTaskDrawerState(val projectId: String?)
 private const val THREAD_TERMINAL = "thread/{threadId}/terminal/{terminalId}"
@@ -2365,7 +2350,6 @@ private fun ThreadFeed(
   bottomAnchorKey: Int = 0,
 ) {
   val context = LocalContext.current
-  val markwon = remember(context) { createMarkdownRenderer(context) }
   val rawFeed = remember(detail.messages, detail.activities) { buildThreadFeed(detail) }
   val terminalAssistantMessageIds = remember(rawFeed) {
     buildMap<String, String> {
@@ -2458,11 +2442,16 @@ private fun ThreadFeed(
               if (message.text.isNotBlank() || message.attachments.isNotEmpty()) {
                 if (message.role == "assistant") {
                   Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (message.text.isNotBlank()) MarkdownMessage(message.text, markwon)
-                    message.attachments.forEach { SentAttachmentImage(environmentId, it, viewModel) }
                     val turnStillRunning = latestTurn?.let {
                       message.turnId == it.id && (it.state == "running" || it.completedAt == null)
                     } == true
+                    if (message.text.isNotBlank()) {
+                      T3Markdown(
+                        markdown = message.text,
+                        streaming = message.streaming || turnStillRunning,
+                      )
+                    }
+                    message.attachments.forEach { SentAttachmentImage(environmentId, it, viewModel) }
                     if (message.text.isNotBlank() && message.id in terminalAssistantMessageIds &&
                       !message.streaming && !turnStillRunning) {
                       MessageCopyButton(message.text)
@@ -2860,36 +2849,6 @@ private fun UserMessageContent(text: String, modifier: Modifier = Modifier) {
       }
     }
   }
-}
-
-@Composable
-private fun MarkdownMessage(markdown: String, markwon: Markwon) {
-  val rendered by produceState<RenderedMarkdown?>(null, markdown, markwon) {
-    val content = withContext(markdownRenderDispatcher) {
-      markwon.toMarkdown(markdown)
-    }
-    value = RenderedMarkdown(markdown, content)
-  }
-  AndroidView(
-    factory = {
-      TextView(it).apply {
-        setTextColor(android.graphics.Color.rgb(229, 229, 229))
-        setTextIsSelectable(true)
-        movementMethod = LinkMovementMethod.getInstance()
-        textSize = 15f
-        includeFontPadding = false
-        setLineSpacing(0f, 1.27f)
-        setPadding(4, 6, 4, 6)
-      }
-    },
-    update = { textView ->
-      rendered?.takeIf { it.source == markdown && textView.tag != it.source }?.let {
-        textView.tag = it.source
-        markwon.setParsedMarkdown(textView, it.content)
-      }
-    },
-    modifier = Modifier.fillMaxWidth(),
-  )
 }
 
 @Composable

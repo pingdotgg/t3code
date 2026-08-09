@@ -12,7 +12,7 @@ The native feed follows the React Native presentation contract:
 - Work rows expose semantic icons, status, previews, structured command output, changed-file lists, focused MCP details, and copy actions without dumping transport-envelope JSON.
 - `update_plan` progress renders as one compact inline plan per turn instead of a generic JSON work row. The latest snapshot replaces earlier updates while the row stays anchored where planning began. The newest plan remains visible beside its final response; older plans stay available inside their turns' expanded work folds.
 - Plan segments and expanded steps are status-coded: completed is green, in-progress uses the primary accent, and pending is muted. The running step also appears beside the working indicator.
-- Assistant text supports CommonMark plus tables, strikethrough, and task lists.
+- Assistant text uses native Compose Markdown with tables, strikethrough, task lists, selectable text, links, and copyable code blocks.
 
 ## Catch-up and cache
 
@@ -37,7 +37,7 @@ Do not change live-update cadence, ordering, folding, scrolling, Markdown presen
 
 ## Verification
 
-Focused JVM coverage pins chronological ordering, settled and active turn presentation, work lifecycle filtering, replay batching, activity sequence parsing, and live turn lifecycle state. The APK build is the compile-time gate for the Compose and Markwon integration.
+Focused JVM coverage pins chronological ordering, settled and active turn presentation, work lifecycle filtering, replay batching, activity sequence parsing, live turn lifecycle state, and Markdown streaming fallback. The APK build is the compile-time gate for the Compose Markdown integration.
 
 Manual S25 acceptance:
 

@@ -3,7 +3,6 @@
 package com.t3tools.android.nativeapp
 
 import android.graphics.Typeface
-import android.text.method.LinkMovementMethod
 import android.text.method.ScrollingMovementMethod
 import android.widget.TextView
 import androidx.activity.compose.BackHandler
@@ -68,7 +67,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -558,28 +556,14 @@ private fun WorkspaceTextFile(path: String, contents: String, truncated: Boolean
 
 @Composable
 private fun MarkdownFile(markdown: String) {
-  val context = LocalContext.current
-  val markwon = remember(context) { createMarkdownRenderer(context) }
-  AndroidView(
-    factory = {
-      TextView(it).apply {
-        setTextColor(android.graphics.Color.rgb(229, 229, 229))
-        setTextIsSelectable(true)
-        movementMethod = LinkMovementMethod.getInstance()
-        textSize = 15f
-        includeFontPadding = false
-        setLineSpacing(0f, 1.27f)
-        setPadding(36, 24, 36, 48)
-      }
-    },
-    update = {
-      if (it.tag != markdown) {
-        it.tag = markdown
-        markwon.setMarkdown(it, markdown)
-      }
-    },
-    modifier = Modifier.fillMaxSize(),
-  )
+  Column(
+    Modifier
+      .fillMaxSize()
+      .verticalScroll(rememberScrollState())
+      .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
+  ) {
+    T3Markdown(markdown = markdown, streaming = false, modifier = Modifier.fillMaxWidth())
+  }
 }
 
 @Composable

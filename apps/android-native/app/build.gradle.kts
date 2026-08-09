@@ -7,7 +7,7 @@ plugins {
 
 android {
   namespace = "com.t3tools.android.nativeapp"
-  compileSdk = 35
+  compileSdk = 37
 
   defaultConfig {
     applicationId = "com.t3tools.t3code.native.experimental"
@@ -50,7 +50,7 @@ dependencies {
   implementation(project(":protocol"))
   implementation(project(":terminal-renderer"))
   implementation(project(":review-renderer"))
-  implementation(platform("androidx.compose:compose-bom:2024.12.01"))
+  implementation(platform("androidx.compose:compose-bom:2026.06.01"))
   implementation("androidx.activity:activity-compose:1.10.0")
   implementation("androidx.compose.foundation:foundation")
   implementation("androidx.compose.material3:material3")
@@ -67,18 +67,15 @@ dependencies {
   implementation("com.squareup.okhttp3:okhttp:4.12.0")
   implementation("io.coil-kt:coil-compose:2.7.0")
   implementation("io.coil-kt:coil-svg:2.7.0")
-  implementation("io.noties.markwon:core:4.6.2")
-  implementation("io.noties.markwon:ext-strikethrough:4.6.2")
-  implementation("io.noties.markwon:ext-tables:4.6.2")
-  implementation("io.noties.markwon:ext-tasklist:4.6.2")
-  implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
+  implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.43.0")
+  implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
   implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 
   testImplementation("junit:junit:4.13.2")
-  testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.1")
+  testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
   androidTestImplementation("androidx.test.ext:junit:1.2.1")
   androidTestImplementation("androidx.test:runner:1.6.2")
-  androidTestImplementation(platform("androidx.compose:compose-bom:2024.12.01"))
+  androidTestImplementation(platform("androidx.compose:compose-bom:2026.06.01"))
   androidTestImplementation("androidx.compose.ui:ui-test-junit4")
   debugImplementation("androidx.compose.ui:ui-tooling")
   debugImplementation("androidx.compose.ui:ui-test-manifest")
@@ -87,9 +84,9 @@ dependencies {
 configurations.configureEach {
   resolutionStrategy {
     force(
-      "org.jetbrains.kotlin:kotlin-stdlib:2.3.10",
-      "org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.3.10",
-      "org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.3.10",
+      "org.jetbrains.kotlin:kotlin-stdlib:2.4.0",
+      "org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.4.0",
+      "org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.4.0",
       "androidx.browser:browser:1.8.0",
       "androidx.activity:activity:1.10.1",
       "androidx.activity:activity-ktx:1.10.1",

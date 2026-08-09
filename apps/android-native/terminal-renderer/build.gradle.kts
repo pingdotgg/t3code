@@ -7,7 +7,7 @@ val sharedTerminal = file("../../mobile/modules/t3-terminal/android")
 
 android {
   namespace = "expo.modules.t3terminal"
-  compileSdk = 35
+  compileSdk = 37
 
   defaultConfig {
     minSdk = 26
@@ -38,6 +38,9 @@ kotlin {
   jvmToolchain(17)
   sourceSets.named("main") {
     kotlin.srcDir(sharedTerminal.resolve("src/main/java"))
-    kotlin.exclude("**/T3TerminalModule.kt", "**/T3TerminalView.kt")
   }
+}
+
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+  exclude("**/T3TerminalModule.kt", "**/T3TerminalView.kt")
 }
