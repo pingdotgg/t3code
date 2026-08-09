@@ -38,11 +38,13 @@ import {
   type TerminalClearInput,
   type TerminalCloseInput,
   type TerminalError,
+  type TerminalMetadataStreamEvent,
   type TerminalOpenInput,
   type TerminalResizeInput,
   type TerminalRestartInput,
   type TerminalSessionSnapshot,
   type TerminalSessionStatus,
+  type TerminalSummary,
   type TerminalWriteInput,
 } from "@t3tools/contracts";
 
@@ -99,6 +101,9 @@ interface AetherTerminalManagerShape {
     input: TerminalRestartInput,
   ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
   readonly close: (input: TerminalCloseInput) => Effect.Effect<void, TerminalError>;
+  readonly subscribeMetadata: (
+    listener: (event: TerminalMetadataStreamEvent) => Effect.Effect<void>,
+  ) => Effect.Effect<() => void>;
 }
 
 export class AetherTerminalManager extends Context.Service<
@@ -136,6 +141,20 @@ const snapshotOf = (session: AetherTerminalSession): TerminalSessionSnapshot => 
   sequence: session.sequence,
 });
 
+const summaryOf = (session: AetherTerminalSession): TerminalSummary => ({
+  threadId: session.threadId,
+  terminalId: session.terminalId,
+  cwd: session.cwd,
+  worktreePath: null,
+  status: session.status,
+  pid: null,
+  exitCode: null,
+  exitSignal: null,
+  hasRunningSubprocess: false,
+  label: labelForTerminal(session.terminalId),
+  updatedAt: session.updatedAt,
+});
+
 const resolveDetail = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
@@ -159,6 +178,15 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
         discard: true,
       }),
     );
+
+  // Cross-thread terminal list. Aether sessions publish upsert/remove here; the
+  // ws router folds this stream into the local manager's metadata so cloud
+  // terminals appear alongside local ones.
+  const metadataListeners = new Set<(event: TerminalMetadataStreamEvent) => Effect.Effect<void>>();
+  const emitMetadata = (event: TerminalMetadataStreamEvent) =>
+    Effect.forEach(Array.from(metadataListeners), (listener) => listener(event), { discard: true });
+  const emitUpsert = (session: AetherTerminalSession) =>
+    emitMetadata({ type: "upsert", terminal: summaryOf(session) });
 
   const drainLoop = (
     session: AetherTerminalSession,
@@ -202,6 +230,7 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
               yield* Effect.forEach(Array.from(session.listeners), (listener) => listener(wire), {
                 discard: true,
               });
+              yield* emitUpsert(session);
               // The shell is gone: free the workspace socket now instead of
               // holding it until the tab closes. Fork the close onto the
               // manager scope — this drain fiber lives in `exitedScope`, so
@@ -304,6 +333,7 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
       session.status = "running";
       session.errorMessage = null;
       session.updatedAt = nowIso();
+      yield* emitUpsert(session);
     }).pipe(
       Effect.catch((reason) =>
         Effect.gen(function* () {
@@ -320,6 +350,7 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
             sequence: session.sequence,
             message,
           });
+          yield* emitUpsert(session);
         }),
       ),
     );
@@ -523,6 +554,11 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
         terminalId: session.terminalId,
         sequence: session.sequence,
       });
+      yield* emitMetadata({
+        type: "remove",
+        threadId: session.threadId,
+        terminalId: session.terminalId,
+      });
       yield* teardownConnection(session);
     });
 
@@ -610,6 +646,20 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
       return isAether;
     });
 
+  const subscribeMetadata: AetherTerminalManagerShape["subscribeMetadata"] = (listener) =>
+    Effect.gen(function* () {
+      metadataListeners.add(listener);
+      const terminals = Array.from(sessions.values()).map(summaryOf);
+      yield* listener({ type: "snapshot", terminals });
+      return () => {
+        metadataListeners.delete(listener);
+      };
+    }).pipe(
+      // If the initial snapshot delivery is interrupted before the unsubscribe
+      // is returned, drop the listener so it does not leak.
+      Effect.onInterrupt(() => Effect.sync(() => metadataListeners.delete(listener))),
+    );
+
   return {
     handles,
     open,
@@ -619,6 +669,7 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
     clear,
     restart,
     close,
+    subscribeMetadata,
   } satisfies AetherTerminalManagerShape;
 });
 

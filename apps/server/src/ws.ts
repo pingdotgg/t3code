@@ -2094,10 +2094,29 @@ const makeWsRpcLayer = (
           observeRpcStream(
             WS_METHODS.subscribeTerminalMetadata,
             Stream.callback<TerminalMetadataStreamEvent>((queue) =>
-              Effect.acquireRelease(
-                terminalManager.subscribeMetadata((event) => Queue.offer(queue, event)),
-                (unsubscribe) => Effect.sync(unsubscribe),
-              ),
+              Effect.gen(function* () {
+                // Separate acquireReleases: each registers its own finalizer, so
+                // an interrupt after the local subscription acquires but before
+                // the Aether one does still releases the local listener.
+                yield* Effect.acquireRelease(
+                  terminalManager.subscribeMetadata((event) => Queue.offer(queue, event)),
+                  (unsubscribe) => Effect.sync(unsubscribe),
+                );
+                // Fold Aether terminals in: its snapshot becomes upserts so it
+                // augments the local snapshot instead of replacing it.
+                yield* Effect.acquireRelease(
+                  aetherTerminalManager.subscribeMetadata((event) =>
+                    event.type === "snapshot"
+                      ? Effect.forEach(
+                          event.terminals,
+                          (terminal) => Queue.offer(queue, { type: "upsert", terminal }),
+                          { discard: true },
+                        )
+                      : Queue.offer(queue, event),
+                  ),
+                  (unsubscribe) => Effect.sync(unsubscribe),
+                );
+              }),
             ),
             { "rpc.aggregate": "terminal" },
           ),

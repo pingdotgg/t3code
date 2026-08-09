@@ -748,10 +748,12 @@ const buildAppUnderTest = (options?: {
           }),
           // Test threads are local-backed: `handles` returns false so every
           // terminal RPC routes to the local TerminalManager mock. `close` is
-          // stubbed because archive tears down both managers unconditionally.
+          // stubbed because archive tears down both managers unconditionally;
+          // `subscribeMetadata` because the metadata stream merges both.
           Layer.mock(AetherTerminalManager.AetherTerminalManager)({
             handles: () => Effect.succeed(false),
             close: () => Effect.void,
+            subscribeMetadata: () => Effect.succeed(() => {}),
           }),
         ),
       ),
