@@ -345,6 +345,7 @@ public struct ThreadDetailView: View {
                 attachments: $attachments,
                 providers: threadProviders,
                 threadSelection: currentSelection,
+                attachmentContextID: thread.id,
                 materializesDefaultSelection: false,
                 isSending: isSending,
                 isWorking: detail.thread.state == .working || detail.thread.state == .queued,

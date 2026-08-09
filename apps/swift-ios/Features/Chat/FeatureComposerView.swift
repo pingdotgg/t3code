@@ -1,12 +1,18 @@
 import SwiftUI
+import UIKit
+import UniformTypeIdentifiers
 
 struct FeatureComposerView: View {
     @State private var isManuallyExpanded = false
     @State private var isAttachmentFlowActive = false
     @State private var attachmentPreparation = FeatureAttachmentPreparationState()
+    @State private var attachmentLifecycle: FeatureAttachmentLifecycle
+    @State private var pasteQueue: FeatureComposerPasteQueue
     @State private var pathEntries: [FeatureComposerPathEntry] = []
     @State private var isPathSearchLoading = false
     @State private var pathSearchError: String?
+    @State private var attachmentErrorMessage: String?
+    @State private var textSelectionRequest: FeatureComposerTextSelectionRequest?
     @Binding private var text: String
     @Binding private var selection: FeatureSelection?
     @Binding private var attachments: [FeatureDraftAttachment]
@@ -16,6 +22,7 @@ struct FeatureComposerView: View {
     private let materializesDefaultSelection: Bool
     private let isSending: Bool
     private let isWorking: Bool
+    private let attachmentContextID: String
     private let focused: FocusState<Bool>.Binding
     private let contextUsage: Double?
     private let forceExpanded: Bool
@@ -34,6 +41,7 @@ struct FeatureComposerView: View {
         attachments: Binding<[FeatureDraftAttachment]>,
         providers: [FeatureProvider],
         threadSelection: FeatureSelection?,
+        attachmentContextID: String,
         materializesDefaultSelection: Bool = true,
         isSending: Bool,
         isWorking: Bool,
@@ -52,8 +60,14 @@ struct FeatureComposerView: View {
         _text = text
         _selection = selection
         _attachments = attachments
+        let attachmentLifecycle = FeatureAttachmentLifecycle(contextID: attachmentContextID)
+        _attachmentLifecycle = State(initialValue: attachmentLifecycle)
+        _pasteQueue = State(
+            initialValue: FeatureComposerPasteQueue(lifecycle: attachmentLifecycle)
+        )
         self.providers = providers
         self.threadSelection = threadSelection
+        self.attachmentContextID = attachmentContextID
         self.materializesDefaultSelection = materializesDefaultSelection
         self.isSending = isSending
         self.isWorking = isWorking
@@ -115,6 +129,20 @@ struct FeatureComposerView: View {
             }
             .task(id: pathSearchRequest) {
                 await updatePathSearch()
+            }
+            .onChange(of: attachmentContextID) {
+                rotateAttachmentLifecycle(to: attachmentContextID)
+            }
+            .alert(
+                "Couldn’t paste image",
+                isPresented: Binding(
+                    get: { attachmentErrorMessage != nil },
+                    set: { if !$0 { attachmentErrorMessage = nil } }
+                )
+            ) {
+                Button("OK") { attachmentErrorMessage = nil }
+            } message: {
+                Text(attachmentErrorMessage ?? "")
             }
     }
 
@@ -192,20 +220,31 @@ struct FeatureComposerView: View {
                     .padding(.horizontal, 13)
             }
 
-            TextField(
-                isWorking ? "Message to queue…" : "Ask anything…",
-                text: $text,
-                axis: .vertical
-            )
-                .font(T3Typography.composer)
-                .lineLimit(1...7)
-                .focused(focused)
-                // Return is always editing input. Sending is deliberately button-only.
-                .submitLabel(.return)
+            let placeholder = isWorking ? "Message to queue…" : "Ask anything…"
+            ZStack(alignment: .topLeading) {
+                FeatureComposerTextInput(
+                    text: $text,
+                    focused: focused,
+                    placeholder: placeholder,
+                    acceptsImages: imagesAllowed,
+                    selectionRequest: textSelectionRequest,
+                    onPasteImages: loadPastedImages
+                )
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
-                .padding(.bottom, 7)
-                .frame(minHeight: 62, alignment: .top)
+
+                if text.isEmpty {
+                    Text(placeholder)
+                        .font(T3Typography.composer)
+                        .foregroundStyle(T3Colors.textTertiary)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 14)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .padding(.bottom, 7)
+            .frame(minHeight: 62, alignment: .top)
 
             if !attachments.isEmpty, !imagesAllowed {
                 Label("Choose a model that accepts images", systemImage: "exclamationmark.circle")
@@ -230,12 +269,69 @@ struct FeatureComposerView: View {
         }
     }
 
+    private func loadPastedImages(_ providers: [NSItemProvider]) {
+        guard imagesAllowed,
+              let lifecycleToken = attachmentLifecycle.token(for: attachmentContextID) else {
+            return
+        }
+        let imageProviders = providers.filter {
+            $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
+        }
+        guard !imageProviders.isEmpty else { return }
+
+        guard let operation = attachmentPreparation.reserve(
+            itemCount: imageProviders.count,
+            attachments: attachments
+        ) else {
+            attachmentErrorMessage = "You can attach up to eight images."
+            return
+        }
+        let reservedProviders = Array(imageProviders.prefix(operation.count))
+        if operation.count < imageProviders.count {
+            attachmentErrorMessage =
+                "Some images were not attached because the eight-image limit was reached."
+        }
+
+        guard pasteQueue.enqueue(token: lifecycleToken, { @MainActor in
+            defer { self.attachmentPreparation.finish(operation) }
+            let result: FeatureImagePasteBatchResult
+            do {
+                result = try await FeatureImagePasteBatchLoader.prepare(
+                    providers: reservedProviders
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                self.attachmentErrorMessage = error.localizedDescription
+                return
+            }
+            guard !Task.isCancelled,
+                  self.attachmentLifecycle.isCurrent(lifecycleToken) else { return }
+            let accepted = FeatureImageAttachmentPolicy.attachmentsToAppend(
+                result.attachments,
+                to: self.attachments
+            )
+            if accepted.count < result.attachments.count {
+                self.attachmentErrorMessage =
+                    "Some images were not attached because the eight-image limit was reached."
+            } else if let failureMessage = result.failureMessage {
+                self.attachmentErrorMessage = failureMessage
+            }
+            self.attachments.append(contentsOf: accepted)
+        }) != nil else {
+            attachmentPreparation.finish(operation)
+            return
+        }
+    }
+
     private var composerFooter: some View {
         HStack(spacing: 2) {
             FeatureImageAttachmentPicker(
                 attachments: $attachments,
                 preparationState: $attachmentPreparation,
                 isFlowActive: $isAttachmentFlowActive,
+                lifecycle: attachmentLifecycle,
+                attachmentContextID: attachmentContextID,
                 isEnabled: imagesAllowed
             )
 
@@ -425,10 +521,18 @@ struct FeatureComposerView: View {
         case let .path(entry):
             replacement = FeatureComposerFileLinkSerializer.markdownLink(for: entry.path) + " "
         }
+        let cursorLocation = FeatureComposerTextSelectionPolicy.cursorLocation(
+            afterReplacing: trigger.range,
+            in: text,
+            with: replacement
+        )
         text = FeatureComposerTriggerParser.replacing(
             trigger.range,
             in: text,
             with: replacement
+        )
+        textSelectionRequest = FeatureComposerTextSelectionRequest(
+            location: cursorLocation
         )
         pathEntries = []
         pathSearchError = nil
@@ -443,8 +547,15 @@ struct FeatureComposerView: View {
             onStop()
         } else if FeatureComposerSubmissionPolicy.allowsSend(for: .explicitButton),
                   canSend {
+            rotateAttachmentLifecycle(to: attachmentContextID)
             onSend()
         }
+    }
+
+    private func rotateAttachmentLifecycle(to contextID: String) {
+        attachmentLifecycle.transition(to: contextID)
+        pasteQueue.cancelAll()
+        attachmentPreparation.cancelAll()
     }
 }
 
@@ -461,6 +572,274 @@ enum FeatureComposerCollapsePolicy {
             && attachmentsAreEmpty
             && !isAttachmentFlowActive
             && !isPreparingAttachments
+    }
+}
+
+@MainActor
+final class FeatureComposerPasteQueue {
+    private var tail: Task<Void, Never>?
+    private let lifecycle: FeatureAttachmentLifecycle
+
+    init(lifecycle: FeatureAttachmentLifecycle) {
+        self.lifecycle = lifecycle
+    }
+
+    @discardableResult
+    func enqueue(
+        token: FeatureAttachmentLifecycle.Token,
+        _ work: @escaping @MainActor () async -> Void
+    ) -> Task<Void, Never>? {
+        guard lifecycle.isCurrent(token) else { return nil }
+        let previous = tail
+        let task = Task { @MainActor [weak self] in
+            await previous?.value
+            guard let self,
+                  self.lifecycle.isCurrent(token),
+                  !Task.isCancelled else { return }
+            await work()
+        }
+        tail = task
+        return task
+    }
+
+    func cancelAll() {
+        tail?.cancel()
+        tail = nil
+    }
+
+}
+
+final class FeatureComposerUITextView: UITextView {
+    var acceptsImages = false {
+        didSet {
+            guard oldValue != acceptsImages else { return }
+            pasteConfiguration = acceptsImages
+                ? UIPasteConfiguration(
+                    acceptableTypeIdentifiers: [
+                        UTType.image.identifier,
+                        UTType.text.identifier,
+                    ]
+                )
+                : nil
+        }
+    }
+    var onPasteImages: (([NSItemProvider]) -> Void)?
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(paste(_:)),
+           acceptsImages,
+           FeatureComposerPasteboardPolicy.containsImage(in: UIPasteboard.general) {
+            return true
+        }
+        return super.canPerformAction(action, withSender: sender)
+    }
+
+    override func paste(_ sender: Any?) {
+        guard acceptsImages else {
+            super.paste(sender)
+            return
+        }
+        let imageProviders = UIPasteboard.general.itemProviders.filter {
+            $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
+        }
+        guard !imageProviders.isEmpty else {
+            super.paste(sender)
+            return
+        }
+        if let pastedText = FeatureComposerPasteTextPolicy.text(
+            from: UIPasteboard.general
+        ) {
+            insertText(pastedText)
+        }
+        onPasteImages?(imageProviders)
+    }
+}
+
+enum FeatureComposerPasteboardPolicy {
+    static func containsImage(in pasteboard: UIPasteboard) -> Bool {
+        pasteboard.contains(pasteboardTypes: [UTType.image.identifier])
+    }
+}
+
+struct FeatureComposerTextSelectionRequest: Equatable {
+    let id = UUID()
+    let location: Int
+}
+
+enum FeatureComposerTextSelectionPolicy {
+    static func cursorLocation(
+        afterReplacing range: Range<Int>,
+        in text: String,
+        with replacement: String
+    ) -> Int {
+        let lower = min(max(range.lowerBound, 0), text.count)
+        let lowerIndex = text.index(text.startIndex, offsetBy: lower)
+        return text[..<lowerIndex].utf16.count + replacement.utf16.count
+    }
+}
+
+enum FeatureComposerPasteTextPolicy {
+    static func text(from pasteboard: UIPasteboard) -> String? {
+        let strings = (0..<pasteboard.numberOfItems).compactMap { itemIndex -> String? in
+            let itemSet = IndexSet(integer: itemIndex)
+            let typeIdentifiers = pasteboard.types(forItemSet: itemSet)?
+                .first ?? []
+            guard !typeIdentifiers.contains(where: {
+                UTType($0)?.conforms(to: .image) == true
+            }) else { return nil }
+
+            for typeIdentifier in preferredPlainTextTypes(in: typeIdentifiers) {
+                if let value = pasteboard.values(
+                    forPasteboardType: typeIdentifier,
+                    inItemSet: itemSet
+                )?.first as? String,
+                   !value.isEmpty {
+                    return value
+                }
+            }
+            return nil
+        }
+        guard !strings.isEmpty else { return nil }
+        return strings.joined(separator: "\n")
+    }
+
+    private static func preferredPlainTextTypes(
+        in typeIdentifiers: [String]
+    ) -> [String] {
+        typeIdentifiers
+            .filter { UTType($0)?.conforms(to: .plainText) == true }
+            .sorted { lhs, rhs in
+                (plainTextPriority(lhs), lhs) < (plainTextPriority(rhs), rhs)
+            }
+    }
+
+    private static func plainTextPriority(_ typeIdentifier: String) -> Int {
+        if typeIdentifier == UTType.utf8PlainText.identifier { return 0 }
+        if typeIdentifier == UTType.plainText.identifier { return 1 }
+        return 2
+    }
+}
+
+private struct FeatureComposerTextInput: UIViewRepresentable {
+    @Binding var text: String
+    let focused: FocusState<Bool>.Binding
+    let placeholder: String
+    let acceptsImages: Bool
+    let selectionRequest: FeatureComposerTextSelectionRequest?
+    let onPasteImages: ([NSItemProvider]) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeUIView(context: Context) -> FeatureComposerUITextView {
+        let textView = FeatureComposerUITextView()
+        context.coordinator.lastAppliedSelectionRequestID = selectionRequest?.id
+        textView.delegate = context.coordinator
+        textView.acceptsImages = acceptsImages
+        textView.onPasteImages = onPasteImages
+        textView.backgroundColor = .clear
+        textView.textColor = UIColor(T3Colors.textPrimary)
+        textView.tintColor = UIColor(T3Colors.accent)
+        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.adjustsFontForContentSizeCategory = true
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        // Return always edits the draft; sending is deliberately button-only.
+        textView.isScrollEnabled = false
+        textView.accessibilityIdentifier = "message-composer"
+        updateAccessibility(textView)
+        return textView
+    }
+
+    func updateUIView(_ textView: FeatureComposerUITextView, context: Context) {
+        context.coordinator.parent = self
+        textView.acceptsImages = acceptsImages
+        textView.onPasteImages = onPasteImages
+
+        let shouldApplySelection = selectionRequest.map {
+            context.coordinator.lastAppliedSelectionRequestID != $0.id
+        } ?? false
+        if textView.text != text {
+            let selectedRange = textView.selectedRange
+            textView.text = text
+            if !shouldApplySelection {
+                let location = min(selectedRange.location, textView.text.utf16.count)
+                let length = min(selectedRange.length, textView.text.utf16.count - location)
+                textView.selectedRange = NSRange(location: location, length: length)
+            }
+        }
+        if shouldApplySelection, let selectionRequest {
+            let location = min(selectionRequest.location, textView.text.utf16.count)
+            textView.selectedRange = NSRange(location: location, length: 0)
+            context.coordinator.lastAppliedSelectionRequestID = selectionRequest.id
+        }
+        updateAccessibility(textView)
+        Self.updateScrolling(textView)
+
+        if context.coordinator.lastAppliedFocus != focused.wrappedValue {
+            context.coordinator.lastAppliedFocus = focused.wrappedValue
+            if focused.wrappedValue, !textView.isFirstResponder {
+                textView.becomeFirstResponder()
+            } else if !focused.wrappedValue, textView.isFirstResponder {
+                textView.resignFirstResponder()
+            }
+        }
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: FeatureComposerUITextView,
+        context: Context
+    ) -> CGSize? {
+        guard let width = proposal.width, width.isFinite else { return nil }
+        let fittingSize = uiView.sizeThatFits(
+            CGSize(width: width, height: .greatestFiniteMagnitude)
+        )
+        let maximumHeight = (uiView.font?.lineHeight ?? 22) * 7
+        return CGSize(width: width, height: min(fittingSize.height, maximumHeight))
+    }
+
+    private func updateAccessibility(_ textView: FeatureComposerUITextView) {
+        textView.accessibilityLabel = "Message agent"
+        textView.accessibilityHint = acceptsImages
+            ? "Enter a message or paste images to attach them."
+            : "Enter a message."
+        textView.accessibilityValue = text.isEmpty ? placeholder : nil
+    }
+
+    private static func updateScrolling(_ textView: UITextView) {
+        let maximumHeight = (textView.font?.lineHeight ?? 22) * 7
+        textView.isScrollEnabled = textView.contentSize.height > maximumHeight
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: FeatureComposerTextInput
+        var lastAppliedFocus: Bool?
+        var lastAppliedSelectionRequestID: UUID?
+
+        init(_ parent: FeatureComposerTextInput) {
+            self.parent = parent
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            FeatureComposerTextInput.updateScrolling(textView)
+            guard parent.text != textView.text else { return }
+            parent.text = textView.text
+        }
+
+        func textViewDidBeginEditing(_ textView: UITextView) {
+            if !parent.focused.wrappedValue {
+                parent.focused.wrappedValue = true
+            }
+        }
+
+        func textViewDidEndEditing(_ textView: UITextView) {
+            if parent.focused.wrappedValue {
+                parent.focused.wrappedValue = false
+            }
+        }
+
     }
 }
 
