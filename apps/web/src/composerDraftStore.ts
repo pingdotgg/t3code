@@ -278,6 +278,31 @@ export interface ComposerThreadDraftState {
 }
 
 /**
+ * True when the user has invested real content in the draft: typed text or
+ * any attachment/context. Model selection and mode choices alone do not
+ * count — those are ambient defaults, not work in progress. Used by the
+ * sidebar draft rows (which draft sessions deserve a row) and by new-thread
+ * resurrection (a draft with content keeps its settings instead of being
+ * reset to defaults).
+ */
+export function composerDraftHasUserContent(
+  draft: ComposerThreadDraftState | null | undefined,
+): boolean {
+  if (!draft) {
+    return false;
+  }
+  return (
+    draft.prompt.trim().length > 0 ||
+    draft.images.length > 0 ||
+    draft.persistedAttachments.length > 0 ||
+    draft.terminalContexts.length > 0 ||
+    draft.elementContexts.length > 0 ||
+    draft.previewAnnotations.length > 0 ||
+    draft.reviewComments.length > 0
+  );
+}
+
+/**
  * Mutable routing and execution context for a pre-thread draft session.
  *
  * Unlike a real server thread, a draft session can still change target
@@ -1911,9 +1936,29 @@ function partializeComposerDraftStoreState(
     };
     persistedDraftsByThreadKey[threadKey] = persistedDraft;
   }
+  // Unmapped sessions exist only to back a sidebar draft row, so a session
+  // that is neither mapped, nor promoting, nor backed by persisted composer
+  // content (e.g. the user emptied it out) has nothing left to resume —
+  // drop it instead of persisting a zombie.
+  const mappedDraftKeys = new Set(
+    Object.values(state.logicalProjectDraftThreadKeyByLogicalProjectKey),
+  );
+  const persistedDraftThreadsByThreadKey: DeepMutable<
+    PersistedComposerDraftStoreState["draftThreadsByThreadKey"]
+  > = {};
+  for (const [threadKey, draftThread] of Object.entries(state.draftThreadsByThreadKey)) {
+    if (
+      !mappedDraftKeys.has(threadKey) &&
+      !isDraftThreadPromoting(draftThread) &&
+      persistedDraftsByThreadKey[threadKey] === undefined
+    ) {
+      continue;
+    }
+    persistedDraftThreadsByThreadKey[threadKey] = draftThread;
+  }
   return {
     draftsByThreadKey: persistedDraftsByThreadKey,
-    draftThreadsByThreadKey: state.draftThreadsByThreadKey,
+    draftThreadsByThreadKey: persistedDraftThreadsByThreadKey,
     logicalProjectDraftThreadKeyByLogicalProjectKey:
       state.logicalProjectDraftThreadKeyByLogicalProjectKey,
     stickyModelSelectionByProvider: compactModelSelectionByProvider(
@@ -2214,7 +2259,25 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           return get().getDraftSessionByProjectRef(projectRef);
         },
         getDraftSessionByProjectRef: (projectRef) => {
-          for (const [draftId, draftThread] of Object.entries(get().draftThreadsByThreadKey)) {
+          const state = get();
+          // Mapped drafts win: a project can also own older unmapped drafts
+          // (invested ones left behind by a remap), but "the" draft for a
+          // project is the one new-thread flows currently target.
+          for (const draftId of Object.values(
+            state.logicalProjectDraftThreadKeyByLogicalProjectKey,
+          )) {
+            const draftThread = state.draftThreadsByThreadKey[draftId];
+            if (!draftThread || isDraftThreadPromoting(draftThread)) {
+              continue;
+            }
+            if (
+              draftThread.projectId === projectRef.projectId &&
+              draftThread.environmentId === projectRef.environmentId
+            ) {
+              return toProjectDraftSession(DraftId.make(draftId), draftThread);
+            }
+          }
+          for (const [draftId, draftThread] of Object.entries(state.draftThreadsByThreadKey)) {
             if (isDraftThreadPromoting(draftThread)) {
               continue;
             }
@@ -2289,6 +2352,11 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               previousThreadKeyForLogicalProject === undefined
                 ? undefined
                 : nextDraftThreadsByThreadKey[previousThreadKeyForLogicalProject];
+            // A remap only garbage-collects the previous draft when the user
+            // never invested content in it. A draft with typed text or
+            // attachments stays alive unmapped — the sidebar draft rows list
+            // every such session, so "new thread" can mint a fresh draft
+            // without destroying the one the user walked away from.
             if (
               previousThreadKeyForLogicalProject &&
               previousThreadKeyForLogicalProject !== draftId &&
@@ -2296,7 +2364,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 nextLogicalProjectDraftThreadKeyByLogicalProjectKey,
                 previousThreadKeyForLogicalProject,
               ) &&
-              !isDraftThreadPromoting(previousDraftThread)
+              !isDraftThreadPromoting(previousDraftThread) &&
+              !composerDraftHasUserContent(
+                state.draftsByThreadKey[previousThreadKeyForLogicalProject],
+              )
             ) {
               delete nextDraftThreadsByThreadKey[previousThreadKeyForLogicalProject];
               if (state.draftsByThreadKey[previousThreadKeyForLogicalProject] !== undefined) {

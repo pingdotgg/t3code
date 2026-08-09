@@ -8,6 +8,7 @@ import { DEFAULT_RUNTIME_MODE, type ScopedProjectRef } from "@t3tools/contracts"
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import {
+  composerDraftHasUserContent,
   markPromotedDraftThreadByRef,
   type DraftThreadEnvMode,
   type DraftThreadState,
@@ -160,29 +161,39 @@ export function useNewThreadHandler() {
       if (storedDraftThreadRef && reusableStoredDraftThread === null) {
         markPromotedDraftThreadByRef(storedDraftThreadRef);
       }
+      // New-thread surfaces (button, hotkeys, "/" landing, palette) only
+      // ever reuse a draft the user has NOT invested in. A draft with typed
+      // text or attachments is work in progress: it stays alive where it is
+      // (reachable from the sidebar draft rows) and this request mints a
+      // fresh draft instead — the remap in the store preserves invested
+      // drafts rather than deleting them.
+      const emptyStoredDraftThread =
+        reusableStoredDraftThread &&
+        !composerDraftHasUserContent(getComposerDraft(reusableStoredDraftThread.draftId))
+          ? reusableStoredDraftThread
+          : null;
       const latestActiveDraftThread: DraftThreadState | null = currentRouteTarget
         ? currentRouteTarget.kind === "server"
           ? getDraftThread(currentRouteTarget.threadRef)
           : getDraftSession(currentRouteTarget.draftId)
         : null;
-      if (reusableStoredDraftThread) {
+      if (emptyStoredDraftThread) {
         return (async () => {
           const isDraftAlreadyOpen =
             currentRouteTarget?.kind === "draft" &&
-            currentRouteTarget.draftId === reusableStoredDraftThread.draftId;
+            currentRouteTarget.draftId === emptyStoredDraftThread.draftId;
           const hasExplicitWorkspaceOption =
             hasBranchOption ||
             hasWorktreePathOption ||
             hasEnvModeOption ||
             hasStartFromOriginOption;
-          // Resurrecting a stored draft must not resurrect its stale context:
-          // explicit workspace options win outright; otherwise the env context
-          // resets to the configured defaults so drafts seeded before a
-          // defaults change (or by the old carry-over behavior) stop landing
-          // on "current checkout" branches forever. Composer text is
-          // preserved. When the draft is already open and no options were
-          // passed, leave it alone entirely — the user may have just picked a
-          // branch in the composer.
+          // Resurrecting an empty stored draft must not resurrect its stale
+          // context: explicit workspace options win outright; otherwise the
+          // env context resets to the configured defaults so drafts seeded
+          // before a defaults change (or by the old carry-over behavior) stop
+          // landing on "current checkout" branches forever. When the draft is
+          // already open and no options were passed, leave it alone entirely —
+          // the user may have just picked a branch in the composer.
           let workspaceContext: NewThreadWorkspaceOptions | null = null;
           if (hasExplicitWorkspaceOption) {
             workspaceContext = pickExplicitWorkspaceOptions(options);
@@ -198,7 +209,7 @@ export function useNewThreadHandler() {
             const routeTargetNow = getCurrentRouteTarget();
             const openedMeanwhile =
               routeTargetNow?.kind === "draft" &&
-              routeTargetNow.draftId === reusableStoredDraftThread.draftId;
+              routeTargetNow.draftId === emptyStoredDraftThread.draftId;
             const promotedMeanwhile =
               storedDraftThreadRef !== null && readThreadShell(storedDraftThreadRef) !== null;
             if (openedMeanwhile || promotedMeanwhile) {
@@ -215,7 +226,7 @@ export function useNewThreadHandler() {
             };
           }
           if (workspaceContext) {
-            setDraftThreadContext(reusableStoredDraftThread.draftId, {
+            setDraftThreadContext(emptyStoredDraftThread.draftId, {
               ...workspaceContext,
               ...(carryRuntimeMode ? { runtimeMode: carryRuntimeMode } : {}),
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
@@ -224,7 +235,7 @@ export function useNewThreadHandler() {
               // The carried selection is a complete snapshot of the viewed
               // thread's model state: absent options mean "no options", not
               // "keep the stale draft's options".
-              setModelSelection(reusableStoredDraftThread.draftId, carryModelSelection, {
+              setModelSelection(emptyStoredDraftThread.draftId, carryModelSelection, {
                 replaceOptions: true,
               });
             }
@@ -236,9 +247,9 @@ export function useNewThreadHandler() {
           setLogicalProjectDraftThreadId(
             logicalProjectKey,
             projectRef,
-            reusableStoredDraftThread.draftId,
+            emptyStoredDraftThread.draftId,
             {
-              threadId: reusableStoredDraftThread.threadId,
+              threadId: emptyStoredDraftThread.threadId,
               ...workspaceContext,
               ...(carryRuntimeMode ? { runtimeMode: carryRuntimeMode } : {}),
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
@@ -250,13 +261,13 @@ export function useNewThreadHandler() {
           const routeTargetAfterWrites = getCurrentRouteTarget();
           if (
             routeTargetAfterWrites?.kind === "draft" &&
-            routeTargetAfterWrites.draftId === reusableStoredDraftThread.draftId
+            routeTargetAfterWrites.draftId === emptyStoredDraftThread.draftId
           ) {
             return;
           }
           await router.navigate({
             to: "/draft/$draftId",
-            params: { draftId: reusableStoredDraftThread.draftId },
+            params: { draftId: emptyStoredDraftThread.draftId },
             replace: options?.replace ?? false,
           });
         })();
@@ -266,7 +277,10 @@ export function useNewThreadHandler() {
         latestActiveDraftThread &&
         currentRouteTarget?.kind === "draft" &&
         latestActiveDraftThread.logicalProjectKey === logicalProjectKey &&
-        latestActiveDraftThread.promotedTo == null
+        latestActiveDraftThread.promotedTo == null &&
+        // Same content rule as above: a new-thread request while viewing an
+        // invested draft mints a fresh one instead of repurposing it.
+        !composerDraftHasUserContent(getComposerDraft(currentRouteTarget.draftId))
       ) {
         if (
           hasBranchOption ||
@@ -298,6 +312,11 @@ export function useNewThreadHandler() {
         const racedDraft = getDraftSessionByLogicalProjectKey(logicalProjectKey);
         if (
           racedDraft &&
+          // Only a draft REGISTERED during the await counts as a raced
+          // winner. An invested draft this invocation deliberately declined
+          // to reuse is still mapped at this point — reusing it here would
+          // silently undo mint-fresh semantics.
+          racedDraft.draftId !== storedDraftThread?.draftId &&
           readThreadShell(scopeThreadRef(racedDraft.environmentId, racedDraft.threadId)) === null
         ) {
           // Same remap the reuse paths above perform: point the draft at the
