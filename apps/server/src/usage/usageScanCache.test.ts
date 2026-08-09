@@ -187,7 +187,9 @@ describe("pruneScanCache with an unwalked root", () => {
 });
 
 describe("dedupeWithinFile", () => {
-  it("keeps the first record per dedupe key", () => {
+  it("keeps the richest record per dedupe key, in its original position", () => {
+    // Streaming writes intermediate snapshots of one message: same key,
+    // growing output. The finished copy is the one that was billed.
     const kept = dedupeWithinFile([
       record({ totals: { ...record().totals, outputTokens: 1 } }),
       record({ totals: { ...record().totals, outputTokens: 999 } }),
@@ -195,7 +197,28 @@ describe("dedupeWithinFile", () => {
     ]);
 
     expect(kept).toHaveLength(2);
-    expect(kept[0]?.totals.outputTokens).toBe(1);
+    expect(kept[0]?.totals.outputTokens).toBe(999);
+    expect(kept[1]?.dedupeKey).toBe("msg_2:");
+  });
+
+  it("keeps the first copy when duplicates are identical", () => {
+    const first = record({ sessionId: "session-a" });
+    const repeat = record({ sessionId: "session-b" });
+
+    const kept = dedupeWithinFile([first, repeat]);
+
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.sessionId).toBe("session-a");
+  });
+
+  it("does not let a later poorer copy replace a richer one", () => {
+    const kept = dedupeWithinFile([
+      record({ totals: { ...record().totals, outputTokens: 999 } }),
+      record({ totals: { ...record().totals, outputTokens: 1 } }),
+    ]);
+
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.totals.outputTokens).toBe(999);
   });
 
   it("keeps every record that has no dedupe key", () => {
