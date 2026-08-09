@@ -34,7 +34,7 @@ export function PreviewPanelShell(props: {
   const isInline = props.mode === "inline";
   const maximized = props.maximized === true;
   const open = props.open ?? true;
-  const maxWidth = useViewportClampedMaxWidth();
+  const { maxWidth, isViewportResizing } = useViewportClampedMaxWidth();
   const { width, isResizing, handlers } = useResizableWidth({
     storageKey: PREVIEW_PANEL_WIDTH_STORAGE_KEY,
     defaultWidth: PREVIEW_PANEL_DEFAULT_WIDTH,
@@ -70,7 +70,9 @@ export function PreviewPanelShell(props: {
         data-preview-panel-mode={props.mode}
         data-preview-panel-maximized={maximized ? "true" : "false"}
         data-right-panel-open={open ? "true" : "false"}
-        data-right-panel-resizing={!maximized && isResizing ? "true" : undefined}
+        data-right-panel-resizing={
+          !maximized && (isResizing || isViewportResizing) ? "true" : undefined
+        }
         aria-hidden={open ? undefined : true}
         inert={open ? undefined : true}
         onTransitionEnd={(event) => {
@@ -122,24 +124,42 @@ export function PreviewPanelShell(props: {
  * Resize-aware so dragging the OS window narrower re-clamps the stored
  * width on the next render (the hook's clamp picks this up automatically).
  */
-function useViewportClampedMaxWidth(): number {
-  const [vw, setVw] = useState(() => (typeof window === "undefined" ? 1280 : window.innerWidth));
+function useViewportClampedMaxWidth(): { maxWidth: number; isViewportResizing: boolean } {
+  const [viewport, setViewport] = useState(() => ({
+    width: typeof window === "undefined" ? 1280 : window.innerWidth,
+    isResizing: false,
+  }));
   useEffect(() => {
     if (typeof window === "undefined") return;
-    let frame = 0;
+    let resizeFrame = 0;
+    let settleFrame = 0;
     const onResize = () => {
       // Coalesce rapid resize events into one rAF tick.
-      if (frame !== 0) return;
-      frame = window.requestAnimationFrame(() => {
-        frame = 0;
-        setVw(window.innerWidth);
+      if (settleFrame !== 0) {
+        window.cancelAnimationFrame(settleFrame);
+        settleFrame = 0;
+      }
+      if (resizeFrame !== 0) return;
+      resizeFrame = window.requestAnimationFrame(() => {
+        resizeFrame = 0;
+        setViewport({ width: window.innerWidth, isResizing: true });
+        settleFrame = window.requestAnimationFrame(() => {
+          settleFrame = 0;
+          setViewport((current) =>
+            current.isResizing ? { ...current, isResizing: false } : current,
+          );
+        });
       });
     };
     window.addEventListener("resize", onResize);
     return () => {
       window.removeEventListener("resize", onResize);
-      if (frame !== 0) window.cancelAnimationFrame(frame);
+      if (resizeFrame !== 0) window.cancelAnimationFrame(resizeFrame);
+      if (settleFrame !== 0) window.cancelAnimationFrame(settleFrame);
     };
   }, []);
-  return getPreviewPanelMaxWidth(vw);
+  return {
+    maxWidth: getPreviewPanelMaxWidth(viewport.width),
+    isViewportResizing: viewport.isResizing,
+  };
 }
