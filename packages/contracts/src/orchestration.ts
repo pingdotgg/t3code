@@ -1230,9 +1230,19 @@ export const ThreadMessageSentPayload = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 
+/**
+ * Marks turn-start intents emitted by a server that durably records the
+ * `starting` lifecycle state before invoking a provider. A reactor may replay
+ * only events carrying this protocol after a restart; older events have an
+ * ambiguous provider-side delivery boundary and must be failed visibly rather
+ * than duplicated.
+ */
+export const TURN_START_DELIVERY_PROTOCOL = 1 as const;
+
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
+  deliveryProtocol: Schema.optional(Schema.Literal(TURN_START_DELIVERY_PROTOCOL)),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),

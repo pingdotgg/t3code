@@ -2,6 +2,8 @@ import { expect, it } from "@effect/vitest";
 
 import {
   decodeServicePreflightResult,
+  PENDING_TURN_RECOVERY_PROTOCOL,
+  PENDING_TURN_RECOVERY_REQUIRED_REASON,
   PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL,
   PROVIDER_LIFECYCLE_RECOVERY_REQUIRED_REASON,
   runServicePreflight,
@@ -28,6 +30,22 @@ it("requires the database-snapshot launcher protocol", () => {
     version: "1.2.3",
     launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
     providerLifecycleRecoveryProtocol: PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL,
+    pendingTurnRecoveryProtocol: PENDING_TURN_RECOVERY_PROTOCOL,
+  });
+});
+
+it("blocks a candidate that would remove durable pending-turn recovery", () => {
+  expect(
+    decodeServicePreflightResult({
+      status: "ready",
+      version: "1.2.4",
+      launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+      providerLifecycleRecoveryProtocol: PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL,
+    }),
+  ).toEqual({
+    status: "blocked",
+    version: "1.2.4",
+    reason: PENDING_TURN_RECOVERY_REQUIRED_REASON,
   });
 });
 

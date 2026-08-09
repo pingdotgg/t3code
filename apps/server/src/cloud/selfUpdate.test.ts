@@ -13,7 +13,10 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import * as TurnAdmissionGate from "../orchestration/TurnAdmissionGate.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
-import { PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL } from "./servicePreflight.ts";
+import {
+  PENDING_TURN_RECOVERY_PROTOCOL,
+  PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL,
+} from "./servicePreflight.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 import * as ServerSelfUpdate from "./selfUpdate.ts";
 
@@ -60,7 +63,10 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
           launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
           ...(options.preflight === "unsafe"
             ? {}
-            : { providerLifecycleRecoveryProtocol: PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL }),
+            : {
+                providerLifecycleRecoveryProtocol: PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL,
+                pendingTurnRecoveryProtocol: PENDING_TURN_RECOVERY_PROTOCOL,
+              }),
         };
         const result =
           options.preflight === "blocked"

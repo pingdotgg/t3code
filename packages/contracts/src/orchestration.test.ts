@@ -23,6 +23,7 @@ import {
   ThreadCreatedPayload,
   ThreadTurnDiff,
   ThreadTurnStartRequestedPayload,
+  TURN_START_DELIVERY_PROTOCOL,
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
@@ -718,10 +719,23 @@ it.effect(
         createdAt: "2026-01-01T00:00:00.000Z",
       });
       assert.strictEqual(parsed.modelSelection, undefined);
+      assert.strictEqual(parsed.deliveryProtocol, undefined);
       assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
       assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
       assert.strictEqual(parsed.sourceProposedPlan, undefined);
     }),
+);
+
+it.effect("decodes the durable turn-start delivery protocol when present", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartRequestedPayload({
+      threadId: "thread-1",
+      messageId: "msg-1",
+      deliveryProtocol: TURN_START_DELIVERY_PROTOCOL,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.deliveryProtocol, TURN_START_DELIVERY_PROTOCOL);
+  }),
 );
 
 it.effect("decodes thread.turn-start-requested source proposed plan metadata when present", () =>
