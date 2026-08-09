@@ -151,7 +151,7 @@ describe("ProviderCommandReactor", () => {
     readonly requiresNewThreadForModelChange?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
-    readonly turnStartBeforeStart?: "recoverable" | "legacy";
+    readonly turnStartBeforeStart?: "recoverable" | "legacy" | "protocol-one" | "delivery-marked";
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -163,6 +163,16 @@ describe("ProviderCommandReactor", () => {
     const { stateDir } = deriveServerPathsSync(baseDir, undefined);
     createdStateDirs.add(stateDir);
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
+    type CommittedTurnStartDelivery = {
+      readonly messageId: MessageId;
+      readonly requestSequence: number;
+      readonly deliverySequence: number;
+    };
+    let committedTurnStartDelivery: CommittedTurnStartDelivery | null = null;
+    const deliveryMarkersAtProviderCalls: Array<{
+      readonly call: "startSession" | "sendTurn";
+      readonly marker: CommittedTurnStartDelivery | null;
+    }> = [];
     let nextSessionIndex = 1;
     const runtimeSessions: Array<ProviderSession> = [];
     const modelSelection = input?.threadModelSelection ?? {
@@ -171,6 +181,10 @@ describe("ProviderCommandReactor", () => {
     };
     const startSessionEffect = input?.startSessionEffect;
     const startSession = vi.fn((_: unknown, input: unknown) => {
+      deliveryMarkersAtProviderCalls.push({
+        call: "startSession",
+        marker: committedTurnStartDelivery,
+      });
       const sessionIndex = nextSessionIndex++;
       const resumeCursor =
         typeof input === "object" && input !== null && "resumeCursor" in input
@@ -231,12 +245,16 @@ describe("ProviderCommandReactor", () => {
         ),
       );
     });
-    const sendTurn = vi.fn((_: unknown) =>
-      Effect.succeed({
+    const sendTurn = vi.fn((_: unknown) => {
+      deliveryMarkersAtProviderCalls.push({
+        call: "sendTurn",
+        marker: committedTurnStartDelivery,
+      });
+      return Effect.succeed({
         threadId: ThreadId.make("thread-1"),
         turnId: asTurnId("turn-1"),
-      }),
-    );
+      });
+    });
     const interruptTurn = vi.fn((_: unknown) => Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
@@ -374,14 +392,21 @@ describe("ProviderCommandReactor", () => {
             engine.readEvents(fromSequenceExclusive, limit).pipe(
               Stream.map((event) => {
                 if (
-                  input?.turnStartBeforeStart !== "legacy" ||
+                  (input?.turnStartBeforeStart !== "legacy" &&
+                    input?.turnStartBeforeStart !== "protocol-one") ||
                   event.type !== "thread.turn-start-requested" ||
                   event.commandId !== "cmd-turn-start-before-reactor"
                 ) {
                   return event;
                 }
                 const { deliveryProtocol: _deliveryProtocol, ...payload } = event.payload;
-                return { ...event, payload };
+                return {
+                  ...event,
+                  payload:
+                    input.turnStartBeforeStart === "protocol-one"
+                      ? { ...payload, deliveryProtocol: 1 as const }
+                      : payload,
+                };
               }),
             ),
           dispatch: (command) => {
@@ -394,7 +419,23 @@ describe("ProviderCommandReactor", () => {
                 return Effect.die(new Error("Injected title regeneration completion failure"));
               }
             }
-            return engine.dispatch(command);
+            return engine.dispatch(command).pipe(
+              Effect.tap((event) => {
+                if (command.type !== "thread.session.set") {
+                  return Effect.void;
+                }
+                const turnStartDelivery = command.turnStartDelivery;
+                if (turnStartDelivery === undefined) {
+                  return Effect.void;
+                }
+                return Effect.sync(() => {
+                  committedTurnStartDelivery = {
+                    ...turnStartDelivery,
+                    deliverySequence: event.sequence,
+                  };
+                });
+              }),
+            );
           },
           get streamDomainEvents() {
             return engine.streamDomainEvents;
@@ -502,7 +543,7 @@ describe("ProviderCommandReactor", () => {
       );
     }
     if (input?.turnStartBeforeStart !== undefined) {
-      await Effect.runPromise(
+      const turnStart = await Effect.runPromise(
         engine.dispatch({
           type: "thread.turn.start",
           commandId: CommandId.make("cmd-turn-start-before-reactor"),
@@ -518,6 +559,30 @@ describe("ProviderCommandReactor", () => {
           createdAt: "2026-01-01T00:00:01.000Z",
         }),
       );
+      if (input.turnStartBeforeStart === "delivery-marked") {
+        await Effect.runPromise(
+          engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make("cmd-turn-delivery-before-reactor"),
+            threadId: ThreadId.make("thread-1"),
+            session: {
+              threadId: ThreadId.make("thread-1"),
+              status: "starting",
+              providerName: "codex",
+              providerInstanceId: modelSelection.instanceId,
+              runtimeMode: "approval-required",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: "2026-01-01T00:00:01.000Z",
+            },
+            turnStartDelivery: {
+              messageId: asMessageId("user-message-before-reactor"),
+              requestSequence: turnStart.sequence,
+            },
+            createdAt: "2026-01-01T00:00:01.000Z",
+          }),
+        );
+      }
     }
 
     scope = await Effect.runPromise(Scope.make("sequential"));
@@ -538,6 +603,7 @@ describe("ProviderCommandReactor", () => {
       generateBranchName,
       generateThreadTitle,
       runtimeSessions,
+      deliveryMarkersAtProviderCalls,
       stateDir,
       drain,
       runEffect,
@@ -552,7 +618,7 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
-    await Effect.runPromise(
+    const request = await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-1"),
@@ -580,12 +646,100 @@ describe("ProviderCommandReactor", () => {
       },
       runtimeMode: "approval-required",
     });
+    expect(harness.deliveryMarkersAtProviderCalls).toEqual([
+      {
+        call: "startSession",
+        marker: {
+          messageId: "user-message-1",
+          requestSequence: request.sequence,
+          deliverySequence: request.sequence + 1,
+        },
+      },
+      {
+        call: "sendTurn",
+        marker: {
+          messageId: "user-message-1",
+          requestSequence: request.sequence,
+          deliverySequence: request.sequence + 1,
+        },
+      },
+    ]);
 
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.status).toBe("starting");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("commits the next request marker before steering an already-running provider", async () => {
+    const harness = await createHarness();
+    const threadId = ThreadId.make("thread-1");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-running-marker-first-turn"),
+        threadId,
+        message: {
+          messageId: asMessageId("running-marker-first-message"),
+          role: "user",
+          text: "first turn",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-running-marker-existing-session"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("existing-running-turn"),
+          lastError: null,
+          updatedAt: "2026-01-01T00:00:02.000Z",
+        },
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+
+    const secondRequest = await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-running-marker-second-turn"),
+        threadId,
+        message: {
+          messageId: asMessageId("running-marker-second-message"),
+          role: "user",
+          text: "steer the running turn",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:03.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(harness.deliveryMarkersAtProviderCalls.at(-1)).toEqual({
+      call: "sendTurn",
+      marker: {
+        messageId: "running-marker-second-message",
+        requestSequence: secondRequest.sequence,
+        deliverySequence: secondRequest.sequence + 1,
+      },
+    });
   });
 
   it("recovers a protocol-marked turn start committed before the reactor subscribed", async () => {
@@ -619,6 +773,32 @@ describe("ProviderCommandReactor", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.lastError).toContain("not replayed automatically");
+    expect(thread?.messages.at(-1)?.text).toBe("Recover this committed message after restart");
+  });
+
+  it("does not replay protocol-one history that predates correlated delivery markers", async () => {
+    const harness = await createHarness({ turnStartBeforeStart: "protocol-one" });
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return (
+        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.session
+          ?.status === "error"
+      );
+    });
+    expect(harness.startSession).not.toHaveBeenCalled();
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+  });
+
+  it("does not replay a pending start whose correlated delivery marker survived restart", async () => {
+    const harness = await createHarness({ turnStartBeforeStart: "delivery-marked" });
+
+    await harness.drain();
+    expect(harness.startSession).not.toHaveBeenCalled();
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.status).toBe("starting");
     expect(thread?.messages.at(-1)?.text).toBe("Recover this committed message after restart");
   });
 

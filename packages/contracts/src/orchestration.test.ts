@@ -19,6 +19,7 @@ import {
   OrchestrationThreadShell,
   ProjectCreateCommand,
   ThreadMetaUpdatedPayload,
+  ThreadSessionSetPayload,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
   ThreadTurnDiff,
@@ -54,6 +55,7 @@ const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPaylo
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
+const decodeThreadSessionSetPayload = Schema.decodeUnknownEffect(ThreadSessionSetPayload);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
@@ -512,6 +514,33 @@ it.effect("decodes thread settled and unsettled events", () =>
   }),
 );
 
+it.effect("decodes a correlated turn-start delivery marker on session events", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadSessionSetPayload({
+      threadId: "thread-1",
+      session: {
+        threadId: "thread-1",
+        status: "starting",
+        providerName: "codex",
+        providerInstanceId: "codex",
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      turnStartDelivery: {
+        messageId: "message-1",
+        requestSequence: 42,
+      },
+    });
+
+    assert.deepStrictEqual(parsed.turnStartDelivery, {
+      messageId: "message-1",
+      requestSequence: 42,
+    });
+  }),
+);
+
 it.effect("accepts provider-scoped model options in thread.turn.start", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadTurnStartCommand({
@@ -735,6 +764,18 @@ it.effect("decodes the durable turn-start delivery protocol when present", () =>
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.deliveryProtocol, TURN_START_DELIVERY_PROTOCOL);
+  }),
+);
+
+it.effect("keeps protocol-one turn-start events decodable as legacy history", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartRequestedPayload({
+      threadId: "thread-1",
+      messageId: "msg-legacy-protocol",
+      deliveryProtocol: 1,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.deliveryProtocol, 1);
   }),
 );
 

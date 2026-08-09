@@ -383,6 +383,10 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
           commandId: CommandId.make("cmd-session-set"),
           threadId: ThreadId.make("thread-1"),
           session: makeSession("running"),
+          turnStartDelivery: {
+            messageId: MessageId.make("message-1"),
+            requestSequence: 42,
+          },
           createdAt: NOW,
         },
         // A keep-active pin is also an override: real activity clears it
@@ -394,6 +398,9 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
         "thread.unsettled",
         "thread.session-set",
       ]);
+      expect(sessionEvents[1]?.payload).toMatchObject({
+        turnStartDelivery: { messageId: "message-1", requestSequence: 42 },
+      });
     }),
   );
 

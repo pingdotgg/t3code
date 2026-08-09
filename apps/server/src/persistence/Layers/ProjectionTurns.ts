@@ -14,6 +14,7 @@ import {
   GetProjectionPendingTurnStartInput,
   GetProjectionTurnByTurnIdInput,
   ListProjectionTurnsByThreadInput,
+  MarkProjectionPendingTurnDeliveryInput,
   ProjectionPendingTurnStart,
   ProjectionTurn,
   ProjectionTurnById,
@@ -117,6 +118,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           turn_id,
           pending_message_id,
           request_sequence,
+          delivery_sequence,
           source_proposed_plan_thread_id,
           source_proposed_plan_id,
           assistant_message_id,
@@ -134,6 +136,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           NULL,
           ${row.messageId},
           ${row.requestSequence},
+          ${row.deliverySequence},
           ${row.sourceProposedPlanThreadId},
           ${row.sourceProposedPlanId},
           NULL,
@@ -158,6 +161,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           thread_id AS "threadId",
           pending_message_id AS "messageId",
           request_sequence AS "requestSequence",
+          delivery_sequence AS "deliverySequence",
           source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           source_proposed_plan_id AS "sourceProposedPlanId",
           requested_at AS "requestedAt"
@@ -181,6 +185,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           thread_id AS "threadId",
           pending_message_id AS "messageId",
           request_sequence AS "requestSequence",
+          delivery_sequence AS "deliverySequence",
           source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           source_proposed_plan_id AS "sourceProposedPlanId",
           requested_at AS "requestedAt"
@@ -194,6 +199,21 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           request_sequence ASC,
           requested_at ASC,
           row_id ASC
+      `,
+  });
+
+  const markPendingProjectionTurnDelivery = SqlSchema.void({
+    Request: MarkProjectionPendingTurnDeliveryInput,
+    execute: ({ threadId, messageId, requestSequence, deliverySequence }) =>
+      sql`
+        UPDATE projection_turns
+        SET delivery_sequence = ${deliverySequence}
+        WHERE thread_id = ${threadId}
+          AND turn_id IS NULL
+          AND state = 'pending'
+          AND pending_message_id = ${messageId}
+          AND request_sequence = ${requestSequence}
+          AND checkpoint_turn_count IS NULL
       `,
   });
 
@@ -337,6 +357,17 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
       ),
     );
 
+  const markPendingTurnDeliveryStarted: ProjectionTurnRepositoryShape["markPendingTurnDeliveryStarted"] =
+    (input) =>
+      markPendingProjectionTurnDelivery(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionTurnRepository.markPendingTurnDeliveryStarted:query",
+            "ProjectionTurnRepository.markPendingTurnDeliveryStarted:encodeRequest",
+          ),
+        ),
+      );
+
   const listByThreadId: ProjectionTurnRepositoryShape["listByThreadId"] = (input) =>
     listProjectionTurnsByThread(input).pipe(
       Effect.mapError(
@@ -383,6 +414,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
     replacePendingTurnStart,
     getPendingTurnStartByThreadId,
     listPendingTurnStarts,
+    markPendingTurnDeliveryStarted,
     deletePendingTurnStartByThreadId,
     listByThreadId,
     getByTurnId,
