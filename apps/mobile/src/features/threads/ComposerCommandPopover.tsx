@@ -59,7 +59,7 @@ function PopoverSurface(props: {
   if (isLiquidGlassSupported) {
     return (
       <LiquidGlassView
-        effect="clear"
+        effect="regular"
         interactive={false}
         tintColor={props.isDarkMode ? "rgba(30,30,32,0.95)" : "rgba(255,255,255,0.92)"}
         colorScheme={props.isDarkMode ? "dark" : "light"}
@@ -113,7 +113,7 @@ function groupLabel(triggerKind: ComposerTriggerKind | null): string | null {
 
 function emptyText(triggerKind: ComposerTriggerKind | null, isLoading: boolean): string {
   if (isLoading) {
-    return triggerKind === "path" ? "Searching files…" : "Loading…";
+    return triggerKind === "path" ? "Searching filesÔÇª" : "LoadingÔÇª";
   }
   switch (triggerKind) {
     case "path":
@@ -131,6 +131,7 @@ const CommandRow = memo(function CommandRow(props: {
   readonly item: ComposerCommandItem;
   readonly onPress: () => void;
   readonly isLast: boolean;
+  readonly isDarkMode: boolean;
 }) {
   const iconName = itemIcon(props.item);
   const iconColor = "#a1a1aa";
@@ -146,7 +147,7 @@ const CommandRow = memo(function CommandRow(props: {
         gap: 10,
         opacity: pressed ? 0.6 : 1,
         borderBottomWidth: props.isLast ? 0 : 0.5,
-        borderBottomColor: "rgba(255,255,255,0.1)",
+        borderBottomColor: props.isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)",
       })}
     >
       {props.item.type === "path" ? (
@@ -193,6 +194,7 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
               item={item}
               onPress={() => props.onSelect(item)}
               isLast={index === props.items.length - 1}
+              isDarkMode={isDarkMode}
             />
           ))}
         </ScrollView>
