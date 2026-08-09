@@ -1937,9 +1937,11 @@ function partializeComposerDraftStoreState(
     persistedDraftsByThreadKey[threadKey] = persistedDraft;
   }
   // Unmapped sessions exist only to back a sidebar draft row, so a session
-  // that is neither mapped, nor promoting, nor backed by persisted composer
-  // content (e.g. the user emptied it out) has nothing left to resume —
-  // drop it instead of persisting a zombie.
+  // that is neither mapped, nor promoting, nor backed by real user content
+  // has nothing left to resume — drop it instead of persisting a zombie.
+  // The user-content predicate matters: a persisted composer entry can hold
+  // only ambient model/mode data, which is not a reason to keep a session
+  // no row will ever show.
   const mappedDraftKeys = new Set(
     Object.values(state.logicalProjectDraftThreadKeyByLogicalProjectKey),
   );
@@ -1950,7 +1952,7 @@ function partializeComposerDraftStoreState(
     if (
       !mappedDraftKeys.has(threadKey) &&
       !isDraftThreadPromoting(draftThread) &&
-      persistedDraftsByThreadKey[threadKey] === undefined
+      !composerDraftHasUserContent(state.draftsByThreadKey[threadKey])
     ) {
       continue;
     }
