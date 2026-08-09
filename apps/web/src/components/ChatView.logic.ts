@@ -165,6 +165,14 @@ export function reconcileMountedTerminalThreadIds(input: {
   });
 }
 
+export function rightPanelSurfacesRemovedAfterExit<T extends { id: string }>(
+  exitingSurfaces: ReadonlyArray<T>,
+  currentSurfaces: ReadonlyArray<{ id: string }>,
+): T[] {
+  const currentSurfaceIds = new Set(currentSurfaces.map((surface) => surface.id));
+  return exitingSurfaces.filter((surface) => !currentSurfaceIds.has(surface.id));
+}
+
 export function reconcileRetainedMountedThreadIds(input: {
   currentThreadIds: ReadonlyArray<string>;
   openThreadIds: ReadonlyArray<string>;

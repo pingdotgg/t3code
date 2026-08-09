@@ -26,6 +26,7 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  rightPanelSurfacesRemovedAfterExit,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   scheduleEnvironmentReconnectWarning,
@@ -463,6 +464,26 @@ describe("reconcileMountedTerminalThreadIds", () => {
         activeThreadTerminalOpen: false,
       }),
     ).toEqual(ids.slice(-MAX_HIDDEN_MOUNTED_TERMINAL_THREADS));
+  });
+});
+
+describe("rightPanelSurfacesRemovedAfterExit", () => {
+  it("returns only resources that stayed closed through the exit", () => {
+    const browser = { id: "browser:one", kind: "preview" };
+    const terminal = { id: "terminal:one", kind: "terminal" };
+
+    expect(
+      rightPanelSurfacesRemovedAfterExit(
+        [browser, terminal],
+        [terminal, { id: "files", kind: "files" }],
+      ),
+    ).toEqual([browser]);
+  });
+
+  it("does not clean up resources when the panel was only hidden", () => {
+    const surfaces = [{ id: "browser:one", kind: "preview" }];
+
+    expect(rightPanelSurfacesRemovedAfterExit(surfaces, surfaces)).toEqual([]);
   });
 });
 

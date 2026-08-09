@@ -9,6 +9,7 @@ import {
   type ProjectId,
   type ProviderApprovalDecision,
   type PreviewAnnotationPayload,
+  type PreviewSessionSnapshot,
   ProviderInstanceId,
   type ServerProvider,
   type ResolvedKeybindingsConfig,
@@ -298,6 +299,7 @@ import {
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  rightPanelSurfacesRemovedAfterExit,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
@@ -1161,14 +1163,41 @@ const RIGHT_PANEL_EXIT_FALLBACK_MS = 250;
 function InlineRightPanelPresence<Snapshot>(props: {
   open: boolean;
   snapshot: Snapshot;
+  onExitComplete?: (snapshot: Snapshot) => void;
   children: (snapshot: Snapshot, onExitComplete: () => void) => ReactNode;
 }) {
   const [present, setPresent] = useState(props.open);
   const lastOpenSnapshotRef = useRef(props.snapshot);
+  const exitCompletedRef = useRef(!props.open);
 
   useLayoutEffect(() => {
-    if (props.open) lastOpenSnapshotRef.current = props.snapshot;
+    if (!props.open) return;
+    lastOpenSnapshotRef.current = props.snapshot;
+    exitCompletedRef.current = false;
   }, [props.open, props.snapshot]);
+
+  const notifyExitComplete = useCallback(() => {
+    if (props.open || exitCompletedRef.current) return false;
+    exitCompletedRef.current = true;
+    props.onExitComplete?.(lastOpenSnapshotRef.current);
+    return true;
+  }, [props.onExitComplete, props.open]);
+
+  const completeExit = useCallback(() => {
+    if (notifyExitComplete()) setPresent(false);
+  }, [notifyExitComplete]);
+
+  const notifyExitCompleteRef = useRef(notifyExitComplete);
+  useLayoutEffect(() => {
+    notifyExitCompleteRef.current = notifyExitComplete;
+  }, [notifyExitComplete]);
+
+  useEffect(
+    () => () => {
+      notifyExitCompleteRef.current();
+    },
+    [],
+  );
 
   useEffect(() => {
     if (props.open) {
@@ -1177,20 +1206,25 @@ function InlineRightPanelPresence<Snapshot>(props: {
     }
     if (!present) return;
     if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-      setPresent(false);
+      completeExit();
       return;
     }
-    const timeoutId = window.setTimeout(() => setPresent(false), RIGHT_PANEL_EXIT_FALLBACK_MS);
+    const timeoutId = window.setTimeout(completeExit, RIGHT_PANEL_EXIT_FALLBACK_MS);
     return () => window.clearTimeout(timeoutId);
-  }, [present, props.open]);
-
-  const handleExitComplete = useCallback(() => {
-    if (!props.open) setPresent(false);
-  }, [props.open]);
+  }, [completeExit, present, props.open]);
 
   const snapshot = props.open ? props.snapshot : lastOpenSnapshotRef.current;
-  return present ? props.children(snapshot, handleExitComplete) : null;
+  return present ? props.children(snapshot, completeExit) : null;
 }
+
+type InlineRightPanelSnapshot = {
+  threadRef: ScopedThreadRef;
+  surfaces: readonly RightPanelSurface[];
+  activeSurfaceId: string | null;
+  content: ReactNode;
+  maximized: boolean;
+  previewSessions: Readonly<Record<string, PreviewSessionSnapshot>>;
+};
 
 // Errors surface through two maps (draft-keyed and thread-keyed) whose entries
 // can race around promotion, so each write carries its time to let the latest
@@ -3418,35 +3452,46 @@ function ChatViewContent(props: ChatViewProps) {
     );
   }, [canMaximizeRightPanel, routeThreadKey]);
   const cleanupRightPanelSurfaces = useCallback(
-    (surfaces: readonly RightPanelSurface[]) => {
-      if (!activeThreadRef) return;
+    (
+      threadRef: ScopedThreadRef,
+      surfaces: readonly RightPanelSurface[],
+      previewSessions: Readonly<Record<string, PreviewSessionSnapshot>>,
+    ) => {
       for (const surface of surfaces) {
         if (surface.kind === "preview" && surface.resourceId) {
           void closePreviewSession({
             closePreview,
-            snapshot: activePreviewState.sessions[surface.resourceId] ?? null,
+            snapshot: previewSessions[surface.resourceId] ?? null,
             tabId: surface.resourceId,
-            threadRef: activeThreadRef,
+            threadRef,
           });
         }
         if (surface.kind === "terminal") {
           for (const terminalId of surface.terminalIds) {
-            storeCloseTerminal(activeThreadRef, terminalId);
+            storeCloseTerminal(threadRef, terminalId);
             void closeTerminalMutation({
-              environmentId: activeThreadRef.environmentId,
-              input: { threadId: activeThreadRef.threadId, terminalId, deleteHistory: true },
+              environmentId: threadRef.environmentId,
+              input: { threadId: threadRef.threadId, terminalId, deleteHistory: true },
             });
           }
         }
       }
     },
-    [
-      activeThreadRef,
-      activePreviewState.sessions,
-      closePreview,
-      closeTerminalMutation,
-      storeCloseTerminal,
-    ],
+    [closePreview, closeTerminalMutation, storeCloseTerminal],
+  );
+  const handleInlineRightPanelExitComplete = useCallback(
+    (snapshot: InlineRightPanelSnapshot) => {
+      const currentSurfaces = selectThreadRightPanelState(
+        useRightPanelStore.getState().byThreadKey,
+        snapshot.threadRef,
+      ).surfaces;
+      cleanupRightPanelSurfaces(
+        snapshot.threadRef,
+        rightPanelSurfacesRemovedAfterExit(snapshot.surfaces, currentSurfaces),
+        snapshot.previewSessions,
+      );
+    },
+    [cleanupRightPanelSurfaces],
   );
   const syncActivePreviewSurface = useCallback(() => {
     if (!activeThreadRef) return;
@@ -3461,21 +3506,34 @@ function ChatViewContent(props: ChatViewProps) {
   const closeRightPanelSurface = useCallback(
     (surface: RightPanelSurface) => {
       if (!activeThreadRef) return;
-      cleanupRightPanelSurfaces([surface]);
+      const deferCleanup =
+        !shouldUseRightPanelSheet && rightPanelOpen && rightPanelState.surfaces.length === 1;
+      if (!deferCleanup) {
+        cleanupRightPanelSurfaces(activeThreadRef, [surface], activePreviewState.sessions);
+      }
       useRightPanelStore.getState().closeSurface(activeThreadRef, surface.id);
       syncActivePreviewSurface();
     },
-    [activeThreadRef, cleanupRightPanelSurfaces, syncActivePreviewSurface],
+    [
+      activePreviewState.sessions,
+      activeThreadRef,
+      cleanupRightPanelSurfaces,
+      rightPanelOpen,
+      rightPanelState.surfaces.length,
+      shouldUseRightPanelSheet,
+      syncActivePreviewSurface,
+    ],
   );
   const closeOtherRightPanelSurfaces = useCallback(
     (surface: RightPanelSurface) => {
       if (!activeThreadRef) return;
       const surfaces = rightPanelState.surfaces.filter((entry) => entry.id !== surface.id);
-      cleanupRightPanelSurfaces(surfaces);
+      cleanupRightPanelSurfaces(activeThreadRef, surfaces, activePreviewState.sessions);
       useRightPanelStore.getState().closeOtherSurfaces(activeThreadRef, surface.id);
       syncActivePreviewSurface();
     },
     [
+      activePreviewState.sessions,
       activeThreadRef,
       cleanupRightPanelSurfaces,
       rightPanelState.surfaces,
@@ -3488,11 +3546,12 @@ function ChatViewContent(props: ChatViewProps) {
       const surfaceIndex = rightPanelState.surfaces.findIndex((entry) => entry.id === surface.id);
       if (surfaceIndex < 0) return;
       const surfaces = rightPanelState.surfaces.slice(surfaceIndex + 1);
-      cleanupRightPanelSurfaces(surfaces);
+      cleanupRightPanelSurfaces(activeThreadRef, surfaces, activePreviewState.sessions);
       useRightPanelStore.getState().closeSurfacesToRight(activeThreadRef, surface.id);
       syncActivePreviewSurface();
     },
     [
+      activePreviewState.sessions,
       activeThreadRef,
       cleanupRightPanelSurfaces,
       rightPanelState.surfaces,
@@ -3501,9 +3560,23 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const closeAllRightPanelSurfaces = useCallback(() => {
     if (!activeThreadRef) return;
-    cleanupRightPanelSurfaces(rightPanelState.surfaces);
+    const deferCleanup = !shouldUseRightPanelSheet && rightPanelOpen;
+    if (!deferCleanup) {
+      cleanupRightPanelSurfaces(
+        activeThreadRef,
+        rightPanelState.surfaces,
+        activePreviewState.sessions,
+      );
+    }
     useRightPanelStore.getState().closeAllSurfaces(activeThreadRef);
-  }, [activeThreadRef, cleanupRightPanelSurfaces, rightPanelState.surfaces]);
+  }, [
+    activePreviewState.sessions,
+    activeThreadRef,
+    cleanupRightPanelSurfaces,
+    rightPanelOpen,
+    rightPanelState.surfaces,
+    shouldUseRightPanelSheet,
+  ]);
   const copyRightPanelFilePath = useCallback((relativePath: string) => {
     if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
       toastManager.add(
@@ -6453,11 +6526,14 @@ function ChatViewContent(props: ChatViewProps) {
         <InlineRightPanelPresence
           key={`${activeThreadKey}:${shouldUseRightPanelSheet ? "sheet" : "inline"}`}
           open={!shouldUseRightPanelSheet && rightPanelOpen}
+          onExitComplete={handleInlineRightPanelExitComplete}
           snapshot={{
+            threadRef: activeThreadRef,
             surfaces: rightPanelState.surfaces,
             activeSurfaceId: selectedRightPanelSurface?.id ?? null,
             content: rightPanelContent,
             maximized: rightPanelMaximized,
+            previewSessions: activePreviewState.sessions,
           }}
         >
           {(snapshot, onExitComplete) => (
