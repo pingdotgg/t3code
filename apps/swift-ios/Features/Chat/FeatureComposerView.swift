@@ -676,6 +676,10 @@ enum FeatureComposerTextSelectionPolicy {
         let lowerIndex = text.index(text.startIndex, offsetBy: lower)
         return text[..<lowerIndex].utf16.count + replacement.utf16.count
     }
+
+    static func cursorLocationAfterBindingUpdate(previousText: String, newText: String, selectedLocation: Int) -> Int {
+        previousText.isEmpty ? newText.utf16.count : min(selectedLocation, newText.utf16.count)
+    }
 }
 
 enum FeatureComposerPasteTextPolicy {
@@ -745,7 +749,6 @@ private struct FeatureComposerTextInput: UIViewRepresentable {
         textView.adjustsFontForContentSizeCategory = true
         textView.textContainerInset = .zero
         textView.textContainer.lineFragmentPadding = 0
-        // Return always edits the draft; sending is deliberately button-only.
         textView.isScrollEnabled = false
         textView.accessibilityIdentifier = "message-composer"
         updateAccessibility(textView)
@@ -761,11 +764,14 @@ private struct FeatureComposerTextInput: UIViewRepresentable {
             context.coordinator.lastAppliedSelectionRequestID != $0.id
         } ?? false
         if textView.text != text {
+            let previousText = textView.text ?? ""
             let selectedRange = textView.selectedRange
             textView.text = text
             if !shouldApplySelection {
-                let location = min(selectedRange.location, textView.text.utf16.count)
-                let length = min(selectedRange.length, textView.text.utf16.count - location)
+                let location = FeatureComposerTextSelectionPolicy.cursorLocationAfterBindingUpdate(
+                    previousText: previousText, newText: text, selectedLocation: selectedRange.location
+                )
+                let length = previousText.isEmpty ? 0 : min(selectedRange.length, text.utf16.count - location)
                 textView.selectedRange = NSRange(location: location, length: length)
             }
         }

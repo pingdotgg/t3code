@@ -58,6 +58,12 @@ struct FeatureComposerPowerTests {
         )
     }
 
+    @Test func restoredComposerTextPlacesCaretAtUTF16End() {
+        #expect(FeatureComposerTextSelectionPolicy.cursorLocationAfterBindingUpdate(
+            previousText: "", newText: "🧪 restored draft", selectedLocation: 0
+        ) == "🧪 restored draft".utf16.count)
+    }
+
     @Test
     func mixedPasteReadsPlainTextLazilyFromUIPasteboard() {
         let pasteboard = UIPasteboard.withUniqueName()
