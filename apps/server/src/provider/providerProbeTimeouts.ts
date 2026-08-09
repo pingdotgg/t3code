@@ -1,7 +1,6 @@
 import * as NodeFs from "node:fs";
 import * as NodeOs from "node:os";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import {
   HostProcessEnvironment,
   HostProcessWorkingDirectory,
