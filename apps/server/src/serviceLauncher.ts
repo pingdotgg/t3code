@@ -80,6 +80,12 @@ const currentBootTimeMs = (): number => Date.now() - NodeOS.uptime() * 1_000;
 const PID_HEARTBEAT_MS = 15_000;
 /** Generous against a paused or heavily loaded machine, still far below a reboot. */
 const PID_RECORD_STALE_AFTER_MS = 90_000;
+/**
+ * Windows only. How long a takeover of a leftover pid record may sit before it
+ * counts as abandoned. The work it covers is a stat, a read, a delete and a
+ * write, so this is orders of magnitude more than any real one needs.
+ */
+const TAKEOVER_STALE_AFTER_MS = 30_000;
 
 /**
  * Windows only. Signal 0 asks the kernel whether a process exists without
@@ -454,12 +460,7 @@ export class Launcher {
     // two launchers racing here could both delete and both claim. An exclusive
     // takeover file decides a single winner; everyone else loses and exits.
     const takeover = `${target}.takeover`;
-    try {
-      await (await NodeFSP.open(takeover, "wx", 0o600)).close();
-    } catch (cause) {
-      if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
-      return false;
-    }
+    if (!(await this.#claimTakeover(takeover))) return false;
     try {
       // Re-check under the takeover: the previous holder may have revived.
       if (await this.#pidFileHolderIsAlive()) return false;
@@ -467,6 +468,51 @@ export class Launcher {
       return await this.#writePidFileExclusive(target);
     } finally {
       await NodeFSP.rm(takeover, { force: true }).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Windows only. Wins the right to replace a leftover pid record.
+   *
+   * A takeover spans a handful of file operations, so one that has been sitting
+   * around was abandoned by a launcher that died mid-claim, or by the machine
+   * losing power. Treating that as "somebody is busy" would block every start
+   * from then on, and the only cure would be deleting a hidden file by hand.
+   */
+  async #claimTakeover(takeover: string): Promise<boolean> {
+    if (await this.#createTakeover(takeover)) return true;
+
+    let abandonedAt: number | undefined;
+    try {
+      const stats = await NodeFSP.stat(takeover);
+      abandonedAt =
+        Date.now() - stats.mtimeMs > TAKEOVER_STALE_AFTER_MS ? stats.mtimeMs : undefined;
+    } catch {
+      // It vanished, so the launcher holding it finished. Let that one win.
+      return false;
+    }
+    if (abandonedAt === undefined) return false;
+
+    // Renaming picks a single winner without a read-then-delete window:
+    // concurrent renames of one source leave exactly one success, and everyone
+    // else finds the source already gone.
+    const claimed = `${takeover}.${process.pid}.${NodeCrypto.randomUUID()}`;
+    try {
+      await NodeFSP.rename(takeover, claimed);
+    } catch {
+      return false;
+    }
+    await NodeFSP.rm(claimed, { force: true }).catch(() => undefined);
+    return await this.#createTakeover(takeover);
+  }
+
+  async #createTakeover(takeover: string): Promise<boolean> {
+    try {
+      await (await NodeFSP.open(takeover, "wx", 0o600)).close();
+      return true;
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
+      return false;
     }
   }
 

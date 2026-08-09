@@ -413,8 +413,10 @@ process.exit(1);
       // Backdate it well past the grace window, which is what makes it stale.
       // A request written just before startup is deliberately treated as real.
       // A fixed date, so this does not depend on the clock the test runs under.
-      const staleEpochMs = 1_577_836_800_000; // 2020-01-01
-      yield* fs.utimes(requestPath, staleEpochMs, staleEpochMs);
+      // Seconds, not milliseconds: utimes reads a bare number as seconds, and
+      // milliseconds would land in the far future and read as brand new.
+      const staleSeconds = 1_577_836_800; // 2020-01-01
+      yield* fs.utimes(requestPath, staleSeconds, staleSeconds);
 
       const launcher = new Launcher(
         root,
@@ -422,8 +424,14 @@ process.exit(1);
         { selfSupervise: true, restartDelayMs: 5 },
       );
       const running = launcher.run();
-      yield* Effect.sleep("100 millis");
-      // Still running: the stale request was cleared, not obeyed.
+      yield* Effect.sleep("150 millis");
+      // Provoke the watcher now that recovery has finished. Without this the
+      // next check is a 2s poll away, and the test would pass without ever
+      // exercising the staleness branch it exists for.
+      yield* fs.writeFileString(path.join(root, "runtime", "provoke"), "");
+      yield* Effect.sleep("150 millis");
+
+      // Still running: the stale request was judged old, not obeyed.
       assert.isFalse(yield* fs.exists(path.join(root, "runtime", SERVICE_STOP_MARKER_FILE)));
 
       yield* Effect.promise(() => launcher.stop("SIGTERM"));
@@ -532,6 +540,97 @@ it.layer(NodeServices.layer)("self-supervising start failures", (it) => {
         ),
       );
       assert.include(outcome, "Active child exited unexpectedly");
+    }).pipe(TestClock.withLive),
+  );
+});
+
+it.layer(NodeServices.layer)("abandoned takeover recovery", (it) => {
+  it.effect("starts anyway when a previous claim died holding the takeover", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launcher-takeover-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const versionDir = path.join(root, "runtime", "versions", "1.0.0");
+      const entryPath = path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs");
+      yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fs.writeFileString(entryPath, "setInterval(() => {}, 1_000);\n");
+      yield* fs.writeFileString(path.join(versionDir, ".install-complete"), "1.0.0\n");
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+
+      // A launcher that died mid-claim leaves both files behind. Without
+      // recovery the takeover blocks every future start, and the only cure is
+      // deleting a hidden file by hand.
+      const pidPath = path.join(root, "runtime", SERVICE_PID_FILE);
+      const takeoverPath = `${pidPath}.takeover`;
+      yield* fs.writeFileString(
+        pidPath,
+        encodeServiceLauncherPresence({ pid: 999_999, bootTimeMs: 0 }),
+      );
+      yield* fs.writeFileString(takeoverPath, "");
+      // Seconds, not milliseconds: a number given to utimes is a Unix
+      // timestamp in seconds, and passing milliseconds lands in the far future.
+      const longAgoSeconds = 1_577_836_800; // 2020-01-01
+      yield* fs.utimes(takeoverPath, longAgoSeconds, longAgoSeconds);
+
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        { selfSupervise: true, restartDelayMs: 5 },
+      );
+      const running = launcher.run();
+      yield* Effect.sleep("150 millis");
+
+      // It claimed the record, and cleared the abandoned takeover on its way.
+      assert.isTrue(yield* fs.exists(pidPath));
+      assert.isFalse(yield* fs.exists(takeoverPath));
+
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      yield* Effect.promise(() => running);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("stands down while another launcher is genuinely mid-claim", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launcher-takeover-busy-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const versionDir = path.join(root, "runtime", "versions", "1.0.0");
+      const entryPath = path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs");
+      yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fs.writeFileString(entryPath, "setInterval(() => {}, 1_000);\n");
+      yield* fs.writeFileString(path.join(versionDir, ".install-complete"), "1.0.0\n");
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+
+      const pidPath = path.join(root, "runtime", SERVICE_PID_FILE);
+      yield* fs.writeFileString(
+        pidPath,
+        encodeServiceLauncherPresence({ pid: 999_999, bootTimeMs: 0 }),
+      );
+      // A fresh takeover means somebody else is actively claiming, so the
+      // recovery above must not fire and let two launchers through.
+      yield* fs.writeFileString(`${pidPath}.takeover`, "");
+
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        { selfSupervise: true, restartDelayMs: 5 },
+      );
+      yield* Effect.promise(() => launcher.run());
+
+      // It exited without touching the other launcher's takeover.
+      assert.isTrue(yield* fs.exists(`${pidPath}.takeover`));
     }).pipe(TestClock.withLive),
   );
 });

@@ -450,12 +450,17 @@ it.layer(NodeServices.layer)("windows boot service", (it) => {
 
   it.effect("ignores a pid record nobody has refreshed", () =>
     Effect.gen(function* () {
-      const { service, fs, pidPath } = yield* makeHarness();
+      const { service, fs, pidPath, control } = yield* makeHarness();
       yield* service.install;
+      // Nothing answers a stop request now, so if the record were judged live
+      // this install would wait and then fail. That is what makes the assertion
+      // below mean something.
+      control.launcherStopsOnRequest = false;
       // Same boot and a live process id, but the launcher stopped refreshing
       // it. Within one boot that is the only way to tell a recycled id apart.
-      const longAgo = 1_577_836_800_000; // 2020-01-01
-      yield* fs.utimes(pidPath, longAgo, longAgo);
+      // Seconds, not milliseconds: utimes reads a bare number as seconds.
+      const longAgoSeconds = 1_577_836_800; // 2020-01-01
+      yield* fs.utimes(pidPath, longAgoSeconds, longAgoSeconds);
 
       yield* service.install;
       expect((yield* service.status).current).toBe(true);
