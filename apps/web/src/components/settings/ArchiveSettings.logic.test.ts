@@ -340,6 +340,8 @@ describe("buildArchivedThreadGroups", () => {
       faviconPath: "icons/latest-local.png",
     });
     const remoteProject = makeProject({
+      defaultThreadEnvMode: "worktree",
+      faviconPath: "icons/remote.png",
       id: sharedProjectId,
       title: "Remote Project",
       workspaceRoot: "/workspaces/remote",
@@ -382,7 +384,11 @@ describe("buildArchivedThreadGroups", () => {
       "/workspaces/latest-local",
       "/workspaces/remote",
     ]);
-    expect(result[0]?.project).toEqual({ ...latestProject, environmentId });
+    expect(result[0]?.project).toStrictEqual({ ...latestProject, environmentId });
+    expect(result[1]?.project).toStrictEqual({
+      ...remoteProject,
+      environmentId: remoteEnvironmentId,
+    });
     expect(result.flatMap((group) => group.threads.map((thread) => thread.id))).toEqual([
       "thread-local",
       "thread-remote",
