@@ -2,6 +2,8 @@ import { expect, it } from "@effect/vitest";
 
 import {
   decodeServicePreflightResult,
+  EMPTY_COLLAB_WAIT_RECOVERY_PROTOCOL,
+  EMPTY_COLLAB_WAIT_RECOVERY_REQUIRED_REASON,
   PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL,
   PROVIDER_LIFECYCLE_RECOVERY_REQUIRED_REASON,
   runServicePreflight,
@@ -28,6 +30,7 @@ it("requires the database-snapshot launcher protocol", () => {
     version: "1.2.3",
     launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
     providerLifecycleRecoveryProtocol: PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL,
+    emptyCollabWaitRecoveryProtocol: EMPTY_COLLAB_WAIT_RECOVERY_PROTOCOL,
   });
 });
 
@@ -42,5 +45,20 @@ it("blocks a candidate that would remove automatic provider lifecycle recovery",
     status: "blocked",
     version: "1.2.4",
     reason: PROVIDER_LIFECYCLE_RECOVERY_REQUIRED_REASON,
+  });
+});
+
+it("blocks a candidate that would remove empty collaboration-wait recovery", () => {
+  expect(
+    decodeServicePreflightResult({
+      status: "ready",
+      version: "1.2.4",
+      launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+      providerLifecycleRecoveryProtocol: PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL,
+    }),
+  ).toEqual({
+    status: "blocked",
+    version: "1.2.4",
+    reason: EMPTY_COLLAB_WAIT_RECOVERY_REQUIRED_REASON,
   });
 });
