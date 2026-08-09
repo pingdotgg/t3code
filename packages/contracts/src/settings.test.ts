@@ -72,6 +72,7 @@ describe("ClientSettings sidebar", () => {
     const settings = decodeClientSettings({});
     expect(settings.legacySidebarEnabled).toBe(false);
     expect(settings.sidebarAutoSettleAfterDays).toBe(3);
+    expect(settings.sidebarAutoSettleCompletedChangeRequests).toBe(true);
   });
 
   it("drops the retired sidebar v2 beta keys, resetting everyone to the default", () => {
@@ -95,6 +96,14 @@ describe("ClientSettings sidebar", () => {
     expect(
       decodeClientSettings({ sidebarAutoSettleAfterDays: null }).sidebarAutoSettleAfterDays,
     ).toBeNull();
+  });
+
+  it.each([true, false])("accepts completed-PR auto-settle patches: %s", (value) => {
+    const patch = decodeClientSettingsPatch({
+      sidebarAutoSettleCompletedChangeRequests: value,
+    });
+    expect(patch.sidebarAutoSettleCompletedChangeRequests).toBe(value);
+    expect(patch).not.toHaveProperty("sidebarAutoSettleAfterDays");
   });
 
   it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {
