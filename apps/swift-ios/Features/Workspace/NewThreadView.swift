@@ -688,7 +688,8 @@ public struct NewThreadView: View {
             selectedBranch = NewTaskWorkspaceDefaults.refreshedSelection(
                 selectedBranch,
                 in: branches,
-                mode: workspaceMode
+                mode: workspaceMode,
+                preserveMissingSelection: workspaceSelectionIsSeeded
             )
         } catch is CancellationError {
             return

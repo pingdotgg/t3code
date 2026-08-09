@@ -116,19 +116,38 @@ struct ThreadContextMenuTests {
             "delete",
         ])
 
-        thread.state = .queued
-        let queued = ThreadContextMenuModel.items(
+        for gatedState in [
+            FeatureThreadState.queued,
+            .waitingForApproval,
+            .waitingForInput,
+        ] {
+            thread.state = gatedState
+            let gatedItems = ThreadContextMenuModel.items(
+                for: thread,
+                isArchived: false,
+                now: now,
+                calendar: calendar,
+                locale: locale
+            )
+            let snoozeEnabled = gatedItems.compactMap { item -> Bool? in
+                guard case let .snooze(_, enabled) = item else { return nil }
+                return enabled
+            }.first
+            #expect(snoozeEnabled == false)
+        }
+
+        thread.state = .idle
+        thread.pinnedAt = now
+        thread.isSettled = true
+        let reverseItems = ThreadContextMenuModel.items(
             for: thread,
             isArchived: false,
             now: now,
             calendar: calendar,
             locale: locale
         )
-        let snoozeEnabled = queued.compactMap { item -> Bool? in
-            guard case let .snooze(_, enabled) = item else { return nil }
-            return enabled
-        }.first
-        #expect(snoozeEnabled == false)
+        #expect(reverseItems.contains(.pin(pinned: true)))
+        #expect(reverseItems.contains(.settle(settled: true)))
     }
 
     @Test
@@ -284,8 +303,23 @@ struct ThreadContextMenuTests {
             NewTaskWorkspaceDefaults.refreshedSelection(
                 seeded,
                 in: loaded,
-                mode: .local
+                mode: .local,
+                preserveMissingSelection: true
             ) == seeded
+        )
+    }
+
+    @Test
+    func missingOrdinaryBranchFallsBackAfterAWorkspaceRefresh() throws {
+        let selected = FeatureWorkspaceBranch(name: "feature/deleted")
+        let current = FeatureWorkspaceBranch(name: "main", isCurrent: true)
+
+        #expect(
+            NewTaskWorkspaceDefaults.refreshedSelection(
+                selected,
+                in: [current],
+                mode: .local
+            ) == current
         )
     }
 

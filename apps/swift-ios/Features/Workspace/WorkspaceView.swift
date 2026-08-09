@@ -257,29 +257,7 @@ public struct WorkspaceView: View {
                 onRegenerateTitle: { thread in
                     Task { @MainActor in
                         guard regeneratingThreadIDs.insert(thread.id).inserted else { return }
-                        let originalTitle = thread.title
-                        guard await model.regenerateThreadTitle(thread.id) else {
-                            regeneratingThreadIDs.remove(thread.id)
-                            return
-                        }
-                        var observedServerRegeneration = false
-                        for _ in 0 ..< 240 {
-                            guard !Task.isCancelled else { break }
-                            guard let latest = model.snapshot.threads.first(where: {
-                                $0.id == thread.id
-                            }) else {
-                                break
-                            }
-                            if latest.title != originalTitle {
-                                break
-                            }
-                            if latest.isRegeneratingTitle == true {
-                                observedServerRegeneration = true
-                            } else if observedServerRegeneration {
-                                break
-                            }
-                            try? await Task.sleep(for: .milliseconds(250))
-                        }
+                        _ = await model.regenerateThreadTitle(thread.id)
                         regeneratingThreadIDs.remove(thread.id)
                     }
                 },
