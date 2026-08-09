@@ -11,6 +11,7 @@ import type {
   UsageBucket,
   UsageProviderKind,
   UsageSourceFingerprint,
+  UsageSourceStatus,
   UsageSummary,
 } from "@t3tools/contracts";
 
@@ -89,20 +90,35 @@ function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
   ].join(" ");
 }
 
+const SOURCE_COVERAGE_RANK: Readonly<Record<UsageSourceStatus, number>> = {
+  missing: 0,
+  failed: 1,
+  partial: 2,
+  ok: 3,
+};
+
 /**
  * Decides which environment owns each physical transcript directory.
  *
  * Several environments on one machine (worktree servers, for instance) resolve
  * the same provider home and would otherwise double count every token. The
- * first environment in a stable order claims a fingerprint; the rest have that
- * provider's buckets dropped. Environments are sorted by id so the winner does
- * not change between renders.
+ * The environment with the best coverage claims a fingerprint; ties break by
+ * stable environment id. This prevents an earlier failed or partial scan from
+ * hiding a later complete scan of the same directory.
  */
 function claimSources(environments: readonly EnvironmentUsage[]): {
   readonly ownerByFingerprint: ReadonlyMap<string, EnvironmentId>;
   readonly duplicates: readonly string[];
 } {
-  const ownerByFingerprint = new Map<string, EnvironmentId>();
+  const claims = new Map<
+    string,
+    {
+      readonly environmentId: EnvironmentId;
+      readonly label: string;
+      readonly resolvedHomePath: string;
+      readonly coverageRank: number;
+    }
+  >();
   const duplicates: string[] = [];
 
   const ordered = [...environments].sort((a, b) => a.environmentId.localeCompare(b.environmentId));
@@ -111,14 +127,29 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
     for (const source of environment.summary.sources) {
       if (source.status === "missing") continue;
       const key = fingerprintKey(source.fingerprint);
-      if (ownerByFingerprint.has(key)) {
-        duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
+      const existing = claims.get(key);
+      const candidate = {
+        environmentId: environment.environmentId,
+        label: environment.label,
+        resolvedHomePath: source.fingerprint.resolvedHomePath,
+        coverageRank: SOURCE_COVERAGE_RANK[source.status],
+      };
+      if (existing === undefined) {
+        claims.set(key, candidate);
         continue;
       }
-      ownerByFingerprint.set(key, environment.environmentId);
+      if (candidate.coverageRank > existing.coverageRank) {
+        duplicates.push(`${existing.label}: ${existing.resolvedHomePath}`);
+        claims.set(key, candidate);
+      } else {
+        duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
+      }
     }
   }
 
+  const ownerByFingerprint = new Map(
+    [...claims].map(([key, claim]) => [key, claim.environmentId] as const),
+  );
   return { ownerByFingerprint, duplicates };
 }
 

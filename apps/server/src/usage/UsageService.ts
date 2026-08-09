@@ -85,12 +85,46 @@ const ScanCacheJson = Schema.fromJsonString(Schema.Unknown as unknown as Schema.
 const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
 const encodeScanCacheFile = Schema.encodeEffect(ScanCacheJson);
 
+function incompleteScanMessage(scanIssues: number, failedFiles: number): string | null {
+  const details: string[] = [];
+  if (scanIssues > 0) {
+    details.push(
+      `${scanIssues} transcript ${scanIssues === 1 ? "path" : "paths"} could not be listed or inspected`,
+    );
+  }
+  if (failedFiles > 0) {
+    details.push(
+      `${failedFiles} transcript ${failedFiles === 1 ? "file" : "files"} could not be read`,
+    );
+  }
+  return details.length === 0 ? null : `Usage may be incomplete: ${details.join("; ")}.`;
+}
+
 export class UsageService extends Context.Service<
   UsageService,
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
   }
 >()("t3/usage/UsageService") {}
+
+/** Resolves Claude's transcript layout without losing explicit-home semantics. */
+export const resolveClaudeTranscriptDir = Effect.fn("UsageService.resolveClaudeTranscriptDir")(
+  function* (input: { readonly homePath: string; readonly explicitHome: boolean }) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const direct = path.join(input.homePath, "projects");
+    if (input.explicitHome) return direct;
+
+    const nested = path.join(input.homePath, ".claude", "projects");
+    const nestedExists = yield* fileSystem
+      .exists(nested)
+      // Fall back only when the preferred path is genuinely absent. If the
+      // probe itself fails, scan that path so coverage reports `failed` rather
+      // than making an unreadable source look `missing` at the legacy path.
+      .pipe(Effect.catchCause(() => Effect.succeed(true)));
+    return nestedExists ? nested : direct;
+  },
+);
 
 /** Empty summary, for suites that only need the RPC surface to resolve. */
 export const layerTest = Layer.succeed(
@@ -183,19 +217,6 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  /**
-   * Claude's config dir is the home itself when overridden, but a default
-   * install nests transcripts under `~/.claude/projects`. Probe both.
-   */
-  const resolveClaudeTranscriptDir = (homePath: string) =>
-    Effect.gen(function* () {
-      const nested = path.join(homePath, ".claude", "projects");
-      const nestedExists = yield* fileSystem
-        .exists(nested)
-        .pipe(Effect.catchCause(() => Effect.succeed(false)));
-      return nestedExists ? nested : path.join(homePath, "projects");
-    });
-
   /** Resolves the transcript directory for each provider. */
   const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* () {
     // A settings failure must surface as an error: swallowing it here would
@@ -214,8 +235,15 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-    const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
-    const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
+    const claudeConfig = settings.providers.claudeAgent;
+    const claudeHome = yield* resolveClaudeHomePath(claudeConfig);
+    const claudeDir = yield* resolveClaudeTranscriptDir({
+      homePath: claudeHome,
+      explicitHome: claudeConfig.homePath.trim().length > 0,
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
     const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
 
     return [
@@ -262,7 +290,7 @@ export const make = Effect.gen(function* () {
     size: number,
     mtimeMs: number,
     provider: UsageProviderKind,
-  ): Effect.Effect<readonly UsageRecord[]> =>
+  ): Effect.Effect<readonly UsageRecord[] | null> =>
     Effect.gen(function* () {
       const cached = fileCache.get(filePath);
       // Provider is part of the identity: if both providers were ever pointed
@@ -279,7 +307,7 @@ export const make = Effect.gen(function* () {
       const parsed = yield* Effect.promise(() => readTranscriptRecords(filePath, provider));
       // A read failure is not an empty transcript: caching it under this
       // (size, mtime) would silently drop the file's usage until it changes.
-      if (parsed === null) return [];
+      if (parsed === null) return null;
       // Stored already de-duplicated within the file, which is 99% of all
       // duplicates. The aggregator still runs the cross-file dedupe pass.
       const records = dedupeWithinFile(parsed);
@@ -327,11 +355,9 @@ export const make = Effect.gen(function* () {
 
     for (const { provider, dir } of dirs) {
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
-      const exists = yield* fileSystem
-        .exists(dir)
-        .pipe(Effect.catchCause(() => Effect.succeed(false)));
+      const listing = yield* Effect.promise(() => listTranscriptFiles(dir, windowStartMs));
 
-      if (!exists) {
+      if (listing.rootStatus === "missing") {
         sources.push({
           fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
           status: "missing",
@@ -344,17 +370,37 @@ export const make = Effect.gen(function* () {
         continue;
       }
 
-      walkedRoots.push(dir);
-      const files = yield* Effect.promise(() => listTranscriptFiles(dir, windowStartMs));
+      if (listing.rootStatus === "failed") {
+        sources.push({
+          fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
+          status: "failed",
+          scannedFiles: 0,
+          skippedFiles: 0,
+          malformedRecords: 0,
+          distinctSessions: 0,
+          message: "Transcript directory could not be read.",
+        });
+        continue;
+      }
+
+      // Absence from a partial walk does not prove a cached file disappeared.
+      // Only a complete walk may evict paths that were not seen this pass.
+      if (listing.failedPaths === 0) walkedRoots.push(dir);
       let scannedFiles = 0;
       let skippedFiles = 0;
+      let failedFiles = 0;
       // Distinct per directory. Buckets carry per-cell session counts, but a
       // session spans days and models, so clients total this figure instead.
       const sessionIds = new Set<string>();
 
-      for (const file of files) {
+      for (const file of listing.files) {
         livePaths.add(file.path);
         const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
+        if (records === null) {
+          failedFiles += 1;
+          skippedFiles += 1;
+          continue;
+        }
         if (records.length === 0) {
           skippedFiles += 1;
           continue;
@@ -369,14 +415,15 @@ export const make = Effect.gen(function* () {
         }
       }
 
+      const message = incompleteScanMessage(listing.failedPaths, failedFiles);
       sources.push({
         fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-        status: "ok",
+        status: message === null ? "ok" : "partial",
         scannedFiles,
         skippedFiles,
         malformedRecords: 0,
         distinctSessions: sessionIds.size,
-        message: null,
+        message,
       });
     }
 

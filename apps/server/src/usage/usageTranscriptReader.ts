@@ -31,24 +31,37 @@ export interface TranscriptFile {
   readonly mtimeMs: number;
 }
 
+export interface TranscriptFileListing {
+  readonly files: readonly TranscriptFile[];
+  readonly rootStatus: "ok" | "missing" | "failed";
+  readonly failedPaths: number;
+}
+
 /**
  * Lists `.jsonl` transcripts under `root` last modified at or after `sinceMs`.
  *
- * Errors on individual entries are swallowed: session files rotate and get
- * removed while the walk is in flight, and a partial listing is far better than
- * failing the page.
+ * A missing root is distinct from a root that exists but cannot be read.
+ * Nested directory and entry failures are counted so callers can keep the
+ * files that were found without claiming complete coverage.
  */
 export async function listTranscriptFiles(
   root: string,
   sinceMs: number,
-): Promise<readonly TranscriptFile[]> {
+): Promise<TranscriptFileListing> {
   const found: TranscriptFile[] = [];
+  let failedPaths = 0;
+  let rootStatus: TranscriptFileListing["rootStatus"] = "ok";
 
   const walk = async (dir: string): Promise<void> => {
     let entries;
     try {
       entries = await NodeFSP.readdir(dir, { withFileTypes: true });
-    } catch {
+    } catch (error) {
+      if (dir === root) {
+        rootStatus = (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "failed";
+      } else {
+        failedPaths += 1;
+      }
       return;
     }
     for (const entry of entries) {
@@ -64,13 +77,13 @@ export async function listTranscriptFiles(
           found.push({ path: child, size: stats.size, mtimeMs: stats.mtimeMs });
         }
       } catch {
-        // Vanished between readdir and stat.
+        failedPaths += 1;
       }
     }
   };
 
   await walk(root);
-  return found;
+  return { files: found, rootStatus, failedPaths };
 }
 
 /**
