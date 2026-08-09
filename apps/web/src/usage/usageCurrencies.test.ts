@@ -124,15 +124,22 @@ describe("formatCurrency", () => {
     expect(formatCurrency(1234, "KRW")).toBe("₩1,234");
   });
 
-  it("keeps compact zero-decimal currencies free of fractional amounts", () => {
+  it("rounds unscaled zero-decimal currency amounts to whole units", () => {
     expect(formatCurrencyCompact(12.5, "JPY")).toBe("¥13");
     expect(formatCurrencyCompact(12.5, "KRW")).toBe("₩13");
-    expect(formatCurrencyCompact(1234.56, "JPY")).toBe("¥1K");
-    expect(formatCurrencyCompact(1234.56, "KRW")).toBe("₩1K");
+    expect(formatCurrencyCompact(1234.56, "JPY")).toBe("¥1.2K");
+    expect(formatCurrencyCompact(1234.56, "KRW")).toBe("₩1.2K");
+  });
+
+  it("keeps compact zero-decimal significands distinguishable", () => {
+    expect(formatCurrencyCompact(1500, "JPY")).toBe("¥1.5K");
+    expect(formatCurrencyCompact(1500, "JPY")).not.toBe(formatCurrencyCompact(2000, "JPY"));
+    expect(formatCurrencyCompact(1500, "KRW")).toBe("₩1.5K");
+    expect(formatCurrencyCompact(1500, "KRW")).not.toBe(formatCurrencyCompact(2000, "KRW"));
   });
 
   it("compacts large currency amounts for chart axes", () => {
-    expect(formatCurrencyCompact(2_395_896, "BIF")).toMatch(/BIF\s*2M/i);
+    expect(formatCurrencyCompact(2_395_896, "BIF")).toMatch(/BIF\s*2\.4M/i);
   });
 
   it("keeps sub-unit compact labels distinguishable", () => {

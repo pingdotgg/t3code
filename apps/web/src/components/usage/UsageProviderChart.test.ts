@@ -39,6 +39,12 @@ describe("niceScale", () => {
   it("degrades to a single zero tick with no data", () => {
     expect(niceScale(0, 4)).toEqual({ max: 0, ticks: [0] });
   });
+
+  it("produces distinct compact labels for zero-decimal currency ticks", () => {
+    const labels = niceScale(2000, 4).ticks.map((tick) => formatCurrencyCompact(tick, "JPY"));
+
+    expect(new Set(labels).size).toBe(labels.length);
+  });
 });
 
 describe("buildDayColumns", () => {
