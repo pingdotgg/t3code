@@ -234,9 +234,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 <XIcon className="size-3" />
               </Button>
             ) : (
-              <Kbd className="mr-px h-4 min-w-0 rounded-sm bg-sidebar-control-surface px-1.5 text-[10px] text-sidebar-muted-foreground ring-1 ring-sidebar-border">
-                /
-              </Kbd>
+              <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">/</Kbd>
             )}
           </div>
           {isSearching && results.length === 0 ? (
