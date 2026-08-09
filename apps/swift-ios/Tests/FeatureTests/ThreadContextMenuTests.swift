@@ -221,6 +221,25 @@ struct ThreadContextMenuTests {
     }
 
     @Test
+    func unavailableProjectHidesNewThreadAction() {
+        let thread = FeatureThread(
+            id: "thread-1",
+            projectID: "disconnected-project",
+            title: "Unavailable project",
+            branch: "feature/menu"
+        )
+
+        let items = ThreadContextMenuModel.items(
+            for: thread,
+            isArchived: false,
+            canCreateThread: false
+        )
+
+        #expect(items.contains(.newThread(branch: "feature/menu")) == false)
+        #expect(items.contains(.copyBranch))
+    }
+
+    @Test
     func snoozedThreadOffersWakeInsteadOfPresets() {
         let thread = FeatureThread(
             id: "thread-1",

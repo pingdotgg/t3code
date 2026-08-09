@@ -148,6 +148,7 @@ enum ThreadContextMenuModel {
     static func items(
         for thread: FeatureThread,
         isArchived: Bool,
+        canCreateThread: Bool = true,
         canCopyPath: Bool = true,
         now: Date = .now,
         calendar: Calendar = .current,
@@ -155,7 +156,7 @@ enum ThreadContextMenuModel {
     ) -> [ThreadContextMenuItem] {
         var items: [ThreadContextMenuItem] = []
 
-        if let branch = nonEmpty(thread.branch) {
+        if canCreateThread, let branch = nonEmpty(thread.branch) {
             items.append(.newThread(branch: branch))
         }
 

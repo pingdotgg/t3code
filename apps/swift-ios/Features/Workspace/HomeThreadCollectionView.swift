@@ -19,6 +19,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     let onToggleArchive: () -> Void
     let onShowMoreSettled: () -> Void
     let regeneratingThreadIDs: Set<String>
+    let canCreateThread: (FeatureThread) -> Bool
     let onNewThreadOnBranch: (FeatureThread) -> Void
     let onRename: (FeatureThread) -> Void
     let onRegenerateTitle: (FeatureThread) -> Void
@@ -390,6 +391,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             ThreadContextMenuModel.items(
                 for: thread,
                 isArchived: isArchived,
+                canCreateThread: parent.canCreateThread(thread),
                 canCopyPath: parent.canCopyPath(thread)
             ).map { item in
                 switch item {

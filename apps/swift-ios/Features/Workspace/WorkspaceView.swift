@@ -249,6 +249,9 @@ public struct WorkspaceView: View {
                 regeneratingThreadIDs: regeneratingThreadIDs.union(
                     serverRegeneratingThreadIDs
                 ),
+                canCreateThread: { thread in
+                    creationProjects.contains { $0.id == thread.projectID }
+                },
                 onNewThreadOnBranch: openNewTaskOnBranch,
                 onRename: { thread in
                     renameTitle = thread.title
@@ -658,7 +661,8 @@ public struct WorkspaceView: View {
     }
 
     private func openNewTaskOnBranch(_ thread: FeatureThread) {
-        guard let workspace = thread.newTaskWorkspaceSeed else { return }
+        guard creationProjects.contains(where: { $0.id == thread.projectID }),
+              let workspace = thread.newTaskWorkspaceSeed else { return }
         openNewTaskOrProjectCreation(
             initialProjectID: thread.projectID,
             initialWorkspace: workspace
