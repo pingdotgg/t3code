@@ -188,15 +188,28 @@ export function useNewThreadHandler() {
             workspaceContext = pickExplicitWorkspaceOptions(options);
           } else if (!isDraftAlreadyOpen) {
             const defaultEnvMode = await resolveDefaultEnvMode();
-            workspaceContext = {
-              branch: null,
-              worktreePath: null,
-              envMode: defaultEnvMode,
-              startFromOrigin: resolveNewDraftStartFromOrigin({
+            // The await yields. If the draft was opened (a concurrent
+            // invocation's navigation landed) or promoted to a real thread
+            // in the meantime, resetting context now would wipe state
+            // written after the snapshot above — leave it alone, matching
+            // the isDraftAlreadyOpen case.
+            const routeTargetNow = getCurrentRouteTarget();
+            const openedMeanwhile =
+              routeTargetNow?.kind === "draft" &&
+              routeTargetNow.draftId === reusableStoredDraftThread.draftId;
+            const promotedMeanwhile =
+              storedDraftThreadRef !== null && readThreadShell(storedDraftThreadRef) !== null;
+            if (!openedMeanwhile && !promotedMeanwhile) {
+              workspaceContext = {
+                branch: null,
+                worktreePath: null,
                 envMode: defaultEnvMode,
-                newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
-              }),
-            };
+                startFromOrigin: resolveNewDraftStartFromOrigin({
+                  envMode: defaultEnvMode,
+                  newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
+                }),
+              };
+            }
           }
           if (workspaceContext) {
             setDraftThreadContext(reusableStoredDraftThread.draftId, {
@@ -228,9 +241,13 @@ export function useNewThreadHandler() {
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             },
           );
+          // Re-read the route: the snapshot from before the await is stale
+          // once a concurrent invocation's navigation lands, and navigating
+          // again would push a duplicate history entry.
+          const routeTargetAfterWrites = getCurrentRouteTarget();
           if (
-            currentRouteTarget?.kind === "draft" &&
-            currentRouteTarget.draftId === reusableStoredDraftThread.draftId
+            routeTargetAfterWrites?.kind === "draft" &&
+            routeTargetAfterWrites.draftId === reusableStoredDraftThread.draftId
           ) {
             return;
           }
