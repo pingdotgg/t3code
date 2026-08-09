@@ -429,10 +429,22 @@ function ProjectDetail({
         const environmentIds = [
           ...new Set(group.memberProjects.map((member) => member.environmentId)),
         ];
+        const previousTarget = previousKeybinding
+          ? decodeProjectScriptKeybindingRule({
+              keybinding: previousKeybinding,
+              command: keybindingCommand,
+            })
+          : null;
         if (keybindingRule) {
+          // `replace` swaps the command's previous rule instead of appending a
+          // second one that would keep the old shortcut alive.
+          const input =
+            previousTarget && previousTarget.key !== keybindingRule.key
+              ? { ...keybindingRule, replace: previousTarget }
+              : keybindingRule;
           for (const environmentId of environmentIds) {
             const result = mapAtomCommandResult(
-              await upsertKeybinding({ environmentId, input: keybindingRule }),
+              await upsertKeybinding({ environmentId, input }),
               () => undefined,
             );
             if (result._tag === "Failure") {
@@ -440,21 +452,15 @@ function ProjectDetail({
               return result;
             }
           }
-        } else if (previousKeybinding) {
-          const removalTarget = decodeProjectScriptKeybindingRule({
-            keybinding: previousKeybinding,
-            command: keybindingCommand,
-          });
-          if (removalTarget) {
-            for (const environmentId of environmentIds) {
-              const result = mapAtomCommandResult(
-                await removeKeybinding({ environmentId, input: removalTarget }),
-                () => undefined,
-              );
-              if (result._tag === "Failure") {
-                reportFailure("Failed to remove keybinding", result);
-                return result;
-              }
+        } else if (previousTarget) {
+          for (const environmentId of environmentIds) {
+            const result = mapAtomCommandResult(
+              await removeKeybinding({ environmentId, input: previousTarget }),
+              () => undefined,
+            );
+            if (result._tag === "Failure") {
+              reportFailure("Failed to remove keybinding", result);
+              return result;
             }
           }
         }
