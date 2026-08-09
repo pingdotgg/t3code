@@ -129,4 +129,25 @@ describe("collectComposerInlineTokens", () => {
       },
     ]);
   });
+
+  it("still collects a file link whose label is at the length cap", () => {
+    const label = `${"a".repeat(508)}.tsx`;
+    const tokens = collectComposerInlineTokens(`see [${label}](src/${label}) ok`);
+
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]?.value).toBe(`src/${label}`);
+  });
+
+  it("leaves a file link past the label cap as plain text", () => {
+    const label = `${"a".repeat(509)}.tsx`;
+    expect(collectComposerInlineTokens(`see [${label}](src/${label}) ok`)).toEqual([]);
+  });
+
+  it("stays fast on unterminated bracket runs", () => {
+    // Unbounded, the label body rescanned the rest of the text from every
+    // whitespace: this input took seconds.
+    const started = performance.now();
+    expect(collectComposerInlineTokens(" [[".repeat(40_000))).toEqual([]);
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
 });
