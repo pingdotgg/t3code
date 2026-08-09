@@ -430,6 +430,19 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
       wrapPhase("migrate", snapshotPath),
     );
 
+    // Verify while the snapshot is still the only thing touched: a slot
+    // collision must abort before the old worktree db gets replaced with a
+    // schema whose colliding migration was silently skipped.
+    yield* verifyMigrationSlots().pipe(
+      Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
+      Effect.catchTags({
+        SqlError: (cause) =>
+          Effect.fail(
+            new MigrateDevDbPhaseError({ phase: "verify", databasePath: snapshotPath, cause }),
+          ),
+      }),
+    );
+
     yield* Console.log(
       `Pruning to ${input.projects} projects, ${input.threadsPerProject} stopped threads each...`,
     );
@@ -456,13 +469,9 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     // WAL does not survive VACUUM INTO; set it so first `vp run dev` finds
     // the database exactly as server boot would have left it.
     yield* sql.unsafe("PRAGMA journal_mode = WAL").unprepared;
-    yield* verifyMigrationSlots();
   }).pipe(
     Effect.provide(NodeSqliteClient.layer({ filename: databasePath })),
-    Effect.catchTags({
-      SqlError: (cause) =>
-        Effect.fail(new MigrateDevDbPhaseError({ phase: "verify", databasePath, cause })),
-    }),
+    wrapPhase("compact", databasePath),
   );
 
   const size = (yield* fs.stat(databasePath)).size;
