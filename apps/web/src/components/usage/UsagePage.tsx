@@ -13,7 +13,7 @@ import {
   formatTokens,
   formatUsd,
   makeWindow,
-} from "../../usage/usageFormat";
+} from "@t3tools/shared/usageFormat";
 import { ScrollArea } from "../ui/scroll-area";
 import { UsageChartLegend, UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_MARK, PROVIDER_ORDER } from "./usageProviders";

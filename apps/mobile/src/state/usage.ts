@@ -4,6 +4,9 @@
  * Every connected environment answers the same typed query; the client merges
  * the results. Raw transcripts never leave the machine that produced them.
  *
+ * Mirror of `apps/web/src/state/usage.ts` over mobile's atom wiring; the merge
+ * rules themselves live in `@t3tools/shared/usageMerge`.
+ *
  * @module state/usage
  */
 import { useAtomValue } from "@effect/atom-react";
@@ -13,12 +16,12 @@ import {
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
+import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 
-import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
-import { appAtomRegistry } from "../rpc/atomRegistry";
+import { appAtomRegistry } from "./atom-registry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
 
@@ -54,7 +57,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
       });
     }
     return statuses;
-  }).pipe(Atom.withLabel(`web-usage:window:${windowKey}`)),
+  }).pipe(Atom.withLabel(`mobile-usage:window:${windowKey}`)),
 );
 
 export interface UsageView {
@@ -86,7 +89,7 @@ export function useUsage(input: UsageSummaryInput): UsageView {
 
   // Refreshing only the derived atom would re-read the per-environment SWR
   // queries within their stale window and change nothing. Refresh each
-  // environment's query so the button always rescans.
+  // environment's query so pull-to-refresh always rescans.
   const refresh = useCallback(() => {
     const input = JSON.parse(windowKey) as UsageSummaryInput;
     for (const environment of environments) {
