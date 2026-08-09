@@ -8,22 +8,22 @@ describe("resolveClerkSignInProps", () => {
     expect(resolveClerkSignInProps(href, false)).toEqual({ forceRedirectUrl: href });
   });
 
-  it("returns to the renderer root on packaged desktop", () => {
+  it("removes a Clerk virtual pathname and callback params while preserving the desktop route", () => {
     expect(
       resolveClerkSignInProps(
-        "t3code://app/CLERK-ROUTER/VIRTUAL/sign-up#/settings/connections",
+        "t3code://app/CLERK-ROUTER/VIRTUAL/sign-up?__clerk_status=complete#/settings/connections",
         true,
       ),
     ).toEqual({
-      forceRedirectUrl: "t3code://app/",
-      signUpForceRedirectUrl: "t3code://app/",
+      forceRedirectUrl: "t3code://app/#/settings/connections",
+      signUpForceRedirectUrl: "t3code://app/#/settings/connections",
     });
   });
 
-  it("returns to the renderer root on development desktop", () => {
+  it("preserves a clean development desktop route", () => {
     expect(resolveClerkSignInProps("t3code-dev://app/#/settings/general", true)).toEqual({
-      forceRedirectUrl: "t3code-dev://app/",
-      signUpForceRedirectUrl: "t3code-dev://app/",
+      forceRedirectUrl: "t3code-dev://app/#/settings/general",
+      signUpForceRedirectUrl: "t3code-dev://app/#/settings/general",
     });
   });
 });
