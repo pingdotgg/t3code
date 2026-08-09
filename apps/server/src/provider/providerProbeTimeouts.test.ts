@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as NodeFs from "node:fs";
 import * as NodeOs from "node:os";
 import * as NodePath from "node:path";
 
@@ -36,5 +37,10 @@ describe("providerProbeTimeouts", () => {
       T3_PROVIDER_CWD: NodeOs.tmpdir(),
     });
     expect(resolved).toBe(NodeOs.tmpdir());
+  });
+
+  it("resolveProviderProbeCwd always returns an existing directory", () => {
+    const resolved = resolveProviderProbeCwd(null, {});
+    expect(NodeFs.statSync(resolved).isDirectory()).toBe(true);
   });
 });

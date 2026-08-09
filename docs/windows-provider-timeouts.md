@@ -18,23 +18,23 @@ Root causes observed on Windows:
 
 ## Changes
 
-| Area | Change |
-|------|--------|
+| Area                       | Change                                                |
+| -------------------------- | ----------------------------------------------------- |
 | `providerProbeTimeouts.ts` | Platform-aware timeouts + `resolveProviderProbeCwd()` |
-| `providerSnapshot.ts` | Longer auth probe timeout; close stdin after spawn |
-| `CursorProvider.ts` | Longer about/ACP timeouts; safe cwd; close stdin |
-| `GrokProvider.ts` | Longer ACP timeout; safe cwd |
-| `CodexProvider.ts` | Safe cwd for app-server probe |
+| `providerSnapshot.ts`      | Longer auth probe timeout; close stdin after spawn    |
+| `CursorProvider.ts`        | Longer about/ACP timeouts; safe cwd; close stdin      |
+| `GrokProvider.ts`          | Longer ACP timeout; safe cwd                          |
+| `CodexProvider.ts`         | Safe cwd for app-server probe                         |
 
 ### Timeouts (Windows / non-Windows)
 
-| Probe | Windows | Other |
-|-------|---------|-------|
-| Version (`--version`) | 15s | 4s |
-| Codex app-server auth | 45s | 15s |
-| Cursor `agent about` | 45s | 20s |
-| Cursor ACP discovery | 45s | 20s |
-| Grok ACP discovery | 45s | 20s |
+| Probe                 | Windows | Other |
+| --------------------- | ------- | ----- |
+| Version (`--version`) | 15s     | 4s    |
+| Codex app-server auth | 45s     | 15s   |
+| Cursor `agent about`  | 45s     | 20s   |
+| Cursor ACP discovery  | 45s     | 20s   |
+| Grok ACP discovery    | 45s     | 20s   |
 
 Env override for probe cwd (optional):
 
@@ -43,12 +43,13 @@ Env override for probe cwd (optional):
 
 ## How to verify
 
+From the repository root:
+
 ```bash
-cd Documents/t3-code-fork/t3code
 pnpm install
-pnpm --filter @t3tools/server test -- src/provider/providerProbeTimeouts.test.ts
-pnpm --filter @t3tools/server test -- src/provider/Layers/CursorProvider.test.ts
-pnpm --filter @t3tools/server test -- src/provider/Layers/ProviderRegistry.test.ts
+pnpm --filter t3 test -- src/provider/providerProbeTimeouts.test.ts
+pnpm --filter t3 test -- src/provider/Layers/CursorProvider.test.ts
+pnpm --filter t3 test -- src/provider/Layers/ProviderRegistry.test.ts
 ```
 
-Then run the desktop app from this fork and open a real project folder before checking Providers.
+Then run the desktop app and open a real project folder before checking Providers.

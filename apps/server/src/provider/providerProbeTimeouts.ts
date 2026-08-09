@@ -1,6 +1,5 @@
 import * as NodeFs from "node:fs";
 import * as NodeOs from "node:os";
-import * as NodePath from "node:path";
 
 /**
  * Provider status probes spawn local CLIs over stdio/ACP.
@@ -65,8 +64,10 @@ export function resolveProviderProbeCwd(
     }
   }
 
-  // Last resort: always a real directory on Node.
-  return NodePath.resolve(".");
+  // Last resort: absolute directory independent of process.cwd().
+  // NodePath.resolve(".") calls process.cwd() and throws ENOENT when cwd is gone —
+  // the exact failure mode this helper is meant to survive.
+  return NodeOs.tmpdir();
 }
 
 function safeProcessCwd(): string | undefined {
