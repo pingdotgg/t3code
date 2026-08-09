@@ -187,6 +187,12 @@ describe("mergeUsage", () => {
     expect(merged.providers[0]?.costShare).toBeCloseTo(0.75, 5);
     expect(merged.costQuality.unpricedShare).toBeCloseTo(0.5, 5);
     expect(merged.costQuality.cacheSavingsUsd).toBe(4);
+    expect(merged.providers.find((provider) => provider.provider === "codex")?.unpricedShare).toBe(
+      1,
+    );
+    expect(merged.models.find((model) => model.model === "gpt-5.6-sol")?.unpricedShare).toBe(1);
+    expect(merged.daily[0]?.unpricedShare).toBeCloseTo(0.5, 5);
+    expect(merged.daily[0]?.byProvider.get("codex")?.unpricedShare).toBe(1);
   });
 
   it("keeps two machines apart when hostname and home path collide", () => {

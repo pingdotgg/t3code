@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildDayColumns, niceScale } from "./UsageProviderChart";
+import { buildDayColumns, formatChartValue, niceScale } from "./UsageProviderChart";
 
 describe("niceScale", () => {
   it("never puts the peak above the top of the scale", () => {
@@ -49,9 +49,10 @@ describe("buildDayColumns", () => {
         day: "2026-08-01",
         costUsd: 30,
         totalTokens: 300,
+        unpricedShare: 0.5,
         byProvider: new Map([
-          ["codex" as const, { costUsd: 10, totalTokens: 100 }],
-          ["claude" as const, { costUsd: 20, totalTokens: 200 }],
+          ["codex" as const, { costUsd: 10, totalTokens: 100, unpricedShare: 1 }],
+          ["claude" as const, { costUsd: 20, totalTokens: 200, unpricedShare: 0.25 }],
         ]),
       },
     ],
@@ -62,7 +63,10 @@ describe("buildDayColumns", () => {
         day: "2026-08-03",
         costUsd: 5,
         totalTokens: 50,
-        byProvider: new Map([["claude" as const, { costUsd: 5, totalTokens: 50 }]]),
+        unpricedShare: 0,
+        byProvider: new Map([
+          ["claude" as const, { costUsd: 5, totalTokens: 50, unpricedShare: 0 }],
+        ]),
       },
     ],
   ]);
@@ -77,14 +81,45 @@ describe("buildDayColumns", () => {
     ]);
   });
 
+  it("retains pricing coverage for cost hover values", () => {
+    const [first] = buildDayColumns(days, byDay, "cost");
+
+    expect(first).toMatchObject({
+      unpricedShare: 0.5,
+      bands: [
+        { provider: "codex", unpricedShare: 1 },
+        { provider: "claude", unpricedShare: 0.25 },
+      ],
+    });
+  });
+
+  it("retains whether sparse provider-day columns have activity", () => {
+    const columns = buildDayColumns(days, byDay, "cost");
+
+    expect(columns[1]).toMatchObject({
+      hasActivity: false,
+      bands: [
+        { provider: "codex", hasActivity: false },
+        { provider: "claude", hasActivity: false },
+      ],
+    });
+    expect(columns[2]).toMatchObject({
+      hasActivity: true,
+      bands: [
+        { provider: "codex", hasActivity: false },
+        { provider: "claude", hasActivity: true },
+      ],
+    });
+  });
+
   it("keeps band values absolute rather than cumulative", () => {
     // Regression: the bands were once stack offsets, which drew Claude Code
     // permanently above Codex regardless of which provider spent more.
     const [first] = buildDayColumns(days, byDay, "cost");
 
     expect(first?.bands).toEqual([
-      { provider: "codex", value: 10 },
-      { provider: "claude", value: 20 },
+      { provider: "codex", value: 10, unpricedShare: 1, hasActivity: true },
+      { provider: "claude", value: 20, unpricedShare: 0.25, hasActivity: true },
     ]);
   });
 
@@ -93,5 +128,22 @@ describe("buildDayColumns", () => {
       const sum = column.bands.reduce((running, band) => running + band.value, 0);
       expect(column.total).toBeCloseTo(sum, 9);
     }
+  });
+});
+
+describe("formatChartValue", () => {
+  it("labels an inactive provider-day as no activity rather than priced zero", () => {
+    expect(formatChartValue("cost", 0, 0, false)).toBe("—");
+    expect(formatChartValue("cost", 0, 0, true)).toBe("$0.00");
+  });
+
+  it("does not show missing or partial cost rates as exact hover values", () => {
+    expect(formatChartValue("cost", 0, 1, true)).toBe("—");
+    expect(formatChartValue("cost", 20, 0.25, true)).toBe("≥$20.00");
+    expect(formatChartValue("cost", 20, 0, true)).toBe("$20.00");
+  });
+
+  it("keeps token hover values independent of pricing coverage", () => {
+    expect(formatChartValue("tokens", 20_000, 1, true)).toBe("20K");
   });
 });

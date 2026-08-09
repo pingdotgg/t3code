@@ -19,6 +19,29 @@ export function formatUsd(value: number): string {
   return CURRENCY.format(value);
 }
 
+/** Marks incomplete API-rate estimates without making missing prices look free. */
+export function formatCostEstimate(
+  costUsd: number,
+  unpricedShare: number,
+): { readonly value: string; readonly detail: string } {
+  if (unpricedShare >= 1) {
+    return {
+      value: "—",
+      detail: "No matching API rates; token totals are still complete.",
+    };
+  }
+  if (unpricedShare > 0) {
+    return {
+      value: `≥${formatUsd(costUsd)}`,
+      detail: `Partial API-rate estimate; ${formatPercent(unpricedShare)} of requests have no matching rate.`,
+    };
+  }
+  return {
+    value: formatUsd(costUsd),
+    detail: "If billed at full API rate.",
+  };
+}
+
 export function formatCount(value: number): string {
   return INTEGER.format(Math.round(value));
 }

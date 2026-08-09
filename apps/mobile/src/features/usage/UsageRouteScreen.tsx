@@ -18,6 +18,7 @@ import { AppText as Text } from "../../components/AppText";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { SettingsSection } from "../settings/components/SettingsSection";
+import { presentUsageCost, presentUsageCostShare, USAGE_COST_GUIDE } from "./usageCostPresentation";
 import { UsageDailyChart } from "./UsageDailyChart";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors } from "./usageProviders";
@@ -150,20 +151,21 @@ function ChartCard(props: {
   const { merged, metric } = props;
   const colors = useProviderColors();
   const hasActivity = merged.daily.some((day) => day.totalTokens > 0);
+  const cost = presentUsageCost(merged.costUsd, merged.costQuality.unpricedShare, 1);
 
   return (
     <View className="gap-4 rounded-[24px] border-continuous bg-card p-4">
       <View className="flex-row items-start justify-between gap-3">
         <View className="min-w-0 flex-1 gap-0.5">
           <Text className="text-sm text-foreground-muted">
-            {metric === "cost" ? "Raw token cost" : "Processed tokens"}
+            {metric === "cost" ? cost.chartLabel : "Processed tokens"}
           </Text>
           <Text className="text-4xl font-t3-bold tabular-nums text-foreground">
-            {metric === "cost" ? `${formatUsd(merged.costUsd)}*` : formatTokens(merged.totalTokens)}
+            {metric === "cost" ? cost.headline : formatTokens(merged.totalTokens)}
           </Text>
           <Text className="text-sm text-foreground-muted">
             {metric === "cost"
-              ? "* if billed at full API rate"
+              ? cost.headlineDetail
               : `Across ${formatCount(merged.sessions)} sessions`}
           </Text>
         </View>
@@ -200,6 +202,10 @@ function ChartCard(props: {
         </View>
         <Text className="text-xs text-foreground-tertiary">{formatDayShort(props.untilDay)}</Text>
       </View>
+
+      {cost.hasUnpriced ? (
+        <Text className="text-xs leading-5 text-foreground-tertiary">{USAGE_COST_GUIDE}</Text>
+      ) : null}
     </View>
   );
 }
@@ -254,6 +260,11 @@ function ProviderSection(props: {
     <SettingsSection title="Providers" card>
       {ordered.map((provider, index) => {
         const share = metric === "cost" ? provider.costShare : provider.tokenShare;
+        const providerCost = presentUsageCost(
+          provider.costUsd,
+          provider.unpricedShare,
+          provider.costShare,
+        );
         return (
           <View
             key={provider.provider}
@@ -268,9 +279,7 @@ function ProviderSection(props: {
                 <Text className="text-lg text-foreground">{PROVIDER_LABEL[provider.provider]}</Text>
               </View>
               <Text className="text-lg tabular-nums text-foreground">
-                {metric === "cost"
-                  ? formatUsd(provider.costUsd)
-                  : formatTokens(provider.totalTokens)}
+                {metric === "cost" ? providerCost.amount : formatTokens(provider.totalTokens)}
               </Text>
             </View>
             <View className="h-1 flex-row overflow-hidden rounded-full bg-subtle">
@@ -282,8 +291,8 @@ function ProviderSection(props: {
             </View>
             <Text className="text-sm text-foreground-muted">
               {metric === "cost"
-                ? `${formatPercent(share)} of cost · ${formatTokens(provider.totalTokens)} tokens`
-                : `${formatPercent(share)} of tokens · ${formatUsd(provider.costUsd)}`}
+                ? `${presentUsageCostShare(providerCost, merged.costQuality.unpricedShare)} · ${formatTokens(provider.totalTokens)} tokens`
+                : `${formatPercent(share)} of tokens · ${providerCost.amount}`}
             </Text>
           </View>
         );
@@ -362,30 +371,34 @@ function ModelsSection(props: { readonly merged: MergedUsage }) {
 
   return (
     <SettingsSection title="By model" card>
-      {merged.models.map((model, index) => (
-        <View
-          key={`${model.provider}:${model.model}`}
-          className={
-            index === 0
-              ? "flex-row items-center gap-3 p-4"
-              : "flex-row items-center gap-3 border-t border-border-subtle p-4"
-          }
-        >
+      {merged.models.map((model, index) => {
+        const modelCost = presentUsageCost(model.costUsd, model.unpricedShare, model.costShare);
+        return (
           <View
-            className="size-2.5 shrink-0 rounded-full"
-            style={{ backgroundColor: colors[model.provider] }}
-          />
-          <View className="min-w-0 flex-1 gap-0.5">
-            <Text className="text-base text-foreground" numberOfLines={1}>
-              {model.model}
-            </Text>
-            <Text className="text-sm text-foreground-muted">
-              {formatPercent(model.costShare)} of cost · {formatTokens(model.totalTokens)} tokens
-            </Text>
+            key={`${model.provider}:${model.model}`}
+            className={
+              index === 0
+                ? "flex-row items-center gap-3 p-4"
+                : "flex-row items-center gap-3 border-t border-border-subtle p-4"
+            }
+          >
+            <View
+              className="size-2.5 shrink-0 rounded-full"
+              style={{ backgroundColor: colors[model.provider] }}
+            />
+            <View className="min-w-0 flex-1 gap-0.5">
+              <Text className="text-base text-foreground" numberOfLines={1}>
+                {model.model}
+              </Text>
+              <Text className="text-sm text-foreground-muted">
+                {presentUsageCostShare(modelCost, merged.costQuality.unpricedShare)} ·{" "}
+                {formatTokens(model.totalTokens)} tokens
+              </Text>
+            </View>
+            <Text className="text-base tabular-nums text-foreground">{modelCost.amount}</Text>
           </View>
-          <Text className="text-base tabular-nums text-foreground">{formatUsd(model.costUsd)}</Text>
-        </View>
-      ))}
+        );
+      })}
     </SettingsSection>
   );
 }
