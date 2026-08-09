@@ -1,3 +1,5 @@
+import CoreGraphics
+import SwiftUI
 import Testing
 @testable import T3Code
 
@@ -185,6 +187,121 @@ struct FeatureComposerPowerTests {
             currentQuestionIDs: ["one"]
         )
         #expect(reconciled == ["one": .text("keep")])
+    }
+
+    @Test
+    func dockedSoftwareKeyboardReducesTheComposerLineLimit() {
+        #expect(
+            FeatureComposerKeyboardLayout.visibleLineRange(
+                dynamicTypeSize: .large,
+                softwareKeyboardIsVisible: false
+            ) == (1...7)
+        )
+        #expect(
+            FeatureComposerKeyboardLayout.visibleLineRange(
+                dynamicTypeSize: .large,
+                softwareKeyboardIsVisible: true
+            ) == (1...3)
+        )
+        #expect(
+            FeatureComposerKeyboardLayout.visibleLineRange(
+                dynamicTypeSize: .accessibility5,
+                softwareKeyboardIsVisible: true
+            ) == (1...1)
+        )
+    }
+
+    @Test
+    func softwareKeyboardDetectionExcludesHiddenFloatingAndRemoteFrames() {
+        let screenBounds = CGRect(x: 0, y: 0, width: 368, height: 800)
+        let dockedFrame = CGRect(x: 0, y: 494, width: 368, height: 306)
+
+        #expect(
+            FeatureComposerKeyboardLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: dockedFrame,
+                screenBounds: screenBounds,
+                isLocal: true
+            )
+        )
+        #expect(
+            !FeatureComposerKeyboardLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: CGRect(x: 0, y: 800, width: 368, height: 306),
+                screenBounds: screenBounds,
+                isLocal: true
+            )
+        )
+        #expect(
+            !FeatureComposerKeyboardLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: CGRect(x: 84, y: 400, width: 200, height: 200),
+                screenBounds: screenBounds,
+                isLocal: true
+            )
+        )
+        #expect(
+            !FeatureComposerKeyboardLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: CGRect(x: 0, y: 745, width: 368, height: 55),
+                screenBounds: screenBounds,
+                isLocal: true
+            )
+        )
+        #expect(
+            !FeatureComposerKeyboardLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: dockedFrame,
+                screenBounds: screenBounds,
+                isLocal: false
+            )
+        )
+    }
+
+    @Test
+    func softwareKeyboardDetectionClearsWhenSceneContextIsUnavailableOrInactive() {
+        let screenBounds = CGRect(x: 0, y: 0, width: 368, height: 800)
+        let dockedFrame = CGRect(x: 0, y: 494, width: 368, height: 306)
+
+        #expect(
+            !FeatureComposerKeyboardLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: nil,
+                screenBounds: screenBounds,
+                isLocal: true
+            )
+        )
+        #expect(
+            !FeatureComposerKeyboardLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: dockedFrame,
+                screenBounds: nil,
+                isLocal: true
+            )
+        )
+        #expect(
+            !FeatureComposerKeyboardLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: dockedFrame,
+                screenBounds: screenBounds,
+                isLocal: true,
+                sceneIsActive: false
+            )
+        )
+    }
+
+    @Test
+    func accessibilitySoftwareKeyboardReservesAComposerFooterRow() {
+        #expect(
+            FeatureComposerKeyboardLayout.bottomClearance(
+                dynamicTypeSize: .large,
+                softwareKeyboardIsVisible: true
+            ) == 0
+        )
+        #expect(
+            FeatureComposerKeyboardLayout.bottomClearance(
+                dynamicTypeSize: .accessibility5,
+                softwareKeyboardIsVisible: false
+            ) == 0
+        )
+        #expect(
+            FeatureComposerKeyboardLayout.bottomClearance(
+                dynamicTypeSize: .accessibility5,
+                softwareKeyboardIsVisible: true
+            ) == 52
+        )
     }
 
     @Test

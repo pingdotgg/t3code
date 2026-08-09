@@ -1,8 +1,12 @@
 import SwiftUI
+import UIKit
 
 struct FeatureComposerView: View {
+    @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var isManuallyExpanded = false
     @State private var isAttachmentFlowActive = false
+    @State private var dockedSoftwareKeyboardOccupiesScreen = false
+    @State private var composerWindow: UIWindow?
     @State private var attachmentPreparation = FeatureAttachmentPreparationState()
     @State private var pathEntries: [FeatureComposerPathEntry] = []
     @State private var isPathSearchLoading = false
@@ -90,6 +94,14 @@ struct FeatureComposerView: View {
             .padding(.horizontal, 12)
             .padding(.top, 12)
             .padding(.bottom, 10)
+            .padding(
+                .bottom,
+                FeatureComposerKeyboardLayout.bottomClearance(
+                    dynamicTypeSize: dynamicTypeSize,
+                    softwareKeyboardIsVisible: focused.wrappedValue
+                        && dockedSoftwareKeyboardOccupiesScreen
+                )
+            )
             .background {
                 LinearGradient(
                     colors: [
@@ -101,6 +113,13 @@ struct FeatureComposerView: View {
                     endPoint: .bottom
                 )
                 .ignoresSafeArea()
+            }
+            .background {
+                FeatureComposerWindowReader { window in
+                    composerWindow = window
+                    updateSoftwareKeyboardState(in: window)
+                }
+                .frame(width: 0, height: 0)
             }
             .onChange(of: focused.wrappedValue) {
                 if FeatureComposerCollapsePolicy.shouldCollapse(
@@ -115,6 +134,13 @@ struct FeatureComposerView: View {
             }
             .task(id: pathSearchRequest) {
                 await updatePathSearch()
+            }
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: UIResponder.keyboardWillChangeFrameNotification
+                )
+            ) { notification in
+                updateSoftwareKeyboardState(from: notification, in: composerWindow)
             }
     }
 
@@ -198,14 +224,23 @@ struct FeatureComposerView: View {
                 axis: .vertical
             )
                 .font(T3Typography.composer)
-                .lineLimit(1...7)
+                .lineLimit(
+                    FeatureComposerKeyboardLayout.visibleLineRange(
+                        dynamicTypeSize: dynamicTypeSize,
+                        softwareKeyboardIsVisible: focused.wrappedValue
+                            && dockedSoftwareKeyboardOccupiesScreen
+                    )
+                )
                 .focused(focused)
                 // Return is always editing input. Sending is deliberately button-only.
                 .submitLabel(.return)
                 .padding(.horizontal, 16)
-                .padding(.top, 14)
-                .padding(.bottom, 7)
-                .frame(minHeight: 62, alignment: .top)
+                .padding(.top, usesAccessibilityKeyboardMetrics ? 6 : 14)
+                .padding(.bottom, usesAccessibilityKeyboardMetrics ? 2 : 7)
+                .frame(
+                    minHeight: usesAccessibilityKeyboardMetrics ? 44 : 62,
+                    alignment: .top
+                )
 
             if !attachments.isEmpty, !imagesAllowed {
                 Label("Choose a model that accepts images", systemImage: "exclamationmark.circle")
@@ -227,6 +262,8 @@ struct FeatureComposerView: View {
             }
 
             composerFooter
+                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
         }
     }
 
@@ -260,7 +297,7 @@ struct FeatureComposerView: View {
         }
         .padding(.horizontal, 7)
         .padding(.top, 2)
-        .padding(.bottom, 8)
+        .padding(.bottom, usesAccessibilityKeyboardMetrics ? 2 : 8)
     }
 
     private var submitButton: some View {
@@ -445,6 +482,128 @@ struct FeatureComposerView: View {
                   canSend {
             onSend()
         }
+    }
+
+    private func updateSoftwareKeyboardState(in window: UIWindow?) {
+        dockedSoftwareKeyboardOccupiesScreen =
+            FeatureComposerKeyboardLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: window?.keyboardLayoutGuide.layoutFrame,
+                screenBounds: window?.bounds,
+                isLocal: true,
+                sceneIsActive: window?.windowScene?.activationState == .foregroundActive
+            )
+    }
+
+    private func updateSoftwareKeyboardState(
+        from notification: Notification,
+        in window: UIWindow?
+    ) {
+        let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
+        let keyboardFrame: CGRect? = window.flatMap { window in
+            guard let frame else { return nil }
+            return window.convert(frame, from: window.screen.coordinateSpace)
+        }
+
+        dockedSoftwareKeyboardOccupiesScreen =
+            FeatureComposerKeyboardLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: keyboardFrame,
+                screenBounds: window?.bounds,
+                isLocal: notification.userInfo?[UIResponder.keyboardIsLocalUserInfoKey]
+                    as? Bool ?? true,
+                sceneIsActive: window?.windowScene?.activationState == .foregroundActive
+            )
+    }
+
+    private var usesAccessibilityKeyboardMetrics: Bool {
+        dynamicTypeSize.isAccessibilitySize
+            && focused.wrappedValue
+            && dockedSoftwareKeyboardOccupiesScreen
+    }
+}
+
+private struct FeatureComposerWindowReader: UIViewRepresentable {
+    let onWindowChange: @MainActor (UIWindow?) -> Void
+
+    func makeUIView(context: Context) -> WindowReportingView {
+        WindowReportingView(onWindowChange: onWindowChange)
+    }
+
+    func updateUIView(_ view: WindowReportingView, context: Context) {
+        view.onWindowChange = onWindowChange
+        view.reportWindowIfNeeded()
+    }
+
+    static func dismantleUIView(_ view: WindowReportingView, coordinator: Void) {
+        view.onWindowChange = nil
+    }
+
+    @MainActor
+    final class WindowReportingView: UIView {
+        var onWindowChange: (@MainActor (UIWindow?) -> Void)?
+        private weak var reportedWindow: UIWindow?
+
+        init(onWindowChange: @escaping @MainActor (UIWindow?) -> Void) {
+            self.onWindowChange = onWindowChange
+            super.init(frame: .zero)
+            isUserInteractionEnabled = false
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            reportWindowIfNeeded()
+        }
+
+        func reportWindowIfNeeded() {
+            guard reportedWindow !== window else { return }
+            reportedWindow = window
+            let nextWindow = window
+            Task { @MainActor [weak self] in
+                self?.onWindowChange?(nextWindow)
+            }
+        }
+    }
+}
+
+enum FeatureComposerKeyboardLayout {
+    private static let minimumSoftwareKeyboardHeight: CGFloat = 100
+    private static let accessibilityKeyboardBottomClearance: CGFloat = 52
+
+    static func visibleLineRange(
+        dynamicTypeSize: DynamicTypeSize,
+        softwareKeyboardIsVisible: Bool
+    ) -> ClosedRange<Int> {
+        guard softwareKeyboardIsVisible else { return 1...7 }
+        return dynamicTypeSize.isAccessibilitySize ? (1...1) : (1...3)
+    }
+
+    static func bottomClearance(
+        dynamicTypeSize: DynamicTypeSize,
+        softwareKeyboardIsVisible: Bool
+    ) -> CGFloat {
+        guard dynamicTypeSize.isAccessibilitySize,
+              softwareKeyboardIsVisible else { return 0 }
+        // Reserve one 44pt footer row plus 8pt breathing room above keyboard clipping.
+        return accessibilityKeyboardBottomClearance
+    }
+
+    static func softwareKeyboardOccupiesScreen(
+        keyboardFrame: CGRect?,
+        screenBounds: CGRect?,
+        isLocal: Bool,
+        sceneIsActive: Bool = true
+    ) -> Bool {
+        guard sceneIsActive,
+              let keyboardFrame,
+              let screenBounds,
+              isLocal,
+              abs(keyboardFrame.maxY - screenBounds.maxY) < 1 else { return false }
+        return screenBounds.intersection(keyboardFrame).height
+            >= minimumSoftwareKeyboardHeight
     }
 }
 
