@@ -2269,22 +2269,28 @@ export default function Sidebar() {
   );
   // Drag-to-reorder for the pinned block. A drop computes ONE fractional key
   // for the moved thread and sends it to that thread's own server (see
-  // planPinnedReorder for the keyless-neighbor materialization case). The
-  // optimistic order keeps the card where it was dropped until the
-  // confirming event round-trips; canonical order matching it releases the
-  // override, and a failed write clears it (the card snaps back) with a toast.
-  // ANY membership change (new pin, unpin, snooze/wake) also releases it:
-  // the override can't say where members it never saw belong, and holding it
-  // would misplace them and launder the stale order into later drags.
+  // planPinnedReorder for the keyless-neighbor materialization case, which
+  // instead rewrites every key in the section). The optimistic order keeps
+  // the card where it was dropped until EVERY key the drop wrote is
+  // reflected in canonical state — a section rewrite is several sequential
+  // writes, and releasing on the first landed key would expose the
+  // half-written canonical order, reshuffling the block once per write.
+  // A failed write clears the override (the card snaps back) with a toast.
+  // A key we did NOT write landing (a concurrent client's reorder that must
+  // win) and ANY membership change (new pin, unpin, snooze/wake) also
+  // release it: the override can't say where members it never saw belong,
+  // and holding it would launder a stale order into later drags.
   const pinnedDndSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
   const [optimisticPinnedOrder, setOptimisticPinnedOrder] = useState<{
     readonly order: readonly string[];
-    /** pinOrderKey per thread as of the drop, so ANY landed write (ours
-        confirming, or a concurrent one from another client) releases the
-        override rather than fighting canonical state. */
+    /** pinOrderKey per thread as of the drop — the baseline that tells a
+        concurrent client's write apart from one of our own landing. */
     readonly keysAtDrop: ReadonlyMap<string, string | null>;
+    /** The keys this drop writes (one per planned assignment). The
+        override holds until all of them appear in canonical state. */
+    readonly assignedKeys: ReadonlyMap<string, string>;
   } | null>(null);
   const orderedPinnedThreads = useMemo(() => {
     if (optimisticPinnedOrder === null) return pinnedThreads;
@@ -2303,24 +2309,32 @@ export default function Sidebar() {
       scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
     );
     // The override represents one drop against one snapshot of the world.
-    // Release it as soon as the world moves on in any way: membership
-    // changed (pin/unpin/snooze/wake — the override can't say where members
-    // it never saw belong), a key changed (our write confirming, or a
-    // concurrent client's reorder that must win), or canonical already
-    // matches. Holding it longer would misplace newcomers and launder the
-    // stale order into later drags.
+    // Release it when the world moves on: membership changed (pin/unpin/
+    // snooze/wake — the override can't say where members it never saw
+    // belong), a key changed to something we did NOT write (a concurrent
+    // client's reorder that must win), every key we wrote has landed, or
+    // canonical already matches. Releasing on the FIRST landed key instead
+    // of the last exposes the half-written order mid-materialization and
+    // the block visibly reshuffles once per write.
     const membershipChanged =
       canonicalKeys.length !== optimisticPinnedOrder.order.length ||
       canonicalKeys.some((key) => !optimisticPinnedOrder.order.includes(key));
-    const anyKeyLanded = canonical.some(
-      (thread, index) =>
-        optimisticPinnedOrder.keysAtDrop.get(canonicalKeys[index]!) !==
-        (thread.pinOrderKey ?? null),
+    const foreignKeyLanded = canonical.some((thread, index) => {
+      const threadKey = canonicalKeys[index]!;
+      const currentKey = thread.pinOrderKey ?? null;
+      if (currentKey === optimisticPinnedOrder.keysAtDrop.get(threadKey)) return false;
+      return currentKey !== optimisticPinnedOrder.assignedKeys.get(threadKey);
+    });
+    const currentKeyByThreadKey = new Map(
+      canonical.map((thread, index) => [canonicalKeys[index]!, thread.pinOrderKey ?? null]),
+    );
+    const allAssignmentsLanded = [...optimisticPinnedOrder.assignedKeys].every(
+      ([threadKey, orderKey]) => currentKeyByThreadKey.get(threadKey) === orderKey,
     );
     const orderConfirmed =
       !membershipChanged &&
       canonicalKeys.every((key, index) => key === optimisticPinnedOrder.order[index]);
-    if (membershipChanged || anyKeyLanded || orderConfirmed) {
+    if (membershipChanged || foreignKeyLanded || allAssignmentsLanded || orderConfirmed) {
       setOptimisticPinnedOrder(null);
     }
   }, [optimisticPinnedOrder, pinnedThreads, reorderablePinnedKeys]);
@@ -2390,7 +2404,13 @@ export default function Sidebar() {
         movedId: activeKey,
       });
       if (assignments.length === 0) return;
-      setOptimisticPinnedOrder({ order: newOrder, keysAtDrop });
+      setOptimisticPinnedOrder({
+        order: newOrder,
+        keysAtDrop,
+        assignedKeys: new Map(
+          assignments.map((assignment) => [assignment.id, assignment.orderKey]),
+        ),
+      });
       void (async () => {
         // Sequential, stop on first failure. There is deliberately no
         // rollback: every key write is a complete, valid placement on its
@@ -2404,8 +2424,12 @@ export default function Sidebar() {
             scopeThreadRef(thread.environmentId, thread.id),
             assignment.orderKey,
           );
-          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          if (result._tag === "Failure") {
+            // Any failure — interrupted included — releases the override:
+            // a key that never lands would otherwise hold it until some
+            // unrelated world change came along.
             setOptimisticPinnedOrder(null);
+            if (isAtomCommandInterrupted(result)) return;
             const error = squashAtomCommandFailure(result);
             toastManager.add(
               stackedThreadToast({
