@@ -15,6 +15,7 @@ github:chrisdeeming
 github:chuks-qua
 github:cursoragent
 github:gbarros-dev
+github:gfsaaser24
 github:github-actions[bot]
 github:hwanseoc
 github:jamesx0416
