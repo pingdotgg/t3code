@@ -410,13 +410,13 @@ function SortablePinnedThreadRow(props: {
   return props.children({ listeners, setNodeRef, transform, transition, isDragging });
 }
 
-// One unsent draft session the user has invested content in. Two lines:
-// header packs the workspace context (project, model, env mode, branch) so
-// the row itself proves the settings survived; the body is the typed prompt.
-// Clicking is a plain navigation to /draft/$draftId — nothing about the
-// draft is touched on the way back. While the draft is open the row renders
-// a frozen snapshot (see SidebarDraftBlock); memoized so per-keystroke
-// block re-renders skip it entirely.
+// One unsent draft session the user has invested content in. Two lines,
+// nothing else: project name, then the typed prompt. All the draft's
+// settings (model, env mode, branch, worktree) still travel with it —
+// clicking is a plain navigation to /draft/$draftId, which touches nothing.
+// While the draft is open the row renders a frozen snapshot (see
+// SidebarDraftBlock); memoized so per-keystroke block re-renders skip it
+// entirely.
 const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   draftId: DraftId;
   session: DraftSessionState;
@@ -428,11 +428,6 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   onDiscard: (draftId: DraftId) => void;
 }) {
   const { composer, draftId, onDiscard, onNavigate, session } = props;
-  // Workspace context only — the model still travels with the draft, it
-  // just is not worth a slot in a row this small.
-  const contextLabel = [props.projectTitle, session.envMode, session.branch]
-    .filter((part): part is string => part !== null && part.length > 0)
-    .join(" · ");
   const promptPreview = composer.prompt.trim().split("\n", 1)[0] ?? "";
   // images mirrors persistedAttachments once rehydration finishes; before
   // that only the persisted list is populated, hence max not sum.
@@ -491,7 +486,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
               className="size-4 shrink-0"
             />
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
-              {contextLabel}
+              {props.projectTitle}
             </span>
             <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
               <button
