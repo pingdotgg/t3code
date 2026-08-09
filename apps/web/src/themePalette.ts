@@ -187,8 +187,10 @@ function isThemeLabel(value: unknown): value is string {
 export const MAX_THEME_WALLPAPER_IMAGE_LENGTH = 192 * 1024;
 export const DEFAULT_THEME_WALLPAPER_OPACITY = 0.15;
 
+/** Canonical padded base64 (what every encoder emits): full quads with a
+ * correctly padded final group, so accepted images always decode. */
 const THEME_WALLPAPER_IMAGE_PATTERN =
-  /^data:image\/(?:avif|gif|jpeg|png|webp);base64,[a-z0-9+/]+=*$/i;
+  /^data:image\/(?:avif|gif|jpeg|png|webp);base64,(?:[a-z0-9+/]{4})*(?:[a-z0-9+/]{2}==|[a-z0-9+/]{3}=|[a-z0-9+/]{4})$/i;
 
 function isThemeWallpaperImage(value: unknown): value is string {
   return (
@@ -1739,6 +1741,7 @@ export function applyThemeColorPreview(
   colors: ThemeColors,
   appearance: ThemeAppearance,
   sidebarArtwork = false,
+  wallpaper?: ThemeWallpaper,
 ): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
@@ -1751,6 +1754,9 @@ export function applyThemeColorPreview(
     // A half-typed hex keeps the last good value instead of blanking the role.
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
+  // Previews wear the wallpaper the save would keep — and clear a lingering
+  // one from the previously applied theme so drafts preview faithfully.
+  applyThemeWallpaper(root, wallpaper);
 }
 
 export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppearance): void {

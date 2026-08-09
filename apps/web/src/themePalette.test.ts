@@ -258,6 +258,13 @@ describe("theme files", () => {
     expect(() =>
       parseThemeFile({ ...base, wallpaper: { image: "https://example.com/bg.png" } }),
     ).toThrow(/data: URIs/);
+    // Undecodable base64: wrong length, and over-padded.
+    expect(() =>
+      parseThemeFile({ ...base, wallpaper: { image: "data:image/png;base64,a" } }),
+    ).toThrow(/data: URIs/);
+    expect(() =>
+      parseThemeFile({ ...base, wallpaper: { image: "data:image/png;base64,aGVsbG8===" } }),
+    ).toThrow(/data: URIs/);
     expect(() =>
       parseThemeFile({
         ...base,
@@ -317,6 +324,22 @@ describe("theme files", () => {
     expect(documentElement.dataset.wallpaper).toBeUndefined();
     expect(documentElement.style.removeProperty).toHaveBeenCalledWith("--theme-wallpaper-image");
     expect(documentElement.style.removeProperty).toHaveBeenCalledWith("--theme-wallpaper-opacity");
+
+    // Previews carry the wallpaper the save would keep — and clear it for
+    // drafts that would save without one, even over a wallpapered theme.
+    applyThemePalette("misty");
+    expect(documentElement.dataset.wallpaper).toBe("");
+    applyThemeColorPreview(T3_CHAT_THEME.colors, "light");
+    expect(documentElement.dataset.wallpaper).toBeUndefined();
+    applyThemeColorPreview(T3_CHAT_THEME.colors, "light", false, {
+      image: "data:image/png;base64,aGVsbG8=",
+      opacity: 0.4,
+    });
+    expect(documentElement.dataset.wallpaper).toBe("");
+    expect(documentElement.style.setProperty).toHaveBeenCalledWith(
+      "--theme-wallpaper-opacity",
+      "0.4",
+    );
 
     vi.unstubAllGlobals();
     invalidateCustomThemes();

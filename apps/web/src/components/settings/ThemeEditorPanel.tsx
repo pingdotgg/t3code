@@ -347,8 +347,23 @@ export function ThemeEditorPanel({
   // comes back when the editor closes, including on cancel.
   useEffect(() => {
     if (!open || !isDraftSeeded) return;
-    applyThemeColorPreview(colorsByAppearance[activeAppearance], activeAppearance, sidebarArtwork);
-  }, [activeAppearance, colorsByAppearance, isDraftSeeded, open, sidebarArtwork]);
+    applyThemeColorPreview(
+      colorsByAppearance[activeAppearance],
+      activeAppearance,
+      sidebarArtwork,
+      // Match what saving will keep: merges retain the target's wallpaper,
+      // edits the edited theme's, and new drafts none.
+      mergeTarget ? mergeTarget.wallpaper : editingTheme?.wallpaper,
+    );
+  }, [
+    activeAppearance,
+    colorsByAppearance,
+    editingTheme,
+    isDraftSeeded,
+    mergeTarget,
+    open,
+    sidebarArtwork,
+  ]);
 
   useEffect(() => {
     if (!open) return;
