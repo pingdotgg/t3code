@@ -70,6 +70,17 @@ export class MigrateDevDbSourceMissingError extends Schema.TaggedErrorClass<Migr
   }
 }
 
+export class MigrateDevDbSourceIsDestinationError extends Schema.TaggedErrorClass<MigrateDevDbSourceIsDestinationError>()(
+  "MigrateDevDbSourceIsDestinationError",
+  {
+    sourcePath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Source database '${this.sourcePath}' resolves to a path this command rewrites. Pick a different --source or --base-dir.`;
+  }
+}
+
 export class MigrateDevDbDestinationBusyError extends Schema.TaggedErrorClass<MigrateDevDbDestinationBusyError>()(
   "MigrateDevDbDestinationBusyError",
   {
@@ -321,6 +332,20 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   if (canonicalBaseDir === canonicalSharedHome) {
     return yield* new MigrateDevDbSharedHomeError();
   }
+  // The destination db and snapshot both get deleted below; a --source that
+  // resolves to either (e.g. a leftover snapshot file) would be destroyed
+  // before it is ever read.
+  const canonicalSourcePath = yield* fs
+    .realPath(sourcePath)
+    .pipe(Effect.orElseSucceed(() => sourcePath));
+  for (const destination of [databasePath, snapshotPath]) {
+    const canonicalDestination = yield* fs
+      .realPath(destination)
+      .pipe(Effect.orElseSucceed(() => destination));
+    if (canonicalSourcePath === canonicalDestination) {
+      return yield* new MigrateDevDbSourceIsDestinationError({ sourcePath });
+    }
+  }
 
   yield* fs.makeDirectory(stateDir, { recursive: true });
   yield* ensureNotInUse(databasePath);
@@ -334,34 +359,38 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
         ),
       );
 
-  yield* Console.log(`Snapshotting ${sourcePath} (read-only)...`);
   yield* removeDatabaseFiles(snapshotPath);
-  yield* Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`VACUUM INTO ${snapshotPath}`;
-  }).pipe(
-    Effect.provide(NodeSqliteClient.layer({ filename: sourcePath, readonly: true })),
-    wrapPhase("snapshot", sourcePath),
-  );
+  // The snapshot is a full-size copy of the source; make sure it is removed
+  // even when a phase fails partway through.
+  const pruned = yield* Effect.gen(function* () {
+    yield* Console.log(`Snapshotting ${sourcePath} (read-only)...`);
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`VACUUM INTO ${snapshotPath}`;
+    }).pipe(
+      Effect.provide(NodeSqliteClient.layer({ filename: sourcePath, readonly: true })),
+      wrapPhase("snapshot", sourcePath),
+    );
 
-  yield* Console.log(
-    `Pruning to ${input.projects} projects, ${input.threadsPerProject} stopped threads each...`,
-  );
-  const pruned = yield* pruneSnapshot(input).pipe(
-    Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
-    wrapPhase("prune", snapshotPath),
-  );
+    yield* Console.log(
+      `Pruning to ${input.projects} projects, ${input.threadsPerProject} stopped threads each...`,
+    );
+    const result = yield* pruneSnapshot(input).pipe(
+      Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
+      wrapPhase("prune", snapshotPath),
+    );
 
-  yield* Console.log(`Compacting into ${databasePath}...`);
-  yield* removeDatabaseFiles(databasePath);
-  yield* Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`VACUUM INTO ${databasePath}`;
-  }).pipe(
-    Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
-    wrapPhase("compact", databasePath),
-  );
-  yield* removeDatabaseFiles(snapshotPath);
+    yield* Console.log(`Compacting into ${databasePath}...`);
+    yield* removeDatabaseFiles(databasePath);
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`VACUUM INTO ${databasePath}`;
+    }).pipe(
+      Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
+      wrapPhase("compact", databasePath),
+    );
+    return result;
+  }).pipe(Effect.ensuring(removeDatabaseFiles(snapshotPath)));
   yield* fs.chmod(databasePath, 0o600);
 
   yield* Console.log("Running migrations...");

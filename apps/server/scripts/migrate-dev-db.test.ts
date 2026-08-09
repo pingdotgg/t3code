@@ -132,6 +132,27 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
     }),
   );
 
+  it.effect("refuses a source that resolves to a destination path", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const sharedDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-overlap-" });
+      const destDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-overlap-dest-" });
+      // A leftover snapshot from a prior failed run, passed as --source: it
+      // must not be deleted before it is read.
+      const leftoverSnapshot = path.join(destDir, "userdata", "state.sqlite.migrate-dev-db-tmp");
+      yield* fs.makeDirectory(path.dirname(leftoverSnapshot), { recursive: true });
+      yield* fs.writeFileString(leftoverSnapshot, "not a real db");
+
+      const error = yield* runMigrateDevDb(
+        { baseDir: destDir, source: leftoverSnapshot, projects: 5, threadsPerProject: 10 },
+        { sharedHome: sharedDir },
+      ).pipe(Effect.flip);
+      assert.equal(error._tag, "MigrateDevDbSourceIsDestinationError");
+      assert.equal(yield* fs.exists(leftoverSnapshot), true);
+    }),
+  );
+
   it.effect("refuses to rebuild the shared home", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
