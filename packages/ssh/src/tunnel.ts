@@ -516,17 +516,17 @@ if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
   DEFAULT_RUNTIME_PID="\${DEFAULT_RUNTIME_INFO%% *}"
   DEFAULT_REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
 fi
-if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && [ "$DEFAULT_REMOTE_PORT" = "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && [ -n "$DEFAULT_RUNTIME_PID" ] && [ "$DEFAULT_RUNTIME_PID" = "$REMOTE_PID" ] && [ "$DEFAULT_REMOTE_PORT" = "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
   DEFAULT_RUNTIME_IS_MANAGED=1
 fi
 if [ -n "$DEFAULT_REMOTE_PORT" ] && [ "$DEFAULT_RUNTIME_IS_MANAGED" -eq 0 ]; then
+  PREVIOUS_REMOTE_PORT="$REMOTE_PORT"
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
     if [ "$REMOTE_MANAGED" = "managed" ]; then
-      PID_TO_STOP="\${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"
-      if [ -n "$PID_TO_STOP" ] && kill -0 "$PID_TO_STOP" 2>/dev/null; then
-        kill "$PID_TO_STOP" 2>/dev/null || true
-        wait_for_pid_exit "$PID_TO_STOP"
+      if [ -n "$REMOTE_PID" ] && [ -n "$PREVIOUS_REMOTE_PORT" ] && [ "$PREVIOUS_REMOTE_PORT" != "$DEFAULT_REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+        kill "$REMOTE_PID" 2>/dev/null || true
+        wait_for_pid_exit "$REMOTE_PID"
       fi
       REMOTE_PID=""
       REMOTE_PORT="$DEFAULT_REMOTE_PORT"
