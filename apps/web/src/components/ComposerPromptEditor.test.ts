@@ -116,6 +116,45 @@ describe("registerComposerInlineTokenPaste", () => {
     );
   });
 
+  it("leaves an image-only paste to the attachment handler", () => {
+    vi.stubGlobal("ClipboardEvent", TestClipboardEvent);
+    const editor = createEditor();
+    const plainTextFallback = vi.fn(() => false);
+    const resolvePastedFilePath = vi.fn(() => null);
+    const image = { name: "shot.png", type: "image/png" } as File;
+
+    editor.update(
+      () => {
+        const paragraph = $createParagraphNode();
+        paragraph.append($createTextNode("Ask"));
+        $getRoot().append(paragraph);
+        paragraph.selectEnd();
+      },
+      { discrete: true },
+    );
+    registerComposerInlineTokenPaste(editor, {
+      createMentionNode: (path) => $createTextNode(`<mention:${path}>`),
+      getExpandedAbsoluteOffsetForPoint: () => 3,
+      resolvePastedFilePath,
+    });
+    editor.registerCommand(PASTE_COMMAND, plainTextFallback, COMMAND_PRIORITY_EDITOR);
+
+    const event = new TestClipboardEvent("", [image]);
+    let handled = true;
+    editor.update(
+      () => {
+        handled = editor.dispatchCommand(PASTE_COMMAND, event as ClipboardEvent);
+      },
+      { discrete: true },
+    );
+
+    expect(handled).toBe(false);
+    expect(resolvePastedFilePath).not.toHaveBeenCalled();
+    expect(plainTextFallback).toHaveBeenCalledOnce();
+    expect(event.defaultPrevented).toBe(false);
+    expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe("Ask");
+  });
+
   it("appends pasted file mentions when the selection is not a range", () => {
     vi.stubGlobal("ClipboardEvent", TestClipboardEvent);
     const editor = createEditor();
@@ -153,10 +192,15 @@ describe("registerComposerInlineTokenPaste", () => {
     );
   });
 
-  it("leaves an unavailable pasted file for the parent error handler", () => {
+  it("consumes an unavailable pasted file before the plain-text fallback", () => {
     vi.stubGlobal("ClipboardEvent", TestClipboardEvent);
     const editor = createEditor();
-    const plainTextFallback = vi.fn(() => false);
+    const plainTextFallback = vi.fn((event: ClipboardEvent) => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) return false;
+      selection.insertText(event.clipboardData?.getData("text/plain") ?? "");
+      return true;
+    });
     const source = { name: "app.ts", type: "text/plain" } as File;
 
     editor.update(
@@ -175,8 +219,8 @@ describe("registerComposerInlineTokenPaste", () => {
     });
     editor.registerCommand(PASTE_COMMAND, plainTextFallback, COMMAND_PRIORITY_EDITOR);
 
-    const event = new TestClipboardEvent("", [source]);
-    let handled = true;
+    const event = new TestClipboardEvent("app.ts", [source]);
+    let handled = false;
     editor.update(
       () => {
         handled = editor.dispatchCommand(PASTE_COMMAND, event as ClipboardEvent);
@@ -184,9 +228,9 @@ describe("registerComposerInlineTokenPaste", () => {
       { discrete: true },
     );
 
-    expect(handled).toBe(false);
-    expect(plainTextFallback).toHaveBeenCalledOnce();
-    expect(event.defaultPrevented).toBe(false);
+    expect(handled).toBe(true);
+    expect(plainTextFallback).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(true);
     expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe("Ask");
   });
 

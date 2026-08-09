@@ -36,9 +36,9 @@ describe("hostPathUsableOnPlatform", () => {
     expect(hostPathUsableOnPlatform("/home/me/file.txt", "windows")).toBe(false);
   });
 
-  it("allows unknown platforms to preserve behavior", () => {
-    expect(hostPathUsableOnPlatform("C:\\Users\\me\\file.txt", "unknown")).toBe(true);
-    expect(hostPathUsableOnPlatform("/home/me/file.txt", null)).toBe(true);
+  it("rejects host paths until the environment platform is known", () => {
+    expect(hostPathUsableOnPlatform("C:\\Users\\me\\file.txt", "unknown")).toBe(false);
+    expect(hostPathUsableOnPlatform("/home/me/file.txt", null)).toBe(false);
   });
 });
 

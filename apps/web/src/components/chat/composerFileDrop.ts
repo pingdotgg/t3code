@@ -52,7 +52,7 @@ export function hostPathUsableOnPlatform(
   absolutePath: string,
   environmentOs: ExecutionEnvironmentPlatformOs | null,
 ): boolean {
-  if (environmentOs === null || environmentOs === "unknown") return true;
+  if (environmentOs === null || environmentOs === "unknown") return false;
   return isWindowsAbsolutePath(absolutePath) === (environmentOs === "windows");
 }
 

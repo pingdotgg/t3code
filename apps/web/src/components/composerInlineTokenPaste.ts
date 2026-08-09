@@ -33,17 +33,24 @@ function $insertPastedFileMentions(
     return false;
   }
   const paths: string[] = [];
+  let hasNonImageFile = false;
   for (const file of Array.from(clipboardData.files)) {
     if (file.type.startsWith("image/")) {
       continue;
     }
+    hasNonImageFile = true;
     const path = resolvePastedFilePath(file);
     if (path !== null && path.length > 0) {
       paths.push(path);
     }
   }
   if (paths.length === 0) {
-    return false;
+    if (!hasNonImageFile) return false;
+    // Consume unresolved file pastes before Lexical's lower-priority text
+    // handler can insert clipboard text. The event still bubbles to the
+    // composer's paste handler, which reports why the file is unavailable.
+    event.preventDefault();
+    return true;
   }
   const selection = $getSelection();
   // The selection is not always a range when the paste lands (a chip can be
