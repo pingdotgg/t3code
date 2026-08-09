@@ -16,6 +16,7 @@ import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
+  resolveAutoSettleCompletedChangeRequests,
   resolveThreadListV2Enabled,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
@@ -121,6 +122,26 @@ describe("resolveThreadListV2Enabled", () => {
   it("holds the default while preferences are still loading so the list does not remount", () => {
     expect(
       resolveThreadListV2Enabled({ legacyPreference: undefined, preferencesLoaded: false }),
+    ).toBe(true);
+  });
+});
+
+describe("resolveAutoSettleCompletedChangeRequests", () => {
+  it("preserves an explicit disabled preference", () => {
+    expect(
+      resolveAutoSettleCompletedChangeRequests({ preference: false, preferencesLoaded: true }),
+    ).toBe(false);
+  });
+
+  it("defaults on when the preference is absent", () => {
+    expect(
+      resolveAutoSettleCompletedChangeRequests({ preference: undefined, preferencesLoaded: true }),
+    ).toBe(true);
+  });
+
+  it("defaults on while preferences load", () => {
+    expect(
+      resolveAutoSettleCompletedChangeRequests({ preference: false, preferencesLoaded: false }),
     ).toBe(true);
   });
 });
