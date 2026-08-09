@@ -204,6 +204,33 @@ server.listen(0, "127.0.0.1", () => {
   process.stdout.write(String(server.address().port) + "\\n");
 });`;
 
+const signalRecordingProcessSource = `const fs = require("node:fs");
+process.on("SIGTERM", () => {
+  fs.writeFileSync(process.env.SIGNAL_MARKER, "signaled\\n");
+  process.exit(0);
+});
+setInterval(() => {}, 1_000);`;
+
+const postLaunchOwnershipRaceSource = `const fs = require("node:fs");
+const http = require("node:http");
+const args = process.argv.slice(2);
+const port = Number(args[args.indexOf("--port") + 1]);
+const server = http.createServer((_request, response) => {
+  response.writeHead(200);
+  response.end("managed");
+});
+server.listen(port, "127.0.0.1", () => {
+  fs.writeFileSync(process.env.RACE_MANAGED_PID_FILE, String(process.pid) + "\\n");
+  fs.mkdirSync(require("node:path").dirname(process.env.RACE_RUNTIME_FILE), { recursive: true });
+  fs.writeFileSync(process.env.RACE_RUNTIME_FILE, JSON.stringify({
+    version: 1,
+    pid: Number(process.env.RACE_EXTERNAL_PID),
+    port: Number(process.env.RACE_EXTERNAL_PORT),
+    origin: "http://127.0.0.1:" + process.env.RACE_EXTERNAL_PORT,
+    startedAt: "2026-08-09T05:10:06.000Z",
+  }) + "\\n");
+});`;
+
 const fakeInstalledServiceGuardSource = `#!/bin/sh
 set -eu
 if [ "\${1:-}" != "--user" ]; then
@@ -350,6 +377,16 @@ describe("ssh tunnel scripts", () => {
     );
     assert.include(
       buildRemoteLaunchScript(),
+      'is_descendant_or_same "$STARTED_RUNTIME_PID" "$REMOTE_PID"',
+    );
+    assert.notInclude(
+      buildRemoteLaunchScript(),
+      '[ "$STARTED_RUNTIME_PORT" = "$REMOTE_PORT" ] && is_descendant_or_same',
+    );
+    assert.include(buildRemoteLaunchScript(), 'adopt_runtime_as_external "$STARTED_RUNTIME_INFO"');
+    assert.include(buildRemoteLaunchScript(), "refusing dual ownership");
+    assert.include(
+      buildRemoteLaunchScript(),
       '[ "$PREVIOUS_REMOTE_PORT" != "$DEFAULT_REMOTE_PORT" ]',
     );
     assert.notInclude(buildRemoteLaunchScript(), "PID_TO_STOP");
@@ -412,6 +449,21 @@ describe("ssh tunnel scripts", () => {
         assert.notEqual(runtimePid, wrapper.pid);
         assert.isTrue(processIsAlive(runtimePid));
 
+        const fakeBin = path.join(home, "bin");
+        const psPath = path.join(fakeBin, "ps");
+        yield* fileSystem.makeDirectory(fakeBin, { recursive: true });
+        yield* fileSystem.writeFileString(
+          psPath,
+          `#!/bin/sh
+if [ "\${4:-}" = "${runtimePid}" ]; then
+  printf '%s\\n' '${wrapper.pid}'
+  exit 0
+fi
+exit 1
+`,
+        );
+        yield* fileSystem.chmod(psPath, 0o755);
+
         yield* fileSystem.makeDirectory(stateDir, { recursive: true });
         yield* fileSystem.writeFileString(path.join(stateDir, "managed"), "managed\n");
         yield* fileSystem.writeFileString(path.join(stateDir, "pid"), `${wrapper.pid}\n`);
@@ -424,7 +476,7 @@ describe("ssh tunnel scripts", () => {
         const shell = yield* spawner.spawn(
           ChildProcess.make("sh", ["-s", "--", stateKey], {
             detached: false,
-            env: { HOME: home },
+            env: { HOME: home, PATH: `${fakeBin}:${process.env.PATH ?? ""}` },
             extendEnv: true,
             stdin: Stream.make(new TextEncoder().encode(buildRemoteLaunchScript())),
           }),
@@ -596,6 +648,80 @@ server.listen(0, "127.0.0.1", () => process.stdout.write(String(server.address()
         assert.isFalse(yield* fileSystem.exists(path.join(stateDir, "pid")));
         assert.isFalse(yield* fileSystem.exists(path.join(stateDir, "managed")));
         assert.isFalse(yield* fileSystem.exists(path.join(stateDir, "server.log")));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.effect("never signals a live PID without runtime ownership proof", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        if ((yield* HostProcessPlatform) === "win32") return;
+
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const executablePath = yield* HostProcessExecutablePath;
+        const home = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-ssh-unverified-pid-test-",
+        });
+        const target = {
+          alias: "unverified-pid",
+          hostname: "unverified.example.com",
+          username: "tester",
+          port: 22,
+        } as const;
+        const stateKey = remoteStateKey(target);
+        const stateDir = path.join(home, ".t3", "ssh-launch", stateKey);
+        const signalMarker = path.join(home, "signal-marker");
+        const unrelatedProcess = yield* spawner.spawn(
+          ChildProcess.make(executablePath, ["-e", signalRecordingProcessSource], {
+            detached: false,
+            env: { SIGNAL_MARKER: signalMarker },
+            extendEnv: true,
+          }),
+        );
+        yield* Effect.addFinalizer(() =>
+          unrelatedProcess.kill().pipe(Effect.catchCause(() => Effect.void)),
+        );
+
+        yield* fileSystem.makeDirectory(stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(stateDir, "managed"), "managed\n");
+        yield* fileSystem.writeFileString(path.join(stateDir, "pid"), `${unrelatedProcess.pid}\n`);
+        yield* fileSystem.writeFileString(path.join(stateDir, "port"), "61234\n");
+
+        const launch = yield* spawner.spawn(
+          ChildProcess.make("sh", ["-s", "--", stateKey], {
+            detached: false,
+            env: { HOME: home, SIGNAL_MARKER: signalMarker },
+            extendEnv: true,
+            stdin: Stream.make(new TextEncoder().encode(buildRemoteLaunchScript())),
+          }),
+        );
+        const [launchStderr, launchExitCode] = yield* Effect.all(
+          [Stream.mkString(Stream.decodeText(launch.stderr)), launch.exitCode],
+          { concurrency: "unbounded" },
+        );
+        assert.notEqual(launchExitCode, 0);
+        assert.include(launchStderr, "runtime ownership cannot be verified");
+        assert.isTrue(yield* unrelatedProcess.isRunning);
+        assert.isFalse(yield* fileSystem.exists(signalMarker));
+
+        const stop = yield* spawner.spawn(
+          ChildProcess.make("sh", ["-s"], {
+            detached: false,
+            env: { HOME: home, SIGNAL_MARKER: signalMarker },
+            extendEnv: true,
+            stdin: Stream.make(new TextEncoder().encode(buildRemoteStopScript(target))),
+          }),
+        );
+        const [stopStderr, stopExitCode] = yield* Effect.all(
+          [Stream.mkString(Stream.decodeText(stop.stderr)), stop.exitCode],
+          { concurrency: "unbounded" },
+        );
+        assert.notEqual(stopExitCode, 0);
+        assert.include(stopStderr, "runtime ownership cannot be verified");
+        assert.isTrue(yield* unrelatedProcess.isRunning);
+        assert.isFalse(yield* fileSystem.exists(signalMarker));
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
@@ -799,6 +925,97 @@ server.listen(0, "127.0.0.1", () => process.stdout.write(String(server.address()
         assert.equal(exitCode, 0, stderr);
         assert.include(stdout, `{"remotePort":${externalPort},"serverKind":"external"}`);
         assert.isFalse(yield* managedServer.isRunning);
+        assert.isTrue(yield* externalServer.isRunning);
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(stateDir, "managed")),
+          "external\n",
+        );
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(stateDir, "port")),
+          `${externalPort}\n`,
+        );
+        assert.isFalse(yield* fileSystem.exists(path.join(stateDir, "pid")));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.effect("adopts an external owner that appears after the managed launch begins", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        if ((yield* HostProcessPlatform) === "win32") return;
+
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const executablePath = yield* HostProcessExecutablePath;
+        const home = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-ssh-post-launch-owner-race-test-",
+        });
+        const stateKey = "post-launch-owner-race";
+        const stateDir = path.join(home, ".t3", "ssh-launch", stateKey);
+        const runtimePath = path.join(home, ".t3", "userdata", "server-runtime.json");
+        const managedPidPath = path.join(home, "managed.pid");
+        const raceServerPath = path.join(home, "post-launch-race-server.cjs");
+
+        const externalServer = yield* spawner.spawn(
+          ChildProcess.make(
+            executablePath,
+            [
+              "-e",
+              `const http = require("node:http");
+const server = http.createServer((_request, response) => {
+  response.writeHead(200);
+  response.end("external");
+});
+server.listen(0, "127.0.0.1", () => process.stdout.write(String(server.address().port) + "\\n"));`,
+            ],
+            { detached: false },
+          ),
+        );
+        yield* Effect.addFinalizer(() =>
+          externalServer.kill().pipe(Effect.catchCause(() => Effect.void)),
+        );
+        const externalPortLine = yield* externalServer.stdout.pipe(
+          Stream.decodeText(),
+          Stream.splitLines,
+          Stream.runHead,
+        );
+        const externalPort = Number.parseInt(Option.getOrThrow(externalPortLine), 10);
+        assert.isTrue(Number.isInteger(externalPort));
+        yield* fileSystem.writeFileString(raceServerPath, postLaunchOwnershipRaceSource);
+
+        const shell = yield* spawner.spawn(
+          ChildProcess.make("sh", ["-s", "--", stateKey], {
+            detached: false,
+            env: {
+              HOME: home,
+              RACE_RUNTIME_FILE: runtimePath,
+              RACE_MANAGED_PID_FILE: managedPidPath,
+              RACE_EXTERNAL_PID: String(externalServer.pid),
+              RACE_EXTERNAL_PORT: String(externalPort),
+            },
+            extendEnv: true,
+            stdin: Stream.make(
+              new TextEncoder().encode(buildRemoteLaunchScript({ nodeScriptPath: raceServerPath })),
+            ),
+          }),
+        );
+        const [stdout, stderr, exitCode] = yield* Effect.all(
+          [
+            Stream.mkString(Stream.decodeText(shell.stdout)),
+            Stream.mkString(Stream.decodeText(shell.stderr)),
+            shell.exitCode,
+          ],
+          { concurrency: "unbounded" },
+        );
+
+        const managedPid = Number.parseInt(
+          (yield* fileSystem.readFileString(managedPidPath)).trim(),
+          10,
+        );
+        assert.equal(exitCode, 0, stderr);
+        assert.include(stdout, `{"remotePort":${externalPort},"serverKind":"external"}`);
+        assert.isFalse(processIsAlive(managedPid));
         assert.isTrue(yield* externalServer.isRunning);
         assert.equal(
           yield* fileSystem.readFileString(path.join(stateDir, "managed")),
@@ -1024,6 +1241,7 @@ server.listen(0, "127.0.0.1", () => process.stdout.write(String(server.address()
         const runtimePath = path.join(home, ".t3", "userdata", "server-runtime.json");
         const fakeBin = path.join(home, "fake-bin");
         const systemctlPath = path.join(fakeBin, "systemctl");
+        const psPath = path.join(fakeBin, "ps");
         const serviceScriptPath = path.join(home, "fake-t3-service.cjs");
         const servicePidPath = path.join(home, "fake-t3-service.pid");
         const serviceLogPath = path.join(home, "fake-t3-service.log");
@@ -1063,6 +1281,17 @@ server.listen(0, "127.0.0.1", () => process.stdout.write(String(server.address()
         yield* fileSystem.makeDirectory(fakeBin, { recursive: true });
         yield* fileSystem.writeFileString(systemctlPath, fakeSystemctlSource);
         yield* fileSystem.chmod(systemctlPath, 0o755);
+        yield* fileSystem.writeFileString(
+          psPath,
+          `#!/bin/sh
+if [ "\${4:-}" = "${managedPid}" ]; then
+  printf '%s\\n' '${wrapper.pid}'
+  exit 0
+fi
+exit 1
+`,
+        );
+        yield* fileSystem.chmod(psPath, 0o755);
         yield* fileSystem.writeFileString(serviceScriptPath, installedServiceSource);
 
         const shell = yield* spawner.spawn(

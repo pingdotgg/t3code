@@ -618,6 +618,10 @@ if [ "$REMOTE_MANAGED" = "external" ]; then
   fi
 elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
   if ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+    if [ "$DEFAULT_RUNTIME_IS_MANAGED" -eq 0 ]; then
+      printf 'Stored managed SSH pid %s is live, but runtime ownership cannot be verified; refusing to signal it. Disconnect the owning process or clear the stale SSH environment state.\n' "$REMOTE_PID" >&2
+      exit 1
+    fi
     kill "$REMOTE_PID" 2>/dev/null || true
     wait_for_pid_exit "$REMOTE_PID"
     if kill -0 "$REMOTE_PID" 2>/dev/null; then
@@ -665,9 +669,19 @@ if [ -z "$REMOTE_PORT" ]; then
   if [ -n "$STARTED_RUNTIME_INFO" ]; then
     STARTED_RUNTIME_PID="\${STARTED_RUNTIME_INFO%% *}"
     STARTED_RUNTIME_PORT="\${STARTED_RUNTIME_INFO#* }"
-    if [ "$STARTED_RUNTIME_PORT" = "$REMOTE_PORT" ] && is_descendant_or_same "$STARTED_RUNTIME_PID" "$REMOTE_PID"; then
+    if is_descendant_or_same "$STARTED_RUNTIME_PID" "$REMOTE_PID"; then
       REMOTE_PID="$STARTED_RUNTIME_PID"
+      REMOTE_PORT="$STARTED_RUNTIME_PORT"
       printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
+      printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+    else
+      kill "$REMOTE_PID" 2>/dev/null || true
+      wait_for_pid_exit "$REMOTE_PID"
+      if kill -0 "$REMOTE_PID" 2>/dev/null; then
+        printf 'New managed SSH T3 server pid %s did not terminate after a different runtime became active; refusing dual ownership.\\n' "$REMOTE_PID" >&2
+        exit 1
+      fi
+      adopt_runtime_as_external "$STARTED_RUNTIME_INFO"
     fi
   fi
 fi
@@ -786,14 +800,20 @@ REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 STOPPED_SSH_MANAGED=0
 if [ "$REMOTE_MANAGED" = "managed" ]; then
   STOPPED_SSH_MANAGED=1
+  REMOTE_PID_CONFIRMED=0
   RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
   if [ -n "$RUNTIME_INFO" ] && [ -n "$REMOTE_PID" ]; then
     RUNTIME_PID="\${RUNTIME_INFO%% *}"
     if is_descendant_or_same "$RUNTIME_PID" "$REMOTE_PID"; then
       REMOTE_PID="$RUNTIME_PID"
+      REMOTE_PID_CONFIRMED=1
     fi
   fi
   if [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+    if [ "$REMOTE_PID_CONFIRMED" -eq 0 ]; then
+      printf 'Stored managed SSH pid %s is live, but runtime ownership cannot be verified; refusing to signal it during disconnect.\n' "$REMOTE_PID" >&2
+      exit 1
+    fi
     kill "$REMOTE_PID" 2>/dev/null || true
     wait_for_pid_exit "$REMOTE_PID"
     if kill -0 "$REMOTE_PID" 2>/dev/null; then

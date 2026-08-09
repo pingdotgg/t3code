@@ -2478,7 +2478,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
 it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-"))(
   "OrchestrationProjectionPipeline pending turn cleanup",
   (it) => {
-    it.effect("clears pending turn starts when startup reaches a terminal session state", () =>
+    it.effect("preserves interrupted recovery starts while clearing explicit terminal starts", () =>
       Effect.gen(function* () {
         const projectionPipeline = yield* OrchestrationProjectionPipeline;
         const eventStore = yield* OrchestrationEventStore;
@@ -2537,7 +2537,7 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
           WHERE turn_id IS NULL
             AND state = 'pending'
         `;
-        assert.deepEqual(pendingRows, []);
+        assert.deepEqual(pendingRows, [{ threadId: "thread-terminal-interrupted" }]);
       }),
     );
 

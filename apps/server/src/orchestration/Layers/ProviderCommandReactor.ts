@@ -1142,7 +1142,8 @@ const make = Effect.gen(function* () {
     }
 
     const key = turnStartKeyForEvent(event);
-    if (yield* hasHandledTurnStartRecently(key)) {
+    const handledRecently = yield* hasHandledTurnStartRecently(key);
+    if (handledRecently && !isRecoveryReplay) {
       return;
     }
 
@@ -1258,10 +1259,7 @@ const make = Effect.gen(function* () {
 
     yield* providerService.sendTurn(sendTurnRequest.value).pipe(
       Effect.tap((turn) => {
-        if (
-          runningTurnIdBeforeDelivery === null ||
-          turn.turnId !== runningTurnIdBeforeDelivery
-        ) {
+        if (runningTurnIdBeforeDelivery === null || turn.turnId !== runningTurnIdBeforeDelivery) {
           return Effect.void;
         }
         return acknowledgePendingTurnStartDelivery({

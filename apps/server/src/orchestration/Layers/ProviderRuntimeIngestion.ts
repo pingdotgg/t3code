@@ -25,6 +25,7 @@ import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -177,6 +178,10 @@ type RuntimeIngestionInput =
       thread: OrchestrationThreadShell;
       detail: string;
       commandTag: "restart-recovery" | "runtime-recovery";
+    }
+  | {
+      source: "rehydrate-task-liveness";
+      completion: Deferred.Deferred<void, unknown>;
     };
 
 function toTurnId(value: TurnId | string | undefined): TurnId | undefined {
@@ -2231,6 +2236,27 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const rehydratePersistedTaskLiveness = Effect.gen(function* () {
+    const persistedTasks = yield* projectionThreadActivityRepository.listLatestTaskLiveness();
+    for (const task of persistedTasks) {
+      threadBackgroundLiveness.recordTaskLiveness({
+        threadId: task.threadId,
+        taskId: task.taskId,
+        taskType: task.taskType ?? undefined,
+        status: task.status ?? undefined,
+        agentId: task.agentId ?? undefined,
+        kind:
+          task.kind === "task.started"
+            ? "started"
+            : task.kind === "task.progress"
+              ? "progress"
+              : task.kind === "task.updated"
+                ? "updated"
+                : "completed",
+      });
+    }
+  });
+
   const processInput = (input: RuntimeIngestionInput) => {
     switch (input.source) {
       case "runtime":
@@ -2239,6 +2265,12 @@ const make = Effect.gen(function* () {
         return processDomainEvent(input.event);
       case "recovery":
         return processRecoveryInput(input);
+      case "rehydrate-task-liveness":
+        return rehydratePersistedTaskLiveness.pipe(
+          Effect.exit,
+          Effect.flatMap((exit) => Deferred.done(input.completion, exit)),
+          Effect.asVoid,
+        );
     }
   };
 
@@ -2252,7 +2284,9 @@ const make = Effect.gen(function* () {
           source: input.source,
           ...(input.source === "recovery"
             ? { threadId: input.thread.id, recovery: input.commandTag }
-            : { eventId: input.event.eventId, eventType: input.event.type }),
+            : input.source === "rehydrate-task-liveness"
+              ? {}
+              : { eventId: input.event.eventId, eventType: input.event.type }),
           cause: Cause.pretty(cause),
         });
       }),
@@ -2310,27 +2344,6 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  const rehydratePersistedTaskLiveness = Effect.gen(function* () {
-    const persistedTasks = yield* projectionThreadActivityRepository.listLatestTaskLiveness();
-    for (const task of persistedTasks) {
-      threadBackgroundLiveness.recordTaskLiveness({
-        threadId: task.threadId,
-        taskId: task.taskId,
-        taskType: task.taskType ?? undefined,
-        status: task.status ?? undefined,
-        agentId: task.agentId ?? undefined,
-        kind:
-          task.kind === "task.started"
-            ? "started"
-            : task.kind === "task.progress"
-              ? "progress"
-              : task.kind === "task.updated"
-                ? "updated"
-                : "completed",
-      });
-    }
-  });
-
   const reconcileInterruptedSessionsDuringRuntime = Effect.gen(function* () {
     const firstObservation = yield* readMissingActiveSessions("runtime");
     if (firstObservation.length === 0) {
@@ -2370,7 +2383,13 @@ const make = Effect.gen(function* () {
       // persisted read model after subscriptions are parked so a dead turn can
       // never remain "running" forever, while adapters that did retain a live
       // session stay untouched.
-      yield* rehydratePersistedTaskLiveness.pipe(Effect.orDie);
+      // Serialize the persisted snapshot with live runtime ingestion. If a
+      // lifecycle event arrived first, it is persisted before the snapshot;
+      // if it arrives later, it overwrites the snapshot in the same worker.
+      const rehydration = yield* Deferred.make<void, unknown>();
+      yield* worker.enqueue({ source: "rehydrate-task-liveness", completion: rehydration });
+      yield* Deferred.await(rehydration).pipe(Effect.orDie);
+      yield* worker.drain;
       yield* reconcileInterruptedSessionsAfterRestart.pipe(Effect.orDie);
       yield* forkParked(
         reconcileInterruptedSessionsDuringRuntime.pipe(

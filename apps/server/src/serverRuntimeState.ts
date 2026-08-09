@@ -164,6 +164,15 @@ export const clearPersistedServerRuntimeStateIfOwned = (input: {
 }): Effect.Effect<void, never, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
+    const observed = yield* readPersistedServerRuntimeState(input.path);
+    if (
+      Option.isNone(observed) ||
+      observed.value.pid !== input.state.pid ||
+      observed.value.startedAt !== input.state.startedAt
+    ) {
+      return;
+    }
+
     const nonce = yield* Random.nextInt;
     const capturedPath = `${input.path}.clearing-${process.pid}-${nonce.toString(36)}`;
     const captured = yield* fs.rename(input.path, capturedPath).pipe(

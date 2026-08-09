@@ -272,7 +272,7 @@ function isMeaningfulItemCompletion(notification: CodexServerNotification): bool
     return false;
   }
   const item = notification.params.item;
-  if (item.type === "reasoning" || item.type === "agentMessage") {
+  if (item.type === "reasoning") {
     return false;
   }
   return !isCompletedEmptyCollabWait(notification);

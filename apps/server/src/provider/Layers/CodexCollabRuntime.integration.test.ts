@@ -51,6 +51,22 @@ function collabWaitCompletion(input: {
   } as const;
 }
 
+function agentMessageCompletion(id: string) {
+  return {
+    method: "item/completed",
+    params: {
+      item: {
+        type: "agentMessage",
+        id,
+        text: "Still working.",
+      },
+      threadId: ROOT,
+      turnId: wireFixture.responses.turnStart.turn.id,
+      completedAtMs: 1_785_898_349_931,
+    },
+  } as const;
+}
+
 /**
  * The captured sequence, extended with the shapes the live capture didn't
  * include: a collabAgentToolCall with receiverThreadIds (feeds the legacy
@@ -375,6 +391,52 @@ describe("CodexSessionRuntime collab integration", () => {
         interrupted.map((entry) => entry.threadId),
         [ROOT],
       );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("does not accumulate empty waits across completed assistant messages", () =>
+    Effect.gen(function* () {
+      const script = {
+        rootThreadId: ROOT,
+        notifications: [
+          collabWaitCompletion({ id: "empty-wait-1" }),
+          agentMessageCompletion("assistant-progress-1"),
+          collabWaitCompletion({ id: "empty-wait-2" }),
+          agentMessageCompletion("assistant-progress-2"),
+          collabWaitCompletion({ id: "empty-wait-3" }),
+        ],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      const interruptsPath = `${scriptPath}.interrupts`;
+      NodeFS.rmSync(interruptsPath, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(interruptsPath, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-empty-wait-with-progress"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const completedFiber = yield* runtime.events.pipe(
+        Stream.filter((event) => event.method === "turn/completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "wait while reporting progress" });
+      yield* Fiber.join(completedFiber).pipe(Effect.timeout("2 seconds"));
+      assert.isFalse(NodeFS.existsSync(interruptsPath));
 
       yield* runtime.close;
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

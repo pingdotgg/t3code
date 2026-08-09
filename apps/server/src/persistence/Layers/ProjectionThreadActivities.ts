@@ -112,36 +112,29 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
     Result: ProjectionTaskLiveness,
     execute: () =>
       sql`
-        WITH ranked_task_activity AS (
+        WITH task_activity AS (
           SELECT
-            activity.thread_id AS "threadId",
-            json_extract(activity.payload_json, '$.taskId') AS "taskId",
+            activity.thread_id AS thread_id,
+            json_extract(activity.payload_json, '$.taskId') AS task_id,
             CASE
               WHEN json_type(activity.payload_json, '$.taskType') = 'text'
               THEN json_extract(activity.payload_json, '$.taskType')
               ELSE NULL
-            END AS "taskType",
+            END AS task_type,
             CASE
               WHEN json_type(activity.payload_json, '$.status') = 'text'
               THEN json_extract(activity.payload_json, '$.status')
               ELSE NULL
-            END AS "status",
+            END AS task_status,
             CASE
               WHEN json_type(activity.payload_json, '$.agentId') = 'text'
               THEN json_extract(activity.payload_json, '$.agentId')
               ELSE NULL
-            END AS "agentId",
+            END AS agent_id,
             activity.kind,
-            ROW_NUMBER() OVER (
-              PARTITION BY
-                activity.thread_id,
-                json_extract(activity.payload_json, '$.taskId')
-              ORDER BY
-                CASE WHEN activity.sequence IS NULL THEN 0 ELSE 1 END DESC,
-                activity.sequence DESC,
-                activity.created_at DESC,
-                activity.activity_id DESC
-            ) AS task_rank
+            activity.sequence,
+            activity.created_at,
+            activity.activity_id
           FROM projection_thread_activities AS activity
           INNER JOIN projection_threads AS thread
             ON thread.thread_id = activity.thread_id
@@ -151,17 +144,68 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
             AND activity.kind IN ('task.started', 'task.progress', 'task.updated', 'task.completed')
             AND json_type(activity.payload_json, '$.taskId') = 'text'
             AND COALESCE(json_extract(activity.payload_json, '$.usageSnapshot'), 0) != 1
+        ),
+        ranked_task_activity AS (
+          SELECT
+            task.*,
+            ROW_NUMBER() OVER (
+              PARTITION BY
+                task.thread_id,
+                task.task_id
+              ORDER BY
+                task.created_at DESC,
+                CASE WHEN task.sequence IS NULL THEN 0 ELSE 1 END DESC,
+                task.sequence DESC,
+                task.activity_id DESC
+            ) AS task_rank
+          FROM task_activity AS task
         )
         SELECT
-          "threadId",
-          "taskId",
-          "taskType",
-          "status",
-          "agentId",
-          kind
-        FROM ranked_task_activity
-        WHERE task_rank = 1
-        ORDER BY "threadId" ASC, "taskId" ASC
+          latest.thread_id AS "threadId",
+          latest.task_id AS "taskId",
+          (
+            SELECT known.task_type
+            FROM task_activity AS known
+            WHERE known.thread_id = latest.thread_id
+              AND known.task_id = latest.task_id
+              AND known.task_type IS NOT NULL
+            ORDER BY
+              known.created_at DESC,
+              CASE WHEN known.sequence IS NULL THEN 0 ELSE 1 END DESC,
+              known.sequence DESC,
+              known.activity_id DESC
+            LIMIT 1
+          ) AS "taskType",
+          (
+            SELECT known.task_status
+            FROM task_activity AS known
+            WHERE known.thread_id = latest.thread_id
+              AND known.task_id = latest.task_id
+              AND known.task_status IS NOT NULL
+            ORDER BY
+              known.created_at DESC,
+              CASE WHEN known.sequence IS NULL THEN 0 ELSE 1 END DESC,
+              known.sequence DESC,
+              known.activity_id DESC
+            LIMIT 1
+          ) AS "status",
+          (
+            SELECT known.agent_id
+            FROM task_activity AS known
+            WHERE known.thread_id = latest.thread_id
+              AND known.task_id = latest.task_id
+              AND known.agent_id IS NOT NULL
+            ORDER BY
+              known.created_at DESC,
+              CASE WHEN known.sequence IS NULL THEN 0 ELSE 1 END DESC,
+              known.sequence DESC,
+              known.activity_id DESC
+            LIMIT 1
+          ) AS "agentId",
+          latest.kind
+        FROM ranked_task_activity AS latest
+        WHERE latest.task_rank = 1
+        ORDER BY latest.thread_id ASC, latest.task_id ASC
       `,
   });
 

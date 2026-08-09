@@ -161,6 +161,8 @@ describe("ProviderCommandReactor", () => {
     readonly replacePendingBeforeRecoveryFailureDispatch?: boolean;
     readonly startReactor?: boolean;
     readonly providerInfoBarrier?: Effect.Effect<void>;
+    readonly providerInfoFailures?: number;
+    readonly turnStartFailureDispatchFailures?: number;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -187,6 +189,7 @@ describe("ProviderCommandReactor", () => {
     let deliveryMarkerDuringRecoveryReadInjected = false;
     let replacementBeforeRecoveryFailureInjected = false;
     let nextSessionIndex = 1;
+    let providerInfoAttempts = 0;
     const runtimeSessions: Array<ProviderSession> = [];
     const modelSelection = input?.threadModelSelection ?? {
       instanceId: ProviderInstanceId.make("codex"),
@@ -354,11 +357,16 @@ describe("ProviderCommandReactor", () => {
           sessionModelSwitch: input?.sessionModelSwitch ?? "in-session",
         }),
       getInstanceInfo: (instanceId) => {
+        providerInfoAttempts += 1;
         const raw = String(instanceId);
         const driverKind = ProviderDriverKind.make(
           raw.startsWith("claude") ? "claudeAgent" : raw.startsWith("codex") ? "codex" : raw,
         );
-        return (input?.providerInfoBarrier ?? Effect.void).pipe(
+        const providerInfoReady =
+          providerInfoAttempts <= (input?.providerInfoFailures ?? 0)
+            ? Effect.die(new Error("Injected provider info failure"))
+            : (input?.providerInfoBarrier ?? Effect.void);
+        return providerInfoReady.pipe(
           Effect.as({
             instanceId,
             driverKind,
@@ -398,6 +406,7 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(SqlitePersistenceMemory),
     );
     let titleRegenerationCompletionDispatchAttempts = 0;
+    let turnStartFailureDispatchAttempts = 0;
     const reactorOrchestrationLayer = Layer.effect(
       OrchestrationEngineService,
       Effect.gen(function* () {
@@ -490,6 +499,14 @@ describe("ProviderCommandReactor", () => {
               }),
             ),
           dispatch: (command) => {
+            if (command.type === "thread.turn-start.recovery-fail") {
+              turnStartFailureDispatchAttempts += 1;
+              if (
+                turnStartFailureDispatchAttempts <= (input?.turnStartFailureDispatchFailures ?? 0)
+              ) {
+                return Effect.die(new Error("Injected turn-start failure settlement failure"));
+              }
+            }
             if (command.type === "thread.title.regeneration.complete") {
               titleRegenerationCompletionDispatchAttempts += 1;
               if (
@@ -1012,6 +1029,48 @@ describe("ProviderCommandReactor", () => {
     await harness.runEffect(harness.startReactorAgain());
     await harness.drain();
     expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries recovery immediately after an unmarked attempt escaped failure settlement", async () => {
+    const harness = await createHarness({
+      providerInfoFailures: 1,
+      turnStartFailureDispatchFailures: 1,
+    });
+    const threadId = ThreadId.make("thread-1");
+
+    const request = await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-retry-after-failed-settlement"),
+        threadId,
+        message: {
+          messageId: asMessageId("retry-after-failed-settlement-message"),
+          role: "user",
+          text: "Retry this exact undelivered request.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+
+    await harness.drain();
+    expect(harness.startSession).not.toHaveBeenCalled();
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    expect(await harness.readPendingTurnStartCount(threadId)).toBe(1);
+
+    await harness.runEffect(harness.startReactorAgain());
+    await harness.drain();
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    expect(harness.deliveryMarkersAtProviderCalls.at(-1)).toMatchObject({
+      call: "sendTurn",
+      marker: {
+        messageId: "retry-after-failed-settlement-message",
+        requestSequence: request.sequence,
+      },
+    });
   });
 
   effectIt.effect("gives a replayed turn start a fresh lifecycle timestamp", () =>

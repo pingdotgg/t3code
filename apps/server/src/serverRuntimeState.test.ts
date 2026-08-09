@@ -116,6 +116,50 @@ describe("serverRuntimeState", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("does not rename another server's state while checking ownership", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-runtime-state-owner-test-",
+      });
+      const statePath = path.join(root, "server.json");
+      const replacementState: ServerRuntimeState.PersistedServerRuntimeState = {
+        version: 1,
+        pid: 456,
+        port: 3_774,
+        origin: "http://127.0.0.1:3774",
+        startedAt: "2026-08-09T05:10:06.000Z",
+      };
+      yield* ServerRuntimeState.persistServerRuntimeState({
+        path: statePath,
+        state: replacementState,
+      });
+
+      let renameAttempted = false;
+      const observedFileSystem = {
+        ...fileSystem,
+        rename: (from: string, to: string) => {
+          if (from === statePath) {
+            renameAttempted = true;
+          }
+          return fileSystem.rename(from, to);
+        },
+      } satisfies FileSystem.FileSystem;
+
+      yield* ServerRuntimeState.clearPersistedServerRuntimeStateIfOwned({
+        path: statePath,
+        state: { pid: 123, startedAt: "2026-08-09T05:09:57.000Z" },
+      }).pipe(Effect.provideService(FileSystem.FileSystem, observedFileSystem));
+
+      assert.isFalse(renameAttempted);
+      assert.deepEqual(
+        Option.getOrThrow(yield* ServerRuntimeState.readPersistedServerRuntimeState(statePath)),
+        replacementState,
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("preserves replacement state written before ownership capture", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

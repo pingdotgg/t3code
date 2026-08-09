@@ -7,6 +7,7 @@ import {
   OrchestrationReadModel,
   ProviderDriverKind,
   ProviderRuntimeEvent,
+  RuntimeTaskId,
   ProviderSession,
   ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -97,7 +98,7 @@ function isLegacyTurnCompletedEvent(
   );
 }
 
-function createProviderServiceHarness() {
+function createProviderServiceHarness(startupEvents: ReadonlyArray<ProviderRuntimeEvent> = []) {
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
   const runtimeSessions: ProviderSession[] = [];
   let listSessionsCallCount = 0;
@@ -144,7 +145,10 @@ function createProviderServiceHarness() {
     },
     rollbackConversation: () => unsupported(),
     get streamEvents() {
-      return Stream.fromPubSub(runtimeEventPubSub);
+      return Stream.concat(
+        Stream.fromIterable(startupEvents),
+        Stream.fromPubSub(runtimeEventPubSub),
+      );
     },
   };
 
@@ -273,11 +277,28 @@ describe("ProviderRuntimeIngestion", () => {
     };
     providerSessionStatus?: ProviderSession["status"] | null;
     persistedBackgroundTask?: "active" | "completed";
+    startupTaskCompletion?: boolean;
     initialPlanProgress?: boolean;
   }) {
     const workspaceRoot = makeTempDir("t3-provider-project-");
     NodeFS.mkdirSync(NodePath.join(workspaceRoot, ".git"));
-    const provider = createProviderServiceHarness();
+    const provider = createProviderServiceHarness(
+      options?.startupTaskCompletion === true
+        ? [
+            {
+              type: "task.completed",
+              eventId: asEventId("evt-startup-task-completed"),
+              provider: ProviderDriverKind.make("codex"),
+              createdAt: "2026-01-01T00:00:01.000Z",
+              threadId: asThreadId("thread-1"),
+              payload: {
+                taskId: RuntimeTaskId.make("persisted-background-task"),
+                status: "completed",
+              },
+            },
+          ]
+        : [],
+    );
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(TurnAdmissionGate.layer),
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
@@ -529,6 +550,18 @@ describe("ProviderRuntimeIngestion", () => {
       (entry) => entry.id === asThreadId("thread-1"),
     );
     expect(thread?.session?.status).toBe("ready");
+    expect(harness.getBackgroundLiveness()).toBeNull();
+  });
+
+  it("keeps a startup task completion authoritative over persisted liveness", async () => {
+    const harness = await createHarness({
+      initialSession: { status: "ready", activeTurnId: null },
+      providerSessionStatus: "ready",
+      persistedBackgroundTask: "active",
+      startupTaskCompletion: true,
+    });
+
+    await harness.drain();
     expect(harness.getBackgroundLiveness()).toBeNull();
   });
 
