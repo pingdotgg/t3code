@@ -33,7 +33,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
-import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -572,22 +571,22 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   // on "Connecting to WSL…" forever even though the backend kept running
   // and became healthy. Each round gets a fresh budget, and the forked
   // loop is torn down with the run scope once the child exits.
-  const probeReadiness = Effect.fn("desktop.backendProcess.probeReadiness")(function* () {
-    const outcome = yield* waitForHttpReady({
+  const probeReadiness = Effect.fn("desktop.backendProcess.probeReadiness")(() =>
+    waitForHttpReady({
       executablePath: options.executablePath,
       entryPath: options.entryPath,
       cwd: options.cwd,
       httpBaseUrl: options.httpBaseUrl,
       timeout: options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
-    }).pipe(Effect.result);
-
-    if (Result.isSuccess(outcome)) {
-      yield* options.onReady?.() ?? Effect.void;
-      return true;
-    }
-    yield* options.onReadinessFailure?.(outcome.failure) ?? Effect.void;
-    return false;
-  });
+    }).pipe(
+      Effect.flatMap(() => options.onReady?.() ?? Effect.void),
+      Effect.as(true),
+      Effect.catchTags({
+        BackendReadinessTimeoutError: (error) =>
+          (options.onReadinessFailure?.(error) ?? Effect.void).pipe(Effect.as(false)),
+      }),
+    ),
+  );
 
   yield* probeReadiness().pipe(Effect.repeat({ while: (ready) => !ready }), Effect.forkScoped);
 
