@@ -2,6 +2,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 
@@ -160,24 +161,25 @@ export const readPersistedServerRuntimeState = (path: string) =>
 export const clearPersistedServerRuntimeStateIfOwned = (input: {
   readonly path: string;
   readonly state: Pick<PersistedServerRuntimeState, "pid" | "startedAt">;
-}) =>
+}): Effect.Effect<void, never, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const nonce = yield* Random.nextInt;
     const capturedPath = `${input.path}.clearing-${process.pid}-${nonce.toString(36)}`;
     const captured = yield* fs.rename(input.path, capturedPath).pipe(
       Effect.as(true),
-      Effect.catchTag("PlatformError", (cause) =>
-        cause.reason._tag === "NotFound"
-          ? Effect.succeed(false)
-          : Effect.fail(
-              new ServerRuntimeStateError({
-                operation: "clear",
-                statePath: input.path,
-                cause,
-              }),
-            ),
-      ),
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          cause.reason._tag === "NotFound"
+            ? Effect.succeed(false)
+            : Effect.fail(
+                new ServerRuntimeStateError({
+                  operation: "clear",
+                  statePath: input.path,
+                  cause,
+                }),
+              ),
+      }),
     );
     if (!captured) {
       return;
@@ -190,18 +192,54 @@ export const clearPersistedServerRuntimeStateIfOwned = (input: {
       current.value.startedAt === input.state.startedAt;
 
     if (!ownsCapturedState) {
-      yield* fs.link(capturedPath, input.path).pipe(
-        Effect.catchTag("PlatformError", (cause) =>
-          cause.reason._tag === "AlreadyExists"
-            ? Effect.void
-            : Effect.fail(
-                new ServerRuntimeStateError({
-                  operation: "clear",
-                  statePath: input.path,
-                  cause,
+      const restoreCapturedState = (
+        linkCause: PlatformError.PlatformError,
+      ): Effect.Effect<void, ServerRuntimeStateError> =>
+        fs.readFileString(capturedPath).pipe(
+          Effect.mapError(
+            (restoreCause) =>
+              new ServerRuntimeStateError({
+                operation: "clear",
+                statePath: input.path,
+                cause: { linkCause, restoreCause },
+              }),
+          ),
+          Effect.flatMap((contents) =>
+            fs
+              .writeFileString(input.path, contents, {
+                flag: "wx",
+                mode: 0o600,
+              })
+              .pipe(
+                Effect.catchTags({
+                  PlatformError: (restoreCause) =>
+                    restoreCause.reason._tag === "AlreadyExists"
+                      ? Effect.void
+                      : Effect.fail(
+                          new ServerRuntimeStateError({
+                            operation: "clear",
+                            statePath: input.path,
+                            cause: { linkCause, restoreCause },
+                          }),
+                        ),
                 }),
               ),
-        ),
+          ),
+        );
+
+      yield* fs.link(capturedPath, input.path).pipe(
+        Effect.catchTags({
+          PlatformError: (linkCause) => {
+            if (linkCause.reason._tag === "AlreadyExists") {
+              return Effect.void;
+            }
+            // Some filesystems do not support hard links. Preserve the same
+            // no-clobber contract with an exclusive create so a concurrent
+            // replacement writer always wins. The captured file stays in
+            // place unless this durable fallback completes.
+            return restoreCapturedState(linkCause);
+          },
+        }),
       );
     }
 
@@ -216,13 +254,14 @@ export const clearPersistedServerRuntimeStateIfOwned = (input: {
       ),
     );
   }).pipe(
-    Effect.catchTag("ServerRuntimeStateError", (error) =>
-      Effect.logWarning(error.message).pipe(
-        Effect.annotateLogs({
-          operation: error.operation,
-          statePath: error.statePath,
-          cause: error,
-        }),
-      ),
-    ),
+    Effect.catchTags({
+      ServerRuntimeStateError: (error) =>
+        Effect.logWarning(error.message).pipe(
+          Effect.annotateLogs({
+            operation: error.operation,
+            statePath: error.statePath,
+            cause: error,
+          }),
+        ),
+    }),
   );
