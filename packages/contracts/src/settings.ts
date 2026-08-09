@@ -499,7 +499,24 @@ export const SourceControlWritingStyleSettings = Schema.Struct({
 });
 export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyleSettings.Type;
 
-export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
+/**
+ * Balanced-profile cadence for the per-cwd remote status poller: git fetch,
+ * ahead/behind counts, and the PR lookup.
+ *
+ * At 30s this was an ~18% duty cycle per open repo. Traces measured
+ * refreshRemoteStatus at 5382ms average and 9507ms worst case, so the server
+ * spent five-plus seconds shelling out to git and gh every half minute, forever,
+ * for every open repo — 530 subprocess spawns in 12.8 minutes.
+ *
+ * Nothing on that path is latency-sensitive. Ahead/behind counts and PR state do
+ * not change on a 30-second cadence, and local status (dirty files, branch
+ * changes) refreshes on its own path via refreshLocalStatus, so the UI stays
+ * responsive to the user's own work regardless of this value.
+ *
+ * This is the `balanced` preset only. `performance` keeps its own 15s cadence
+ * for anyone who wants tighter polling, and `battery-saver` disables it.
+ */
+export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.minutes(5);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
 
 export const BackgroundActivityProfile = Schema.Literals([

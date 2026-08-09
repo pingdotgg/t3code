@@ -25,6 +25,11 @@ import { mergeGitStatusParts } from "@t3tools/shared/git";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 
+// Wake cadence used only when automatic fetching is disabled (configured
+// interval zero). The loop skips the actual refresh in that case, so this
+// decides how often the setting is re-checked, not how often we poll the
+// remote. The polling cadence is automaticGitFetchInterval, resolved from the
+// background activity profile.
 const DEFAULT_VCS_STATUS_REFRESH_INTERVAL = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
