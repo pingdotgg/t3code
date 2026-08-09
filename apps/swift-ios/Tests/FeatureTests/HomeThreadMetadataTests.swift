@@ -69,6 +69,16 @@ struct HomeThreadMetadataTests {
     }
 
     @Test
+    func futureAccessibilityDurationClampsToZeroSeconds() {
+        #expect(accessibilityDuration(startedAtOffset: 5) == "0 seconds")
+    }
+
+    @Test
+    func accessibilityDurationSpellsOutPluralHours() {
+        #expect(accessibilityDuration(startedAtOffset: -7_200) == "2 hours")
+    }
+
+    @Test
     func accessibilityDurationSpellsOutHoursAndMinutes() {
         #expect(
             accessibilityDuration(startedAtOffset: -5_465)

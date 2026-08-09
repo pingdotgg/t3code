@@ -175,8 +175,8 @@ public struct ThreadDetailView: View {
                 // waking every second forever.
                 Group {
                     if currentThread.homeStatus == .working,
-                       currentThread.workingStartedAt != nil {
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                       let startedAt = currentThread.workingStartedAt {
+                        TimelineView(.periodic(from: startedAt, by: 1)) { context in
                             headerStatus(at: context.date)
                         }
                     } else {
@@ -193,6 +193,11 @@ public struct ThreadDetailView: View {
         .frame(maxWidth: horizontalSizeClass == .compact ? 260 : 460, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
+        .accessibilityAddTraits(
+            currentThread.homeStatus == .working && currentThread.workingStartedAt != nil
+                ? .updatesFrequently
+                : []
+        )
     }
 
     @ViewBuilder
@@ -214,16 +219,13 @@ public struct ThreadDetailView: View {
         .lineLimit(1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(headerStatusAccessibilityLabel(at: now))
-        .accessibilityAddTraits(
-            currentThread.homeStatus == .working && currentThread.workingStartedAt != nil
-                ? .updatesFrequently
-                : []
-        )
     }
 
     private func headerStatusAccessibilityLabel(at now: Date) -> String {
-        if let startedAt = currentThread.workingStartedAt,
-           currentThread.homeStatus == .working {
+        if currentThread.homeStatus == .working {
+            guard let startedAt = currentThread.workingStartedAt else {
+                return "Agent is working"
+            }
             return "Agent is working for \(HomeWorkingDuration.accessibility(since: startedAt, now: now))"
         }
         return currentThread.homeStatusLabel ?? "Ready"
@@ -344,7 +346,9 @@ public struct ThreadDetailView: View {
                     activeSubagentCount: detail.activeSubagentCount,
                     backgroundWorkIsActive: detail.backgroundWorkIsActive,
                     isMonitoring: detail.thread.state == .monitoring,
-                    workingStartedAt: detail.thread.workingStartedAt,
+                    workingStartedAt: detail.thread.homeStatus == .working
+                        ? detail.thread.workingStartedAt
+                        : nil,
                     canLoadEarlier: detail.page?.hasMore == true,
                     isLoadingEarlier: detail.page?.isLoading == true,
                     onLoadEarlier: {
@@ -838,7 +842,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             let workingDetailChanged = currentActiveSubagentCount != activeSubagentCount
                 || currentBackgroundWorkIsActive != backgroundWorkIsActive
                 || currentIsMonitoring != isMonitoring
-            let workingStartChanged = currentWorkingStartedAt != workingStartedAt
+            let workingStartChanged = isWorking && currentWorkingStartedAt != workingStartedAt
             let loadEarlierChanged = currentCanLoadEarlier != canLoadEarlier
                 || currentIsLoadingEarlier != isLoadingEarlier
             guard threadChanged || typeSizeChanged || revisionChanged || workingChanged
@@ -1251,7 +1255,7 @@ private struct FeatureThreadWorkingIndicator: View {
         // The per-second timeline only exists while a start date is known;
         // without one the row stays static instead of waking every second.
         if let startedAt {
-            TimelineView(.periodic(from: .now, by: 1)) { context in
+            TimelineView(.periodic(from: startedAt, by: 1)) { context in
                 content(
                     duration: HomeWorkingDuration.compact(since: startedAt, now: context.date),
                     accessibilityDuration: HomeWorkingDuration.accessibility(
