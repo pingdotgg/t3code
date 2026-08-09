@@ -273,6 +273,20 @@ export function useNewThreadHandler() {
           racedDraft &&
           readThreadShell(scopeThreadRef(racedDraft.environmentId, racedDraft.threadId)) === null
         ) {
+          // Same remap the reuse paths above perform: point the draft at the
+          // caller's project member and apply any explicit workspace options.
+          // The winner already applied carry state, and both invocations
+          // derive it from the same viewed thread.
+          setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, racedDraft.draftId, {
+            threadId: racedDraft.threadId,
+            createdAt: racedDraft.createdAt,
+            runtimeMode: racedDraft.runtimeMode,
+            interactionMode: racedDraft.interactionMode,
+            ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
+            ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
+            ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
+            ...(hasStartFromOriginOption ? { startFromOrigin: options?.startFromOrigin } : {}),
+          });
           await router.navigate({
             to: "/draft/$draftId",
             params: { draftId: racedDraft.draftId },
