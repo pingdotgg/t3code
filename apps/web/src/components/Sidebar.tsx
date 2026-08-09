@@ -28,7 +28,7 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   AlarmClockIcon,
@@ -39,7 +39,6 @@ import {
   CircleCheckIcon,
   CircleDashedIcon,
   ClockIcon,
-  CopyIcon,
   FolderIcon,
   FolderPlusIcon,
   GitBranchIcon,
@@ -51,7 +50,6 @@ import {
   ServerIcon,
   SquarePenIcon,
   TerminalIcon,
-  Trash2Icon,
   Undo2Icon,
   XIcon,
 } from "lucide-react";
@@ -89,14 +87,9 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { isMacPlatform } from "~/lib/utils";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { readLocalApi } from "../localApi";
-import {
-  deriveProjectGroupingOverrideKey,
-  getProjectOrderKey,
-  selectProjectGroupingSettings,
-} from "../logicalProject";
+import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
 import {
   buildSidebarProjectSnapshots,
-  type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
@@ -105,7 +98,7 @@ import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
+import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
@@ -113,7 +106,6 @@ import { useProjects, useThreadShells } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
-import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
@@ -138,7 +130,6 @@ import {
   resolveSidebarThreadStatus,
   searchSidebarThreadsByTitle,
   resolveWorkingStartedAt,
-  shouldNavigateAfterProjectRemoval,
   sortLogicalProjectsForSidebar,
   sortPinnedThreadsForSidebar,
   sortSettledThreadsForSidebar,
@@ -166,33 +157,24 @@ import { primaryServerProvidersAtom } from "../state/server";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Button } from "./ui/button";
-import {
-  Dialog,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogPanel,
-  DialogPopup,
-  DialogTitle,
-} from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
-import { useComposerDraftStore } from "../composerDraftStore";
+import {
+  composerDraftHasUserContent,
+  DraftId,
+  useComposerDraftStore,
+  type ComposerThreadDraftState,
+  type DraftSessionState,
+} from "../composerDraftStore";
 
 // Settled-tail paging: recent history is the common lookup; the deep tail
 // stays behind an explicit Show more.
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
-const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
-  repository: "Group by repository",
-  repository_path: "Group by repository path",
-  separate: "Keep separate",
-};
 
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
@@ -254,6 +236,7 @@ function SidebarThreadTooltip({
   thread,
   projectTitle,
   projectCwd,
+  projectFaviconPath,
   environmentLabel,
   driverKind,
   modelInstanceId,
@@ -265,6 +248,7 @@ function SidebarThreadTooltip({
   thread: SidebarThreadSummary;
   projectTitle: string | null;
   projectCwd: string | null;
+  projectFaviconPath: string | null;
   environmentLabel: string | null;
   driverKind: ProviderInstanceEntry["driverKind"] | null;
   modelInstanceId: string;
@@ -294,6 +278,7 @@ function SidebarThreadTooltip({
               <ProjectFavicon
                 environmentId={thread.environmentId}
                 cwd={projectCwd ?? ""}
+                faviconPath={projectFaviconPath}
                 className="size-3 shrink-0 stroke-muted-foreground"
               />
               <div className="min-w-0 truncate text-foreground/75">{projectTitle}</div>
@@ -428,6 +413,233 @@ function SortablePinnedThreadRow(props: {
   return props.children({ listeners, setNodeRef, transform, transition, isDragging });
 }
 
+// One unsent draft session the user has invested content in. Two lines,
+// nothing else: project name, then the typed prompt. All the draft's
+// settings (model, env mode, branch, worktree) still travel with it —
+// clicking is a plain navigation to /draft/$draftId, which touches nothing.
+// While the draft is open the row renders a frozen snapshot (see
+// SidebarDraftBlock); memoized so per-keystroke block re-renders skip it
+// entirely.
+const SidebarDraftRow = memo(function SidebarDraftRow(props: {
+  draftId: DraftId;
+  session: DraftSessionState;
+  composer: ComposerThreadDraftState;
+  projectTitle: string | null;
+  projectCwd: string | null;
+  projectFaviconPath: string | null;
+  isActive: boolean;
+  onNavigate: (draftId: DraftId) => void;
+  onDiscard: (draftId: DraftId) => void;
+}) {
+  const { composer, draftId, onDiscard, onNavigate, session } = props;
+  const promptPreview = composer.prompt.trim().split("\n", 1)[0] ?? "";
+  // images mirrors persistedAttachments once rehydration finishes; before
+  // that only the persisted list is populated, hence max not sum.
+  const attachmentCount =
+    Math.max(composer.images.length, composer.persistedAttachments.length) +
+    composer.terminalContexts.length +
+    composer.elementContexts.length +
+    composer.previewAnnotations.length +
+    composer.reviewComments.length;
+  const preview =
+    promptPreview.length > 0
+      ? promptPreview
+      : `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`;
+  const handleActivate = useCallback(() => onNavigate(draftId), [draftId, onNavigate]);
+  const handleKeyDown = useCallback(
+    (event: ReactKeyboardEvent) => {
+      // Keys targeting the nested discard button belong to the button:
+      // preventDefault here would swallow Space's synthesized click and
+      // navigate instead of discarding.
+      if ((event.target as HTMLElement).closest("button")) return;
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        onNavigate(draftId);
+      }
+    },
+    [draftId, onNavigate],
+  );
+  const handleDiscard = useCallback(
+    (event: ReactMouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onDiscard(draftId);
+    },
+    [draftId, onDiscard],
+  );
+  return (
+    <li className="list-none py-0.5">
+      <div
+        role="button"
+        tabIndex={0}
+        data-testid="sidebar-draft-row"
+        className={cn(
+          "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left text-sidebar-foreground outline-none select-none",
+          props.isActive
+            ? "bg-sidebar-row-active"
+            : "bg-amber-400/[0.04] hover:bg-amber-400/[0.08]",
+        )}
+        onClick={handleActivate}
+        onKeyDown={handleKeyDown}
+      >
+        <div className="relative z-10 px-[var(--sidebar-row-content-inset)] py-[var(--sidebar-content-inset)]">
+          <div className="flex h-5 min-w-0 items-center gap-1.5">
+            <SquarePenIcon
+              aria-hidden
+              className="size-3 shrink-0 text-amber-600 dark:text-amber-300/80"
+            />
+            <ProjectFavicon
+              environmentId={session.environmentId}
+              cwd={props.projectCwd ?? ""}
+              faviconPath={props.projectFaviconPath}
+              className="size-4 shrink-0"
+            />
+            <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
+              {props.projectTitle}
+            </span>
+            <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
+              <button
+                type="button"
+                aria-label="Discard draft"
+                title="Discard draft"
+                onClick={handleDiscard}
+                className="pointer-events-none inline-flex cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100"
+              >
+                <XIcon className="size-3" />
+              </button>
+            </span>
+          </div>
+          <div className="mt-0.5 truncate text-sm font-medium text-foreground/90">{preview}</div>
+        </div>
+      </div>
+    </li>
+  );
+});
+
+interface SidebarDraftRowData {
+  draftId: DraftId;
+  session: DraftSessionState;
+  composer: ComposerThreadDraftState;
+}
+
+// Draft sessions with user content, surfaced above the pinned block so an
+// interrupted "new thread" stays one click away. Self-contained (own store
+// subscription + closing divider) so per-keystroke composer updates
+// re-render only this block, never the whole sidebar. Vanishes at count 0.
+const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
+  projectDisplayNameByKey: ReadonlyMap<string, string>;
+  projectCwdByKey: ReadonlyMap<string, string>;
+  projectFaviconPathByKey: ReadonlyMap<string, string | null | undefined>;
+  scopedProjectKeys: ReadonlySet<string> | null;
+  routeDraftId: string | null;
+  onNavigateToDraft: (draftId: DraftId) => void;
+}) {
+  const draftThreadsByThreadKey = useComposerDraftStore((store) => store.draftThreadsByThreadKey);
+  const draftsByThreadKey = useComposerDraftStore((store) => store.draftsByThreadKey);
+  const clearDraftThread = useComposerDraftStore((store) => store.clearDraftThread);
+  // The open draft's row is FROZEN at the moment the draft became the route:
+  // it stays visible (like a thread row) but never repaints while the user
+  // types. A draft that was never navigated away from has no snapshot to
+  // freeze, so a fresh typing session shows no row at all. Captured
+  // synchronously on route change (setState-during-render derived state) so
+  // the row never flickers out for a frame between route change and capture.
+  const [frozenActive, setFrozenActive] = useState<{
+    routeDraftId: string | null;
+    row: SidebarDraftRowData | null;
+  }>({ routeDraftId: null, row: null });
+  if (frozenActive.routeDraftId !== props.routeDraftId) {
+    let row: SidebarDraftRowData | null = null;
+    if (props.routeDraftId !== null) {
+      const draftId = DraftId.make(props.routeDraftId);
+      const store = useComposerDraftStore.getState();
+      const session = store.getDraftSession(draftId);
+      const composer = store.getComposerDraft(draftId);
+      row =
+        session && session.promotedTo == null && composer && composerDraftHasUserContent(composer)
+          ? { draftId, session, composer }
+          : null;
+    }
+    setFrozenActive({ routeDraftId: props.routeDraftId, row });
+  }
+  const drafts = useMemo(() => {
+    const rows: SidebarDraftRowData[] = [];
+    // Every non-promoted session with content gets a row, mapped or not:
+    // new-thread surfaces mint fresh drafts and leave invested ones behind
+    // unmapped, so the mapping only knows about the latest per project.
+    for (const [draftKey, session] of Object.entries(draftThreadsByThreadKey)) {
+      if (session.promotedTo != null) {
+        continue;
+      }
+      if (
+        props.scopedProjectKeys !== null &&
+        !props.scopedProjectKeys.has(`${session.environmentId}:${session.projectId}`)
+      ) {
+        continue;
+      }
+      if (draftKey === props.routeDraftId) {
+        // Open draft: render the frozen entry snapshot, or nothing for a
+        // draft that has never been left. Gated on the LIVE session above so
+        // send/discard still removes the row immediately.
+        if (frozenActive.routeDraftId === draftKey && frozenActive.row !== null) {
+          rows.push(frozenActive.row);
+        }
+        continue;
+      }
+      const composer = draftsByThreadKey[draftKey];
+      if (!composer || !composerDraftHasUserContent(composer)) {
+        continue;
+      }
+      rows.push({ draftId: DraftId.make(draftKey), session, composer });
+    }
+    rows.sort((left, right) => right.session.createdAt.localeCompare(left.session.createdAt));
+    return rows;
+  }, [
+    draftThreadsByThreadKey,
+    draftsByThreadKey,
+    frozenActive,
+    props.routeDraftId,
+    props.scopedProjectKeys,
+  ]);
+  const handleDiscard = useCallback(
+    (draftId: DraftId) => {
+      // The /draft/$draftId route redirects home on its own when the draft
+      // it renders disappears, so discarding the open draft needs no
+      // special-casing here.
+      clearDraftThread(draftId);
+    },
+    [clearDraftThread],
+  );
+  if (drafts.length === 0) {
+    return null;
+  }
+  return (
+    <>
+      {drafts.map(({ composer, draftId, session }) => {
+        const projectKey = `${session.environmentId}:${session.projectId}`;
+        return (
+          <SidebarDraftRow
+            key={draftId}
+            draftId={draftId}
+            session={session}
+            composer={composer}
+            projectTitle={props.projectDisplayNameByKey.get(projectKey) ?? null}
+            projectCwd={props.projectCwdByKey.get(projectKey) ?? null}
+            projectFaviconPath={props.projectFaviconPathByKey.get(projectKey) ?? null}
+            isActive={draftId === props.routeDraftId}
+            onNavigate={props.onNavigateToDraft}
+            onDiscard={handleDiscard}
+          />
+        );
+      })}
+      <li
+        aria-hidden
+        data-testid="sidebar-draft-divider"
+        className="mx-2.5 my-1.5 h-px list-none bg-sidebar-border/60"
+      />
+    </>
+  );
+});
+
 const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   thread: SidebarThreadSummary;
   variant: "card" | "slim";
@@ -462,6 +674,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   currentEnvironmentId: string | null;
   environmentLabel: string | null;
   projectCwd: string | null;
+  projectFaviconPath: string | null;
   projectTitle: string | null;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   timestampFormat: TimestampFormat;
@@ -652,6 +865,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       thread={thread}
       projectTitle={props.projectTitle}
       projectCwd={props.projectCwd}
+      projectFaviconPath={props.projectFaviconPath}
       environmentLabel={props.environmentLabel}
       driverKind={driverKind}
       modelInstanceId={modelInstanceId}
@@ -917,6 +1131,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               <ProjectFavicon
                 environmentId={thread.environmentId}
                 cwd={props.projectCwd ?? ""}
+                faviconPath={props.projectFaviconPath}
                 className="size-4"
                 fallbackIcon={MessageSquareIcon}
               />
@@ -1056,6 +1271,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               <ProjectFavicon
                 environmentId={thread.environmentId}
                 cwd={props.projectCwd ?? ""}
+                faviconPath={props.projectFaviconPath}
                 className="size-4 shrink-0"
               />
               {props.projectTitle ? (
@@ -1192,18 +1408,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ) : null}
             </div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-              {/* While working, the current plan step outranks the branch:
-                  it's the one line that says what the thread is doing. */}
-              {status === "working" && thread.planProgress ? (
-                <span className="min-w-0 flex-1 truncate whitespace-nowrap">
-                  {thread.planProgress.step}
-                  {/* Completed count, matching the transcript chip's n/m. */}
-                  <span className="text-icon-muted tabular-nums">
-                    {" "}
-                    {thread.planProgress.completedSteps}/{thread.planProgress.totalSteps}
-                  </span>
-                </span>
-              ) : thread.branch ? (
+              {/* Always the branch. The plan step used to take this slot while
+                  working, but it truncated to a half-sentence and dropped the
+                  branch, so the row lost its most stable identifier. */}
+              {thread.branch ? (
                 <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
               ) : (
                 <span className="flex-1" />
@@ -1257,6 +1465,7 @@ function latestTurnDiff(
 const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   thread: SidebarThreadSummary;
   projectCwd: string | null;
+  projectFaviconPath: string | null;
   projectTitle: string | null;
   environmentLabel: string | null;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
@@ -1329,6 +1538,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           <ProjectFavicon
             environmentId={thread.environmentId}
             cwd={props.projectCwd ?? ""}
+            faviconPath={props.projectFaviconPath}
             className="size-4 shrink-0"
             fallbackIcon={MessageSquareIcon}
           />
@@ -1341,6 +1551,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           thread={thread}
           projectTitle={props.projectTitle}
           projectCwd={props.projectCwd}
+          projectFaviconPath={props.projectFaviconPath}
           environmentLabel={props.environmentLabel}
           driverKind={driverKind}
           modelInstanceId={modelInstanceId}
@@ -1379,13 +1590,6 @@ export default function Sidebar() {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
-  const deleteProject = useAtomCommand(projectEnvironment.delete, {
-    reportFailure: false,
-  });
-  const updateProject = useAtomCommand(projectEnvironment.update, {
-    reportFailure: false,
-  });
-  const updateSettings = useUpdateClientSettings();
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
       toastManager.add({
@@ -1423,9 +1627,6 @@ export default function Sidebar() {
       );
     },
   });
-  const [projectActionsTarget, setProjectActionsTarget] = useState<SidebarProjectSnapshot | null>(
-    null,
-  );
   const [projectScopeMenuOpen, setProjectScopeMenuOpen] = useState(false);
   const newThreadContext = useHandleNewThread();
   const openAddProjectCommandPalette = useCallback(
@@ -1527,6 +1728,13 @@ export default function Sidebar() {
       ),
     [projects],
   );
+  const projectFaviconPathByKey = useMemo(
+    () =>
+      new Map(
+        projects.map((project) => [`${project.environmentId}:${project.id}`, project.faviconPath]),
+      ),
+    [projects],
+  );
   const projectDisplayNameByKey = useMemo(
     () =>
       new Map(
@@ -1596,162 +1804,52 @@ export default function Sidebar() {
       setProjectScopeKey(null);
     }
   }, [projectScopeKey, scopedProjectGroup]);
+  // Count-only subscription: the parent needs "are there draft rows" for the
+  // empty state, while SidebarDraftBlock owns the per-keystroke content
+  // subscription. Selecting a number keeps typing in a draft composer from
+  // re-rendering the whole sidebar. Approximates the block's row filter
+  // (every non-promoted session with content); it can overcount by one for
+  // an open never-left draft, which only softens the empty state.
+  const routeDraftIdForRows = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
+  const visibleDraftSessionCount = useComposerDraftStore((store) => {
+    let count = 0;
+    for (const [draftKey, session] of Object.entries(store.draftThreadsByThreadKey)) {
+      if (session.promotedTo != null) {
+        continue;
+      }
+      if (!composerDraftHasUserContent(store.draftsByThreadKey[draftKey])) {
+        continue;
+      }
+      if (
+        scopedProjectKeys !== null &&
+        !scopedProjectKeys.has(`${session.environmentId}:${session.projectId}`)
+      ) {
+        continue;
+      }
+      count += 1;
+    }
+    return count;
+  });
   // Scope flips drop the selection: rows selected under the old scope may be
   // hidden now, and bulk actions must never count or touch invisible rows.
   useEffect(() => {
     clearSelection();
   }, [clearSelection, projectScopeKey]);
 
-  const handleRemoveProjectMembers = useCallback(
-    async (projectGroup: SidebarProjectSnapshot, members: readonly SidebarProjectGroupMember[]) => {
-      const api = readLocalApi();
-      if (!api) return;
-
-      const memberKeys = new Set(members.map((member) => `${member.environmentId}:${member.id}`));
-      const projectThreads = threads.filter((thread) =>
-        memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
-      );
-      const isWholeGroup = members.length === projectGroup.memberProjects.length;
-      const singleMember = members.length === 1 ? members[0]! : null;
-      const targetLabel = singleMember?.title ?? projectGroup.displayName;
-      const confirmed = await settlePromise(() =>
-        api.dialogs.confirm(
-          projectThreads.length > 0
-            ? [
-                `Remove project "${targetLabel}" and delete its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}?`,
-                ...(singleMember
-                  ? [
-                      `Path: ${singleMember.workspaceRoot}`,
-                      ...(singleMember.environmentLabel
-                        ? [`Environment: ${singleMember.environmentLabel}`]
-                        : []),
-                    ]
-                  : [`This removes ${members.length} grouped project entries.`]),
-                "This permanently clears conversation history for those threads.",
-                isWholeGroup
-                  ? "This removes only the project entries, not the files on disk."
-                  : "Other entries in this grouped project are unaffected.",
-                "This action cannot be undone.",
-              ].join("\n")
-            : [
-                `Remove project "${targetLabel}"?`,
-                ...(singleMember
-                  ? [
-                      `Path: ${singleMember.workspaceRoot}`,
-                      ...(singleMember.environmentLabel
-                        ? [`Environment: ${singleMember.environmentLabel}`]
-                        : []),
-                    ]
-                  : [`This removes ${members.length} grouped project entries.`]),
-                isWholeGroup
-                  ? "This removes only the project entries, not the files on disk."
-                  : "Other entries in this grouped project are unaffected.",
-              ].join("\n"),
-        ),
-      );
-      if (confirmed._tag === "Failure" || !confirmed.value) return;
-
-      const draftStore = useComposerDraftStore.getState();
-      let shouldNavigate = false;
-      for (const project of members) {
-        const memberThreads = projectThreads.filter(
-          (thread) =>
-            thread.environmentId === project.environmentId && thread.projectId === project.id,
-        );
-        const projectRef = scopeProjectRef(project.environmentId, project.id);
-        const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
-        const memberRemovalNeedsNavigation = shouldNavigateAfterProjectRemoval({
-          routeTarget: routeTargetRef.current,
-          projectThreads: memberThreads,
-          projectDraftId: projectDraftThread?.draftId ?? null,
-        });
-
-        const result = await deleteProject({
-          environmentId: project.environmentId,
-          input: {
-            projectId: project.id,
-            ...(memberThreads.length > 0 ? { force: true } : {}),
-          },
-        });
-        if (result._tag === "Failure") {
-          if (!isAtomCommandInterrupted(result)) {
-            const error = squashAtomCommandFailure(result);
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: `Failed to remove "${project.title}"`,
-                description: error instanceof Error ? error.message : "An error occurred.",
-              }),
-            );
-          }
-          if (shouldNavigate) {
-            void router.navigate({ to: "/" });
-          }
-          return;
-        }
-
-        shouldNavigate ||= memberRemovalNeedsNavigation;
-        if (projectDraftThread) {
-          draftStore.clearDraftThread(projectDraftThread.draftId);
-        }
-        draftStore.clearProjectDraftThreadId(projectRef);
-      }
-
-      if (shouldNavigate) {
-        void router.navigate({ to: "/" });
-      }
-    },
-    [deleteProject, router, threads],
-  );
-
-  const renameProjectMember = useCallback(
-    async (member: SidebarProjectGroupMember, nextTitle: string) => {
-      const title = nextTitle.trim();
-      if (!title) {
-        toastManager.add({ type: "warning", title: "Project title cannot be empty" });
-        return;
-      }
-      if (title === member.title) return;
-      const result = await updateProject({
-        environmentId: member.environmentId,
-        input: { projectId: member.id, title },
-      });
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to rename project",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      }
-    },
-    [updateProject],
-  );
-
-  const updateProjectGroupingPreference = useCallback(
-    (member: SidebarProjectGroupMember, selection: SidebarProjectGroupingMode | "inherit") => {
-      const overrideKey = deriveProjectGroupingOverrideKey(member);
-      const nextOverrides = { ...projectGroupingSettings.sidebarProjectGroupingOverrides };
-      if (selection === "inherit") {
-        delete nextOverrides[overrideKey];
-      } else {
-        nextOverrides[overrideKey] = selection;
-      }
-      updateSettings({ sidebarProjectGroupingOverrides: nextOverrides });
-    },
-    [projectGroupingSettings.sidebarProjectGroupingOverrides, updateSettings],
-  );
-
   const handleProjectActions = useCallback(
     (event: ReactMouseEvent<HTMLButtonElement>, projectGroup: SidebarProjectSnapshot) => {
       event.preventDefault();
       event.stopPropagation();
       setProjectScopeMenuOpen(false);
-      window.requestAnimationFrame(() => setProjectActionsTarget(projectGroup));
+      if (isMobile) {
+        setOpenMobile(false);
+      }
+      void router.navigate({
+        to: "/settings/projects/$projectKey",
+        params: { projectKey: projectGroup.projectKey },
+      });
     },
-    [],
+    [isMobile, router, setOpenMobile],
   );
 
   // Settled threads stay in the live shell stream (settled ≠ archived), so
@@ -2054,6 +2152,21 @@ export default function Sidebar() {
     [clearSelection, isMobile, router, setOpenMobile, setSelectionAnchor],
   );
 
+  const navigateToDraft = useCallback(
+    (draftId: DraftId) => {
+      // Unconditional: also drops a stale selection anchor left by
+      // plain-click navigation, so a later shift-click starts fresh
+      // instead of ranging from a row that is no longer the context.
+      // (clearSelection no-ops when there is nothing to clear.)
+      clearSelection();
+      if (isMobile) {
+        setOpenMobile(false);
+      }
+      void router.navigate({ to: "/draft/$draftId", params: { draftId } });
+    },
+    [clearSelection, isMobile, router, setOpenMobile],
+  );
+
   const clearThreadSearch = useCallback(() => {
     setThreadSearchQuery("");
     setActiveSearchResultIndex(0);
@@ -2269,22 +2382,28 @@ export default function Sidebar() {
   );
   // Drag-to-reorder for the pinned block. A drop computes ONE fractional key
   // for the moved thread and sends it to that thread's own server (see
-  // planPinnedReorder for the keyless-neighbor materialization case). The
-  // optimistic order keeps the card where it was dropped until the
-  // confirming event round-trips; canonical order matching it releases the
-  // override, and a failed write clears it (the card snaps back) with a toast.
-  // ANY membership change (new pin, unpin, snooze/wake) also releases it:
-  // the override can't say where members it never saw belong, and holding it
-  // would misplace them and launder the stale order into later drags.
+  // planPinnedReorder for the keyless-neighbor materialization case, which
+  // instead rewrites every key in the section). The optimistic order keeps
+  // the card where it was dropped until EVERY key the drop wrote is
+  // reflected in canonical state — a section rewrite is several sequential
+  // writes, and releasing on the first landed key would expose the
+  // half-written canonical order, reshuffling the block once per write.
+  // A failed write clears the override (the card snaps back) with a toast.
+  // A key we did NOT write landing (a concurrent client's reorder that must
+  // win) and ANY membership change (new pin, unpin, snooze/wake) also
+  // release it: the override can't say where members it never saw belong,
+  // and holding it would launder a stale order into later drags.
   const pinnedDndSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
   const [optimisticPinnedOrder, setOptimisticPinnedOrder] = useState<{
     readonly order: readonly string[];
-    /** pinOrderKey per thread as of the drop, so ANY landed write (ours
-        confirming, or a concurrent one from another client) releases the
-        override rather than fighting canonical state. */
+    /** pinOrderKey per thread as of the drop — the baseline that tells a
+        concurrent client's write apart from one of our own landing. */
     readonly keysAtDrop: ReadonlyMap<string, string | null>;
+    /** The keys this drop writes (one per planned assignment). The
+        override holds until all of them appear in canonical state. */
+    readonly assignedKeys: ReadonlyMap<string, string>;
   } | null>(null);
   const orderedPinnedThreads = useMemo(() => {
     if (optimisticPinnedOrder === null) return pinnedThreads;
@@ -2303,24 +2422,32 @@ export default function Sidebar() {
       scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
     );
     // The override represents one drop against one snapshot of the world.
-    // Release it as soon as the world moves on in any way: membership
-    // changed (pin/unpin/snooze/wake — the override can't say where members
-    // it never saw belong), a key changed (our write confirming, or a
-    // concurrent client's reorder that must win), or canonical already
-    // matches. Holding it longer would misplace newcomers and launder the
-    // stale order into later drags.
+    // Release it when the world moves on: membership changed (pin/unpin/
+    // snooze/wake — the override can't say where members it never saw
+    // belong), a key changed to something we did NOT write (a concurrent
+    // client's reorder that must win), every key we wrote has landed, or
+    // canonical already matches. Releasing on the FIRST landed key instead
+    // of the last exposes the half-written order mid-materialization and
+    // the block visibly reshuffles once per write.
     const membershipChanged =
       canonicalKeys.length !== optimisticPinnedOrder.order.length ||
       canonicalKeys.some((key) => !optimisticPinnedOrder.order.includes(key));
-    const anyKeyLanded = canonical.some(
-      (thread, index) =>
-        optimisticPinnedOrder.keysAtDrop.get(canonicalKeys[index]!) !==
-        (thread.pinOrderKey ?? null),
+    const foreignKeyLanded = canonical.some((thread, index) => {
+      const threadKey = canonicalKeys[index]!;
+      const currentKey = thread.pinOrderKey ?? null;
+      if (currentKey === optimisticPinnedOrder.keysAtDrop.get(threadKey)) return false;
+      return currentKey !== optimisticPinnedOrder.assignedKeys.get(threadKey);
+    });
+    const currentKeyByThreadKey = new Map(
+      canonical.map((thread, index) => [canonicalKeys[index]!, thread.pinOrderKey ?? null]),
+    );
+    const allAssignmentsLanded = [...optimisticPinnedOrder.assignedKeys].every(
+      ([threadKey, orderKey]) => currentKeyByThreadKey.get(threadKey) === orderKey,
     );
     const orderConfirmed =
       !membershipChanged &&
       canonicalKeys.every((key, index) => key === optimisticPinnedOrder.order[index]);
-    if (membershipChanged || anyKeyLanded || orderConfirmed) {
+    if (membershipChanged || foreignKeyLanded || allAssignmentsLanded || orderConfirmed) {
       setOptimisticPinnedOrder(null);
     }
   }, [optimisticPinnedOrder, pinnedThreads, reorderablePinnedKeys]);
@@ -2390,7 +2517,13 @@ export default function Sidebar() {
         movedId: activeKey,
       });
       if (assignments.length === 0) return;
-      setOptimisticPinnedOrder({ order: newOrder, keysAtDrop });
+      setOptimisticPinnedOrder({
+        order: newOrder,
+        keysAtDrop,
+        assignedKeys: new Map(
+          assignments.map((assignment) => [assignment.id, assignment.orderKey]),
+        ),
+      });
       void (async () => {
         // Sequential, stop on first failure. There is deliberately no
         // rollback: every key write is a complete, valid placement on its
@@ -2404,8 +2537,12 @@ export default function Sidebar() {
             scopeThreadRef(thread.environmentId, thread.id),
             assignment.orderKey,
           );
-          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          if (result._tag === "Failure") {
+            // Any failure — interrupted included — releases the override:
+            // a key that never lands would otherwise hold it until some
+            // unrelated world change came along.
             setOptimisticPinnedOrder(null);
+            if (isAtomCommandInterrupted(result)) return;
             const error = squashAtomCommandFailure(result);
             toastManager.add(
               stackedThreadToast({
@@ -3114,6 +3251,7 @@ export default function Sidebar() {
                       <ProjectFavicon
                         environmentId={scopedProjectGroup.environmentId}
                         cwd={scopedProjectGroup.workspaceRoot}
+                        faviconPath={scopedProjectGroup.faviconPath}
                         className="size-4 shrink-0"
                       />
                     ) : (
@@ -3151,6 +3289,7 @@ export default function Sidebar() {
                             <ProjectFavicon
                               environmentId={project.environmentId}
                               cwd={project.workspaceRoot}
+                              faviconPath={project.faviconPath}
                               className="size-4 shrink-0"
                             />
                             <span className="min-w-0 truncate text-sm">{project.displayName}</span>
@@ -3222,6 +3361,11 @@ export default function Sidebar() {
                         thread={thread}
                         projectCwd={
                           projectCwdByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
+                        }
+                        projectFaviconPath={
+                          projectFaviconPathByKey.get(
+                            `${thread.environmentId}:${thread.projectId}`,
+                          ) ?? null
                         }
                         projectTitle={
                           projectDisplayNameByKey.get(
@@ -3326,6 +3470,11 @@ export default function Sidebar() {
                         projectCwd={
                           projectCwdByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
                         }
+                        projectFaviconPath={
+                          projectFaviconPathByKey.get(
+                            `${thread.environmentId}:${thread.projectId}`,
+                          ) ?? null
+                        }
                         projectTitle={
                           projectDisplayNameByKey.get(
                             `${thread.environmentId}:${thread.projectId}`,
@@ -3352,13 +3501,23 @@ export default function Sidebar() {
                       />
                     );
                   };
-                  // Pinned block: full cards above the inbox, closed by a
-                  // thin divider (the pin glyphs carry the meaning, so no
-                  // header text). Vanishes entirely at count 0.
-                  // Rows render in the one shared pinned order; only
+                  // Draft block above everything, then the pinned block:
+                  // full cards above the inbox, closed by a thin divider (the
+                  // pin glyphs carry the meaning, so no header text). Both
+                  // vanish entirely at count 0.
+                  // Pinned rows render in the one shared pinned order; only
                   // reorder-capable rows register as sortable (legacy-server
                   // pins render in place as plain rows).
                   const items: ReactNode[] = [
+                    <SidebarDraftBlock
+                      key="draft-sessions"
+                      projectDisplayNameByKey={projectDisplayNameByKey}
+                      projectCwdByKey={projectCwdByKey}
+                      projectFaviconPathByKey={projectFaviconPathByKey}
+                      scopedProjectKeys={scopedProjectKeys}
+                      routeDraftId={routeDraftIdForRows}
+                      onNavigateToDraft={navigateToDraft}
+                    />,
                     <DndContext
                       key="pinned-dnd"
                       sensors={pinnedDndSensors}
@@ -3494,6 +3653,7 @@ export default function Sidebar() {
             </TooltipProvider>
           ) : null}
           {!isSearchingThreads &&
+          visibleDraftSessionCount === 0 &&
           pinnedThreads.length +
             activeThreads.length +
             snoozedThreads.length +
@@ -3521,190 +3681,6 @@ export default function Sidebar() {
           ) : null}
         </SidebarGroup>
       </SidebarContent>
-      <Dialog
-        open={projectActionsTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) setProjectActionsTarget(null);
-        }}
-      >
-        <DialogPopup className="max-w-xl">
-          <DialogHeader className="gap-3 pb-1!">
-            <DialogTitle className="text-balance">Project settings</DialogTitle>
-            <DialogDescription className="sr-only">
-              Manage project names, grouping rules, and environments.
-            </DialogDescription>
-            <div className="grid gap-1.5 text-base text-muted-foreground">
-              {projectActionsTarget?.memberProjects.map((member) => (
-                <div key={member.physicalProjectKey} className="flex min-w-0 items-center gap-3">
-                  <span className="flex min-w-0 items-center gap-1">
-                    <FolderIcon className="size-3.5 shrink-0 opacity-60" />
-                    <span className="min-w-0 truncate font-mono">{member.workspaceRoot}</span>
-                    <Button
-                      size="icon-xs"
-                      variant="ghost"
-                      className="size-4 shrink-0 rounded-sm"
-                      aria-label="Copy project path"
-                      title="Copy project path"
-                      onClick={() =>
-                        copyPathToClipboard(member.workspaceRoot, { path: member.workspaceRoot })
-                      }
-                    >
-                      <CopyIcon className="size-3.5" />
-                    </Button>
-                  </span>
-                  <span className="flex min-w-0 shrink-0 items-center gap-1">
-                    <ServerIcon className="size-3.5 shrink-0 opacity-60" />
-                    <span className="min-w-0 truncate">
-                      {member.environmentLabel ?? "Current environment"}
-                    </span>
-                  </span>
-                </div>
-              ))}
-            </div>
-          </DialogHeader>
-          <DialogPanel className="p-0">
-            <div className="divide-y divide-border/60">
-              {projectActionsTarget?.memberProjects.map((member) => (
-                <section
-                  key={member.physicalProjectKey}
-                  className="grid min-w-0 gap-5 px-6 pb-5 pt-2 sm:gap-4 sm:pb-4 sm:pt-2"
-                >
-                  <div className="grid gap-4 sm:grid-cols-2 sm:gap-3">
-                    <label className="grid min-w-0 gap-1.5">
-                      <span className="font-medium text-foreground">Project name</span>
-                      <Input
-                        key={`${member.physicalProjectKey}:${member.title}`}
-                        aria-label={`Project name in ${member.environmentLabel ?? "current environment"}`}
-                        defaultValue={member.title}
-                        onBlur={(event) => {
-                          void renameProjectMember(member, event.currentTarget.value);
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") event.currentTarget.blur();
-                        }}
-                      />
-                    </label>
-                    <label className="grid min-w-0 gap-1.5">
-                      <span className="font-medium text-foreground">Grouping rule</span>
-                      <Select
-                        value={
-                          projectGroupingSettings.sidebarProjectGroupingOverrides?.[
-                            deriveProjectGroupingOverrideKey(member)
-                          ] ?? "inherit"
-                        }
-                        onValueChange={(value) => {
-                          if (
-                            value === "inherit" ||
-                            value === "repository" ||
-                            value === "repository_path" ||
-                            value === "separate"
-                          ) {
-                            updateProjectGroupingPreference(member, value);
-                          }
-                        }}
-                      >
-                        <SelectTrigger
-                          className="w-full sm:min-h-7.5"
-                          aria-label={`Grouping rule for ${member.environmentLabel ?? "current environment"}`}
-                        >
-                          <SelectValue>
-                            {(() => {
-                              const selection =
-                                projectGroupingSettings.sidebarProjectGroupingOverrides?.[
-                                  deriveProjectGroupingOverrideKey(member)
-                                ] ?? "inherit";
-                              return selection === "inherit"
-                                ? `Default (${PROJECT_GROUPING_MODE_LABELS[projectGroupingSettings.sidebarProjectGroupingMode]})`
-                                : PROJECT_GROUPING_MODE_LABELS[selection];
-                            })()}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectPopup align="start" alignItemWithTrigger={false}>
-                          <SelectItem hideIndicator value="inherit">
-                            Use global default
-                          </SelectItem>
-                          <SelectItem hideIndicator value="repository">
-                            {PROJECT_GROUPING_MODE_LABELS.repository}
-                          </SelectItem>
-                          <SelectItem hideIndicator value="repository_path">
-                            {PROJECT_GROUPING_MODE_LABELS.repository_path}
-                          </SelectItem>
-                          <SelectItem hideIndicator value="separate">
-                            {PROJECT_GROUPING_MODE_LABELS.separate}
-                          </SelectItem>
-                        </SelectPopup>
-                      </Select>
-                    </label>
-                  </div>
-                  {projectActionsTarget.memberProjects.length > 1 ? (
-                    <div className="flex justify-end">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-destructive-foreground hover:bg-destructive/8 hover:text-destructive-foreground"
-                        onClick={() => {
-                          const projectGroup = projectActionsTarget;
-                          setProjectActionsTarget(null);
-                          void handleRemoveProjectMembers(projectGroup, [member]);
-                        }}
-                      >
-                        <Trash2Icon />
-                        Remove project
-                      </Button>
-                    </div>
-                  ) : null}
-                </section>
-              ))}
-            </div>
-            {projectActionsTarget && projectActionsTarget.memberProjects.length > 1 ? (
-              <div className="flex flex-col gap-3 border-t border-border/60 bg-muted/32 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <p className="text-base font-medium text-foreground sm:text-sm">
-                    Remove this project everywhere
-                  </p>
-                  <p className="text-base text-pretty text-muted-foreground sm:text-sm">
-                    Deletes all grouped entries and their conversation history.
-                  </p>
-                </div>
-                <Button
-                  size="sm"
-                  variant="destructive-outline"
-                  className="shrink-0"
-                  onClick={() => {
-                    const projectGroup = projectActionsTarget;
-                    setProjectActionsTarget(null);
-                    void handleRemoveProjectMembers(projectGroup, projectGroup.memberProjects);
-                  }}
-                >
-                  <Trash2Icon />
-                  Remove all entries
-                </Button>
-              </div>
-            ) : null}
-          </DialogPanel>
-          <DialogFooter
-            variant="bare"
-            className={cn(
-              projectActionsTarget?.memberProjects.length === 1 && "sm:justify-between",
-            )}
-          >
-            {projectActionsTarget?.memberProjects.length === 1 ? (
-              <Button
-                variant="destructive-outline"
-                onClick={() => {
-                  const projectGroup = projectActionsTarget;
-                  setProjectActionsTarget(null);
-                  void handleRemoveProjectMembers(projectGroup, projectGroup.memberProjects);
-                }}
-              >
-                <Trash2Icon />
-                Remove project
-              </Button>
-            ) : null}
-            <Button onClick={() => setProjectActionsTarget(null)}>Close</Button>
-          </DialogFooter>
-        </DialogPopup>
-      </Dialog>
       <SidebarChromeFooter />
     </>
   );
