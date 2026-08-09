@@ -18,7 +18,9 @@ import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityRes
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import { encodeThreadDetailPageCursor } from "../threadDetailCursor.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
@@ -29,6 +31,7 @@ const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(val
 const projectionSnapshotLayer = it.layer(
   OrchestrationProjectionSnapshotQueryLive.pipe(
     Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provide(ThreadPlanProgress.layer),
     Layer.provideMerge(RepositoryIdentityResolver.layer),
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(NodeServices.layer),
@@ -84,6 +87,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           pending_approval_count,
           pending_user_input_count,
           has_actionable_proposed_plan,
+          pinned_at,
+          pin_order_key,
           created_at,
           updated_at,
           deleted_at
@@ -102,6 +107,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           1,
           0,
           0,
+          '2026-02-24T00:00:01.000Z',
+          'gm',
           '2026-02-24T00:00:02.000Z',
           '2026-02-24T00:00:03.000Z',
           NULL
@@ -314,7 +321,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           settledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
-          pinnedAt: null,
+          pinnedAt: "2026-02-24T00:00:01.000Z",
+          pinOrderKey: "gm",
           titleRegeneration: null,
           deletedAt: null,
           messages: [
@@ -430,7 +438,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           settledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
-          pinnedAt: null,
+          pinnedAt: "2026-02-24T00:00:01.000Z",
+          pinOrderKey: "gm",
           titleRegeneration: null,
           session: {
             threadId: ThreadId.make("thread-1"),
@@ -446,6 +455,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
           backgroundLiveness: null,
+          planProgress: null,
         },
       ]);
 
@@ -1829,6 +1839,7 @@ it.effect(
     const resolveCalls: string[] = [];
     const layer = OrchestrationProjectionSnapshotQueryLive.pipe(
       Layer.provide(ThreadBackgroundLiveness.layer),
+      Layer.provide(ThreadPlanProgress.layer),
       Layer.provideMerge(
         Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
           resolve: (cwd: string) =>
@@ -1917,3 +1928,407 @@ it.effect(
     }).pipe(Effect.provide(layer));
   },
 );
+
+projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) => {
+  // A thread shaped like real fan-out usage: user turns interleaved with
+  // subagent turns (no user pending message), plus a turnless straggler user
+  // message and a turnless activity anchored between turns.
+  //
+  //   row  turn      pending msg        anchor (requested_at)
+  //   1    turn-1    user-msg-1         T00
+  //   2    turn-2    (subagent)         T01
+  //   3    turn-3    (subagent)         T02
+  //   4    turn-4    user-msg-4         T03
+  //   5    turn-5    user-msg-5         T04
+  //
+  // Straggler user message at T03.5 (turn_id NULL, not any pending_message_id)
+  // and a turnless activity at T03.6 — both belong to the page containing T03+.
+  const seedFanOutThread = Effect.fnUntraced(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    // Tests in this block share one in-memory database; reset before seeding.
+    yield* sql`DELETE FROM projection_projects`;
+    yield* sql`DELETE FROM projection_threads`;
+    yield* sql`DELETE FROM projection_turns`;
+    yield* sql`DELETE FROM projection_thread_messages`;
+    yield* sql`DELETE FROM projection_thread_activities`;
+    yield* sql`DELETE FROM projection_state`;
+
+    yield* sql`
+      INSERT INTO projection_projects (
+        project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at
+      )
+      VALUES ('project-w', 'Windowed', '/tmp/project-w', '[]',
+        '2026-03-01T00:00:00.000Z', '2026-03-01T00:00:00.000Z', NULL)
+    `;
+    yield* sql`
+      INSERT INTO projection_threads (
+        thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+        latest_turn_id, pending_approval_count, pending_user_input_count,
+        has_actionable_proposed_plan, created_at, updated_at, deleted_at
+      )
+      VALUES ('thread-w', 'project-w', 'Windowed thread',
+        '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default',
+        'turn-5', 0, 0, 0, '2026-03-01T00:00:00.000Z', '2026-03-01T00:00:10.000Z', NULL)
+    `;
+
+    const turns: ReadonlyArray<{
+      turn: string;
+      pendingMessage: string | null;
+      at: string;
+    }> = [
+      { turn: "turn-1", pendingMessage: "user-msg-1", at: "2026-03-01T00:00:00.000Z" },
+      { turn: "turn-2", pendingMessage: null, at: "2026-03-01T00:01:00.000Z" },
+      { turn: "turn-3", pendingMessage: null, at: "2026-03-01T00:02:00.000Z" },
+      { turn: "turn-4", pendingMessage: "user-msg-4", at: "2026-03-01T00:03:00.000Z" },
+      { turn: "turn-5", pendingMessage: "user-msg-5", at: "2026-03-01T00:04:00.000Z" },
+    ];
+    for (const { turn, pendingMessage, at } of turns) {
+      yield* sql`
+        INSERT INTO projection_turns (
+          thread_id, turn_id, pending_message_id, state, requested_at, started_at, completed_at,
+          checkpoint_files_json
+        )
+        VALUES ('thread-w', ${turn}, ${pendingMessage}, 'completed', ${at}, ${at}, ${at}, '[]')
+      `;
+      if (pendingMessage !== null) {
+        yield* sql`
+          INSERT INTO projection_thread_messages (
+            message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
+          )
+          VALUES (${pendingMessage}, 'thread-w', NULL, 'user', ${"prompt for " + turn}, 0, ${at}, ${at})
+        `;
+      }
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
+        )
+        VALUES (${turn + "-reply"}, 'thread-w', ${turn}, 'assistant', ${"reply from " + turn}, 0, ${at}, ${at})
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at
+        )
+        VALUES (${turn + "-activity"}, 'thread-w', ${turn}, 'tool', 'tool.completed',
+          'ran tool', '{"ok":true}', ${at})
+      `;
+    }
+
+    // Straggler user message sent while turn-4 ran: turn_id NULL and not any
+    // turn's pending_message_id.
+    yield* sql`
+      INSERT INTO projection_thread_messages (
+        message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
+      )
+      VALUES ('user-msg-straggler', 'thread-w', NULL, 'user', 'while you are at it',
+        0, '2026-03-01T00:03:30.000Z', '2026-03-01T00:03:30.000Z')
+    `;
+    // Turnless activity in the same time range.
+    yield* sql`
+      INSERT INTO projection_thread_activities (
+        activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at
+      )
+      VALUES ('turnless-activity', 'thread-w', NULL, 'info', 'context-window.updated',
+        'usage', '{"usedTokens":1}', '2026-03-01T00:03:36.000Z')
+    `;
+
+    for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
+      yield* sql`
+        INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+        VALUES (${projector}, 42, '2026-03-01T00:00:10.000Z')
+      `;
+    }
+  });
+
+  const threadW = ThreadId.make("thread-w");
+  const messageIds = (snapshot: { thread: { messages: ReadonlyArray<{ id: string }> } }) =>
+    snapshot.thread.messages.map((message) => message.id).toSorted();
+  const activityIds = (snapshot: { thread: { activities: ReadonlyArray<{ id: string }> } }) =>
+    snapshot.thread.activities.map((activity) => activity.id).toSorted();
+
+  it.effect("returns the full thread with no page metadata when no window is requested", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+      const snapshot = yield* snapshotQuery.getThreadDetailSnapshot(threadW);
+      assert.equal(snapshot._tag, "Some");
+      if (snapshot._tag === "Some") {
+        assert.equal(snapshot.value.page, undefined);
+        assert.equal(snapshot.value.thread.messages.length, 9);
+        assert.equal(snapshot.value.thread.activities.length, 6);
+        assert.equal(snapshot.value.snapshotSequence, 42);
+      }
+    }),
+  );
+
+  it.effect("windows to the last N user-anchored turns with subagent turns riding along", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+      // turnLimit 2 walks back: turn-5 (user), turn-4 (user) -> window is
+      // rows 4..5. Subagent turns 2-3 are older than the 2nd user turn and
+      // stay out; the straggler message and turnless activity (T03.5/T03.6,
+      // after turn-4's anchor) ride along.
+      const snapshot = yield* snapshotQuery.getThreadDetailSnapshot(threadW, { turnLimit: 2 });
+      assert.equal(snapshot._tag, "Some");
+      if (snapshot._tag === "Some") {
+        assert.deepEqual(messageIds(snapshot.value), [
+          "turn-4-reply",
+          "turn-5-reply",
+          "user-msg-4",
+          "user-msg-5",
+          "user-msg-straggler",
+        ]);
+        assert.deepEqual(activityIds(snapshot.value), [
+          "turn-4-activity",
+          "turn-5-activity",
+          "turnless-activity",
+        ]);
+        assert.equal(snapshot.value.page?.hasMore, true);
+        assert.notEqual(snapshot.value.page?.beforeCursor, null);
+        assert.equal(snapshot.value.page?.snapshotSequence, 42);
+      }
+    }),
+  );
+
+  it.effect("subagent turns between user turns ride along inside the window", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+      // turnLimit 3 reaches user turn-1, dragging subagent turns 2-3 along:
+      // the full thread, so no further pages.
+      const snapshot = yield* snapshotQuery.getThreadDetailSnapshot(threadW, { turnLimit: 3 });
+      assert.equal(snapshot._tag, "Some");
+      if (snapshot._tag === "Some") {
+        assert.equal(snapshot.value.thread.messages.length, 9);
+        assert.equal(snapshot.value.thread.activities.length, 6);
+        assert.equal(snapshot.value.page?.hasMore, false);
+        assert.equal(snapshot.value.page?.beforeCursor, null);
+      }
+    }),
+  );
+
+  it.effect("cursors survive a projection rewrite that reassigns turn row ids", () =>
+    Effect.gen(function* () {
+      // The revert projector (and any projection rebuild) deletes and
+      // re-upserts projection_turns, assigning fresh autoincrement row ids.
+      // The keyset cursor is derived from event content, so a page cursor
+      // minted before the rewrite must keep working after it.
+      yield* seedFanOutThread();
+      const sql = yield* SqlClient.SqlClient;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+      const firstPage = yield* snapshotQuery.getThreadDetailSnapshot(threadW, { turnLimit: 2 });
+      assert.equal(firstPage._tag, "Some");
+      if (firstPage._tag !== "Some") return;
+      const cursor = firstPage.value.page?.beforeCursor;
+      assert.notEqual(cursor, null);
+      if (cursor === null || cursor === undefined) return;
+
+      // Simulate the rewrite: delete and re-insert every turn row with the
+      // same content, which reassigns all row ids.
+      const turnRows = yield* sql`
+        SELECT thread_id, turn_id, pending_message_id, state, requested_at, started_at,
+          completed_at, checkpoint_files_json
+        FROM projection_turns WHERE thread_id = 'thread-w' ORDER BY row_id
+      `;
+      yield* sql`DELETE FROM projection_turns WHERE thread_id = 'thread-w'`;
+      for (const row of turnRows) {
+        yield* sql`
+          INSERT INTO projection_turns (
+            thread_id, turn_id, pending_message_id, state, requested_at, started_at,
+            completed_at, checkpoint_files_json
+          )
+          VALUES (${row.thread_id as string}, ${row.turn_id as string},
+            ${row.pending_message_id as string | null}, ${row.state as string},
+            ${row.requested_at as string}, ${row.started_at as string},
+            ${row.completed_at as string}, ${row.checkpoint_files_json as string})
+        `;
+      }
+
+      const olderPage = yield* snapshotQuery.getThreadDetailSnapshot(threadW, {
+        turnLimit: 1,
+        beforeCursor: cursor,
+      });
+      assert.equal(olderPage._tag, "Some");
+      if (olderPage._tag === "Some") {
+        // Identical older slice to what the pre-rewrite cursor would return.
+        assert.deepEqual(messageIds(olderPage.value), [
+          "turn-1-reply",
+          "turn-2-reply",
+          "turn-3-reply",
+          "user-msg-1",
+        ]);
+        assert.equal(olderPage.value.page?.hasMore, false);
+      }
+    }),
+  );
+
+  it.effect("beforeCursor returns the disjoint adjacent older slice", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+      const firstPage = yield* snapshotQuery.getThreadDetailSnapshot(threadW, { turnLimit: 2 });
+      assert.equal(firstPage._tag, "Some");
+      if (firstPage._tag !== "Some") return;
+      const cursor = firstPage.value.page?.beforeCursor;
+      assert.notEqual(cursor, null);
+      assert.notEqual(cursor, undefined);
+      if (cursor === null || cursor === undefined) return;
+
+      // Older page: user turn-1 plus subagent turns 2-3 riding along. Disjoint
+      // from the first page: no turn-4/5 rows, no straggler.
+      const olderPage = yield* snapshotQuery.getThreadDetailSnapshot(threadW, {
+        turnLimit: 1,
+        beforeCursor: cursor,
+      });
+      assert.equal(olderPage._tag, "Some");
+      if (olderPage._tag === "Some") {
+        assert.deepEqual(messageIds(olderPage.value), [
+          "turn-1-reply",
+          "turn-2-reply",
+          "turn-3-reply",
+          "user-msg-1",
+        ]);
+        assert.deepEqual(activityIds(olderPage.value), [
+          "turn-1-activity",
+          "turn-2-activity",
+          "turn-3-activity",
+        ]);
+        assert.equal(olderPage.value.page?.hasMore, false);
+        assert.equal(olderPage.value.page?.beforeCursor, null);
+      }
+    }),
+  );
+
+  it.effect("a cursor for a different thread degrades to the first page", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+      const firstPage = yield* snapshotQuery.getThreadDetailSnapshot(threadW, { turnLimit: 2 });
+      assert.equal(firstPage._tag, "Some");
+      if (firstPage._tag !== "Some") return;
+
+      const foreign = encodeThreadDetailPageCursor({
+        threadId: ThreadId.make("thread-other"),
+        beforeAnchorAt: "2026-03-01T00:01:00.000Z",
+        beforeTurnId: "turn-2",
+      });
+      const snapshot = yield* snapshotQuery.getThreadDetailSnapshot(threadW, {
+        turnLimit: 2,
+        beforeCursor: foreign,
+      });
+      assert.equal(snapshot._tag, "Some");
+      if (snapshot._tag === "Some") {
+        assert.deepEqual(messageIds(snapshot.value), messageIds(firstPage.value));
+      }
+    }),
+  );
+
+  it.effect("a malformed cursor degrades to the first page instead of failing", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+      const snapshot = yield* snapshotQuery.getThreadDetailSnapshot(threadW, {
+        turnLimit: 2,
+        beforeCursor: "not-a-cursor",
+      });
+      assert.equal(snapshot._tag, "Some");
+      if (snapshot._tag === "Some") {
+        assert.equal(snapshot.value.page?.hasMore, true);
+        assert.equal(snapshot.value.thread.messages.length, 5);
+      }
+    }),
+  );
+
+  it.effect("windows never split below the raw-turn ceiling boundary contiguously", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+      // Page repeatedly with turnLimit 1 and assert the union of all pages is
+      // exactly the full thread with no duplicates (disjointness + coverage).
+      const seenMessages: string[] = [];
+      const seenActivities: string[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < 10; page += 1) {
+        const snapshot = yield* snapshotQuery.getThreadDetailSnapshot(threadW, {
+          turnLimit: 1,
+          ...(cursor !== undefined ? { beforeCursor: cursor } : {}),
+        });
+        assert.equal(snapshot._tag, "Some");
+        if (snapshot._tag !== "Some") return;
+        seenMessages.push(...snapshot.value.thread.messages.map((message) => message.id));
+        seenActivities.push(...snapshot.value.thread.activities.map((activity) => activity.id));
+        const next = snapshot.value.page?.beforeCursor;
+        if (next === null || next === undefined) break;
+        cursor = next;
+      }
+      assert.equal(new Set(seenMessages).size, seenMessages.length);
+      assert.equal(new Set(seenActivities).size, seenActivities.length);
+      assert.equal(seenMessages.length, 9);
+      assert.equal(seenActivities.length, 6);
+    }),
+  );
+
+  it.effect("a thread with no turns returns its content unwindowed on the first page", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at
+        )
+        VALUES ('project-e', 'Empty', '/tmp/project-e', '[]',
+          '2026-03-02T00:00:00.000Z', '2026-03-02T00:00:00.000Z', NULL)
+      `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+          pending_approval_count, pending_user_input_count, has_actionable_proposed_plan,
+          created_at, updated_at, deleted_at
+        )
+        VALUES ('thread-e', 'project-e', 'Turnless thread',
+          '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default',
+          0, 0, 0, '2026-03-02T00:00:00.000Z', '2026-03-02T00:00:00.000Z', NULL)
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
+        )
+        VALUES ('pre-turn-msg', 'thread-e', NULL, 'user', 'first prompt', 0,
+          '2026-03-02T00:00:01.000Z', '2026-03-02T00:00:01.000Z')
+      `;
+      for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
+        yield* sql`
+          INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+          VALUES (${projector}, 7, '2026-03-02T00:00:01.000Z')
+        `;
+      }
+
+      const snapshot = yield* snapshotQuery.getThreadDetailSnapshot(ThreadId.make("thread-e"), {
+        turnLimit: 5,
+      });
+      assert.equal(snapshot._tag, "Some");
+      if (snapshot._tag === "Some") {
+        assert.deepEqual(messageIds(snapshot.value), ["pre-turn-msg"]);
+        assert.equal(snapshot.value.page?.hasMore, false);
+        assert.equal(snapshot.value.page?.beforeCursor, null);
+      }
+    }),
+  );
+});
