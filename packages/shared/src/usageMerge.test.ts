@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeUsage, type EnvironmentUsage } from "./usageMerge";
+import { mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
 
 function bucket(overrides: Partial<UsageBucket> = {}): UsageBucket {
   return {
