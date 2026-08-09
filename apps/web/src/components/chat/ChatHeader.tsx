@@ -200,12 +200,9 @@ export const ChatHeader = memo(function ChatHeader({
     if (!rect) return;
     openMenu({ x: rect.left, y: rect.bottom + 4 });
   }, [openMenu]);
-  const handleHeaderContextMenu = useCallback(
+  const handleTitleContextMenu = useCallback(
     (event: ReactMouseEvent) => {
       if (!isServerThread || renamingTitle !== null) return;
-      // The right-side controls (git, scripts, open-in) keep their own
-      // behavior; only the breadcrumb area opens the thread menu.
-      if ((event.target as HTMLElement).closest("[data-chat-header-actions]")) return;
       event.preventDefault();
       openMenu({ x: event.clientX, y: event.clientY });
     },
@@ -225,10 +222,7 @@ export const ChatHeader = memo(function ChatHeader({
     [commitRename],
   );
   return (
-    <div
-      className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3"
-      onContextMenu={handleHeaderContextMenu}
-    >
+    <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
       <WorkspaceBreadcrumb ariaLabel="Thread breadcrumb" className="flex-1">
         {/* The project always leads the header: knowing which project a
             thread lives in is priority zero, and the thread title alone
@@ -285,6 +279,7 @@ export const ChatHeader = memo(function ChatHeader({
                     aria-label={`Thread actions for ${activeThreadTitle}`}
                     aria-haspopup="menu"
                     onClick={openMenuFromTitle}
+                    onContextMenu={handleTitleContextMenu}
                     className="group/thread-title inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1 rounded-sm text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                   />
                 }
