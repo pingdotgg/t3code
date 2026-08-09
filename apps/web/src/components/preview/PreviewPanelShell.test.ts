@@ -58,7 +58,18 @@ describe("PreviewPanelShell", () => {
     }
     expect(maximizedHtml).toContain('data-preview-panel-maximized="true"');
     expect(maximizedHtml).not.toContain("right-panel-inline-gap");
-    expect(maximizedHtml).not.toContain("right-panel-inline-surface");
+    expect(maximizedHtml).toContain("right-panel-inline-surface");
+    expect(maximizedHtml).not.toContain("right-panel-inline-maximized-exit");
+  });
+
+  it("keeps a maximized panel full-width while its surface exits", () => {
+    const html = renderPreviewPanelShell("inline", { open: false, maximized: true });
+
+    expect(html).toContain("right-panel-inline-maximized-exit");
+    expect(html).toContain("right-panel-inline-surface");
+    expect(html).toContain('data-preview-panel-maximized="true"');
+    expect(html).toContain('data-right-panel-open="false"');
+    expect(html).not.toContain("right-panel-inline-gap");
   });
 
   it("does not apply the inline opening layout to sheet panels", () => {

@@ -6456,12 +6456,13 @@ function ChatViewContent(props: ChatViewProps) {
             surfaces: rightPanelState.surfaces,
             activeSurfaceId: selectedRightPanelSurface?.id ?? null,
             content: rightPanelContent,
+            maximized: rightPanelMaximized,
           }}
         >
           {(snapshot, onExitComplete) => (
             <RightPanelTabs
               mode="inline"
-              maximized={rightPanelMaximized}
+              maximized={snapshot.maximized}
               open={rightPanelOpen}
               onExitComplete={onExitComplete}
               surfaces={snapshot.surfaces}

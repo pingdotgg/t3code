@@ -441,6 +441,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     translate: 100%;
   }
 
+  .right-panel-inline-maximized-exit[data-right-panel-open="false"] .right-panel-inline-surface {
+    translate: 100%;
+  }
+
   @starting-style {
     .right-panel-inline-gap[data-right-panel-open="true"] {
       width: 0;

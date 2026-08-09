@@ -60,7 +60,11 @@ export function PreviewPanelShell(props: {
       <div
         className={cn(
           "right-panel-inline-frame relative h-full min-h-0 min-w-0 self-stretch",
-          maximized ? "flex-1" : "right-panel-inline-gap shrink-0",
+          maximized
+            ? open
+              ? "flex-1"
+              : "right-panel-inline-maximized-exit absolute inset-0 z-10"
+            : "right-panel-inline-gap shrink-0",
         )}
         style={maximized ? undefined : ({ "--right-panel-width": `${width}px` } as CSSProperties)}
         data-preview-panel-mode={props.mode}
@@ -78,11 +82,20 @@ export function PreviewPanelShell(props: {
       >
         <div
           className={cn(
-            "right-panel-inline-body flex h-full min-h-0 min-w-0 flex-col border-l border-border bg-background",
-            maximized
-              ? "relative w-full"
-              : "right-panel-inline-surface absolute inset-y-0 right-0 w-(--right-panel-width)",
+            "right-panel-inline-body right-panel-inline-surface flex h-full min-h-0 min-w-0 flex-col border-l border-border bg-background",
+            maximized ? "relative w-full" : "absolute inset-y-0 right-0 w-(--right-panel-width)",
           )}
+          onTransitionEnd={(event) => {
+            if (
+              open ||
+              !maximized ||
+              event.target !== event.currentTarget ||
+              event.propertyName !== "translate"
+            ) {
+              return;
+            }
+            props.onExitComplete?.();
+          }}
         >
           {panelContents}
         </div>
