@@ -145,6 +145,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     ...defaultSchema.attributes,
     "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
     code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
+    span: [...(defaultSchema.attributes?.span ?? []), "dataColorSwatch", "className", "style"],
   },
   protocols: {
     ...defaultSchema.protocols,
@@ -157,6 +158,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkNormalizeListItemIndentation,
   remarkPreserveCodeMeta,
   remarkTagInlineCode,
+  remarkColorSwatches,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
@@ -165,6 +167,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkBreaks,
   remarkPreserveCodeMeta,
   remarkTagInlineCode,
+  remarkColorSwatches,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
@@ -261,6 +264,53 @@ function remarkTagInlineCode() {
     };
 
     visit(tree, false);
+  };
+}
+
+const COLOR_LITERAL_REGEX = /(#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b|(?:rgb|rgba|hsl|hsla)\([^)]+\))/gi;
+
+function remarkColorSwatches() {
+  return (tree: MarkdownAstNode) => {
+    const visit = (node: MarkdownAstNode) => {
+      if (!node.children) return;
+      for (let i = 0; i < node.children.length; i++) {
+        const child = node.children[i];
+        if (child && child.type === "text" && typeof (child as any).value === "string") {
+          const textValue = (child as any).value as string;
+          const matches = [...textValue.matchAll(COLOR_LITERAL_REGEX)];
+          if (matches.length > 0) {
+            const newChildren: MarkdownAstNode[] = [];
+            let lastIndex = 0;
+            for (const match of matches) {
+              const start = match.index!;
+              const end = start + match[0].length;
+              if (start > lastIndex) {
+                newChildren.push({ type: "text", value: textValue.slice(lastIndex, start) } as any);
+              }
+              newChildren.push({
+                type: "colorSwatch",
+                data: {
+                  hName: "span",
+                  hProperties: {
+                    dataColorSwatch: match[0],
+                  },
+                },
+                children: [{ type: "text", value: match[0] } as any],
+              });
+              lastIndex = end;
+            }
+            if (lastIndex < textValue.length) {
+              newChildren.push({ type: "text", value: textValue.slice(lastIndex) } as any);
+            }
+            node.children.splice(i, 1, ...newChildren);
+            i += newChildren.length - 1;
+          }
+        } else {
+          visit(child as MarkdownAstNode);
+        }
+      }
+    };
+    visit(tree);
   };
 }
 
@@ -1413,6 +1463,21 @@ function ChatMarkdown({
     };
 
     return {
+      span({ node, className, children, ...props }) {
+        if ("data-color-swatch" in props) {
+          const colorValue = String(props["data-color-swatch"]);
+          return (
+            <span className="inline-flex items-center gap-1">
+              <span
+                className="inline-block size-3 shrink-0 rounded-[3px] border border-border"
+                style={{ backgroundColor: colorValue }}
+              />
+              <span {...props} className={className}>{children}</span>
+            </span>
+          );
+        }
+        return <span {...props} className={className}>{children}</span>;
+      },
       p({ node: _node, children, ...props }) {
         return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</p>;
       },
