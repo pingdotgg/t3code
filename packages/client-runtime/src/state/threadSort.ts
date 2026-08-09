@@ -7,6 +7,9 @@ export interface ThreadSortInput {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly latestUserMessageAt?: string | null;
+  readonly latestTurn?: {
+    readonly completedAt?: string | null;
+  } | null;
   readonly messages?: ReadonlyArray<{
     readonly createdAt: string;
     readonly role: string;
@@ -65,6 +68,10 @@ export function getThreadSortTimestamp(
     return (
       getFirstSortableTimestamp(thread.createdAt, thread.updatedAt) ?? Number.NEGATIVE_INFINITY
     );
+  }
+  if (sortOrder === "activity") {
+    const completedAt = toSortableTimestamp(thread.latestTurn?.completedAt ?? undefined);
+    return Math.max(getLatestUserMessageTimestamp(thread), completedAt ?? Number.NEGATIVE_INFINITY);
   }
   return getLatestUserMessageTimestamp(thread);
 }
