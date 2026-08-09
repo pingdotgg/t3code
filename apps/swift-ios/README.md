@@ -131,8 +131,9 @@ T3_SWIFT_DEVELOPMENT_TEAM="TEAMID1234" \
 The script builds, provisions, installs, and launches the Debug identity by
 default. Set `T3_SWIFT_CONFIGURATION=Release` for the TestFlight identity. It
 accepts the T3 Connect build settings above as environment variables. Optional
-overrides are `T3_SWIFT_DERIVED_DATA_PATH`, `T3_SWIFT_VERSION`, and
-`T3_SWIFT_BUILD_NUMBER`. Run with
+overrides are `T3_SWIFT_DERIVED_DATA_PATH`, `T3_SWIFT_VERSION`,
+`T3_SWIFT_BUILD_NUMBER`, and—on Debug builds only—`T3_SWIFT_BASE_REF` for the
+build comparison line. Run with
 `T3_SWIFT_VERIFY_BUNDLE_IDENTIFIERS_ONLY=1` to verify the configuration's host
 and extension bundle identifiers without a device build.
 

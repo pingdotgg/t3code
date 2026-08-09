@@ -296,6 +296,13 @@ public struct WorkspaceView: View {
             connectionBrand
                 .frame(maxWidth: .infinity, alignment: .leading)
 
+#if DEBUG
+            devBuildBadge
+                .frame(maxWidth: 120, alignment: .trailing)
+                .layoutPriority(-1)
+                .padding(.trailing, 4)
+#endif
+
             Button {
                 withAnimation(.easeOut(duration: 0.16)) {
                     isSearching.toggle()
@@ -334,6 +341,38 @@ public struct WorkspaceView: View {
         .frame(height: 49)
         .background(T3Colors.background)
     }
+
+#if DEBUG
+    private static let devBuildMetadata = DebugBuildMetadata(info: Bundle.main.infoDictionary)
+
+    @ViewBuilder
+    private var devBuildBadge: some View {
+        if Self.devBuildMetadata.commit == "unknown" {
+            EmptyView()
+        } else if let url = Self.devBuildMetadata.commitURL {
+            Link(destination: url) { devBuildBadgeLabel.underline() }
+                .foregroundStyle(T3Colors.textSecondary)
+                .accessibilityLabel("\(Self.devBuildMetadata.accessibilityLabel). Opens the commit on GitHub.")
+        } else {
+            devBuildBadgeLabel
+                .foregroundStyle(T3Colors.textSecondary)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(Self.devBuildMetadata.accessibilityLabel)
+        }
+    }
+
+    private var devBuildBadgeLabel: some View {
+        VStack(alignment: .trailing, spacing: 0) {
+            Text(Self.devBuildMetadata.identityLabel)
+            if let distance = Self.devBuildMetadata.distanceLabel {
+                Text(distance)
+            }
+        }
+        .font(.caption2.weight(.semibold).monospaced())
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
+    }
+#endif
 
     @ViewBuilder
     private var connectionBrand: some View {

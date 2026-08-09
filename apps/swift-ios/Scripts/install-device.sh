@@ -76,6 +76,58 @@ build_settings=(
   "DEVELOPMENT_TEAM=${DEVELOPMENT_TEAM}"
 )
 
+if [[ "${CONFIGURATION}" == "Debug" ]]; then
+  require_cmd git
+
+  GIT_COMMIT="$(git -C "${APP_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  if [[ "${GIT_COMMIT}" != "unknown" ]] && \
+     [[ -n "$(git -C "${APP_DIR}" status --porcelain -- . 2>/dev/null)" ]]; then
+    GIT_COMMIT="${GIT_COMMIT}-dirty"
+  fi
+
+  GIT_REPO_URL="$(git -C "${APP_DIR}" remote get-url upstream 2>/dev/null || true)"
+  if [[ -z "${GIT_REPO_URL}" ]]; then
+    GIT_REPO_URL="$(git -C "${APP_DIR}" remote get-url origin 2>/dev/null || true)"
+  fi
+  GIT_REPO_URL="${GIT_REPO_URL%.git}"
+  case "${GIT_REPO_URL}" in
+    https://*@*) GIT_REPO_URL="https://${GIT_REPO_URL#*@}" ;;
+    ssh://git@*) GIT_REPO_URL="https://${GIT_REPO_URL#ssh://git@}" ;;
+    git@*) GIT_REPO_URL="https://$(printf '%s' "${GIT_REPO_URL#git@}" | tr ':' '/')" ;;
+  esac
+  if [[ "${GIT_REPO_URL}" != https://github.com/* ]]; then
+    GIT_REPO_URL=""
+  fi
+
+  # Prefer an explicit comparison line, then the public repository's default.
+  GIT_BASE_REF="${T3_SWIFT_BASE_REF:-}"
+  if [[ -z "${GIT_BASE_REF}" ]]; then
+    GIT_BASE_REF="$(git -C "${APP_DIR}" symbolic-ref --short refs/remotes/upstream/HEAD 2>/dev/null || true)"
+  fi
+  if [[ -z "${GIT_BASE_REF}" ]] && \
+     git -C "${APP_DIR}" rev-parse --verify --quiet refs/remotes/upstream/main^{commit} >/dev/null; then
+    GIT_BASE_REF="upstream/main"
+  fi
+  if [[ -z "${GIT_BASE_REF}" ]]; then
+    GIT_BASE_REF="$(git -C "${APP_DIR}" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+  fi
+
+  GIT_AHEAD_COUNT=""
+  GIT_BEHIND_COUNT=""
+  if [[ -n "${GIT_BASE_REF}" ]] && git -C "${APP_DIR}" rev-parse --verify --quiet "${GIT_BASE_REF}^{commit}" >/dev/null; then
+    read -r GIT_BEHIND_COUNT GIT_AHEAD_COUNT < <(
+      git -C "${APP_DIR}" rev-list --left-right --count "${GIT_BASE_REF}...HEAD"
+    ) || true
+  fi
+  build_settings+=(
+    "T3_GIT_COMMIT=${GIT_COMMIT}"
+    "T3_GIT_REPO_URL=${GIT_REPO_URL}"
+    "T3_GIT_BASE_REF=${GIT_BASE_REF}"
+    "T3_GIT_AHEAD_COUNT=${GIT_AHEAD_COUNT}"
+    "T3_GIT_BEHIND_COUNT=${GIT_BEHIND_COUNT}"
+  )
+fi
+
 DEVICE_JSON="$(mktemp -t t3-swift-devices.XXXXXX)"
 trap 'unlink "${DEVICE_JSON}" 2>/dev/null || true' EXIT
 xcrun devicectl list devices --json-output "${DEVICE_JSON}" --quiet >/dev/null

@@ -34,6 +34,16 @@
             </dict>
         </dict>
     </dict>
+    <key>T3GitCommit</key>
+    <string>$(T3_GIT_COMMIT)</string>
+    <key>T3GitRepoURL</key>
+    <string>$(T3_GIT_REPO_URL)</string>
+    <key>T3GitBaseRef</key>
+    <string>$(T3_GIT_BASE_REF)</string>
+    <key>T3GitAheadCount</key>
+    <string>$(T3_GIT_AHEAD_COUNT)</string>
+    <key>T3GitBehindCount</key>
+    <string>$(T3_GIT_BEHIND_COUNT)</string>
     <key>T3ConnectClerkJWTTemplate</key>
     <string>$(T3CODE_CLERK_JWT_TEMPLATE)</string>
     <key>T3ConnectClerkPublishableKey</key>
