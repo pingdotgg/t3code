@@ -234,6 +234,7 @@ export async function fetchUsageCurrencyRates(now = new Date()): Promise<UsageCu
   let date = todayLocalDay(now);
 
   for (const row of rows) {
+    if (row.base !== "USD") continue;
     if (!isUsageCurrencyCode(row.quote)) continue;
     rates[row.quote] = row.rate;
     date = row.date;

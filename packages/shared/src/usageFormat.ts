@@ -11,8 +11,7 @@ const INTEGER = new Intl.NumberFormat("en-US");
 const currencyFormatters = new Map<string, Intl.NumberFormat>();
 const compactCurrencyFormatters = new Map<string, Intl.NumberFormat>();
 
-/** Formats a monetary amount in the given ISO 4217 currency. */
-export function formatCurrency(value: number, currency = "USD"): string {
+function getCurrencyFormatter(currency: string): Intl.NumberFormat {
   let formatter = currencyFormatters.get(currency);
   if (formatter === undefined) {
     // Omit fraction-digit overrides so Intl uses the currency's ISO default
@@ -23,16 +22,21 @@ export function formatCurrency(value: number, currency = "USD"): string {
     });
     currencyFormatters.set(currency, formatter);
   }
-  return formatter.format(value);
+  return formatter;
+}
+
+/** Formats a monetary amount in the given ISO 4217 currency. */
+export function formatCurrency(value: number, currency = "USD"): string {
+  return getCurrencyFormatter(currency).format(value);
 }
 
 export function formatUsd(value: number): string {
   return formatCurrency(value, "USD");
 }
 
-/** Short chart-axis form (`$1.2K`, `BIF 2.4M`) so wide currencies stay readable. */
+/** Short chart-axis form (`$1.2K`, `BIF 2M`) so wide currencies stay readable. */
 export function formatCurrencyCompact(value: number, currency = "USD"): string {
-  const maximumFractionDigits = compactCurrencyFractionDigits(value);
+  const maximumFractionDigits = compactCurrencyFractionDigits(value, currency);
   const cacheKey = `${currency}:${maximumFractionDigits}`;
   let formatter = compactCurrencyFormatters.get(cacheKey);
   if (formatter === undefined) {
