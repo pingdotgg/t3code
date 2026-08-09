@@ -18,6 +18,10 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
+import {
+  isDefaultThreadEnvModeSettled,
+  resolveDefaultThreadEnvMode,
+} from "@t3tools/shared/threadEnvMode";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 
@@ -366,20 +370,19 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     if (t3ProjectFileData === null || t3ProjectFileData.truncated) return null;
     return parseT3ProjectFile(t3ProjectFileData.contents)?.defaultThreadEnvMode ?? null;
   }, [t3ProjectFileData]);
-  const defaultWorkspaceMode: WorkspaceMode =
-    selectedProject?.defaultThreadEnvMode ??
-    t3ProjectFileDefaultMode ??
-    selectedEnvironmentServerConfig?.settings.defaultThreadEnvMode ??
-    "local";
-  // While the t3.json read is in flight the resolved default is provisional.
-  // Nothing may write it into the draft during that window (the auto-branch
-  // effect does), or the frozen interim value beats the file's default once
-  // it loads. Explicit draft picks and the project setting outrank the file,
-  // so those settle the mode immediately.
-  const defaultWorkspaceModeSettled =
-    selectedProjectDraft.workspaceSelection?.mode !== undefined ||
-    selectedProject?.defaultThreadEnvMode != null ||
-    !t3ProjectFileQuery.isPending;
+  const defaultWorkspaceMode: WorkspaceMode = resolveDefaultThreadEnvMode({
+    projectSetting: selectedProject?.defaultThreadEnvMode,
+    projectFile: t3ProjectFileDefaultMode,
+    globalDefault: selectedEnvironmentServerConfig?.settings.defaultThreadEnvMode ?? "local",
+  });
+  // While unsettled the resolved default is provisional. Nothing may write
+  // it into the draft during that window (the auto-branch effect does), or
+  // the frozen interim value beats the t3.json default once it loads.
+  const defaultWorkspaceModeSettled = isDefaultThreadEnvModeSettled({
+    explicitMode: selectedProjectDraft.workspaceSelection?.mode,
+    projectSetting: selectedProject?.defaultThreadEnvMode,
+    projectFilePending: t3ProjectFileQuery.isPending,
+  });
   const workspaceMode = selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode;
   const selectedBranchName = selectedProjectDraft.workspaceSelection?.branch ?? null;
   const selectedWorktreePath = selectedProjectDraft.workspaceSelection?.worktreePath ?? null;
