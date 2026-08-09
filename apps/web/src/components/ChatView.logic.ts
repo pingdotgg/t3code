@@ -154,13 +154,14 @@ export function reconcileMountedTerminalThreadIds(input: {
   openThreadIds: ReadonlyArray<string>;
   activeThreadId: string | null;
   activeThreadTerminalOpen: boolean;
+  activeThreadTerminalExiting?: boolean;
   maxHiddenThreadCount?: number;
 }): string[] {
   return reconcileRetainedMountedThreadIds({
     currentThreadIds: input.currentThreadIds,
     openThreadIds: input.openThreadIds,
     activeThreadId: input.activeThreadId,
-    activeThreadOpen: input.activeThreadTerminalOpen,
+    activeThreadOpen: input.activeThreadTerminalOpen || input.activeThreadTerminalExiting === true,
     maxHiddenThreadCount: input.maxHiddenThreadCount ?? MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   });
 }

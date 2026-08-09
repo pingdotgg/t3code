@@ -464,6 +464,18 @@ describe("reconcileMountedTerminalThreadIds", () => {
       }),
     ).toEqual(ids.slice(-MAX_HIDDEN_MOUNTED_TERMINAL_THREADS));
   });
+
+  it("retains the active terminal while its close transition exits", () => {
+    expect(
+      reconcileMountedTerminalThreadIds({
+        currentThreadIds: ["thread-a"],
+        openThreadIds: [],
+        activeThreadId: "thread-a",
+        activeThreadTerminalOpen: false,
+        activeThreadTerminalExiting: true,
+      }),
+    ).toEqual(["thread-a"]);
+  });
 });
 
 describe("reconcileRetainedMountedThreadIds", () => {

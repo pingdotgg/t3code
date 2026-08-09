@@ -154,6 +154,7 @@ import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
+import { TerminalDrawerTransitionShell } from "./TerminalDrawerTransitionShell";
 import {
   AlarmClockIcon,
   CheckCircle2Icon,
@@ -625,7 +626,8 @@ function serverTerminalIdsStrictSubsetOfClient(
 interface PersistentThreadTerminalDrawerProps {
   threadRef: { environmentId: EnvironmentId; threadId: ThreadId };
   threadId: ThreadId;
-  visible: boolean;
+  active: boolean;
+  onExitComplete: (threadKey: string) => void;
   launchContext: PersistentTerminalLaunchContext | null;
   focusRequestId: number;
   splitShortcutLabel: string | undefined;
@@ -639,7 +641,8 @@ interface PersistentThreadTerminalDrawerProps {
 const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDrawer({
   threadRef,
   threadId,
-  visible,
+  active,
+  onExitComplete,
   launchContext,
   focusRequestId,
   splitShortcutLabel,
@@ -663,6 +666,8 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   const terminalUiState = useTerminalUiStateStore((state) =>
     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef),
   );
+  const terminalOpen = active && terminalUiState.terminalOpen;
+  const [isResizing, setIsResizing] = useState(false);
   const knownTerminalSessions = useKnownTerminalSessions({
     environmentId: threadRef.environmentId,
     threadId,
@@ -795,11 +800,11 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   );
 
   const bumpFocusRequestId = useCallback(() => {
-    if (!visible) {
+    if (!terminalOpen) {
       return;
     }
     setLocalFocusRequestId((value) => value + 1);
-  }, [visible]);
+  }, [terminalOpen]);
 
   const setTerminalHeight = useCallback(
     (height: number) => {
@@ -939,50 +944,71 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
 
   const handleAddTerminalContext = useCallback(
     (selection: TerminalContextSelection) => {
-      if (!visible) {
+      if (!terminalOpen) {
         return;
       }
       onAddTerminalContext(selection);
     },
-    [onAddTerminalContext, visible],
+    [onAddTerminalContext, terminalOpen],
   );
 
-  if (!project || !terminalUiState.terminalOpen || !cwd) {
+  const terminalThreadKey = scopedThreadKey(threadRef);
+  useEffect(() => {
+    if (!active || terminalOpen) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      onExitComplete(terminalThreadKey);
+      return;
+    }
+    const timeoutId = window.setTimeout(
+      () => onExitComplete(terminalThreadKey),
+      TERMINAL_DRAWER_EXIT_FALLBACK_MS,
+    );
+    return () => window.clearTimeout(timeoutId);
+  }, [active, onExitComplete, terminalOpen, terminalThreadKey]);
+
+  if (!project || !cwd) {
     return null;
   }
 
   return (
-    <div className={visible ? undefined : "hidden"}>
+    <TerminalDrawerTransitionShell
+      active={active}
+      open={terminalOpen}
+      height={terminalUiState.terminalHeight}
+      resizing={terminalOpen && isResizing}
+      onExitComplete={() => onExitComplete(terminalThreadKey)}
+    >
       <ThreadTerminalDrawer
         threadRef={threadRef}
         threadId={threadId}
         cwd={cwd}
         worktreePath={effectiveWorktreePath}
         runtimeEnv={runtimeEnv}
-        visible={visible}
+        visible={terminalOpen}
         height={terminalUiState.terminalHeight}
         // Known-session order is MRU and changes on focus; persisted store order keeps sidebar labels stable.
         terminalIds={terminalUiState.terminalIds}
         activeTerminalId={terminalUiState.activeTerminalId}
         terminalGroups={terminalUiState.terminalGroups}
         activeTerminalGroupId={terminalUiState.activeTerminalGroupId}
-        focusRequestId={focusRequestId + localFocusRequestId + (visible ? 1 : 0)}
+        focusRequestId={focusRequestId + localFocusRequestId + (terminalOpen ? 1 : 0)}
         onSplitTerminal={splitTerminal}
         onSplitTerminalVertical={splitTerminalVertical}
         onNewTerminal={createNewTerminal}
-        splitShortcutLabel={visible ? splitShortcutLabel : undefined}
-        splitVerticalShortcutLabel={visible ? splitVerticalShortcutLabel : undefined}
-        newShortcutLabel={visible ? newShortcutLabel : undefined}
-        closeShortcutLabel={visible ? closeShortcutLabel : undefined}
+        splitShortcutLabel={terminalOpen ? splitShortcutLabel : undefined}
+        splitVerticalShortcutLabel={terminalOpen ? splitVerticalShortcutLabel : undefined}
+        newShortcutLabel={terminalOpen ? newShortcutLabel : undefined}
+        closeShortcutLabel={terminalOpen ? closeShortcutLabel : undefined}
         keybindings={keybindings}
         onActiveTerminalChange={activateTerminal}
         onCloseTerminal={closeTerminal}
         onHeightChange={setTerminalHeight}
+        onResizeStateChange={setIsResizing}
         onAddTerminalContext={handleAddTerminalContext}
         terminalLabelsById={terminalLabelsById}
         terminalLaunchLocationsById={terminalLaunchLocationsById}
       />
-    </div>
+    </TerminalDrawerTransitionShell>
   );
 });
 
@@ -1155,6 +1181,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
   );
 });
 
+const TERMINAL_DRAWER_EXIT_FALLBACK_MS = 250;
 const RIGHT_PANEL_EXIT_FALLBACK_MS = 250;
 
 /** Keep the heavy panel mounted only until its CSS exit finishes. */
@@ -1464,6 +1491,11 @@ function ChatViewContent(props: ChatViewProps) {
       }),
     [mountedTerminalThreadKeys],
   );
+  const completeTerminalDrawerExit = useCallback((terminalThreadKey: string) => {
+    setMountedTerminalThreadKeys((currentThreadKeys) =>
+      currentThreadKeys.filter((threadKey) => threadKey !== terminalThreadKey),
+    );
+  }, []);
 
   const fallbackDraftProjectRef = draftThread
     ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
@@ -1686,6 +1718,11 @@ function ChatViewContent(props: ChatViewProps) {
         openThreadIds: existingOpenTerminalThreadKeys,
         activeThreadId: activeThreadKey,
         activeThreadTerminalOpen: Boolean(activeThreadKey && terminalUiState.terminalOpen),
+        activeThreadTerminalExiting: Boolean(
+          activeThreadKey &&
+          !terminalUiState.terminalOpen &&
+          currentThreadIds.includes(activeThreadKey),
+        ),
         maxHiddenThreadCount: MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
       });
       return currentThreadIds.length === nextThreadIds.length &&
@@ -6433,7 +6470,8 @@ function ChatViewContent(props: ChatViewProps) {
             key={mountedThreadKey}
             threadRef={mountedThreadRef}
             threadId={mountedThreadRef.threadId}
-            visible={mountedThreadKey === activeThreadKey && terminalUiState.terminalOpen}
+            active={mountedThreadKey === activeThreadKey}
+            onExitComplete={completeTerminalDrawerExit}
             launchContext={
               mountedThreadKey === activeThreadKey ? (activeTerminalLaunchContext ?? null) : null
             }

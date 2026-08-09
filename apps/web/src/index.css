@@ -462,6 +462,48 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     }
   }
 
+  /* Match both sidebars' 200ms motion without resizing the terminal canvas on
+     every frame. The gap reallocates chat height while the fixed-size terminal
+     surface moves independently. */
+  .terminal-drawer-inline-gap {
+    height: var(--terminal-drawer-height);
+    transition: height 200ms linear;
+  }
+
+  .terminal-drawer-inline-gap[data-terminal-drawer-resizing="true"] {
+    transition: none;
+  }
+
+  .terminal-drawer-inline-surface {
+    translate: 0;
+    transition: translate 200ms linear;
+  }
+
+  .terminal-drawer-inline-gap[data-terminal-drawer-open="false"] {
+    height: 0;
+  }
+
+  .terminal-drawer-inline-gap[data-terminal-drawer-open="false"] .terminal-drawer-inline-surface {
+    translate: 0 100%;
+  }
+
+  @starting-style {
+    .terminal-drawer-inline-gap[data-terminal-drawer-open="true"] {
+      height: 0;
+    }
+
+    .terminal-drawer-inline-gap[data-terminal-drawer-open="true"] .terminal-drawer-inline-surface {
+      translate: 0 100%;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .terminal-drawer-inline-gap,
+    .terminal-drawer-inline-surface {
+      transition: none;
+    }
+  }
+
   .chat-composer-horizontal-inset {
     padding-inline-start: calc(env(safe-area-inset-left) + 0.75rem);
     padding-inline-end: calc(env(safe-area-inset-right) + 0.75rem);
