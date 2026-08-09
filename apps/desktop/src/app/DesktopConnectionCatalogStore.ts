@@ -469,9 +469,38 @@ export const make = Effect.gen(function* () {
     return Option.some(encoded);
   });
 
+  const readRecoverableDocument = readDocument(fileSystem, catalogPath).pipe(
+    Effect.catchTag("DesktopConnectionCatalogStoreDocumentDecodeError", (decodeError) =>
+      Effect.gen(function* () {
+        yield* Effect.gen(function* () {
+          const suffix = (yield* crypto.randomUUIDv4).replace(/-/g, "");
+          const quarantinePath = `${catalogPath}.corrupt.${process.pid}.${suffix}`;
+          yield* fileSystem.rename(catalogPath, quarantinePath);
+          yield* Effect.logWarning("Quarantined a corrupt desktop connection catalog.", {
+            catalogPath,
+            quarantinePath,
+            decodeError: decodeError.message,
+          });
+        }).pipe(
+          Effect.catch((quarantineError) =>
+            Effect.logWarning(
+              "Could not quarantine a corrupt desktop connection catalog; continuing without it.",
+              {
+                catalogPath,
+                decodeError: decodeError.message,
+                quarantineError: String(quarantineError),
+              },
+            ),
+          ),
+        );
+        return Option.none<EncryptedConnectionCatalogDocument>();
+      }),
+    ),
+  );
+
   return DesktopConnectionCatalogStore.of({
     get: Effect.gen(function* () {
-      const document = yield* readDocument(fileSystem, catalogPath);
+      const document = yield* readRecoverableDocument;
       if (Option.isNone(document)) {
         return yield* migrateLegacyCatalog;
       }
