@@ -308,6 +308,26 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("keeps automatic favicon resolution separate from a saved override", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-automatic-",
+      });
+      yield* fileSystem.makeDirectory(path.join(root, "brand"));
+      yield* fileSystem.writeFileString(path.join(root, "brand", "saved.svg"), "<svg>saved</svg>");
+      yield* fileSystem.writeFileString(path.join(root, "favicon.svg"), "<svg>automatic</svg>");
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: root },
+      });
+
+      expect(result.sourcePath).toBe("favicon.svg");
+      expect(result.relativeUrl).toMatch(/\/v[0-9a-f]{64}-favicon\.svg$/);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("rejects a resolved project favicon with a non-image extension", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

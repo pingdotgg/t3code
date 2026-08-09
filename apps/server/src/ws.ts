@@ -1785,7 +1785,9 @@ const makeWsRpcLayer = (
                 }
                 return yield* issueAssetUrl({
                   resource: input.resource,
-                  projectFaviconPath: project.value.faviconPath ?? null,
+                  ...(input.resource.path !== undefined && project.value.faviconPath
+                    ? { projectFaviconPath: project.value.faviconPath }
+                    : {}),
                 });
               }
               const thread = yield* projectionSnapshotQuery
