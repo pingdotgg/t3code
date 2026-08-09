@@ -754,7 +754,11 @@ function ProjectDetail({
           description={faviconPath ?? "Automatic"}
           resetAction={
             faviconPath !== null ? (
-              <SettingResetButton label="project icon" onClick={() => void setFaviconPath(null)} />
+              <SettingResetButton
+                label="project icon"
+                disabled={isSavingFavicon}
+                onClick={() => void setFaviconPath(null)}
+              />
             ) : null
           }
           control={

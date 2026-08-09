@@ -91,7 +91,7 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
       }),
     );
 
-    it.effect("does not fall back when a saved override is missing", () =>
+    it.effect("falls back when a saved override is missing from a checkout", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
         const cwd = yield* makeTempDir;
@@ -99,7 +99,8 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
 
         const resolved = yield* resolver.resolvePath(cwd, "brand/missing.svg");
 
-        expect(resolved).toBeNull();
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("favicon.svg");
       }),
     );
 

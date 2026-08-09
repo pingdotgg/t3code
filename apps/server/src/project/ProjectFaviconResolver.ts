@@ -180,10 +180,13 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    // A saved project override is exact. If the file is gone, return no icon
-    // instead of silently showing a different automatic candidate.
+    // A grouped project's saved path can be absent from one checkout. Use it
+    // where it exists and retain automatic discovery for the other checkouts.
     if (faviconPath !== undefined) {
-      return yield* findExistingFile(projectCwd, [faviconPath]);
+      const existing = yield* findExistingFile(projectCwd, [faviconPath]);
+      if (existing) {
+        return existing;
+      }
     }
 
     // A t3.json iconPath takes precedence over the well-known locations.
