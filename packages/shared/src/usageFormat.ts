@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off -- Usage windows are calendar days in the viewer's zone, derived from wall-clock "now" via Intl.
 /**
  * Display formatting for the usage page.
  *
