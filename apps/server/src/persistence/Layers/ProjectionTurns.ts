@@ -19,6 +19,7 @@ import {
   ProjectionTurn,
   ProjectionTurnById,
   ProjectionTurnRepository,
+  SettleProjectionPendingTurnStartInput,
   type ProjectionTurnRepositoryShape,
 } from "../Services/ProjectionTurns.ts";
 
@@ -217,6 +218,25 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
       `,
   });
 
+  const settlePendingProjectionTurnStart = SqlSchema.findOneOption({
+    Request: SettleProjectionPendingTurnStartInput,
+    Result: Schema.Struct({ threadId: GetProjectionPendingTurnStartInput.fields.threadId }),
+    execute: ({ threadId, messageId, requestSequence }) =>
+      sql`
+        DELETE FROM projection_turns
+        WHERE thread_id = ${threadId}
+          AND turn_id IS NULL
+          AND state = 'pending'
+          AND pending_message_id = ${messageId}
+          AND (
+            request_sequence = ${requestSequence}
+            OR (request_sequence IS NULL AND ${requestSequence} IS NULL)
+          )
+          AND checkpoint_turn_count IS NULL
+        RETURNING thread_id AS "threadId"
+      `,
+  });
+
   const listProjectionTurnsByThread = SqlSchema.findAll({
     Request: ListProjectionTurnsByThreadInput,
     Result: ProjectionTurnDbRowSchema,
@@ -368,6 +388,18 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
         ),
       );
 
+  const settlePendingTurnStartIfMatches: ProjectionTurnRepositoryShape["settlePendingTurnStartIfMatches"] =
+    (input) =>
+      settlePendingProjectionTurnStart(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionTurnRepository.settlePendingTurnStartIfMatches:query",
+            "ProjectionTurnRepository.settlePendingTurnStartIfMatches:decodeResult",
+          ),
+        ),
+        Effect.map(Option.isSome),
+      );
+
   const listByThreadId: ProjectionTurnRepositoryShape["listByThreadId"] = (input) =>
     listProjectionTurnsByThread(input).pipe(
       Effect.mapError(
@@ -415,6 +447,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
     getPendingTurnStartByThreadId,
     listPendingTurnStarts,
     markPendingTurnDeliveryStarted,
+    settlePendingTurnStartIfMatches,
     deletePendingTurnStartByThreadId,
     listByThreadId,
     getByTurnId,

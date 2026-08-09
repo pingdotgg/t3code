@@ -541,6 +541,50 @@ it.effect("decodes a correlated turn-start delivery marker on session events", (
   }),
 );
 
+it.effect("decodes correlated pending turn-start recovery failure commands and events", () =>
+  Effect.gen(function* () {
+    const command = yield* decodeOrchestrationCommand({
+      type: "thread.turn-start.recovery-fail",
+      commandId: "cmd-recovery-fail",
+      threadId: "thread-1",
+      messageId: "message-1",
+      requestSequence: null,
+      detail: "Provider delivery could not be proven.",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    const event = yield* decodeOrchestrationEvent({
+      sequence: 42,
+      eventId: "event-recovery-fail",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      commandId: "cmd-recovery-fail",
+      causationEventId: null,
+      correlationId: "cmd-recovery-fail",
+      metadata: {},
+      type: "thread.turn-start-recovery-failed",
+      payload: {
+        threadId: "thread-1",
+        messageId: "message-1",
+        requestSequence: null,
+        detail: "Provider delivery could not be proven.",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+
+    assert.strictEqual(command.type, "thread.turn-start.recovery-fail");
+    if (command.type !== "thread.turn-start.recovery-fail") {
+      return;
+    }
+    assert.strictEqual(command.requestSequence, null);
+    assert.strictEqual(event.type, "thread.turn-start-recovery-failed");
+    if (event.type !== "thread.turn-start-recovery-failed") {
+      return;
+    }
+    assert.strictEqual(event.payload.messageId, "message-1");
+  }),
+);
+
 it.effect("accepts provider-scoped model options in thread.turn.start", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadTurnStartCommand({

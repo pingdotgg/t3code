@@ -49,14 +49,14 @@ it("blocks a candidate that would remove durable pending-turn recovery", () => {
   });
 });
 
-it("blocks protocol one because it lacks request-correlated delivery markers", () => {
+it("blocks protocol two because stale recovery can still erase a newer pending request", () => {
   expect(
     decodeServicePreflightResult({
       status: "ready",
       version: "1.2.4",
       launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
       providerLifecycleRecoveryProtocol: PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL,
-      pendingTurnRecoveryProtocol: 1,
+      pendingTurnRecoveryProtocol: 2,
     }),
   ).toEqual({
     status: "blocked",

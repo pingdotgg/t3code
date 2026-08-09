@@ -2719,6 +2719,279 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
         ]);
       }),
     );
+
+    it.effect("atomically settles an exact legacy pending start and projects its failure", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-exact-recovery-failure");
+        const messageId = MessageId.make("message-exact-recovery-failure");
+        const createdAt = "2026-02-26T14:30:00.000Z";
+
+        yield* eventStore.append({
+          type: "thread.turn-start-requested",
+          eventId: EventId.make("evt-exact-recovery-request"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: CommandId.make("cmd-exact-recovery-request"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-exact-recovery-request"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId,
+            runtimeMode: "approval-required",
+            createdAt,
+          },
+        });
+        yield* projectionPipeline.bootstrap;
+        yield* sql`
+          UPDATE projection_turns
+          SET request_sequence = NULL
+          WHERE thread_id = ${threadId}
+        `;
+
+        const startingAt = "2026-02-26T14:31:00.000Z";
+        const startingSession = yield* eventStore.append({
+          type: "thread.session-set",
+          eventId: EventId.make("evt-exact-recovery-starting"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: startingAt,
+          commandId: CommandId.make("cmd-exact-recovery-starting"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-exact-recovery-starting"),
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "starting",
+              providerName: "codex",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              runtimeMode: "approval-required",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: startingAt,
+            },
+          },
+        });
+        yield* projectionPipeline.projectEvent(startingSession);
+
+        const failure = yield* eventStore.append({
+          type: "thread.turn-start-recovery-failed",
+          eventId: EventId.make("evt-exact-recovery-failure"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: CommandId.make("cmd-exact-recovery-failure"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-exact-recovery-failure"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId,
+            requestSequence: null,
+            detail: "Legacy delivery could not be proven.",
+            createdAt,
+          },
+        });
+        yield* projectionPipeline.projectEvent(failure);
+
+        const pendingRows = yield* sql`
+          SELECT pending_message_id
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+            AND turn_id IS NULL
+        `;
+        const activities = yield* sql<{
+          readonly activityId: string;
+          readonly kind: string;
+          readonly detail: string;
+        }>`
+          SELECT
+            activity_id AS "activityId",
+            kind,
+            json_extract(payload_json, '$.detail') AS detail
+          FROM projection_thread_activities
+          WHERE thread_id = ${threadId}
+        `;
+        const sessions = yield* sql<{
+          readonly status: string;
+          readonly activeTurnId: string | null;
+          readonly lastError: string | null;
+          readonly updatedAt: string;
+        }>`
+          SELECT
+            status,
+            active_turn_id AS "activeTurnId",
+            last_error AS "lastError",
+            updated_at AS "updatedAt"
+          FROM projection_thread_sessions
+          WHERE thread_id = ${threadId}
+        `;
+        assert.deepEqual(pendingRows, []);
+        assert.deepEqual(activities, [
+          {
+            activityId: failure.eventId,
+            kind: "provider.turn.start.failed",
+            detail: "Legacy delivery could not be proven.",
+          },
+        ]);
+        assert.deepEqual(sessions, [
+          {
+            status: "error",
+            activeTurnId: null,
+            lastError: "Legacy delivery could not be proven.",
+            updatedAt: startingAt,
+          },
+        ]);
+      }),
+    );
+
+    it.effect("does not settle or emit failure activity for a replaced pending start", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-stale-recovery-failure");
+        const firstMessageId = MessageId.make("message-stale-recovery-first");
+        const secondMessageId = MessageId.make("message-stale-recovery-second");
+        const createdAt = "2026-02-26T14:40:00.000Z";
+        const replacementAt = "2026-02-26T14:41:00.000Z";
+
+        const firstRequest = yield* eventStore.append({
+          type: "thread.turn-start-requested",
+          eventId: EventId.make("evt-stale-recovery-first-request"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: CommandId.make("cmd-stale-recovery-first-request"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-stale-recovery-first-request"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId: firstMessageId,
+            runtimeMode: "approval-required",
+            createdAt,
+          },
+        });
+        const secondRequest = yield* eventStore.append({
+          type: "thread.turn-start-requested",
+          eventId: EventId.make("evt-stale-recovery-second-request"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: replacementAt,
+          commandId: CommandId.make("cmd-stale-recovery-second-request"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-stale-recovery-second-request"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId: secondMessageId,
+            runtimeMode: "approval-required",
+            createdAt: replacementAt,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.session-set",
+          eventId: EventId.make("evt-stale-recovery-replacement-starting"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: replacementAt,
+          commandId: CommandId.make("cmd-stale-recovery-replacement-starting"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-stale-recovery-replacement-starting"),
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "starting",
+              providerName: "codex",
+              providerInstanceId: ProviderInstanceId.make("codex-replacement"),
+              runtimeMode: "approval-required",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: replacementAt,
+            },
+            turnStartDelivery: {
+              messageId: secondMessageId,
+              requestSequence: secondRequest.sequence,
+            },
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.turn-start-recovery-failed",
+          eventId: EventId.make("evt-stale-recovery-failure"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: CommandId.make("cmd-stale-recovery-failure"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-stale-recovery-failure"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId: firstMessageId,
+            requestSequence: firstRequest.sequence,
+            detail: "This stale failure must not apply.",
+            createdAt,
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const pendingRows = yield* sql<{
+          readonly messageId: string;
+          readonly requestSequence: number | null;
+        }>`
+          SELECT
+            pending_message_id AS "messageId",
+            request_sequence AS "requestSequence"
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+            AND turn_id IS NULL
+        `;
+        const activities = yield* sql`
+          SELECT activity_id
+          FROM projection_thread_activities
+          WHERE thread_id = ${threadId}
+        `;
+        const sessions = yield* sql<{
+          readonly status: string;
+          readonly providerInstanceId: string | null;
+          readonly lastError: string | null;
+          readonly updatedAt: string;
+        }>`
+          SELECT
+            status,
+            provider_instance_id AS "providerInstanceId",
+            last_error AS "lastError",
+            updated_at AS "updatedAt"
+          FROM projection_thread_sessions
+          WHERE thread_id = ${threadId}
+        `;
+        assert.deepEqual(pendingRows, [
+          {
+            messageId: secondMessageId,
+            requestSequence: secondRequest.sequence,
+          },
+        ]);
+        assert.deepEqual(activities, []);
+        assert.deepEqual(sessions, [
+          {
+            status: "starting",
+            providerInstanceId: "codex-replacement",
+            lastError: null,
+            updatedAt: replacementAt,
+          },
+        ]);
+      }),
+    );
   },
 );
 

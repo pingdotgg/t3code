@@ -152,6 +152,9 @@ describe("ProviderCommandReactor", () => {
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly turnStartBeforeStart?: "recoverable" | "legacy" | "protocol-one" | "delivery-marked";
+    readonly replacePendingDuringRecoveryRead?: boolean;
+    readonly replacePendingBeforeRecoveryFailureDispatch?: boolean;
+    readonly providerInfoBarrier?: Effect.Effect<void>;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -173,6 +176,9 @@ describe("ProviderCommandReactor", () => {
       readonly call: "startSession" | "sendTurn";
       readonly marker: CommittedTurnStartDelivery | null;
     }> = [];
+    let replacementTurnStartSequence: number | null = null;
+    let replacementTurnStartInjected = false;
+    let replacementBeforeRecoveryFailureInjected = false;
     let nextSessionIndex = 1;
     const runtimeSessions: Array<ProviderSession> = [];
     const modelSelection = input?.threadModelSelection ?? {
@@ -345,19 +351,21 @@ describe("ProviderCommandReactor", () => {
         const driverKind = ProviderDriverKind.make(
           raw.startsWith("claude") ? "claudeAgent" : raw.startsWith("codex") ? "codex" : raw,
         );
-        return Effect.succeed({
-          instanceId,
-          driverKind,
-          displayName: undefined,
-          enabled: true,
-          continuationIdentity: {
+        return (input?.providerInfoBarrier ?? Effect.void).pipe(
+          Effect.as({
+            instanceId,
             driverKind,
-            continuationKey:
-              driverKind === ProviderDriverKind.make("codex")
-                ? "codex:home:/shared-codex"
-                : `${driverKind}:instance:${instanceId}`,
-          },
-        });
+            displayName: undefined,
+            enabled: true,
+            continuationIdentity: {
+              driverKind,
+              continuationKey:
+                driverKind === ProviderDriverKind.make("codex")
+                  ? "codex:home:/shared-codex"
+                  : `${driverKind}:instance:${instanceId}`,
+            },
+          }),
+        );
       },
       rollbackConversation: () => unsupported(),
       get streamEvents() {
@@ -390,6 +398,41 @@ describe("ProviderCommandReactor", () => {
         return {
           readEvents: (fromSequenceExclusive, limit) =>
             engine.readEvents(fromSequenceExclusive, limit).pipe(
+              Stream.tap((event) => {
+                if (
+                  input?.replacePendingDuringRecoveryRead !== true ||
+                  replacementTurnStartInjected ||
+                  event.type !== "thread.turn-start-requested" ||
+                  event.commandId !== "cmd-turn-start-before-reactor"
+                ) {
+                  return Effect.void;
+                }
+                replacementTurnStartInjected = true;
+                return engine
+                  .dispatch({
+                    type: "thread.turn.start",
+                    commandId: CommandId.make("cmd-turn-start-recovery-race-replacement"),
+                    threadId: ThreadId.make("thread-1"),
+                    message: {
+                      messageId: asMessageId("user-message-before-reactor"),
+                      role: "user",
+                      text: "Replace the stale recovery candidate",
+                      attachments: [],
+                    },
+                    interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+                    runtimeMode: "approval-required",
+                    createdAt: "2026-01-01T00:00:02.000Z",
+                  })
+                  .pipe(
+                    Effect.orDie,
+                    Effect.tap((replacement) =>
+                      Effect.sync(() => {
+                        replacementTurnStartSequence = replacement.sequence;
+                      }),
+                    ),
+                    Effect.asVoid,
+                  );
+              }),
               Stream.map((event) => {
                 if (
                   (input?.turnStartBeforeStart !== "legacy" &&
@@ -419,7 +462,38 @@ describe("ProviderCommandReactor", () => {
                 return Effect.die(new Error("Injected title regeneration completion failure"));
               }
             }
-            return engine.dispatch(command).pipe(
+            const dispatched =
+              input?.replacePendingBeforeRecoveryFailureDispatch === true &&
+              !replacementBeforeRecoveryFailureInjected &&
+              command.type === "thread.turn-start.recovery-fail"
+                ? (() => {
+                    replacementBeforeRecoveryFailureInjected = true;
+                    return engine
+                      .dispatch({
+                        type: "thread.turn.start",
+                        commandId: CommandId.make("cmd-turn-start-recovery-boundary-replacement"),
+                        threadId: ThreadId.make("thread-1"),
+                        message: {
+                          messageId: asMessageId("user-message-before-reactor"),
+                          role: "user",
+                          text: "Replace the recovery candidate at the mutation boundary",
+                          attachments: [],
+                        },
+                        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+                        runtimeMode: "approval-required",
+                        createdAt: "2026-01-01T00:00:03.000Z",
+                      })
+                      .pipe(
+                        Effect.tap((replacement) =>
+                          Effect.sync(() => {
+                            replacementTurnStartSequence = replacement.sequence;
+                          }),
+                        ),
+                        Effect.andThen(engine.dispatch(command)),
+                      );
+                  })()
+                : engine.dispatch(command);
+            return dispatched.pipe(
               Effect.tap((event) => {
                 if (command.type !== "thread.session.set") {
                   return Effect.void;
@@ -608,6 +682,9 @@ describe("ProviderCommandReactor", () => {
       drain,
       runEffect,
       startReactorAgain: () => reactor.start().pipe(Scope.provide(scope!)),
+      get replacementTurnStartSequence() {
+        return replacementTurnStartSequence;
+      },
       get titleRegenerationCompletionDispatchAttempts() {
         return titleRegenerationCompletionDispatchAttempts;
       },
@@ -742,6 +819,76 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  effectIt.effect("skips an overtaken queued request whose delivery marker did not persist", () =>
+    Effect.gen(function* () {
+      const releaseProviderInfo = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({ providerInfoBarrier: Deferred.await(releaseProviderInfo) }),
+      );
+      const threadId = ThreadId.make("thread-1");
+
+      const firstRequest = yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-queued-overtake-first"),
+        threadId,
+        message: {
+          messageId: asMessageId("queued-overtake-first-message"),
+          role: "user",
+          text: "This request will be overtaken",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+      const secondRequest = yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-queued-overtake-second"),
+        threadId,
+        message: {
+          messageId: asMessageId("queued-overtake-second-message"),
+          role: "user",
+          text: "Only this latest request may reach the provider",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:02.000Z",
+      });
+
+      expect(firstRequest.sequence).toBeLessThan(secondRequest.sequence);
+      expect(harness.startSession).not.toHaveBeenCalled();
+      expect(harness.sendTurn).not.toHaveBeenCalled();
+      yield* Deferred.succeed(releaseProviderInfo, undefined);
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+      yield* Effect.promise(() => harness.drain());
+
+      expect(harness.startSession).toHaveBeenCalledTimes(1);
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+      expect(harness.deliveryMarkersAtProviderCalls).toEqual([
+        {
+          call: "startSession",
+          marker: {
+            messageId: "queued-overtake-second-message",
+            requestSequence: secondRequest.sequence,
+            deliverySequence: secondRequest.sequence + 2,
+          },
+        },
+        {
+          call: "sendTurn",
+          marker: {
+            messageId: "queued-overtake-second-message",
+            requestSequence: secondRequest.sequence,
+            deliverySequence: secondRequest.sequence + 2,
+          },
+        },
+      ]);
+      expect(harness.generateBranchName).not.toHaveBeenCalled();
+      expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+      expect(harness.renameBranch).not.toHaveBeenCalled();
+    }),
+  );
+
   it("recovers a protocol-marked turn start committed before the reactor subscribed", async () => {
     const harness = await createHarness({ turnStartBeforeStart: "recoverable" });
 
@@ -758,21 +905,122 @@ describe("ProviderCommandReactor", () => {
     expect(harness.sendTurn).toHaveBeenCalledTimes(1);
   });
 
+  effectIt.effect("gives a replayed turn start a fresh lifecycle timestamp", () =>
+    Effect.gen(function* () {
+      const releaseStart = yield* Deferred.make<void>();
+      const recoveryStartedAt = yield* Clock.currentTimeMillis;
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          turnStartBeforeStart: "recoverable",
+          startSessionEffect: (session) => Deferred.await(releaseStart).pipe(Effect.as(session)),
+        }),
+      );
+
+      yield* Effect.promise(() => waitFor(() => harness.startSession.mock.calls.length === 1));
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(thread?.session?.status).toBe("starting");
+      expect(Date.parse(thread?.session?.updatedAt ?? "")).toBeGreaterThanOrEqual(
+        recoveryStartedAt,
+      );
+      expect(thread?.messages.at(-1)?.createdAt).toBe("2026-01-01T00:00:01.000Z");
+
+      yield* Deferred.succeed(releaseStart, undefined);
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+    }),
+  );
+
+  effectIt.effect("does not settle a newer same-message request raced against stale recovery", () =>
+    Effect.gen(function* () {
+      const releaseProviderInfo = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          turnStartBeforeStart: "legacy",
+          replacePendingDuringRecoveryRead: true,
+          providerInfoBarrier: Deferred.await(releaseProviderInfo),
+        }),
+      );
+
+      const replacementSequence = harness.replacementTurnStartSequence;
+      expect(replacementSequence).not.toBeNull();
+      const duringRace = yield* Effect.promise(() => harness.readModel());
+      const thread = duringRace.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(thread?.session).toBeNull();
+      expect(
+        thread?.activities.filter((activity) => activity.kind === "provider.turn.start.failed"),
+      ).toEqual([]);
+      expect(harness.startSession).not.toHaveBeenCalled();
+
+      yield* Deferred.succeed(releaseProviderInfo, undefined);
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+      expect(harness.deliveryMarkersAtProviderCalls.at(-1)).toMatchObject({
+        call: "sendTurn",
+        marker: {
+          messageId: "user-message-before-reactor",
+          requestSequence: replacementSequence,
+        },
+      });
+    }),
+  );
+
+  effectIt.effect("preserves a replacement inserted at the recovery settlement boundary", () =>
+    Effect.gen(function* () {
+      const releaseProviderInfo = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          turnStartBeforeStart: "legacy",
+          replacePendingBeforeRecoveryFailureDispatch: true,
+          providerInfoBarrier: Deferred.await(releaseProviderInfo),
+        }),
+      );
+
+      const replacementSequence = harness.replacementTurnStartSequence;
+      expect(replacementSequence).not.toBeNull();
+      const afterSettlement = yield* Effect.promise(() => harness.readModel());
+      const thread = afterSettlement.threads.find(
+        (entry) => entry.id === ThreadId.make("thread-1"),
+      );
+      expect(thread?.session).toBeNull();
+      expect(
+        thread?.activities.filter((activity) => activity.kind === "provider.turn.start.failed"),
+      ).toEqual([]);
+
+      yield* Deferred.succeed(releaseProviderInfo, undefined);
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+      expect(harness.deliveryMarkersAtProviderCalls.at(-1)).toMatchObject({
+        call: "sendTurn",
+        marker: {
+          messageId: "user-message-before-reactor",
+          requestSequence: replacementSequence,
+        },
+      });
+    }),
+  );
+
   it("fails a legacy ambiguous pending start visibly instead of duplicating provider work", async () => {
     const harness = await createHarness({ turnStartBeforeStart: "legacy" });
 
     await waitFor(async () => {
       const readModel = await harness.readModel();
       return (
-        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.session
-          ?.status === "error"
+        readModel.threads
+          .find((entry) => entry.id === ThreadId.make("thread-1"))
+          ?.activities.some((activity) => activity.kind === "provider.turn.start.failed") ?? false
       );
     });
     expect(harness.startSession).not.toHaveBeenCalled();
     expect(harness.sendTurn).not.toHaveBeenCalled();
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-    expect(thread?.session?.lastError).toContain("not replayed automatically");
+    expect(thread?.session).toBeNull();
+    expect(thread?.activities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "provider.turn.start.failed",
+          payload: expect.objectContaining({ detail: expect.stringContaining("not replayed") }),
+        }),
+      ]),
+    );
     expect(thread?.messages.at(-1)?.text).toBe("Recover this committed message after restart");
   });
 
@@ -782,8 +1030,9 @@ describe("ProviderCommandReactor", () => {
     await waitFor(async () => {
       const readModel = await harness.readModel();
       return (
-        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.session
-          ?.status === "error"
+        readModel.threads
+          .find((entry) => entry.id === ThreadId.make("thread-1"))
+          ?.activities.some((activity) => activity.kind === "provider.turn.start.failed") ?? false
       );
     });
     expect(harness.startSession).not.toHaveBeenCalled();
@@ -878,14 +1127,30 @@ describe("ProviderCommandReactor", () => {
         waitFor(async () => {
           const readModel = await harness.readModel();
           return (
-            readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.session
-              ?.status === "error"
+            readModel.threads
+              .find((entry) => entry.id === ThreadId.make("thread-1"))
+              ?.activities.some((activity) => activity.kind === "provider.turn.start.failed") ??
+            false
           );
         }),
       );
       let readModel = yield* Effect.promise(() => harness.readModel());
       let thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-      expect(thread?.session?.lastError).toContain("deterministic startup failure");
+      expect(thread?.activities).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "provider.turn.start.failed",
+            payload: expect.objectContaining({
+              detail: expect.stringContaining("deterministic startup failure"),
+            }),
+          }),
+        ]),
+      );
+      expect(thread?.session).toMatchObject({
+        status: "error",
+        activeTurnId: null,
+        lastError: expect.stringContaining("deterministic startup failure"),
+      });
       expect(harness.sendTurn).not.toHaveBeenCalled();
 
       failStartup = false;
