@@ -4,10 +4,12 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
 
 import {
   buildWslNodeEnvPreamble,
@@ -15,36 +17,64 @@ import {
   formatMissingToolsReason,
   formatNodePtyProbeFailureReason,
   formatWslShellTransportFailureReason,
+  getDistroIpImpl,
   parseNodePath,
   parseNodeVersion,
   parseResolvedPath,
+  parseSingleWslHostnameAddress,
   parseToolchainReport,
+  parseWslRouteSource,
   probeWslDistros,
 } from "./DesktopWslEnvironment.ts";
 
 const encoder = new TextEncoder();
 
-const makeDistroListSpawner = (result: { readonly stdout?: string; readonly exitCode?: number }) =>
-  ChildProcessSpawner.make(() =>
-    Effect.succeed(
-      ChildProcessSpawner.makeHandle({
-        pid: ChildProcessSpawner.ProcessId(1),
-        exitCode:
-          result.exitCode === undefined
-            ? Effect.never
-            : Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode)),
-        isRunning: Effect.succeed(result.exitCode === undefined),
-        kill: () => Effect.void,
-        unref: Effect.succeed(Effect.void),
-        stdin: Sink.drain,
-        stdout: Stream.make(encoder.encode(result.stdout ?? "")),
-        stderr: Stream.empty,
-        all: Stream.empty,
-        getInputFd: () => Sink.drain,
-        getOutputFd: () => Stream.empty,
-      }),
-    ),
-  );
+type SpawnResult = { readonly stdout?: string; readonly exitCode?: number };
+
+const makeProcessHandle = (result: SpawnResult) =>
+  ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(1),
+    exitCode:
+      result.exitCode === undefined
+        ? Effect.never
+        : Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode)),
+    isRunning: Effect.succeed(result.exitCode === undefined),
+    kill: () => Effect.void,
+    unref: Effect.succeed(Effect.void),
+    stdin: Sink.drain,
+    stdout: Stream.make(encoder.encode(result.stdout ?? "")),
+    stderr: Stream.empty,
+    all: Stream.empty,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+  });
+
+const makeDistroListSpawner = (result: SpawnResult) =>
+  ChildProcessSpawner.make(() => Effect.succeed(makeProcessHandle(result)));
+
+const makeCommandSpawner = (
+  commands: ChildProcess.Command[],
+  handler: (command: ChildProcess.Command) => SpawnResult,
+) =>
+  ChildProcessSpawner.make((command) => {
+    commands.push(command);
+    return Effect.succeed(makeProcessHandle(handler(command)));
+  });
+
+const commandParts = (command: ChildProcess.Command): ReadonlyArray<string> =>
+  command._tag === "StandardCommand" ? [command.command, ...command.args] : [];
+
+const ROUTE_COMMAND = ["wsl.exe", "-d", "Ubuntu", "--", "ip", "-4", "route", "get", "1.1.1.1"];
+
+const HOSTNAME_COMMAND = ["wsl.exe", "-d", "Ubuntu", "--", "hostname", "-I"];
+
+const isRouteCommand = (command: ChildProcess.Command): boolean =>
+  commandParts(command).includes("route");
+
+const isHostnameCommand = (command: ChildProcess.Command): boolean => {
+  const parts = commandParts(command);
+  return parts.at(-1) === "-I" || parts.at(-1) === "hostname -I";
+};
 
 describe("probeWslDistros", () => {
   it.effect("preserves a successful empty distro list", () =>
@@ -85,6 +115,150 @@ describe("probeWslDistros", () => {
       expect(error).toBeInstanceOf(DesktopWslDistroListError);
       expect(error.message).toContain("timed out");
     }).pipe(Effect.provide(layer));
+  });
+});
+
+describe("getDistroIpImpl", () => {
+  it.effect("uses the route-selected src instead of the first hostname address", () =>
+    Effect.gen(function* () {
+      const commands: ChildProcess.Command[] = [];
+      const spawner = makeCommandSpawner(commands, (command) => {
+        if (isRouteCommand(command)) {
+          return {
+            stdout: "1.1.1.1 via 172.27.0.1 dev eth0 src 192.168.1.219 uid 1000 cache\n",
+            exitCode: 0,
+          };
+        }
+        if (isHostnameCommand(command)) {
+          return {
+            stdout: "172.22.0.1 172.19.0.1 172.17.0.1 192.168.1.219\n",
+            exitCode: 0,
+          };
+        }
+        return { exitCode: 1 };
+      });
+
+      const result = yield* getDistroIpImpl("Ubuntu").pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+
+      expect(Option.getOrUndefined(result)).toBe("192.168.1.219");
+      expect(commands.map(commandParts)).toEqual([ROUTE_COMMAND]);
+    }),
+  );
+
+  it.effect("falls back to the only hostname address when route lookup is unavailable", () =>
+    Effect.gen(function* () {
+      const commands: ChildProcess.Command[] = [];
+      const spawner = makeCommandSpawner(commands, (command) => {
+        if (isRouteCommand(command)) return { exitCode: 127 };
+        if (isHostnameCommand(command)) return { stdout: "192.168.1.219\n", exitCode: 0 };
+        return { exitCode: 1 };
+      });
+
+      const result = yield* getDistroIpImpl("Ubuntu").pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+
+      expect(Option.getOrUndefined(result)).toBe("192.168.1.219");
+      expect(commands.map(commandParts)).toEqual([ROUTE_COMMAND, HOSTNAME_COMMAND]);
+    }),
+  );
+
+  it.effect("returns none when the hostname fallback contains multiple addresses", () =>
+    Effect.gen(function* () {
+      const commands: ChildProcess.Command[] = [];
+      const spawner = makeCommandSpawner(commands, (command) => {
+        if (isRouteCommand(command)) return { stdout: "1.1.1.1 dev eth0\n", exitCode: 0 };
+        if (isHostnameCommand(command)) {
+          return {
+            stdout: "172.22.0.1 172.19.0.1 172.17.0.1 192.168.1.219\n",
+            exitCode: 0,
+          };
+        }
+        return { exitCode: 1 };
+      });
+
+      const result = yield* getDistroIpImpl("Ubuntu").pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+
+      expect(Option.isNone(result)).toBe(true);
+      expect(commands.map(commandParts)).toEqual([ROUTE_COMMAND, HOSTNAME_COMMAND]);
+    }),
+  );
+
+  it.effect("rejects invalid IPv4 octets in route and hostname output", () =>
+    Effect.gen(function* () {
+      const commands: ChildProcess.Command[] = [];
+      const spawner = makeCommandSpawner(commands, (command) => {
+        if (isRouteCommand(command)) {
+          return { stdout: "1.1.1.1 dev eth0 src 999.999.999.999\n", exitCode: 0 };
+        }
+        if (isHostnameCommand(command)) return { stdout: "999.999.999.999\n", exitCode: 0 };
+        return { exitCode: 1 };
+      });
+
+      const result = yield* getDistroIpImpl("Ubuntu").pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+
+      expect(Option.isNone(result)).toBe(true);
+      expect(commands.map(commandParts)).toEqual([ROUTE_COMMAND, HOSTNAME_COMMAND]);
+    }),
+  );
+
+  it.effect("uses one total timeout and does not start the fallback after it expires", () => {
+    const commands: ChildProcess.Command[] = [];
+    const spawner = makeCommandSpawner(commands, () => ({}));
+    const layer = Layer.merge(
+      TestClock.layer(),
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+
+    return Effect.gen(function* () {
+      const fiber = yield* getDistroIpImpl("Ubuntu").pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.seconds(6));
+      const result = yield* Fiber.join(fiber);
+
+      expect(Option.isNone(result)).toBe(true);
+      expect(commands.map(commandParts)).toEqual([ROUTE_COMMAND]);
+    }).pipe(Effect.provide(layer));
+  });
+});
+
+describe("WSL IPv4 parsing", () => {
+  it("extracts the exact route src token and ignores gateway and suffix fields", () => {
+    const result = parseWslRouteSource(
+      "1.1.1.1 via 172.27.0.1 dev eth0 src 192.168.1.219 uid 1000 cache\n",
+    );
+
+    expect(Option.getOrUndefined(result)).toBe("192.168.1.219");
+  });
+
+  it("does not treat prefsrc as a route src token", () => {
+    expect(Option.isNone(parseWslRouteSource("1.1.1.1 dev eth0 prefsrc 192.168.1.219"))).toBe(true);
+  });
+
+  it("rejects missing and malformed route sources", () => {
+    expect(Option.isNone(parseWslRouteSource("1.1.1.1 dev eth0"))).toBe(true);
+    expect(Option.isNone(parseWslRouteSource("1.1.1.1 dev eth0 src not-an-ip"))).toBe(true);
+    expect(Option.isNone(parseWslRouteSource("1.1.1.1 dev eth0 src 256.1.1.1"))).toBe(true);
+  });
+
+  it("accepts one valid hostname address", () => {
+    expect(Option.getOrUndefined(parseSingleWslHostnameAddress("  192.168.1.219\n"))).toBe(
+      "192.168.1.219",
+    );
+  });
+
+  it("rejects ambiguous hostname address output", () => {
+    expect(
+      Option.isNone(
+        parseSingleWslHostnameAddress("172.22.0.1 172.19.0.1 172.17.0.1 192.168.1.219\n"),
+      ),
+    ).toBe(true);
   });
 });
 
