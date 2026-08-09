@@ -521,6 +521,12 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
   > = probeCodexAppServerProvider,
   environment?: NodeJS.ProcessEnv,
+  /**
+   * Workspace for `skills/list` (typically ServerConfig.cwd). Defaults to
+   * process.cwd() for callers that omit it. Snapshot skills are server-cwd
+   * scoped, not per-thread worktree — multi-project pickers need a follow-up.
+   */
+  cwd: string = process.cwd(),
 ): Effect.fn.Return<
   ServerProviderDraft,
   ServerSettingsError,
@@ -551,7 +557,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     binaryPath: codexSettings.binaryPath,
     homePath: codexSettings.homePath,
     launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
-    cwd: process.cwd(),
+    cwd,
     customModels: codexSettings.customModels,
     environment: resolvedEnvironment,
   }).pipe(
