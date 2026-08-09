@@ -134,6 +134,106 @@ describe("parseCodexLine", () => {
     parseCodexLine(turnContext, state);
     expect(parseCodexLine(tokenCount(100, 0, 10, 0), state)).not.toBeNull();
   });
+
+  // A forked/subagent rollout opens with the parent's history copied in and
+  // every line re-stamped to the fork instant, then the ancestors' session
+  // metas. Counting those again multiplied usage ~1.85x on real data (#5758).
+  describe("forked rollouts", () => {
+    const meta = (overrides: {
+      id: string;
+      timestamp: string;
+      forkedFromId?: string;
+      spawnParentId?: string;
+    }) =>
+      JSON.stringify({
+        type: "session_meta",
+        timestamp: overrides.timestamp,
+        payload: {
+          type: "session_meta",
+          id: overrides.id,
+          ...(overrides.forkedFromId === undefined
+            ? {}
+            : { forked_from_id: overrides.forkedFromId }),
+          ...(overrides.spawnParentId === undefined
+            ? {}
+            : {
+                source: {
+                  subagent: { thread_spawn: { parent_thread_id: overrides.spawnParentId } },
+                },
+              }),
+        },
+      });
+    const stamped = (timestamp: string, line: string) => {
+      const parsed = JSON.parse(line) as { timestamp: string };
+      parsed.timestamp = timestamp;
+      return JSON.stringify(parsed);
+    };
+
+    it("keeps the child session id over copied ancestor metas", () => {
+      const state = initialCodexScanState();
+      parseCodexLine(meta({ id: "child", timestamp: "2026-08-01T05:00:00.000Z" }), state);
+      parseCodexLine(meta({ id: "parent", timestamp: "2026-08-01T05:00:00.000Z" }), state);
+      parseCodexLine(turnContext, state);
+      const record = parseCodexLine(tokenCount(100, 0, 10, 0), state);
+
+      expect(record?.sessionId).toBe("child");
+    });
+
+    it("drops the re-stamped copied burst and keeps the first real event", () => {
+      const state = initialCodexScanState();
+      const forkInstant = "2026-08-01T05:00:00.000Z";
+      parseCodexLine(meta({ id: "child", timestamp: forkInstant, forkedFromId: "parent" }), state);
+      parseCodexLine(meta({ id: "parent", timestamp: forkInstant }), state);
+      parseCodexLine(stamped(forkInstant, turnContext), state);
+
+      // Copied history: written in one burst at the fork instant.
+      expect(
+        parseCodexLine(stamped("2026-08-01T05:00:00.001Z", tokenCount(100, 0, 10, 0)), state),
+      ).toBeNull();
+      expect(
+        parseCodexLine(stamped("2026-08-01T05:00:00.002Z", tokenCount(200, 0, 20, 0)), state),
+      ).toBeNull();
+
+      // The child's first genuine turn lands seconds later and must count.
+      const real = parseCodexLine(
+        stamped("2026-08-01T05:00:06.000Z", tokenCount(300, 0, 30, 0)),
+        state,
+      );
+      expect(real).not.toBeNull();
+      expect(real?.totals.outputTokens).toBe(30);
+
+      // Suppression never restarts, even for closely spaced later events.
+      const next = parseCodexLine(
+        stamped("2026-08-01T05:00:06.100Z", tokenCount(400, 0, 40, 0)),
+        state,
+      );
+      expect(next).not.toBeNull();
+    });
+
+    it("recognizes subagent spawns without forked_from_id", () => {
+      const state = initialCodexScanState();
+      const spawnInstant = "2026-08-01T05:00:00.000Z";
+      parseCodexLine(
+        meta({ id: "child", timestamp: spawnInstant, spawnParentId: "parent" }),
+        state,
+      );
+      parseCodexLine(stamped(spawnInstant, turnContext), state);
+      expect(
+        parseCodexLine(stamped("2026-08-01T05:00:00.001Z", tokenCount(100, 0, 10, 0)), state),
+      ).toBeNull();
+    });
+
+    it("does not suppress anything in a rollout that is not a fork", () => {
+      const state = initialCodexScanState();
+      parseCodexLine(meta({ id: "root", timestamp: "2026-08-01T05:00:00.000Z" }), state);
+      parseCodexLine(stamped("2026-08-01T05:00:00.100Z", turnContext), state);
+      const record = parseCodexLine(
+        stamped("2026-08-01T05:00:00.200Z", tokenCount(100, 0, 10, 0)),
+        state,
+      );
+      expect(record).not.toBeNull();
+    });
+  });
 });
 
 describe("totalTokens", () => {

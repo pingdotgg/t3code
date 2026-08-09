@@ -151,10 +151,42 @@ export interface CodexScanState {
   model: string;
   sessionId: string;
   lastUsageSignature: string | null;
+  sawSessionMeta: boolean;
+  /** While true, leading usage events are re-stamped copies of parent history. */
+  suppressingForkCopies: boolean;
+  forkCopyAnchorMs: number;
 }
 
 export function initialCodexScanState(): CodexScanState {
-  return { model: "", sessionId: "", lastUsageSignature: null };
+  return {
+    model: "",
+    sessionId: "",
+    lastUsageSignature: null,
+    sawSessionMeta: false,
+    suppressingForkCopies: false,
+    forkCopyAnchorMs: 0,
+  };
+}
+
+/**
+ * A forked or subagent rollout opens with the parent's full history copied in,
+ * every line re-stamped to the fork instant. Those copies are written in one
+ * synchronous burst (observed gaps 0-40ms), while the child's first genuine
+ * usage event only lands after a real model turn (observed 5s+). One second of
+ * separation splits the two cleanly; `ccusage` uses the same threshold.
+ */
+const FORK_COPY_MAX_GAP_MS = 1000;
+
+/** Whether a `session_meta` payload marks the rollout as a fork or subagent. */
+function isForkedSessionMeta(payload: Record<string, unknown>): boolean {
+  if (typeof payload["forked_from_id"] === "string") return true;
+  const source = payload["source"];
+  if (typeof source !== "object" || source === null) return false;
+  const subagent = (source as Record<string, unknown>)["subagent"];
+  if (typeof subagent !== "object" || subagent === null) return false;
+  const spawn = (subagent as Record<string, unknown>)["thread_spawn"];
+  if (typeof spawn !== "object" || spawn === null) return false;
+  return typeof (spawn as Record<string, unknown>)["parent_thread_id"] === "string";
 }
 
 /**
@@ -181,8 +213,18 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
   const payloadType = payloadRecord["type"];
 
   if (record["type"] === "session_meta") {
+    // Only the first meta describes this file's own session. A forked rollout
+    // repeats the ancestors' metas right after it; letting those through would
+    // reassign every subsequent record to an ancestor session.
+    if (state.sawSessionMeta) return null;
+    state.sawSessionMeta = true;
     const id = payloadRecord["id"] ?? payloadRecord["session_id"];
     if (typeof id === "string") state.sessionId = id;
+    const metaTimestampMs = parseTimestampMs(record["timestamp"]);
+    if (metaTimestampMs !== null && isForkedSessionMeta(payloadRecord)) {
+      state.suppressingForkCopies = true;
+      state.forkCopyAnchorMs = metaTimestampMs;
+    }
     return null;
   }
 
@@ -213,6 +255,17 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
   if (signature === state.lastUsageSignature) return null;
   state.lastUsageSignature = signature;
 
+  // In a forked rollout the copied parent history was already counted from the
+  // parent's own file. Drop the leading burst; the first usage event separated
+  // from its predecessor by a real turn's worth of time ends it for good.
+  if (state.suppressingForkCopies) {
+    if (timestampMs - state.forkCopyAnchorMs < FORK_COPY_MAX_GAP_MS) {
+      state.forkCopyAnchorMs = timestampMs;
+      return null;
+    }
+    state.suppressingForkCopies = false;
+  }
+
   const inputTokens = int(lastRecord["input_tokens"]);
   const cachedInputTokens = int(lastRecord["cached_input_tokens"]);
   const cacheCreationTokens = int(lastRecord["cache_write_input_tokens"]);
@@ -238,7 +291,8 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
     totals,
     // Codex does not report cost in the rollout.
     reportedCostUsd: null,
-    // Rollout files are unique per session, so events need no global dedup.
+    // Events surviving the fork-copy suppression above are unique to this
+    // rollout, so they need no global dedup.
     dedupeKey: null,
   };
 }
