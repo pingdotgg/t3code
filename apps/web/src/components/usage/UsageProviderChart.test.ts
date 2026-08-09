@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { formatCurrencyCompact } from "../../usage/usageFormat";
 import { buildDayColumns, niceScale } from "./UsageProviderChart";
 
 describe("niceScale", () => {
@@ -117,5 +118,15 @@ describe("currency-aware cost scale", () => {
     // Converted USD ticks would be 692.8 / 519.6 / …; nicening in EUR first
     // should land on a clean 1/2/5 step instead.
     expect(niceScale(peakUsd * eurRate, 4).ticks).toEqual([0, 200, 400, 600, 800]);
+  });
+
+  it("formats low-cost axis ticks with distinct labels", () => {
+    const { ticks } = niceScale(0.04, 4);
+    const labels = ticks
+      .filter((tick) => tick > 0)
+      .map((tick) => formatCurrencyCompact(tick, "USD"));
+
+    expect(labels.length).toBeGreaterThan(1);
+    expect(new Set(labels).size).toBe(labels.length);
   });
 });

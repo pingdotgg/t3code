@@ -97,6 +97,16 @@ describe("ratesNeedRefresh", () => {
     };
     expect(ratesNeedRefresh(cache, now)).toBe(true);
   });
+
+  it("refreshes when fetchedAt is in the future", () => {
+    const now = new Date("2026-08-09T12:00:00");
+    const cache: UsageCurrencyRatesCache = {
+      fetchedAt: now.getTime() + 60_000,
+      date: "2026-08-09",
+      rates: { USD: 1, EUR: 0.86 },
+    };
+    expect(ratesNeedRefresh(cache, now)).toBe(true);
+  });
 });
 
 describe("formatCurrency", () => {
@@ -110,6 +120,13 @@ describe("formatCurrency", () => {
 
   it("compacts large currency amounts for chart axes", () => {
     expect(formatCurrencyCompact(2_395_896, "BIF")).toMatch(/BIF\s*2(\.4)?M/i);
+  });
+
+  it("keeps sub-unit compact labels distinguishable", () => {
+    // Regression: one fraction digit collapsed every cent-scale amount to "$0".
+    expect(formatCurrencyCompact(0.01, "USD")).toBe("$0.01");
+    expect(formatCurrencyCompact(0.04, "USD")).toBe("$0.04");
+    expect(formatCurrencyCompact(0.01, "USD")).not.toBe(formatCurrencyCompact(0.04, "USD"));
   });
 });
 

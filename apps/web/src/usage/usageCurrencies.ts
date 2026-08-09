@@ -120,7 +120,9 @@ function todayLocalDay(now = new Date()): string {
 }
 
 function isWithinRatesTtl(fetchedAt: number, now: Date): boolean {
-  return Number.isFinite(fetchedAt) && now.getTime() - fetchedAt < USAGE_CURRENCY_RATES_TTL_MS;
+  if (!Number.isFinite(fetchedAt)) return false;
+  const ageMs = now.getTime() - fetchedAt;
+  return ageMs >= 0 && ageMs < USAGE_CURRENCY_RATES_TTL_MS;
 }
 
 export function readStoredUsageCurrency(): UsageCurrencyCode {

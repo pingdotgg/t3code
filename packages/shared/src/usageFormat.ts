@@ -32,15 +32,17 @@ export function formatUsd(value: number): string {
 
 /** Short chart-axis form (`$1.2K`, `BIF 2.4M`) so wide currencies stay readable. */
 export function formatCurrencyCompact(value: number, currency = "USD"): string {
-  let formatter = compactCurrencyFormatters.get(currency);
+  const maximumFractionDigits = compactCurrencyFractionDigits(value);
+  const cacheKey = `${currency}:${maximumFractionDigits}`;
+  let formatter = compactCurrencyFormatters.get(cacheKey);
   if (formatter === undefined) {
     formatter = new Intl.NumberFormat("en-US", {
       style: "currency",
       currency,
       notation: "compact",
-      maximumFractionDigits: 1,
+      maximumFractionDigits,
     });
-    compactCurrencyFormatters.set(currency, formatter);
+    compactCurrencyFormatters.set(cacheKey, formatter);
   }
   return formatter.format(value);
 }
