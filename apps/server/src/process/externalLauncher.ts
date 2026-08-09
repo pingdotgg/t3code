@@ -124,6 +124,19 @@ function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAnd
   });
 }
 
+const resolveFileManagerTarget = Effect.fn("externalLauncher.resolveFileManagerTarget")(function* (
+  target: string,
+): Effect.fn.Return<string, never, FileSystem.FileSystem> {
+  const parsedTarget = parseTargetPathAndPosition(target);
+  if (Option.isNone(parsedTarget)) return target;
+
+  const fileSystem = yield* FileSystem.FileSystem;
+  if (yield* fileSystem.exists(target).pipe(Effect.orElseSucceed(() => false))) return target;
+  return (yield* fileSystem.exists(parsedTarget.value.path).pipe(Effect.orElseSucceed(() => false)))
+    ? parsedTarget.value.path
+    : target;
+});
+
 function resolveCommandEditorArgs(
   editor: (typeof EDITORS)[number],
   target: string,
@@ -376,11 +389,12 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
   }
 
+  const target = yield* resolveFileManagerTarget(input.cwd);
   return {
     editor: editorDef.id,
-    target: input.cwd,
+    target,
     command: fileManagerCommandForPlatform(platform),
-    args: [input.cwd],
+    args: [target],
   };
 });
 

@@ -94,6 +94,53 @@ it.effect("launches the default browser through the platform command", () => {
   );
 });
 
+it.effect("strips file manager positions without changing existing paths", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-file-manager-" });
+    const commandPath = path.join(binDir, "open");
+    const targetPath = path.join(binDir, "CLAUDE.md");
+    const existingColonPath = `${targetPath}:2024`;
+    const missingColonPath = path.join(binDir, "missing:2024");
+    yield* fileSystem.writeFileString(commandPath, "#!/bin/sh\n");
+    yield* fileSystem.chmod(commandPath, 0o755);
+    yield* fileSystem.writeFileString(targetPath, "");
+    yield* fileSystem.writeFileString(existingColonPath, "");
+
+    const spawned: ChildProcess.StandardCommand[] = [];
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      for (const cwd of [targetPath, `${targetPath}:4`, `${targetPath}:12:4`]) {
+        yield* launcher.launchEditor({ editor: "file-manager", cwd });
+      }
+      yield* launcher.launchEditor({ editor: "file-manager", cwd: existingColonPath });
+      yield* launcher.launchEditor({ editor: "file-manager", cwd: missingColonPath });
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          platform: "darwin",
+          env: { PATH: binDir },
+          onSpawn: (command) => {
+            spawned.push(command);
+          },
+        }),
+      ),
+    );
+
+    assert.deepEqual(
+      spawned.map(({ command, args }) => ({ command, args })),
+      [
+        { command: "open", args: [targetPath] },
+        { command: "open", args: [targetPath] },
+        { command: "open", args: [targetPath] },
+        { command: "open", args: [existingColonPath] },
+        { command: "open", args: [missingColonPath] },
+      ],
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("launches an installed editor with platform-safe arguments", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
