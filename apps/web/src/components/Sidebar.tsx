@@ -50,7 +50,6 @@ import {
   ServerIcon,
   SquarePenIcon,
   TerminalIcon,
-  Undo2Icon,
   XIcon,
 } from "lucide-react";
 import {
