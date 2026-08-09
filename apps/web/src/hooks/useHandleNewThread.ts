@@ -275,8 +275,10 @@ export function useNewThreadHandler() {
         ) {
           // Same remap the reuse paths above perform: point the draft at the
           // caller's project member and apply any explicit workspace options.
-          // The winner already applied carry state, and both invocations
-          // derive it from the same viewed thread.
+          // Env mode and startFromOrigin come from this invocation's resolved
+          // values — the winner may target a different project member with
+          // different defaults. The winner already applied carry state, and
+          // both invocations derive it from the same viewed thread.
           setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, racedDraft.draftId, {
             threadId: racedDraft.threadId,
             createdAt: racedDraft.createdAt,
@@ -284,8 +286,13 @@ export function useNewThreadHandler() {
             interactionMode: racedDraft.interactionMode,
             ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
             ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
-            ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
-            ...(hasStartFromOriginOption ? { startFromOrigin: options?.startFromOrigin } : {}),
+            envMode: initialEnvMode,
+            startFromOrigin:
+              options?.startFromOrigin ??
+              resolveNewDraftStartFromOrigin({
+                envMode: initialEnvMode,
+                newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
+              }),
           });
           await router.navigate({
             to: "/draft/$draftId",
