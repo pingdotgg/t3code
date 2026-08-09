@@ -23,15 +23,7 @@ import { resolveEnvModeLabel } from "../BranchToolbar.logic";
 import { createModelSelection } from "@t3tools/shared/model";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
-import {
-  CopyIcon,
-  FolderIcon,
-  ImageIcon,
-  PlusIcon,
-  ServerIcon,
-  SettingsIcon,
-  Trash2Icon,
-} from "lucide-react";
+import { CopyIcon, FolderIcon, PlusIcon, ServerIcon, SettingsIcon, Trash2Icon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -75,7 +67,7 @@ import {
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
-import { ProjectFavicon, useProjectFaviconAsset } from "../ProjectFavicon";
+import { ProjectFavicon } from "../ProjectFavicon";
 import {
   EMPTY_PROJECT_SCRIPT_INPUT,
   editorRequestForScript,
@@ -406,15 +398,6 @@ function ProjectDetail({
   // ----- favicon -----
   const [faviconPickerOpen, setFaviconPickerOpen] = useState(false);
   const [isSavingFavicon, setIsSavingFavicon] = useState(false);
-  const automaticFavicon = useProjectFaviconAsset({
-    environmentId: representative.environmentId,
-    cwd: representative.workspaceRoot,
-  });
-  const selectedFavicon = useProjectFaviconAsset({
-    environmentId: representative.environmentId,
-    cwd: representative.workspaceRoot,
-    faviconPath,
-  });
   const setFaviconPath = useCallback(
     async (faviconPath: string | null) => {
       setIsSavingFavicon(true);
@@ -764,90 +747,33 @@ function ProjectDetail({
         <SettingsRow
           id="project-favicon"
           title="Project icon"
-          description="Used in the sidebar and project settings. Choose automatic detection or an image file from this project."
-        >
-          <div
-            role="radiogroup"
-            aria-label="Project icon source"
-            className="mt-3 overflow-hidden rounded-lg border border-border/60"
-          >
-            <button
-              type="button"
-              role="radio"
-              aria-checked={faviconPath === null}
-              disabled={isSavingFavicon}
-              onClick={() => {
-                if (faviconPath !== null) void setFaviconPath(null);
-              }}
-              className="grid w-full grid-cols-[1rem_minmax(0,1fr)_2rem] items-center gap-3 bg-background px-3 py-2.5 text-left outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
-            >
-              <span
-                aria-hidden
-                className={`size-3.5 rounded-full border ${
-                  faviconPath === null ? "border-4 border-primary" : "border-border"
-                }`}
-              />
-              <span className="min-w-0">
-                <span className="block text-sm font-medium text-foreground">Automatic</span>
-                <span className="block truncate text-xs text-muted-foreground">
-                  {automaticFavicon._tag === "Loading"
-                    ? "Finding project icon…"
-                    : automaticFavicon._tag === "Failure"
-                      ? "Could not load the automatic icon"
-                      : automaticFavicon.sourcePath
-                        ? `Found ${automaticFavicon.sourcePath}`
-                        : "No project icon found"}
-                </span>
-              </span>
+          description={faviconPath ?? "Automatic"}
+          resetAction={
+            faviconPath !== null ? (
+              <SettingResetButton label="project icon" onClick={() => void setFaviconPath(null)} />
+            ) : null
+          }
+          control={
+            <div className="flex items-center gap-2">
               <ProjectFavicon
                 environmentId={representative.environmentId}
                 cwd={representative.workspaceRoot}
+                faviconPath={faviconPath}
                 className="size-6"
               />
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={faviconPath !== null}
-              disabled={isSavingFavicon}
-              onClick={() => setFaviconPickerOpen(true)}
-              className="grid w-full grid-cols-[1rem_minmax(0,1fr)_auto] items-center gap-3 border-t border-border/60 bg-background px-3 py-2.5 text-left outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
-            >
-              <span
-                aria-hidden
-                className={`size-3.5 rounded-full border ${
-                  faviconPath !== null ? "border-4 border-primary" : "border-border"
-                }`}
-              />
-              <span className="min-w-0">
-                <span className="block text-sm font-medium text-foreground">
-                  Choose a project file
-                </span>
-                <span className="block truncate text-xs text-muted-foreground">
-                  {faviconPath ?? "SVG, PNG, ICO, JPEG, GIF, AVIF, or WebP"}
-                  {faviconPath !== null &&
-                  selectedFavicon._tag === "Success" &&
-                  !selectedFavicon.sourcePath
-                    ? " · File not found"
-                    : ""}
-                </span>
-              </span>
-              {faviconPath !== null ? (
-                <ProjectFavicon
-                  environmentId={representative.environmentId}
-                  cwd={representative.workspaceRoot}
-                  faviconPath={faviconPath}
-                  className="size-6"
-                  fallbackIcon={ImageIcon}
-                />
-              ) : (
-                <span className="rounded-md border border-border px-2 py-1 text-xs text-foreground">
-                  Choose
-                </span>
-              )}
-            </button>
-          </div>
-        </SettingsRow>
+              <Button
+                size="xs"
+                variant="outline"
+                type="button"
+                aria-label="Choose a project icon file"
+                disabled={isSavingFavicon}
+                onClick={() => setFaviconPickerOpen(true)}
+              >
+                Choose file
+              </Button>
+            </div>
+          }
+        />
       </SettingsSection>
 
       <SettingsSection title="Model">
