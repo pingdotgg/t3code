@@ -2,10 +2,10 @@ export type SettingsPath =
   | "/settings/general"
   | "/settings/appearance"
   | "/settings/keybindings"
+  | "/settings/projects"
   | "/settings/providers"
   | "/settings/source-control"
   | "/settings/connections"
-  | "/settings/beta"
   | "/settings/archived";
 
 export interface SettingsSearchItem {
@@ -23,10 +23,10 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/general": "General",
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
+  "/settings/projects": "Projects",
   "/settings/providers": "Providers",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
-  "/settings/beta": "Beta",
   "/settings/archived": "Archive",
 };
 
@@ -38,9 +38,19 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
  */
 export const SETTINGS_SEARCH_ITEMS = [
   {
-    id: "theme",
-    title: "Theme",
+    id: "color-scheme",
+    title: "Color scheme",
     to: "/settings/appearance",
+    // The scheme tiles sit at the top of the Appearance section.
+    targetId: "appearance",
+  },
+  {
+    id: "theme",
+    title: "Themes",
+    to: "/settings/appearance",
+    // Theme cards live directly under the scheme tiles; the section is the
+    // stable scroll destination for both.
+    targetId: "appearance",
   },
   {
     // Prefixed because the slider control already owns the `glass-opacity` id.
@@ -91,6 +101,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "auto-settle-inactive-threads",
+    title: "Auto-settle inactive threads",
+    to: "/settings/general",
+  },
+  {
     id: "time-format",
     title: "Time format",
     to: "/settings/general",
@@ -101,18 +116,8 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
-    id: "assistant-output",
-    title: "Assistant output",
-    to: "/settings/general",
-  },
-  {
     id: "provider-update-checks",
     title: "Provider update checks",
-    to: "/settings/general",
-  },
-  {
-    id: "auto-open-task-panel",
-    title: "Auto-open task panel",
     to: "/settings/general",
   },
   {
@@ -152,9 +157,44 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "legacy-plan-mode",
+    title: "Plan mode (legacy)",
+    to: "/settings/general",
+  },
+  {
+    id: "legacy-token-streaming",
+    title: "Stream token by token (legacy)",
+    to: "/settings/general",
+  },
+  {
+    id: "legacy-sidebar",
+    title: "Sidebar (legacy)",
+    to: "/settings/general",
+  },
+  {
     id: "keybindings",
     title: "Keybindings",
     to: "/settings/keybindings",
+  },
+  {
+    id: "projects",
+    title: "Projects",
+    to: "/settings/projects",
+  },
+  {
+    id: "project-default-model",
+    title: "Project default model",
+    to: "/settings/projects",
+  },
+  {
+    id: "project-scripts",
+    title: "Project scripts",
+    to: "/settings/projects",
+  },
+  {
+    id: "project-checkouts",
+    title: "Project checkouts",
+    to: "/settings/projects",
   },
   {
     id: "providers",
@@ -170,17 +210,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "remote-environments",
     title: "Remote environments",
     to: "/settings/connections",
-  },
-  {
-    id: "sidebar-v2",
-    title: "Sidebar v2",
-    to: "/settings/beta",
-  },
-  {
-    id: "auto-settle-inactive-threads",
-    title: "Auto-settle inactive threads",
-    to: "/settings/beta",
-    targetId: "sidebar-v2",
   },
   {
     id: "archive",
