@@ -1,7 +1,11 @@
 import * as NodeFs from "node:fs";
 import * as NodeOs from "node:os";
 import * as Effect from "effect/Effect";
-import { HostProcessEnvironment, isHostWindows } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessEnvironment,
+  HostProcessWorkingDirectory,
+  isHostWindows,
+} from "@t3tools/shared/hostProcess";
 
 /**
  * Provider status probes spawn local CLIs over stdio/ACP.
@@ -83,34 +87,27 @@ export function isUsableProbeDirectory(path: string): boolean {
   }
 }
 
-function safeProcessCwd(): string | undefined {
-  try {
-    const cwd = process.cwd();
-    return cwd.trim().length > 0 ? cwd : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * Resolve a usable working directory for provider status probes.
  *
  * Electron/desktop backends can end up with a non-directory or inaccessible
- * `process.cwd()` (empty welcome state). Spawning with an invalid cwd on
+ * working directory (empty welcome state). Spawning with an invalid cwd on
  * Windows can hang or fail instead of failing cleanly.
  *
  * Pure (sync) form — prefer {@link resolveProviderProbeCwd} Effect for new call sites
- * that already run inside Effect.gen.
+ * that already run inside Effect.gen. Pass `workingDirectory` from
+ * `HostProcessWorkingDirectory` when available; do not read `process.cwd()` here.
  */
 export function resolveProviderProbeCwdSync(
   preferred?: string | null,
   environment: NodeJS.ProcessEnv = process.env,
+  workingDirectory?: string | null,
 ): string {
   const candidates: Array<string | undefined> = [
     preferred?.trim() || undefined,
     environment.T3_PROVIDER_CWD?.trim() || undefined,
     environment.T3CODE_PROVIDER_CWD?.trim() || undefined,
-    safeProcessCwd(),
+    workingDirectory?.trim() || undefined,
     environment.USERPROFILE?.trim() || undefined,
     environment.HOME?.trim() || undefined,
     NodeOs.homedir(),
@@ -128,13 +125,17 @@ export function resolveProviderProbeCwdSync(
 }
 
 /**
- * Effect form: reads optional env overrides from `HostProcessEnvironment` when
- * `environment` is not passed explicitly.
+ * Effect form: env from `HostProcessEnvironment` (unless overridden) and
+ * working directory from `HostProcessWorkingDirectory`.
  */
 export const resolveProviderProbeCwd = Effect.fn("resolveProviderProbeCwd")(function* (
   preferred?: string | null,
   environment?: NodeJS.ProcessEnv,
 ) {
   const env = environment ?? (yield* HostProcessEnvironment);
-  return resolveProviderProbeCwdSync(preferred, env);
+  const workingDirectory = yield* HostProcessWorkingDirectory.pipe(
+    Effect.map((cwd) => (cwd.trim().length > 0 ? cwd : undefined)),
+    Effect.catch(() => Effect.succeed(undefined as string | undefined)),
+  );
+  return resolveProviderProbeCwdSync(preferred, env, workingDirectory);
 });

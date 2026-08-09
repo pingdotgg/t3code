@@ -3,7 +3,7 @@ import * as NodeFs from "node:fs";
 import * as NodeOs from "node:os";
 import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessPlatform, HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
 
 import {
   cursorAboutTimeoutMs,
@@ -70,5 +70,16 @@ describe("providerProbeTimeouts", () => {
     const viaEffect = await Effect.runPromise(resolveProviderProbeCwd(preferred, {}));
     expect(viaEffect).toBe(resolveProviderProbeCwdSync(preferred, {}));
     expect(NodeFs.statSync(viaEffect).isDirectory()).toBe(true);
+  });
+
+  it("resolveProviderProbeCwd uses HostProcessWorkingDirectory as a candidate", async () => {
+    const preferredMissing = NodePath.join(NodeOs.tmpdir(), `t3-missing-wd-${Date.now()}`);
+    const overrideCwd = NodeOs.tmpdir();
+    const viaEffect = await Effect.runPromise(
+      resolveProviderProbeCwd(preferredMissing, {}).pipe(
+        Effect.provideService(HostProcessWorkingDirectory, overrideCwd),
+      ),
+    );
+    expect(viaEffect).toBe(overrideCwd);
   });
 });
