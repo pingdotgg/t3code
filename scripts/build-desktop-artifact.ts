@@ -632,14 +632,24 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // so the SDK's optional platform packages (each a ~200MB bundled executable)
   // are dead weight. The trailing dash keeps the SDK's own JS package.
   "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
+  // Shipped beside app.asar through extraResources; excluding the staging copy
+  // keeps the compressed WSL runtime from also being embedded inside app.asar.
+  "!apps/desktop/prod-resources/wsl-runtime.tar.gz",
 ] as const;
 // The WSL backend launches the server with plain `wsl.exe -- node`, which
 // cannot read inside an asar archive — and the server bundle externalizes its
 // runtime deps, so the whole node_modules tree must be unpacked, not just the
 // bundle (otherwise ERR_MODULE_NOT_FOUND: "Cannot find package 'effect'").
-// The Windows primary backend reads the same files through the asar redirect,
-// so nothing is duplicated.
+// The Windows primary backend reads these files through the asar redirect. A
+// compressed copy is also shipped as one sequentially readable WSL runtime
+// archive; the mounted tree remains as a compatibility fallback for local and
+// older packages.
 export const WINDOWS_ASAR_UNPACK = ["apps/server/dist/**", "**/node_modules/**"] as const;
+export const WSL_RUNTIME_ARCHIVE_NAME = "wsl-runtime.tar.gz";
+export const WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE = {
+  from: `apps/desktop/prod-resources/${WSL_RUNTIME_ARCHIVE_NAME}`,
+  to: WSL_RUNTIME_ARCHIVE_NAME,
+} as const;
 export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/resource-monitor",
@@ -1548,7 +1558,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // WINDOWS_ASAR_UNPACK); macOS and Linux stay packed — smart unpack
     // extracts native libraries, which fff-node finds in app.asar.unpacked.
     ...(platform === "win" ? { asarUnpack: [...WINDOWS_ASAR_UNPACK] } : {}),
-    extraResources: DESKTOP_EXTRA_RESOURCES,
+    extraResources:
+      platform === "win"
+        ? [...DESKTOP_EXTRA_RESOURCES, WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE]
+        : DESKTOP_EXTRA_RESOURCES,
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
   const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
@@ -1714,6 +1727,33 @@ const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (
   yield* Effect.log(
     `[desktop-artifact] Staged WSL node-pty prebuild (linux-${linuxArch}, node-pty ${nodePtyVersion}).`,
   );
+});
+
+export const buildWslRuntimeArchiveArgs = (archivePath: string): ReadonlyArray<string> => [
+  "-czf",
+  archivePath,
+  "--exclude=node_modules/@anthropic-ai/claude-agent-sdk-*",
+  "--exclude=node_modules/.pnpm/@anthropic-ai+claude-agent-sdk-*",
+  "apps/server/dist",
+  "node_modules",
+];
+
+const stageWslRuntimeArchive = Effect.fn("stageWslRuntimeArchive")(function* (stageAppDir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const archivePath = path.join(
+    stageAppDir,
+    "apps/desktop/prod-resources",
+    WSL_RUNTIME_ARCHIVE_NAME,
+  );
+  yield* fs.makeDirectory(path.dirname(archivePath), { recursive: true });
+  yield* runCommand(
+    ChildProcess.make("tar", buildWslRuntimeArchiveArgs(archivePath), {
+      cwd: stageAppDir,
+    }),
+    { label: "tar WSL runtime", verbose: false },
+  );
+  yield* Effect.log(`[desktop-artifact] Staged compressed WSL runtime at ${archivePath}.`);
 });
 
 const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
@@ -1979,6 +2019,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       arch: options.arch,
       prebuildPath: options.wslPrebuild,
     });
+    yield* stageWslRuntimeArchive(stageAppDir);
   }
 
   // electron-builder treats several set-but-empty variables (e.g. CSC_LINK="")

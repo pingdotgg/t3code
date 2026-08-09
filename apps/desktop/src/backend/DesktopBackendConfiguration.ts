@@ -93,6 +93,7 @@ const DESKTOP_BACKEND_ENV_NAMES = [
 const WSL_FORWARDED_ENV_NAMES = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"] as const;
 
 const WSL_SERVER_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const WSL_RUNTIME_ARCHIVE_NAME = "wsl-runtime.tar.gz";
 
 const backendChildEnvPatch = (): Record<string, string | undefined> =>
   Object.fromEntries(DESKTOP_BACKEND_ENV_NAMES.map((name) => [name, undefined]));
@@ -238,8 +239,8 @@ const WSL_TRANSIENT_PREFLIGHT_RETRY_LIMIT = 12;
 
 const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(function* (input: {
   readonly distro: string | null;
-  readonly windowsEntryPath: string;
-  readonly windowsRepoRoot: string;
+  readonly windowsSourcePath: string;
+  readonly runtimeSource: DesktopWslEnvironment.WslRuntimeSource;
   readonly allowBuild: boolean;
 }): Effect.fn.Return<
   WslPreflightSuccess | WslPreflightFailure,
@@ -288,27 +289,28 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
     } as const;
   }
 
-  const entryExists = yield* fileSystem
-    .exists(input.windowsEntryPath)
+  const sourceExists = yield* fileSystem
+    .exists(input.windowsSourcePath)
     .pipe(Effect.orElseSucceed(() => false));
-  if (!entryExists) {
+  if (!sourceExists) {
     return {
       _tag: "Failed",
-      reason: `missing server entry at ${input.windowsEntryPath}`,
+      reason: `missing WSL runtime source at ${input.windowsSourcePath}`,
       fatal: true,
     } as const;
   }
 
-  const linuxEntry = yield* wslEnv.windowsToWslPath(runningDistro, input.windowsEntryPath);
-  if (Option.isNone(linuxEntry)) {
+  const runtime = yield* wslEnv.prepareRuntime(runningDistro, input.runtimeSource);
+  if (!runtime.ok) {
     return {
       _tag: "Failed",
-      reason: `wslpath conversion failed for ${input.windowsEntryPath}`,
-      fatal: false,
+      reason: runtime.reason,
+      fatal: runtime.fatal,
     } as const;
   }
+  const linuxEntryPath = `${runtime.linuxAppRoot}/apps/server/dist/bin.mjs`;
 
-  const nodePtyResult = yield* wslEnv.ensureNodePty(runningDistro, input.windowsRepoRoot, {
+  const nodePtyResult = yield* wslEnv.ensureNodePty(runningDistro, runtime.linuxAppRoot, {
     allowBuild: input.allowBuild,
     nodeEngineRange: serverPackageJson.engines.node,
   });
@@ -324,7 +326,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
   return {
     _tag: "Ready",
     runningDistro,
-    linuxEntryPath: linuxEntry.value,
+    linuxEntryPath,
     nodePath: nodePtyResult.nodePath,
     resolvedPath: nodePtyResult.resolvedPath,
   } as const;
@@ -428,6 +430,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
 > {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   // Bind to 0.0.0.0 inside WSL so the backend is reachable both via
   // WSL2's automatic localhost forwarding (wslhost: Windows 127.0.0.1
@@ -464,22 +467,35 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     ...buildObservabilityFragment(input.observabilitySettings),
   };
 
-  // In packaged builds environment.appRoot is .../resources/app.asar — an
-  // archive FILE. The Windows primary reads its entry through
-  // ELECTRON_RUN_AS_NODE (asar-aware), but the WSL backend launches plain
-  // `wsl.exe -- node`, which can't read inside an asar. electron-builder unpacks
-  // the server bundle + node-pty (see asarUnpack in build-desktop-artifact.ts)
-  // to the app.asar.unpacked sibling, so point WSL there. In dev appRoot is
-  // already a real directory, so this is a no-op.
+  // Packaged Windows builds carry a compressed Linux runtime beside app.asar.
+  // Install it once into the distro's ext4 filesystem so Node doesn't resolve
+  // the server's module graph through slow /mnt/c DrvFS reads on every launch.
+  // Older/local packages without the archive retain the mounted-directory path
+  // as a compatibility fallback; dev appRoot is already a real directory.
   const wslAppRoot = environment.isPackaged
     ? environment.path.join(environment.resourcesPath, "app.asar.unpacked")
     : environment.appRoot;
   const wslEntryPath = environment.path.join(wslAppRoot, "apps/server/dist/bin.mjs");
+  const wslRuntimeArchivePath = environment.path.join(
+    environment.resourcesPath,
+    WSL_RUNTIME_ARCHIVE_NAME,
+  );
+  const hasWslRuntimeArchive = environment.isPackaged
+    ? yield* fileSystem.exists(wslRuntimeArchivePath).pipe(Effect.orElseSucceed(() => false))
+    : false;
+  const runtimeSource: DesktopWslEnvironment.WslRuntimeSource = hasWslRuntimeArchive
+    ? {
+        _tag: "Archive",
+        windowsArchivePath: wslRuntimeArchivePath,
+        runtimeId: `${environment.appVersion}-${environment.processArch}`,
+      }
+    : { _tag: "MountedDirectory", windowsAppRoot: wslAppRoot };
+  const windowsSourcePath = hasWslRuntimeArchive ? wslRuntimeArchivePath : wslEntryPath;
 
   const preflight = yield* runWslPreflight({
     distro: input.distro,
-    windowsEntryPath: wslEntryPath,
-    windowsRepoRoot: wslAppRoot,
+    windowsSourcePath,
+    runtimeSource,
     // Packaged builds ship a prebuilt Linux node-pty (built on Linux in CI and
     // attached to the Windows artifact — see build-desktop-artifact.ts), so the
     // WSL backend never needs a compiler, node-gyp, or network on first launch.
@@ -534,7 +550,9 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
 
   const baseConfig = {
     executablePath: "wsl.exe",
-    entryPath: wslEntryPath,
+    // DesktopBackendManager validates this Windows-side path before spawning.
+    // The actual Linux entry is supplied in args after runtime preparation.
+    entryPath: windowsSourcePath,
     cwd: environment.backendCwd,
     env: {
       ...parentEnvWithoutT3Home,

@@ -193,9 +193,9 @@ describe("DesktopBackendConfiguration", () => {
                   { name: "Debian", isDefault: false, version: 2 },
                   { name: "Ubuntu", isDefault: true, version: 2 },
                 ],
-                windowsToWslPath: (distro) => {
+                prepareRuntime: (distro) => {
                   observedDistros.push(distro);
-                  return Option.some("/repo/apps/server/dist/bin.mjs");
+                  return { ok: true, linuxAppRoot: "/repo" };
                 },
                 ensureNodePty: (distro) => {
                   observedDistros.push(distro);
@@ -225,6 +225,67 @@ describe("DesktopBackendConfiguration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("resolveWsl launches a packaged backend from the WSL-local runtime cache", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const archivePath = path.join(baseDir, "wsl-runtime.tar.gz");
+      yield* fileSystem.writeFileString(archivePath, "archive");
+
+      const observedSources: DesktopWslEnvironment.WslRuntimeSource[] = [];
+      const observedNodePtyRoots: string[] = [];
+      const linuxAppRoot = "/home/test/.t3/runtime/1.2.3-x64";
+      const config = yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        return yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+                prepareRuntime: (_distro, source) => {
+                  observedSources.push(source);
+                  return { ok: true, linuxAppRoot };
+                },
+                ensureNodePty: (_distro, root) => {
+                  observedNodePtyRoots.push(root);
+                  return { ok: true, nodePath: "/usr/bin/node", resolvedPath: "/usr/bin:/bin" };
+                },
+                getDistroIp: () => Option.some("172.27.0.99"),
+              }),
+            ),
+            Layer.provideMerge(
+              makeEnvironmentLayer(baseDir, {
+                appPath: baseDir,
+                platform: "win32",
+                resourcesPath: baseDir,
+              }),
+            ),
+          ),
+        ),
+      );
+
+      assert.deepEqual(observedSources, [
+        {
+          _tag: "Archive",
+          windowsArchivePath: archivePath,
+          runtimeId: "1.2.3-x64",
+        },
+      ]);
+      assert.deepEqual(observedNodePtyRoots, [linuxAppRoot]);
+      assert.equal(config.entryPath, archivePath);
+      assert.include(config.args, `${linuxAppRoot}/apps/server/dist/bin.mjs`);
+      assert.isTrue(Option.isNone(config.preflightFailure));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect(
     "resolveWsl preserves inherited PATH with quote-sensitive values as separate args",
     () =>
@@ -239,7 +300,8 @@ describe("DesktopBackendConfiguration", () => {
         yield* fileSystem.writeFileString(entryPath, "");
 
         const nodePath = "/home/test user's/.nvm/versions/node/v22.0.0/bin/node";
-        const linuxEntryPath = "/tmp/t3 code's launch/entry file.mjs";
+        const linuxAppRoot = "/tmp/t3 code's launch";
+        const linuxEntryPath = `${linuxAppRoot}/apps/server/dist/bin.mjs`;
         const resolvedPath = "/home/test user/bin:/opt/test's tools/bin:/usr/bin:/bin";
         const devServerUrl = "http://127.0.0.1:5733/dev%20assets/?label=hello%20world";
         const config = yield* Effect.gen(function* () {
@@ -254,7 +316,7 @@ describe("DesktopBackendConfiguration", () => {
                 DesktopWslEnvironment.layerTest({
                   isAvailable: true,
                   distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
-                  windowsToWslPath: () => Option.some(linuxEntryPath),
+                  prepareRuntime: () => ({ ok: true, linuxAppRoot }),
                   ensureNodePty: () => ({ ok: true, nodePath, resolvedPath }),
                   getDistroIp: () => Option.some("172.27.0.99"),
                 }),
@@ -621,7 +683,7 @@ describe("DesktopBackendConfiguration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("resolveWsl marks a missing packaged server entry as fatal", () =>
+  it.effect("resolveWsl marks a missing packaged runtime source as fatal", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -634,7 +696,7 @@ describe("DesktopBackendConfiguration", () => {
         const failure = Option.getOrThrow(config.preflightFailure);
 
         assert.isTrue(failure.fatal);
-        assert.include(failure.reason, "missing server entry");
+        assert.include(failure.reason, "missing WSL runtime source");
       }).pipe(
         Effect.provide(
           DesktopBackendConfiguration.layer.pipe(

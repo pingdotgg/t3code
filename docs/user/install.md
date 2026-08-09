@@ -41,6 +41,17 @@ Arch Linux:
 yay -S t3code-bin
 ```
 
+### Windows Subsystem for Linux
+
+When the desktop app runs a WSL backend, it installs the matching server runtime into
+`~/.t3/runtime` inside the selected distro. The first launch after installing or updating T3 Code
+may take a little longer while that runtime is extracted. Later launches reuse the Linux-local
+copy so startup does not depend on reading application files through `/mnt/c`.
+
+Each T3 Code version uses its own runtime directory. Removing an old version's directory is safe
+when you no longer need to roll back to that version; projects, threads, settings, and provider
+credentials live elsewhere.
+
 ## Providers
 
 T3 Code drives provider CLIs; it does not ship them. Install the CLI for each provider you want

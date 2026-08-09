@@ -10,6 +10,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  buildWslRuntimeInstallScript,
   buildWslNodeEnvPreamble,
   DesktopWslDistroListError,
   formatMissingToolsReason,
@@ -19,7 +20,9 @@ import {
   parseNodeVersion,
   parseResolvedPath,
   parseToolchainReport,
+  parseWslRuntimeRoot,
   probeWslDistros,
+  sanitizeWslRuntimeId,
 } from "./DesktopWslEnvironment.ts";
 
 const encoder = new TextEncoder();
@@ -122,6 +125,37 @@ describe("buildWslNodeEnvPreamble", () => {
 
   it("keeps the shared resolver permissive when no Node engine range is provided", () => {
     expect(buildWslNodeEnvPreamble()).toContain("T3_NODE_ENGINE_RANGE=''");
+  });
+});
+
+describe("WSL runtime cache", () => {
+  it("sanitizes cache ids before interpolating them into Linux paths", () => {
+    expect(sanitizeWslRuntimeId("1.2.3/x64; touch /tmp/nope")).toBe("1.2.3_x64__touch__tmp_nope");
+  });
+
+  it("installs through a temporary directory and only reuses completed caches", () => {
+    const script = buildWslRuntimeInstallScript(
+      "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
+      "1.2.3-x64",
+    );
+
+    expect(script).toContain('if [ -f "$ready_marker" ]');
+    expect(script).toContain('mktemp -d "$runtime_parent/.1.2.3-x64.tmp.XXXXXX"');
+    expect(script).toContain(
+      "tar -xzf '/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz' -C \"$runtime_tmp\"",
+    );
+    expect(script).toContain('test -f "$runtime_tmp/apps/server/dist/bin.mjs"');
+    expect(script).toContain('test -f "$runtime_tmp/node_modules/effect/package.json"');
+    expect(script).toContain('mv -T "$runtime_tmp" "$runtime_root"');
+    expect(script).not.toContain('rm -rf "$runtime_root"');
+  });
+
+  it("parses only absolute Linux runtime paths", () => {
+    expect(parseWslRuntimeRoot("runtimeRoot:/home/josh/.t3/runtime/1.2.3-x64\n")).toBe(
+      "/home/josh/.t3/runtime/1.2.3-x64",
+    );
+    expect(parseWslRuntimeRoot("runtimeRoot:relative/path\n")).toBeNull();
+    expect(parseWslRuntimeRoot("noise\n")).toBeNull();
   });
 });
 
