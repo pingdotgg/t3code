@@ -85,15 +85,18 @@ export class MigrateDevDbDestinationBusyError extends Schema.TaggedErrorClass<Mi
   "MigrateDevDbDestinationBusyError",
   {
     databasePath: Schema.String,
-    reason: Schema.Literals(["write-locked", "wal-held"]),
+    reason: Schema.Literals(["server-running", "write-locked", "wal-held"]),
+    pid: Schema.optional(Schema.Number),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
     const detail =
-      this.reason === "write-locked"
-        ? "the database is write-locked"
-        : "another connection is holding its WAL";
+      this.reason === "server-running"
+        ? `a running server has it open (pid ${this.pid ?? "unknown"} per server-runtime.json)`
+        : this.reason === "write-locked"
+          ? "the database is write-locked"
+          : "another connection is holding its WAL";
     return `Dev database at '${this.databasePath}' looks in use (${detail}). Stop the dev server first; if none is running, delete the -wal/-shm files next to it.`;
   }
 }
@@ -155,12 +158,45 @@ const removeDatabaseFiles = Effect.fn("removeDatabaseFiles")(function* (database
   }
 });
 
-/** Best-effort liveness probe for a running dev server: BEGIN IMMEDIATE
- * fails while a writer is active, and wal_checkpoint(TRUNCATE) reports busy
- * while another connection holds the WAL. A leftover -shm alone is not a
- * signal — read-only connections cannot clean it up on close. */
+/** The slice of server-runtime.json this script cares about. */
+const ServerRuntimeState = Schema.fromJsonString(Schema.Struct({ pid: Schema.Number }));
+const decodeServerRuntimeState = Schema.decodeEffect(ServerRuntimeState);
+
+const isProcessAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM means the process exists but belongs to someone else.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
+/** Liveness probe for a running dev server. The server writes its pid to
+ * server-runtime.json next to the database, which also catches an idle
+ * server holding an open-but-inactive connection. The SQL probes below back
+ * that up: BEGIN IMMEDIATE fails while a writer is active, and
+ * wal_checkpoint(TRUNCATE) reports busy while another connection holds the
+ * WAL. A leftover -shm alone is not a signal — read-only connections cannot
+ * clean it up on close. */
 const ensureNotInUse = Effect.fn("ensureDevDbNotInUse")(function* (databasePath: string) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  const runtimeStatePath = path.join(path.dirname(databasePath), "server-runtime.json");
+  const runtimeState = yield* fs.readFileString(runtimeStatePath).pipe(
+    Effect.flatMap(decodeServerRuntimeState),
+    // A missing or malformed descriptor is not a liveness signal.
+    Effect.option,
+  );
+  if (Option.isSome(runtimeState) && isProcessAlive(runtimeState.value.pid)) {
+    return yield* new MigrateDevDbDestinationBusyError({
+      databasePath,
+      reason: "server-running",
+      pid: runtimeState.value.pid,
+    });
+  }
+
   if (!(yield* fs.exists(databasePath))) {
     return;
   }
@@ -368,7 +404,7 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   yield* removeDatabaseFiles(snapshotPath);
   // The snapshot is a full-size copy of the source; make sure it is removed
   // even when a phase fails partway through.
-  const pruned = yield* Effect.gen(function* () {
+  const { executedMigrations, pruned } = yield* Effect.gen(function* () {
     yield* Console.log(`Snapshotting ${sourcePath} (read-only)...`);
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -376,6 +412,21 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     }).pipe(
       Effect.provide(NodeSqliteClient.layer({ filename: sourcePath, readonly: true })),
       wrapPhase("snapshot", sourcePath),
+    );
+
+    // Migrate before pruning: a source older than this checkout would
+    // otherwise crash the prune queries on columns that don't exist yet.
+    // Running against the full snapshot also exercises new migrations on the
+    // same data volume the real database would face.
+    yield* Console.log("Running migrations on the snapshot...");
+    const executed = yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      // Mirror server boot (persistence/Layers/Sqlite.ts).
+      yield* sql.unsafe("PRAGMA foreign_keys = ON").unprepared;
+      return yield* runMigrations();
+    }).pipe(
+      Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
+      wrapPhase("migrate", snapshotPath),
     );
 
     yield* Console.log(
@@ -395,24 +446,17 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
       Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
       wrapPhase("compact", databasePath),
     );
-    return result;
+    return { executedMigrations: executed, pruned: result };
   }).pipe(Effect.ensuring(removeDatabaseFiles(snapshotPath)));
   yield* fs.chmod(databasePath, 0o600);
 
-  yield* Console.log("Running migrations...");
-  const executedMigrations = yield* Effect.gen(function* () {
+  yield* Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    // Mirror server boot (persistence/Layers/Sqlite.ts) so first `vp run dev`
-    // finds the database exactly as it would have left it.
-    yield* sql.unsafe("PRAGMA foreign_keys = ON").unprepared;
+    // WAL does not survive VACUUM INTO; set it so first `vp run dev` finds
+    // the database exactly as server boot would have left it.
     yield* sql.unsafe("PRAGMA journal_mode = WAL").unprepared;
-    return yield* runMigrations();
+    yield* verifyMigrationSlots();
   }).pipe(
-    Effect.provide(NodeSqliteClient.layer({ filename: databasePath })),
-    wrapPhase("migrate", databasePath),
-  );
-
-  yield* verifyMigrationSlots().pipe(
     Effect.provide(NodeSqliteClient.layer({ filename: databasePath })),
     Effect.catchTags({
       SqlError: (cause) =>

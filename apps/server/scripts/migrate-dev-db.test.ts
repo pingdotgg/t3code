@@ -132,6 +132,33 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
     }),
   );
 
+  it.effect("refuses while a dev server holds the destination", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-busy-" });
+      const destDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-busy-dest-" });
+      const source = yield* createFixtureSource(sourceDir);
+      // This test process stands in for a live dev server.
+      const stateDir = path.join(destDir, "userdata");
+      yield* fs.makeDirectory(stateDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(stateDir, "server-runtime.json"),
+        `{"version":1,"pid":${process.pid}}`,
+      );
+
+      const error = yield* runMigrateDevDb(
+        { baseDir: destDir, source, projects: 5, threadsPerProject: 10 },
+        { sharedHome: sourceDir },
+      ).pipe(Effect.flip);
+      assert.equal(error._tag, "MigrateDevDbDestinationBusyError");
+      if (error._tag === "MigrateDevDbDestinationBusyError") {
+        assert.equal(error.reason, "server-running");
+        assert.equal(error.pid, process.pid);
+      }
+    }),
+  );
+
   it.effect("refuses a source that resolves to a destination path", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
