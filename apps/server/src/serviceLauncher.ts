@@ -24,13 +24,42 @@ import {
   parseServiceState,
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
+  SERVICE_PID_FILE,
+  SERVICE_SELF_SUPERVISE_ENV,
   SERVICE_STATE_FILE,
   SERVICE_STOP_MARKER_FILE,
+  SERVICE_STOP_REQUEST_FILE,
 } from "./cloud/serviceProtocol.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
 const PREPARED_TIMEOUT_MS = 120_000;
 const TERMINATE_GRACE_MS = 5_000;
+
+/**
+ * Windows only. A Startup folder shortcut has no supervisor, so the launcher
+ * does the job the systemd unit does on Linux. These three mirror RestartSec=5,
+ * StartLimitBurst=5 and StartLimitIntervalSec=300, so a self-supervising
+ * launcher gives up at exactly the point systemd would. The burst counts the
+ * first start as well, the way systemd counts it, so five means four restarts.
+ */
+const RESTART_DELAY_MS = 5_000;
+const RESTART_BURST = 5;
+const RESTART_WINDOW_MS = 300_000;
+/** Windows only. How often the launcher looks for a stop request. Directory
+    watching misses events, so this poll is the real delivery guarantee. */
+const STOP_REQUEST_WATCH_INTERVAL_MS = 2_000;
+/**
+ * Windows only. A request older than this when the launcher starts was left by
+ * a stop nobody completed, so obeying it would stop a launcher the request was
+ * never meant for. The window is generous on purpose: some filesystems report
+ * a coarse modification time, and wrongly ignoring a real stop is far worse
+ * than wrongly obeying an old one. Ignoring one lets an install rewrite the
+ * runtime under a launcher that is still running.
+ */
+const STOP_REQUEST_GRACE_MS = 5_000;
+
+/** Windows only. Set by the generated logon script. systemd never sets it. */
+const isSelfSupervising = (): boolean => process.env[SERVICE_SELF_SUPERVISE_ENV] === "1";
 
 type TerminalStatus = "committed" | "rolled-back" | "failed";
 type ChildRole = "active" | "trial";
@@ -262,9 +291,29 @@ async function terminateChild(
 const stopMarkerPath = (baseDir: string) =>
   NodePath.join(baseDir, "runtime", SERVICE_STOP_MARKER_FILE);
 
+/** Windows only. Written by the CLI to ask for a stop, because there is no SIGTERM. */
+const stopRequestPath = (baseDir: string) =>
+  NodePath.join(baseDir, "runtime", SERVICE_STOP_REQUEST_FILE);
+
+/** Windows only. Present exactly while a self-supervising launcher is running. */
+const pidFilePath = (baseDir: string) => NodePath.join(baseDir, "runtime", SERVICE_PID_FILE);
+
+export interface LauncherOptions {
+  /**
+   * Windows only. Whether this launcher must restart its own child and watch
+   * for stop requests. Defaults to the flag the generated logon script sets,
+   * which systemd never sets.
+   */
+  readonly selfSupervise?: boolean;
+  /** Overridable so tests do not sit through the real wait. */
+  readonly restartDelayMs?: number;
+}
+
 export class Launcher {
   readonly #baseDir: string;
   readonly #statePath: string;
+  readonly #selfSupervise: boolean;
+  readonly #restartDelayMs: number;
   #state: ServiceState;
   #child: ManagedChild | null = null;
   #timer: NodeJS.Timeout | undefined;
@@ -272,12 +321,30 @@ export class Launcher {
   #stopRequested = false;
   #stopping = false;
   #done = false;
+  /** Windows only. Restart times inside the current window. */
+  #restartAttempts: Array<number> = [];
+  /** Windows only. Used to tell a fresh stop request from a leftover one. */
+  #startedAt = 0;
+  /** Windows only. Modification time of a request already judged stale. */
+  #dismissedRequestAt: number | undefined;
+  /**
+   * Windows only. Recovery clears a stale stop marker, so acting on a request
+   * before it runs would let recovery wipe the marker the stop just wrote. The
+   * child would then read "a replacement server is coming" while none is.
+   */
+  #recovered = false;
+  #stopWatcher: NodeFS.FSWatcher | undefined;
+  #stopPoll: NodeJS.Timeout | undefined;
+  /** Windows only. Lets a stop cut a restart backoff short instead of queueing behind it. */
+  #restartWait: { readonly timer: NodeJS.Timeout; readonly resolve: () => void } | undefined;
   readonly #completion = Promise.withResolvers<void>();
 
-  constructor(baseDir: string, state: ServiceState) {
+  constructor(baseDir: string, state: ServiceState, options?: LauncherOptions) {
     this.#baseDir = baseDir;
     this.#statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
     this.#state = state;
+    this.#selfSupervise = options?.selfSupervise ?? isSelfSupervising();
+    this.#restartDelayMs = options?.restartDelayMs ?? RESTART_DELAY_MS;
   }
 
   async run(): Promise<void> {
@@ -285,13 +352,116 @@ export class Launcher {
     const onSigint = () => void this.stop("SIGINT");
     process.once("SIGTERM", onSigterm);
     process.once("SIGINT", onSigint);
+    const supervising = this.#selfSupervise;
+    this.#startedAt = Date.now();
+    // The first start counts toward the burst, the way systemd counts it.
+    this.#restartAttempts = [this.#startedAt];
     try {
+      if (supervising) {
+        // Written before anything else, so the CLI can never see a running
+        // launcher as absent and rewrite the runtime underneath it.
+        await NodeFSP.mkdir(NodePath.dirname(pidFilePath(this.#baseDir)), {
+          recursive: true,
+          mode: 0o700,
+        }).catch(() => undefined);
+        await NodeFSP.writeFile(pidFilePath(this.#baseDir), `${process.pid}\n`, {
+          mode: 0o600,
+        }).catch(() => undefined);
+        this.#watchStopRequest();
+      }
       this.#enqueue(() => this.#recover());
+      this.#enqueue(async () => {
+        this.#recovered = true;
+      });
       await this.#completion.promise;
     } finally {
       process.off("SIGTERM", onSigterm);
       process.off("SIGINT", onSigint);
+      this.#stopWatchingStopRequest();
+      if (supervising) {
+        // Removing these before run() returns is how the CLI learns the stop
+        // finished. Doing it after would race the process exiting.
+        await NodeFSP.rm(stopRequestPath(this.#baseDir), { force: true }).catch(() => undefined);
+        await NodeFSP.rm(pidFilePath(this.#baseDir), { force: true }).catch(() => undefined);
+      }
     }
+  }
+
+  /**
+   * Windows only. Watches for the CLI's stop request, because Windows has no
+   * SIGTERM. The stop it triggers is not graceful: the child is terminated
+   * without running its shutdown finalizer.
+   */
+  #watchStopRequest(): void {
+    const target = stopRequestPath(this.#baseDir);
+    const check = () => {
+      if (!this.#recovered || this.#stopRequested || this.#stopping) return;
+      void NodeFSP.stat(target).then(
+        async (stats) => {
+          if (this.#stopRequested || this.#stopping) return;
+          if (this.#dismissedRequestAt === stats.mtimeMs) return;
+          if (stats.mtimeMs >= this.#startedAt - STOP_REQUEST_GRACE_MS) {
+            await this.stop("SIGTERM");
+            return;
+          }
+          // Left behind by a stop nobody completed. Remember it rather than
+          // deleting it: the CLI reads a vanished pid file as proof that a
+          // launcher stopped, and deleting files here must never look like that.
+          this.#dismissedRequestAt = stats.mtimeMs;
+        },
+        () => undefined,
+      );
+    };
+    try {
+      this.#stopWatcher = NodeFS.watch(NodePath.dirname(target), () => check());
+      // An error event with no listener is an uncaught exception, and Windows
+      // emits EPERM here when the watched directory goes away. The poll below
+      // is the real delivery guarantee, so losing the watcher costs nothing.
+      this.#stopWatcher.on("error", () => undefined);
+    } catch {
+      // Best effort, for the same reason.
+    }
+    this.#stopPoll = setInterval(check, STOP_REQUEST_WATCH_INTERVAL_MS);
+    this.#stopPoll.unref();
+    check();
+  }
+
+  #stopWatchingStopRequest(): void {
+    this.#stopWatcher?.close();
+    this.#stopWatcher = undefined;
+    clearInterval(this.#stopPoll);
+    this.#stopPoll = undefined;
+  }
+
+  /**
+   * Windows only. Waits out the restart backoff, but returns early when a stop
+   * arrives. The wait runs inside a queued transition, so sleeping through it
+   * would delay the stop by the full delay and eat the CLI's patience.
+   */
+  #waitBeforeRestart(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        this.#restartWait = undefined;
+        resolve();
+      }, this.#restartDelayMs);
+      this.#restartWait = {
+        timer,
+        resolve: () => {
+          clearTimeout(timer);
+          this.#restartWait = undefined;
+          resolve();
+        },
+      };
+    });
+  }
+
+  /** Windows only. False once the burst limit is reached inside the window. */
+  #recordRestartAttempt(): boolean {
+    const now = Date.now();
+    this.#restartAttempts = this.#restartAttempts.filter((at) => now - at < RESTART_WINDOW_MS);
+    if (this.#restartAttempts.length >= RESTART_BURST) return false;
+    this.#restartAttempts.push(now);
+    return true;
   }
 
   #enqueue(transition: () => Promise<void>): void {
@@ -328,6 +498,9 @@ export class Launcher {
       return;
     }
     this.#stopRequested = true;
+    // Windows only. A restart backoff holds the transition queue, so a stop
+    // queued behind it would wait the full delay before it even started.
+    this.#restartWait?.resolve();
     this.#clearTimer();
     this.#enqueue(async () => {
       // Let an update transition already in progress start its replacement
@@ -570,6 +743,15 @@ export class Launcher {
     const pending = this.#state.update;
     if (pending?.status === "pending") {
       await this.#startTrial(pending);
+      return;
+    }
+    // Windows only. Nothing supervises a Startup folder entry, so the launcher
+    // does what Restart=always does on Linux, and gives up on the same terms.
+    // Without the flag this still throws, so the Linux path is unchanged.
+    if (this.#selfSupervise && this.#recordRestartAttempt()) {
+      await this.#waitBeforeRestart();
+      if (this.#stopping || this.#done || this.#stopRequested) return;
+      await this.#startChild(this.#state.activeVersion, "active", this.#state.update);
       return;
     }
     throw new Error(`Active child exited unexpectedly (${String(code ?? signal ?? "unknown")}).`);

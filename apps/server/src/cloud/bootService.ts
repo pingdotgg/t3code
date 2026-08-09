@@ -88,7 +88,7 @@ export class BootServiceUnsupportedError extends Schema.TaggedErrorClass<BootSer
   { platform: Schema.String },
 ) {
   override get message(): string {
-    return `Background setup currently supports Linux with systemd; this machine reports '${this.platform}'.`;
+    return `Background setup supports Linux with systemd and Windows; this machine reports '${this.platform}'.`;
   }
 }
 
@@ -133,10 +133,18 @@ export type BootServiceError =
   | BootServiceInstallError
   | BootServiceUpdatePendingError;
 
+/**
+ * Which backend answered. The name carries the platform on purpose: a bare
+ * "shortcut" would read as a macOS or Linux desktop entry just as easily.
+ */
+export type BootServiceKind = "systemd" | "win32-startup-shortcut";
+
 export interface BootServiceStatus {
   readonly supported: boolean;
   readonly installed: boolean;
   readonly current: boolean;
+  readonly kind: BootServiceKind;
+  /** The systemd unit on Linux, the Startup folder shortcut on Windows. */
   readonly unitPath: string;
   readonly logPath: string;
 }
@@ -382,11 +390,12 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   }).pipe(Effect.withSpan("cloud.boot_service.uninstall"));
 
   const status: BootService["Service"]["status"] = Effect.gen(function* () {
+    const base = { kind: "systemd", unitPath, logPath } as const;
     if (platform !== "linux" || homeDir === "") {
-      return { supported: false, installed: false, current: false, unitPath, logPath };
+      return { supported: false, installed: false, current: false, ...base };
     }
     if (!(yield* fs.exists(unitPath))) {
-      return { supported: true, installed: false, current: false, unitPath, logPath };
+      return { supported: true, installed: false, current: false, ...base };
     }
     const [unit, launcherExists, runtimeEntryExists, runtimeSentinel, stateText] =
       yield* Effect.all([
@@ -408,8 +417,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         runtimeSentinel.value.trim() === input.cliVersion &&
         state?.activeVersion === input.cliVersion &&
         state?.update?.status !== "pending",
-      unitPath,
-      logPath,
+      ...base,
     };
   }).pipe(
     Effect.mapError((cause) => new BootServiceInstallError({ cause })),

@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
 
 import { Launcher, readServiceState, writeServiceState } from "./serviceLauncher.ts";
 import {
@@ -11,6 +12,7 @@ import {
   isExactServiceVersion,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STOP_MARKER_FILE,
+  SERVICE_STOP_REQUEST_FILE,
 } from "./cloud/serviceProtocol.ts";
 
 it("accepts only exact semantic versions", () => {
@@ -288,5 +290,140 @@ if (context.update?.status === "pending") {
       assert.isDefined(updateId);
       assert.isFalse(yield* fs.exists(path.join(root, "runtime", "db-backup", updateId)));
     }),
+  );
+});
+
+it.layer(NodeServices.layer)("self-supervising launcher", (it) => {
+  /** A child that records every start, then exits so the launcher sees a crash. */
+  const crashingChild = `
+import { appendFileSync } from "node:fs";
+appendFileSync(process.env.T3_TEST_START_LOG, "start\\n");
+process.exit(1);
+`;
+
+  const seedRuntime = Effect.fn("test.seed_launcher_runtime")(function* (
+    root: string,
+    source: string,
+  ) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const statePath = path.join(root, "runtime", "service-state.json");
+    const versionDir = path.join(root, "runtime", "versions", "1.0.0");
+    const entryPath = path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs");
+    yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
+    yield* fs.writeFileString(entryPath, source);
+    yield* fs.writeFileString(path.join(versionDir, ".install-complete"), "1.0.0\n");
+    yield* Effect.promise(() =>
+      writeServiceState(statePath, {
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        activeVersion: "1.0.0",
+      }),
+    );
+    return statePath;
+  });
+
+  it.effect("fails fast when something else supervises it, as on Linux", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launcher-supervised-" });
+      const startLog = path.join(root, "starts.log");
+      process.env.T3_TEST_START_LOG = startLog;
+      const statePath = yield* seedRuntime(root, crashingChild);
+
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        { selfSupervise: false },
+      );
+      yield* Effect.promise(() =>
+        launcher.run().then(
+          () => Promise.reject(new Error("launcher unexpectedly completed")),
+          () => Promise.resolve(),
+        ),
+      );
+
+      // One start, then it hands the problem to the init system by exiting.
+      assert.equal((yield* fs.readFileString(startLog)).trim().split("\n").length, 1);
+    }),
+  );
+
+  it.effect("restarts its own child, then gives up on the systemd burst limit", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launcher-selfsuper-" });
+      const startLog = path.join(root, "starts.log");
+      process.env.T3_TEST_START_LOG = startLog;
+      const statePath = yield* seedRuntime(root, crashingChild);
+
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        { selfSupervise: true, restartDelayMs: 5 },
+      );
+      yield* Effect.promise(() =>
+        launcher.run().then(
+          () => Promise.reject(new Error("launcher unexpectedly completed")),
+          () => Promise.resolve(),
+        ),
+      );
+
+      // Five starts in total, which is what StartLimitBurst=5 permits: the
+      // first one plus four restarts.
+      assert.equal((yield* fs.readFileString(startLog)).trim().split("\n").length, 5);
+    }),
+  );
+
+  it.effect("stops when the CLI writes a stop request, then clears it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launcher-stopreq-" });
+      const statePath = yield* seedRuntime(root, "setInterval(() => {}, 1_000);\n");
+      const requestPath = path.join(root, "runtime", SERVICE_STOP_REQUEST_FILE);
+
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        { selfSupervise: true, restartDelayMs: 5 },
+      );
+      const running = launcher.run();
+      yield* fs.writeFileString(requestPath, "");
+      yield* Effect.promise(() => running);
+
+      // Deleting it is how the CLI learns the stop actually happened.
+      assert.isFalse(yield* fs.exists(requestPath));
+      assert.isTrue(yield* fs.exists(path.join(root, "runtime", SERVICE_STOP_MARKER_FILE)));
+    }),
+  );
+
+  it.effect("ignores a request left over from before it started", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launcher-stalereq-" });
+      const statePath = yield* seedRuntime(root, "setInterval(() => {}, 1_000);\n");
+      const requestPath = path.join(root, "runtime", SERVICE_STOP_REQUEST_FILE);
+      yield* fs.writeFileString(requestPath, "");
+      // Backdate it well past the grace window, which is what makes it stale.
+      // A request written just before startup is deliberately treated as real.
+      // A fixed date, so this does not depend on the clock the test runs under.
+      const staleEpochMs = 1_577_836_800_000; // 2020-01-01
+      yield* fs.utimes(requestPath, staleEpochMs, staleEpochMs);
+
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        { selfSupervise: true, restartDelayMs: 5 },
+      );
+      const running = launcher.run();
+      yield* Effect.sleep("100 millis");
+      // Still running: the stale request was cleared, not obeyed.
+      assert.isFalse(yield* fs.exists(path.join(root, "runtime", SERVICE_STOP_MARKER_FILE)));
+
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      yield* Effect.promise(() => running);
+    }).pipe(TestClock.withLive),
   );
 });

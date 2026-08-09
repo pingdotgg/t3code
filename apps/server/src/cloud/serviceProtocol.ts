@@ -9,6 +9,20 @@ export const SERVICE_STATE_FILE = "service-state.json";
     the child can tell "the service is going away" from "the launcher is about
     to start my replacement" while a pending update is recorded. */
 export const SERVICE_STOP_MARKER_FILE = ".service-stopping";
+/** Windows only. Set by the generated logon script because a Startup folder
+    shortcut has no supervisor. systemd never sets it, so the Linux launcher
+    keeps failing fast and letting `Restart=always` bring the whole unit back. */
+export const SERVICE_SELF_SUPERVISE_ENV = "T3_SERVICE_SELF_SUPERVISE";
+/** Windows only. Written by the CLI to ask a self-supervising launcher to stop,
+    because Windows has no SIGTERM. The launcher deletes it once it has stopped,
+    which is how the CLI learns the stop finished. */
+export const SERVICE_STOP_REQUEST_FILE = ".service-stop-request";
+/** Windows only. Holds a self-supervising launcher's process id while it runs.
+    It is what lets the CLI tell "the service stopped" apart from "no service was
+    running" and from "it is still running and did not answer". Without it, an
+    install could rewrite the runtime under a live launcher and end up with two
+    servers on one database. */
+export const SERVICE_PID_FILE = ".service-pid";
 
 export interface PendingServiceUpdate {
   readonly id: string;
