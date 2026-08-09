@@ -2,11 +2,15 @@
 
 package com.t3tools.android.nativeapp
 
+import android.content.ClipboardManager
 import android.os.Build
 import android.net.Uri
 import android.text.method.LinkMovementMethod
 import android.widget.TextView
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.graphicsLayer
@@ -27,6 +31,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -53,6 +58,8 @@ import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.ContentPaste
+import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Stop
@@ -96,7 +103,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
@@ -116,9 +125,12 @@ import com.t3tools.android.protocol.Project
 import com.t3tools.android.protocol.ProviderModel
 import com.t3tools.android.protocol.ThreadDetail
 import com.t3tools.android.protocol.ThreadSummary
+import com.t3tools.android.protocol.ChatImageAttachment
 import com.t3tools.android.protocol.DEFAULT_TERMINAL_ID
 import com.t3tools.android.protocol.nextTerminalId
 import io.noties.markwon.Markwon
+import coil.compose.AsyncImage
+import java.io.File
 import kotlinx.coroutines.flow.collectLatest
 
 private const val ONBOARDING = "onboarding"
@@ -1149,7 +1161,12 @@ private fun PendingTaskRow(task: PendingTask, viewModel: AppViewModel) {
   var text by remember(task.messageId, task.text) { mutableStateOf(task.text) }
   Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF111827))) {
     Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-      Text(task.text, maxLines = 3, fontWeight = FontWeight.SemiBold)
+      if (task.text.isNotBlank()) Text(task.text, maxLines = 3, fontWeight = FontWeight.SemiBold)
+      ComposerAttachmentStrip(
+        attachments = task.attachments,
+        onRemove = { viewModel.removePendingAttachment(task.messageId, it) },
+        removable = task.status != PendingTaskStatus.Sending,
+      )
       Text(
         when (task.status) {
           PendingTaskStatus.Queued -> if (task.error == null) "Queued" else "Waiting to retry · ${task.error}"
@@ -1174,14 +1191,23 @@ private fun PendingTaskRow(task: PendingTask, viewModel: AppViewModel) {
     AlertDialog(
       onDismissRequest = { editing = false },
       title = { Text("Edit pending task") },
-      text = { OutlinedTextField(text, { text = it }, minLines = 3) },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          OutlinedTextField(text, { text = it }, minLines = 3)
+          ComposerAttachmentButtons(
+            existingCount = task.attachments.size,
+            onAdd = { viewModel.importPendingAttachments(task.messageId, it) },
+            onPasteText = { text += it },
+          )
+        }
+      },
       confirmButton = {
         Button(
           onClick = {
             viewModel.editPending(task.messageId, text)
             editing = false
           },
-          enabled = text.isNotBlank(),
+          enabled = text.isNotBlank() || task.attachments.isNotEmpty(),
         ) { Text("Save") }
       },
       dismissButton = { TextButton(onClick = { editing = false }) { Text("Cancel") } },
@@ -1601,6 +1627,16 @@ private fun NewTaskScreen(
         minLines = 5,
         modifier = Modifier.fillMaxWidth(),
       )
+      ComposerAttachmentActions(
+        draft = draft,
+        onAdd = { viewModel.importDraftAttachments(draftKey, it) },
+        onRemove = { viewModel.removeDraftAttachment(draftKey, it) },
+        enabled = dispatchState !is DispatchState.Sending,
+        onPasteText = {
+          draft = draft.copy(text = draft.text + it)
+          viewModel.saveDraft(draftKey, draft)
+        },
+      )
       Button(
         onClick = {
           viewModel.createTask(
@@ -1610,7 +1646,7 @@ private fun NewTaskScreen(
             worktree = WorktreeChoice(worktree, baseBranch, branch, runSetup),
           )
         },
-        enabled = draft.text.isNotBlank() && projectId.isNotBlank() &&
+        enabled = (draft.text.isNotBlank() || draft.attachments.isNotEmpty()) && projectId.isNotBlank() &&
           runtime.shell.sequence >= 0 && dispatchState !is DispatchState.Sending,
         modifier = Modifier.fillMaxWidth(),
       ) { Text(if (dispatchState is DispatchState.Sending) "Creating…" else "Create task") }
@@ -1701,6 +1737,8 @@ private fun ThreadScreen(
       } else {
         ThreadFeed(
           detail = detail,
+          environmentId = environmentId,
+          viewModel = viewModel,
           modifier = Modifier.fillMaxSize(),
           contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 140.dp),
         )
@@ -1721,6 +1759,8 @@ private fun ThreadScreen(
               draft = next
               viewModel.saveDraft(draftKey, next)
             },
+            onAddAttachments = { viewModel.importDraftAttachments(draftKey, it) },
+            onRemoveAttachment = { viewModel.removeDraftAttachment(draftKey, it) },
             onSend = { viewModel.sendThreadTurn(threadId, draftKey, draft) },
             onInterrupt = { viewModel.interrupt(threadId) },
             onStop = { viewModel.stop(threadId) },
@@ -1734,6 +1774,8 @@ private fun ThreadScreen(
 @Composable
 private fun ThreadFeed(
   detail: ThreadDetail,
+  environmentId: String,
+  viewModel: AppViewModel,
   modifier: Modifier = Modifier,
   state: LazyListState = rememberLazyListState(),
   contentPadding: PaddingValues = PaddingValues(16.dp),
@@ -1753,14 +1795,20 @@ private fun ThreadFeed(
   ) {
     items(entries, key = { it.id }) { message ->
       if (message.role == "assistant") {
-        MarkdownMessage(message.text)
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          if (message.text.isNotBlank()) MarkdownMessage(message.text)
+          message.attachments.forEach { SentAttachmentImage(environmentId, it, viewModel) }
+        }
       } else {
         Surface(
           shape = RoundedCornerShape(16.dp),
           color = if (message.role == "user") Color(0xFF172554) else MaterialTheme.colorScheme.surface,
           modifier = Modifier.fillMaxWidth(),
         ) {
-          UserMessageContent(message.text, modifier = Modifier.padding(14.dp))
+          Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (message.text.isNotBlank()) UserMessageContent(message.text)
+            message.attachments.forEach { SentAttachmentImage(environmentId, it, viewModel) }
+          }
         }
       }
     }
@@ -1890,6 +1938,8 @@ private fun ChatComposerArea(
   enabled: Boolean,
   sending: Boolean,
   onDraftUpdate: (ComposerDraft) -> Unit,
+  onAddAttachments: (List<Uri>) -> Unit,
+  onRemoveAttachment: (String) -> Unit,
   onSend: () -> Unit,
   onInterrupt: () -> Unit,
   onStop: () -> Unit,
@@ -1929,6 +1979,7 @@ private fun ChatComposerArea(
           .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
       ) {
+        ComposerAttachmentStrip(draft.attachments, onRemoveAttachment, removable = !sending)
         val reviewComments = remember(draft.text) { parseReviewComments(draft.text) }
         reviewComments.forEach { comment ->
           ReviewCommentCard(
@@ -1979,6 +2030,14 @@ private fun ChatComposerArea(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.weight(1f, fill = false),
           ) {
+            ComposerAttachmentButtons(
+              existingCount = draft.attachments.size,
+              onAdd = onAddAttachments,
+              enabled = !sending,
+              onPasteText = { pasted ->
+                onDraftUpdate(draft.copy(text = draft.text + pasted))
+              },
+            )
             // 1. Model Selector Pill
             Box {
               Surface(
@@ -2152,7 +2211,8 @@ private fun ChatComposerArea(
                 )
               }
             } else {
-              val canSend = enabled && draft.text.isNotBlank() && !sending
+              val canSend = enabled &&
+                (draft.text.isNotBlank() || draft.attachments.isNotEmpty()) && !sending
               IconButton(
                 onClick = onSend,
                 enabled = canSend,
@@ -2175,6 +2235,154 @@ private fun ChatComposerArea(
         }
       }
     }
+  }
+}
+
+@Composable
+private fun ComposerAttachmentActions(
+  draft: ComposerDraft,
+  onAdd: (List<Uri>) -> Unit,
+  onRemove: (String) -> Unit,
+  enabled: Boolean = true,
+  onPasteText: (String) -> Unit,
+) {
+  ComposerAttachmentStrip(draft.attachments, onRemove, removable = enabled)
+  ComposerAttachmentButtons(draft.attachments.size, onAdd, enabled, onPasteText)
+}
+
+@Composable
+private fun ComposerAttachmentButtons(
+  existingCount: Int,
+  onAdd: (List<Uri>) -> Unit,
+  enabled: Boolean = true,
+  onPasteText: (String) -> Unit,
+) {
+  val context = LocalContext.current
+  val picker = rememberLauncherForActivityResult(
+    ActivityResultContracts.PickMultipleVisualMedia(MaxComposerAttachments),
+    onAdd,
+  )
+  Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    IconButton(
+      onClick = {
+        picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+      },
+      enabled = enabled && existingCount < MaxComposerAttachments,
+    ) {
+      Icon(Icons.Rounded.PhotoLibrary, contentDescription = "Add images")
+    }
+    IconButton(
+      onClick = {
+        val clipboard = context.getSystemService(ClipboardManager::class.java)
+        val clip = clipboard?.primaryClip
+        val item = clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)
+        val imageUri = item?.uri?.takeIf {
+          clip.description.hasMimeType("image/*") || context.contentResolver.getType(it)?.startsWith("image/") == true
+        }
+        when {
+          imageUri != null -> onAdd(listOf(imageUri))
+          item != null -> item.coerceToText(context).toString().takeIf(String::isNotEmpty)?.let(onPasteText)
+        }
+      },
+      enabled = enabled,
+    ) {
+      Icon(Icons.Rounded.ContentPaste, contentDescription = "Paste image or text")
+    }
+  }
+}
+
+@Composable
+private fun ComposerAttachmentStrip(
+  attachments: List<DraftImageAttachment>,
+  onRemove: (String) -> Unit,
+  removable: Boolean = true,
+) {
+  if (attachments.isEmpty()) return
+  var preview by remember { mutableStateOf<DraftImageAttachment?>(null) }
+  LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    items(attachments, key = DraftImageAttachment::id) { attachment ->
+      Box {
+        AsyncImage(
+          model = File(attachment.path),
+          contentDescription = attachment.name,
+          contentScale = ContentScale.Crop,
+          modifier = Modifier
+            .size(72.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF27272A), RoundedCornerShape(12.dp))
+            .clickable { preview = attachment },
+        )
+        if (removable) {
+          IconButton(
+            onClick = { onRemove(attachment.id) },
+            modifier = Modifier.align(Alignment.TopEnd).size(28.dp),
+          ) {
+            Icon(
+              Icons.Rounded.Clear,
+              contentDescription = "Remove ${attachment.name}",
+              tint = Color.White,
+              modifier = Modifier
+                .size(18.dp)
+                .background(Color.Black.copy(alpha = 0.7f), CircleShape),
+            )
+          }
+        }
+      }
+    }
+  }
+  preview?.let { attachment ->
+    AlertDialog(
+      onDismissRequest = { preview = null },
+      title = { Text(attachment.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+      text = {
+        AsyncImage(
+          model = File(attachment.path),
+          contentDescription = attachment.name,
+          contentScale = ContentScale.Fit,
+          modifier = Modifier.fillMaxWidth().height(320.dp),
+        )
+      },
+      confirmButton = { TextButton(onClick = { preview = null }) { Text("Close") } },
+    )
+  }
+}
+
+@Composable
+private fun SentAttachmentImage(
+  environmentId: String,
+  attachment: ChatImageAttachment,
+  viewModel: AppViewModel,
+) {
+  val urls by viewModel.attachmentUrls.collectAsState()
+  val key = "$environmentId:${attachment.id}"
+  val url = urls[key]
+  var preview by remember(attachment.id) { mutableStateOf(false) }
+  LaunchedEffect(key) { viewModel.loadAttachmentUrl(environmentId, attachment.id) }
+  AsyncImage(
+    model = url,
+    contentDescription = attachment.name,
+    contentScale = ContentScale.Crop,
+    modifier = Modifier
+      .fillMaxWidth()
+      .height(220.dp)
+      .clip(RoundedCornerShape(14.dp))
+      .background(Color(0xFF27272A), RoundedCornerShape(14.dp))
+      .clickable(enabled = url != null) { preview = true },
+  )
+  if (preview) {
+    AlertDialog(
+      onDismissRequest = { preview = false },
+      title = { Text(attachment.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+      text = {
+        AsyncImage(
+          model = url,
+          contentDescription = attachment.name,
+          contentScale = ContentScale.Fit,
+          modifier = Modifier.fillMaxWidth().height(320.dp),
+        )
+      },
+      confirmButton = { TextButton(onClick = { preview = false }) { Text("Close") } },
+    )
   }
 }
 

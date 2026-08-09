@@ -68,6 +68,7 @@ class EnvironmentStore(
 @Serializable
 data class ComposerDraft(
   val text: String = "",
+  val attachments: List<DraftImageAttachment> = emptyList(),
   val modelInstanceId: String? = null,
   val model: String? = null,
   val runtimeMode: String = "full-access",
@@ -76,7 +77,7 @@ data class ComposerDraft(
 
 @Serializable
 private data class PersistedDrafts(
-  val version: Int = 1,
+  val version: Int = 2,
   val drafts: Map<String, ComposerDraft> = emptyMap(),
 )
 
@@ -103,6 +104,10 @@ class DraftStore(
     val current = read()
     write(current.copy(drafts = current.drafts.filterKeys { !it.startsWith(prefix) }))
   }
+
+  fun attachmentPaths(): Set<String> = read().drafts.values
+    .flatMap(ComposerDraft::attachments)
+    .mapTo(mutableSetOf(), DraftImageAttachment::path)
 
   private fun read(): PersistedDrafts = preferences.getString(KEY, null)?.let { value ->
     runCatching { json.decodeFromString<PersistedDrafts>(value) }.getOrNull()

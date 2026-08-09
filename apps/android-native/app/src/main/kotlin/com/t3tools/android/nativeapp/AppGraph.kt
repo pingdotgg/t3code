@@ -30,6 +30,7 @@ class AppGraph(application: Application) {
   val credentialStore = AndroidCredentialStore(application)
   val environmentStore = EnvironmentStore(application, database)
   val draftStore = DraftStore(application)
+  val attachmentStore = AttachmentStore(application)
   val connectivity = AndroidConnectivity(application)
   private val protocolClient = T3ProtocolClient(credentialStore)
   val connectClient = T3ConnectClient(protocolClient)
@@ -39,6 +40,7 @@ class AppGraph(application: Application) {
     credentialStore = credentialStore,
     environmentStore = environmentStore,
     draftStore = draftStore,
+    attachmentStore = attachmentStore,
     database = database,
     connectivity = connectivity,
   )

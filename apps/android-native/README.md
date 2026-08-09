@@ -1,13 +1,13 @@
-# T3 Code Native Android — Phase 3D
+# T3 Code Native Android — Phase 3E
 
-Independent native Android client for T3 Code. Phase 3D adds review navigation and contextual comments to the project, files, Git, and terminal journeys from Phases 3A–3C.
+Independent native Android client for T3 Code. Phase 3E adds durable image attachments to new tasks and existing threads, completing the Phase 3 project, files, Git, terminal, review, and attachment journeys.
 
 ## Modules
 
-- `:protocol` — pairing, bearer authentication, Effect RPC WebSocket transport, typed shell/thread/workspace/Git/terminal/review models, sequence-aware reducers, commands, and the headless proof harness.
+- `:protocol` — pairing, bearer authentication, Effect RPC WebSocket transport, typed shell/thread/workspace/Git/terminal/review/attachment models, sequence-aware reducers, commands, and the headless proof harness.
 - `:terminal-renderer` — the shared Ghostty VT/JNI and Canvas renderer compiled from the RN terminal module's plain Android sources.
 - `:review-renderer` — the shared virtualized Canvas diff renderer compiled from the RN review module's Expo-free Android surface.
-- `:app` — Compose UI, multi-environment supervisors, SQLite catalog/outbox/cache, project/files/Git/terminal/review UI, T3 Connect client, and Android Keystore-backed credentials.
+- `:app` — Compose UI, multi-environment supervisors, SQLite catalog/outbox/cache, app-private attachment storage, project/files/Git/terminal/review UI, T3 Connect client, and Android Keystore-backed credentials.
 
 The Kotlin implementation targets the current matching T3 server revision. Broader server-version compatibility is not promised until versioned wire artifacts exist.
 
@@ -87,11 +87,13 @@ T3_NATIVE_PROMPT='Count slowly from one to twenty, one number per line.' \
 
 It must exit 0 after pairing, loading the shell, creating one task with atomic `thread.turn.start`, recovering an uncertain retry by deterministic thread id, streaming assistant output, dispatching `thread.turn.interrupt`, reconnecting from the saved bearer credential, probing the server, and resuming shell/thread streams without duplicate sequences.
 
-## Phase 3D boundaries
+## Phase 3E boundaries
 
-Turn, working-tree, and base-branch review sections; file navigation; collapse/viewed state; large and non-text notices; contextual review comments; and refresh are in scope. Review comments use the existing durable composer draft and outbox. File editing, attachments, and attachment picker/upload remain outside Phase 3D. Performance benchmarking remains deferred until Phase 3E is complete.
+Gallery selection, explicit clipboard paste, draft previews/removal, attachment-only messages, durable draft/outbox recovery, retry/edit/delete cleanup, and sent-image rendering are in scope. Images are capped at eight per message and 10 MB each. The server remains authoritative for sent attachment ids and signed asset URLs.
 
-The Phase 3D capability matrix and device acceptance steps live in [`docs/PHASE3D.md`](docs/PHASE3D.md). Earlier evidence remains in [`docs/PHASE3C.md`](docs/PHASE3C.md), [`docs/PHASE3B.md`](docs/PHASE3B.md), [`docs/PHASE3A.md`](docs/PHASE3A.md), and [`docs/PHASE2.md`](docs/PHASE2.md).
+Camera capture, document/video attachments, Android share-target intake, and file editing remain outside Phase 3E. T3 Connect administrator approval is not a gate. Performance benchmarking follows Phase 3 completion rather than expanding this slice.
+
+The Phase 3E capability matrix and device acceptance steps live in [`docs/PHASE3E.md`](docs/PHASE3E.md). Earlier evidence remains in [`docs/PHASE3D.md`](docs/PHASE3D.md), [`docs/PHASE3C.md`](docs/PHASE3C.md), [`docs/PHASE3B.md`](docs/PHASE3B.md), [`docs/PHASE3A.md`](docs/PHASE3A.md), and [`docs/PHASE2.md`](docs/PHASE2.md).
 
 ### Atomic bootstrap retry caveat
 

@@ -93,6 +93,24 @@ class ChatReducersTest {
   }
 
   @Test
+  fun `thread reducer preserves image attachments across streaming updates`() {
+    val attached = ThreadState().reduce(threadSnapshot()).reduce(
+      messageEvent(
+        21,
+        "",
+        streaming = true,
+        attachments = """
+          [{"id":"attachment-1","type":"image","name":"photo.png","mimeType":"image/png","sizeBytes":3}]
+        """.trimIndent(),
+      ),
+    )
+    val updated = attached.reduce(messageEvent(22, "Done", streaming = false))
+
+    assertEquals("attachment-1", updated.detail?.messages?.single()?.attachments?.single()?.id)
+    assertEquals("image/png", updated.detail?.messages?.single()?.attachments?.single()?.mimeType)
+  }
+
+  @Test
   fun `unknown thread event advances sequence without changing detail`() {
     val initial = ThreadState().reduce(threadSnapshot())
     val updated = initial.reduce(
@@ -162,7 +180,12 @@ class ChatReducersTest {
     """,
   )
 
-  private fun messageEvent(sequence: Long, text: String, streaming: Boolean) = json(
+  private fun messageEvent(
+    sequence: Long,
+    text: String,
+    streaming: Boolean,
+    attachments: String = "[]",
+  ) = json(
     """
     {
       "kind":"event",
@@ -171,6 +194,7 @@ class ChatReducersTest {
         "type":"thread.message-sent",
         "payload":{
           "messageId":"message-1","role":"assistant","text":"$text",
+          "attachments":$attachments,
           "turnId":"turn-1","streaming":$streaming,
           "createdAt":"2026-08-08T00:00:00Z","updatedAt":"2026-08-08T00:00:01Z"
         }

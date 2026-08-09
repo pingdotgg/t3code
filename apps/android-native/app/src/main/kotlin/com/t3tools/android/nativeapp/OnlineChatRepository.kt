@@ -1,5 +1,6 @@
 package com.t3tools.android.nativeapp
 
+import android.net.Uri
 import com.clerk.api.Clerk
 import com.clerk.api.network.model.error.ClerkErrorResponse
 import com.clerk.api.network.serialization.ClerkResult
@@ -29,6 +30,7 @@ import com.t3tools.android.protocol.editStartCommand
 import com.t3tools.android.protocol.parseProviderModels
 import com.t3tools.android.protocol.reduce
 import com.t3tools.android.protocol.startCommand
+import com.t3tools.android.protocol.withStartCommandAttachments
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
@@ -113,6 +115,7 @@ class OnlineChatRepository(
   private val credentialStore: AndroidCredentialStore,
   private val environmentStore: EnvironmentStore,
   private val draftStore: DraftStore,
+  private val attachmentStore: AttachmentStore,
   private val database: NativeDatabase,
   private val connectivity: AndroidConnectivity,
 ) : AutoCloseable {
@@ -175,6 +178,11 @@ class OnlineChatRepository(
       database.pending().forEach {
         pending[it.messageId] = it.copy(status = OutboxPolicy.normalizeRestoredStatus(it.status))
       }
+      attachmentStore.reconcile(
+        draftStore.attachmentPaths() + pending.values.flatMap { task ->
+          task.attachments.map(DraftImageAttachment::path)
+        },
+      )
       activeEnvironmentId = environmentStore.load()?.environmentId
       restored = true
       publishLocked()
@@ -401,6 +409,7 @@ class OnlineChatRepository(
     }
     credentialStore.clear(environmentId)
     draftStore.clearEnvironment(environmentId)
+    attachmentStore.deleteEnvironment(environmentId)
     activeEnvironmentId?.let(environmentStore::select)
     synchronized(lock) { publishLocked() }
   }
@@ -515,6 +524,26 @@ class OnlineChatRepository(
     val relative = asset.relativeUrl
     if (relative.startsWith("http://") || relative.startsWith("https://")) relative
     else URI("$base/").resolve(relative.removePrefix("/")).toString()
+  }
+
+  suspend fun attachmentAssetUrl(environmentId: String, attachmentId: String): String =
+    withContext(Dispatchers.IO) {
+      val runtime = connectedRuntime(environmentId)
+      val asset = client.createAttachmentAssetUrl(
+        requireNotNull(runtime.connection).session,
+        attachmentId,
+      )
+      val base = runtime.environment.httpBaseUrl.trimEnd('/')
+      val relative = asset.relativeUrl
+      if (relative.startsWith("http://") || relative.startsWith("https://")) relative
+      else URI("$base/").resolve(relative.removePrefix("/")).toString()
+    }
+
+  suspend fun cleanupAttachments() = withContext(Dispatchers.IO) {
+    val outboxPaths = synchronized(lock) {
+      pending.values.flatMap { task -> task.attachments.map(DraftImageAttachment::path) }
+    }
+    attachmentStore.reconcile(draftStore.attachmentPaths() + outboxPaths)
   }
 
   suspend fun reviewDiffPreview(
@@ -793,6 +822,7 @@ class OnlineChatRepository(
     settings: List<JsonObject>,
     createsThread: Boolean,
     text: String,
+    attachments: List<DraftImageAttachment>,
   ) = withContext(Dispatchers.IO) {
     val environmentId = requireNotNull(activeEnvironmentId) { "No saved environment." }
     val task = PendingTask(
@@ -804,6 +834,7 @@ class OnlineChatRepository(
       settings = JsonArray(settings),
       createsThread = createsThread,
       text = text,
+      attachments = attachments,
     )
     outboxMutex.withLock {
       database.savePending(task)
@@ -821,7 +852,7 @@ class OnlineChatRepository(
         val current = requireNotNull(pending[messageId]) { "Pending task no longer exists." }
         require(current.status != PendingTaskStatus.Sending) { "Wait for the current send attempt." }
         current.copy(
-          command = editStartCommand(current.command, text),
+          command = editStartCommand(current.command, text, current.attachments.isNotEmpty()),
           text = text.trim(),
           status = PendingTaskStatus.Queued,
           attempt = 0,
@@ -839,6 +870,63 @@ class OnlineChatRepository(
     scheduleDrain(updated.environmentId, updated.threadId)
   }
 
+  suspend fun importPendingAttachments(messageId: String, uris: List<Uri>) = withContext(Dispatchers.IO) {
+    val current = synchronized(lock) {
+      requireNotNull(pending[messageId]) { "Pending task no longer exists." }.also {
+        require(it.status != PendingTaskStatus.Sending) { "Wait for the current send attempt." }
+      }
+    }
+    val imported = attachmentStore.import(current.environmentId, uris, current.attachments.size)
+    try {
+      if (imported.attachments.isNotEmpty()) {
+        outboxMutex.withLock {
+          val latest = synchronized(lock) {
+            requireNotNull(pending[messageId]) { "Pending task no longer exists." }.also {
+              require(it.status != PendingTaskStatus.Sending) { "Wait for the current send attempt." }
+            }
+          }
+          require(latest.attachments.size + imported.attachments.size <= MaxComposerAttachments) {
+            "You can attach up to $MaxComposerAttachments images per message."
+          }
+          val updated = latest.copy(
+            attachments = latest.attachments + imported.attachments,
+          )
+          database.savePending(updated)
+          synchronized(lock) {
+            pending[messageId] = updated
+            publishLocked()
+          }
+        }
+      }
+    } catch (failure: Throwable) {
+      attachmentStore.delete(imported.attachments)
+      throw failure
+    }
+    imported.error
+  }
+
+  suspend fun removePendingAttachment(messageId: String, attachmentId: String) = withContext(Dispatchers.IO) {
+    val removed = outboxMutex.withLock {
+      val current = synchronized(lock) {
+        requireNotNull(pending[messageId]) { "Pending task no longer exists." }.also {
+          require(it.status != PendingTaskStatus.Sending) { "Wait for the current send attempt." }
+        }
+      }
+      val removed = current.attachments.filter { it.id == attachmentId }
+      if (removed.isEmpty()) return@withLock emptyList()
+      val remaining = current.attachments.filterNot { it.id == attachmentId }
+      require(current.text.isNotBlank() || remaining.isNotEmpty()) { "Message must include text or an attachment." }
+      val updated = current.copy(attachments = remaining)
+      database.savePending(updated)
+      synchronized(lock) {
+        pending[messageId] = updated
+        publishLocked()
+      }
+      removed
+    }
+    cleanupAttachments()
+  }
+
   suspend fun removePending(messageId: String) = withContext(Dispatchers.IO) {
     outboxMutex.withLock {
       val task = synchronized(lock) { pending[messageId] } ?: return@withLock
@@ -849,6 +937,7 @@ class OnlineChatRepository(
         publishLocked()
       }
     }
+    cleanupAttachments()
   }
 
   suspend fun retryPending(messageId: String) = withContext(Dispatchers.IO) {
@@ -1123,6 +1212,7 @@ class OnlineChatRepository(
         previousActiveId?.let(environmentStore::select)
       }
       draftStore.clearEnvironment(previousEnvironmentId)
+      attachmentStore.deleteEnvironment(previousEnvironmentId)
 
       synchronized(lock) {
         runtimes[replacement.environmentId] = EnvironmentRuntime(
@@ -1245,9 +1335,11 @@ class OnlineChatRepository(
       val result = runCatching {
         val session = requireNotNull(runtime.connection).session
         sending.settings.forEach { client.dispatch(session, it as JsonObject) }
-        val start = startCommand(sending.command)
+        val uploads = sending.attachments.map(attachmentStore::materialize)
+        val wireCommand = withStartCommandAttachments(sending.command, uploads)
+        val start = startCommand(wireCommand)
         if (sending.createsThread) client.recoverAtomicStart(session, start)
-        else client.dispatch(session, sending.command)
+        else client.dispatch(session, wireCommand)
       }
       if (result.isSuccess) {
         outboxMutex.withLock {
@@ -1257,6 +1349,7 @@ class OnlineChatRepository(
             publishLocked()
           }
         }
+        cleanupAttachments()
         continue
       }
       val error = requireNotNull(result.exceptionOrNull())

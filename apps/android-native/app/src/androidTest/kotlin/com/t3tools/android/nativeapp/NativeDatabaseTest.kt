@@ -1,5 +1,6 @@
 package com.t3tools.android.nativeapp
 
+import android.database.sqlite.SQLiteDatabase
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.t3tools.android.protocol.ShellState
@@ -106,6 +107,7 @@ class NativeDatabaseTest {
       command = JsonObject(mapOf("text" to JsonPrimitive("one"))),
       createsThread = false,
       text = "one",
+      attachments = listOf(DraftImageAttachment("image-1", "photo.png", "image/png", 3, "/owned/photo.png")),
       createdAt = 10,
     )
     val second = PendingTask(
@@ -135,9 +137,52 @@ class NativeDatabaseTest {
     assertEquals(PendingTaskStatus.Failed, updated.status)
     assertEquals(2, updated.attempt)
     assertEquals("timeout", updated.error)
+    assertEquals("image-1", updated.attachments.single().id)
 
     database.removePending("m1")
     assertEquals(listOf("m2"), database.pending(env.environmentId).map(PendingTask::messageId))
+  }
+
+  @Test
+  fun migrates_v1_outbox_with_empty_attachment_metadata() {
+    val migrationName = "phase3e-migration-${UUID.randomUUID()}.db"
+    val path = context.getDatabasePath(migrationName).apply { parentFile?.mkdirs() }
+    SQLiteDatabase.openOrCreateDatabase(path, null).use { legacy ->
+      legacy.execSQL(
+        """
+        CREATE TABLE outbox (
+          message_id TEXT PRIMARY KEY NOT NULL,
+          environment_id TEXT NOT NULL,
+          thread_id TEXT NOT NULL,
+          draft_key TEXT NOT NULL,
+          command_json TEXT NOT NULL,
+          settings_json TEXT NOT NULL,
+          creates_thread INTEGER NOT NULL,
+          text TEXT NOT NULL,
+          status TEXT NOT NULL,
+          attempt INTEGER NOT NULL,
+          next_attempt_at INTEGER NOT NULL,
+          error TEXT,
+          created_at INTEGER NOT NULL
+        )
+        """.trimIndent(),
+      )
+      legacy.version = 1
+    }
+
+    val migrated = NativeDatabase(context, migrationName)
+    try {
+      val columns = migrated.writableDatabase.rawQuery("PRAGMA table_info(outbox)", null).use { cursor ->
+        buildSet {
+          val nameIndex = cursor.getColumnIndexOrThrow("name")
+          while (cursor.moveToNext()) add(cursor.getString(nameIndex))
+        }
+      }
+      assertTrue("attachments_json" in columns)
+    } finally {
+      migrated.close()
+      context.deleteDatabase(migrationName)
+    }
   }
 
   @Test

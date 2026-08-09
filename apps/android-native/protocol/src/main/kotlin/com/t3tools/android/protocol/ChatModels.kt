@@ -77,10 +77,27 @@ data class ChatMessage(
   val id: String,
   val role: String,
   val text: String,
+  val attachments: List<ChatImageAttachment> = emptyList(),
   val turnId: String?,
   val streaming: Boolean,
   val createdAt: String,
   val updatedAt: String,
+)
+
+@Serializable
+data class ChatImageAttachment(
+  val id: String,
+  val type: String = "image",
+  val name: String,
+  val mimeType: String,
+  val sizeBytes: Long,
+)
+
+data class UploadChatImageAttachment(
+  val name: String,
+  val mimeType: String,
+  val sizeBytes: Long,
+  val dataUrl: String,
 )
 
 @Serializable

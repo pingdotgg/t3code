@@ -8,6 +8,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 
 data class StartCommand(
@@ -27,10 +28,14 @@ fun startCommand(command: JsonObject): StartCommand {
   )
 }
 
-fun editStartCommand(command: JsonObject, prompt: String): JsonObject {
-  require(prompt.isNotBlank()) { "Prompt must not be blank." }
+fun editStartCommand(command: JsonObject, prompt: String, hasAttachments: Boolean = false): JsonObject {
   val message = command.required("message").jsonObject
-  val title = prompt.trim().replace(Regex("\\s+"), " ").let {
+  val commandHasAttachments = (message["attachments"] as? JsonArray)?.isNotEmpty() == true
+  require(prompt.isNotBlank() || hasAttachments || commandHasAttachments) {
+    "Message must include text or an attachment."
+  }
+  val titleSource = prompt.ifBlank { command["titleSeed"]?.jsonPrimitive?.content ?: "Image attachment" }
+  val title = titleSource.trim().replace(Regex("\\s+"), " ").let {
     if (it.length <= 72) it else "${it.take(69).trimEnd()}..."
   }
   val bootstrap = command["bootstrap"] as? JsonObject
@@ -68,6 +73,8 @@ fun atomicStartCommand(
   project: ProjectChoice,
   modelSelection: JsonObject,
   prompt: String,
+  attachments: List<UploadChatImageAttachment> = emptyList(),
+  pendingAttachmentNames: List<String> = emptyList(),
   runtimeMode: String = "full-access",
   interactionMode: String = "default",
   worktree: WorktreeBootstrap? = null,
@@ -76,9 +83,14 @@ fun atomicStartCommand(
   threadId: String = UUID.randomUUID().toString(),
   now: Instant = Instant.now(),
 ): StartCommand {
-  require(prompt.isNotBlank()) { "Prompt must not be blank." }
+  require(prompt.isNotBlank() || attachments.isNotEmpty() || pendingAttachmentNames.isNotEmpty()) {
+    "Message must include text or an attachment."
+  }
   val timestamp = now.toString()
-  val title = prompt.trim().replace(Regex("\\s+"), " ").let {
+  val titleSource = prompt.ifBlank {
+    attachments.firstOrNull()?.name ?: pendingAttachmentNames.firstOrNull() ?: "Image attachment"
+  }
+  val title = titleSource.trim().replace(Regex("\\s+"), " ").let {
     if (it.length <= 72) it else "${it.take(69).trimEnd()}..."
   }
   return StartCommand(
@@ -93,7 +105,7 @@ fun atomicStartCommand(
         "messageId" to JsonPrimitive(messageId),
         "role" to JsonPrimitive("user"),
         "text" to JsonPrimitive(prompt),
-        "attachments" to JsonArray(emptyList()),
+        "attachments" to JsonArray(attachments.map(UploadChatImageAttachment::toJsonObject)),
       ),
       "modelSelection" to modelSelection,
       "titleSeed" to JsonPrimitive(title),
@@ -129,13 +141,17 @@ fun turnStartCommand(
   threadId: String,
   modelSelection: JsonObject,
   prompt: String,
+  attachments: List<UploadChatImageAttachment> = emptyList(),
+  pendingAttachmentNames: List<String> = emptyList(),
   runtimeMode: String,
   interactionMode: String,
   commandId: String = UUID.randomUUID().toString(),
   messageId: String = UUID.randomUUID().toString(),
   now: Instant = Instant.now(),
 ): StartCommand {
-  require(prompt.isNotBlank()) { "Prompt must not be blank." }
+  require(prompt.isNotBlank() || attachments.isNotEmpty() || pendingAttachmentNames.isNotEmpty()) {
+    "Message must include text or an attachment."
+  }
   return StartCommand(
     threadId = threadId,
     commandId = commandId,
@@ -148,7 +164,7 @@ fun turnStartCommand(
         "messageId" to JsonPrimitive(messageId),
         "role" to JsonPrimitive("user"),
         "text" to JsonPrimitive(prompt),
-        "attachments" to JsonArray(emptyList()),
+        "attachments" to JsonArray(attachments.map(UploadChatImageAttachment::toJsonObject)),
       ),
       "modelSelection" to modelSelection,
       "runtimeMode" to JsonPrimitive(runtimeMode),
@@ -157,6 +173,25 @@ fun turnStartCommand(
     ),
   )
 }
+
+fun withStartCommandAttachments(
+  command: JsonObject,
+  attachments: List<UploadChatImageAttachment>,
+): JsonObject {
+  val message = command.required("message").jsonObject
+  val updatedMessage = JsonObject(
+    message + ("attachments" to JsonArray(attachments.map(UploadChatImageAttachment::toJsonObject))),
+  )
+  return JsonObject(command + ("message" to updatedMessage))
+}
+
+private fun UploadChatImageAttachment.toJsonObject() = buildJsonObject(
+  "type" to JsonPrimitive("image"),
+  "name" to JsonPrimitive(name),
+  "mimeType" to JsonPrimitive(mimeType),
+  "sizeBytes" to JsonPrimitive(sizeBytes),
+  "dataUrl" to JsonPrimitive(dataUrl),
+)
 
 fun interruptCommand(threadId: String, now: Instant = Instant.now()) = buildJsonObject(
   "type" to JsonPrimitive("thread.turn.interrupt"),

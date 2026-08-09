@@ -213,6 +213,9 @@ class T3ProtocolClient(
     path: String,
   ) = session.unary("assets.createUrl", workspaceAssetPayload(threadId, path)).toWorkspaceAssetUrl()
 
+  suspend fun createAttachmentAssetUrl(session: EffectRpcSession, attachmentId: String) =
+    session.unary("assets.createUrl", attachmentAssetPayload(attachmentId)).toWorkspaceAssetUrl()
+
   suspend fun reviewDiffPreview(
     session: EffectRpcSession,
     cwd: String,

@@ -5,6 +5,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.jsonArray
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -56,6 +57,51 @@ class ChatCommandsTest {
     assertEquals("project-1", bootstrap.required("createThread").jsonObject.required("projectId").jsonPrimitive.content)
     assertEquals("main", bootstrap.required("prepareWorktree").jsonObject.required("baseBranch").jsonPrimitive.content)
     assertEquals(false, bootstrap.required("runSetupScript").jsonPrimitive.content.toBoolean())
+  }
+
+  @Test
+  fun `attachment-only turn emits upload without requiring text`() {
+    val start = turnStartCommand(
+      threadId = "thread-1",
+      modelSelection = model,
+      prompt = "",
+      attachments = listOf(
+        UploadChatImageAttachment("photo.png", "image/png", 3, "data:image/png;base64,AQID"),
+      ),
+      runtimeMode = "full-access",
+      interactionMode = "default",
+      now = now,
+    )
+
+    val attachment = start.command.required("message").jsonObject
+      .required("attachments").jsonArray.single().jsonObject
+    assertEquals("image/png", attachment.required("mimeType").jsonPrimitive.content)
+    assertEquals("data:image/png;base64,AQID", attachment.required("dataUrl").jsonPrimitive.content)
+  }
+
+  @Test
+  fun `pending attachment-only turn can be edited before upload materialization`() {
+    val start = turnStartCommand(
+      threadId = "thread-1",
+      modelSelection = model,
+      prompt = "",
+      pendingAttachmentNames = listOf("photo.png"),
+      runtimeMode = "full-access",
+      interactionMode = "default",
+      now = now,
+    )
+
+    val edited = editStartCommand(start.command, "", hasAttachments = true)
+    val materialized = withStartCommandAttachments(
+      edited,
+      listOf(UploadChatImageAttachment("photo.png", "image/png", 3, "data:image/png;base64,AQID")),
+    )
+
+    assertEquals(
+      "data:image/png;base64,AQID",
+      materialized.required("message").jsonObject.required("attachments")
+        .jsonArray.single().jsonObject.required("dataUrl").jsonPrimitive.content,
+    )
   }
 
   @Test

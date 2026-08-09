@@ -96,6 +96,13 @@ internal fun workspaceAssetPayload(threadId: String, path: String) = buildJsonOb
   ),
 )
 
+internal fun attachmentAssetPayload(attachmentId: String) = buildJsonObject(
+  "resource" to buildJsonObject(
+    "_tag" to JsonPrimitive("attachment"),
+    "attachmentId" to JsonPrimitive(attachmentId),
+  ),
+)
+
 internal fun JsonElement.toWorkspaceEntries(): WorkspaceEntries {
   val value = jsonObject
   return WorkspaceEntries(

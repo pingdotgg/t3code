@@ -249,6 +249,7 @@ private fun JsonObject.toMessage(): ChatMessage? {
     id = id,
     role = text("role") ?: "system",
     text = text("text") ?: "",
+    attachments = attachments(),
     turnId = nullableText("turnId"),
     streaming = bool("streaming") == true,
     createdAt = text("createdAt") ?: "",
@@ -288,6 +289,7 @@ private fun ThreadDetail.upsertMessage(payload: JsonObject): ThreadDetail {
     id = id,
     role = payload.text("role") ?: "system",
     text = payload.text("text") ?: "",
+    attachments = payload.attachments(),
     turnId = payload.nullableText("turnId"),
     streaming = payload.bool("streaming") == true,
     createdAt = payload.text("createdAt") ?: "",
@@ -301,11 +303,26 @@ private fun ThreadDetail.upsertMessage(payload: JsonObject): ThreadDetail {
       if (message.id != id) message else incoming.copy(
         text = if (incoming.streaming) message.text + incoming.text
         else incoming.text.ifEmpty { message.text },
+        attachments = incoming.attachments.ifEmpty { message.attachments },
         createdAt = message.createdAt,
       )
     }
   }
   return copy(messages = next)
+}
+
+private fun JsonObject.attachments() = array("attachments").orEmpty().mapNotNull { value ->
+  val attachment = value as? JsonObject ?: return@mapNotNull null
+  val id = attachment.text("id") ?: return@mapNotNull null
+  val mimeType = attachment.text("mimeType")?.takeIf { it.startsWith("image/", ignoreCase = true) }
+    ?: return@mapNotNull null
+  ChatImageAttachment(
+    id = id,
+    type = attachment.text("type") ?: "image",
+    name = attachment.text("name") ?: "image",
+    mimeType = mimeType,
+    sizeBytes = attachment.long("sizeBytes") ?: 0,
+  )
 }
 
 private fun ThreadDetail.upsertActivity(activity: JsonObject?): ThreadDetail {

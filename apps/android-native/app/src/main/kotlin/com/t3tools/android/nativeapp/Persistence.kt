@@ -27,6 +27,7 @@ data class PendingTask(
   val settings: JsonArray = JsonArray(emptyList()),
   val createsThread: Boolean,
   val text: String,
+  val attachments: List<DraftImageAttachment> = emptyList(),
   val status: PendingTaskStatus = PendingTaskStatus.Queued,
   val attempt: Int = 0,
   val nextAttemptAt: Long = 0,
@@ -104,6 +105,7 @@ class NativeDatabase(
         settings_json TEXT NOT NULL,
         creates_thread INTEGER NOT NULL,
         text TEXT NOT NULL,
+        attachments_json TEXT NOT NULL,
         status TEXT NOT NULL,
         attempt INTEGER NOT NULL,
         next_attempt_at INTEGER NOT NULL,
@@ -119,6 +121,10 @@ class NativeDatabase(
   }
 
   override fun onUpgrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+    if (oldVersion == 1 && newVersion == 2) {
+      database.execSQL("ALTER TABLE outbox ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]'")
+      return
+    }
     error("Unsupported native database migration $oldVersion -> $newVersion")
   }
 
@@ -301,6 +307,7 @@ class NativeDatabase(
         put("settings_json", json.encodeToString(JsonArray.serializer(), task.settings))
         put("creates_thread", if (task.createsThread) 1 else 0)
         put("text", task.text)
+        put("attachments_json", json.encodeToString(task.attachments))
         put("status", task.status.name)
         put("attempt", task.attempt)
         put("next_attempt_at", task.nextAttemptAt)
@@ -336,11 +343,12 @@ class NativeDatabase(
               settings = json.decodeFromString(JsonArray.serializer(), cursor.getString(5)),
               createsThread = cursor.getInt(6) != 0,
               text = cursor.getString(7),
-              status = PendingTaskStatus.valueOf(cursor.getString(8)),
-              attempt = cursor.getInt(9),
-              nextAttemptAt = cursor.getLong(10),
-              error = cursor.getString(11),
-              createdAt = cursor.getLong(12),
+              attachments = json.decodeFromString(cursor.getString(8)),
+              status = PendingTaskStatus.valueOf(cursor.getString(9)),
+              attempt = cursor.getInt(10),
+              nextAttemptAt = cursor.getLong(11),
+              error = cursor.getString(12),
+              createdAt = cursor.getLong(13),
             )
           }.getOrNull()?.let(::add)
         }
@@ -463,7 +471,7 @@ class NativeDatabase(
 
   private companion object {
     const val DATABASE_NAME = "t3-native.db"
-    const val DATABASE_VERSION = 1
+    const val DATABASE_VERSION = 2
     const val SELECTED_ENVIRONMENT = "selected_environment_id"
     const val SHELL_KIND = "shell"
     const val SHELL_ITEM = "current"
@@ -490,6 +498,7 @@ class NativeDatabase(
       "settings_json",
       "creates_thread",
       "text",
+      "attachments_json",
       "status",
       "attempt",
       "next_attempt_at",

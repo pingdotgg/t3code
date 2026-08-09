@@ -1,5 +1,6 @@
 package com.t3tools.android.nativeapp
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -145,6 +146,7 @@ data class ReviewUiState(
 class AppViewModel(
   private val repository: OnlineChatRepository,
   private val draftStore: DraftStore,
+  private val attachmentStore: AttachmentStore,
 ) : ViewModel() {
   val runtime: StateFlow<OnlineChatState> = repository.state
 
@@ -171,6 +173,9 @@ class AppViewModel(
 
   private val mutableReviewState = MutableStateFlow(ReviewUiState())
   val reviewState = mutableReviewState.asStateFlow()
+
+  private val mutableAttachmentUrls = MutableStateFlow<Map<String, String>>(emptyMap())
+  val attachmentUrls = mutableAttachmentUrls.asStateFlow()
 
   private val mutableTerminalRenderCommands = MutableSharedFlow<TerminalRenderCommand>(
     extraBufferCapacity = 256,
@@ -1355,6 +1360,56 @@ class AppViewModel(
 
   fun saveDraft(key: String, draft: ComposerDraft) = draftStore.save(key, draft)
 
+  fun importDraftAttachments(draftKey: String, uris: List<Uri>) {
+    val environmentId = runtime.value.environment?.environmentId ?: return
+    viewModelScope.launch {
+      val current = draftStore.load(draftKey)
+      var imported = emptyList<DraftImageAttachment>()
+      runCatching {
+        attachmentStore.import(environmentId, uris, current.attachments.size).also { result ->
+          imported = result.attachments
+          if (result.attachments.isNotEmpty()) {
+            draftStore.save(
+              draftKey,
+              current.copy(attachments = current.attachments + result.attachments),
+            )
+          }
+        }
+      }
+        .onSuccess { result ->
+          if (result.attachments.isNotEmpty()) {
+            mutableDraftRevision.update { it + 1 }
+          }
+          result.error?.let { mutableDispatchState.value = DispatchState.Failed(it) }
+        }
+        .onFailure {
+          attachmentStore.delete(imported)
+          mutableDispatchState.value = DispatchState.Failed(it.safeMessage())
+        }
+    }
+  }
+
+  fun removeDraftAttachment(draftKey: String, attachmentId: String) {
+    val current = draftStore.load(draftKey)
+    val removed = current.attachments.filter { it.id == attachmentId }
+    if (removed.isEmpty()) return
+    draftStore.save(
+      draftKey,
+      current.copy(attachments = current.attachments.filterNot { it.id == attachmentId }),
+    )
+    mutableDraftRevision.update { it + 1 }
+    viewModelScope.launch { repository.cleanupAttachments() }
+  }
+
+  fun loadAttachmentUrl(environmentId: String, attachmentId: String) {
+    val key = "$environmentId:$attachmentId"
+    if (mutableAttachmentUrls.value.containsKey(key)) return
+    viewModelScope.launch {
+      runCatching { repository.attachmentAssetUrl(environmentId, attachmentId) }
+        .onSuccess { url -> mutableAttachmentUrls.update { it + (key to url) } }
+    }
+  }
+
   fun sendThreadTurn(threadId: String, draftKey: String, draft: ComposerDraft) {
     val summary = runtime.value.shell.threads[threadId]
       ?: runtime.value.thread.detail?.summary
@@ -1364,6 +1419,7 @@ class AppViewModel(
       threadId = threadId,
       modelSelection = selection.toJsonObject(),
       prompt = draft.text,
+      pendingAttachmentNames = draft.attachments.map(DraftImageAttachment::name),
       runtimeMode = draft.runtimeMode,
       interactionMode = draft.interactionMode,
     )
@@ -1399,6 +1455,7 @@ class AppViewModel(
       ),
       modelSelection = selection.toJsonObject(),
       prompt = draft.text,
+      pendingAttachmentNames = draft.attachments.map(DraftImageAttachment::name),
       runtimeMode = draft.runtimeMode,
       interactionMode = draft.interactionMode,
       worktree = if (worktree.enabled) {
@@ -1412,7 +1469,7 @@ class AppViewModel(
         null
       },
     )
-    dispatchNew(start, draftKey)
+    dispatchNew(start, draftKey, draft)
   }
 
   fun retryDispatch() {
@@ -1467,6 +1524,21 @@ class AppViewModel(
   fun editPending(messageId: String, text: String) {
     viewModelScope.launch {
       runCatching { repository.editPending(messageId, text) }
+        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
+  }
+
+  fun importPendingAttachments(messageId: String, uris: List<Uri>) {
+    viewModelScope.launch {
+      runCatching { repository.importPendingAttachments(messageId, uris) }
+        .onSuccess { error -> error?.let { mutableDispatchState.value = DispatchState.Failed(it) } }
+        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
+  }
+
+  fun removePendingAttachment(messageId: String, attachmentId: String) {
+    viewModelScope.launch {
+      runCatching { repository.removePendingAttachment(messageId, attachmentId) }
         .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
     }
   }
@@ -1584,12 +1656,22 @@ class AppViewModel(
           settings = settings,
           createsThread = false,
           text = draft.text,
+          attachments = draft.attachments,
         )
       }
         .onSuccess {
           retryable = null
           val currentDraft = draftStore.load(draftKey)
-          if (currentDraft == draft) draftStore.save(draftKey, draft.copy(text = ""))
+          val sentAttachmentIds = draft.attachments.mapTo(mutableSetOf(), DraftImageAttachment::id)
+          val nextDraft = if (currentDraft == draft) {
+            draft.copy(text = "", attachments = emptyList())
+          } else {
+            currentDraft.copy(
+              attachments = currentDraft.attachments.filterNot { it.id in sentAttachmentIds },
+            )
+          }
+          draftStore.save(draftKey, nextDraft)
+          repository.cleanupAttachments()
           mutableDraftRevision.update { it + 1 }
           mutableDispatchState.value = DispatchState.Idle
         }
@@ -1597,7 +1679,7 @@ class AppViewModel(
     }
   }
 
-  private fun dispatchNew(start: StartCommand, draftKey: String) {
+  private fun dispatchNew(start: StartCommand, draftKey: String, draft: ComposerDraft) {
     retryable = RetryableDispatch.NewTask(start, draftKey)
     viewModelScope.launch {
       mutableDispatchState.value = DispatchState.Sending
@@ -1607,7 +1689,8 @@ class AppViewModel(
           draftKey = draftKey,
           settings = emptyList(),
           createsThread = true,
-          text = draftStore.load(draftKey).text,
+          text = draft.text,
+          attachments = draft.attachments,
         )
       }
         .onSuccess { acceptNew(start, draftKey) }
@@ -1616,13 +1699,14 @@ class AppViewModel(
   }
 
   private fun recoverNew(start: StartCommand, draftKey: String) {
-    dispatchNew(start, draftKey)
+    dispatchNew(start, draftKey, draftStore.load(draftKey))
   }
 
   private fun acceptNew(start: StartCommand, draftKey: String) {
     retryable = null
     draftStore.clear(draftKey)
     mutableDraftRevision.update { it + 1 }
+    viewModelScope.launch { repository.cleanupAttachments() }
     mutableDispatchState.value = DispatchState.Idle
     repository.selectThread(start.threadId)
     mutableEvents.tryEmit(AppEvent.OpenThread(start.threadId))
@@ -1703,7 +1787,7 @@ class AppViewModel(
   class Factory(private val graph: AppGraph) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
-      AppViewModel(graph.chatRepository, graph.draftStore) as T
+      AppViewModel(graph.chatRepository, graph.draftStore, graph.attachmentStore) as T
   }
 }
 
