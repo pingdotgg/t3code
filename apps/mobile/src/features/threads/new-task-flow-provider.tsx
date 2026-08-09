@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type {
   EnvironmentId,
   ModelSelection,
+  ProjectReadFileResult,
   ProviderInteractionMode,
   ProviderOptionSelection,
   RuntimeMode,
@@ -13,8 +14,10 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   MessageId,
+  T3_PROJECT_FILE_NAME,
   ThreadId,
 } from "@t3tools/contracts";
+import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 
@@ -30,6 +33,8 @@ import {
 } from "../../lib/modelOptions";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { projectEnvironment } from "../../state/projects";
+import { useEnvironmentQuery } from "../../state/query";
 import {
   appendComposerDraftAttachments,
   clearComposerDraft,
@@ -345,10 +350,27 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
   const prompt = selectedProjectDraft.text;
   const attachments = selectedProjectDraft.attachments;
-  // The server's configured default decides the mode until the user picks one
-  // explicitly — same resolution web uses for new draft threads.
+  // Default mode until the user picks one explicitly — same resolution web
+  // uses for new draft threads: per-project setting, then the repo's
+  // checked-in t3.json, then the server's configured default.
+  const t3ProjectFileQuery = useEnvironmentQuery(
+    selectedProject !== null && selectedProject.workspaceRoot !== ""
+      ? projectEnvironment.readFile({
+          environmentId: selectedProject.environmentId,
+          input: { cwd: selectedProject.workspaceRoot, relativePath: T3_PROJECT_FILE_NAME },
+        })
+      : null,
+  );
+  const t3ProjectFileData = t3ProjectFileQuery.data as ProjectReadFileResult | null;
+  const t3ProjectFileDefaultMode = useMemo(() => {
+    if (t3ProjectFileData === null || t3ProjectFileData.truncated) return null;
+    return parseT3ProjectFile(t3ProjectFileData.contents)?.defaultThreadEnvMode ?? null;
+  }, [t3ProjectFileData]);
   const defaultWorkspaceMode: WorkspaceMode =
-    selectedEnvironmentServerConfig?.settings.defaultThreadEnvMode ?? "local";
+    selectedProject?.defaultThreadEnvMode ??
+    t3ProjectFileDefaultMode ??
+    selectedEnvironmentServerConfig?.settings.defaultThreadEnvMode ??
+    "local";
   const workspaceMode = selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode;
   const selectedBranchName = selectedProjectDraft.workspaceSelection?.branch ?? null;
   const selectedWorktreePath = selectedProjectDraft.workspaceSelection?.worktreePath ?? null;

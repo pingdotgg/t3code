@@ -22,6 +22,7 @@ import {
 } from "../logicalProject";
 import { readThreadShell, useProjects, useThread } from "../state/entities";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
+import { readT3ProjectFileDefaultThreadEnvMode } from "../lib/t3ProjectFileDefaults";
 import { primaryServerSettingsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
@@ -105,6 +106,20 @@ export function useNewThreadHandler() {
           candidate.id === projectRef.projectId &&
           candidate.environmentId === projectRef.environmentId,
       );
+      // Default env mode resolves per project: the project's own setting,
+      // then the repo's checked-in t3.json, then the global setting. The
+      // t3.json read is skipped entirely when the project setting decides,
+      // and its query atom caches per project after the first call.
+      const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
+        if (project?.defaultThreadEnvMode != null) return project.defaultThreadEnvMode;
+        const fromProjectFile = project
+          ? await readT3ProjectFileDefaultThreadEnvMode(
+              project.environmentId,
+              project.workspaceRoot,
+            )
+          : null;
+        return fromProjectFile ?? primaryServerSettings.defaultThreadEnvMode;
+      };
       const logicalProjectKey = project
         ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
         : scopedProjectKey(projectRef);
@@ -146,7 +161,6 @@ export function useNewThreadHandler() {
           // preserved. When the draft is already open and no options were
           // passed, leave it alone entirely — the user may have just picked a
           // branch in the composer.
-          const defaultEnvMode = primaryServerSettings.defaultThreadEnvMode;
           const workspaceContext = hasExplicitWorkspaceOption
             ? {
                 ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
@@ -156,15 +170,19 @@ export function useNewThreadHandler() {
               }
             : isDraftAlreadyOpen
               ? null
-              : {
-                  branch: null,
-                  worktreePath: null,
-                  envMode: defaultEnvMode,
-                  startFromOrigin: resolveNewDraftStartFromOrigin({
+              : await (async () => {
+                  const defaultEnvMode = await resolveDefaultEnvMode();
+                  return {
+                    branch: null,
+                    worktreePath: null,
                     envMode: defaultEnvMode,
-                    newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
-                  }),
-                };
+                    startFromOrigin: resolveNewDraftStartFromOrigin({
+                      envMode: defaultEnvMode,
+                      newWorktreesStartFromOrigin:
+                        primaryServerSettings.newWorktreesStartFromOrigin,
+                    }),
+                  };
+                })();
           if (workspaceContext) {
             setDraftThreadContext(reusableStoredDraftThread.draftId, {
               ...workspaceContext,
@@ -244,8 +262,8 @@ export function useNewThreadHandler() {
       const draftId = newDraftId();
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
-      const initialEnvMode = options?.envMode ?? primaryServerSettings.defaultThreadEnvMode;
       return (async () => {
+        const initialEnvMode = options?.envMode ?? (await resolveDefaultEnvMode());
         setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId, {
           threadId,
           createdAt,
