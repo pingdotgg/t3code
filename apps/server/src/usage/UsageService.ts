@@ -14,6 +14,8 @@
 import * as NodeOS from "node:os";
 
 import {
+  ClaudeSettings,
+  CodexSettings,
   USAGE_CONTRACT_VERSION,
   type UsageProviderKind,
   type UsageSource,
@@ -37,6 +39,7 @@ import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import { listProviderHomeCandidates, scanHomePath } from "./usageHomes.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -84,6 +87,9 @@ const encodeRatesCache = Schema.encodeEffect(
 const ScanCacheJson = Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>);
 const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
 const encodeScanCacheFile = Schema.encodeEffect(ScanCacheJson);
+
+const decodeClaudeSettings = Schema.decodeUnknownEffect(ClaudeSettings);
+const decodeCodexSettings = Schema.decodeUnknownEffect(CodexSettings);
 
 export class UsageService extends Context.Service<
   UsageService,
@@ -196,7 +202,11 @@ export const make = Effect.gen(function* () {
       return nestedExists ? nested : path.join(homePath, "projects");
     });
 
-  /** Resolves the transcript directory for each provider. */
+  /**
+   * Resolves the transcript directories for each provider, one per configured
+   * provider instance. Instances that share a home (shadow homes symlink
+   * `sessions` back into the shared home) collapse to a single directory.
+   */
   const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* () {
     // A settings failure must surface as an error: swallowing it here would
     // present "zero usage from every provider" as a valid answer.
@@ -214,14 +224,54 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-    const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
-    const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
-    const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
+    const dirs: { provider: UsageProviderKind; dir: string }[] = [];
+    const seen = new Set<string>();
+    // Two instances can point at one physical directory through symlinks
+    // (or macOS's /tmp → /private/tmp). Canonicalising before de-duplication
+    // stops the same transcripts being counted once per alias. A directory
+    // that does not resolve (typically: does not exist) keeps its configured
+    // path and is reported as missing further down.
+    const push = (provider: UsageProviderKind, dir: string) =>
+      Effect.gen(function* () {
+        const canonical = yield* fileSystem
+          .realPath(dir)
+          .pipe(Effect.catchCause(() => Effect.succeed(dir)));
+        const key = `${provider}\0${canonical}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        dirs.push({ provider, dir: canonical });
+      });
 
-    return [
-      { provider: "claude" as const, dir: claudeDir },
-      { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
-    ];
+    for (const candidate of listProviderHomeCandidates(settings, "claude")) {
+      // A blob that fails to decode belongs to an instance the registry
+      // already reports as unavailable; the scan skips it.
+      const config = yield* decodeClaudeSettings(candidate.config).pipe(
+        Effect.catchCause(() => Effect.succeed(null)),
+      );
+      if (config === null) continue;
+      const claudeHome = yield* resolveClaudeHomePath({
+        homePath: scanHomePath(config.homePath, candidate.homeEnvValue, false),
+      });
+      yield* push("claude", yield* resolveClaudeTranscriptDir(claudeHome));
+    }
+
+    for (const candidate of listProviderHomeCandidates(settings, "codex")) {
+      const config = yield* decodeCodexSettings(candidate.config).pipe(
+        Effect.catchCause(() => Effect.succeed(null)),
+      );
+      if (config === null) continue;
+      const layout = yield* resolveCodexHomeLayout({
+        ...config,
+        homePath: scanHomePath(
+          config.homePath,
+          candidate.homeEnvValue,
+          config.shadowHomePath.trim().length > 0,
+        ),
+      });
+      yield* push("codex", path.join(layout.sharedHomePath, "sessions"));
+    }
+
+    return dirs;
   });
 
   /**
