@@ -308,6 +308,10 @@ it.effect("refreshes imported metadata without replacing the projected session s
       commands[0]?.type === "thread.meta.update" && commands[0].title,
       "Fresh Codex title",
     );
+    NodeAssert.equal(
+      commands[0]?.type === "thread.meta.update" && commands[0].expectedTitle,
+      originalTitle,
+    );
     NodeAssert.equal(bindings[0]?.status, undefined);
     NodeAssert.equal(bindings[0]?.runtimeMode, undefined);
     NodeAssert.equal(readModel.threads[0]?.title, originalTitle);

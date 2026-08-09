@@ -298,7 +298,9 @@ export const synchronizeDiscoveredProviderThreads = Effect.fn(
               discovered.updatedAt,
             ),
             threadId: linkedThread.id,
-            ...(providerOwnsTitle && title !== metadata.providerTitle ? { title } : {}),
+            ...(providerOwnsTitle && title !== metadata.providerTitle
+              ? { title, expectedTitle: metadata.providerTitle }
+              : {}),
           });
           if (providerOwnsTitle && title !== metadata.providerTitle) {
             linkedThread.title = title;
