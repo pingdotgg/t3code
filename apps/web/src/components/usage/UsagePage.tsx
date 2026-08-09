@@ -1,9 +1,10 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { useCanGoBack, useNavigate, useRouter } from "@tanstack/react-router";
 import { ArrowLeftIcon, CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { cn } from "../../lib/utils";
+import { useAccountLimits } from "../../state/accountLimits";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import {
   enumerateDays,
@@ -15,6 +16,7 @@ import {
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { ScrollArea } from "../ui/scroll-area";
+import { AccountLimitsSection } from "./AccountLimits";
 import { UsageChartLegend, UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_MARK, PROVIDER_ORDER } from "./usageProviders";
 
@@ -35,7 +37,14 @@ export function UsagePage() {
   // Recomputed only when the window length changes, so a re-render does not
   // shift the range and refetch every environment.
   const window = useMemo(() => makeWindow(windowDays), [windowDays]);
-  const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
+  const { merged, environments, isPending, isPartial, refresh: refreshUsage } = useUsage(window);
+  const { refresh: refreshLimits } = useAccountLimits();
+  // One refresh button, two caches: the transcript scan and the limits
+  // snapshot both re-read, or the Limits strip lags the rest of the page.
+  const refresh = useCallback(() => {
+    refreshUsage();
+    refreshLimits();
+  }, [refreshUsage, refreshLimits]);
 
   // Hold the content until every environment is terminal. Rendering merged
   // totals while devices are still answering makes every number on the page
@@ -116,6 +125,10 @@ export function UsagePage() {
             </button>
           </div>
         </header>
+
+        {/* Limits come from the live limits cache, not the transcript scan,
+            so they render even while the scan below settles. */}
+        <AccountLimitsSection />
 
         {settling ? (
           <>

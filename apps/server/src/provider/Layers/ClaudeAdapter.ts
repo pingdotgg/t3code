@@ -15,6 +15,7 @@ import {
   type PermissionUpdate,
   type SDKMessage,
   type SDKControlGetContextUsageResponse,
+  type SDKControlGetUsageResponse,
   type SDKResultMessage,
   type SettingSource,
   type SDKUserMessage,
@@ -58,6 +59,7 @@ import {
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -99,6 +101,13 @@ const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonStri
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 
 const PROVIDER = ProviderDriverKind.make("claudeAgent");
+
+/**
+ * Minimum spacing between account usage control requests. The request proxies
+ * the claude.ai usage endpoint, which rate limits aggressively, and sessions
+ * start often enough that fetching on every init would hammer it.
+ */
+const ACCOUNT_USAGE_MIN_INTERVAL_MS = 3 * 60_000;
 type ClaudeTextStreamKind = Extract<RuntimeContentStreamKind, "assistant_text" | "reasoning_text">;
 type ClaudeToolResultStreamKind = Extract<
   RuntimeContentStreamKind,
@@ -256,6 +265,11 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
   readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
   readonly getContextUsage?: () => Promise<SDKControlGetContextUsageResponse>;
+  /**
+   * SDK Query usage control request - the full rate-limit window set. The
+   * name is the SDK's own; optional for test doubles and older SDKs.
+   */
+  readonly usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?: () => Promise<SDKControlGetUsageResponse>;
   readonly close: () => void;
 }
 
@@ -3077,6 +3091,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             config: message as Record<string, unknown>,
           },
         });
+        // Session start is the one reliable moment a query handle exists, so
+        // it doubles as the account-limits refresh point (throttled inside).
+        yield* refreshAccountUsageSnapshot(context);
         return;
       case "status":
         yield* offerRuntimeEvent({
@@ -3405,6 +3422,64 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
   });
 
+  let lastAccountUsageFetchAtMs = 0;
+
+  /**
+   * Pulls the full rate-limit window set (5h, weekly, model-scoped) through
+   * the SDK usage control request and re-emits it as
+   * `account.rate-limits.updated`. The streamed `rate_limit_event` only ever
+   * names the single window currently binding, and Claude limits never reach
+   * disk, so this pull is the only source that shows every window at once.
+   */
+  const emitAccountUsageSnapshot = Effect.fn("emitAccountUsageSnapshot")(function* (
+    context: ClaudeSessionContext,
+  ) {
+    if (!context.query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET) return;
+    const now = yield* Clock.currentTimeMillis;
+    const elapsed = now - lastAccountUsageFetchAtMs;
+    // A negative elapsed means the wall clock stepped backwards; treat it as
+    // expired rather than freezing refreshes until the clock catches up.
+    if (elapsed >= 0 && elapsed < ACCOUNT_USAGE_MIN_INTERVAL_MS) return;
+    lastAccountUsageFetchAtMs = now;
+
+    const usage = yield* Effect.promise(async () => {
+      try {
+        // Called through the query object so the SDK method keeps its
+        // receiver; an extracted reference loses `this` and throws.
+        return await context.query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?.();
+      } catch {
+        return undefined;
+      }
+    });
+    if (!usage || usage.rate_limits === null || usage.rate_limits === undefined) return;
+
+    const stamp = yield* makeEventStamp();
+    yield* offerRuntimeEvent({
+      eventId: stamp.eventId,
+      provider: PROVIDER,
+      createdAt: stamp.createdAt,
+      threadId: context.session.threadId,
+      providerRefs: nativeProviderRefs(context),
+      type: "account.rate-limits.updated",
+      // Only the limit fields travel: the full response also carries session
+      // cost and a local behaviors scan that have no consumer here.
+      payload: {
+        rateLimits: {
+          subscription_type: usage.subscription_type,
+          rate_limits: usage.rate_limits,
+        },
+      },
+    });
+  });
+
+  /** Fire-and-forget wrapper: a slow claude.ai fetch must not stall the pump. */
+  const refreshAccountUsageSnapshot = (context: ClaudeSessionContext) =>
+    emitAccountUsageSnapshot(context).pipe(
+      Effect.ignoreCause({ log: true }),
+      Effect.forkDetach,
+      Effect.asVoid,
+    );
+
   const handleSdkTelemetryMessage = Effect.fn("handleSdkTelemetryMessage")(function* (
     context: ClaudeSessionContext,
     message: SDKMessage,
@@ -3511,6 +3586,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       case "auth_status":
       case "rate_limit_event":
         yield* handleSdkTelemetryMessage(context, message);
+        if (message.type === "rate_limit_event") {
+          // The streamed event names one window; refresh the full set too.
+          yield* refreshAccountUsageSnapshot(context);
+        }
         return;
       // Composer prompt suggestions have no T3 surface; consumed deliberately.
       case "prompt_suggestion":

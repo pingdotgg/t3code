@@ -43,6 +43,7 @@ import {
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { AccountLimitsService } from "../../usage/AccountLimitsService.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
@@ -875,6 +876,7 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const serverSettingsService = yield* ServerSettingsService;
+  const accountLimits = yield* AccountLimitsService;
   const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
     crypto.randomUUIDv4.pipe(
       Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
@@ -1474,6 +1476,17 @@ const make = Effect.gen(function* () {
 
   const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
+      // Rate-limit payloads feed the server-wide limits cache, not a thread
+      // projection, so they are folded in before the thread lookup: a
+      // snapshot must not be lost because its thread is already gone.
+      if (event.type === "account.rate-limits.updated") {
+        yield* accountLimits.ingest({
+          provider: event.provider,
+          payload: event.payload.rateLimits,
+          createdAt: event.createdAt,
+        });
+      }
+
       const thread = yield* resolveThreadShell(event.threadId);
       if (!thread) return;
 

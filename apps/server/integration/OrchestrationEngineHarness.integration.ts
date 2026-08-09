@@ -37,6 +37,7 @@ import { ProviderAdapterRegistry } from "../src/provider/Services/ProviderAdapte
 import { makeProviderRegistryLayer } from "../src/provider/testUtils/providerRegistryMock.ts";
 import { ProviderSessionDirectoryLive } from "../src/provider/Layers/ProviderSessionDirectory.ts";
 import { ServerSettingsService } from "../src/serverSettings.ts";
+import * as AccountLimitsService from "../src/usage/AccountLimitsService.ts";
 import { makeProviderServiceLive } from "../src/provider/Layers/ProviderService.ts";
 import { makeCodexAdapter } from "../src/provider/Layers/CodexAdapter.ts";
 import {
@@ -318,6 +319,7 @@ export const makeOrchestrationIntegrationHarness = (
     const serverSettingsLayer = ServerSettingsService.layerTest();
     const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
+      Layer.provideMerge(AccountLimitsService.layerTest),
       Layer.provideMerge(serverSettingsLayer),
     );
     const gitWorkflowLayer = Layer.mock(GitWorkflowService)({
