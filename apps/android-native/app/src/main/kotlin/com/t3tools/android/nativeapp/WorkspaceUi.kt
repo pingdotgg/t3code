@@ -75,7 +75,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
 import com.t3tools.android.protocol.WorkspaceEntry
-import io.noties.markwon.Markwon
 
 @Composable
 fun AddProjectScreen(
@@ -560,7 +559,7 @@ private fun WorkspaceTextFile(path: String, contents: String, truncated: Boolean
 @Composable
 private fun MarkdownFile(markdown: String) {
   val context = LocalContext.current
-  val markwon = remember(context) { Markwon.create(context) }
+  val markwon = remember(context) { createMarkdownRenderer(context) }
   AndroidView(
     factory = {
       TextView(it).apply {
@@ -571,7 +570,12 @@ private fun MarkdownFile(markdown: String) {
         setPadding(36, 24, 36, 48)
       }
     },
-    update = { markwon.setMarkdown(it, markdown) },
+    update = {
+      if (it.tag != markdown) {
+        it.tag = markdown
+        markwon.setMarkdown(it, markdown)
+      }
+    },
     modifier = Modifier.fillMaxSize(),
   )
 }

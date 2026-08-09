@@ -68,6 +68,7 @@ private fun ThreadState.reduceThreadEvent(event: JsonObject): ThreadState {
     "thread.message-sent" -> current.upsertMessage(payload)
     "thread.activity-appended" -> current.upsertActivity(payload.obj("activity"))
     "thread.session-set" -> current.withSession(payload.obj("session"))
+    "thread.turn-interrupt-requested" -> current.interruptTurn(payload)
     "thread.meta-updated" -> current.copy(
       summary = current.summary.copy(
         title = payload.text("title") ?: current.summary.title,
@@ -214,6 +215,7 @@ private fun JsonObject.toThreadSummary(): ThreadSummary? {
       LatestTurn(
         id = turnId,
         state = turn.text("state") ?: "completed",
+        startedAt = turn.nullableText("startedAt"),
         completedAt = turn.nullableText("completedAt"),
       )
     },
@@ -267,6 +269,7 @@ private fun JsonObject.toActivity(): ThreadActivity? {
     payload = this["payload"] ?: JsonNull,
     turnId = nullableText("turnId"),
     createdAt = text("createdAt") ?: "",
+    sequence = long("sequence"),
   )
 }
 
@@ -308,7 +311,26 @@ private fun ThreadDetail.upsertMessage(payload: JsonObject): ThreadDetail {
       )
     }
   }
-  return copy(messages = next)
+  val activeTurnId = summary.session?.activeTurnId
+  val turnStillRunning = incoming.turnId != null &&
+    summary.session?.status == "running" &&
+    activeTurnId == incoming.turnId
+  val settlesTurn = !incoming.streaming && !turnStillRunning
+  val currentTurn = summary.latestTurn
+  val latestTurn = if (
+    incoming.role == "assistant" && incoming.turnId != null &&
+    (currentTurn == null || currentTurn.id == incoming.turnId)
+  ) {
+    LatestTurn(
+      id = incoming.turnId,
+      state = if (settlesTurn) {
+        currentTurn?.state?.takeIf { it in setOf("interrupted", "error") } ?: "completed"
+      } else "running",
+      completedAt = if (settlesTurn) incoming.updatedAt else currentTurn?.completedAt,
+      startedAt = currentTurn?.startedAt ?: incoming.createdAt,
+    )
+  } else currentTurn
+  return copy(messages = next, summary = summary.copy(latestTurn = latestTurn))
 }
 
 private fun JsonObject.attachments() = array("attachments").orEmpty().mapNotNull { value ->
@@ -330,9 +352,46 @@ private fun ThreadDetail.upsertActivity(activity: JsonObject?): ThreadDetail {
   return copy(activities = activities.filterNot { it.id == parsed.id } + parsed)
 }
 
-private fun ThreadDetail.withSession(session: JsonObject?): ThreadDetail = copy(
-  summary = summary.copy(session = session?.toThreadSession()),
-)
+private fun ThreadDetail.withSession(session: JsonObject?): ThreadDetail {
+  val nextSession = session?.toThreadSession()
+  val currentTurn = summary.latestTurn
+  val latestTurn = when {
+    nextSession?.status == "running" && nextSession.activeTurnId != null -> LatestTurn(
+      id = nextSession.activeTurnId,
+      state = "running",
+      completedAt = null,
+      startedAt = currentTurn?.takeIf { it.id == nextSession.activeTurnId }?.startedAt
+        ?: nextSession.updatedAt,
+    )
+    currentTurn?.state == "running" -> settledTurnState(nextSession?.status)?.let { state ->
+      currentTurn.copy(state = state, completedAt = nextSession?.updatedAt)
+    } ?: currentTurn
+    else -> currentTurn
+  }
+  return copy(summary = summary.copy(session = nextSession, latestTurn = latestTurn))
+}
+
+private fun ThreadDetail.interruptTurn(payload: JsonObject): ThreadDetail {
+  val turnId = payload.text("turnId") ?: return this
+  val current = summary.latestTurn?.takeIf { it.id == turnId } ?: return this
+  val interruptedAt = payload.text("createdAt")
+  return copy(
+    summary = summary.copy(
+      latestTurn = current.copy(
+        state = "interrupted",
+        startedAt = current.startedAt ?: interruptedAt,
+        completedAt = current.completedAt ?: interruptedAt,
+      ),
+    ),
+  )
+}
+
+private fun settledTurnState(status: String?) = when (status) {
+  "idle", "ready" -> "completed"
+  "error" -> "error"
+  "interrupted", "stopped" -> "interrupted"
+  else -> null
+}
 
 internal fun derivePendingApprovals(activities: List<ThreadActivity>): List<PendingApproval> {
   val pending = linkedMapOf<String, PendingApproval>()

@@ -3,6 +3,7 @@
 package com.t3tools.android.nativeapp
 
 import android.content.ClipboardManager
+import android.content.ClipData
 import android.os.Build
 import android.net.Uri
 import android.text.method.LinkMovementMethod
@@ -51,6 +52,7 @@ import androidx.compose.material.icons.rounded.AccountTree
 import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.CreateNewFolder
 import androidx.compose.material.icons.rounded.EditNote
@@ -1737,6 +1739,7 @@ private fun ThreadScreen(
       } else {
         ThreadFeed(
           detail = detail,
+          syncPhase = runtime.threadSyncPhase,
           environmentId = environmentId,
           viewModel = viewModel,
           modifier = Modifier.fillMaxSize(),
@@ -1774,17 +1777,47 @@ private fun ThreadScreen(
 @Composable
 private fun ThreadFeed(
   detail: ThreadDetail,
+  syncPhase: SyncPhase,
   environmentId: String,
   viewModel: AppViewModel,
   modifier: Modifier = Modifier,
   state: LazyListState = rememberLazyListState(),
   contentPadding: PaddingValues = PaddingValues(16.dp),
 ) {
-  val entries = detail.messages
-  LaunchedEffect(entries.size, entries.lastOrNull()?.text?.length) {
-    val lastVisible = state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-    if (entries.isNotEmpty() && (lastVisible >= entries.lastIndex - 1 || lastVisible == -1)) {
-      state.scrollToItem(entries.lastIndex)
+  val context = LocalContext.current
+  val markwon = remember(context) { createMarkdownRenderer(context) }
+  val rawFeed = remember(detail.messages, detail.activities) { buildThreadFeed(detail) }
+  var expandedTurnIds by remember(detail.summary.id) { mutableStateOf(emptySet<String>()) }
+  var expandedWorkGroupIds by remember(detail.summary.id) { mutableStateOf(emptySet<String>()) }
+  var expandedActivityIds by remember(detail.summary.id) { mutableStateOf(emptySet<String>()) }
+  var initialPositioningComplete by remember(detail.summary.id) { mutableStateOf(false) }
+  val latestTurn = detail.summary.latestTurn
+  LaunchedEffect(latestTurn?.id, latestTurn?.state) {
+    if (latestTurn?.state == "interrupted") expandedTurnIds += latestTurn.id
+  }
+  val activeWorkStartedAt = detail.summary.session?.takeIf {
+    it.status == "starting" || it.status == "running"
+  }?.let { latestTurn?.startedAt ?: it.updatedAt }
+  val entries = remember(
+    rawFeed,
+    latestTurn,
+    expandedTurnIds,
+    expandedWorkGroupIds,
+    activeWorkStartedAt,
+  ) {
+    presentThreadFeed(
+      feed = rawFeed,
+      latestTurn = latestTurn,
+      expandedTurnIds = expandedTurnIds,
+      expandedWorkGroupIds = expandedWorkGroupIds,
+      activeWorkStartedAt = activeWorkStartedAt,
+    )
+  }
+  LaunchedEffect(entries.size, entries.lastOrNull()?.id, syncPhase) {
+    if (entries.isEmpty() || initialPositioningComplete) return@LaunchedEffect
+    state.scrollToItem(entries.lastIndex)
+    if (syncPhase == SyncPhase.Synchronized || syncPhase == SyncPhase.Error) {
+      initialPositioningComplete = true
     }
   }
   LazyColumn(
@@ -1793,36 +1826,161 @@ private fun ThreadFeed(
     contentPadding = contentPadding,
     verticalArrangement = Arrangement.spacedBy(10.dp),
   ) {
-    items(entries, key = { it.id }) { message ->
-      if (message.role == "assistant") {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-          if (message.text.isNotBlank()) MarkdownMessage(message.text)
-          message.attachments.forEach { SentAttachmentImage(environmentId, it, viewModel) }
-        }
-      } else {
-        Surface(
-          shape = RoundedCornerShape(16.dp),
-          color = if (message.role == "user") Color(0xFF172554) else MaterialTheme.colorScheme.surface,
-          modifier = Modifier.fillMaxWidth(),
-        ) {
-          Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (message.text.isNotBlank()) UserMessageContent(message.text)
-            message.attachments.forEach { SentAttachmentImage(environmentId, it, viewModel) }
+    items(entries, key = ThreadFeedItem::id) { entry ->
+      when (entry) {
+        is ThreadFeedItem.Message -> {
+          val message = entry.message
+          if (message.role == "assistant") {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+              if (message.text.isNotBlank()) MarkdownMessage(message.text, markwon)
+              message.attachments.forEach { SentAttachmentImage(environmentId, it, viewModel) }
+            }
+          } else {
+            Surface(
+              shape = RoundedCornerShape(16.dp),
+              color = if (message.role == "user") Color(0xFF172554) else MaterialTheme.colorScheme.surface,
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (message.text.isNotBlank()) UserMessageContent(message.text)
+                message.attachments.forEach { SentAttachmentImage(environmentId, it, viewModel) }
+              }
+            }
           }
+        }
+
+        is ThreadFeedItem.TurnFold -> {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clickable {
+                expandedTurnIds = if (entry.turnId in expandedTurnIds) {
+                  expandedTurnIds - entry.turnId
+                } else {
+                  expandedTurnIds + entry.turnId
+                }
+              }
+              .padding(vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+          ) {
+            Icon(
+              Icons.Rounded.KeyboardArrowDown,
+              contentDescription = if (entry.expanded) "Collapse work" else "Expand work",
+              tint = MaterialTheme.colorScheme.onSurfaceVariant,
+              modifier = Modifier
+                .size(18.dp)
+                .graphicsLayer { rotationZ = if (entry.expanded) 180f else 0f },
+            )
+            Text(
+              entry.label,
+              style = MaterialTheme.typography.labelMedium,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+          }
+        }
+
+        is ThreadFeedItem.ActivityGroup -> entry.activities.forEach { activity ->
+          ThreadActivityRow(
+            activity = activity,
+            expanded = activity.id in expandedActivityIds,
+            onToggle = {
+              expandedActivityIds = if (activity.id in expandedActivityIds) {
+                expandedActivityIds - activity.id
+              } else {
+                expandedActivityIds + activity.id
+              }
+            },
+            onCopy = {
+              val text = listOfNotNull(activity.summary, activity.detail, activity.getFullDetail())
+                .distinct().joinToString("\n")
+              context.getSystemService(ClipboardManager::class.java)
+                .setPrimaryClip(ClipData.newPlainText("T3 activity", text))
+            },
+          )
+        }
+
+        is ThreadFeedItem.WorkToggle -> TextButton(
+          onClick = {
+            expandedWorkGroupIds = if (entry.groupId in expandedWorkGroupIds) {
+              expandedWorkGroupIds - entry.groupId
+            } else {
+              expandedWorkGroupIds + entry.groupId
+            }
+          },
+        ) {
+          Text(if (entry.expanded) "Show less" else "${entry.hiddenCount} more")
+        }
+
+        is ThreadFeedItem.Working -> Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          modifier = Modifier.padding(vertical = 7.dp),
+        ) {
+          LinearProgressIndicator(Modifier.width(28.dp).height(2.dp))
+          Text(
+            "Working…",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
         }
       }
     }
-    if (detail.activities.isNotEmpty()) {
-      item(key = "work-log") {
-        Column(
-          Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp)).padding(12.dp),
-          verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-          Text("Work log", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge)
-          detail.activities.takeLast(3).forEach { activity ->
-            Text(activity.summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+  }
+}
+
+@Composable
+private fun ThreadActivityRow(
+  activity: ThreadFeedActivity,
+  expanded: Boolean,
+  onToggle: () -> Unit,
+  onCopy: () -> Unit,
+) {
+  val statusColor = when (activity.status) {
+    ThreadFeedActivityStatus.Success -> Color(0xFF4ADE80)
+    ThreadFeedActivityStatus.Failure -> MaterialTheme.colorScheme.error
+    ThreadFeedActivityStatus.Neutral, null -> MaterialTheme.colorScheme.onSurfaceVariant
+  }
+  Surface(
+    color = MaterialTheme.colorScheme.surface,
+    shape = RoundedCornerShape(10.dp),
+    modifier = Modifier.fillMaxWidth().clickable(
+      enabled = activity.canExpand,
+      onClick = onToggle,
+    ),
+  ) {
+    Column(Modifier.padding(horizontal = 11.dp, vertical = 9.dp)) {
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+          if (activity.status == ThreadFeedActivityStatus.Failure) Icons.Rounded.Bolt else Icons.Rounded.Check,
+          contentDescription = null,
+          tint = statusColor,
+          modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+          Text(activity.summary, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+          activity.detail?.takeIf { !expanded }?.let {
+            Text(
+              it,
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
           }
         }
+        IconButton(onClick = onCopy, modifier = Modifier.size(30.dp)) {
+          Icon(Icons.Rounded.ContentCopy, contentDescription = "Copy activity", modifier = Modifier.size(15.dp))
+        }
+      }
+      if (expanded) {
+        Text(
+          activity.getFullDetail() ?: activity.detail.orEmpty(),
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(start = 24.dp, top = 6.dp),
+        )
       }
     }
   }
@@ -1844,9 +2002,7 @@ private fun UserMessageContent(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun MarkdownMessage(markdown: String) {
-  val context = LocalContext.current
-  val markwon = remember(context) { Markwon.create(context) }
+private fun MarkdownMessage(markdown: String, markwon: Markwon) {
   AndroidView(
     factory = {
       TextView(it).apply {
@@ -1857,7 +2013,12 @@ private fun MarkdownMessage(markdown: String) {
         setPadding(4, 6, 4, 6)
       }
     },
-    update = { markwon.setMarkdown(it, markdown) },
+    update = {
+      if (it.tag != markdown) {
+        it.tag = markdown
+        markwon.setMarkdown(it, markdown)
+      }
+    },
     modifier = Modifier.fillMaxWidth(),
   )
 }

@@ -1,6 +1,6 @@
-# T3 Code Native Android — Phase 3E
+# T3 Code Native Android — Phase 3 complete
 
-Independent native Android client for T3 Code. Phase 3E adds durable image attachments to new tasks and existing threads, completing the Phase 3 project, files, Git, terminal, review, and attachment journeys.
+Independent native Android client for T3 Code. Phase 3 is complete across project, files, Git, terminal, review, and attachment journeys. The post-Phase 3 thread-feed pass also matches the React Native client's chronological work timeline, settled-turn folding, Markdown support, and fast cached catch-up behavior.
 
 ## Modules
 
@@ -93,7 +93,7 @@ Gallery selection, explicit clipboard paste, draft previews/removal, attachment-
 
 Camera capture, document/video attachments, Android share-target intake, and file editing remain outside Phase 3E. T3 Connect administrator approval is not a gate. Performance benchmarking follows Phase 3 completion rather than expanding this slice.
 
-The Phase 3E capability matrix and device acceptance steps live in [`docs/PHASE3E.md`](docs/PHASE3E.md). Earlier evidence remains in [`docs/PHASE3D.md`](docs/PHASE3D.md), [`docs/PHASE3C.md`](docs/PHASE3C.md), [`docs/PHASE3B.md`](docs/PHASE3B.md), [`docs/PHASE3A.md`](docs/PHASE3A.md), and [`docs/PHASE2.md`](docs/PHASE2.md).
+The Phase 3E capability matrix and device acceptance steps live in [`docs/PHASE3E.md`](docs/PHASE3E.md). Thread-feed parity and catch-up behavior live in [`docs/THREAD_FEED.md`](docs/THREAD_FEED.md). Earlier evidence remains in [`docs/PHASE3D.md`](docs/PHASE3D.md), [`docs/PHASE3C.md`](docs/PHASE3C.md), [`docs/PHASE3B.md`](docs/PHASE3B.md), [`docs/PHASE3A.md`](docs/PHASE3A.md), and [`docs/PHASE2.md`](docs/PHASE2.md).
 
 ### Atomic bootstrap retry caveat
 

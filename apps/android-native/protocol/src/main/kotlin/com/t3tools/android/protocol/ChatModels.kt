@@ -38,6 +38,7 @@ data class LatestTurn(
   val id: String,
   val state: String,
   val completedAt: String? = null,
+  val startedAt: String? = null,
 )
 
 @Serializable
@@ -109,6 +110,7 @@ data class ThreadActivity(
   val payload: JsonElement,
   val turnId: String?,
   val createdAt: String,
+  val sequence: Long? = null,
 )
 
 @Serializable

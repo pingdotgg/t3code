@@ -14,7 +14,7 @@ android {
     minSdk = 26
     targetSdk = 35
     versionCode = 1
-    versionName = "0.5.0-phase3e"
+    versionName = "0.5.1-thread-feed"
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
@@ -68,6 +68,9 @@ dependencies {
   implementation("io.coil-kt:coil-compose:2.7.0")
   implementation("io.coil-kt:coil-svg:2.7.0")
   implementation("io.noties.markwon:core:4.6.2")
+  implementation("io.noties.markwon:ext-strikethrough:4.6.2")
+  implementation("io.noties.markwon:ext-tables:4.6.2")
+  implementation("io.noties.markwon:ext-tasklist:4.6.2")
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
   implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 

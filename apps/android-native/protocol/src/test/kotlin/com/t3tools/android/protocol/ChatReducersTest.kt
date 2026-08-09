@@ -111,6 +111,41 @@ class ChatReducersTest {
   }
 
   @Test
+  fun `thread reducer tracks the active turn until its session settles`() {
+    val running = ThreadState().reduce(threadSnapshot()).reduce(
+      threadEvent(
+        21,
+        "thread.session-set",
+        """{"session":{"status":"running","activeTurnId":"turn-1","lastError":null,"updatedAt":"2026-08-08T00:00:01Z"}}""",
+      ),
+    )
+    val commentary = running.reduce(messageEvent(22, "Checking", streaming = false))
+    val completed = commentary.reduce(
+      threadEvent(
+        23,
+        "thread.session-set",
+        """{"session":{"status":"idle","activeTurnId":null,"lastError":null,"updatedAt":"2026-08-08T00:00:18Z"}}""",
+      ),
+    )
+
+    assertEquals("running", commentary.detail?.summary?.latestTurn?.state)
+    assertEquals("2026-08-08T00:00:01Z", commentary.detail?.summary?.latestTurn?.startedAt)
+    assertEquals("completed", completed.detail?.summary?.latestTurn?.state)
+    assertEquals("2026-08-08T00:00:18Z", completed.detail?.summary?.latestTurn?.completedAt)
+  }
+
+  @Test
+  fun `thread snapshot preserves activity sequence`() {
+    val state = ThreadState().reduce(
+      threadSnapshot(
+        activities = """[{"id":"activity-1","tone":"tool","kind":"tool.completed","summary":"Done","payload":{},"turnId":"turn-1","createdAt":"2026-08-08T00:00:01Z","sequence":12}]""",
+      ),
+    )
+
+    assertEquals(12, state.detail?.activities?.single()?.sequence)
+  }
+
+  @Test
   fun `unknown thread event advances sequence without changing detail`() {
     val initial = ThreadState().reduce(threadSnapshot())
     val updated = initial.reduce(

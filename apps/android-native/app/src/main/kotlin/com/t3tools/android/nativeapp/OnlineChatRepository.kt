@@ -60,6 +60,8 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 enum class ConnectionPhase { Empty, Offline, Connecting, Backoff, Connected, Blocked, Error }
 enum class SyncPhase { Idle, Cached, Synchronizing, Synchronized, Error }
@@ -1251,17 +1253,30 @@ class OnlineChatRepository(
           afterSequence = runtime.thread.sequence.takeIf { it >= 0 },
           turnLimit = 50,
         ).collect { item ->
-          synchronized(lock) {
-            if (runtime.generation != generation || runtime.selectedThreadId != threadId) return@collect
+          val stateToPersist = synchronized(lock) {
+            if (runtime.generation != generation || runtime.selectedThreadId != threadId) {
+              return@synchronized null
+            }
+            val wasSynchronized = runtime.thread.synchronized
             runtime.thread = runtime.thread.reduce(item)
             runtime.threadSyncPhase = if (runtime.thread.synchronized) {
               SyncPhase.Synchronized
             } else {
               SyncPhase.Synchronizing
             }
-            database.saveThread(runtime.environment.environmentId, threadId, runtime.thread)
-            publishLocked()
-          }
+            val status = runtime.thread.detail?.summary?.session?.status
+            val active = status == "starting" || status == "running" ||
+              runtime.thread.detail?.summary?.latestTurn?.state == "running"
+            val policy = threadStreamPolicy(
+              kind = item["kind"]?.jsonPrimitive?.contentOrNull,
+              wasSynchronized = wasSynchronized,
+              isSynchronized = runtime.thread.synchronized,
+              isActive = active,
+            )
+            if (policy.publish) publishLocked()
+            runtime.thread.takeIf { policy.persist }
+          } ?: return@collect
+          database.saveThread(runtime.environment.environmentId, threadId, stateToPersist)
         }
       }.onFailure { error ->
         if (error !is CancellationException) {
