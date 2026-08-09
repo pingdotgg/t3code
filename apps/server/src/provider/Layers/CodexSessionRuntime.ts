@@ -863,13 +863,13 @@ function currentProviderThreadId(session: ProviderSession): string | undefined {
 
 function updateSession(
   sessionRef: Ref.Ref<ProviderSession>,
-  updates: Partial<ProviderSession>,
+  updates: Partial<ProviderSession> | ((session: ProviderSession) => Partial<ProviderSession>),
 ): Effect.Effect<void> {
   return Effect.gen(function* () {
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     yield* Ref.update(sessionRef, (session) => ({
       ...session,
-      ...updates,
+      ...(typeof updates === "function" ? updates(session) : updates),
       updatedAt,
     }));
   });
