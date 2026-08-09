@@ -1,10 +1,10 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { useCanGoBack, useNavigate, useRouter } from "@tanstack/react-router";
-import { ArrowLeftIcon, RefreshCwIcon } from "lucide-react";
+import { ArrowLeftIcon, CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { cn } from "../../lib/utils";
-import { useUsage } from "../../state/usage";
+import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import {
   enumerateDays,
   formatCount,
@@ -36,6 +36,11 @@ export function UsagePage() {
   // shift the range and refetch every environment.
   const window = useMemo(() => makeWindow(windowDays), [windowDays]);
   const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
+
+  // Hold the content until every environment is terminal. Rendering merged
+  // totals while devices are still answering makes every number on the page
+  // jump as each one lands.
+  const settling = isPending || isPartial;
 
   const days = useMemo(
     () => enumerateDays(window.sinceDay, window.untilDay),
@@ -112,19 +117,19 @@ export function UsagePage() {
           </div>
         </header>
 
-        <UsageCoverageNotice
-          environments={environments}
-          duplicateSources={merged.duplicateSources}
-          staleEnvironments={merged.staleEnvironments}
-          isPartial={isPartial}
-        />
-
-        {isPending ? (
-          <p className="py-16 text-center text-sm text-muted-foreground">
-            Scanning provider transcripts…
-          </p>
+        {settling ? (
+          <>
+            {environments.length > 1 ? <UsageDeviceStrip environments={environments} /> : null}
+            <UsageSkeleton />
+          </>
         ) : (
           <>
+            <UsageCoverageNotice
+              environments={environments}
+              duplicateSources={merged.duplicateSources}
+              staleEnvironments={merged.staleEnvironments}
+            />
+
             {/* Cost first: the financial answer, then the provider split. */}
             <section className="grid gap-6 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
               {/* The summary follows the chart toggle, so the headline and the
@@ -391,37 +396,30 @@ function Metric({
 }
 
 /**
- * Says plainly when the totals are incomplete: an environment still answering,
- * one that failed, or one whose transcripts another environment already
- * reported.
+ * Says plainly when the totals are incomplete: an environment that failed, or
+ * one whose transcripts another environment already reported. Environments
+ * that are still answering never reach this notice; the page shows the
+ * loading skeleton until every one is terminal.
  */
 function UsageCoverageNotice({
   environments,
   duplicateSources,
   staleEnvironments,
-  isPartial,
 }: {
-  readonly environments: readonly {
-    environmentId: string;
-    label: string;
-    error: string | null;
-    isPending: boolean;
-  }[];
+  readonly environments: readonly EnvironmentUsageStatus[];
   readonly duplicateSources: readonly string[];
   readonly staleEnvironments: readonly string[];
-  readonly isPartial: boolean;
 }) {
   const failed = environments.filter((environment) => environment.error !== null);
   const stale = environments.filter((environment) =>
     staleEnvironments.includes(environment.environmentId),
   );
-  if (failed.length === 0 && stale.length === 0 && duplicateSources.length === 0 && !isPartial) {
+  if (failed.length === 0 && stale.length === 0 && duplicateSources.length === 0) {
     return null;
   }
 
   return (
     <div className="flex flex-col gap-1 border border-border px-3 py-2 text-xs text-muted-foreground">
-      {isPartial ? <span>Some environments are still reporting. Totals are partial.</span> : null}
       {failed.map((environment) => (
         <span key={environment.label}>{environment.label} could not report usage.</span>
       ))}
@@ -437,5 +435,128 @@ function UsageCoverageNotice({
         </span>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Per-device progress while the page waits for every environment to answer.
+ * Only rendered with two or more devices; a lone device has nothing to
+ * enumerate.
+ */
+function UsageDeviceStrip({
+  environments,
+}: {
+  readonly environments: readonly EnvironmentUsageStatus[];
+}) {
+  const scanning = environments.filter(
+    (environment) => environment.summary === null && environment.error === null,
+  );
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border border-border px-3 py-2 text-xs">
+      {environments.map((environment) => {
+        if (environment.summary !== null) {
+          return (
+            <span
+              key={environment.environmentId}
+              className="flex items-center gap-1 text-foreground"
+            >
+              <CheckIcon className="size-3 text-emerald-600 dark:text-emerald-300/90" aria-hidden />
+              {environment.label}
+            </span>
+          );
+        }
+        if (environment.error !== null) {
+          return (
+            <span
+              key={environment.environmentId}
+              className="flex items-center gap-1 text-destructive"
+            >
+              <XIcon className="size-3" aria-hidden />
+              {environment.label}
+            </span>
+          );
+        }
+        return (
+          <span
+            key={environment.environmentId}
+            className="animate-status-pulse text-muted-foreground"
+          >
+            {environment.label}…
+          </span>
+        );
+      })}
+      <span className="ms-auto text-muted-foreground">
+        {scanning.length === 1
+          ? "1 device still scanning"
+          : `${scanning.length} devices still scanning`}
+      </span>
+    </div>
+  );
+}
+
+/** Deterministic bar heights (each unique: they double as keys). */
+const SKELETON_BAR_HEIGHTS = [34, 58, 41, 72, 22, 12, 49, 63, 80, 38, 55, 26, 44, 67];
+
+/**
+ * Static stand-in with the loaded page's shape: headline, provider split,
+ * chart and metrics strip. No shimmer; blocks fill in exactly once when the
+ * last device answers.
+ */
+function UsageSkeleton() {
+  return (
+    <>
+      <section className="grid gap-6 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+        <div className="flex flex-col gap-5">
+          <div className="flex flex-col gap-1">
+            <span className="text-xs tracking-wide text-muted-foreground uppercase">
+              Raw token cost
+            </span>
+            <div className="my-1.5 h-8 w-36 rounded-sm bg-muted" />
+            <div className="h-3 w-28 rounded-sm bg-muted" />
+          </div>
+
+          {PROVIDER_ORDER.map((provider) => (
+            <div key={provider} className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-2 text-sm text-foreground">
+                  <ProviderMark provider={provider} className="size-4" />
+                  {PROVIDER_LABEL[provider]}
+                </span>
+                <div className="h-3.5 w-14 rounded-sm bg-muted" />
+              </div>
+              <div className="h-1 w-full rounded-full bg-muted" />
+              <div className="h-3 w-36 rounded-sm bg-muted" />
+            </div>
+          ))}
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <h2 className="py-1 text-sm font-medium text-foreground">Daily cost</h2>
+          {/* Mirrors the chart's h-56 body and w-14 axis gutter to avoid a
+              relayout when the real chart swaps in. */}
+          <div className="flex h-56 items-end gap-1 pl-16">
+            {SKELETON_BAR_HEIGHTS.map((height) => (
+              <div
+                key={height}
+                className="flex-1 rounded-sm bg-muted"
+                style={{ height: `${height}%` }}
+              />
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="grid grid-cols-2 gap-px border-y border-border bg-border md:grid-cols-5">
+        {["Processed tokens", "Cached input", "Uncached input", "Output", "Cache savings"].map(
+          (label) => (
+            <div key={label} className="flex flex-col gap-0.5 bg-background px-4 py-3">
+              <span className="text-xs text-muted-foreground">{label}</span>
+              <div className="my-1 h-5 w-16 rounded-sm bg-muted" />
+              <div className="h-3 w-24 rounded-sm bg-muted" />
+            </div>
+          ),
+        )}
+      </section>
+    </>
   );
 }
