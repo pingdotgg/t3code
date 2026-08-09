@@ -38,7 +38,7 @@ import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
 import {
   buildArchivedProjectRemovalPlans,
   getArchivedProjectRemovalWarning,
-} from "../Sidebar.logic";
+} from "./ProjectSettingsPanel.logic";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { keybindingValueForCommand } from "../../lib/projectScriptKeybindings";
 import { readLocalApi } from "../../localApi";
