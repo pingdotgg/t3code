@@ -2,7 +2,7 @@ import { ArchiveIcon, ChevronDownIcon, Undo2Icon } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { cn } from "~/lib/utils";
-import { shouldRenderSidebarArchiveAll } from "./Sidebar.logic";
+import { shouldRenderSidebarArchiveAll } from "./SidebarArchiveControls.logic";
 
 export const SIDEBAR_LIFECYCLE_BUTTON_SURFACE_CLASS_NAME =
   "cursor-pointer rounded-md bg-transparent text-muted-foreground hover:text-foreground";

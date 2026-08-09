@@ -13,11 +13,8 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef } from "react";
 
-import {
-  getFallbackThreadIdAfterDelete,
-  isThreadArchiveBlocked,
-  pinOrderKeyBetween,
-} from "../components/Sidebar.logic";
+import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
+import { isThreadArchiveBlocked } from "../components/SidebarArchiveControls.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";

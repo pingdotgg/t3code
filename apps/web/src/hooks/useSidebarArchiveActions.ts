@@ -18,7 +18,7 @@ import {
   getCompletedArchiveThreadKeys,
   isThreadArchiveBlocked,
   withCoordinatedThreadArchiveEntries,
-} from "../components/Sidebar.logic";
+} from "../components/SidebarArchiveControls.logic";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 
 export type SidebarArchiveEntry = {
