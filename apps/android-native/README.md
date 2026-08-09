@@ -1,11 +1,11 @@
-# T3 Code Native Android — Phase 3A
+# T3 Code Native Android — Phase 3B
 
-Independent native Android client for T3 Code. Phase 3A adds project registration and clone flows plus an environment-scoped, read-only workspace browser with file/path search, content search, and text, Markdown, and image previews.
+Independent native Android client for T3 Code. Phase 3B adds environment-scoped Git status, commits, pull/push, pull-request creation, branches, and worktrees to the project and read-only workspace flows from Phase 3A.
 
 ## Modules
 
-- `:protocol` — pairing, bearer authentication, Effect RPC WebSocket transport, typed shell/thread/workspace models, sequence-aware reducers, commands, and the headless proof harness.
-- `:app` — Compose UI, multi-environment supervisors, SQLite catalog/outbox/cache, project/files UI, T3 Connect client, and Android Keystore-backed credentials.
+- `:protocol` — pairing, bearer authentication, Effect RPC WebSocket transport, typed shell/thread/workspace/Git models, sequence-aware reducers, commands, and the headless proof harness.
+- `:app` — Compose UI, multi-environment supervisors, SQLite catalog/outbox/cache, project/files/Git UI, T3 Connect client, and Android Keystore-backed credentials.
 
 The Kotlin implementation targets the current matching T3 server revision. Broader server-version compatibility is not promised until versioned wire artifacts exist.
 
@@ -53,7 +53,9 @@ Pairing performs these steps:
 4. Persist only the scoped bearer credential.
 5. Request a short-lived ticket from `POST /api/auth/websocket-ticket`.
 6. Open `/ws?wsTicket=…` and call `server.getConfig`.
-7. Reject the connection if the discovered and WebSocket environment ids differ.
+7. Reject the connection if the discovered and WebSocket environment ids differ within the same handshake.
+
+On reconnect, the server descriptor is authoritative. A successfully authenticated server with a changed environment id replaces the saved credential key and environment-scoped cache. If the old bearer is rejected, pairing the same endpoint replaces its stale environment entry after the new handshake succeeds.
 
 The Android store encrypts the serialized credential with AES-GCM and a non-exportable Android Keystore key. The environment id is authenticated as additional data.
 
@@ -83,11 +85,11 @@ T3_NATIVE_PROMPT='Count slowly from one to twenty, one number per line.' \
 
 It must exit 0 after pairing, loading the shell, creating one task with atomic `thread.turn.start`, recovering an uncertain retry by deterministic thread id, streaming assistant output, dispatching `thread.turn.interrupt`, reconnecting from the saved bearer credential, probing the server, and resuming shell/thread streams without duplicate sequences.
 
-## Phase 3A boundaries
+## Phase 3B boundaries
 
-Project registration/clone and read-only thread workspace browsing are in scope. File editing, terminal, review, git operations beyond clone, and attachment picker/upload remain later Phase 3 slices. Performance benchmarking remains deferred until Phase 3 is complete.
+Git status, refresh, selective commit, pull, push, pull-request creation, branch switching/creation, and worktree creation are in scope. Git initialization, worktree deletion, force operations, terminal sessions, review UI, file editing, and attachment picker/upload remain outside Phase 3B. Performance benchmarking remains deferred until Phase 3 is complete.
 
-The Phase 3A capability matrix and device acceptance steps live in [`docs/PHASE3A.md`](docs/PHASE3A.md). Phase 2 architecture and evidence remain in [`docs/PHASE2.md`](docs/PHASE2.md).
+The Phase 3B capability matrix and device acceptance steps live in [`docs/PHASE3B.md`](docs/PHASE3B.md). Earlier evidence remains in [`docs/PHASE3A.md`](docs/PHASE3A.md) and [`docs/PHASE2.md`](docs/PHASE2.md).
 
 ### Atomic bootstrap retry caveat
 

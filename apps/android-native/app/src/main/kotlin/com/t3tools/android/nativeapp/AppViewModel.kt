@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.t3tools.android.protocol.ModelSelection
+import com.t3tools.android.protocol.GitActionProgressEvent
+import com.t3tools.android.protocol.GitStackedAction
 import com.t3tools.android.protocol.ProjectChoice
 import com.t3tools.android.protocol.StartCommand
 import com.t3tools.android.protocol.WorktreeBootstrap
@@ -21,6 +23,8 @@ import com.t3tools.android.protocol.threadActionCommand
 import com.t3tools.android.protocol.toJsonObject
 import com.t3tools.android.protocol.turnStartCommand
 import com.t3tools.android.protocol.userInputResponseCommand
+import com.t3tools.android.protocol.reduceVcsStatus
+import com.t3tools.android.protocol.updateThreadGitContextCommand
 import java.net.URI
 import java.net.URLDecoder
 import java.net.URLEncoder
@@ -34,6 +38,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -89,6 +94,15 @@ data class WorktreeChoice(
   val runSetupScript: Boolean,
 )
 
+private data class GitTarget(
+  val environmentId: String,
+  val threadId: String,
+  val cwd: String,
+  val projectRoot: String,
+  val branch: String?,
+  val worktreePath: String?,
+)
+
 class AppViewModel(
   private val repository: OnlineChatRepository,
   private val draftStore: DraftStore,
@@ -110,11 +124,16 @@ class AppViewModel(
   private val mutableWorkspaceFilesState = MutableStateFlow(WorkspaceFilesUiState())
   val workspaceFilesState = mutableWorkspaceFilesState.asStateFlow()
 
+  private val mutableGitState = MutableStateFlow(GitUiState())
+  val gitState = mutableGitState.asStateFlow()
+
   private var browseProjectJob: Job? = null
   private var addProjectJob: Job? = null
   private var workspaceEntriesJob: Job? = null
   private var workspaceSearchJob: Job? = null
   private var workspaceFileJob: Job? = null
+  private var gitStatusJob: Job? = null
+  private var gitMutationJob: Job? = null
 
   private var retryable: RetryableDispatch? = null
 
@@ -180,7 +199,11 @@ class AppViewModel(
 
   fun selectThread(threadId: String) = repository.selectThread(threadId)
 
-  fun clearSelectedThread() = repository.clearSelectedThread()
+  fun clearSelectedThread() {
+    repository.clearSelectedThread()
+    gitStatusJob?.cancel()
+    if (gitMutationJob?.isActive != true) mutableGitState.value = GitUiState()
+  }
 
   fun resetAddProject() {
     browseProjectJob?.cancel()
@@ -390,6 +413,356 @@ class AppViewModel(
     workspaceSearchJob?.cancel()
     workspaceFileJob?.cancel()
     mutableWorkspaceFilesState.value = WorkspaceFilesUiState()
+  }
+
+  fun observeGit(threadId: String, force: Boolean = false) {
+    val target = resolveGitTarget(threadId) ?: return
+    val current = mutableGitState.value
+    if (!force && current.environmentId == target.environmentId && current.threadId == threadId &&
+      current.cwd == target.cwd && gitStatusJob?.isActive == true) return
+    startGitStatus(target, current.status.takeIf {
+      current.environmentId == target.environmentId && current.cwd == target.cwd
+    })
+  }
+
+  fun refreshGitStatus() {
+    val target = currentGitTarget() ?: return
+    viewModelScope.launch {
+      mutableGitState.update { it.copy(loading = true, error = null) }
+      runCatching { refreshGitStatusNow(target) }
+        .onFailure { error ->
+          mutableGitState.update { it.copy(loading = false, error = error.safeMessage()) }
+        }
+    }
+  }
+
+  fun loadGitRefs() {
+    val target = currentGitTarget() ?: return
+    viewModelScope.launch {
+      mutableGitState.update { it.copy(refsLoading = true, error = null) }
+      runCatching { repository.listVcsRefs(target.environmentId, target.projectRoot) }
+        .onSuccess { result ->
+          mutableGitState.update { current ->
+            if (current.environmentId != target.environmentId || current.threadId != target.threadId) current
+            else current.copy(refs = result.refs.filterNot { it.isRemote }, refsLoading = false)
+          }
+        }
+        .onFailure { error ->
+          mutableGitState.update { it.copy(refsLoading = false, error = error.safeMessage()) }
+        }
+    }
+  }
+
+  fun pullGit() = launchGitMutation("Pulling latest changes") { target ->
+    val result = repository.pullVcs(target.environmentId, target.cwd)
+    refreshGitStatusNow(target)
+    mutableGitState.update {
+      it.copy(
+        progress = GitProgressUiState(
+          phase = "success",
+          label = if (result.status == "skipped_up_to_date") {
+            "Already up to date"
+          } else {
+            "Pulled latest on ${result.refName}"
+          },
+        ),
+      )
+    }
+  }
+
+  fun createGitBranch(rawName: String) {
+    val name = sanitizeFeatureBranchName(rawName)
+    launchGitMutation("Creating branch") { target ->
+      val refName = repository.createVcsRef(target.environmentId, target.cwd, name)
+      repository.dispatch(
+        target.environmentId,
+        updateThreadGitContextCommand(
+          threadId = target.threadId,
+          branch = refName,
+          worktreePath = target.worktreePath,
+          expectedBranch = target.branch,
+        ),
+      )
+      refreshGitStatusNow(target)
+      refreshGitRefsNow(target)
+    }
+  }
+
+  fun switchGitBranch(refName: String) = launchGitMutation("Switching branch") { target ->
+    val branch = repository.switchVcsRef(target.environmentId, target.cwd, refName) ?: refName
+    repository.dispatch(
+      target.environmentId,
+      updateThreadGitContextCommand(
+        threadId = target.threadId,
+        branch = branch,
+        worktreePath = target.worktreePath,
+        expectedBranch = target.branch,
+      ),
+    )
+    refreshGitStatusNow(target)
+    refreshGitRefsNow(target)
+  }
+
+  fun createGitWorktree(baseRef: String, rawNewRef: String) {
+    val newRef = sanitizeFeatureBranchName(rawNewRef)
+    launchGitMutation("Creating worktree") { target ->
+      val worktree = repository.createVcsWorktree(
+        target.environmentId,
+        target.projectRoot,
+        baseRef,
+        newRef,
+      )
+      repository.dispatch(
+        target.environmentId,
+        updateThreadGitContextCommand(
+          threadId = target.threadId,
+          branch = worktree.refName,
+          worktreePath = worktree.path,
+          expectedBranch = target.branch,
+        ),
+      )
+      startGitStatus(target.copy(
+        cwd = worktree.path,
+        branch = worktree.refName,
+        worktreePath = worktree.path,
+      ))
+      refreshGitRefsNow(target)
+    }
+  }
+
+  fun runGitAction(
+    action: GitStackedAction,
+    commitMessage: String? = null,
+    filePaths: List<String>? = null,
+    useFeatureBranch: Boolean = false,
+  ) {
+    if (gitMutationJob?.isActive == true) return
+    val target = currentGitTarget() ?: return
+    gitMutationJob = viewModelScope.launch {
+      mutableGitState.update {
+        it.copy(
+          operation = "Running source control action",
+          error = null,
+          progress = GitProgressUiState("running", "Starting Git action…"),
+        )
+      }
+      var terminal = false
+      var actionStreamStarted = false
+      try {
+        val featureBranch = useFeatureBranch && action in setOf(
+          GitStackedAction.Commit,
+          GitStackedAction.CommitPush,
+          GitStackedAction.CommitPushPr,
+        )
+        if (useFeatureBranch && !featureBranch) {
+          val refs = repository.listVcsRefs(target.environmentId, target.projectRoot).refs
+          val branch = resolveAutoFeatureBranchName(refs)
+          repository.createVcsRef(target.environmentId, target.cwd, branch)
+          repository.dispatch(
+            target.environmentId,
+            updateThreadGitContextCommand(
+              threadId = target.threadId,
+              branch = branch,
+              worktreePath = target.worktreePath,
+              expectedBranch = target.branch,
+            ),
+          )
+        }
+        actionStreamStarted = true
+        repository.runGitAction(
+          environmentId = target.environmentId,
+          actionId = UUID.randomUUID().toString(),
+          cwd = target.cwd,
+          action = action,
+          commitMessage = commitMessage,
+          featureBranch = featureBranch,
+          filePaths = filePaths,
+        ).collect { event ->
+          when (event) {
+            is GitActionProgressEvent.ActionStarted -> mutableGitState.update {
+              it.copy(progress = it.progress?.copy(
+                label = "Running ${actionLabel(action)}",
+                description = event.phases.joinToString(" → "),
+              ))
+            }
+            is GitActionProgressEvent.PhaseStarted -> mutableGitState.update {
+              it.copy(progress = it.progress?.copy(label = event.label))
+            }
+            is GitActionProgressEvent.HookStarted -> mutableGitState.update {
+              it.copy(progress = it.progress?.copy(description = "Running ${event.hookName}"))
+            }
+            is GitActionProgressEvent.HookOutput -> mutableGitState.update { current ->
+              val progress = current.progress ?: return@update current
+              current.copy(progress = progress.copy(
+                description = event.text.lineSequence().lastOrNull()?.take(180),
+                output = (progress.output + event.text).takeLast(12),
+              ))
+            }
+            is GitActionProgressEvent.HookFinished -> mutableGitState.update {
+              it.copy(progress = it.progress?.copy(
+                description = "${event.hookName} finished${event.exitCode?.let { code -> " ($code)" }.orEmpty()}",
+              ))
+            }
+            is GitActionProgressEvent.ActionFinished -> {
+              terminal = true
+              if (event.result.branchStatus == "created" && event.result.branchName != null) {
+                runCatching {
+                  repository.dispatch(
+                    target.environmentId,
+                    updateThreadGitContextCommand(
+                      threadId = target.threadId,
+                      branch = event.result.branchName,
+                      worktreePath = target.worktreePath,
+                      expectedBranch = target.branch,
+                    ),
+                  )
+                }.onFailure { metadataError ->
+                  mutableGitState.update { it.copy(error = metadataError.safeMessage()) }
+                }
+              }
+              mutableGitState.update { it.copy(progress = event.result.toProgress()) }
+            }
+            is GitActionProgressEvent.ActionFailed -> {
+              terminal = true
+              mutableGitState.update {
+                it.copy(
+                  progress = GitProgressUiState("error", "Git action failed", event.message),
+                  error = event.message,
+                )
+              }
+            }
+          }
+        }
+        if (!terminal) error("Git action ended before reporting a result.")
+        runCatching { refreshGitStatusNow(target) }
+        runCatching { refreshGitRefsNow(target) }
+      } catch (error: Throwable) {
+        runCatching { refreshGitStatusNow(target) }
+        val message = error.safeMessage()
+        val uncertain = actionStreamStarted && !terminal
+        mutableGitState.update {
+          it.copy(
+            progress = GitProgressUiState(
+              "error",
+              if (uncertain) "Git result needs verification" else "Git action failed",
+              if (uncertain) {
+                "The connection changed during the action. Status was refreshed; verify the repository before retrying."
+              } else {
+                message
+              },
+            ),
+            error = message,
+          )
+        }
+      } finally {
+        mutableGitState.update { it.copy(operation = null) }
+      }
+    }
+  }
+
+  fun dismissGitProgress() {
+    if (mutableGitState.value.progress?.phase != "running") {
+      mutableGitState.update { it.copy(progress = null) }
+    }
+  }
+
+  private fun launchGitMutation(label: String, block: suspend (GitTarget) -> Unit) {
+    if (gitMutationJob?.isActive == true) return
+    val target = currentGitTarget() ?: return
+    gitMutationJob = viewModelScope.launch {
+      mutableGitState.update { it.copy(operation = label, error = null) }
+      runCatching { block(target) }
+        .onFailure { error -> mutableGitState.update { it.copy(error = error.safeMessage()) } }
+      mutableGitState.update { it.copy(operation = null) }
+    }
+  }
+
+  private fun resolveGitTarget(threadId: String): GitTarget? {
+    val state = runtime.value
+    val environmentId = state.environment?.environmentId ?: return null
+    val summary = state.shell.threads[threadId] ?: state.thread.detail?.summary ?: return null
+    val project = state.shell.projects[summary.projectId] ?: return null
+    return GitTarget(
+      environmentId = environmentId,
+      threadId = threadId,
+      cwd = summary.worktreePath ?: project.workspaceRoot,
+      projectRoot = project.workspaceRoot,
+      branch = summary.branch,
+      worktreePath = summary.worktreePath,
+    )
+  }
+
+  private fun currentGitTarget(): GitTarget? {
+    val state = mutableGitState.value
+    val environmentId = state.environmentId ?: return null
+    val threadId = state.threadId ?: return null
+    val cwd = state.cwd ?: return null
+    val projectRoot = state.projectRoot ?: return null
+    val summary = runtime.value.shell.threads[threadId] ?: runtime.value.thread.detail?.summary
+    return GitTarget(
+      environmentId,
+      threadId,
+      cwd,
+      projectRoot,
+      state.status?.refName ?: summary?.branch,
+      summary?.worktreePath ?: cwd.takeIf { it != projectRoot },
+    )
+  }
+
+  private fun startGitStatus(target: GitTarget, retainedStatus: com.t3tools.android.protocol.VcsStatus? = null) {
+    gitStatusJob?.cancel()
+    val previous = mutableGitState.value
+    mutableGitState.value = GitUiState(
+      environmentId = target.environmentId,
+      threadId = target.threadId,
+      cwd = target.cwd,
+      projectRoot = target.projectRoot,
+      status = retainedStatus,
+      refs = previous.refs,
+      loading = retainedStatus == null,
+      refsLoading = previous.refsLoading,
+      operation = previous.operation,
+      progress = previous.progress,
+      error = previous.error,
+    )
+    gitStatusJob = viewModelScope.launch {
+      var status = retainedStatus
+      runCatching {
+        repository.observeVcsStatus(target.environmentId, target.cwd).collect { event ->
+          status = reduceVcsStatus(status, event)
+          mutableGitState.update { current ->
+            if (current.environmentId != target.environmentId || current.cwd != target.cwd) current
+            else current.copy(status = status, loading = false, error = null)
+          }
+        }
+      }.onFailure { error ->
+        mutableGitState.update { it.copy(loading = false, error = error.safeMessage()) }
+      }
+    }
+  }
+
+  private suspend fun refreshGitStatusNow(target: GitTarget) {
+    val status = repository.refreshVcsStatus(target.environmentId, target.cwd)
+    mutableGitState.update { current ->
+      if (current.environmentId != target.environmentId || current.cwd != target.cwd) current
+      else current.copy(status = status, loading = false, error = null)
+    }
+  }
+
+  private suspend fun refreshGitRefsNow(target: GitTarget) {
+    val refs = repository.listVcsRefs(target.environmentId, target.projectRoot)
+    mutableGitState.update { current ->
+      if (current.environmentId != target.environmentId || current.threadId != target.threadId) current
+      else current.copy(refs = refs.refs.filterNot { it.isRemote }, refsLoading = false)
+    }
+  }
+
+  private fun actionLabel(action: GitStackedAction) = when (action) {
+    GitStackedAction.Commit -> "commit"
+    GitStackedAction.Push -> "push"
+    GitStackedAction.CreatePr -> "pull request"
+    GitStackedAction.CommitPush -> "commit and push"
+    GitStackedAction.CommitPushPr -> "commit, push and pull request"
   }
 
   fun loadDraft(key: String) = draftStore.load(key)

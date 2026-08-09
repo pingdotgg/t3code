@@ -42,6 +42,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AccountTree
 import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Check
@@ -126,11 +127,15 @@ private const val SETTINGS = "settings"
 private const val ARCHIVED_THREADS = "settings/archived"
 private const val THREAD = "thread/{threadId}"
 private const val THREAD_FILES = "thread/{threadId}/files"
+private const val THREAD_GIT = "thread/{threadId}/git"
+private const val THREAD_GIT_COMMIT = "thread/{threadId}/git/commit"
+private const val THREAD_GIT_BRANCHES = "thread/{threadId}/git/branches"
 
 @Composable
 fun T3NativeApp(viewModel: AppViewModel) {
   val runtime by viewModel.runtime.collectAsState()
   val dispatchState by viewModel.dispatchState.collectAsState()
+  val gitState by viewModel.gitState.collectAsState()
   val navController = rememberNavController()
   val start = remember { if (runtime.environment == null) ONBOARDING else HOME }
 
@@ -157,7 +162,8 @@ fun T3NativeApp(viewModel: AppViewModel) {
     }
   }
 
-  NavHost(navController = navController, startDestination = start) {
+  Box(Modifier.fillMaxSize()) {
+    NavHost(navController = navController, startDestination = start) {
     composable(ONBOARDING) {
       OnboardingScreen(
         runtime = runtime,
@@ -242,11 +248,13 @@ fun T3NativeApp(viewModel: AppViewModel) {
         runtime = runtime,
         dispatchState = dispatchState,
         viewModel = viewModel,
+        gitState = gitState,
         onBack = {
           viewModel.clearSelectedThread()
           navController.popBackStack()
         },
         onFiles = { navController.navigate("thread/$threadId/files") },
+        onGit = { navController.navigate("thread/$threadId/git") },
       )
     }
     composable(
@@ -260,6 +268,44 @@ fun T3NativeApp(viewModel: AppViewModel) {
         onBack = { navController.popBackStack() },
       )
     }
+    composable(
+      route = THREAD_GIT,
+      arguments = listOf(navArgument("threadId") { type = NavType.StringType }),
+    ) { entry ->
+      val threadId = requireNotNull(entry.arguments?.getString("threadId"))
+      GitOverviewScreen(
+        threadId = threadId,
+        state = gitState,
+        viewModel = viewModel,
+        onBack = { navController.popBackStack() },
+        onCommit = { navController.navigate("thread/$threadId/git/commit") },
+        onBranches = { navController.navigate("thread/$threadId/git/branches") },
+      )
+    }
+    composable(
+      route = THREAD_GIT_COMMIT,
+      arguments = listOf(navArgument("threadId") { type = NavType.StringType }),
+    ) { entry ->
+      GitCommitScreen(
+        threadId = requireNotNull(entry.arguments?.getString("threadId")),
+        state = gitState,
+        viewModel = viewModel,
+        onBack = { navController.popBackStack() },
+      )
+    }
+    composable(
+      route = THREAD_GIT_BRANCHES,
+      arguments = listOf(navArgument("threadId") { type = NavType.StringType }),
+    ) { entry ->
+      GitBranchesScreen(
+        threadId = requireNotNull(entry.arguments?.getString("threadId")),
+        state = gitState,
+        viewModel = viewModel,
+        onBack = { navController.popBackStack() },
+      )
+    }
+    }
+    GitProgressOverlay(gitState.progress, viewModel::dismissGitProgress)
   }
 }
 
@@ -1510,14 +1556,17 @@ private fun ThreadScreen(
   runtime: OnlineChatState,
   dispatchState: DispatchState,
   viewModel: AppViewModel,
+  gitState: GitUiState,
   onBack: () -> Unit,
   onFiles: () -> Unit,
+  onGit: () -> Unit,
 ) {
   val detail = runtime.thread.detail
   val focusManager = LocalFocusManager.current
   LaunchedEffect(threadId) {
     focusManager.clearFocus(force = true)
     viewModel.selectThread(threadId)
+    viewModel.observeGit(threadId)
   }
   LaunchedEffect(threadId, detail != null) {
     if (detail != null) focusManager.clearFocus(force = true)
@@ -1547,6 +1596,15 @@ private fun ThreadScreen(
           }
         },
         actions = {
+          TextButton(onClick = onGit, enabled = detail != null) {
+            Icon(Icons.Rounded.AccountTree, contentDescription = null)
+            Spacer(Modifier.width(5.dp))
+            Text(
+              gitState.status?.refName ?: "Git",
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
           IconButton(onClick = onFiles, enabled = detail != null) {
             Icon(Icons.Rounded.FolderOpen, contentDescription = "Files")
           }

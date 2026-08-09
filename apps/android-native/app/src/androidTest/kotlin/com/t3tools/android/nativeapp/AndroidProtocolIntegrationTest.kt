@@ -29,6 +29,7 @@ class AndroidProtocolIntegrationTest {
     val workspaceThreadId = InstrumentationRegistry.getArguments().getString("workspaceThreadId")
     val cloneRemoteUrl = InstrumentationRegistry.getArguments().getString("cloneRemoteUrl")
     val cloneDestination = InstrumentationRegistry.getArguments().getString("cloneDestination")
+    val gitCwd = InstrumentationRegistry.getArguments().getString("gitCwd")
     assumeTrue("pairingUrl instrumentation argument is required", !pairingUrl.isNullOrBlank())
 
     val store = AndroidCredentialStore(instrumentation.targetContext)
@@ -80,6 +81,16 @@ class AndroidProtocolIntegrationTest {
         assertEquals(cloneDestination, cloned.cwd)
         assertTrue(client.listWorkspaceEntries(connected.session, cloned.cwd)
           .entries.any { it.path == "README.md" })
+      }
+      if (!gitCwd.isNullOrBlank()) {
+        val status = client.refreshVcsStatus(connected.session, gitCwd)
+        val streamed = client.vcsStatus(connected.session, gitCwd).first()
+        val refs = client.listVcsRefs(connected.session, gitCwd)
+
+        assertTrue(status.isRepo)
+        assertTrue(streamed is com.t3tools.android.protocol.VcsStatusEvent.Snapshot)
+        assertTrue(refs.isRepo)
+        assertTrue(refs.refs.any { it.current })
       }
     } finally {
       connected.session.close()

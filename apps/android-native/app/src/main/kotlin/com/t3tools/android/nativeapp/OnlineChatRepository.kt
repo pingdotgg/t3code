@@ -11,6 +11,8 @@ import com.t3tools.android.protocol.AtomicStartResult
 import com.t3tools.android.protocol.ClonedRepository
 import com.t3tools.android.protocol.ConnectedEnvironment
 import com.t3tools.android.protocol.FilesystemBrowseResult
+import com.t3tools.android.protocol.GitActionProgressEvent
+import com.t3tools.android.protocol.GitStackedAction
 import com.t3tools.android.protocol.ShellState
 import com.t3tools.android.protocol.StartCommand
 import com.t3tools.android.protocol.T3ProtocolClient
@@ -26,6 +28,7 @@ import com.t3tools.android.protocol.startCommand
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,9 +37,15 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -178,6 +187,13 @@ class OnlineChatRepository(
       label = connected.descriptor.label,
       httpBaseUrl = pairingUrl.substringBefore("/pair").substringBefore('#'),
     )
+    environmentStore.loadAll()
+      .filter {
+        it.kind == EnvironmentKind.Bearer &&
+          it.environmentId != saved.environmentId &&
+          it.httpBaseUrl.trimEnd('/') == saved.httpBaseUrl.trimEnd('/')
+      }
+      .forEach { forget(it.environmentId) }
     environmentStore.save(saved)
     activateConnectedEnvironment(saved, connected)
   }
@@ -497,6 +513,83 @@ class OnlineChatRepository(
     else URI("$base/").resolve(relative.removePrefix("/")).toString()
   }
 
+  @OptIn(ExperimentalCoroutinesApi::class)
+  fun observeVcsStatus(environmentId: String, cwd: String) = mutableState
+    .map { state ->
+      state.environment?.environmentId == environmentId &&
+        state.connectionPhase == ConnectionPhase.Connected
+    }
+    .distinctUntilChanged()
+    .flatMapLatest { connected ->
+      if (!connected) emptyFlow() else flow {
+        val runtime = connectedRuntime(environmentId)
+        client.vcsStatus(requireNotNull(runtime.connection).session, cwd).collect(::emit)
+      }
+    }
+
+  suspend fun refreshVcsStatus(environmentId: String, cwd: String) = withContext(Dispatchers.IO) {
+    val runtime = connectedRuntime(environmentId)
+    client.refreshVcsStatus(requireNotNull(runtime.connection).session, cwd)
+  }
+
+  suspend fun listVcsRefs(environmentId: String, cwd: String) = withContext(Dispatchers.IO) {
+    val runtime = connectedRuntime(environmentId)
+    client.listVcsRefs(requireNotNull(runtime.connection).session, cwd)
+  }
+
+  suspend fun pullVcs(environmentId: String, cwd: String) = withContext(Dispatchers.IO) {
+    val runtime = connectedRuntime(environmentId)
+    client.pullVcs(requireNotNull(runtime.connection).session, cwd)
+  }
+
+  suspend fun createVcsRef(environmentId: String, cwd: String, refName: String) =
+    withContext(Dispatchers.IO) {
+      val runtime = connectedRuntime(environmentId)
+      client.createVcsRef(requireNotNull(runtime.connection).session, cwd, refName)
+    }
+
+  suspend fun switchVcsRef(environmentId: String, cwd: String, refName: String) =
+    withContext(Dispatchers.IO) {
+      val runtime = connectedRuntime(environmentId)
+      client.switchVcsRef(requireNotNull(runtime.connection).session, cwd, refName)
+    }
+
+  suspend fun createVcsWorktree(
+    environmentId: String,
+    cwd: String,
+    baseRef: String,
+    newRef: String,
+  ) = withContext(Dispatchers.IO) {
+    val runtime = connectedRuntime(environmentId)
+    client.createVcsWorktree(
+      requireNotNull(runtime.connection).session,
+      cwd,
+      baseRef,
+      newRef,
+    )
+  }
+
+  fun runGitAction(
+    environmentId: String,
+    actionId: String,
+    cwd: String,
+    action: GitStackedAction,
+    commitMessage: String?,
+    featureBranch: Boolean,
+    filePaths: List<String>?,
+  ): Flow<GitActionProgressEvent> = flow {
+    val runtime = connectedRuntime(environmentId)
+    client.runGitAction(
+      requireNotNull(runtime.connection).session,
+      actionId,
+      cwd,
+      action,
+      commitMessage,
+      featureBranch,
+      filePaths,
+    ).collect(::emit)
+  }
+
   suspend fun dispatchAtomicStart(start: StartCommand): AtomicStartResult = withContext(Dispatchers.IO) {
     val runtime = connectedActiveRuntime()
     client.dispatchAtomicStart(requireNotNull(runtime.connection).session, start)
@@ -704,6 +797,11 @@ class OnlineChatRepository(
         continue
       }
 
+      if (connected.descriptor.environmentId != environmentId) {
+        replaceEnvironmentIdentity(environmentId, runtime, connected)
+        return
+      }
+
       runtime.connection = connected
       runtime.generation += 1
       runtime.shell = runtime.shell.awaitingSynchronization()
@@ -806,6 +904,55 @@ class OnlineChatRepository(
       if (interrupted == SupervisorSignal.Stop) return
       attempt += 1
     }
+  }
+
+  private suspend fun replaceEnvironmentIdentity(
+    previousEnvironmentId: String,
+    previousRuntime: EnvironmentRuntime,
+    connected: ConnectedEnvironment,
+  ) {
+    val replacement = previousRuntime.environment.copy(
+      environmentId = connected.descriptor.environmentId,
+      label = connected.descriptor.label,
+    )
+    val previousActiveId = synchronized(lock) { activeEnvironmentId }
+
+    outboxMutex.withLock {
+      synchronized(lock) {
+        if (previousActiveId == previousEnvironmentId) {
+          activeThreadJob?.cancel()
+          activeThreadJob = null
+        }
+        signals.remove(previousEnvironmentId)
+        supervisors.remove(previousEnvironmentId)
+        runtimes.remove(previousEnvironmentId)
+        pending.values.filter { it.environmentId == previousEnvironmentId }
+          .forEach { pending.remove(it.messageId) }
+      }
+
+      environmentStore.remove(previousEnvironmentId)
+      environmentStore.save(replacement)
+      if (previousActiveId != previousEnvironmentId) {
+        previousActiveId?.let(environmentStore::select)
+      }
+      draftStore.clearEnvironment(previousEnvironmentId)
+
+      synchronized(lock) {
+        runtimes[replacement.environmentId] = EnvironmentRuntime(
+          environment = replacement,
+          shell = ShellState(),
+        ).apply {
+          providerModels = parseProviderModels(connected.config)
+          capabilities = connected.descriptor.capabilities.toThreadCapabilities()
+        }
+        if (previousActiveId == previousEnvironmentId) {
+          activeEnvironmentId = replacement.environmentId
+        }
+        publishLocked()
+      }
+    }
+
+    ensureSupervisor(replacement, connected)
   }
 
   private fun startThreadSubscription(runtime: EnvironmentRuntime) {

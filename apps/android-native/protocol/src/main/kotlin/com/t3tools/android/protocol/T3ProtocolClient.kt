@@ -76,10 +76,13 @@ class T3ProtocolClient(
       "No saved credential for $environmentId."
     }
     val descriptor = auth.fetchDescriptor(credential.httpBaseUrl)
-    require(descriptor.environmentId == environmentId) {
-      "Saved environment id does not match the current server descriptor."
+    val currentCredential = credential.copy(environmentId = descriptor.environmentId)
+    val connected = connect(descriptor, currentCredential)
+    if (descriptor.environmentId != environmentId) {
+      credentialStore.save(currentCredential)
+      credentialStore.clear(environmentId)
     }
-    return connect(descriptor, credential)
+    return connected
   }
 
   fun fetchDescriptor(httpBaseUrl: String) = auth.fetchDescriptor(httpBaseUrl)
@@ -209,6 +212,51 @@ class T3ProtocolClient(
     threadId: String,
     path: String,
   ) = session.unary("assets.createUrl", workspaceAssetPayload(threadId, path)).toWorkspaceAssetUrl()
+
+  fun vcsStatus(session: EffectRpcSession, cwd: String): Flow<VcsStatusEvent> =
+    session.stream("subscribeVcsStatus", vcsStatusPayload(cwd)).mapNotNull { value ->
+      value.toVcsStatusEvent()
+    }
+
+  suspend fun refreshVcsStatus(session: EffectRpcSession, cwd: String) =
+    session.unary("vcs.refreshStatus", vcsStatusPayload(cwd)).toVcsStatus()
+
+  suspend fun listVcsRefs(session: EffectRpcSession, cwd: String) =
+    session.unary("vcs.listRefs", vcsRefsPayload(cwd)).toVcsRefs()
+
+  suspend fun pullVcs(session: EffectRpcSession, cwd: String) =
+    session.unary("vcs.pull", vcsStatusPayload(cwd)).toVcsPullResult()
+
+  suspend fun createVcsRef(session: EffectRpcSession, cwd: String, refName: String) =
+    session.unary("vcs.createRef", vcsCreateRefPayload(cwd, refName))
+      .jsonObject.required("refName").jsonPrimitive.content
+
+  suspend fun switchVcsRef(session: EffectRpcSession, cwd: String, refName: String) =
+    session.unary("vcs.switchRef", vcsSwitchRefPayload(cwd, refName))
+      .jsonObject.stringOrNull("refName")
+
+  suspend fun createVcsWorktree(
+    session: EffectRpcSession,
+    cwd: String,
+    baseRef: String,
+    newRef: String,
+  ) = session.unary(
+    "vcs.createWorktree",
+    vcsCreateWorktreePayload(cwd, baseRef, newRef),
+  ).toVcsWorktree()
+
+  fun runGitAction(
+    session: EffectRpcSession,
+    actionId: String,
+    cwd: String,
+    action: GitStackedAction,
+    commitMessage: String? = null,
+    featureBranch: Boolean = false,
+    filePaths: List<String>? = null,
+  ): Flow<GitActionProgressEvent> = session.stream(
+    "git.runStackedAction",
+    gitActionPayload(actionId, cwd, action, commitMessage, featureBranch, filePaths),
+  ).mapNotNull { value -> value.toGitActionProgressEvent() }
 
   private suspend fun connect(
     descriptor: EnvironmentDescriptor,

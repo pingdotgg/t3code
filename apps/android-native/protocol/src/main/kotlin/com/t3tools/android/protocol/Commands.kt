@@ -165,6 +165,21 @@ fun interruptCommand(threadId: String, now: Instant = Instant.now()) = buildJson
   "createdAt" to JsonPrimitive(now.toString()),
 )
 
+fun updateThreadGitContextCommand(
+  threadId: String,
+  branch: String?,
+  worktreePath: String?,
+  expectedBranch: String? = null,
+  commandId: String = UUID.randomUUID().toString(),
+) = buildJsonObject(
+  "type" to JsonPrimitive("thread.meta.update"),
+  "commandId" to JsonPrimitive(commandId),
+  "threadId" to JsonPrimitive(threadId),
+  "branch" to (branch?.let(::JsonPrimitive) ?: JsonNull),
+  "expectedBranch" to expectedBranch?.let(::JsonPrimitive),
+  "worktreePath" to (worktreePath?.let(::JsonPrimitive) ?: JsonNull),
+)
+
 fun stopSessionCommand(threadId: String, now: Instant = Instant.now()) = timestampedThreadCommand(
   type = "thread.session.stop",
   threadId = threadId,
