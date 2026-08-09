@@ -278,7 +278,7 @@ describe("AssetAccess", () => {
       yield* fileSystem.writeFileString(path.join(root, "favicon.svg"), "<svg>auto</svg>");
 
       const result = yield* issueAssetUrl({
-        resource: { _tag: "project-favicon", cwd: root, path: "brand/custom.svg" },
+        resource: { _tag: "project-favicon", cwd: root },
         projectFaviconPath: "brand/custom.svg",
       });
 

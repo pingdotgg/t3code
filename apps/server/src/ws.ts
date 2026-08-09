@@ -1785,7 +1785,7 @@ const makeWsRpcLayer = (
                 }
                 return yield* issueAssetUrl({
                   resource: input.resource,
-                  ...(input.resource.path !== undefined && project.value.faviconPath
+                  ...(project.value.faviconPath
                     ? { projectFaviconPath: project.value.faviconPath }
                     : {}),
                 });
