@@ -151,9 +151,8 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         { baseDir: destDir, source, projects: 5, threadsPerProject: 10 },
         { sharedHome: sourceDir },
       ).pipe(Effect.flip);
-      assert.equal(error._tag, "MigrateDevDbDestinationBusyError");
-      if (error._tag === "MigrateDevDbDestinationBusyError") {
-        assert.equal(error.reason, "server-running");
+      assert.equal(error._tag, "MigrateDevDbServerRunningError");
+      if (error._tag === "MigrateDevDbServerRunningError") {
         assert.equal(error.pid, process.pid);
       }
     }),

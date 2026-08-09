@@ -81,19 +81,27 @@ export class MigrateDevDbSourceIsDestinationError extends Schema.TaggedErrorClas
   }
 }
 
+export class MigrateDevDbServerRunningError extends Schema.TaggedErrorClass<MigrateDevDbServerRunningError>()(
+  "MigrateDevDbServerRunningError",
+  {
+    databasePath: Schema.String,
+    pid: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Dev database at '${this.databasePath}' is open by a running server (pid ${this.pid} per server-runtime.json). Stop that server first; if that pid is not actually a T3 server (stale descriptor, reused pid), delete the server-runtime.json next to the database and retry.`;
+  }
+}
+
 export class MigrateDevDbDestinationBusyError extends Schema.TaggedErrorClass<MigrateDevDbDestinationBusyError>()(
   "MigrateDevDbDestinationBusyError",
   {
     databasePath: Schema.String,
-    reason: Schema.Literals(["server-running", "write-locked", "wal-held"]),
-    pid: Schema.optional(Schema.Number),
+    reason: Schema.Literals(["write-locked", "wal-held"]),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    if (this.reason === "server-running") {
-      return `Dev database at '${this.databasePath}' is open by a running server (pid ${this.pid ?? "unknown"} per server-runtime.json). Stop that server first; if that pid is not actually a T3 server (stale descriptor, reused pid), delete the server-runtime.json next to the database and retry.`;
-    }
     const detail =
       this.reason === "write-locked"
         ? "the database is write-locked"
@@ -191,9 +199,8 @@ const ensureNotInUse = Effect.fn("ensureDevDbNotInUse")(function* (databasePath:
     Effect.option,
   );
   if (Option.isSome(runtimeState) && isProcessAlive(runtimeState.value.pid)) {
-    return yield* new MigrateDevDbDestinationBusyError({
+    return yield* new MigrateDevDbServerRunningError({
       databasePath,
-      reason: "server-running",
       pid: runtimeState.value.pid,
     });
   }
@@ -346,6 +353,11 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   input: RunMigrateDevDbInput,
   options: RunMigrateDevDbOptions = {},
 ) {
+  // SQLite treats a negative LIMIT as "no limit", which would clone
+  // everything. The CLI flags validate this too; this covers direct callers.
+  if (input.projects < 1 || input.threadsPerProject < 0) {
+    return yield* Effect.die("projects must be >= 1 and threadsPerProject >= 0");
+  }
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
