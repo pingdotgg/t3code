@@ -1,16 +1,13 @@
 import {
   T3_PROJECT_FILE_NAME,
   type EnvironmentId,
+  type T3ProjectFile,
   type T3ProjectFileScript,
 } from "@t3tools/contracts";
-import { T3ProjectFileFromJson } from "@t3tools/shared/t3ProjectFile";
-import * as Exit from "effect/Exit";
-import * as Schema from "effect/Schema";
+import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { useMemo } from "react";
 
 import { useProjectFileQuery } from "~/components/files/projectFilesQueryState";
-
-const decodeT3ProjectFile = Schema.decodeExit(T3ProjectFileFromJson);
 
 const NO_SCRIPTS: ReadonlyArray<T3ProjectFileScript> = [];
 
@@ -23,6 +20,8 @@ export interface T3ProjectFileState {
    * - `loading`: the file query has not settled yet.
    */
   status: "loading" | "missing" | "invalid" | "valid";
+  /** The decoded file when status is `valid`, null otherwise. */
+  file: T3ProjectFile | null;
   scripts: ReadonlyArray<T3ProjectFileScript>;
 }
 
@@ -39,13 +38,17 @@ export function useT3ProjectFileState(
   const isPending = query.isPending;
   return useMemo(() => {
     if (contents === null) {
-      return { status: isPending ? "loading" : "missing", scripts: NO_SCRIPTS } as const;
+      return {
+        status: isPending ? "loading" : "missing",
+        file: null,
+        scripts: NO_SCRIPTS,
+      } as const;
     }
-    const decoded = decodeT3ProjectFile(contents);
-    if (Exit.isFailure(decoded)) {
-      return { status: "invalid", scripts: NO_SCRIPTS } as const;
+    const file = parseT3ProjectFile(contents);
+    if (file === null) {
+      return { status: "invalid", file: null, scripts: NO_SCRIPTS } as const;
     }
-    return { status: "valid", scripts: decoded.value.scripts ?? NO_SCRIPTS } as const;
+    return { status: "valid", file, scripts: file.scripts ?? NO_SCRIPTS } as const;
   }, [contents, isPending]);
 }
 

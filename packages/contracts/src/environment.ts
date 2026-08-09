@@ -18,6 +18,14 @@ export const ExecutionEnvironmentPlatform = Schema.Struct({
   os: ExecutionEnvironmentPlatformOs,
   arch: ExecutionEnvironmentPlatformArch,
 });
+
+/**
+ * Where a new thread runs: the project's current checkout ("local") or a
+ * fresh git worktree ("worktree"). Lives here (not settings.ts) so
+ * orchestration contracts can reference it without an import cycle.
+ */
+export const ThreadEnvMode = Schema.Literals(["local", "worktree"]);
+export type ThreadEnvMode = typeof ThreadEnvMode.Type;
 export type ExecutionEnvironmentPlatform = typeof ExecutionEnvironmentPlatform.Type;
 
 /** How a server can replace itself with another version when asked over RPC.
