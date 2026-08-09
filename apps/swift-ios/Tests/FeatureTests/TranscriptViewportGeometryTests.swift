@@ -1,8 +1,35 @@
 import Testing
 @testable import T3Code
 
-@Suite("Transcript viewport anchoring")
+@Suite("Transcript viewport and timestamp gestures")
 struct TranscriptViewportGeometryTests {
+    @Test
+    func timestampRevealTracksLeftwardDragWithinBounds() {
+        #expect(TranscriptTimestampRevealGeometry.width(translationX: -32) == 32)
+    }
+
+    @Test
+    func timestampRevealClampsAtRestAndMaximumWidth() {
+        #expect(TranscriptTimestampRevealGeometry.width(translationX: 24) == 0)
+        #expect(
+            TranscriptTimestampRevealGeometry.width(translationX: -200)
+                == TranscriptTimestampRevealGeometry.maximumWidth
+        )
+    }
+
+    @Test
+    func timestampRevealClaimsOnlyDeliberateLeftwardHorizontalPans() {
+        #expect(
+            TranscriptTimestampRevealGeometry.shouldBegin(velocityX: -24, velocityY: 4)
+        )
+        #expect(
+            !TranscriptTimestampRevealGeometry.shouldBegin(velocityX: -4, velocityY: 24)
+        )
+        #expect(
+            !TranscriptTimestampRevealGeometry.shouldBegin(velocityX: 24, velocityY: 4)
+        )
+    }
+
     @Test
     func firstLoadedTranscriptAnchorsToLatestMessage() {
         let empty = TranscriptViewportGeometry(
