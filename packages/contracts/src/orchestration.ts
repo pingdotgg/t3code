@@ -870,6 +870,12 @@ const ThreadSessionStopCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   createdAt: IsoDateTime,
+  // Settle-cleanup stops are conditional: the decider drops the stop if the
+  // thread was re-engaged (unsettled, session starting/running, or a queued
+  // turn start) between the settle and this command. Guarding in the decider
+  // closes the race a post-settle snapshot read cannot: commands are decided
+  // serially against the authoritative read model.
+  onlyIfSettled: Schema.optional(Schema.Boolean),
 });
 
 const DispatchableClientOrchestrationCommand = Schema.Union([

@@ -1116,11 +1116,32 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.session.stop": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      // Settle-cleanup stops are conditional: between the settle landing and
+      // this command, another client may have re-engaged the thread (a turn
+      // start unsettles it and brings the session alive). Commands are
+      // decided serially against this read model, so checking here — not in
+      // the dispatcher's pre-settle snapshot — closes that race.
+      if (command.onlyIfSettled === true) {
+        const sessionComingAlive =
+          thread.session?.status === "starting" || thread.session?.status === "running";
+        if (
+          thread.settledOverride !== "settled" ||
+          sessionComingAlive ||
+          threadHasQueuedTurnStart(thread, command.createdAt)
+        ) {
+          return yield* Effect.fail(
+            new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: `thread ${command.threadId} was re-engaged after settle; skipping session stop`,
+            }),
+          );
+        }
+      }
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
