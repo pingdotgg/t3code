@@ -73,6 +73,12 @@ export interface WorkLogEntry {
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
   toolData?: unknown;
+  /** Provider tool name, `mcp__<server>__` prefix stripped (`Read`, `bash`, `create_issue`). */
+  toolName?: string;
+  /** MCP server name when the call targets an MCP server. */
+  toolServer?: string;
+  /** Raw tool input / arguments when the provider exposes them. */
+  toolInput?: Record<string, unknown>;
   itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
   /** From runtime item / task payload `status` when present (e.g. tool.updated). */
@@ -871,6 +877,18 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (itemType) {
     entry.itemType = itemType;
   }
+  if (!isTaskActivity) {
+    const toolMeta = extractToolCallMeta(payload);
+    if (toolMeta.toolName) {
+      entry.toolName = toolMeta.toolName;
+    }
+    if (toolMeta.toolServer) {
+      entry.toolServer = toolMeta.toolServer;
+    }
+    if (toolMeta.toolInput) {
+      entry.toolInput = toolMeta.toolInput;
+    }
+  }
   if (requestKind) {
     entry.requestKind = requestKind;
   }
@@ -1043,6 +1061,9 @@ function mergeDerivedWorkLogEntries(
   const toolCallId = next.toolCallId ?? previous.toolCallId;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
+  const toolName = next.toolName ?? previous.toolName;
+  const toolServer = next.toolServer ?? previous.toolServer;
+  const toolInput = next.toolInput ?? previous.toolInput;
   return {
     ...previous,
     ...next,
@@ -1057,6 +1078,9 @@ function mergeDerivedWorkLogEntries(
     ...(toolCallId ? { toolCallId } : {}),
     ...(toolLifecycleStatus !== undefined ? { toolLifecycleStatus } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
+    ...(toolName !== undefined ? { toolName } : {}),
+    ...(toolServer !== undefined ? { toolServer } : {}),
+    ...(toolInput !== undefined ? { toolInput } : {}),
   };
 }
 
@@ -1262,7 +1286,13 @@ function formatCommandValue(value: unknown): string | null {
   return parts.map((part) => formatCommandArrayPart(part)).join(" ");
 }
 
-function normalizeCommandValue(value: unknown): string | null {
+/**
+ * Turns a raw provider `command` argument into the text a row should show:
+ * argv arrays are quoted and joined, and known shell wrappers (`bash -lc …`,
+ * `pwsh -Command …`, `cmd /c …`) are unwrapped. This is what `entry.command` is
+ * derived with, so preview code must reuse it rather than read the raw value.
+ */
+export function normalizeCommandValue(value: unknown): string | null {
   const formatted = formatCommandValue(value);
   return formatted ? unwrapKnownShellCommandWrapper(formatted) : null;
 }
@@ -1317,6 +1347,60 @@ function extractToolTitle(payload: Record<string, unknown> | null): string | nul
 function extractToolCallId(payload: Record<string, unknown> | null): string | null {
   const data = asRecord(payload?.data);
   return asTrimmedString(data?.toolCallId);
+}
+
+const MCP_TOOL_NAME_PATTERN = /^mcp__(.+?)__(.+)$/;
+
+/** Claude and OpenCode expose MCP calls as one `mcp__<server>__<tool>` name. */
+export function splitMcpToolName(rawName: string): { server: string | null; name: string } {
+  const match = MCP_TOOL_NAME_PATTERN.exec(rawName);
+  const server = match?.[1];
+  const name = match?.[2];
+  return server && name ? { server, name } : { server: null, name: rawName };
+}
+
+type ToolCallMeta = Pick<WorkLogEntry, "toolName" | "toolServer" | "toolInput">;
+
+function asToolInputRecord(value: unknown): Record<string, unknown> | null {
+  return Array.isArray(value) ? null : asRecord(value);
+}
+
+/**
+ * Recovers the concrete tool identity the adapters bury in `payload.data`:
+ * Claude sends `{ toolName, input }`, Codex a typed `item`, OpenCode
+ * `{ tool, state }`, ACP providers only `rawInput`. Titles and itemTypes are
+ * lossy (every Claude Read/Grep/Glob arrives as "Tool call"), so the name and
+ * arguments are the only way the UI can phrase a real sentence.
+ */
+function extractToolCallMeta(payload: Record<string, unknown> | null): ToolCallMeta {
+  const data = asRecord(payload?.data);
+  if (!data) {
+    return {};
+  }
+  const item = asRecord(data.item);
+  const state = asRecord(data.state);
+  const rawName =
+    asTrimmedString(data.toolName) ?? asTrimmedString(item?.tool) ?? asTrimmedString(data.tool);
+  const input =
+    asToolInputRecord(data.input) ??
+    asToolInputRecord(item?.arguments) ??
+    asToolInputRecord(state?.input) ??
+    asToolInputRecord(data.rawInput);
+
+  const meta: ToolCallMeta = {};
+  if (rawName) {
+    const { server: mcpServer, name } = splitMcpToolName(rawName);
+    meta.toolName = name;
+    // Codex splits the MCP identity across `item.server` / `item.tool`.
+    const server = mcpServer ?? asTrimmedString(item?.server);
+    if (server) {
+      meta.toolServer = server;
+    }
+  }
+  if (input) {
+    meta.toolInput = input;
+  }
+  return meta;
 }
 
 function normalizeInlinePreview(value: string): string {

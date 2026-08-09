@@ -682,4 +682,94 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("lucide-x");
     expect(markup).toContain('aria-label="Tool call failed"');
   });
+
+  it("renders a misclassified MCP call as the tool it really is", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "File change",
+              tone: "tool",
+              toolTitle: "File change",
+              itemType: "file_change",
+              toolName: "create_pr",
+              toolServer: "github",
+              toolInput: { title: "Fix login bug" },
+            },
+          },
+        ]}
+        workspaceRoot="/Users/dev/t3code"
+      />,
+    );
+
+    expect(markup).toContain("github · create_pr");
+    expect(markup).toContain("Fix login bug");
+    expect(markup).toContain("lucide-wrench");
+    expect(markup).not.toContain("File change");
+  });
+
+  it("keeps a pending approval phrased as a request", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Command approval requested",
+              tone: "info",
+              requestKind: "command",
+              detail: "Bash: rm -rf /tmp/build",
+            },
+          },
+        ]}
+        workspaceRoot="/Users/dev/t3code"
+      />,
+    );
+
+    expect(markup).toContain("Command approval requested");
+    expect(markup).toContain("Bash: rm -rf /tmp/build");
+    expect(markup).not.toContain("Ran command");
+  });
+
+  it("does not render the expanded body of a collapsed tool row", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Tool call",
+              tone: "tool",
+              itemType: "dynamic_tool_call",
+              toolName: "Grep",
+              toolInput: { pattern: "useEffect" },
+            },
+          },
+        ]}
+        workspaceRoot="/Users/dev/t3code"
+      />,
+    );
+
+    // The row is expandable, but nothing is serialised until it is opened.
+    expect(markup).toContain("Searched code");
+    expect(markup).toContain("lucide-chevron-down");
+    expect(markup).not.toContain("Input\n");
+  });
 });
