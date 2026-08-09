@@ -1817,8 +1817,13 @@ internal fun extractPairingUrl(payload: String): String {
   return URLDecoder.decode(encoded, StandardCharsets.UTF_8.name())
 }
 
-private fun ComposerDraft.modelSelectionOr(fallback: ModelSelection) =
-  if (modelInstanceId != null && model != null) ModelSelection(modelInstanceId, model) else fallback
+private fun ComposerDraft.modelSelectionOr(fallback: ModelSelection): ModelSelection {
+  if (modelInstanceId == null || model == null) return fallback
+  val options = modelOptions ?: fallback.options.takeIf {
+    modelInstanceId == fallback.instanceId && model == fallback.model
+  }
+  return ModelSelection(modelInstanceId, model, options)
+}
 
 private fun WorkspaceFilesUiState.workspaceKey(): Triple<String, String, String>? {
   val environmentId = environmentId ?: return null

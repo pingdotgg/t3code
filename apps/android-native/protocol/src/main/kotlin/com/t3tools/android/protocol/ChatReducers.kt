@@ -149,9 +149,37 @@ fun parseProviderModels(config: JsonObject): List<ProviderModel> =
     }
     val instanceId = provider.text("instanceId") ?: return@flatMap emptyList()
     val providerLabel = provider.text("label") ?: provider.text("name") ?: instanceId
+    val slashCommands = provider.array("slashCommands").orEmpty().mapNotNull { commandElement ->
+      val command = commandElement as? JsonObject ?: return@mapNotNull null
+      ProviderSlashCommand(
+        name = command.text("name") ?: return@mapNotNull null,
+        description = command.text("description"),
+        inputHint = command.obj("input")?.text("hint"),
+      )
+    }
     provider.array("models").orEmpty().mapNotNull { modelElement ->
       val model = modelElement as? JsonObject ?: return@mapNotNull null
       val slug = model.text("slug") ?: return@mapNotNull null
+      val optionDescriptors = model.obj("capabilities")?.array("optionDescriptors").orEmpty()
+        .mapNotNull { descriptorElement ->
+          val descriptor = descriptorElement as? JsonObject ?: return@mapNotNull null
+          ProviderOptionDescriptor(
+            id = descriptor.text("id") ?: return@mapNotNull null,
+            label = descriptor.text("label") ?: return@mapNotNull null,
+            type = descriptor.text("type") ?: return@mapNotNull null,
+            choices = descriptor.array("options").orEmpty().mapNotNull { choiceElement ->
+              val choice = choiceElement as? JsonObject ?: return@mapNotNull null
+              ProviderOptionChoice(
+                id = choice.text("id") ?: return@mapNotNull null,
+                label = choice.text("label") ?: return@mapNotNull null,
+                isDefault = choice.bool("isDefault") == true,
+              )
+            },
+            currentValue = descriptor["currentValue"] as? JsonPrimitive,
+            promptInjectedValues = descriptor.array("promptInjectedValues").orEmpty()
+              .mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
+          )
+        }
       val selection = buildJsonObject(
         "instanceId" to JsonPrimitive(instanceId),
         "model" to JsonPrimitive(slug),
@@ -163,6 +191,8 @@ fun parseProviderModels(config: JsonObject): List<ProviderModel> =
         modelLabel = model.text("name") ?: model.text("label") ?: slug,
         isDefault = model.bool("isDefault") == true,
         rawSelection = selection,
+        optionDescriptors = optionDescriptors,
+        slashCommands = slashCommands,
       )
     }
   }

@@ -174,6 +174,30 @@ fun ShellState.awaitingSynchronization() = copy(synchronized = false)
 fun ThreadState.awaitingSynchronization() = copy(synchronized = false)
 
 @Serializable
+data class ProviderOptionChoice(
+  val id: String,
+  val label: String,
+  val isDefault: Boolean = false,
+)
+
+@Serializable
+data class ProviderOptionDescriptor(
+  val id: String,
+  val label: String,
+  val type: String,
+  val choices: List<ProviderOptionChoice> = emptyList(),
+  val currentValue: JsonPrimitive? = null,
+  val promptInjectedValues: List<String> = emptyList(),
+)
+
+@Serializable
+data class ProviderSlashCommand(
+  val name: String,
+  val description: String? = null,
+  val inputHint: String? = null,
+)
+
+@Serializable
 data class ProviderModel(
   val instanceId: String,
   val providerLabel: String,
@@ -181,4 +205,6 @@ data class ProviderModel(
   val modelLabel: String,
   val isDefault: Boolean,
   val rawSelection: JsonObject,
+  val optionDescriptors: List<ProviderOptionDescriptor> = emptyList(),
+  val slashCommands: List<ProviderSlashCommand> = emptyList(),
 )

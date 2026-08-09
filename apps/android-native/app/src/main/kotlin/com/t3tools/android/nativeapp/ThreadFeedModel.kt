@@ -5,8 +5,9 @@ import com.t3tools.android.protocol.LatestTurn
 import com.t3tools.android.protocol.ThreadActivity
 import com.t3tools.android.protocol.ThreadDetail
 import java.time.Instant
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -28,6 +29,20 @@ internal sealed interface ThreadFeedItem {
     val activities: List<ThreadFeedActivity>,
   ) : ThreadFeedItem
 
+  data class Plan(
+    override val id: String,
+    override val createdAt: String,
+    val updatedAt: String,
+    val turnId: String?,
+    val steps: List<ThreadPlanStep>,
+  ) : ThreadFeedItem {
+    val currentStepLabel: String
+      get() = steps.firstOrNull { it.status == ThreadPlanStepStatus.InProgress }?.step
+        ?: steps.firstOrNull { it.status == ThreadPlanStepStatus.Pending }?.step
+        ?: steps.lastOrNull()?.step
+        ?: "Plan"
+  }
+
   data class TurnFold(
     override val id: String,
     override val createdAt: String,
@@ -44,12 +59,35 @@ internal sealed interface ThreadFeedItem {
     val expanded: Boolean,
   ) : ThreadFeedItem
 
-  data class Working(override val createdAt: String) : ThreadFeedItem {
+  data class Working(
+    override val createdAt: String,
+    val stepLabel: String?,
+  ) : ThreadFeedItem {
     override val id = "working-indicator-row"
   }
 }
 
+internal enum class ThreadPlanStepStatus { Pending, InProgress, Completed }
+
+internal data class ThreadPlanStep(
+  val step: String,
+  val status: ThreadPlanStepStatus,
+)
+
 internal enum class ThreadFeedActivityStatus { Success, Failure, Neutral }
+
+internal enum class ThreadFeedActivityIcon {
+  Agent,
+  Check,
+  Command,
+  Edit,
+  Eye,
+  Globe,
+  Message,
+  Warning,
+  Wrench,
+  Generic,
+}
 
 internal data class ThreadFeedActivity(
   val id: String,
@@ -57,15 +95,18 @@ internal data class ThreadFeedActivity(
   val turnId: String?,
   val summary: String,
   val detail: String?,
-  val canExpand: Boolean,
-  val getFullDetail: () -> String?,
+  val expandedBody: String?,
+  val icon: ThreadFeedActivityIcon,
   val toolLike: Boolean,
   val status: ThreadFeedActivityStatus?,
-)
+) {
+  val canExpand get() = expandedBody != null
+}
 
 internal fun buildThreadFeed(detail: ThreadDetail): List<ThreadFeedItem> {
   val raw = buildList<ThreadFeedItem> {
     detail.messages.forEach { add(ThreadFeedItem.Message(it)) }
+    addAll(deriveTurnPlans(detail.activities))
     deriveWorkActivities(detail.activities).forEach { activity ->
       add(
         ThreadFeedItem.ActivityGroup(
@@ -116,10 +157,18 @@ internal fun presentThreadFeed(
   val source = feed.filterNot {
     it is ThreadFeedItem.TurnFold || it is ThreadFeedItem.WorkToggle || it is ThreadFeedItem.Working
   }
-  val folds = deriveTurnFolds(source, latestTurn)
+  val latestPlanId = source.filterIsInstance<ThreadFeedItem.Plan>()
+    .maxWithOrNull(compareBy<ThreadFeedItem.Plan>({ parseTime(it.updatedAt) }, { it.id }))
+    ?.id
+  val folds = deriveTurnFolds(source, latestTurn, setOfNotNull(latestPlanId))
   val hiddenIds = folds.values
     .filterNot { it.turnId in expandedTurnIds }
     .flatMapTo(mutableSetOf()) { it.hiddenIds }
+  val activeStepLabel = latestTurn?.id?.let { turnId ->
+    source.filterIsInstance<ThreadFeedItem.Plan>()
+      .lastOrNull { it.turnId == turnId }
+      ?.currentStepLabel
+  }
 
   return buildList {
     source.forEach { entry ->
@@ -136,7 +185,7 @@ internal fun presentThreadFeed(
       }
       if (entry.id !in hiddenIds) appendPresentedEntry(entry, expandedWorkGroupIds)
     }
-    activeWorkStartedAt?.let { add(ThreadFeedItem.Working(it)) }
+    activeWorkStartedAt?.let { add(ThreadFeedItem.Working(it, activeStepLabel)) }
   }
 }
 
@@ -190,6 +239,7 @@ private data class TurnFold(
 private fun deriveTurnFolds(
   feed: List<ThreadFeedItem>,
   latestTurn: LatestTurn?,
+  alwaysVisibleIds: Set<String>,
 ): Map<String, TurnFold> {
   val terminalByTurn = mutableMapOf<String, String>()
   feed.forEach { entry ->
@@ -209,6 +259,7 @@ private fun deriveTurnFolds(
     val turnId = when (entry) {
       is ThreadFeedItem.Message -> entry.message.turnId.takeIf { entry.message.role == "assistant" }
       is ThreadFeedItem.ActivityGroup -> entry.turnId
+      is ThreadFeedItem.Plan -> entry.turnId
       else -> null
     } ?: return@forEach
     val group = groups.getOrPut(turnId) {
@@ -225,7 +276,9 @@ private fun deriveTurnFolds(
       if (turnId == unsettledTurnId) return@forEach
       if (group.entries.any { it is ThreadFeedItem.Message && it.message.streaming }) return@forEach
       val terminalId = terminalByTurn[turnId]
-      val hiddenIds = group.entries.mapNotNullTo(mutableSetOf()) { it.id.takeIf { id -> id != terminalId } }
+      val hiddenIds = group.entries.mapNotNullTo(mutableSetOf()) {
+        it.id.takeIf { id -> id != terminalId && id !in alwaysVisibleIds }
+      }
       if (hiddenIds.isEmpty()) return@forEach
       val first = group.entries.first()
       val last = group.entries.last()
@@ -249,17 +302,9 @@ private fun deriveTurnFolds(
 }
 
 private fun deriveWorkActivities(activities: List<ThreadActivity>): List<ThreadFeedActivity> {
-  val ordered = activities.sortedWith(
-    compareBy<ThreadActivity>(
-      { it.sequence ?: Long.MAX_VALUE },
-      { parseTime(it.createdAt) },
-      { lifecycleRank(it.kind) },
-      { it.id },
-    ),
-  )
   val collapsed = mutableListOf<DerivedActivity>()
   val taskIndexes = mutableMapOf<String, Int>()
-  ordered.forEach { activity ->
+  orderedActivities(activities).forEach { activity ->
     if (shouldHide(activity)) return@forEach
     val next = activity.toDerivedActivity()
     if (next.taskId != null && activity.kind in taskLifecycleKinds) {
@@ -288,6 +333,51 @@ private fun deriveWorkActivities(activities: List<ThreadActivity>): List<ThreadF
   return collapsed.map(DerivedActivity::toFeedActivity)
 }
 
+private fun deriveTurnPlans(activities: List<ThreadActivity>): List<ThreadFeedItem.Plan> {
+  val plans = linkedMapOf<String, ThreadFeedItem.Plan>()
+  orderedActivities(activities).forEach { activity ->
+    if (activity.kind != "turn.plan.updated") return@forEach
+    val key = activity.turnId ?: "no-turn"
+    val steps = (activity.payload as? JsonObject)
+      ?.array("plan")
+      .orEmpty()
+      .mapNotNull { value ->
+        val step = value as? JsonObject ?: return@mapNotNull null
+        val label = step.string("step") ?: return@mapNotNull null
+        ThreadPlanStep(
+          step = label,
+          status = when (step.string("status")) {
+            "completed" -> ThreadPlanStepStatus.Completed
+            "inProgress" -> ThreadPlanStepStatus.InProgress
+            else -> ThreadPlanStepStatus.Pending
+          },
+        )
+      }
+    if (steps.isEmpty()) {
+      plans.remove(key)
+      return@forEach
+    }
+    val existing = plans[key]
+    plans[key] = ThreadFeedItem.Plan(
+      id = "turn-plan:$key",
+      createdAt = existing?.createdAt ?: activity.createdAt,
+      updatedAt = activity.createdAt,
+      turnId = activity.turnId,
+      steps = steps,
+    )
+  }
+  return plans.values.toList()
+}
+
+private fun orderedActivities(activities: List<ThreadActivity>) = activities.sortedWith(
+  compareBy<ThreadActivity>(
+    { it.sequence ?: Long.MAX_VALUE },
+    { parseTime(it.createdAt) },
+    { lifecycleRank(it.kind) },
+    { it.id },
+  ),
+)
+
 private data class DerivedActivity(
   val source: ThreadActivity,
   val summary: String,
@@ -296,6 +386,11 @@ private data class DerivedActivity(
   val statusText: String?,
   val taskId: String?,
   val collapseKey: String?,
+  val command: String?,
+  val rawCommand: String?,
+  val changedFiles: List<String>,
+  val toolData: JsonElement?,
+  val requestKind: String?,
 ) {
   val kind get() = source.kind
 
@@ -305,6 +400,11 @@ private data class DerivedActivity(
     statusText = next.statusText ?: statusText,
     taskId = next.taskId ?: taskId,
     collapseKey = next.collapseKey ?: collapseKey,
+    command = next.command ?: command,
+    rawCommand = next.rawCommand ?: rawCommand,
+    changedFiles = (changedFiles + next.changedFiles).distinct(),
+    toolData = next.toolData ?: toolData,
+    requestKind = next.requestKind ?: requestKind,
   )
 
   fun toFeedActivity(): ThreadFeedActivity {
@@ -316,22 +416,26 @@ private data class DerivedActivity(
           Regex("exit(?:ed)? with exit code\\s+[1-9]\\d*").containsMatchIn(it)
       }
     val inProgress = statusText in setOf("inProgress", "running", "started") || source.kind == "tool.updated"
-    val canExpand = when (val payload = source.payload) {
-      JsonNull -> false
-      is JsonObject -> payload.isNotEmpty()
-      else -> true
+    val preview = command ?: detail ?: changedFiles.firstOrNull()?.let { first ->
+      if (changedFiles.size == 1) first else "$first +${changedFiles.size - 1} more"
     }
-    val fullDetail by lazy {
-      source.payload.toString().takeUnless { it == "{}" || it == "null" }
-    }
+    val expandedBody = buildList {
+      if (itemType == "mcp_tool_call" && toolData != null) {
+        add("MCP call\n${prettyJson.encodeToString(JsonElement.serializer(), toolData)}")
+      }
+      add(rawCommand ?: command)
+      add(detail)
+      if (changedFiles.isNotEmpty()) add(changedFiles.joinToString("\n"))
+    }.filterNotNull().map(String::trim).filter(String::isNotEmpty).distinct()
+      .joinToString("\n\n").ifEmpty { null }
     return ThreadFeedActivity(
       id = source.id,
       createdAt = source.createdAt,
       turnId = source.turnId,
       summary = summary,
-      detail = detail,
-      canExpand = canExpand || detail != null,
-      getFullDetail = { fullDetail },
+      detail = preview,
+      expandedBody = expandedBody,
+      icon = activityIcon(source, itemType, requestKind, command, changedFiles),
       toolLike = toolLike,
       status = when {
         !toolLike -> null
@@ -349,21 +453,144 @@ private fun ThreadActivity.toDerivedActivity(): DerivedActivity {
   val title = payload.string("title") ?: payload.obj("data").string("title") ?: summary
   val normalizedSummary = title.replace(Regex("\\s+(?:complete|completed)$", RegexOption.IGNORE_CASE), "")
     .trim().replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
-  val detail = payload.string("detail") ?: payload.obj("data").string("detail") ?: findString(payload, "command")
+  val command = extractCommand(payload)
+  val detail = payload.string("detail")?.let(::stripTrailingExitCode)
+    ?.takeUnless { normalizePreview(it) == normalizePreview(title) }
   val status = payload.string("status") ?: payload.obj("data").string("status")
   val taskId = payload.string("taskId")
+  val changedFiles = extractChangedFiles(payload)
+  val toolData = if (itemType == "mcp_tool_call") payload.obj("data")?.get("item") else null
+  val requestKind = payload.string("requestKind") ?: when (payload.string("requestType")) {
+    "command_execution_approval", "exec_command_approval" -> "command"
+    "file_read_approval" -> "file-read"
+    "file_change_approval", "apply_patch_approval" -> "file-change"
+    else -> null
+  }
   val collapseKey = if (kind in setOf("tool.updated", "tool.completed")) {
     listOf(itemType.orEmpty(), normalizedSummary, detail.orEmpty()).joinToString("\u001f")
       .takeIf { it.isNotBlank() }
   } else null
-  return DerivedActivity(this, normalizedSummary, detail, itemType, status, taskId, collapseKey)
+  return DerivedActivity(
+    source = this,
+    summary = normalizedSummary,
+    detail = detail,
+    itemType = itemType,
+    statusText = status,
+    taskId = taskId,
+    collapseKey = collapseKey,
+    command = command?.normalized,
+    rawCommand = command?.raw,
+    changedFiles = changedFiles,
+    toolData = toolData,
+    requestKind = requestKind,
+  )
 }
+
+private data class ToolCommand(val normalized: String, val raw: String?)
+
+private fun extractCommand(payload: JsonObject?): ToolCommand? {
+  val data = payload.obj("data")
+  val item = data.obj("item")
+  val candidates = listOf(
+    item?.get("command"),
+    item.obj("input")?.get("command"),
+    item.obj("result")?.get("command"),
+    data?.get("command"),
+  )
+  candidates.forEach { candidate ->
+    val raw = formatCommand(candidate) ?: return@forEach
+    val normalized = unwrapShellCommand(raw)
+    return ToolCommand(normalized, raw.takeIf { it != normalized })
+  }
+  if (payload.string("itemType") == "command_execution") {
+    val raw = payload.string("detail")?.let(::stripTrailingExitCode) ?: return null
+    val normalized = unwrapShellCommand(raw)
+    return ToolCommand(normalized, raw.takeIf { it != normalized })
+  }
+  return null
+}
+
+private fun formatCommand(value: JsonElement?): String? = when (value) {
+  is JsonPrimitive -> value.contentOrNull?.trim()?.takeIf(String::isNotEmpty)
+  is JsonArray -> value.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+    .takeIf(List<String>::isNotEmpty)
+    ?.joinToString(" ") { part ->
+      if (part.any(Char::isWhitespace)) "\"${part.replace("\"", "\\\"")}\"" else part
+    }
+  else -> null
+}
+
+private fun unwrapShellCommand(value: String): String {
+  val wrapper = Regex(
+    """^(?:\"[^\"]*(?:pwsh|powershell)(?:\.exe)?\"|\S*(?:pwsh|powershell)(?:\.exe)?)\s+.*?-Command\s+(.+)$""",
+    RegexOption.IGNORE_CASE,
+  ).find(value)?.groupValues?.get(1)
+    ?: Regex("""^(?:bash|zsh|sh)\s+-(?:l)?c\s+(.+)$""").find(value)?.groupValues?.get(1)
+    ?: Regex("""^(?:cmd(?:\.exe)?)\s+/c\s+(.+)$""", RegexOption.IGNORE_CASE)
+      .find(value)?.groupValues?.get(1)
+    ?: return value
+  return wrapper.trim().removeSurrounding("\"").removeSurrounding("'").trim()
+}
+
+private fun stripTrailingExitCode(value: String) = value.trim()
+  .replace(Regex("""\s*<exited with exit code \d+>\s*$""", RegexOption.IGNORE_CASE), "")
+  .trim()
+
+private fun normalizePreview(value: String) = value.replace(Regex("\\s+"), " ")
+  .replace(Regex("\\s+(?:complete|completed)$", RegexOption.IGNORE_CASE), "")
+  .trim().lowercase()
+
+private fun extractChangedFiles(payload: JsonObject?): List<String> {
+  val files = linkedSetOf<String>()
+  fun collect(value: JsonElement?, depth: Int) {
+    if (depth > 4 || files.size >= 12) return
+    when (value) {
+      is JsonArray -> value.forEach { collect(it, depth + 1) }
+      is JsonObject -> {
+        listOf("path", "filePath", "relativePath", "filename", "newPath", "oldPath")
+          .mapNotNull(value::string)
+          .forEach(files::add)
+        listOf("item", "result", "input", "data", "changes", "files", "edits", "patch", "patches", "operations")
+          .forEach { collect(value[it], depth + 1) }
+      }
+      else -> Unit
+    }
+  }
+  collect(payload.obj("data"), 0)
+  return files.toList()
+}
+
+private fun activityIcon(
+  activity: ThreadActivity,
+  itemType: String?,
+  requestKind: String?,
+  command: String?,
+  changedFiles: List<String>,
+) = when {
+  activity.kind in setOf("user-input.requested", "user-input.resolved") -> ThreadFeedActivityIcon.Message
+  activity.kind == "runtime.warning" -> ThreadFeedActivityIcon.Warning
+  requestKind == "command" -> ThreadFeedActivityIcon.Command
+  requestKind == "file-read" -> ThreadFeedActivityIcon.Eye
+  requestKind == "file-change" -> ThreadFeedActivityIcon.Edit
+  itemType == "command_execution" || command != null -> ThreadFeedActivityIcon.Command
+  itemType == "file_change" || changedFiles.isNotEmpty() -> ThreadFeedActivityIcon.Edit
+  itemType == "web_search" -> ThreadFeedActivityIcon.Globe
+  itemType == "image_view" -> ThreadFeedActivityIcon.Eye
+  itemType == "mcp_tool_call" -> ThreadFeedActivityIcon.Wrench
+  itemType in setOf("dynamic_tool_call", "collab_agent_tool_call") || activity.kind.startsWith("task.") -> ThreadFeedActivityIcon.Agent
+  activity.tone == "error" -> ThreadFeedActivityIcon.Warning
+  activity.tone == "info" -> ThreadFeedActivityIcon.Check
+  else -> ThreadFeedActivityIcon.Generic
+}
+
+private val prettyJson = Json { prettyPrint = true }
 
 private val taskLifecycleKinds = setOf("task.progress", "task.completed", "task.updated")
 private val terminalTaskStatuses = setOf("idle", "completed", "failed", "cancelled", "interrupted")
 
 private fun shouldHide(activity: ThreadActivity): Boolean {
   val payload = activity.payload as? JsonObject
+  if (activity.kind == "turn.plan.updated") return true
   if (activity.kind in setOf("tool.started", "task.started", "tool.progress", "context-window.updated")) return true
   if (activity.kind == "task.updated" && !(payload.bool("timelineBypass") && payload.string("status") in terminalTaskStatuses)) return true
   if (activity.summary == "Checkpoint captured") return true
@@ -389,11 +616,7 @@ private fun JsonObject?.bool(key: String): Boolean =
 
 private fun JsonObject?.obj(key: String): JsonObject? = this?.get(key) as? JsonObject
 
-private fun findString(element: JsonElement?, key: String, depth: Int = 0): String? {
-  if (element !is JsonObject || depth > 3) return null
-  element.string(key)?.let { return it }
-  return element.values.firstNotNullOfOrNull { findString(it, key, depth + 1) }
-}
+private fun JsonObject?.array(key: String): JsonArray? = this?.get(key) as? JsonArray
 
 private fun parseTime(value: String): Long = runCatching { Instant.parse(value).toEpochMilli() }.getOrDefault(Long.MAX_VALUE)
 

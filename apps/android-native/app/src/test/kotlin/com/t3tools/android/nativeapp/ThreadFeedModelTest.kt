@@ -9,6 +9,7 @@ import com.t3tools.android.protocol.ThreadSession
 import com.t3tools.android.protocol.ThreadSummary
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -43,17 +44,25 @@ class ThreadFeedModelTest {
         message("final", "assistant", "Done", "turn-1", "2026-08-09T00:00:17Z"),
       ),
       activities = listOf(
+        activity(
+          "plan",
+          "turn.plan.updated",
+          "Plan updated",
+          "turn-1",
+          "2026-08-09T00:00:04Z",
+          json("""{"plan":[{"step":"Read files","status":"completed"}]}"""),
+        ),
         activity("tool", "tool.completed", "Read files", "turn-1", "2026-08-09T00:00:05Z"),
       ),
     )
     val feed = buildThreadFeed(detail)
 
     val collapsed = presentThreadFeed(feed, turn, emptySet())
-    assertEquals(listOf("turn-fold:turn-1", "final"), collapsed.map { it.id })
+    assertEquals(listOf("turn-fold:turn-1", "turn-plan:turn-1", "final"), collapsed.map { it.id })
     assertEquals("Worked for 17s", (collapsed.first() as ThreadFeedItem.TurnFold).label)
 
     assertEquals(
-      listOf("turn-fold:turn-1", "commentary", "tool", "final"),
+      listOf("turn-fold:turn-1", "commentary", "turn-plan:turn-1", "tool", "final"),
       presentThreadFeed(feed, turn, setOf("turn-1")).map { it.id },
     )
   }
@@ -91,6 +100,214 @@ class ThreadFeedModelTest {
     assertEquals(listOf("completed"), group.activities.map { it.id })
     assertEquals("Read files", group.activities.single().summary)
     assertTrue(group.activities.single().toolLike)
+  }
+
+  @Test
+  fun keeps_one_latest_plan_per_turn_at_its_first_timeline_position() {
+    val activities = listOf(
+      activity(
+        "plan-1",
+        "turn.plan.updated",
+        "Plan updated",
+        "turn-1",
+        "2026-08-09T00:00:02Z",
+        json("""{"explanation":"Initial","plan":[{"step":"Inspect code","status":"inProgress"},{"step":"Implement UI","status":"pending"}]}"""),
+      ),
+      activity(
+        "plan-2",
+        "turn.plan.updated",
+        "Plan updated",
+        "turn-1",
+        "2026-08-09T00:00:05Z",
+        json("""{"plan":[{"step":"Inspect code","status":"completed"},{"step":"Implement UI","status":"inProgress"}]}"""),
+      ),
+    )
+
+    val plan = buildThreadFeed(detail(activities = activities)).single() as ThreadFeedItem.Plan
+    assertEquals("turn-plan:turn-1", plan.id)
+    assertEquals("2026-08-09T00:00:02Z", plan.createdAt)
+    assertEquals(
+      listOf(ThreadPlanStepStatus.Completed, ThreadPlanStepStatus.InProgress),
+      plan.steps.map { it.status },
+    )
+    assertEquals("Implement UI", plan.currentStepLabel)
+  }
+
+  @Test
+  fun removes_a_turn_plan_when_a_later_snapshot_clears_it() {
+    val activities = listOf(
+      activity(
+        "plan-1",
+        "turn.plan.updated",
+        "Plan updated",
+        "turn-1",
+        "2026-08-09T00:00:02Z",
+        json("""{"plan":[{"step":"Inspect code","status":"inProgress"}]}"""),
+      ),
+      activity(
+        "plan-2",
+        "turn.plan.updated",
+        "Plan updated",
+        "turn-1",
+        "2026-08-09T00:00:03Z",
+        json("""{"plan":[]}"""),
+      ),
+    )
+
+    assertTrue(buildThreadFeed(detail(activities = activities)).isEmpty())
+  }
+
+  @Test
+  fun shows_the_running_turns_current_plan_step_in_the_working_row() {
+    val turn = LatestTurn("turn-1", "running", startedAt = "2026-08-09T00:00:01Z")
+    val feed = buildThreadFeed(
+      detail(
+        latestTurn = turn,
+        activities = listOf(
+          activity(
+            "plan-1",
+            "turn.plan.updated",
+            "Plan updated",
+            "turn-1",
+            "2026-08-09T00:00:02Z",
+            json("""{"plan":[{"step":"Inspect code","status":"completed"},{"step":"Implement UI","status":"inProgress"}]}"""),
+          ),
+        ),
+      ),
+    )
+
+    val working = presentThreadFeed(
+      feed,
+      turn,
+      expandedTurnIds = emptySet(),
+      activeWorkStartedAt = "2026-08-09T00:00:01Z",
+    ).last() as ThreadFeedItem.Working
+
+    assertEquals("Implement UI", working.stepLabel)
+  }
+
+  @Test
+  fun keeps_only_the_latest_plan_outside_settled_turn_folds() {
+    val latestTurn = LatestTurn(
+      id = "turn-2",
+      state = "completed",
+      completedAt = "2026-08-09T00:00:08Z",
+      startedAt = "2026-08-09T00:00:05Z",
+    )
+    val feed = buildThreadFeed(
+      detail(
+        latestTurn = latestTurn,
+        messages = listOf(
+          message("commentary-1", "assistant", "First work", "turn-1", "2026-08-09T00:00:01Z"),
+          message("final-1", "assistant", "First done", "turn-1", "2026-08-09T00:00:04Z"),
+          message("commentary-2", "assistant", "Second work", "turn-2", "2026-08-09T00:00:05Z"),
+          message("final-2", "assistant", "Second done", "turn-2", "2026-08-09T00:00:08Z"),
+        ),
+        activities = listOf(
+          activity(
+            "plan-1",
+            "turn.plan.updated",
+            "Plan updated",
+            "turn-1",
+            "2026-08-09T00:00:02Z",
+            json("""{"plan":[{"step":"First plan","status":"completed"}]}"""),
+          ),
+          activity(
+            "plan-2",
+            "turn.plan.updated",
+            "Plan updated",
+            "turn-2",
+            "2026-08-09T00:00:06Z",
+            json("""{"plan":[{"step":"Second plan","status":"completed"}]}"""),
+          ),
+        ),
+      ),
+    )
+
+    assertEquals(
+      listOf("turn-fold:turn-1", "final-1", "turn-fold:turn-2", "turn-plan:turn-2", "final-2"),
+      presentThreadFeed(feed, latestTurn, emptySet()).map { it.id },
+    )
+    assertEquals(
+      listOf("turn-fold:turn-1", "commentary-1", "turn-plan:turn-1", "final-1"),
+      presentThreadFeed(feed, latestTurn, setOf("turn-1")).take(4).map { it.id },
+    )
+  }
+
+  @Test
+  fun formats_command_tools_without_exposing_the_transport_payload() {
+    val group = buildThreadFeed(
+      detail(
+        activities = listOf(
+          activity(
+            "command",
+            "tool.completed",
+            "Ran command",
+            "turn-1",
+            "2026-08-09T00:00:01Z",
+            json(
+              """{"itemType":"command_execution","title":"bash","detail":"Tests passed <exited with exit code 0>","data":{"item":{"command":["bun","test"]}}}""",
+            ),
+          ),
+        ),
+      ),
+    ).single() as ThreadFeedItem.ActivityGroup
+    val command = group.activities.single()
+
+    assertEquals(ThreadFeedActivityIcon.Command, command.icon)
+    assertEquals("bun test", command.detail)
+    assertEquals("bun test\n\nTests passed", command.expandedBody)
+  }
+
+  @Test
+  fun formats_file_changes_as_a_path_preview_and_readable_file_list() {
+    val group = buildThreadFeed(
+      detail(
+        activities = listOf(
+          activity(
+            "files",
+            "tool.completed",
+            "File change",
+            "turn-1",
+            "2026-08-09T00:00:01Z",
+            json(
+              """{"itemType":"file_change","data":{"item":{"changes":[{"path":"apps/a.kt"},{"filename":"apps/b.kt"}]}}}""",
+            ),
+          ),
+        ),
+      ),
+    ).single() as ThreadFeedItem.ActivityGroup
+    val files = group.activities.single()
+
+    assertEquals(ThreadFeedActivityIcon.Edit, files.icon)
+    assertEquals("apps/a.kt +1 more", files.detail)
+    assertEquals("apps/a.kt\napps/b.kt", files.expandedBody)
+  }
+
+  @Test
+  fun formats_only_the_relevant_mcp_item_as_pretty_json() {
+    val group = buildThreadFeed(
+      detail(
+        activities = listOf(
+          activity(
+            "mcp",
+            "tool.completed",
+            "preview_status",
+            "turn-1",
+            "2026-08-09T00:00:01Z",
+            json(
+              """{"itemType":"mcp_tool_call","title":"t3-code · preview_status","data":{"toolCallId":"call-1","item":{"server":"t3-code","tool":"preview_status","arguments":{},"status":"completed"}}}""",
+            ),
+          ),
+        ),
+      ),
+    ).single() as ThreadFeedItem.ActivityGroup
+    val mcp = group.activities.single()
+
+    assertEquals(ThreadFeedActivityIcon.Wrench, mcp.icon)
+    assertTrue(mcp.expandedBody?.startsWith("MCP call\n{") == true)
+    assertFalse(mcp.expandedBody.orEmpty().contains("itemType"))
+    assertFalse(mcp.expandedBody.orEmpty().contains("toolCallId"))
   }
 
   private fun detail(
@@ -149,4 +366,6 @@ class ThreadFeedModelTest {
   private fun payload(vararg values: Pair<String, String>) = Json.parseToJsonElement(
     values.joinToString(prefix = "{", postfix = "}") { (key, value) -> "\"$key\":\"$value\"" },
   )
+
+  private fun json(value: String) = Json.parseToJsonElement(value)
 }

@@ -3,6 +3,7 @@ package com.t3tools.android.nativeapp
 import android.content.Context
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 
 @Serializable
 data class SavedEnvironment(
@@ -71,6 +72,7 @@ data class ComposerDraft(
   val attachments: List<DraftImageAttachment> = emptyList(),
   val modelInstanceId: String? = null,
   val model: String? = null,
+  val modelOptions: JsonElement? = null,
   val runtimeMode: String = "full-access",
   val interactionMode: String = "default",
 )

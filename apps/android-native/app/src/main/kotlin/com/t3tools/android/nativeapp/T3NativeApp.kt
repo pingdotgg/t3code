@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.ClipData
 import android.os.Build
 import android.net.Uri
+import android.text.Spanned
 import android.text.method.LinkMovementMethod
 import android.widget.TextView
 import androidx.activity.compose.BackHandler
@@ -19,6 +20,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -29,8 +31,10 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.LazyListScope
@@ -38,7 +42,9 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -49,8 +55,11 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AccountTree
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.Build
+import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Clear
@@ -60,14 +69,18 @@ import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
-import androidx.compose.material.icons.rounded.ContentPaste
+import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.PhotoLibrary
+import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.RateReview
 import androidx.compose.material.icons.rounded.Unarchive
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -81,6 +94,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -95,24 +109,33 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.SubcomposeLayout
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -125,6 +148,7 @@ import com.t3tools.android.protocol.PendingApproval
 import com.t3tools.android.protocol.PendingUserInput
 import com.t3tools.android.protocol.Project
 import com.t3tools.android.protocol.ProviderModel
+import com.t3tools.android.protocol.ProviderOptionDescriptor
 import com.t3tools.android.protocol.ThreadDetail
 import com.t3tools.android.protocol.ThreadSummary
 import com.t3tools.android.protocol.ChatImageAttachment
@@ -133,7 +157,17 @@ import com.t3tools.android.protocol.nextTerminalId
 import io.noties.markwon.Markwon
 import coil.compose.AsyncImage
 import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 
 private const val ONBOARDING = "onboarding"
 private const val CONNECT = "connect"
@@ -148,6 +182,13 @@ private const val THREAD_FILES = "thread/{threadId}/files"
 private const val THREAD_GIT = "thread/{threadId}/git"
 private const val THREAD_GIT_COMMIT = "thread/{threadId}/git/commit"
 private const val THREAD_GIT_BRANCHES = "thread/{threadId}/git/branches"
+
+private val markdownRenderDispatcher = Dispatchers.Default.limitedParallelism(1)
+
+private data class RenderedMarkdown(
+  val source: String,
+  val content: Spanned,
+)
 private const val THREAD_TERMINAL = "thread/{threadId}/terminal/{terminalId}"
 private const val THREAD_REVIEW = "thread/{threadId}/review"
 
@@ -1199,7 +1240,6 @@ private fun PendingTaskRow(task: PendingTask, viewModel: AppViewModel) {
           ComposerAttachmentButtons(
             existingCount = task.attachments.size,
             onAdd = { viewModel.importPendingAttachments(task.messageId, it) },
-            onPasteText = { text += it },
           )
         }
       },
@@ -1634,10 +1674,6 @@ private fun NewTaskScreen(
         onAdd = { viewModel.importDraftAttachments(draftKey, it) },
         onRemove = { viewModel.removeDraftAttachment(draftKey, it) },
         enabled = dispatchState !is DispatchState.Sending,
-        onPasteText = {
-          draft = draft.copy(text = draft.text + it)
-          viewModel.saveDraft(draftKey, draft)
-        },
       )
       Button(
         onClick = {
@@ -1737,37 +1773,51 @@ private fun ThreadScreen(
           Text(runtime.error ?: "Opening thread…")
         }
       } else {
-        ThreadFeed(
-          detail = detail,
-          syncPhase = runtime.threadSyncPhase,
-          environmentId = environmentId,
-          viewModel = viewModel,
-          modifier = Modifier.fillMaxSize(),
-          contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 140.dp),
-        )
-        Column(
-          modifier = Modifier
-            .align(Alignment.BottomCenter)
-            .fillMaxWidth(),
-        ) {
-          ThreadRequests(detail, viewModel)
-          DispatchFailure(dispatchState, viewModel::retryDispatch)
-          ChatComposerArea(
-            detail = detail,
-            draft = draft,
-            models = runtime.providerModels,
-            enabled = runtime.shell.sequence >= 0,
-            sending = dispatchState is DispatchState.Sending,
-            onDraftUpdate = { next ->
-              draft = next
-              viewModel.saveDraft(draftKey, next)
-            },
-            onAddAttachments = { viewModel.importDraftAttachments(draftKey, it) },
-            onRemoveAttachment = { viewModel.removeDraftAttachment(draftKey, it) },
-            onSend = { viewModel.sendThreadTurn(threadId, draftKey, draft) },
-            onInterrupt = { viewModel.interrupt(threadId) },
-            onStop = { viewModel.stop(threadId) },
-          )
+        SubcomposeLayout(Modifier.fillMaxSize()) { constraints ->
+          val composer = subcompose("composer") {
+            Column(Modifier.fillMaxWidth()) {
+              ThreadRequests(detail, viewModel)
+              DispatchFailure(dispatchState, viewModel::retryDispatch)
+              ChatComposerArea(
+                detail = detail,
+                draft = draft,
+                models = runtime.providerModels,
+                queuedMessageCount = runtime.pendingTasks.count {
+                  it.threadId == threadId && !it.createsThread && it.status == PendingTaskStatus.Queued
+                },
+                enabled = runtime.shell.sequence >= 0,
+                sending = dispatchState is DispatchState.Sending,
+                onDraftUpdate = { next ->
+                  draft = next
+                  viewModel.saveDraft(draftKey, next)
+                },
+                onAddAttachments = { viewModel.importDraftAttachments(draftKey, it) },
+                onRemoveAttachment = { viewModel.removeDraftAttachment(draftKey, it) },
+                onSend = { viewModel.sendThreadTurn(threadId, draftKey, draft) },
+                onInterrupt = { viewModel.interrupt(threadId) },
+                onStop = { viewModel.stop(threadId) },
+              )
+            }
+          }.single().measure(constraints.copy(minHeight = 0))
+          val feed = subcompose("feed") {
+            ThreadFeed(
+              detail = detail,
+              environmentId = environmentId,
+              viewModel = viewModel,
+              modifier = Modifier.fillMaxSize(),
+              contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = 16.dp,
+                bottom = composer.height.toDp() + 8.dp,
+              ),
+              bottomAnchorKey = composer.height,
+            )
+          }.single().measure(constraints)
+          layout(constraints.maxWidth, constraints.maxHeight) {
+            feed.placeRelative(0, 0)
+            composer.placeRelative(0, constraints.maxHeight - composer.height)
+          }
         }
       }
     }
@@ -1777,20 +1827,32 @@ private fun ThreadScreen(
 @Composable
 private fun ThreadFeed(
   detail: ThreadDetail,
-  syncPhase: SyncPhase,
   environmentId: String,
   viewModel: AppViewModel,
   modifier: Modifier = Modifier,
   state: LazyListState = rememberLazyListState(),
   contentPadding: PaddingValues = PaddingValues(16.dp),
+  bottomAnchorKey: Int = 0,
 ) {
   val context = LocalContext.current
   val markwon = remember(context) { createMarkdownRenderer(context) }
   val rawFeed = remember(detail.messages, detail.activities) { buildThreadFeed(detail) }
+  val terminalAssistantMessageIds = remember(rawFeed) {
+    buildMap<String, String> {
+      rawFeed.filterIsInstance<ThreadFeedItem.Message>().forEach { entry ->
+        val message = entry.message
+        val turnId = message.turnId
+        if (message.role == "assistant" && turnId != null) put(turnId, message.id)
+      }
+    }.values.toSet()
+  }
   var expandedTurnIds by remember(detail.summary.id) { mutableStateOf(emptySet<String>()) }
   var expandedWorkGroupIds by remember(detail.summary.id) { mutableStateOf(emptySet<String>()) }
   var expandedActivityIds by remember(detail.summary.id) { mutableStateOf(emptySet<String>()) }
-  var initialPositioningComplete by remember(detail.summary.id) { mutableStateOf(false) }
+  var expandedPlanIds by remember(detail.summary.id) { mutableStateOf(emptySet<String>()) }
+  var followBottom by remember(detail.summary.id) { mutableStateOf(true) }
+  val layoutAnchor = remember(detail.summary.id) { intArrayOf(-1, -1) }
+  val isFeedDragged by state.interactionSource.collectIsDraggedAsState()
   val latestTurn = detail.summary.latestTurn
   LaunchedEffect(latestTurn?.id, latestTurn?.state) {
     if (latestTurn?.state == "interrupted") expandedTurnIds += latestTurn.id
@@ -1813,16 +1875,38 @@ private fun ThreadFeed(
       activeWorkStartedAt = activeWorkStartedAt,
     )
   }
-  LaunchedEffect(entries.size, entries.lastOrNull()?.id, syncPhase) {
-    if (entries.isEmpty() || initialPositioningComplete) return@LaunchedEffect
-    state.scrollToItem(entries.lastIndex)
-    if (syncPhase == SyncPhase.Synchronized || syncPhase == SyncPhase.Error) {
-      initialPositioningComplete = true
+  LaunchedEffect(state, detail.summary.id) {
+    snapshotFlow { state.canScrollForward to isFeedDragged }
+      .collectLatest { (canScrollForward, isDragged) ->
+        if (isDragged) {
+          followBottom = !canScrollForward
+        } else if (!canScrollForward) {
+          followBottom = true
+        }
+      }
+  }
+  SideEffect {
+    if (entries.isNotEmpty() && followBottom && !isFeedDragged) {
+      state.requestScrollToItem(entries.lastIndex)
     }
   }
   LazyColumn(
     state = state,
-    modifier = modifier.fillMaxWidth(),
+    modifier = modifier
+      .fillMaxWidth()
+      .layout { measurable, constraints ->
+        if (layoutAnchor[0] != constraints.maxHeight || layoutAnchor[1] != bottomAnchorKey) {
+          layoutAnchor[0] = constraints.maxHeight
+          layoutAnchor[1] = bottomAnchorKey
+          if (entries.isNotEmpty() && followBottom && !isFeedDragged) {
+            state.requestScrollToItem(entries.lastIndex)
+          }
+        }
+        val placeable = measurable.measure(constraints)
+        layout(placeable.width, placeable.height) {
+          placeable.placeRelative(0, 0)
+        }
+      },
     contentPadding = contentPadding,
     verticalArrangement = Arrangement.spacedBy(10.dp),
   ) {
@@ -1834,16 +1918,30 @@ private fun ThreadFeed(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
               if (message.text.isNotBlank()) MarkdownMessage(message.text, markwon)
               message.attachments.forEach { SentAttachmentImage(environmentId, it, viewModel) }
+              val turnStillRunning = latestTurn?.let {
+                message.turnId == it.id && (it.state == "running" || it.completedAt == null)
+              } == true
+              if (message.text.isNotBlank() && message.id in terminalAssistantMessageIds &&
+                !message.streaming && !turnStillRunning) {
+                MessageCopyButton(message.text)
+              }
             }
           } else {
-            Surface(
-              shape = RoundedCornerShape(16.dp),
-              color = if (message.role == "user") Color(0xFF172554) else MaterialTheme.colorScheme.surface,
-              modifier = Modifier.fillMaxWidth(),
-            ) {
-              Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (message.text.isNotBlank()) UserMessageContent(message.text)
-                message.attachments.forEach { SentAttachmentImage(environmentId, it, viewModel) }
+            Column(horizontalAlignment = Alignment.End) {
+              Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = if (message.role == "user") Color(0xFF172554) else MaterialTheme.colorScheme.surface,
+                modifier = Modifier.fillMaxWidth(),
+              ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                  if (message.text.isNotBlank()) {
+                    SelectionContainer { UserMessageContent(message.text) }
+                  }
+                  message.attachments.forEach { SentAttachmentImage(environmentId, it, viewModel) }
+                }
+              }
+              if (message.role == "user" && message.text.isNotBlank()) {
+                MessageCopyButton(message.text)
               }
             }
           }
@@ -1892,13 +1990,25 @@ private fun ThreadFeed(
               }
             },
             onCopy = {
-              val text = listOfNotNull(activity.summary, activity.detail, activity.getFullDetail())
+              val text = listOfNotNull(activity.summary, activity.detail, activity.expandedBody)
                 .distinct().joinToString("\n")
               context.getSystemService(ClipboardManager::class.java)
                 .setPrimaryClip(ClipData.newPlainText("T3 activity", text))
             },
           )
         }
+
+        is ThreadFeedItem.Plan -> ThreadPlanRow(
+          plan = entry,
+          expanded = entry.id in expandedPlanIds,
+          onToggle = {
+            expandedPlanIds = if (entry.id in expandedPlanIds) {
+              expandedPlanIds - entry.id
+            } else {
+              expandedPlanIds + entry.id
+            }
+          },
+        )
 
         is ThreadFeedItem.WorkToggle -> TextButton(
           onClick = {
@@ -1919,10 +2029,121 @@ private fun ThreadFeed(
         ) {
           LinearProgressIndicator(Modifier.width(28.dp).height(2.dp))
           Text(
-            "Working…",
+            entry.stepLabel?.let { "Working… · $it" } ?: "Working…",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
           )
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun ThreadPlanRow(
+  plan: ThreadFeedItem.Plan,
+  expanded: Boolean,
+  onToggle: () -> Unit,
+) {
+  val completedCount = plan.steps.count { it.status == ThreadPlanStepStatus.Completed }
+  val allDone = completedCount == plan.steps.size
+  val success = Color(0xFF4ADE80)
+  val active = MaterialTheme.colorScheme.primary
+  val pending = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+
+  Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp)) {
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .clickable(onClick = onToggle)
+        .padding(horizontal = 2.dp, vertical = 3.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      Icon(
+        Icons.Rounded.KeyboardArrowDown,
+        contentDescription = if (expanded) "Collapse plan" else "Expand plan",
+        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+        modifier = Modifier
+          .size(16.dp)
+          .graphicsLayer { rotationZ = if (expanded) 0f else -90f },
+      )
+      if (plan.steps.size > 1) {
+        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+          plan.steps.forEach { step ->
+            Box(
+              Modifier
+                .width(10.dp)
+                .height(3.dp)
+                .background(
+                  when (step.status) {
+                    ThreadPlanStepStatus.Completed -> success
+                    ThreadPlanStepStatus.InProgress -> active
+                    ThreadPlanStepStatus.Pending -> pending
+                  },
+                  CircleShape,
+                ),
+            )
+          }
+        }
+      }
+      Text(
+        plan.currentStepLabel,
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = if (allDone) FontWeight.Normal else FontWeight.Medium,
+        color = if (allDone) {
+          MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+        } else {
+          MaterialTheme.colorScheme.onSurface.copy(alpha = 0.88f)
+        },
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.weight(1f),
+      )
+      if (plan.steps.size > 1) {
+        Text(
+          "$completedCount/${plan.steps.size}",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+        )
+      }
+    }
+    if (expanded) {
+      Column(Modifier.padding(start = 24.dp, top = 2.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        plan.steps.forEach { step ->
+          val color = when (step.status) {
+            ThreadPlanStepStatus.Completed -> success
+            ThreadPlanStepStatus.InProgress -> active
+            ThreadPlanStepStatus.Pending -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+          }
+          Row(
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(vertical = 2.dp),
+          ) {
+            Text(
+              when (step.status) {
+                ThreadPlanStepStatus.Completed -> "✓"
+                ThreadPlanStepStatus.InProgress -> "●"
+                ThreadPlanStepStatus.Pending -> "○"
+              },
+              color = color,
+              style = MaterialTheme.typography.labelSmall,
+              modifier = Modifier.width(14.dp),
+            )
+            Text(
+              step.step,
+              style = MaterialTheme.typography.bodySmall,
+              color = when (step.status) {
+                ThreadPlanStepStatus.Completed -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                ThreadPlanStepStatus.InProgress -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.92f)
+                ThreadPlanStepStatus.Pending -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
+              },
+              modifier = Modifier.weight(1f),
+            )
+          }
         }
       }
     }
@@ -1952,9 +2173,20 @@ private fun ThreadActivityRow(
     Column(Modifier.padding(horizontal = 11.dp, vertical = 9.dp)) {
       Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(
-          if (activity.status == ThreadFeedActivityStatus.Failure) Icons.Rounded.Bolt else Icons.Rounded.Check,
-          contentDescription = null,
-          tint = statusColor,
+          when (activity.icon) {
+            ThreadFeedActivityIcon.Agent -> Icons.Rounded.SmartToy
+            ThreadFeedActivityIcon.Check -> Icons.Rounded.Check
+            ThreadFeedActivityIcon.Command -> Icons.Rounded.Terminal
+            ThreadFeedActivityIcon.Edit -> Icons.Rounded.EditNote
+            ThreadFeedActivityIcon.Eye -> Icons.Rounded.Visibility
+            ThreadFeedActivityIcon.Globe -> Icons.Rounded.Public
+            ThreadFeedActivityIcon.Message -> Icons.Rounded.ChatBubbleOutline
+            ThreadFeedActivityIcon.Warning -> Icons.Rounded.WarningAmber
+            ThreadFeedActivityIcon.Wrench -> Icons.Rounded.Build
+            ThreadFeedActivityIcon.Generic -> Icons.Rounded.Bolt
+          },
+          contentDescription = activity.icon.name,
+          tint = MaterialTheme.colorScheme.onSurfaceVariant,
           modifier = Modifier.size(16.dp),
         )
         Spacer(Modifier.width(8.dp))
@@ -1970,19 +2202,71 @@ private fun ThreadActivityRow(
             )
           }
         }
+        if (activity.canExpand) {
+          Icon(
+            Icons.Rounded.KeyboardArrowDown,
+            contentDescription = if (expanded) "Collapse tool details" else "Expand tool details",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+              .size(16.dp)
+              .graphicsLayer { rotationZ = if (expanded) 0f else -90f },
+          )
+        }
+        if (activity.status != null) {
+          Icon(
+            if (activity.status == ThreadFeedActivityStatus.Failure) Icons.Rounded.Clear else Icons.Rounded.Check,
+            contentDescription = when (activity.status) {
+              ThreadFeedActivityStatus.Success -> "Completed"
+              ThreadFeedActivityStatus.Failure -> "Failed"
+              ThreadFeedActivityStatus.Neutral -> "In progress"
+            },
+            tint = statusColor,
+            modifier = Modifier.size(15.dp),
+          )
+        }
         IconButton(onClick = onCopy, modifier = Modifier.size(30.dp)) {
           Icon(Icons.Rounded.ContentCopy, contentDescription = "Copy activity", modifier = Modifier.size(15.dp))
         }
       }
       if (expanded) {
-        Text(
-          activity.getFullDetail() ?: activity.detail.orEmpty(),
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          modifier = Modifier.padding(start = 24.dp, top = 6.dp),
-        )
+        SelectionContainer {
+          Text(
+            activity.expandedBody.orEmpty(),
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 24.dp, top = 6.dp),
+          )
+        }
       }
     }
+  }
+}
+
+@Composable
+private fun MessageCopyButton(text: String, modifier: Modifier = Modifier) {
+  val context = LocalContext.current
+  var copied by remember(text) { mutableStateOf(false) }
+  LaunchedEffect(copied) {
+    if (copied) {
+      delay(1_200)
+      copied = false
+    }
+  }
+  IconButton(
+    onClick = {
+      context.getSystemService(ClipboardManager::class.java)
+        .setPrimaryClip(ClipData.newPlainText("T3 message", text))
+      copied = true
+    },
+    modifier = modifier.size(28.dp),
+  ) {
+    Icon(
+      if (copied) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+      contentDescription = if (copied) "Copied" else "Copy message",
+      tint = if (copied) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+      modifier = Modifier.size(14.dp),
+    )
   }
 }
 
@@ -1993,7 +2277,7 @@ private fun UserMessageContent(text: String, modifier: Modifier = Modifier) {
     segments.forEach { segment ->
       when (segment) {
         is ReviewMessageSegment.Text -> segment.value.trim().takeIf(String::isNotEmpty)?.let {
-          Text(it)
+          Text(it, fontSize = 15.sp)
         }
         is ReviewMessageSegment.Comment -> ReviewCommentCard(segment.value)
       }
@@ -2003,6 +2287,12 @@ private fun UserMessageContent(text: String, modifier: Modifier = Modifier) {
 
 @Composable
 private fun MarkdownMessage(markdown: String, markwon: Markwon) {
+  val rendered by produceState<RenderedMarkdown?>(null, markdown, markwon) {
+    val content = withContext(markdownRenderDispatcher) {
+      markwon.toMarkdown(markdown)
+    }
+    value = RenderedMarkdown(markdown, content)
+  }
   AndroidView(
     factory = {
       TextView(it).apply {
@@ -2013,10 +2303,10 @@ private fun MarkdownMessage(markdown: String, markwon: Markwon) {
         setPadding(4, 6, 4, 6)
       }
     },
-    update = {
-      if (it.tag != markdown) {
-        it.tag = markdown
-        markwon.setMarkdown(it, markdown)
+    update = { textView ->
+      rendered?.takeIf { it.source == markdown && textView.tag != it.source }?.let {
+        textView.tag = it.source
+        markwon.setParsedMarkdown(textView, it.content)
       }
     },
     modifier = Modifier.fillMaxWidth(),
@@ -2091,11 +2381,199 @@ private fun resolveThreadProviderModels(
   return if (driverMatches.isNotEmpty()) driverMatches else allModels
 }
 
+private data class ComposerSlashTrigger(val start: Int, val query: String)
+
+private data class ComposerSlashSuggestion(
+  val name: String,
+  val description: String,
+  val opensModelMenu: Boolean = false,
+)
+
+private val ComposerSlashPattern = Regex("(?:^|\\s)/([^\\s/]*)$")
+
+private fun composerSlashTrigger(text: String): ComposerSlashTrigger? {
+  val match = ComposerSlashPattern.find(text) ?: return null
+  val slashOffset = match.value.lastIndexOf('/')
+  return ComposerSlashTrigger(
+    start = match.range.first + slashOffset,
+    query = match.groupValues[1],
+  )
+}
+
+private fun replaceComposerSlashTrigger(
+  text: String,
+  trigger: ComposerSlashTrigger,
+  replacement: String,
+) = text.replaceRange(trigger.start, text.length, replacement)
+
+private fun JsonElement?.providerOptionValues(): Map<String, JsonPrimitive> = when (this) {
+  is JsonArray -> mapNotNull { element ->
+    val item = element as? JsonObject ?: return@mapNotNull null
+    val id = (item["id"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
+    val value = item["value"] as? JsonPrimitive ?: return@mapNotNull null
+    id to value
+  }.toMap()
+  is JsonObject -> mapNotNull { (id, value) ->
+    (value as? JsonPrimitive)?.let { id to it }
+  }.toMap()
+  else -> emptyMap()
+}
+
+private fun ProviderOptionDescriptor.valueFrom(options: JsonElement?): JsonPrimitive? =
+  options.providerOptionValues()[id]
+    ?: currentValue
+    ?: choices.firstOrNull { it.isDefault }?.let { JsonPrimitive(it.id) }
+
+private fun ProviderModel.optionsWith(
+  current: JsonElement?,
+  changedId: String? = null,
+  changedValue: JsonPrimitive? = null,
+): JsonArray? {
+  val selections = optionDescriptors.mapNotNull { descriptor ->
+    val value = (if (descriptor.id == changedId) changedValue else descriptor.valueFrom(current))
+      ?: return@mapNotNull null
+    buildJsonObject {
+      put("id", JsonPrimitive(descriptor.id))
+      put("value", value)
+    }
+  }
+  return selections.takeIf(List<*>::isNotEmpty)?.let(::JsonArray)
+}
+
+private fun ProviderOptionDescriptor.currentLabel(options: JsonElement?): String? {
+  val value = valueFrom(options) ?: return null
+  return if (type == "boolean") {
+    if (value.booleanOrNull == true) "On" else "Off"
+  } else {
+    choices.firstOrNull { it.id == value.contentOrNull }?.label
+  }
+}
+
+private fun ProviderOptionDescriptor.isSpeedOption() = id == "fastMode" ||
+  (id == "serviceTier" && choices.any { it.label.equals("Fast", ignoreCase = true) })
+
+private fun ProviderOptionDescriptor.fastEnabled(options: JsonElement?): Boolean = when {
+  id == "fastMode" -> valueFrom(options)?.booleanOrNull == true
+  id == "serviceTier" -> {
+    val current = valueFrom(options)?.contentOrNull
+    choices.firstOrNull { it.id == current }?.label.equals("Fast", ignoreCase = true)
+  }
+  else -> false
+}
+
+private fun traitsTriggerLabel(
+  descriptors: List<ProviderOptionDescriptor>,
+  options: JsonElement?,
+): Pair<String, Boolean> {
+  val fast = descriptors.any { it.isSpeedOption() && it.fastEnabled(options) }
+  val labels = descriptors.filterNot(ProviderOptionDescriptor::isSpeedOption)
+    .mapNotNull { it.currentLabel(options) }
+    .toMutableList()
+  if (fast) labels += "Fast"
+  if (labels.isEmpty()) labels += if (descriptors.any(ProviderOptionDescriptor::isSpeedOption)) "Standard" else "Options"
+  return labels.joinToString(" · ") to fast
+}
+
+private fun runtimeModeLabel(mode: String) = when (mode) {
+  "approval-required" -> "Supervised"
+  "auto-accept-edits" -> "Auto-accept edits"
+  "auto" -> "Auto"
+  else -> "Full access"
+}
+
+private fun runtimeModeDescription(mode: String) = when (mode) {
+  "approval-required" -> "Ask before commands and file changes"
+  "auto-accept-edits" -> "Approve edits, ask before other actions"
+  "auto" -> "Approve routine supported actions"
+  else -> "Allow commands and edits without prompts"
+}
+
+private fun runtimeModeIcon(mode: String): ImageVector = when (mode) {
+  "approval-required" -> Icons.Rounded.Shield
+  "auto-accept-edits" -> Icons.Rounded.EditNote
+  "auto" -> Icons.Rounded.AutoAwesome
+  else -> Icons.Rounded.LockOpen
+}
+
+@Composable
+private fun ComposerOptionsMenu(
+  expanded: Boolean,
+  onDismissRequest: () -> Unit,
+  content: @Composable ColumnScope.() -> Unit,
+) {
+  DropdownMenu(
+    expanded = expanded,
+    onDismissRequest = onDismissRequest,
+    modifier = Modifier.widthIn(min = 240.dp, max = 320.dp),
+    shape = RoundedCornerShape(20.dp),
+    containerColor = Color(0xFF1C1C1F),
+    tonalElevation = 6.dp,
+    shadowElevation = 12.dp,
+    border = BorderStroke(1.dp, Color(0xFF3F3F46)),
+    content = content,
+  )
+}
+
+@Composable
+private fun ComposerMenuSection(title: String) {
+  Text(
+    title,
+    style = MaterialTheme.typography.labelSmall,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+  )
+}
+
+@Composable
+private fun ComposerMenuChoice(
+  label: String,
+  description: String? = null,
+  selected: Boolean,
+  icon: ImageVector? = null,
+  onClick: () -> Unit,
+) {
+  DropdownMenuItem(
+    text = {
+      Column {
+        Text(label, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+        description?.let {
+          Text(
+            it,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
+      }
+    },
+    onClick = onClick,
+    leadingIcon = icon?.let { imageVector ->
+      {
+        Icon(
+          imageVector,
+          contentDescription = null,
+          tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+    },
+    trailingIcon = {
+      if (selected) {
+        Icon(Icons.Rounded.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+      }
+    },
+    modifier = Modifier
+      .padding(horizontal = 6.dp, vertical = 2.dp)
+      .clip(RoundedCornerShape(14.dp))
+      .background(if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent),
+    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 5.dp),
+  )
+}
+
 @Composable
 private fun ChatComposerArea(
   detail: ThreadDetail,
   draft: ComposerDraft,
   models: List<ProviderModel>,
+  queuedMessageCount: Int,
   enabled: Boolean,
   sending: Boolean,
   onDraftUpdate: (ComposerDraft) -> Unit,
@@ -2107,17 +2585,43 @@ private fun ChatComposerArea(
 ) {
   var showModelMenu by remember { mutableStateOf(false) }
   var showAccessMenu by remember { mutableStateOf(false) }
+  var showTraitsMenu by remember { mutableStateOf(false) }
 
   val threadInstanceId = detail.summary.modelSelection.instanceId
   val availableModels = remember(threadInstanceId, models) {
     resolveThreadProviderModels(threadInstanceId, models)
   }
 
+  val selectedInstanceId = draft.modelInstanceId ?: detail.summary.modelSelection.instanceId
+  val selectedModelId = draft.model ?: detail.summary.modelSelection.model
   val selectedModel = availableModels.firstOrNull {
-    it.instanceId == draft.modelInstanceId && it.model == draft.model
-  } ?: availableModels.firstOrNull {
-    it.instanceId == threadInstanceId && it.model == detail.summary.modelSelection.model
+    it.instanceId == selectedInstanceId && it.model == selectedModelId
   } ?: availableModels.firstOrNull { it.isDefault } ?: availableModels.firstOrNull()
+  val selectedOptions = if (draft.modelInstanceId != null && draft.model != null) {
+    draft.modelOptions
+  } else {
+    detail.summary.modelSelection.options
+  }
+  val plainText = plainReviewMessageText(draft.text)
+  val slashTrigger = composerSlashTrigger(plainText)
+  val slashSuggestions = remember(slashTrigger, selectedModel) {
+    val query = slashTrigger?.query?.lowercase() ?: return@remember emptyList()
+    buildList {
+      if ("model".contains(query)) {
+        add(ComposerSlashSuggestion("model", "Switch model", opensModelMenu = true))
+      }
+      selectedModel?.slashCommands.orEmpty().forEach { command ->
+        if (command.name.lowercase().contains(query)) {
+          add(
+            ComposerSlashSuggestion(
+              name = command.name,
+              description = command.description ?: command.inputHint ?: "Run provider command",
+            ),
+          )
+        }
+      }
+    }.distinctBy { it.name.lowercase() }
+  }
 
   val session = detail.summary.session
   val active = session?.status in setOf("starting", "running")
@@ -2127,6 +2631,60 @@ private fun ChatComposerArea(
       .fillMaxWidth()
       .padding(horizontal = 12.dp, vertical = 8.dp),
   ) {
+    if (slashTrigger != null && slashSuggestions.isNotEmpty()) {
+      Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = Color(0xFF1C1C1F),
+        border = BorderStroke(1.dp, Color(0xFF3F3F46)),
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(bottom = 8.dp),
+      ) {
+        Column(Modifier.padding(vertical = 5.dp)) {
+          Text(
+            "Commands",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+          )
+          slashSuggestions.take(6).forEach { suggestion ->
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                  val replacement = if (suggestion.opensModelMenu) "" else "/${suggestion.name} "
+                  val nextText = replaceComposerSlashTrigger(plainText, slashTrigger, replacement)
+                  onDraftUpdate(draft.copy(text = replacePlainReviewMessageText(draft.text, nextText)))
+                  if (suggestion.opensModelMenu) showModelMenu = true
+                }
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+              Icon(
+                Icons.Rounded.Terminal,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(16.dp),
+              )
+              Text(
+                "/${suggestion.name}",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+              )
+              Text(
+                suggestion.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+              )
+            }
+          }
+        }
+      }
+    }
     val composerShape = RoundedCornerShape(20.dp)
     Surface(
       shape = composerShape,
@@ -2179,27 +2737,26 @@ private fun ChatComposerArea(
           modifier = Modifier.fillMaxWidth(),
         )
 
-        // Bottom Action Bar housing the 3 Option Pills + Send/Stop Button
+        // Bottom action bar
         Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.SpaceBetween,
           verticalAlignment = Alignment.CenterVertically,
         ) {
-          // Left side: Option Pills (Model, Access, Mode)
+          // Left side: attachments and server-driven settings
           Row(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.weight(1f, fill = false),
+            modifier = Modifier
+              .weight(1f)
+              .horizontalScroll(rememberScrollState()),
           ) {
             ComposerAttachmentButtons(
               existingCount = draft.attachments.size,
               onAdd = onAddAttachments,
               enabled = !sending,
-              onPasteText = { pasted ->
-                onDraftUpdate(draft.copy(text = draft.text + pasted))
-              },
             )
-            // 1. Model Selector Pill
+            // Model selector
             Box {
               Surface(
                 onClick = { showModelMenu = true },
@@ -2228,48 +2785,148 @@ private fun ChatComposerArea(
                 }
               }
 
-              DropdownMenu(
+              ComposerOptionsMenu(
                 expanded = showModelMenu,
                 onDismissRequest = { showModelMenu = false },
               ) {
+                ComposerMenuSection("Models")
                 availableModels.forEach { model ->
-                  val isSelected = model.instanceId == draft.modelInstanceId && model.model == draft.model
-                  DropdownMenuItem(
-                    text = {
-                      Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                      ) {
-                        Text(
-                          model.modelLabel,
-                          fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                        )
-                        if (isSelected) {
-                          Icon(
-                            Icons.Rounded.Check,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(16.dp),
-                          )
-                        }
-                      }
-                    },
+                  val isSelected = model.instanceId == selectedInstanceId && model.model == selectedModelId
+                  ComposerMenuChoice(
+                    label = model.modelLabel,
+                    description = model.providerLabel,
+                    selected = isSelected,
                     onClick = {
                       showModelMenu = false
-                      onDraftUpdate(draft.copy(modelInstanceId = model.instanceId, model = model.model))
+                      val options = if (isSelected) selectedOptions else model.optionsWith(null)
+                      onDraftUpdate(
+                        draft.copy(
+                          modelInstanceId = model.instanceId,
+                          model = model.model,
+                          modelOptions = options,
+                        ),
+                      )
                     },
                   )
                 }
               }
             }
 
-            // 2. Access Mode Pill
-            val accessLabel = when (draft.runtimeMode) {
-              "approval-required" -> "Ask"
-              "auto-accept-edits" -> "Auto edits"
-              "auto" -> "Auto"
-              else -> "Full"
+            selectedModel?.takeIf { it.optionDescriptors.isNotEmpty() }?.let { optionModel ->
+              val (traitsLabel, fastEnabled) = traitsTriggerLabel(optionModel.optionDescriptors, selectedOptions)
+              Box {
+                Surface(
+                  onClick = { showTraitsMenu = true },
+                  shape = RoundedCornerShape(12.dp),
+                  color = Color(0xFF27272A),
+                  modifier = Modifier.height(30.dp),
+                ) {
+                  Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                  ) {
+                    if (fastEnabled) {
+                      Icon(
+                        Icons.Rounded.Bolt,
+                        contentDescription = "Fast mode",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(14.dp),
+                      )
+                    }
+                    Text(
+                      traitsLabel,
+                      style = MaterialTheme.typography.labelMedium,
+                      fontWeight = FontWeight.SemiBold,
+                      color = Color.White,
+                    )
+                    Icon(
+                      Icons.Rounded.KeyboardArrowDown,
+                      contentDescription = "Model options",
+                      modifier = Modifier.size(14.dp),
+                      tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                  }
+                }
+                ComposerOptionsMenu(
+                  expanded = showTraitsMenu,
+                  onDismissRequest = { showTraitsMenu = false },
+                ) {
+                  optionModel.optionDescriptors.forEachIndexed { index, descriptor ->
+                    if (index > 0) {
+                      HorizontalDivider(
+                        color = Color(0xFF3F3F46),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                      )
+                    }
+                    ComposerMenuSection(if (descriptor.isSpeedOption()) "Speed" else descriptor.label)
+                    val currentValue = descriptor.valueFrom(selectedOptions)
+                    if (descriptor.type == "select") {
+                      descriptor.choices.filterNot {
+                        it.id in descriptor.promptInjectedValues || it.id == "ultracode"
+                      }.forEach { choice ->
+                        val isSelected = choice.id == currentValue?.contentOrNull
+                        ComposerMenuChoice(
+                          label = choice.label,
+                          selected = isSelected,
+                          icon = if (descriptor.isSpeedOption() && choice.label.equals("Fast", true)) {
+                            Icons.Rounded.Bolt
+                          } else {
+                            null
+                          },
+                          onClick = {
+                            showTraitsMenu = false
+                            onDraftUpdate(
+                              draft.copy(
+                                modelInstanceId = optionModel.instanceId,
+                                model = optionModel.model,
+                                modelOptions = optionModel.optionsWith(
+                                  selectedOptions,
+                                  descriptor.id,
+                                  JsonPrimitive(choice.id),
+                                ),
+                              ),
+                            )
+                          },
+                        )
+                      }
+                    } else if (descriptor.type == "boolean") {
+                      val currentBoolean = currentValue?.booleanOrNull ?: false
+                      val labels = if (descriptor.isSpeedOption()) {
+                        listOf(false to "Standard", true to "Fast")
+                      } else {
+                        listOf(false to "Off", true to "On")
+                      }
+                      labels.forEach { (value, label) ->
+                        val isSelected = currentBoolean == value
+                        ComposerMenuChoice(
+                          label = label,
+                          selected = isSelected,
+                          icon = if (descriptor.isSpeedOption() && value) Icons.Rounded.Bolt else null,
+                          onClick = {
+                            showTraitsMenu = false
+                            onDraftUpdate(
+                              draft.copy(
+                                modelInstanceId = optionModel.instanceId,
+                                model = optionModel.model,
+                                modelOptions = optionModel.optionsWith(
+                                  selectedOptions,
+                                  descriptor.id,
+                                  JsonPrimitive(value),
+                                ),
+                              ),
+                            )
+                          },
+                        )
+                      }
+                    }
+                  }
+                }
+              }
             }
+
+            // Access mode
+            val accessLabel = runtimeModeLabel(draft.runtimeMode)
             Box {
               Surface(
                 onClick = { showAccessMenu = true },
@@ -2283,10 +2940,10 @@ private fun ChatComposerArea(
                   horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                   Icon(
-                    imageVector = if (draft.runtimeMode == "approval-required") Icons.Rounded.Shield else Icons.Rounded.Bolt,
+                    imageVector = runtimeModeIcon(draft.runtimeMode),
                     contentDescription = null,
                     modifier = Modifier.size(14.dp),
-                    tint = if (draft.runtimeMode == "approval-required") UnsnoozeColor else SettleColor,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                   )
                   Text(
                     text = accessLabel,
@@ -2297,21 +2954,18 @@ private fun ChatComposerArea(
                 }
               }
 
-              DropdownMenu(
+              ComposerOptionsMenu(
                 expanded = showAccessMenu,
                 onDismissRequest = { showAccessMenu = false },
               ) {
-                listOf(
-                  "approval-required" to "Ask (Approval Required)",
-                  "auto-accept-edits" to "Auto Edits",
-                  "auto" to "Auto Mode",
-                  "full-access" to "Full Access",
-                ).forEach { (key, label) ->
+                ComposerMenuSection("Runtime")
+                listOf("approval-required", "auto-accept-edits", "auto", "full-access").forEach { key ->
                   val isSel = draft.runtimeMode == key
-                  DropdownMenuItem(
-                    text = {
-                      Text(label, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
-                    },
+                  ComposerMenuChoice(
+                    label = runtimeModeLabel(key),
+                    description = runtimeModeDescription(key),
+                    selected = isSel,
+                    icon = runtimeModeIcon(key),
                     onClick = {
                       showAccessMenu = false
                       onDraftUpdate(draft.copy(runtimeMode = key))
@@ -2321,38 +2975,9 @@ private fun ChatComposerArea(
               }
             }
 
-            // 3. Plan Mode Toggle Pill
-            val isPlan = draft.interactionMode == "plan"
-            Surface(
-              onClick = {
-                onDraftUpdate(draft.copy(interactionMode = if (isPlan) "default" else "plan"))
-              },
-              shape = RoundedCornerShape(12.dp),
-              color = if (isPlan) MaterialTheme.colorScheme.primaryContainer else Color(0xFF27272A),
-              modifier = Modifier.height(30.dp),
-            ) {
-              Row(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-              ) {
-                Icon(
-                  imageVector = Icons.Rounded.EditNote,
-                  contentDescription = null,
-                  modifier = Modifier.size(14.dp),
-                  tint = if (isPlan) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                  text = if (isPlan) "Plan" else "Chat",
-                  style = MaterialTheme.typography.labelMedium,
-                  fontWeight = FontWeight.SemiBold,
-                  color = if (isPlan) MaterialTheme.colorScheme.primary else Color.White,
-                )
-              }
-            }
           }
 
-          // Right side: Send / Interrupt Button
+          // Right side: Stop and Send/Queue
           Row(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -2371,30 +2996,37 @@ private fun ChatComposerArea(
                   modifier = Modifier.size(20.dp),
                 )
               }
-            } else {
-              val canSend = enabled &&
-                (draft.text.isNotBlank() || draft.attachments.isNotEmpty()) && !sending
-              IconButton(
-                onClick = onSend,
-                enabled = canSend,
-                modifier = Modifier
-                  .size(38.dp)
-                  .background(
-                    if (canSend) MaterialTheme.colorScheme.primary else Color(0xFF27272A),
-                    CircleShape,
-                  ),
-              ) {
-                Icon(
-                  imageVector = Icons.AutoMirrored.Rounded.Send,
-                  contentDescription = "Send message",
-                  tint = if (canSend) Color.White else Color(0xFF71717A),
-                  modifier = Modifier.size(18.dp),
-                )
-              }
+            }
+            val canSend = enabled &&
+              (draft.text.isNotBlank() || draft.attachments.isNotEmpty()) && !sending
+            IconButton(
+              onClick = onSend,
+              enabled = canSend,
+              modifier = Modifier
+                .size(38.dp)
+                .background(
+                  if (canSend) MaterialTheme.colorScheme.primary else Color(0xFF27272A),
+                  CircleShape,
+                ),
+            ) {
+              Icon(
+                imageVector = Icons.AutoMirrored.Rounded.Send,
+                contentDescription = if (active || queuedMessageCount > 0) "Queue message" else "Send message",
+                tint = if (canSend) Color.White else Color(0xFF71717A),
+                modifier = Modifier.size(18.dp),
+              )
             }
           }
         }
       }
+    }
+    if (queuedMessageCount > 0) {
+      Text(
+        "$queuedMessageCount queued message${if (queuedMessageCount == 1) "" else "s"} will send automatically",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 6.dp, top = 5.dp),
+      )
     }
   }
 }
@@ -2405,10 +3037,9 @@ private fun ComposerAttachmentActions(
   onAdd: (List<Uri>) -> Unit,
   onRemove: (String) -> Unit,
   enabled: Boolean = true,
-  onPasteText: (String) -> Unit,
 ) {
   ComposerAttachmentStrip(draft.attachments, onRemove, removable = enabled)
-  ComposerAttachmentButtons(draft.attachments.size, onAdd, enabled, onPasteText)
+  ComposerAttachmentButtons(draft.attachments.size, onAdd, enabled)
 }
 
 @Composable
@@ -2416,38 +3047,20 @@ private fun ComposerAttachmentButtons(
   existingCount: Int,
   onAdd: (List<Uri>) -> Unit,
   enabled: Boolean = true,
-  onPasteText: (String) -> Unit,
 ) {
-  val context = LocalContext.current
   val picker = rememberLauncherForActivityResult(
     ActivityResultContracts.PickMultipleVisualMedia(MaxComposerAttachments),
     onAdd,
   )
-  Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+  CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 36.dp) {
     IconButton(
       onClick = {
         picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
       },
       enabled = enabled && existingCount < MaxComposerAttachments,
+      modifier = Modifier.size(36.dp),
     ) {
       Icon(Icons.Rounded.PhotoLibrary, contentDescription = "Add images")
-    }
-    IconButton(
-      onClick = {
-        val clipboard = context.getSystemService(ClipboardManager::class.java)
-        val clip = clipboard?.primaryClip
-        val item = clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)
-        val imageUri = item?.uri?.takeIf {
-          clip.description.hasMimeType("image/*") || context.contentResolver.getType(it)?.startsWith("image/") == true
-        }
-        when {
-          imageUri != null -> onAdd(listOf(imageUri))
-          item != null -> item.coerceToText(context).toString().takeIf(String::isNotEmpty)?.let(onPasteText)
-        }
-      },
-      enabled = enabled,
-    ) {
-      Icon(Icons.Rounded.ContentPaste, contentDescription = "Paste image or text")
     }
   }
 }

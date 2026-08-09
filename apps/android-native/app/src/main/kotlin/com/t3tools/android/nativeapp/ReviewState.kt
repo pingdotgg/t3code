@@ -375,13 +375,16 @@ fun parseReviewComments(value: String): List<ReviewComment> = ReviewCommentPatte
   .mapIndexedNotNull { index, match -> parseReviewComment(match, index) }
   .toList()
 
-fun plainReviewMessageText(value: String) = ReviewCommentPattern.replace(value, "").trim()
+fun plainReviewMessageText(value: String): String {
+  if (!ReviewCommentPattern.containsMatchIn(value)) return value
+  return ReviewCommentPattern.replace(value, "").trim('\n')
+}
 
 fun replacePlainReviewMessageText(value: String, text: String): String {
   val blocks = ReviewCommentPattern.findAll(value).map(MatchResult::value).toList()
-  return listOf(text.trim(), blocks.joinToString("\n\n"))
-    .filter(String::isNotBlank)
-    .joinToString("\n\n")
+  if (blocks.isEmpty()) return text
+  return if (text.isEmpty()) blocks.joinToString("\n\n")
+  else "$text\n\n${blocks.joinToString("\n\n")}"
 }
 
 fun removeReviewComment(value: String, commentId: String): String {
