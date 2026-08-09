@@ -421,7 +421,6 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   draftId: DraftId;
   session: DraftSessionState;
   composer: ComposerThreadDraftState;
-  providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   projectTitle: string | null;
   projectCwd: string | null;
   isActive: boolean;
@@ -429,19 +428,9 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   onDiscard: (draftId: DraftId) => void;
 }) {
   const { composer, draftId, onDiscard, onNavigate, session } = props;
-  const modelSelection = composer.activeProvider
-    ? (composer.modelSelectionByProvider[composer.activeProvider] ?? null)
-    : null;
-  const providerEntry = modelSelection
-    ? (props.providerEntryByInstanceId.get(modelSelection.instanceId) ?? null)
-    : null;
-  const selectedModel = providerEntry?.models.find((model) => model.slug === modelSelection?.model);
-  const modelLabel = modelSelection
-    ? selectedModel
-      ? getTriggerDisplayModelLabel(selectedModel)
-      : modelSelection.model
-    : null;
-  const contextLabel = [props.projectTitle, modelLabel, session.envMode, session.branch]
+  // Workspace context only — the model still travels with the draft, it
+  // just is not worth a slot in a row this small.
+  const contextLabel = [props.projectTitle, session.envMode, session.branch]
     .filter((part): part is string => part !== null && part.length > 0)
     .join(" · ");
   const promptPreview = composer.prompt.trim().split("\n", 1)[0] ?? "";
@@ -534,7 +523,6 @@ interface SidebarDraftRowData {
 // subscription + closing divider) so per-keystroke composer updates
 // re-render only this block, never the whole sidebar. Vanishes at count 0.
 const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
-  providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   projectDisplayNameByKey: ReadonlyMap<string, string>;
   projectCwdByKey: ReadonlyMap<string, string>;
   scopedProjectKeys: ReadonlySet<string> | null;
@@ -629,7 +617,6 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
             draftId={draftId}
             session={session}
             composer={composer}
-            providerEntryByInstanceId={props.providerEntryByInstanceId}
             projectTitle={props.projectDisplayNameByKey.get(projectKey) ?? null}
             projectCwd={props.projectCwdByKey.get(projectKey) ?? null}
             isActive={draftId === props.routeDraftId}
@@ -3490,7 +3477,6 @@ export default function Sidebar() {
                   const items: ReactNode[] = [
                     <SidebarDraftBlock
                       key="draft-sessions"
-                      providerEntryByInstanceId={providerEntryByInstanceId}
                       projectDisplayNameByKey={projectDisplayNameByKey}
                       projectCwdByKey={projectCwdByKey}
                       scopedProjectKeys={scopedProjectKeys}
