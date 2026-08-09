@@ -1048,6 +1048,9 @@ const makeWsRpcLayer = (
                 normalizedCommand.type === "thread.settle"
                   ? normalizedCommand
                   : undefined;
+              // Best-effort on purpose: the user's archive/settle must not
+              // fail because this cleanup read blipped, so a failed read
+              // logs and skips the stop instead of propagating.
               const shouldStopSessionAfterCommand = parkingCommand
                 ? yield* projectionSnapshotQuery.getThreadShellById(parkingCommand.threadId).pipe(
                     Effect.map(
@@ -1057,7 +1060,12 @@ const makeWsRpcLayer = (
                           thread.session !== null && thread.session.status !== "stopped",
                       }),
                     ),
-                    Effect.orElseSucceed(() => false),
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning(
+                        "failed to read thread session state before session-stop check",
+                        { threadId: parkingCommand.threadId, cause },
+                      ).pipe(Effect.as(false)),
+                    ),
                   )
                 : false;
               const result = yield* dispatchNormalizedCommand(normalizedCommand);
