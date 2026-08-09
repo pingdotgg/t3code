@@ -64,7 +64,14 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
     `ExecStart=${quoteSystemdValue(plan.nodePath)} ${quoteSystemdValue(plan.launcherPath)}`,
-    "KillMode=control-group",
+    // Let the launcher mark an explicit stop before it signals the server.
+    // systemd still SIGKILLs the whole cgroup if graceful shutdown times out.
+    "KillMode=mixed",
+    // Agent tool calls run as children of the server, so they share this cgroup.
+    // With the systemd default of OOMPolicy=stop, the kernel killing one greedy
+    // child stops the whole unit: the server, every live agent, and the user's
+    // connection. Keep running and let Restart=always cover the main process.
+    "OOMPolicy=continue",
     "Restart=always",
     "RestartSec=5",
     `StandardOutput=append:${escapeSystemdSpecifiers(plan.logPath)}`,

@@ -44,7 +44,7 @@ function SidebarUpdateReleaseNotesTooltip({
       <div className="px-1">
         <div className="text-sm leading-5 font-medium">{tooltip}</div>
       </div>
-      <div className="pointer-events-auto max-h-[min(28rem,calc(100vh-6rem))] overflow-y-auto px-1 pt-4 pb-1">
+      <div className="max-h-[min(28rem,calc(100vh-6rem))] overflow-y-auto px-1 pt-4 pb-1">
         {state.releaseNotes.map((releaseNote, index) => (
           <div key={releaseNote.version}>
             {index > 0 && <Separator className="my-3 bg-border/60" />}
@@ -159,11 +159,11 @@ export function SidebarUpdatePill() {
       )}
       {visible && (
         <div
-          className={`group/update relative flex h-7 w-full items-center rounded-lg bg-primary/15 text-xs font-medium text-primary ${
+          className={`group/update relative flex h-7 w-full items-center rounded-lg bg-update-surface text-xs font-medium text-update ${
             disabled ? " cursor-not-allowed opacity-60" : ""
           }`}
         >
-          <div className="pointer-events-none absolute inset-0 rounded-lg transition-colors group-has-[button.update-main:hover]/update:bg-primary/22" />
+          <div className="pointer-events-none absolute inset-0 rounded-lg transition-colors group-has-[button.update-main:hover]/update:bg-update/12" />
           <Tooltip>
             <TooltipTrigger
               render={
@@ -203,7 +203,9 @@ export function SidebarUpdatePill() {
               align="start"
               className={
                 state?.channel === "nightly" && state.releaseNotes.length > 0
-                  ? "max-w-none text-balance"
+                  ? // pointer-events-auto overrides the positioner's pointer-events-none so the
+                    // release notes stay open (and scrollable) when the cursor moves into them.
+                    "pointer-events-auto max-w-none text-balance"
                   : undefined
               }
               side="top"
@@ -222,7 +224,7 @@ export function SidebarUpdatePill() {
                   <button
                     type="button"
                     aria-label="Dismiss update"
-                    className="mr-1 inline-flex size-5 items-center justify-center rounded-md text-primary/60 transition-colors hover:text-primary"
+                    className="mr-1 inline-flex size-5 items-center justify-center rounded-md text-update/60 transition-colors hover:text-update"
                     onClick={() => setDismissed(true)}
                   >
                     <XIcon className="size-3.5" />
