@@ -50,6 +50,7 @@ import {
   parseAetherFileReadResponse,
   parseAetherGitDiffResponse,
   type AetherAgentEvent,
+  type AetherPortsMessage,
   type AetherFrameParseResult,
   type AetherWsFileReadSuccessResponse,
   type AetherWsGitDiffResult,
@@ -433,6 +434,14 @@ export interface AetherAgentConnection {
   readonly readWorkspaceFile: (
     path: string,
   ) => Effect.Effect<AetherWsFileReadSuccessResponse, AetherWorkspaceRequestError>;
+  /**
+   * The workspace's preview-gateway token (32-char), from the connect
+   * transport — authorizes cloud port previews for every port of this
+   * workspace. Used to build `{port}-{workspaceId8}-{token}.{previewDomain}`.
+   */
+  readonly previewToken: string;
+  /** The workspace id, used as the port-preview subdomain prefix. */
+  readonly workspaceId: string;
 }
 
 export interface AetherAgentStreamOptions {
@@ -461,6 +470,8 @@ export interface AetherAgentStreamOptions {
   readonly onConnected: (connection: AetherAgentConnection) => Effect.Effect<void>;
   /** One parsed agent event. */
   readonly onEvent: (event: AetherAgentEvent) => Effect.Effect<void>;
+  /** A ports-channel notification (port opened/closed) for cloud previews. */
+  readonly onPortsMessage: (message: AetherPortsMessage) => Effect.Effect<void>;
   /**
    * A dropped frame (unknown kind, malformed known kind, or a server
    * error-channel frame). Called once per distinct key per stream — the
@@ -639,7 +650,12 @@ export const runAetherAgentStream = Effect.fn("runAetherAgentStream")(function* 
       if (transport._tag === "unavailable") {
         return { _tag: "unavailable", reason: transport.reason } as const;
       }
-      return { _tag: "transport", websocketPath: transport.websocketPath } as const;
+      return {
+        _tag: "transport",
+        websocketPath: transport.websocketPath,
+        previewToken: transport.previewToken,
+        workspaceId: resolution.workspaceId,
+      } as const;
     });
 
     // Once the stream has subscribed at least once, a transport-class REST
@@ -833,6 +849,8 @@ export const runAetherAgentStream = Effect.fn("runAetherAgentStream")(function* 
                       JSON.stringify({ channel: "files", type: "read", requestId, path }),
                     parse: parseAetherFileReadResponse,
                   }),
+                previewToken: attached.previewToken,
+                workspaceId: attached.workspaceId,
               });
 
               while (true) {
@@ -861,6 +879,9 @@ export const runAetherAgentStream = Effect.fn("runAetherAgentStream")(function* 
                     yield* options.onEvent(parsed.event);
                     break;
                   }
+                  case "ports":
+                    yield* options.onPortsMessage(parsed.message);
+                    break;
                   case "ignored":
                     // Another channel multiplexed on the same socket — not ours.
                     break;

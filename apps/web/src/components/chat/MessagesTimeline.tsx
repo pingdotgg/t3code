@@ -103,6 +103,7 @@ import {
   type ParsedPreviewAnnotation,
 } from "~/lib/previewAnnotation";
 import { cn } from "~/lib/utils";
+import { readLocalApi } from "~/localApi";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatShortTimestamp } from "../../timestampFormat";
@@ -2211,14 +2212,44 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: Time
   );
 });
 
+const PortPreviewCtaRow = memo(function PortPreviewCtaRow(props: { workEntry: TimelineWorkEntry }) {
+  const preview = props.workEntry.portPreview;
+  if (!preview) {
+    return null;
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        // Best-effort open: the embedded browser on desktop, a new tab on web
+        // (localApi.shell.openExternal handles the platform split).
+        void readLocalApi()?.shell.openExternal(preview.url);
+      }}
+      className="-mx-1 flex w-full items-center gap-2 rounded-md border border-border/60 bg-card/50 px-2.5 py-1.5 text-left text-[13px] transition hover:bg-accent/50"
+    >
+      <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-info" />
+      <WorkEntryIconSvg name="globe" className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 truncate">
+        <span className="font-medium">Port {preview.port} is live</span>
+      </span>
+      <span className="ml-auto shrink-0 font-mono text-[.7rem] text-info-foreground">
+        Open preview ▸
+      </span>
+    </button>
+  );
+});
+
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
 }) {
   const { workEntry, workspaceRoot } = props;
-  // Before any hooks: spawn CTA rows render their own component.
+  // Before any hooks: spawn CTA and port-preview rows render their own component.
   if (workEntry.agentSpawn) {
     return <AgentSpawnCtaRow workEntry={workEntry} />;
+  }
+  if (workEntry.portPreview) {
+    return <PortPreviewCtaRow workEntry={workEntry} />;
   }
   return <PlainWorkEntryRow workEntry={workEntry} workspaceRoot={workspaceRoot} />;
 });

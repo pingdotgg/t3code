@@ -54,6 +54,8 @@ export interface ThreadFeedActivity {
     | "zap";
   readonly toolLike: boolean;
   readonly status: "success" | "failure" | "neutral" | null;
+  /** Present on a `port.opened` row: a live workspace port + its preview URL. */
+  readonly portPreview?: { readonly port: number; readonly url: string };
 }
 
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
@@ -75,6 +77,8 @@ interface WorkLogEntry {
   requestKind?: PendingApproval["requestKind"];
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   toolData?: unknown;
+  /** Present on a `port.opened` row: a live workspace port + its preview URL. */
+  portPreview?: { port: number; url: string };
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -421,6 +425,13 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (toolLifecycleStatus) {
     entry.toolLifecycleStatus = toolLifecycleStatus;
   }
+  if (activity.kind === "port.opened" && payload) {
+    const port = payload.port;
+    const url = payload.url;
+    if (typeof port === "number" && typeof url === "string" && url.length > 0) {
+      entry.portPreview = { port, url };
+    }
+  }
   const collapseKey = deriveToolLifecycleCollapseKey(entry);
   if (collapseKey) {
     entry.collapseKey = collapseKey;
@@ -615,6 +626,7 @@ function workEntryIcon(entry: DerivedWorkLogEntry): ThreadFeedActivity["icon"] {
     return "message";
   }
   if (entry.activityKind === "runtime.warning") return "warning";
+  if (entry.activityKind === "port.opened") return "globe";
   if (entry.requestKind === "command") return "command";
   if (entry.requestKind === "file-read") return "eye";
   if (entry.requestKind === "file-change") return "edit";
@@ -1512,6 +1524,7 @@ export function buildThreadFeed(
               icon: workEntryIcon(entry),
               toolLike: workLogEntryIsToolLike(entry),
               status: workEntryStatus(entry),
+              ...(entry.portPreview ? { portPreview: entry.portPreview } : {}),
             },
           };
         }),

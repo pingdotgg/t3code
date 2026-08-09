@@ -154,6 +154,40 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  it("surfaces a port.opened activity as a clickable preview row", () => {
+    const url = `https://3000-ws-1-${"t".repeat(32)}.preview.runaether.dev`;
+    const thread = makeThread({
+      id: ThreadId.make("thread-1"),
+      projectId: ProjectId.make("project-1"),
+      title: "Port preview thread",
+      activities: [
+        makeActivity({
+          id: EventId.make("activity-port"),
+          kind: "port.opened",
+          summary: "Port 3000 is live",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId: TurnId.make("turn-1"),
+          payload: { port: 3000, url },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    expect(feed).toMatchObject([
+      {
+        type: "activity-group",
+        activities: [
+          {
+            id: "activity-port",
+            summary: "Port 3000 is live",
+            icon: "globe",
+            portPreview: { port: 3000, url },
+          },
+        ],
+      },
+    ]);
+  });
+
   it("collapses matching tool lifecycle rows like desktop", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-2"),

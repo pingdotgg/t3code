@@ -100,6 +100,7 @@ import {
   type AetherEventMapper,
 } from "./aether/eventMapper.ts";
 import { makeAetherMirrorSync, type AetherMirrorSyncEngine } from "./aether/mirrorSync.ts";
+import { buildAetherPreviewUrl } from "./aether/portPreview.ts";
 import type { AetherRestClient } from "./aether/restClient.ts";
 import type {
   AetherPromptAttachment,
@@ -359,6 +360,12 @@ interface AetherSessionContext {
   mirror: AetherMirrorSyncEngine | undefined;
   /** Live WS connection handle (undefined while detached). */
   connection: AetherAgentConnection | undefined;
+  /** Cloud port-preview token (from the connect transport); set on attach. */
+  previewToken: string | undefined;
+  /** The workspace id backing this session (port-preview subdomain prefix). */
+  workspaceId: string | undefined;
+  /** Ports already surfaced as `port.opened`, to dedupe snapshot re-syncs. */
+  readonly emittedPorts: Set<number>;
   /** The durable reconciliation — the settle backstop the turn poll drives. */
   reconcile: Effect.Effect<void> | undefined;
   /** True while an attach pump fiber runs for this session. */
@@ -1241,6 +1248,8 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
         Effect.gen(function* () {
           connectRetryWarned = false;
           context.connection = connection;
+          context.previewToken = connection.previewToken;
+          context.workspaceId = connection.workspaceId;
           if (!sessionStartedEmitted) {
             sessionStartedEmitted = true;
             context.sessionStartedEmitted = true;
@@ -1251,6 +1260,41 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
             });
           }
           yield* reconcile;
+        }),
+      onPortsMessage: (message) =>
+        Effect.gen(function* () {
+          // Best-effort cloud port previews. A port only surfaces once (deduped
+          // across snapshot re-syncs); a close re-arms it so a re-open re-emits.
+          const previewToken = context.previewToken;
+          const workspaceId = context.workspaceId;
+          if (previewToken === undefined || workspaceId === undefined) {
+            return;
+          }
+          if (message._tag === "change" && message.action === "close") {
+            context.emittedPorts.delete(message.port);
+            return;
+          }
+          const ports = message._tag === "snapshot" ? message.ports : [message.port];
+          for (const port of ports) {
+            if (context.emittedPorts.has(port)) {
+              continue;
+            }
+            const url = buildAetherPreviewUrl({
+              apiBaseUrl: socket.apiBaseUrl,
+              workspaceId,
+              port,
+              previewToken,
+            });
+            if (url === undefined) {
+              continue;
+            }
+            context.emittedPorts.add(port);
+            yield* emit({
+              ...(yield* baseEvent(context)),
+              type: "port.opened",
+              payload: { port, url },
+            });
+          }
         }),
       onDisconnected: () =>
         Effect.sync(() => {
@@ -1642,6 +1686,9 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
         getTaskId: () => context.taskId,
       }),
       connection: undefined,
+      previewToken: undefined,
+      workspaceId: undefined,
+      emittedPorts: new Set<number>(),
       reconcile: undefined,
       pumpRunning: false,
       sessionStartedEmitted: false,

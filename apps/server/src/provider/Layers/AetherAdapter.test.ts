@@ -1352,6 +1352,62 @@ describe("AetherAdapter event pipeline", () => {
     }),
   );
 
+  it.effect("emits port.opened with the workspace preview URL, deduping snapshot re-syncs", () =>
+    Effect.gen(function* () {
+      const sockets: Array<FakeAdapterSocket> = [];
+      const deltaSequences: Array<number> = [];
+      const TOKEN = "t".repeat(32);
+      yield* withAdapter(
+        {
+          restClient: streamingRestClient(deltaSequences),
+          socket: {
+            apiBaseUrl: "https://api.runaether.dev",
+            apiKey: "aether_test_key",
+            timing: { ...zeroSocketTiming, requestTimeoutMs: 60_000 },
+            webSocketFactory: () => {
+              const socket = diffAnsweringSocket();
+              sockets.push(socket);
+              return socket;
+            },
+          },
+        },
+        (adapter) =>
+          Effect.gen(function* () {
+            const collector = yield* adapter.streamEvents.pipe(
+              Stream.filter((event) => event.type === "port.opened"),
+              Stream.take(2),
+              Stream.runCollect,
+              Effect.forkScoped,
+            );
+            yield* adapter.startSession(
+              startInput({
+                resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 7 },
+              }),
+            );
+            yield* settleAdapterPump;
+
+            // Snapshot surfaces each port once; a re-snapshot dedupes; a
+            // distinct open adds exactly one more.
+            sockets[0]!.message({ channel: "ports", type: "snapshot", ports: [3000] });
+            sockets[0]!.message({ channel: "ports", type: "snapshot", ports: [3000] });
+            sockets[0]!.message({ channel: "ports", type: "change", action: "open", port: 5173 });
+            yield* settleAdapterPump;
+
+            const events = [...(yield* Fiber.join(collector))];
+            expect(events).toHaveLength(2);
+            expect(events[0]).toMatchObject({
+              type: "port.opened",
+              payload: { port: 3000, url: `https://3000-ws-1-${TOKEN}.preview.runaether.dev` },
+            });
+            expect(events[1]).toMatchObject({
+              type: "port.opened",
+              payload: { port: 5173, url: `https://5173-ws-1-${TOKEN}.preview.runaether.dev` },
+            });
+          }),
+      );
+    }),
+  );
+
   it.effect("resume onto an in-flight task adopts the turn and arms the settle backstop", () =>
     Effect.gen(function* () {
       const sockets: Array<FakeAdapterSocket> = [];

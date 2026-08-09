@@ -16,7 +16,7 @@ import {
   type AetherAgentStreamOptions,
   type AetherWebSocketLike,
 } from "./workspaceSocket.ts";
-import type { AetherAgentEvent } from "./wireEvents.ts";
+import type { AetherAgentEvent, AetherPortsMessage } from "./wireEvents.ts";
 import { taskProcessing, wsAssistantDelta, wsUnknownKindFrame } from "./eventMapper.fixtures.ts";
 
 const taskQueued: AetherTask = {
@@ -322,6 +322,7 @@ class FakeSocket implements AetherWebSocketLike {
 interface StreamHarness {
   readonly sockets: Array<FakeSocket>;
   readonly events: Array<AetherAgentEvent>;
+  readonly ports: Array<AetherPortsMessage>;
   readonly dropped: Array<{ key: string; detail: string }>;
   readonly durableOnly: Array<string>;
   readonly connects: Array<number>;
@@ -335,6 +336,7 @@ function makeHarness(
 ): StreamHarness {
   const sockets: Array<FakeSocket> = [];
   const events: Array<AetherAgentEvent> = [];
+  const ports: Array<AetherPortsMessage> = [];
   const dropped: Array<{ key: string; detail: string }> = [];
   const durableOnly: Array<string> = [];
   const connects: Array<number> = [];
@@ -342,6 +344,7 @@ function makeHarness(
   return {
     sockets,
     events,
+    ports,
     dropped,
     durableOnly,
     connects,
@@ -365,6 +368,7 @@ function makeHarness(
       },
       onConnected: () => Effect.sync(() => void connects.push(sockets.length)),
       onEvent: (event) => Effect.sync(() => void events.push(event)),
+      onPortsMessage: (message) => Effect.sync(() => void ports.push(message)),
       onFrameDropped: (problem) => Effect.sync(() => void dropped.push({ ...problem })),
       onConnectRetry: (failure) => Effect.sync(() => void connectRetries.push({ ...failure })),
       onDurableOnly: (reason) => Effect.sync(() => void durableOnly.push(reason)),
@@ -416,6 +420,34 @@ describe("runAetherAgentStream", () => {
       yield* Fiber.interrupt(fiber);
       // Scope teardown closes the socket (session-scope ownership).
       expect(socket.closed).toBe(true);
+    }),
+  );
+
+  it.effect("routes ports-channel frames (snapshot + open/close) to onPortsMessage", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        getTask: scriptedGetTask([taskProcessing]).getTask,
+        connectWorkspace: scriptedConnect([runningOutcome]).connectWorkspace,
+      });
+      const fiber = yield* Effect.forkChild(runAetherAgentStream(harness.options));
+      yield* settlePump;
+      const socket = harness.sockets[0]!;
+
+      socket.message({ channel: "ports", type: "snapshot", ports: [3000, 5173] });
+      socket.message({ channel: "ports", type: "change", action: "open", port: 8080 });
+      socket.message({ channel: "ports", type: "change", action: "close", port: 3000 });
+      // A malformed ports frame is ignored, not routed.
+      socket.message({ channel: "ports", type: "change", action: "open" });
+      yield* settlePump;
+
+      expect(harness.ports).toEqual([
+        { _tag: "snapshot", ports: [3000, 5173] },
+        { _tag: "change", action: "open", port: 8080 },
+        { _tag: "change", action: "close", port: 3000 },
+      ]);
+      expect(socket.closed).toBe(false);
+
+      yield* Fiber.interrupt(fiber);
     }),
   );
 

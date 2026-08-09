@@ -460,6 +460,20 @@ export function runtimeEventToActivities(
       ];
     }
 
+    case "port.opened": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "port.opened",
+          summary: `Port ${event.payload.port} is live`,
+          payload: { port: event.payload.port, url: event.payload.url },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
     case "runtime.warning": {
       return [
         {

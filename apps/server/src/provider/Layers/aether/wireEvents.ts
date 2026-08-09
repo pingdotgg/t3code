@@ -295,9 +295,34 @@ export type AetherAgentEvent =
 // Frame parsing
 // ---------------------------------------------------------------------------
 
+// Ports channel — VM port-open/-close notifications powering cloud port
+// previews. Two frame shapes the workspace-service emits:
+//   {channel:"ports", type:"snapshot", ports:number[]}
+//   {channel:"ports", type:"change", action:"open"|"close", port:number}
+const AetherWsPortsSnapshotFrame = Schema.Struct({
+  channel: Schema.Literal("ports"),
+  type: Schema.Literal("snapshot"),
+  ports: Schema.Array(Schema.Number),
+});
+const AetherWsPortsChangeFrame = Schema.Struct({
+  channel: Schema.Literal("ports"),
+  type: Schema.Literal("change"),
+  action: Schema.Literals(["open", "close"]),
+  port: Schema.Number,
+});
+const decodePortsSnapshot = Schema.decodeUnknownResult(AetherWsPortsSnapshotFrame);
+const decodePortsChange = Schema.decodeUnknownResult(AetherWsPortsChangeFrame);
+
+/** A parsed ports-channel message — the source of cloud port previews. */
+export type AetherPortsMessage =
+  | { readonly _tag: "snapshot"; readonly ports: ReadonlyArray<number> }
+  | { readonly _tag: "change"; readonly action: "open" | "close"; readonly port: number };
+
 export type AetherFrameParseResult =
   /** A fully parsed agent task event. */
   | { readonly _tag: "event"; readonly event: AetherAgentEvent }
+  /** A ports-channel notification (port opened/closed) for cloud previews. */
+  | { readonly _tag: "ports"; readonly message: AetherPortsMessage }
   /** A frame for another channel / message type — not ours, silently skipped. */
   | { readonly _tag: "ignored"; readonly channel: string; readonly type: string }
   /**
@@ -412,6 +437,30 @@ export function parseAetherAgentFrame(raw: string): AetherFrameParseResult {
         ? probe.success.error
         : "server sent an error frame carrying no string `error` field",
     };
+  }
+  if (envelope.success.channel === "ports") {
+    // Best-effort: a ports frame we cannot parse is ignored (not an error),
+    // like any other multiplexed traffic — a stale preview is never worth a
+    // dropped-frame diagnostic.
+    if (envelope.success.type === "snapshot") {
+      const decoded = decodePortsSnapshot(frame);
+      if (Result.isSuccess(decoded)) {
+        return { _tag: "ports", message: { _tag: "snapshot", ports: decoded.success.ports } };
+      }
+    } else if (envelope.success.type === "change") {
+      const decoded = decodePortsChange(frame);
+      if (Result.isSuccess(decoded)) {
+        return {
+          _tag: "ports",
+          message: {
+            _tag: "change",
+            action: decoded.success.action,
+            port: decoded.success.port,
+          },
+        };
+      }
+    }
+    return { _tag: "ignored", channel: "ports", type: envelope.success.type };
   }
   if (envelope.success.channel === "git" || envelope.success.channel === "files") {
     // Correlated request-response traffic for the mirror sync engine. Frames

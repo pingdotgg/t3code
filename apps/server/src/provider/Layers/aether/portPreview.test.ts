@@ -1,0 +1,64 @@
+import { describe, expect, it } from "@effect/vitest";
+
+import { buildAetherPreviewUrl, deriveAetherPreviewDomain } from "./portPreview.ts";
+
+// A valid gateway token: 32 lowercase-alphanumeric chars.
+const TOKEN = "abcdef0123456789abcdef0123456789";
+
+describe("deriveAetherPreviewDomain", () => {
+  it("swaps a leading api. label for preview.", () => {
+    expect(deriveAetherPreviewDomain("https://api.runaether.dev")).toBe("preview.runaether.dev");
+    expect(deriveAetherPreviewDomain("https://api.staging.runaether.dev")).toBe(
+      "preview.staging.runaether.dev",
+    );
+  });
+
+  it("returns a non-api host unchanged and falls back on an unparseable URL", () => {
+    expect(deriveAetherPreviewDomain("http://localhost:8080")).toBe("localhost:8080");
+    expect(deriveAetherPreviewDomain("not a url")).toBe("preview.runaether.dev");
+  });
+});
+
+describe("buildAetherPreviewUrl", () => {
+  it("builds {port}-{workspaceId8}-{token}.preview.runaether.dev for the prod api base", () => {
+    expect(
+      buildAetherPreviewUrl({
+        apiBaseUrl: "https://api.runaether.dev",
+        workspaceId: "1a2b3c4d5e6f7890",
+        port: 3000,
+        previewToken: TOKEN,
+      }),
+    ).toBe(`https://3000-1a2b3c4d-${TOKEN}.preview.runaether.dev`);
+  });
+
+  it("uses http for a localhost preview domain", () => {
+    expect(
+      buildAetherPreviewUrl({
+        apiBaseUrl: "http://localhost:8080",
+        workspaceId: "abcdefgh1234",
+        port: 5173,
+        previewToken: TOKEN,
+      }),
+    ).toBe(`http://5173-abcdefgh-${TOKEN}.localhost:8080`);
+  });
+
+  it("returns undefined for a malformed token (best-effort, never throws)", () => {
+    expect(
+      buildAetherPreviewUrl({
+        apiBaseUrl: "https://api.runaether.dev",
+        workspaceId: "1a2b3c4d",
+        port: 3000,
+        previewToken: "short",
+      }),
+    ).toBeUndefined();
+    // Uppercase is not allowed by the gateway pattern.
+    expect(
+      buildAetherPreviewUrl({
+        apiBaseUrl: "https://api.runaether.dev",
+        workspaceId: "1a2b3c4d",
+        port: 3000,
+        previewToken: "ABCDEF0123456789abcdef0123456789",
+      }),
+    ).toBeUndefined();
+  });
+});
