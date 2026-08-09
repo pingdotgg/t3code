@@ -832,6 +832,20 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     }
                   : null;
   const isWokeStatus = topStatus?.icon === "woke";
+  const compactStatusDotClassName =
+    topStatus === null
+      ? "bg-muted-foreground/35"
+      : topStatus.icon === "working" || topStatus.label === "Monitoring"
+        ? "bg-sky-500 dark:bg-sky-400"
+        : topStatus.label === "Approval"
+          ? "bg-amber-500 dark:bg-amber-400"
+          : topStatus.label === "Input"
+            ? "bg-indigo-500 dark:bg-indigo-400"
+            : topStatus.label === "Failed"
+              ? "bg-red-500 dark:bg-red-400"
+              : topStatus.icon === "woke"
+                ? "bg-amber-500 dark:bg-amber-400"
+                : "bg-emerald-500 dark:bg-emerald-400";
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
@@ -1093,7 +1107,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       data-testid={`sidebar-terminal-status-${thread.id}`}
       className={cn("inline-flex shrink-0 items-center justify-center", terminalStatus.colorClass)}
     >
-      <TerminalIcon className={cn("size-3.5", terminalStatus.pulse && "animate-status-pulse")} />
+      <TerminalIcon className={cn("size-3", terminalStatus.pulse && "animate-status-pulse")} />
     </span>
   ) : null;
 
@@ -1101,7 +1115,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     return (
       <li
         data-thread-item
-        className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]"
+        className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_30px]"
       >
         <Tooltip>
           <TooltipTrigger
@@ -1111,7 +1125,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 tabIndex={0}
                 data-testid="sidebar-row-slim"
                 aria-busy={isRegeneratingTitle || undefined}
-                className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
+                className={cn(rowSurfaceClassName, "flex h-[1.875rem] items-center gap-0.5 px-1.5")}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
                 onKeyDown={handleKeyDown}
@@ -1132,11 +1146,50 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 environmentId={thread.environmentId}
                 cwd={props.projectCwd ?? ""}
                 faviconPath={props.projectFaviconPath}
-                className="size-4"
+                className="size-3.5"
                 fallbackIcon={MessageSquareIcon}
               />
             </span>
+            {props.isPinned ? (
+              props.pinningSupported ? (
+                <button
+                  type="button"
+                  aria-label="Unpin thread"
+                  title="Unpin thread"
+                  onClick={handleUnpinClick}
+                  className="inline-flex shrink-0 cursor-pointer items-center rounded-sm text-muted-foreground/65 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <PinIcon aria-hidden className="size-2.5 shrink-0" />
+                </button>
+              ) : (
+                <PinIcon
+                  aria-label="Pinned"
+                  role="img"
+                  className="size-2.5 shrink-0 text-muted-foreground/65"
+                />
+              )
+            ) : null}
             {title}
+            {compactStatusDotClassName ? (
+              <span
+                aria-label={topStatus?.label ?? "Ready"}
+                className={cn("size-1.5 shrink-0 rounded-full", compactStatusDotClassName)}
+                role="img"
+                title={topStatus?.label ?? "Ready"}
+              />
+            ) : null}
+            {driverKind ? (
+              <span
+                className="inline-flex shrink-0 items-center opacity-65"
+                title={thread.session?.providerName ?? modelInstanceId}
+              >
+                <ProviderInstanceIcon
+                  driverKind={driverKind}
+                  displayName={thread.session?.providerName ?? modelInstanceId}
+                  iconClassName="size-3"
+                />
+              </span>
+            ) : null}
             {terminalStatusIcon}
             {isRegeneratingTitle ? (
               <span role="status" className="sr-only">
@@ -1147,7 +1200,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               remain visible AND clickable while the row is hovered. Only
               the time/jump label yields to the settle affordance. */}
             {prBadge}
-            <span className="relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end">
+            <span className="relative flex h-5 shrink-0 items-center">
               <span
                 className={cn(
                   "inline-flex justify-end tabular-nums text-secondary-label transition-opacity",
@@ -1174,7 +1227,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     <span role="status">Woke</span>
                   </button>
                 ) : (
-                  <span className="text-xs">
+                  <span className="text-[10px]">
                     {variantAction === "unsettle"
                       ? settledTimeLabel(thread)
                       : threadTimeLabel(thread)}
@@ -1572,6 +1625,7 @@ export default function Sidebar() {
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const sidebarCompactMode = useClientSettings((s) => s.sidebarCompactMode);
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
@@ -3410,26 +3464,23 @@ export default function Sidebar() {
                     const threadKey = scopedThreadKey(
                       scopeThreadRef(thread.environmentId, thread.id),
                     );
-                    // Settled and snoozed are the ONLY things that collapse a
-                    // row: every other thread is a full card. Density comes
-                    // from users (or the auto rules) actually parking work,
-                    // not from the sidebar second-guessing what still matters.
-                    const isCard = section === "active" || section === "pinned";
+                    // Every inbox thread uses the compact one-line treatment.
+                    // Secondary metadata remains available in the tooltip so
+                    // the row can prioritize title, provider and time.
+                    const isCard =
+                      !sidebarCompactMode && (section === "active" || section === "pinned");
                     const rowVariant = isCard ? "card" : "slim";
                     return (
                       <SidebarThreadRow
-                        // Keyed per variant on purpose: when a thread settles,
-                        // the card fades out in place and the slim row fades
-                        // in at its settled position instead of one element
-                        // FLIP-sliding through every row in between (rows here
-                        // are translucent, so a crossing row reads as text
-                        // painted over text).
+                        // Keep the section in the key while lifecycle state
+                        // changes so list transitions do not FLIP-slide a row
+                        // through every neighboring item.
                         key={`${threadKey}:${rowVariant}`}
                         thread={thread}
                         variant={rowVariant}
                         // Snoozed rows wake; settled rows un-settle (explicit
                         // settles clear the override, auto-settled rows get
-                        // pinned active); cards settle.
+                        // pinned active); inbox rows settle.
                         variantAction={
                           section === "snoozed"
                             ? "unsnooze"

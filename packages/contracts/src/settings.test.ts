@@ -71,6 +71,7 @@ describe("ClientSettings sidebar", () => {
   it("defaults to the current sidebar with a three-day auto-settle threshold", () => {
     const settings = decodeClientSettings({});
     expect(settings.legacySidebarEnabled).toBe(false);
+    expect(settings.sidebarCompactMode).toBe(true);
     expect(settings.sidebarAutoSettleAfterDays).toBe(3);
   });
 
@@ -89,6 +90,11 @@ describe("ClientSettings sidebar", () => {
     expect(decodeClientSettingsPatch({ legacySidebarEnabled: true }).legacySidebarEnabled).toBe(
       true,
     );
+  });
+
+  it("supports opting out of compact inbox rows", () => {
+    expect(decodeClientSettings({ sidebarCompactMode: false }).sidebarCompactMode).toBe(false);
+    expect(decodeClientSettingsPatch({ sidebarCompactMode: false }).sidebarCompactMode).toBe(false);
   });
 
   it("allows auto-settle by inactivity to be disabled", () => {
