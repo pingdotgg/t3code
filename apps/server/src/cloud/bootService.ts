@@ -145,10 +145,12 @@ export class BootServicePathHasPercentError extends Schema.TaggedErrorClass<Boot
   { pathLabel: Schema.String },
 ) {
   override get message(): string {
+    // The label carries what to change. Naming T3CODE_HOME here would be wrong
+    // advice for the Node executable, which that variable cannot move.
     return (
       `The path to ${this.pathLabel} contains a percent sign, and the Windows command ` +
-      "shell would rewrite it before the service could start. Move T3 Code to a path " +
-      "without one, or set T3CODE_HOME to such a path, then run this again."
+      "shell would rewrite it before the service could start. Move it to a path without " +
+      "one, then run this again."
     );
   }
 }

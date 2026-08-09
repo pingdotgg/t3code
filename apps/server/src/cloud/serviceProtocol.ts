@@ -24,6 +24,44 @@ export const SERVICE_STOP_REQUEST_FILE = ".service-stop-request";
     servers on one database. */
 export const SERVICE_PID_FILE = ".service-pid";
 
+/**
+ * Windows only. What the pid file records.
+ *
+ * A process id alone is not enough. The file survives a crash or a hard reboot,
+ * and the operating system reuses process ids freely, so an old file can name a
+ * live process that has nothing to do with T3 Code. Believing it would leave the
+ * launcher refusing to start for as long as that stranger runs. Recording when
+ * the machine booted makes any file written before this boot obviously stale.
+ */
+export interface ServiceLauncherPresence {
+  readonly pid: number;
+  readonly bootTimeMs: number;
+}
+
+/** Boot time is derived from uptime, which drifts by a little between reads. */
+export const SAME_BOOT_TOLERANCE_MS = 60_000;
+
+export function encodeServiceLauncherPresence(presence: ServiceLauncherPresence): string {
+  return `${presence.pid} ${presence.bootTimeMs}\n`;
+}
+
+export function decodeServiceLauncherPresence(text: string): ServiceLauncherPresence | undefined {
+  const [rawPid, rawBoot] = text.trim().split(/\s+/);
+  const pid = Number(rawPid);
+  const bootTimeMs = Number(rawBoot);
+  return Number.isInteger(pid) && pid > 0 && Number.isFinite(bootTimeMs)
+    ? { pid, bootTimeMs }
+    : undefined;
+}
+
+/** False when the file predates this boot, whatever process now holds that id. */
+export function serviceLauncherPresenceIsFromThisBoot(
+  presence: ServiceLauncherPresence,
+  currentBootTimeMs: number,
+): boolean {
+  return Math.abs(presence.bootTimeMs - currentBootTimeMs) <= SAME_BOOT_TOLERANCE_MS;
+}
+
 export interface PendingServiceUpdate {
   readonly id: string;
   readonly fromVersion: string;

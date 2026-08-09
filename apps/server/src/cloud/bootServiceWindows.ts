@@ -26,6 +26,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as NodeOS from "node:os";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as BootService from "./bootService.ts";
@@ -39,6 +40,8 @@ import {
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_PID_FILE,
   SERVICE_STATE_FILE,
+  decodeServiceLauncherPresence,
+  serviceLauncherPresenceIsFromThisBoot,
   SERVICE_STOP_REQUEST_FILE,
   parseServiceState,
   serviceStateHasPendingUpdate,
@@ -102,6 +105,11 @@ const processIsAlive = (pid: number): Effect.Effect<boolean> =>
       return (cause as NodeJS.ErrnoException | undefined)?.code === "EPERM";
     }
   });
+
+/** Windows only. Milliseconds since the epoch when this machine last booted. */
+const currentBootTimeMs = DateTime.now.pipe(
+  Effect.map((now) => DateTime.toEpochMillis(now) - NodeOS.uptime() * 1_000),
+);
 
 /** Windows only. PowerShell single-quoted strings escape a quote by doubling it. */
 export function quotePowerShellLiteral(value: string): string {
@@ -425,14 +433,24 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
    * start a second server on the same database.
    */
   const requestStop = Effect.gen(function* () {
-    const recordedPid = yield* fs.readFileString(pidPath).pipe(Effect.option);
-    if (Option.isNone(recordedPid)) return false;
-    const pid = Number.parseInt(recordedPid.value.trim(), 10);
-    if (!Number.isInteger(pid) || pid <= 0 || !(yield* processIsAlive(pid))) {
-      // The launcher died without cleaning up. Nothing to wait for.
+    const recorded = yield* fs.readFileString(pidPath).pipe(Effect.option);
+    if (Option.isNone(recorded)) return false;
+    const presence = decodeServiceLauncherPresence(recorded.value);
+    // Only trust the process id while the record is from this boot. Ids are
+    // recycled across reboots, so an old file can name an unrelated live
+    // process, and waiting on that would never finish.
+    const live =
+      presence !== undefined &&
+      serviceLauncherPresenceIsFromThisBoot(presence, yield* currentBootTimeMs) &&
+      (yield* processIsAlive(presence.pid));
+    if (!live || presence === undefined) {
+      // No launcher is listening. Clear the request too: leaving one behind
+      // would stop the very launcher this install is about to start.
       yield* fs.remove(pidPath, { force: true }).pipe(Effect.ignore);
+      yield* fs.remove(stopRequestPath, { force: true }).pipe(Effect.ignore);
       return false;
     }
+    const pid = presence.pid;
 
     // A launcher is confirmed alive, so a failed write must fail the whole
     // operation. Swallowing it would let the caller carry on and start a second
@@ -517,8 +535,10 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
 
     const percentIn = findPercentInPaths([
       ["the Node executable", plan.nodePath],
-      ["the data directory", plan.launcherPath],
-      ["the log directory", plan.logPath],
+      // Named with the variable that moves it, because the shared message
+      // deliberately gives no relocation advice of its own.
+      ["the T3 Code data directory (T3CODE_HOME)", plan.launcherPath],
+      ["the T3 Code log directory", plan.logPath],
     ]);
     if (percentIn !== undefined) {
       return yield* new BootService.BootServicePathHasPercentError({ pathLabel: percentIn });

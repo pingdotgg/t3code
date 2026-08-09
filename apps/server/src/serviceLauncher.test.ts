@@ -10,6 +10,9 @@ import {
   compareExactServiceVersions,
   decodeServiceState,
   isExactServiceVersion,
+  decodeServiceLauncherPresence,
+  encodeServiceLauncherPresence,
+  serviceLauncherPresenceIsFromThisBoot,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_PID_FILE,
   SERVICE_STOP_MARKER_FILE,
@@ -467,4 +470,25 @@ it.layer(NodeServices.layer)("self-supervising pid ownership", (it) => {
       assert.isFalse(yield* fs.exists(pidPath));
     }).pipe(TestClock.withLive),
   );
+});
+
+it("treats a pid record from an earlier boot as stale, whoever holds that id now", () => {
+  const presence = { pid: process.pid, bootTimeMs: 1_000 };
+
+  assert.isFalse(serviceLauncherPresenceIsFromThisBoot(presence, 9_000_000));
+  assert.isTrue(serviceLauncherPresenceIsFromThisBoot(presence, 1_000));
+  // Boot time comes from uptime, which drifts a little between reads.
+  assert.isTrue(serviceLauncherPresenceIsFromThisBoot(presence, 30_000));
+});
+
+it("round-trips a pid record and rejects a malformed one", () => {
+  const presence = { pid: 4321, bootTimeMs: 1_700_000_000_000 };
+
+  assert.deepEqual(
+    decodeServiceLauncherPresence(encodeServiceLauncherPresence(presence)),
+    presence,
+  );
+  assert.isUndefined(decodeServiceLauncherPresence(""));
+  // The old format carried a bare pid, and believing it would drop the guard.
+  assert.isUndefined(decodeServiceLauncherPresence("4321\n"));
 });

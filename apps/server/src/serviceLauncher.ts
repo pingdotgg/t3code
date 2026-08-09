@@ -7,6 +7,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import type {
@@ -14,6 +15,7 @@ import type {
   ServiceLauncherChildMessage,
   ServiceLauncherContext,
   ServiceLauncherParentMessage,
+  ServiceLauncherPresence,
   ServiceState,
   ServiceUpdateRecord,
 } from "./cloud/serviceProtocol.ts";
@@ -25,6 +27,9 @@ import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_PID_FILE,
+  decodeServiceLauncherPresence,
+  encodeServiceLauncherPresence,
+  serviceLauncherPresenceIsFromThisBoot,
   SERVICE_SELF_SUPERVISE_ENV,
   SERVICE_STATE_FILE,
   SERVICE_STOP_MARKER_FILE,
@@ -60,6 +65,9 @@ const STOP_REQUEST_GRACE_MS = 5_000;
 
 /** Windows only. Set by the generated logon script. systemd never sets it. */
 const isSelfSupervising = (): boolean => process.env[SERVICE_SELF_SUPERVISE_ENV] === "1";
+
+/** Windows only. Milliseconds since the epoch when this machine last booted. */
+const currentBootTimeMs = (): number => Date.now() - NodeOS.uptime() * 1_000;
 
 /**
  * Windows only. Signal 0 asks the kernel whether a process exists without
@@ -411,12 +419,16 @@ export class Launcher {
    */
   async #claimPidFile(): Promise<boolean> {
     const target = pidFilePath(this.#baseDir);
+    const bootTimeMs = currentBootTimeMs();
     await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true, mode: 0o700 });
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         const handle = await NodeFSP.open(target, "wx", 0o600);
         try {
-          await handle.writeFile(`${process.pid}\n`, "utf8");
+          await handle.writeFile(
+            encodeServiceLauncherPresence({ pid: process.pid, bootTimeMs }),
+            "utf8",
+          );
           await handle.sync();
         } finally {
           await handle.close();
@@ -424,27 +436,34 @@ export class Launcher {
         return true;
       } catch (cause) {
         if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
+        const owner = await this.#readPidFile();
         // A live owner wins, even when it is this very process. Two Launcher
         // instances sharing a process would still be two servers on one
-        // database, so there is nothing to exempt.
-        const owner = await this.#readPidFile();
-        if (owner !== undefined && processIsAlive(owner)) return false;
-        // The recorded owner is gone, so the file is leftover. Clear and retry.
+        // database, so there is nothing to exempt. But only trust the process
+        // id while the file is from this boot: ids are recycled across reboots,
+        // and believing a stranger would keep the service down indefinitely.
+        if (
+          owner !== undefined &&
+          serviceLauncherPresenceIsFromThisBoot(owner, bootTimeMs) &&
+          processIsAlive(owner.pid)
+        ) {
+          return false;
+        }
+        // Leftover, from a dead owner or an earlier boot. Clear it and retry.
         await NodeFSP.rm(target, { force: true });
       }
     }
     return false;
   }
 
-  async #readPidFile(): Promise<number | undefined> {
+  async #readPidFile(): Promise<ServiceLauncherPresence | undefined> {
     const contents = await NodeFSP.readFile(pidFilePath(this.#baseDir), "utf8").catch(() => "");
-    const pid = Number.parseInt(contents.trim(), 10);
-    return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+    return decodeServiceLauncherPresence(contents);
   }
 
   /** Windows only. Only clears the file if this process still owns it. */
   async #releasePidFile(): Promise<void> {
-    if ((await this.#readPidFile()) !== process.pid) return;
+    if ((await this.#readPidFile())?.pid !== process.pid) return;
     await NodeFSP.rm(pidFilePath(this.#baseDir), { force: true }).catch(() => undefined);
   }
 

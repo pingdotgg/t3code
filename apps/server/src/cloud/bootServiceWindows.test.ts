@@ -6,18 +6,21 @@ import {
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
+import * as NodeOS from "node:os";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as BootServiceWindows from "./bootServiceWindows.ts";
 import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
 import {
+  encodeServiceLauncherPresence,
   parseServiceState,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_PID_FILE,
@@ -172,9 +175,14 @@ const makeHarness = Effect.fn("test.make_windows_boot_service_harness")(function
         const action = input.args.at(-1);
         if (command.includes("service-startup")) {
           // Standing in for the logon script: a launcher starts and claims the
-          // pid file, exactly as the real one does before anything else.
+          // pid file, exactly as the real one does before anything else. The
+          // boot stamp matters, since a record from an earlier boot is ignored.
+          const bootTimeMs = DateTime.toEpochMillis(yield* DateTime.now) - NodeOS.uptime() * 1_000;
           yield* fs.makeDirectory(runtimeDir, { recursive: true });
-          yield* fs.writeFileString(pidPath, `${process.pid}\n`);
+          yield* fs.writeFileString(
+            pidPath,
+            encodeServiceLauncherPresence({ pid: process.pid, bootTimeMs }),
+          );
         }
         if (command.includes("service-shortcut")) {
           if (action === "Install") {
@@ -241,6 +249,7 @@ const makeHarness = Effect.fn("test.make_windows_boot_service_harness")(function
   return {
     service,
     fs,
+    stopRequestPath,
     statePath,
     startupScriptPath,
     shortcutPath,
@@ -380,6 +389,36 @@ it.layer(NodeServices.layer)("windows boot service", (it) => {
       // gets the user told which path to move.
       expect(error._tag).toBe("BootServicePathHasPercentError");
       expect(error.message).toContain("percent sign");
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("ignores a pid record left behind by an earlier boot", () =>
+    Effect.gen(function* () {
+      const { service, fs, pidPath } = yield* makeHarness();
+      yield* service.install;
+      // Process ids are recycled across reboots, so a record from a previous
+      // boot can name a live stranger. Trusting it would block every install.
+      yield* fs.writeFileString(
+        pidPath,
+        encodeServiceLauncherPresence({ pid: process.pid, bootTimeMs: 0 }),
+      );
+
+      yield* service.install;
+      expect((yield* service.status).current).toBe(true);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("clears a leftover stop request when no launcher is listening", () =>
+    Effect.gen(function* () {
+      const { service, fs, pidPath, stopRequestPath } = yield* makeHarness();
+      yield* service.install;
+      // A dead launcher leaves both files. Removing only the pid record would
+      // let the request stop the very launcher the next install starts.
+      yield* fs.remove(pidPath, { force: true });
+      yield* fs.writeFileString(stopRequestPath, "");
+
+      yield* service.install;
+      expect(yield* fs.exists(stopRequestPath)).toBe(false);
     }).pipe(TestClock.withLive),
   );
 
