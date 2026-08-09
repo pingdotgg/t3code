@@ -106,6 +106,7 @@ import { buildExpandedImagePreview, type ExpandedImagePreview } from "./Expanded
 import { basenameOfPath } from "../../pierre-icons";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 
 type ComposerCommandMenuPosition = {
   bottom: number;
@@ -2221,10 +2222,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     stashEntryToQueue,
   ]);
 
-  const toggleStashMenu = useCallback(() => {
-    setIsStashMenuOpen((open) => !open);
-  }, []);
-
   // Close the stash menu whenever the trigger-driven command menu opens so
   // the two popovers never stack in the same layer, and when the user
   // resumes typing (the menu is a transient picker, not a panel).
@@ -2856,24 +2853,38 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               isComposerCollapsedMobile && "hidden",
             )}
           >
-            <ComposerStashBadge
-              count={stashQueue.length}
-              pulseKey={stashPulse.key}
-              pulsing={stashPulse.active}
-              menuOpen={isStashMenuOpen}
-              onToggleMenu={toggleStashMenu}
-            />
-
-            {isStashMenuOpen && !composerMenuOpen && !isComposerApprovalState && (
-              <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
+            <Popover
+              open={isStashMenuOpen && !composerMenuOpen && !isComposerApprovalState}
+              onOpenChange={setIsStashMenuOpen}
+            >
+              <PopoverTrigger
+                render={
+                  <ComposerStashBadge
+                    count={stashQueue.length}
+                    pulseKey={stashPulse.key}
+                    pulsing={stashPulse.active}
+                    menuOpen={isStashMenuOpen}
+                  />
+                }
+              />
+              <PopoverPopup
+                anchor={composerMenuAnchor}
+                side="top"
+                align="start"
+                sideOffset={8}
+                initialFocus={false}
+                finalFocus={false}
+                className="w-(--anchor-width) border-0 bg-transparent p-0 shadow-none before:hidden [-webkit-backdrop-filter:none]! [--viewport-inline-padding:0] [backdrop-filter:none]!"
+                viewportClassName="rounded-[20px] !overflow-hidden p-0"
+              >
                 <ComposerStashMenu
                   entries={stashQueue}
                   onRestore={restoreStashEntry}
                   onDelete={deleteStashEntry}
                   onClose={() => setIsStashMenuOpen(false)}
                 />
-              </ComposerCommandMenuLayer>
-            )}
+              </PopoverPopup>
+            </Popover>
 
             {composerMenuOpen && !isComposerApprovalState && (
               <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
