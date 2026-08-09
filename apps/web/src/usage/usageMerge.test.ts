@@ -4,6 +4,7 @@ import {
   type UsageBucket,
   type UsageDay,
   type UsageProviderKind,
+  type UsageSourceStatus,
   type UsageSummary,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -40,6 +41,7 @@ function summary(
     homePath: string;
     volumeId?: string;
     distinctSessions?: number;
+    status?: UsageSourceStatus;
   }[],
   contractVersion: number = USAGE_CONTRACT_VERSION,
 ): UsageSummary {
@@ -57,7 +59,7 @@ function summary(
         resolvedHomePath: source.homePath,
         volumeId: source.volumeId ?? `vol-${source.hostId}`,
       },
-      status: "ok" as const,
+      status: source.status ?? "ok",
       scannedFiles: 1,
       skippedFiles: 0,
       malformedRecords: 0,
@@ -110,6 +112,74 @@ describe("mergeUsage", () => {
     expect(merged.sessions).toBe(1);
     expect(merged.duplicateSources).toHaveLength(1);
     expect(merged.contributingEnvironments).toEqual(["env-a"]);
+  });
+
+  it("prefers complete coverage for a shared source even when its environment sorts later", () => {
+    const shared = {
+      provider: "claude" as const,
+      hostId: "mac",
+      homePath: "/home/theo/.claude",
+    };
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket({ costUsd: 4, records: 2 })],
+            [{ ...shared, status: "partial", distinctSessions: 2 }],
+          ),
+        ),
+        environment(
+          "env-b",
+          summary(
+            [bucket({ costUsd: 10, records: 5 })],
+            [{ ...shared, status: "ok", distinctSessions: 7 }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(10);
+    expect(merged.records).toBe(5);
+    expect(merged.sessions).toBe(7);
+    expect(merged.contributingEnvironments).toEqual(["env-b"]);
+    expect(merged.duplicateSources).toEqual(["env-a: /home/theo/.claude"]);
+  });
+
+  it("prefers partial coverage over failed and missing copies of a shared source", () => {
+    const shared = {
+      provider: "claude" as const,
+      hostId: "mac",
+      homePath: "/home/theo/.claude",
+    };
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary([bucket({ costUsd: 1 })], [{ ...shared, status: "failed", distinctSessions: 1 }]),
+        ),
+        environment(
+          "env-b",
+          summary(
+            [bucket({ costUsd: 2 })],
+            [{ ...shared, status: "missing", distinctSessions: 2 }],
+          ),
+        ),
+        environment(
+          "env-c",
+          summary(
+            [bucket({ costUsd: 6 })],
+            [{ ...shared, status: "partial", distinctSessions: 6 }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(6);
+    expect(merged.sessions).toBe(6);
+    expect(merged.contributingEnvironments).toEqual(["env-c"]);
   });
 
   it("drops only the duplicated provider, keeping the environment's other one", () => {
