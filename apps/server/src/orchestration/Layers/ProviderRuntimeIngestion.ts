@@ -1532,8 +1532,14 @@ const make = Effect.gen(function* () {
             if (activeTurnId !== null && eventTurnId !== undefined) {
               return sameId(activeTurnId, eventTurnId);
             }
-            // If no active turn is tracked, accept completion scoped to this thread.
-            return true;
+            // No active turn tracked: accept only completions that name their
+            // turn (covers a real completion whose turn.started was lost). An
+            // untargeted completion cannot prove it belongs to any turn this
+            // thread ran — the known emitter was the Claude resume handshake
+            // (system/init + result(num_turns: 0)), which is not a turn at
+            // all — and applying it here stomps the "starting" lifecycle
+            // state while a turn start is pending.
+            return eventTurnId !== undefined;
           default:
             return true;
         }
