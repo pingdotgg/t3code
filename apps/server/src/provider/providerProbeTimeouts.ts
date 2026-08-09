@@ -1,6 +1,7 @@
 import * as NodeFs from "node:fs";
 import * as NodeOs from "node:os";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import {
   HostProcessEnvironment,
   HostProcessWorkingDirectory,
@@ -133,9 +134,14 @@ export const resolveProviderProbeCwd = Effect.fn("resolveProviderProbeCwd")(func
   environment?: NodeJS.ProcessEnv,
 ) {
   const env = environment ?? (yield* HostProcessEnvironment);
-  const workingDirectory = yield* HostProcessWorkingDirectory.pipe(
-    Effect.map((cwd) => (cwd.trim().length > 0 ? cwd : undefined)),
-    Effect.catch(() => Effect.succeed(undefined as string | undefined)),
+  // HostProcessWorkingDirectory is typed as infallible, but its defaultValue
+  // calls process.cwd() which can throw a defect when cwd is gone. Use Exit so
+  // defects fall through to home/tmpdir instead of failing the probe.
+  const workingDirectoryExit = yield* Effect.exit(
+    Effect.map(HostProcessWorkingDirectory, (cwd) => (cwd.trim().length > 0 ? cwd : undefined)),
   );
+  const workingDirectory = Exit.isSuccess(workingDirectoryExit)
+    ? workingDirectoryExit.value
+    : undefined;
   return resolveProviderProbeCwdSync(preferred, env, workingDirectory);
 });
