@@ -3927,61 +3927,96 @@ function ChatViewContent(props: ChatViewProps) {
     timelineRealContentOverflowsViewport,
   ]);
 
-  const onTimelineAnchorReady = useCallback((messageId: MessageId, anchorIndex: number) => {
-    // Anchored-end space can be remeasured when the turn completes. Once the
-    // user has scrolled away (or returned to ordinary end-following), that
-    // remeasurement must not restart the send-time anchor positioning.
-    const isEntryAnchor = pendingEntryResponseAnchorMessageIdRef.current === messageId;
-    const isSendAnchor =
-      timelineScrollModeRef.current === "anchoring-new-turn" &&
-      (pendingTimelineAnchorRef.current === messageId ||
-        positionedTimelineAnchorRef.current === messageId);
-    if (!isSendAnchor && !isEntryAnchor) {
-      return;
-    }
-    if (isEntryAnchor && !isSendAnchor) {
-      timelineScrollModeRef.current = "anchoring-entry";
-      preserveInitialResponsePositionRef.current = true;
-      liveFollowUserScrollGenerationRef.current = null;
-    }
-    if (pendingTimelineAnchorRef.current === messageId) {
-      pendingTimelineAnchorRef.current = null;
-    }
-    activeTimelineAnchorIndexRef.current = anchorIndex;
-    if (positionedTimelineAnchorRef.current === messageId) {
-      return;
-    }
-    positionedTimelineAnchorRef.current = messageId;
-    settledTimelineAnchorRef.current = null;
-    const positionAnchor = (remainingAttempts: number) => {
-      requestAnimationFrame(() => {
-        if (positionedTimelineAnchorRef.current !== messageId) {
-          return;
-        }
-        const list = legendListRef.current;
-        if (!list) {
-          if (remainingAttempts > 0) {
-            positionAnchor(remainingAttempts - 1);
-          }
-          return;
-        }
-        void list
-          .scrollToIndex({
-            index: anchorIndex,
-            animated: true,
-            viewPosition: 0,
-            viewOffset: CHAT_LIST_ANCHOR_OFFSET,
-          })
-          .then(() => {
-            if (positionedTimelineAnchorRef.current !== messageId) {
-              return;
-            }
-            settledTimelineAnchorRef.current = messageId;
-          });
+  const resumeTimelineEndFollow = useCallback(() => {
+    isAtEndRef.current = true;
+    pendingTimelineManualScrollRef.current = null;
+    timelineScrollPositionByThreadKey.set(routeThreadKey, { kind: "follow-end" });
+    preserveInitialResponsePositionRef.current = false;
+    pendingEntryResponseAnchorMessageIdRef.current = null;
+    if (timelineEntryScrollMode.kind === "anchor-response") {
+      setManuallyNavigatedTimelineEntry({
+        threadKey: routeThreadKey,
+        turnId: timelineEntryScrollMode.turnId,
       });
-    };
-    requestAnimationFrame(() => positionAnchor(12));
-  }, []);
+    }
+    timelineScrollModeRef.current = "following-end";
+    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+    setTimelineLiveFollowEnabled(true);
+    showScrollDebouncer.current.cancel();
+    setShowScrollToBottom(false);
+  }, [routeThreadKey, timelineEntryScrollMode]);
+
+  const onTimelineAnchorReady = useCallback(
+    (messageId: MessageId, anchorIndex: number) => {
+      // Anchored-end space can be remeasured when the turn completes. Once the
+      // user has scrolled away (or returned to ordinary end-following), that
+      // remeasurement must not restart the send-time anchor positioning.
+      const isEntryAnchor = pendingEntryResponseAnchorMessageIdRef.current === messageId;
+      const isSendAnchor =
+        timelineScrollModeRef.current === "anchoring-new-turn" &&
+        (pendingTimelineAnchorRef.current === messageId ||
+          positionedTimelineAnchorRef.current === messageId);
+      if (!isSendAnchor && !isEntryAnchor) {
+        return;
+      }
+      if (isEntryAnchor && !isSendAnchor) {
+        timelineScrollModeRef.current = "anchoring-entry";
+        preserveInitialResponsePositionRef.current = true;
+        liveFollowUserScrollGenerationRef.current = null;
+      }
+      if (pendingTimelineAnchorRef.current === messageId) {
+        pendingTimelineAnchorRef.current = null;
+      }
+      activeTimelineAnchorIndexRef.current = anchorIndex;
+      if (positionedTimelineAnchorRef.current === messageId) {
+        return;
+      }
+      positionedTimelineAnchorRef.current = messageId;
+      settledTimelineAnchorRef.current = null;
+      const positionAnchor = (remainingAttempts: number) => {
+        requestAnimationFrame(() => {
+          if (positionedTimelineAnchorRef.current !== messageId) {
+            return;
+          }
+          const list = legendListRef.current;
+          if (!list) {
+            if (remainingAttempts > 0) {
+              positionAnchor(remainingAttempts - 1);
+            }
+            return;
+          }
+          void list
+            .scrollToIndex({
+              index: anchorIndex,
+              animated: true,
+              viewPosition: 0,
+              viewOffset: CHAT_LIST_ANCHOR_OFFSET,
+            })
+            .then(() => {
+              if (positionedTimelineAnchorRef.current !== messageId) {
+                return;
+              }
+              settledTimelineAnchorRef.current = messageId;
+              if (isEntryAnchor) {
+                const settledIsAtEnd = resolveTimelineIsAtEnd(
+                  list.getState(),
+                  composerOverlayHeight,
+                );
+                if (settledIsAtEnd === true) {
+                  resumeTimelineEndFollow();
+                } else if (settledIsAtEnd === false) {
+                  isAtEndRef.current = false;
+                  timelineScrollModeRef.current = "free-scrolling";
+                  showScrollDebouncer.current.maybeExecute();
+                }
+              }
+            });
+        });
+      };
+      requestAnimationFrame(() => positionAnchor(12));
+    },
+    [composerOverlayHeight, resumeTimelineEndFollow],
+  );
 
   const onIsAtEndChange = useCallback(
     (isAtEnd: boolean) => {
@@ -3993,33 +4028,27 @@ function ChatViewContent(props: ChatViewProps) {
         setShowScrollToBottom(false);
         return;
       }
+      const pendingEntryAnchorMessageId = pendingEntryResponseAnchorMessageIdRef.current;
+      if (
+        preserveInitialResponsePositionRef.current &&
+        pendingEntryAnchorMessageId !== null &&
+        settledTimelineAnchorRef.current !== pendingEntryAnchorMessageId
+      ) {
+        showScrollDebouncer.current.cancel();
+        setShowScrollToBottom(false);
+        return;
+      }
       if (isAtEndRef.current === isAtEnd) return;
       isAtEndRef.current = isAtEnd;
       if (isAtEnd) {
-        pendingTimelineManualScrollRef.current = null;
-        timelineScrollPositionByThreadKey.set(routeThreadKey, { kind: "follow-end" });
-        if (preserveInitialResponsePositionRef.current) {
-          preserveInitialResponsePositionRef.current = false;
-          pendingEntryResponseAnchorMessageIdRef.current = null;
-          if (timelineEntryScrollMode.kind === "anchor-response") {
-            setManuallyNavigatedTimelineEntry({
-              threadKey: routeThreadKey,
-              turnId: timelineEntryScrollMode.turnId,
-            });
-          }
-        }
-        timelineScrollModeRef.current = "following-end";
-        liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-        setTimelineLiveFollowEnabled(true);
-        showScrollDebouncer.current.cancel();
-        setShowScrollToBottom(false);
+        resumeTimelineEndFollow();
       } else {
         timelineScrollModeRef.current = "free-scrolling";
         liveFollowUserScrollGenerationRef.current = null;
         showScrollDebouncer.current.maybeExecute();
       }
     },
-    [routeThreadKey, timelineEntryScrollMode],
+    [resumeTimelineEndFollow],
   );
 
   const onTimelineScrollOffsetChange = useCallback(
