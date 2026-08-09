@@ -86,6 +86,7 @@ import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
+import { isPrivateLinkHost } from "../../lib/privateLinkHost";
 import {
   hasNativeSelectableMarkdownText,
   SelectableMarkdownText,
@@ -596,7 +597,11 @@ const MarkdownExternalLink = memo(function MarkdownExternalLink(props: {
   readonly href: string;
   readonly onPress: (href: string) => void;
 }) {
-  const [failed, setFailed] = useState(() => failedMarkdownFaviconHosts.has(props.host));
+  // A favicon service cannot resolve a private host. Skip the request so the
+  // host name stays inside the network.
+  const [failed, setFailed] = useState(
+    () => isPrivateLinkHost(props.host) || failedMarkdownFaviconHosts.has(props.host),
+  );
 
   return (
     <NativeText
