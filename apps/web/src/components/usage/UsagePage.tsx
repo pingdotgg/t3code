@@ -71,7 +71,7 @@ export function UsagePage() {
                   type="button"
                   onClick={() => setWindowDays(option.days)}
                   className={cn(
-                    "px-3 py-1.5 text-xs",
+                    "cursor-pointer px-3 py-1.5 text-xs",
                     option.days === windowDays
                       ? "bg-muted text-foreground"
                       : "text-muted-foreground hover:text-foreground",
@@ -85,7 +85,7 @@ export function UsagePage() {
               type="button"
               onClick={refresh}
               aria-label="Refresh usage"
-              className="rounded-md border border-border p-2 text-muted-foreground hover:text-foreground"
+              className="cursor-pointer rounded-md border border-border p-2 text-muted-foreground hover:text-foreground"
             >
               <RefreshCwIcon className="size-3.5" />
             </button>
@@ -173,7 +173,7 @@ export function UsagePage() {
                           type="button"
                           onClick={() => setMetric(option)}
                           className={cn(
-                            "px-2.5 py-1 text-[10px] tracking-wide uppercase",
+                            "cursor-pointer px-2.5 py-1 text-[10px] tracking-wide uppercase",
                             option === metric
                               ? "bg-muted text-foreground"
                               : "text-muted-foreground hover:text-foreground",
@@ -233,7 +233,7 @@ export function UsagePage() {
                         type="button"
                         onClick={() => setBreakdown(option)}
                         className={cn(
-                          "px-2.5 py-1 text-[10px] tracking-wide uppercase",
+                          "cursor-pointer px-2.5 py-1 text-[10px] tracking-wide uppercase",
                           option === breakdown
                             ? "bg-muted text-foreground"
                             : "text-muted-foreground hover:text-foreground",

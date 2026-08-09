@@ -103,7 +103,7 @@ function StatBlock({
               render={
                 <button
                   type="button"
-                  className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/60 hover:text-foreground"
+                  className="cursor-pointer inline-flex size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/60 hover:text-foreground"
                   aria-label={`${label} details`}
                 >
                   <InfoIcon className="size-3" />
@@ -187,7 +187,7 @@ function ExpandableText({
       {canExpand ? (
         <button
           type="button"
-          className="mt-1 text-[11px] font-medium text-foreground/70 underline-offset-2 hover:text-foreground hover:underline"
+          className="cursor-pointer mt-1 text-[11px] font-medium text-foreground/70 underline-offset-2 hover:text-foreground hover:underline"
           onClick={() => setExpanded((value) => !value)}
         >
           {expanded ? "Show less" : expandLabel}
@@ -274,7 +274,7 @@ function TraceIdCell({ traceId }: { traceId: string }) {
           render={
             <button
               type="button"
-              className="inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="cursor-pointer inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
               aria-label={copied ? "Copied trace ID" : "Copy trace ID"}
               onClick={() => copyToClipboard(traceId)}
             >
@@ -323,7 +323,7 @@ function ProcessNameCell({
       {hasChildren ? (
         <button
           type="button"
-          className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="cursor-pointer inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
           aria-label={isExpanded ? `Collapse ${name}` : `Expand ${name}`}
           onClick={() => onToggle(process.pid)}
         >
@@ -365,7 +365,7 @@ function ProcessSignalActions({
             <button
               type="button"
               disabled={isSignaling}
-              className="text-[11px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:pointer-events-none disabled:opacity-50"
+              className="cursor-pointer text-[11px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:pointer-events-none disabled:opacity-50"
               onClick={() => onSignal(process.pid, "SIGINT")}
             >
               INT
@@ -380,7 +380,7 @@ function ProcessSignalActions({
             <button
               type="button"
               disabled={isSignaling}
-              className="text-[11px] font-medium text-destructive underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
+              className="cursor-pointer text-[11px] font-medium text-destructive underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
               onClick={() => onSignal(process.pid, "SIGKILL")}
             >
               KILL
@@ -640,7 +640,7 @@ function ResourceHistoryWindowSelector({
           key={option.windowMs}
           type="button"
           className={cn(
-            "h-6 rounded-sm px-2 text-[11px] font-medium text-muted-foreground hover:text-foreground",
+            "cursor-pointer h-6 rounded-sm px-2 text-[11px] font-medium text-muted-foreground hover:text-foreground",
             selectedWindowMs === option.windowMs && "bg-muted text-foreground",
           )}
           onClick={() => onSelect(option.windowMs)}

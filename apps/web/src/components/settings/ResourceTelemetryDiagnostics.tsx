@@ -383,7 +383,7 @@ function HistoryWindowSelector({
           key={option.windowMs}
           type="button"
           className={cn(
-            "h-6 rounded-sm px-2 text-[11px] font-medium text-muted-foreground hover:text-foreground",
+            "cursor-pointer h-6 rounded-sm px-2 text-[11px] font-medium text-muted-foreground hover:text-foreground",
             selectedWindowMs === option.windowMs && "bg-muted text-foreground",
           )}
           onClick={() => onSelect(option.windowMs)}
@@ -487,7 +487,7 @@ function ProcessTreeName({
       {hasChildren ? (
         <button
           type="button"
-          className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="cursor-pointer inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
           onClick={() => onToggle(process)}
           aria-label={collapsed ? `Expand ${name}` : `Collapse ${name}`}
         >
@@ -538,7 +538,7 @@ function ProcessActions({
       <button
         type="button"
         disabled={isSignaling}
-        className="text-[10px] font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
+        className="cursor-pointer text-[10px] font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
         onClick={() => onSignal(process, "SIGINT")}
       >
         INT
@@ -546,7 +546,7 @@ function ProcessActions({
       <button
         type="button"
         disabled={isSignaling}
-        className="text-[10px] font-semibold text-destructive hover:underline disabled:opacity-50"
+        className="cursor-pointer text-[10px] font-semibold text-destructive hover:underline disabled:opacity-50"
         onClick={() => onSignal(process, "SIGKILL")}
       >
         KILL
