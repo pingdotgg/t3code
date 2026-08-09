@@ -48,6 +48,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { FadeIn, FadeInUp, type SharedValue } from "react-native-reanimated";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useFontFamily } from "../../lib/useFontFamily";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import {
   hasNativeSelectableMarkdownText,
@@ -271,7 +272,7 @@ const MarkdownExternalLink = memo(function MarkdownExternalLink(props: {
     <NativeText
       className="font-sans"
       onPress={() => {
-        void Linking.openURL(props.href);
+        void tryOpenExternalUrl(props.href, "markdown-link");
       }}
       style={{
         color: props.color,
@@ -601,7 +602,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
             onPress={
               linkHref
                 ? () => {
-                    void Linking.openURL(linkHref);
+                    void tryOpenExternalUrl(linkHref, "markdown-link");
                   }
                 : undefined
             }
@@ -1403,7 +1404,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       }
 
       if (presentation.href) {
-        void Linking.openURL(presentation.href);
+        void tryOpenExternalUrl(presentation.href, "markdown-link");
       }
     },
     [props.environmentId, props.threadId, props.workspaceRoot, navigation],
