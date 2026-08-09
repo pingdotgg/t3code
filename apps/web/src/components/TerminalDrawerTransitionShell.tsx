@@ -19,7 +19,7 @@ export function TerminalDrawerTransitionShell(props: {
       ref={props.frameRef}
       className={cn(
         "terminal-drawer-inline-frame",
-        props.active ? "terminal-drawer-inline-gap relative shrink-0" : "hidden",
+        props.active ? "terminal-drawer-inline-gap relative shrink-0 overflow-clip" : "hidden",
       )}
       style={{ "--terminal-drawer-height": `${props.height}px` } as CSSProperties}
       data-terminal-drawer-active={props.active ? "true" : "false"}

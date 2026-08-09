@@ -30,6 +30,7 @@ describe("TerminalDrawerTransitionShell", () => {
 
     expect(html).toContain("terminal-drawer-inline-gap");
     expect(html).toContain("terminal-drawer-inline-surface");
+    expect(html).toContain("overflow-clip");
     expect(html).toContain("--terminal-drawer-height:320px");
     expect(html).toContain('data-terminal-drawer-open="true"');
   });
