@@ -2042,19 +2042,22 @@ private fun ThreadFeed(
       activeWorkStartedAt = activeWorkStartedAt,
     )
   }
+  val bottomFirstEntries = remember(entries) { entries.asReversed() }
   LaunchedEffect(state, detail.summary.id) {
-    snapshotFlow { state.canScrollForward to isFeedDragged }
-      .collectLatest { (canScrollForward, isDragged) ->
-        if (isDragged) {
-          followBottom = !canScrollForward
-        } else if (!canScrollForward) {
-          followBottom = true
-        }
+    snapshotFlow {
+      Triple(state.firstVisibleItemIndex, state.firstVisibleItemScrollOffset, isFeedDragged)
+    }.collectLatest { (firstIndex, firstOffset, isDragged) ->
+      val atBottom = firstIndex == 0 && firstOffset == 0
+      if (isDragged) {
+        followBottom = atBottom
+      } else if (atBottom) {
+        followBottom = true
       }
+    }
   }
   SideEffect {
     if (entries.isNotEmpty() && followBottom && !isFeedDragged) {
-      state.requestScrollToItem(entries.lastIndex, Int.MAX_VALUE)
+      state.requestScrollToItem(0)
     }
   }
   LazyColumn(
@@ -2066,7 +2069,7 @@ private fun ThreadFeed(
           layoutAnchor[0] = constraints.maxHeight
           layoutAnchor[1] = bottomAnchorKey
           if (entries.isNotEmpty() && followBottom && !isFeedDragged) {
-            state.requestScrollToItem(entries.lastIndex, Int.MAX_VALUE)
+            state.requestScrollToItem(0)
           }
         }
         val placeable = measurable.measure(constraints)
@@ -2074,10 +2077,11 @@ private fun ThreadFeed(
           placeable.placeRelative(0, 0)
         }
       },
+    reverseLayout = true,
     contentPadding = contentPadding,
-    verticalArrangement = Arrangement.spacedBy(10.dp),
+    verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Bottom),
   ) {
-    items(entries, key = ThreadFeedItem::id) { entry ->
+    items(bottomFirstEntries, key = ThreadFeedItem::id) { entry ->
       when (entry) {
         is ThreadFeedItem.Message -> {
           val message = entry.message
