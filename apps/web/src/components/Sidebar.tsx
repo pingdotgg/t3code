@@ -1168,18 +1168,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ) : null}
             </div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-              {/* While working, the current plan step outranks the branch:
-                  it's the one line that says what the thread is doing. */}
-              {status === "working" && thread.planProgress ? (
-                <span className="min-w-0 flex-1 truncate whitespace-nowrap">
-                  {thread.planProgress.step}
-                  {/* Completed count, matching the transcript chip's n/m. */}
-                  <span className="text-icon-muted tabular-nums">
-                    {" "}
-                    {thread.planProgress.completedSteps}/{thread.planProgress.totalSteps}
-                  </span>
-                </span>
-              ) : thread.branch ? (
+              {/* Always the branch. The plan step used to take this slot while
+                  working, but it truncated to a half-sentence and dropped the
+                  branch, so the row lost its most stable identifier. */}
+              {thread.branch ? (
                 <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
               ) : (
                 <span className="flex-1" />
