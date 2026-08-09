@@ -69,6 +69,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
           return yield* checkGrokProviderStatus(
             decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            { HOME: dir },
           );
         }),
       );
@@ -81,14 +82,66 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
     }),
   );
 
-  it.effect("reports an error when ACP model discovery is unavailable", () =>
+  it.effect("does not start ACP discovery when Grok has no usable cached auth", () =>
     Effect.gen(function* () {
       const snapshot = yield* Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-success-" });
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-no-auth-" });
           const grokPath = path.join(dir, "grok");
+          const grokHomePath = path.join(dir, ".grok");
+          const acpMarkerPath = path.join(dir, "acp-started");
+          yield* fs.makeDirectory(grokHomePath);
+          yield* fs.writeFileString(path.join(grokHomePath, "auth.json"), "{}\n");
+          yield* fs.writeFileString(
+            grokPath,
+            [
+              "#!/bin/sh",
+              'if [ "$1" = "--version" ]; then',
+              '  printf "grok-cli 0.0.99\\n"',
+              "  exit 0",
+              "fi",
+              `printf "unexpected ACP startup\\n" > "${acpMarkerPath}"`,
+              "exit 0",
+              "",
+            ].join("\n"),
+          );
+          yield* fs.chmod(grokPath, 0o755);
+
+          const checked = yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            { HOME: dir },
+          );
+          const acpStarted = yield* fs.exists(acpMarkerPath);
+          return { checked, acpStarted };
+        }),
+      );
+
+      expect(snapshot.checked.status).toBe("error");
+      expect(snapshot.checked.installed).toBe(true);
+      expect(snapshot.checked.auth.status).toBe("unauthenticated");
+      expect(snapshot.checked.message).toBe(
+        "Grok CLI is installed but not authenticated. Run `grok login` and try again.",
+      );
+      expect(snapshot.acpStarted).toBe(false);
+    }),
+  );
+
+  it.effect("checks the Windows user profile for cached Grok auth", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-windows-auth-" });
+          const grokPath = path.join(dir, "grok");
+          const grokHomePath = path.join(dir, ".grok");
+          yield* fs.makeDirectory(grokHomePath);
+          yield* fs.writeFileString(
+            path.join(grokHomePath, "auth.json"),
+            '{"refresh_token":"valid-refresh-token-value"}\n',
+          );
           yield* fs.writeFileString(
             grokPath,
             ["#!/bin/sh", 'printf "grok-cli 0.0.99\\n"', "exit 0", ""].join("\n"),
@@ -97,6 +150,39 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
           return yield* checkGrokProviderStatus(
             decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            { USERPROFILE: dir },
+          );
+        }),
+      );
+
+      expect(snapshot.auth.status).toBe("unknown");
+      expect(snapshot.message).toContain("ACP startup failed");
+    }),
+  );
+
+  it.effect("reports an error when ACP model discovery is unavailable", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-success-" });
+          const grokPath = path.join(dir, "grok");
+          const grokHomePath = path.join(dir, ".grok");
+          yield* fs.makeDirectory(grokHomePath);
+          yield* fs.writeFileString(
+            path.join(grokHomePath, "auth.json"),
+            '{"refresh_token":"valid-refresh-token-value"}\n',
+          );
+          yield* fs.writeFileString(
+            grokPath,
+            ["#!/bin/sh", 'printf "grok-cli 0.0.99\\n"', "exit 0", ""].join("\n"),
+          );
+          yield* fs.chmod(grokPath, 0o755);
+
+          return yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            { HOME: dir },
           );
         }),
       );
