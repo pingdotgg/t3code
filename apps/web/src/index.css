@@ -488,11 +488,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   @starting-style {
-    .terminal-drawer-inline-gap[data-terminal-drawer-open="true"] {
+    .terminal-drawer-inline-gap[data-terminal-drawer-open="true"][data-terminal-drawer-animate-enter="true"] {
       height: 0;
     }
 
-    .terminal-drawer-inline-gap[data-terminal-drawer-open="true"] .terminal-drawer-inline-surface {
+    .terminal-drawer-inline-gap[data-terminal-drawer-open="true"][data-terminal-drawer-animate-enter="true"]
+      .terminal-drawer-inline-surface {
       translate: 0 100%;
     }
   }

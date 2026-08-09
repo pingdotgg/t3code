@@ -668,6 +668,12 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   );
   const terminalOpen = active && terminalUiState.terminalOpen;
   const [isResizing, setIsResizing] = useState(false);
+  const terminalDrawerFrameRef = useRef<HTMLDivElement>(null);
+  const wasActiveRef = useRef(active);
+  const animateTerminalEnter = active && wasActiveRef.current;
+  useLayoutEffect(() => {
+    wasActiveRef.current = active;
+  }, [active]);
   const knownTerminalSessions = useKnownTerminalSessions({
     environmentId: threadRef.environmentId,
     threadId,
@@ -812,6 +818,9 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     },
     [storeSetTerminalHeight, threadRef],
   );
+  const previewTerminalHeight = useCallback((height: number) => {
+    terminalDrawerFrameRef.current?.style.setProperty("--terminal-drawer-height", `${height}px`);
+  }, []);
 
   const splitTerminal = useCallback(() => {
     if (!cwd) {
@@ -974,8 +983,10 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     <TerminalDrawerTransitionShell
       active={active}
       open={terminalOpen}
+      animateEnter={animateTerminalEnter}
       height={terminalUiState.terminalHeight}
       resizing={terminalOpen && isResizing}
+      frameRef={terminalDrawerFrameRef}
       onExitComplete={() => onExitComplete(terminalThreadKey)}
     >
       <ThreadTerminalDrawer
@@ -1003,6 +1014,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         onActiveTerminalChange={activateTerminal}
         onCloseTerminal={closeTerminal}
         onHeightChange={setTerminalHeight}
+        onHeightPreviewChange={previewTerminalHeight}
         onResizeStateChange={setIsResizing}
         onAddTerminalContext={handleAddTerminalContext}
         terminalLabelsById={terminalLabelsById}

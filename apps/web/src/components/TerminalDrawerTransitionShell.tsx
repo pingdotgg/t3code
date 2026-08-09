@@ -1,12 +1,14 @@
-import { type CSSProperties, type ReactNode } from "react";
+import { type CSSProperties, type ReactNode, type Ref } from "react";
 
 import { cn } from "~/lib/utils";
 
 export function TerminalDrawerTransitionShell(props: {
   active: boolean;
   open: boolean;
+  animateEnter: boolean;
   height: number;
   resizing: boolean;
+  frameRef?: Ref<HTMLDivElement>;
   onExitComplete: () => void;
   children: ReactNode;
 }) {
@@ -14,6 +16,7 @@ export function TerminalDrawerTransitionShell(props: {
 
   return (
     <div
+      ref={props.frameRef}
       className={cn(
         "terminal-drawer-inline-frame",
         props.active ? "terminal-drawer-inline-gap relative shrink-0" : "hidden",
@@ -21,6 +24,7 @@ export function TerminalDrawerTransitionShell(props: {
       style={{ "--terminal-drawer-height": `${props.height}px` } as CSSProperties}
       data-terminal-drawer-active={props.active ? "true" : "false"}
       data-terminal-drawer-open={interactive ? "true" : "false"}
+      data-terminal-drawer-animate-enter={interactive && props.animateEnter ? "true" : undefined}
       data-terminal-drawer-resizing={interactive && props.resizing ? "true" : undefined}
       aria-hidden={interactive ? undefined : true}
       inert={interactive ? undefined : true}

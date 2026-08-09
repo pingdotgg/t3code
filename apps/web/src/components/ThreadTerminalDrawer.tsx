@@ -888,6 +888,7 @@ interface ThreadTerminalDrawerProps {
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => void;
   onHeightChange: (height: number) => void;
+  onHeightPreviewChange?: (height: number) => void;
   onResizeStateChange?: (resizing: boolean) => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   keybindings: ResolvedKeybindingsConfig;
@@ -950,6 +951,7 @@ export default function ThreadTerminalDrawer({
   onActiveTerminalChange,
   onCloseTerminal,
   onHeightChange,
+  onHeightPreviewChange,
   onResizeStateChange,
   onAddTerminalContext,
   keybindings,
@@ -1206,9 +1208,10 @@ export default function ThreadTerminalDrawer({
       }
       didResizeDuringDragRef.current = true;
       drawerHeightRef.current = clampedHeight;
+      onHeightPreviewChange?.(clampedHeight);
       setDrawerHeight(clampedHeight);
     },
-    [setDrawerHeight],
+    [onHeightPreviewChange, setDrawerHeight],
   );
 
   const handleResizePointerEnd = useCallback(

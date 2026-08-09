@@ -8,12 +8,13 @@ function renderTerminalDrawerShell(
   options?: Partial<
     Pick<
       ComponentProps<typeof TerminalDrawerTransitionShell>,
-      "active" | "height" | "open" | "resizing"
+      "active" | "animateEnter" | "height" | "open" | "resizing"
     >
   >,
 ): string {
   const props: ComponentProps<typeof TerminalDrawerTransitionShell> = {
     active: options?.active ?? true,
+    animateEnter: options?.animateEnter ?? true,
     height: options?.height ?? 320,
     open: options?.open ?? true,
     resizing: options?.resizing ?? false,
@@ -55,5 +56,12 @@ describe("TerminalDrawerTransitionShell", () => {
     expect(html).toContain('data-terminal-drawer-active="false"');
     expect(html).toContain('aria-hidden="true"');
     expect(html).toContain("Terminal content");
+  });
+
+  it("can reveal a retained terminal without replaying its enter animation", () => {
+    const html = renderTerminalDrawerShell({ animateEnter: false });
+
+    expect(html).toContain('data-terminal-drawer-open="true"');
+    expect(html).not.toContain("data-terminal-drawer-animate-enter");
   });
 });
