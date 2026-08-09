@@ -864,6 +864,7 @@ export function workEntryIconName(workEntry: WorkLogEntry): WorkEntryIconName {
  */
 const TOOL_INPUT_STRING_MAX_LENGTH = 400;
 const TOOL_INPUT_ARRAY_MAX_ITEMS = 20;
+const TOOL_INPUT_OBJECT_MAX_ENTRIES = 20;
 const TOOL_INPUT_MAX_DEPTH = 4;
 
 function boundToolInputValue(value: unknown, depth: number): unknown {
@@ -887,12 +888,15 @@ function boundToolInputValue(value: unknown, depth: number): unknown {
     if (depth >= TOOL_INPUT_MAX_DEPTH) {
       return "…";
     }
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
-        key,
-        boundToolInputValue(item, depth + 1),
-      ]),
-    );
+    const entries = Object.entries(value as Record<string, unknown>);
+    const kept: Array<[string, unknown]> = entries
+      .slice(0, TOOL_INPUT_OBJECT_MAX_ENTRIES)
+      .map(([key, item]) => [key, boundToolInputValue(item, depth + 1)]);
+    const overflow = entries.length - TOOL_INPUT_OBJECT_MAX_ENTRIES;
+    if (overflow > 0) {
+      kept.push(["…", `(+${overflow} more entries)`]);
+    }
+    return Object.fromEntries(kept);
   }
   return value;
 }

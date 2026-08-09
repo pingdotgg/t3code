@@ -1785,6 +1785,21 @@ describe("work entry row chrome", () => {
     expect(body!.length).toBeLessThan(1000);
   });
 
+  it("bounds a tool input dictionary with many keys", () => {
+    const metadata = Object.fromEntries(
+      Array.from({ length: 500 }, (_, index) => [`file-${index}.ts`, `sha-${index}`]),
+    );
+    const body = buildToolCallExpandedBody(
+      makeWorkEntry({ toolName: "Catalog", toolInput: metadata }),
+      WORKSPACE_ROOT,
+    );
+
+    expect(body).toContain("file-19.ts");
+    expect(body).not.toContain("file-20.ts");
+    expect(body).toContain("(+480 more entries)");
+    expect(body!.length).toBeLessThan(1500);
+  });
+
   it("bounds long arrays and deep nesting in tool input", () => {
     const body = buildToolCallExpandedBody(
       makeWorkEntry({
