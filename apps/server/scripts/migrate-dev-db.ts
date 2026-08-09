@@ -464,6 +464,9 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     );
 
     yield* Console.log(`Compacting into ${databasePath}...`);
+    // Re-check right before the swap: a dev server started while the
+    // snapshot was migrating and pruning must not lose its database.
+    yield* ensureNotInUse(databasePath);
     yield* removeDatabaseFiles(databasePath);
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
