@@ -1080,7 +1080,9 @@ describe("composerDraftStore project draft thread mapping", () => {
       envMode: "worktree",
       worktreePath: null,
     });
-    expect(useComposerDraftStore.getState().getDraftThreadByRef(threadRef)).toMatchObject({
+    const worktreeDraft = useComposerDraftStore.getState().getDraftThread(draftId);
+    expect(useComposerDraftStore.getState().getDraftThreadByRef(threadRef)).toBe(worktreeDraft);
+    expect(worktreeDraft).toMatchObject({
       envMode: "worktree",
       worktreePath: null,
     });
@@ -1089,7 +1091,9 @@ describe("composerDraftStore project draft thread mapping", () => {
       envMode: "local",
       worktreePath: null,
     });
-    expect(useComposerDraftStore.getState().getDraftThreadByRef(threadRef)).toMatchObject({
+    const localDraft = useComposerDraftStore.getState().getDraftThread(draftId);
+    expect(useComposerDraftStore.getState().getDraftThreadByRef(threadRef)).toBe(localDraft);
+    expect(localDraft).toMatchObject({
       envMode: "local",
       worktreePath: null,
     });
