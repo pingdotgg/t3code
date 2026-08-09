@@ -134,13 +134,10 @@ export const resolveProviderProbeCwd = Effect.fn("resolveProviderProbeCwd")(func
 ) {
   const env = environment ?? (yield* HostProcessEnvironment);
   // HostProcessWorkingDirectory is typed as infallible, but its defaultValue
-  // calls process.cwd() which can throw a defect when cwd is gone. Use Exit so
-  // defects fall through to home/tmpdir instead of failing the probe.
-  const workingDirectoryExit = yield* Effect.exit(
-    Effect.map(HostProcessWorkingDirectory, (cwd) => (cwd.trim().length > 0 ? cwd : undefined)),
-  );
-  const workingDirectory = Exit.isSuccess(workingDirectoryExit)
-    ? workingDirectoryExit.value
-    : undefined;
+  // calls process.cwd() which can throw a defect when cwd is gone. Catch only
+  // defects (not fiber interrupts) so cancelled probes still stop promptly.
+  const workingDirectory = yield* Effect.map(HostProcessWorkingDirectory, (cwd) =>
+    cwd.trim().length > 0 ? cwd : undefined,
+  ).pipe(Effect.catchDefect(() => Effect.succeed(undefined as string | undefined)));
   return resolveProviderProbeCwdSync(preferred, env, workingDirectory);
 });
