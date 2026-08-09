@@ -63,7 +63,7 @@ export function PreviewPanelShell(props: {
           maximized
             ? open
               ? "flex-1"
-              : "right-panel-inline-maximized-exit absolute inset-0 z-10"
+              : "right-panel-inline-maximized-exit absolute inset-0 z-40"
             : "right-panel-inline-gap shrink-0",
         )}
         style={maximized ? undefined : ({ "--right-panel-width": `${width}px` } as CSSProperties)}

@@ -66,6 +66,8 @@ describe("PreviewPanelShell", () => {
     const html = renderPreviewPanelShell("inline", { open: false, maximized: true });
 
     expect(html).toContain("right-panel-inline-maximized-exit");
+    expect(html).toContain("z-40");
+    expect(html).not.toContain("z-10");
     expect(html).toContain("right-panel-inline-surface");
     expect(html).toContain('data-preview-panel-maximized="true"');
     expect(html).toContain('data-right-panel-open="false"');
