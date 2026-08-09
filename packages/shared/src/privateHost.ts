@@ -1,3 +1,13 @@
+/**
+ * Private host detection, for code that sends a host name to a third party.
+ *
+ * A public favicon service cannot resolve a private host, so a request for one
+ * always fails. The request also tells that service the private host name.
+ *
+ * This module holds no runtime dependency, so web, mobile and desktop can all
+ * import it.
+ */
+
 const PRIVATE_HOST_SUFFIXES = [".local", ".internal", ".home.arpa", ".ts.net"];
 
 function isPrivateIpv4(host: string): boolean {
@@ -36,12 +46,12 @@ function isPrivateIpv6(host: string): boolean {
 }
 
 /**
- * True when a link host belongs to a private network.
+ * True when a host belongs to a private network.
  *
- * A favicon service cannot resolve such a host, so a request for it always
- * fails. The request also tells that service the private host name.
+ * An empty host counts as private, so a caller that cannot read a host never
+ * sends it to a third party.
  */
-export function isPrivateLinkHost(host: string): boolean {
+export function isPrivateHost(host: string): boolean {
   const normalized = host.trim().toLowerCase();
   if (normalized.length === 0) {
     return true;

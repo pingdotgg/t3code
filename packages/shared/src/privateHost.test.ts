@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isPrivateLinkHost } from "./privateLinkHost";
+import { isPrivateHost } from "./privateHost.ts";
 
-describe("isPrivateLinkHost", () => {
+describe("isPrivateHost", () => {
   it("treats public hosts as public", () => {
     for (const host of [
       "github.com",
@@ -16,7 +16,7 @@ describe("isPrivateLinkHost", () => {
       "192.167.1.1",
       "11.0.0.1",
     ]) {
-      expect(isPrivateLinkHost(host), host).toBe(false);
+      expect(isPrivateHost(host), host).toBe(false);
     }
   });
 
@@ -30,16 +30,16 @@ describe("isPrivateLinkHost", () => {
       "172.31.255.255",
       "169.254.1.1",
     ]) {
-      expect(isPrivateLinkHost(host), host).toBe(true);
+      expect(isPrivateHost(host), host).toBe(true);
     }
   });
 
   it("detects the Tailscale 100.64.0.0/10 range", () => {
     for (const host of ["100.64.0.1", "100.100.100.100", "100.126.17.15", "100.127.255.255"]) {
-      expect(isPrivateLinkHost(host), host).toBe(true);
+      expect(isPrivateHost(host), host).toBe(true);
     }
-    expect(isPrivateLinkHost("100.63.255.255")).toBe(false);
-    expect(isPrivateLinkHost("100.128.0.1")).toBe(false);
+    expect(isPrivateHost("100.63.255.255")).toBe(false);
+    expect(isPrivateHost("100.128.0.1")).toBe(false);
   });
 
   it("detects private host names and suffixes", () => {
@@ -52,24 +52,24 @@ describe("isPrivateLinkHost", () => {
       "box.tailnet.ts.net",
       "AIR.TAILE8BEA7.TS.NET",
     ]) {
-      expect(isPrivateLinkHost(host), host).toBe(true);
+      expect(isPrivateHost(host), host).toBe(true);
     }
   });
 
   it("detects private IPv6 addresses", () => {
     for (const host of ["::1", "[::1]", "fd00::1", "fc00::1", "fe80::1", "FD12:3456::1"]) {
-      expect(isPrivateLinkHost(host), host).toBe(true);
+      expect(isPrivateHost(host), host).toBe(true);
     }
-    expect(isPrivateLinkHost("2606:4700:4700::1111")).toBe(false);
+    expect(isPrivateHost("2606:4700:4700::1111")).toBe(false);
   });
 
   it("treats an empty host as private", () => {
-    expect(isPrivateLinkHost("")).toBe(true);
-    expect(isPrivateLinkHost("   ")).toBe(true);
+    expect(isPrivateHost("")).toBe(true);
+    expect(isPrivateHost("   ")).toBe(true);
   });
 
   it("rejects malformed IPv4 text as a public host", () => {
-    expect(isPrivateLinkHost("10.0.0.999")).toBe(false);
-    expect(isPrivateLinkHost("10.0.0")).toBe(false);
+    expect(isPrivateHost("10.0.0.999")).toBe(false);
+    expect(isPrivateHost("10.0.0")).toBe(false);
   });
 });
