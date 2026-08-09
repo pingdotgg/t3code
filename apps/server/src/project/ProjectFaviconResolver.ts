@@ -91,6 +91,7 @@ export class ProjectFaviconResolver extends Context.Service<
      */
     readonly resolvePath: (
       cwd: string,
+      faviconPath?: string,
     ) => Effect.Effect<string | null, ProjectFaviconResolutionError>;
   }
 >()("t3/project/ProjectFaviconResolver") {}
@@ -168,7 +169,7 @@ export const make = Effect.gen(function* () {
 
   const resolvePath: ProjectFaviconResolver["Service"]["resolvePath"] = Effect.fn(
     "ProjectFaviconResolver.resolvePath",
-  )(function* (cwd) {
+  )(function* (cwd, faviconPath) {
     const projectCwd = yield* workspacePaths.normalizeWorkspaceRoot(cwd).pipe(
       Effect.mapError(
         (cause) =>
@@ -179,6 +180,12 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
+    // A saved project override is exact. If the file is gone, return no icon
+    // instead of silently showing a different automatic candidate.
+    if (faviconPath !== undefined) {
+      return yield* findExistingFile(projectCwd, [faviconPath]);
+    }
+
     // A t3.json iconPath takes precedence over the well-known locations.
     const projectFile = yield* projectFileLoader.load(projectCwd);
     if (Option.isSome(projectFile) && projectFile.value.iconPath !== undefined) {

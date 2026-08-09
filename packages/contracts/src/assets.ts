@@ -14,6 +14,7 @@ export const AssetResource = Schema.Union([
   }),
   Schema.TaggedStruct("project-favicon", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    path: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH))),
   }),
 ]);
 export type AssetResource = typeof AssetResource.Type;
@@ -26,6 +27,9 @@ export type AssetCreateUrlInput = typeof AssetCreateUrlInput.Type;
 export const AssetCreateUrlResult = Schema.Struct({
   relativeUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
   expiresAt: Schema.Number,
+  sourcePath: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+  ),
 });
 export type AssetCreateUrlResult = typeof AssetCreateUrlResult.Type;
 

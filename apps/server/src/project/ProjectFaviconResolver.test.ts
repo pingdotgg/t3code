@@ -77,6 +77,32 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
       }),
     );
 
+    it.effect("uses a saved project favicon override", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "brand/custom.svg", "<svg>custom</svg>");
+        yield* writeTextFile(cwd, "favicon.svg", "<svg>automatic</svg>");
+
+        const resolved = yield* resolver.resolvePath(cwd, "brand/custom.svg");
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("brand/custom.svg");
+      }),
+    );
+
+    it.effect("does not fall back when a saved override is missing", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "favicon.svg", "<svg>automatic</svg>");
+
+        const resolved = yield* resolver.resolvePath(cwd, "brand/missing.svg");
+
+        expect(resolved).toBeNull();
+      }),
+    );
+
     it.effect("falls back to well-known files when the t3.json iconPath does not exist", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
