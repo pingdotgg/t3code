@@ -33,6 +33,7 @@ import { scopedProjectKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadSearch } from "../../state/queries";
+import { useAutoSettleCompletedChangeRequests } from "../threads/use-auto-settle-completed-change-requests";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import { environmentServerConfigsAtom } from "../../state/server";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -206,6 +207,7 @@ export function HomeScreen(props: HomeScreenProps) {
   >(() => new Map());
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const threadListV2Enabled = useThreadListV2Enabled();
+  const autoSettleCompletedChangeRequests = useAutoSettleCompletedChangeRequests();
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const listRef = useRef<LegendListRef | null>(null);
@@ -649,6 +651,7 @@ export function HomeScreen(props: HomeScreenProps) {
       searchQuery: props.searchQuery,
       matchedThreadKeys,
       changeRequestStateByKey,
+      autoSettleCompletedChangeRequests,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
       settledLimit: settledVisibleCount,
@@ -659,6 +662,7 @@ export function HomeScreen(props: HomeScreenProps) {
       selectedThreadKey: null,
     });
   }, [
+    autoSettleCompletedChangeRequests,
     changeRequestStateByKey,
     nowMinute,
     snoozeWakeTick,

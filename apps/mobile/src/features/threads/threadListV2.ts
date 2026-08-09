@@ -122,6 +122,18 @@ export function resolveThreadListV2Enabled(input: {
   return input.legacyPreference !== true;
 }
 
+/**
+ * Existing installs had completed-PR auto-settlement before this preference
+ * existed, so an absent or not-yet-loaded value preserves that behavior.
+ */
+export function resolveAutoSettleCompletedChangeRequests(input: {
+  readonly preference: boolean | undefined;
+  readonly preferencesLoaded: boolean;
+}): boolean {
+  if (!input.preferencesLoaded) return true;
+  return input.preference ?? true;
+}
+
 export function resolveThreadListV2Status(
   thread: Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "session">,
 ): ThreadListV2Status {
@@ -307,8 +319,8 @@ export function buildThreadListV2ListItems(input: {
 /**
  * Partitions visible threads into the active card block (creation order) and
  * the settled recency tail, matching the web v2 list. `autoSettleAfterDays`
- * mirrors the web default of 3 — mobile has no client-settings sync yet, so
- * the default is fixed here rather than user-configurable.
+ * mirrors the web default of 3. Completed-change-request auto-settlement is
+ * configurable through a device-local mobile preference.
  */
 export function buildThreadListV2Items(input: {
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
@@ -329,6 +341,7 @@ export function buildThreadListV2Items(input: {
       contract as settlementEnvironmentIds. */
   readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
   readonly autoSettleAfterDays?: number;
+  readonly autoSettleCompletedChangeRequests?: boolean;
   /** Max settled rows to render; the rest are counted, not built. */
   readonly settledLimit?: number;
   /** Injectable for tests; defaults to now. */
@@ -349,6 +362,7 @@ export function buildThreadListV2Items(input: {
   const now = input.now ?? new Date().toISOString();
   const snoozeNow = input.snoozeNow ?? now;
   const autoSettleAfterDays = input.autoSettleAfterDays ?? 3;
+  const autoSettleCompletedChangeRequests = input.autoSettleCompletedChangeRequests !== false;
   const query = input.searchQuery.trim().toLocaleLowerCase();
   const projectKeys = input.projectRefs
     ? new Set(input.projectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`))
@@ -405,7 +419,12 @@ export function buildThreadListV2Items(input: {
     }
     if (
       supportsSettlement &&
-      effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
+      effectiveSettled(thread, {
+        now,
+        autoSettleAfterDays,
+        autoSettleCompletedChangeRequests,
+        changeRequestState,
+      })
     ) {
       settled.push(thread);
     } else {

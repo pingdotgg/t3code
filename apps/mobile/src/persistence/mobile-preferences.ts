@@ -27,6 +27,12 @@ export interface Preferences {
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   /**
+   * Device-local counterpart of the web completed-change-request auto-settle
+   * preference. Mobile has no client-settings sync, so this is stored per
+   * device and defaults on when absent for backward compatibility.
+   */
+  readonly autoSettleCompletedChangeRequests?: boolean;
+  /**
    * Device-local mirror of the web `legacySidebarEnabled` setting. Mobile has
    * no client-settings sync, so the legacy grouped thread list is opted into
    * per device. Deliberately a fresh key (was `threadListV2Enabled`, an
@@ -73,7 +79,7 @@ export class MobilePreferencesStore extends Context.Service<
   }
 >()("@t3tools/mobile/persistence/MobilePreferencesStore") {}
 
-function sanitizePreferences(parsed: Preferences): Preferences {
+export function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
     liveActivitiesEnabled?: boolean;
     baseFontSize?: number;
@@ -85,6 +91,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     collapsedProjectGroups?: readonly string[];
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
+    autoSettleCompletedChangeRequests?: boolean;
     legacyThreadListEnabled?: boolean;
   } = {};
 
@@ -121,6 +128,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     parsed.projectGroupingMode === "separate"
   ) {
     preferences.projectGroupingMode = parsed.projectGroupingMode;
+  }
+  if (typeof parsed.autoSettleCompletedChangeRequests === "boolean") {
+    preferences.autoSettleCompletedChangeRequests = parsed.autoSettleCompletedChangeRequests;
   }
   if (typeof parsed.legacyThreadListEnabled === "boolean") {
     preferences.legacyThreadListEnabled = parsed.legacyThreadListEnabled;

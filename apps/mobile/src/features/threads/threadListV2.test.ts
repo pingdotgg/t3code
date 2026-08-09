@@ -315,6 +315,84 @@ describe("buildThreadListV2Items", () => {
     expect(layout.settledCount).toBe(0);
   });
 
+  it("keeps fresh completed-PR threads active when completed-PR auto-settle is off", () => {
+    const fresh = makeThread({
+      id: ThreadId.make("fresh-completed-pr"),
+      title: "Fresh completed PR",
+      latestUserMessageAt: "2026-06-01T12:00:00.000Z",
+      latestTurn: {
+        turnId: TurnId.make("fresh-completed-pr-turn"),
+        state: "completed",
+        requestedAt: "2026-06-01T12:00:00.000Z",
+        startedAt: "2026-06-01T12:00:00.000Z",
+        completedAt: "2026-06-01T12:10:00.000Z",
+        assistantMessageId: null,
+      },
+    });
+    const layout = buildThreadListV2Items({
+      threads: [fresh],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      autoSettleAfterDays: 3,
+      autoSettleCompletedChangeRequests: false,
+      changeRequestStateByKey: new Map([[`${environmentId}:${fresh.id}`, "merged"]]),
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.variant])).toEqual([
+      ["fresh-completed-pr", "card"],
+    ]);
+    expect(layout.settledCount).toBe(0);
+  });
+
+  it("defaults completed-PR auto-settle on for existing mobile installs", () => {
+    const fresh = makeThread({
+      id: ThreadId.make("default-completed-pr"),
+      title: "Default completed PR",
+    });
+    const layout = buildThreadListV2Items({
+      threads: [fresh],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      changeRequestStateByKey: new Map([[`${environmentId}:${fresh.id}`, "merged"]]),
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.variant])).toEqual([
+      ["default-completed-pr", "slim"],
+    ]);
+  });
+
+  it("keeps inactivity settlement independent when completed-PR auto-settle is off", () => {
+    const stale = makeThread({
+      id: ThreadId.make("stale-completed-pr"),
+      title: "Stale completed PR",
+      latestUserMessageAt: "2026-05-28T12:00:00.000Z",
+      latestTurn: {
+        turnId: TurnId.make("stale-completed-pr-turn"),
+        state: "completed",
+        requestedAt: "2026-05-28T12:00:00.000Z",
+        startedAt: "2026-05-28T12:00:00.000Z",
+        completedAt: "2026-05-28T12:10:00.000Z",
+        assistantMessageId: null,
+      },
+    });
+    const layout = buildThreadListV2Items({
+      threads: [stale],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      autoSettleAfterDays: 3,
+      autoSettleCompletedChangeRequests: false,
+      changeRequestStateByKey: new Map([[`${environmentId}:${stale.id}`, "closed"]]),
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.variant])).toEqual([
+      ["stale-completed-pr", "slim"],
+    ]);
+    expect(layout.settledCount).toBe(1);
+  });
+
   it("snooze hides a pinned thread and wake restores it to the pinned block", () => {
     const snoozedInput = {
       threads: [
