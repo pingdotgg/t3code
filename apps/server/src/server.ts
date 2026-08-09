@@ -448,7 +448,6 @@ export const makeRoutesLayer = Layer.mergeAll(
 ).pipe(
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer),
-  Layer.provide(TurnAdmissionGate.layer),
   Layer.provide(commandReadinessLayer),
   Layer.provide(browserApiCorsLayer),
   Layer.provide(httpCompressionLayer),
@@ -465,6 +464,11 @@ export const makeServerLayer = Layer.unwrap(
     const cloudLinkParked = yield* Deferred.make<void>();
     const routesReady = yield* Deferred.make<void>();
     const launcherLayer = ServiceLauncherClient.layer;
+    const turnAdmissionGate = yield* TurnAdmissionGate.make;
+    const turnAdmissionGateLayer = Layer.succeed(
+      TurnAdmissionGate.TurnAdmissionGate,
+      turnAdmissionGate,
+    );
 
     yield* fixPath();
 
@@ -642,11 +646,17 @@ export const makeServerLayer = Layer.unwrap(
         ],
         { concurrency: "unbounded" },
       ).pipe(Effect.asVoid),
-    }).pipe(Layer.provideMerge(RuntimeDependenciesLive), Layer.provide(launcherLayer));
+    }).pipe(
+      Layer.provideMerge(RuntimeDependenciesLive.pipe(Layer.provide(turnAdmissionGateLayer))),
+      Layer.provide(launcherLayer),
+    );
 
-    const routesLayer = HttpRouter.serve(makeRoutesLayer.pipe(Layer.provide(launcherLayer)), {
-      disableLogger: !config.logWebSocketEvents,
-    }).pipe(Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)));
+    const routesLayer = HttpRouter.serve(
+      makeRoutesLayer.pipe(Layer.provide(turnAdmissionGateLayer), Layer.provide(launcherLayer)),
+      {
+        disableLogger: !config.logWebSocketEvents,
+      },
+    ).pipe(Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)));
     const serverApplicationLayer = Layer.mergeAll(
       routesLayer,
       httpListeningLayer,

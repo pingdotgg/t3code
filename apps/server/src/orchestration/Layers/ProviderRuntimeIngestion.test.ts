@@ -101,6 +101,7 @@ function createProviderServiceHarness() {
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
   const runtimeSessions: ProviderSession[] = [];
   let listSessionsCallCount = 0;
+  const beforeListSessionsCall = new Map<number, () => void>();
 
   const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
   const service: ProviderServiceShape = {
@@ -113,6 +114,11 @@ function createProviderServiceHarness() {
     listSessions: () =>
       Effect.sync(() => {
         listSessionsCallCount += 1;
+        const hook = beforeListSessionsCall.get(listSessionsCallCount);
+        if (hook !== undefined) {
+          beforeListSessionsCall.delete(listSessionsCallCount);
+          hook();
+        }
         return [...runtimeSessions];
       }),
     getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
@@ -176,6 +182,9 @@ function createProviderServiceHarness() {
     setSession,
     clearSession,
     getListSessionsCallCount: () => listSessionsCallCount,
+    beforeListSessionsCall: (callNumber: number, hook: () => void) => {
+      beforeListSessionsCall.set(callNumber, hook);
+    },
   };
 }
 
@@ -412,6 +421,7 @@ describe("ProviderRuntimeIngestion", () => {
       setProviderSession: provider.setSession,
       clearProviderSession: provider.clearSession,
       getListSessionsCallCount: provider.getListSessionsCallCount,
+      beforeListSessionsCall: provider.beforeListSessionsCall,
       recordBackgroundTask: () =>
         backgroundLiveness.recordTaskLiveness({
           threadId: "thread-1",
@@ -588,6 +598,44 @@ describe("ProviderRuntimeIngestion", () => {
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     await Effect.runPromise(Effect.sleep("2500 millis"));
+
+    const thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === asThreadId("thread-1"),
+    );
+    expect(thread?.session?.status).toBe("running");
+    expect(thread?.session?.activeTurnId).toBe(turnId);
+    expect(thread?.latestTurn?.state).toBe("running");
+  });
+
+  it("does not interrupt a provider that appears at the final recovery boundary", async () => {
+    const turnId = asTurnId("turn-provider-final-boundary");
+    const harness = await createHarness({
+      initialSession: { status: "running", activeTurnId: turnId },
+      providerSessionStatus: "running",
+    });
+
+    const firstRecoveryCall = harness.getListSessionsCallCount() + 1;
+    harness.clearProviderSession(asThreadId("thread-1"));
+    harness.beforeListSessionsCall(firstRecoveryCall + 2, () => {
+      harness.setProviderSession({
+        provider: ProviderDriverKind.make("codex"),
+        status: "running",
+        runtimeMode: "approval-required",
+        threadId: asThreadId("thread-1"),
+        activeTurnId: turnId,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+    });
+
+    const deadline = (await Effect.runPromise(Clock.currentTimeMillis)) + 10_000;
+    while (harness.getListSessionsCallCount() < firstRecoveryCall + 2) {
+      if ((await Effect.runPromise(Clock.currentTimeMillis)) >= deadline) {
+        throw new Error("Timed out waiting for the final provider liveness recheck");
+      }
+      await Effect.runPromise(Effect.sleep("10 millis"));
+    }
+    await Effect.runPromise(Effect.sleep("250 millis"));
 
     const thread = (await harness.readModel()).threads.find(
       (entry) => entry.id === asThreadId("thread-1"),

@@ -24,7 +24,7 @@ interface HarnessOptions {
   readonly activeWorkByCheck?: ReadonlyArray<number>;
   readonly activeLatestTurnByCheck?: ReadonlyArray<boolean>;
   readonly requestUpdate?: ServiceLauncherClient.ServiceLauncherClient["Service"]["requestUpdate"];
-  readonly commitUpdateHandoff?: TurnAdmissionGate.TurnAdmissionGateShape["commitUpdateHandoff"];
+  readonly commitUpdateHandoff?: TurnAdmissionGate.TurnAdmissionGate["Service"]["commitUpdateHandoff"];
 }
 
 const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
@@ -118,7 +118,10 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
     ...baseTurnAdmissionGate,
     commitUpdateHandoff:
       options.commitUpdateHandoff ??
-      ((handoff) => Effect.sync(() => order.push("gate")).pipe(Effect.andThen(handoff))),
+      ((handoff) =>
+        Effect.sync(() => order.push("gate")).pipe(
+          Effect.andThen(baseTurnAdmissionGate.commitUpdateHandoff(handoff)),
+        )),
   });
   const selfUpdate = yield* ServerSelfUpdate.make().pipe(
     Effect.provideService(ProcessRunner.ProcessRunner, runner),
@@ -128,7 +131,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
     Effect.provideService(HostProcessExecutablePath, "/usr/bin/node"),
     Effect.provide(ServerConfig.layer({ ...config, mode: options.mode ?? "web" })),
   );
-  return { selfUpdate, order };
+  return { selfUpdate, order, turnAdmissionGate };
 });
 
 it.layer(NodeServices.layer)("server self update", (it) => {
@@ -206,6 +209,34 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         "This T3 Code release does not include the required automatic provider lifecycle recovery. The current server was kept running.",
       );
       expect(order).toEqual(["install", "preflight"]);
+    }),
+  );
+
+  it.effect("keeps turn admission open when launcher handoff fails", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, turnAdmissionGate } = yield* makeHarness({
+        requestUpdate: ({ targetVersion }) =>
+          Effect.fail(
+            new ServiceLauncherClient.ServiceLauncherRejectedError({
+              targetVersion,
+              reason: "launcher refused the candidate",
+            }),
+          ),
+      });
+
+      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
+        "launcher refused the candidate",
+      );
+      expect(
+        yield* turnAdmissionGate.admitTurn(
+          Effect.succeed("admitted"),
+          () =>
+            new ServiceLauncherClient.ServiceLauncherRejectedError({
+              targetVersion: "1.1.0",
+              reason: "turn admission stayed closed",
+            }),
+        ),
+      ).toBe("admitted");
     }),
   );
 

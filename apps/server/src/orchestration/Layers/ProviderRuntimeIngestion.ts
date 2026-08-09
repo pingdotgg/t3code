@@ -19,6 +19,7 @@ import {
   type OrchestrationThreadActivity,
   type OrchestrationThreadShell,
   type ProviderRuntimeEvent,
+  type ProviderSession,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -58,6 +59,18 @@ const RUNTIME_INTERRUPTION_DETAIL =
 const PROVIDER_LIVENESS_SWEEP_INTERVAL = Duration.seconds(5);
 const PROVIDER_LIVENESS_CONFIRMATION_DELAY = Duration.seconds(2);
 const PROVIDER_STARTING_GRACE_PERIOD = Duration.seconds(30);
+
+const isLiveProviderSession = (session: ProviderSession) =>
+  session.status === "connecting" || session.status === "ready" || session.status === "running";
+
+const hasSameRecoveryObservation = (
+  first: OrchestrationThreadShell,
+  second: OrchestrationThreadShell,
+) =>
+  first.session?.status === second.session?.status &&
+  first.session?.activeTurnId === second.session?.activeTurnId &&
+  first.session?.updatedAt === second.session?.updatedAt &&
+  first.backgroundLiveness === second.backgroundLiveness;
 
 // Fallback when the in-memory description cache no longer has the task name
 // (server restart, session-exit sweep, TTL/capacity eviction): earlier
@@ -2064,14 +2077,7 @@ const make = Effect.gen(function* () {
     ]);
     const observedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
     const liveThreadIds = new Set(
-      providerSessions
-        .filter(
-          (session) =>
-            session.status === "connecting" ||
-            session.status === "ready" ||
-            session.status === "running",
-        )
-        .map((session) => session.threadId),
+      providerSessions.filter(isLiveProviderSession).map((session) => session.threadId),
     );
     return snapshot.threads.filter((thread) => {
       const session = thread.session;
@@ -2100,17 +2106,34 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      const updatedAt = DateTime.formatIso(yield* DateTime.now);
-      yield* Effect.forEach(
+      const interruptedThreadIds = yield* Effect.forEach(
         interruptedThreads,
         (thread) =>
           Effect.gen(function* () {
-            const session = thread.session;
-            threadBackgroundLiveness.clearThreadLiveness(thread.id);
-            threadPlanProgress.clearThreadPlanProgress(thread.id);
-            if (session === null) {
-              return;
+            // Both observations can become stale before dispatch. Re-read the
+            // projection and provider inventory at the mutation boundary so a
+            // provider that just connected, or a new turn that just changed
+            // the session, is never overwritten as interrupted.
+            const current = yield* projectionSnapshotQuery.getThreadShellById(thread.id);
+            if (Option.isNone(current) || !hasSameRecoveryObservation(thread, current.value)) {
+              return Option.none<ThreadId>();
             }
+            const providerSessions = yield* providerService.listSessions();
+            if (
+              providerSessions.some(
+                (session) => session.threadId === thread.id && isLiveProviderSession(session),
+              )
+            ) {
+              return Option.none<ThreadId>();
+            }
+
+            const session = current.value.session;
+            if (session === null) {
+              threadBackgroundLiveness.clearThreadLiveness(thread.id);
+              threadPlanProgress.clearThreadPlanProgress(thread.id);
+              return Option.some(thread.id);
+            }
+            const updatedAt = DateTime.formatIso(yield* DateTime.now);
             const commandUuid = yield* crypto.randomUUIDv4;
             yield* orchestrationEngine.dispatch({
               type: "thread.session.set",
@@ -2125,13 +2148,22 @@ const make = Effect.gen(function* () {
               },
               createdAt: updatedAt,
             });
+            threadBackgroundLiveness.clearThreadLiveness(thread.id);
+            threadPlanProgress.clearThreadPlanProgress(thread.id);
+            return Option.some(thread.id);
           }),
         { concurrency: 1 },
       );
+      const actuallyInterruptedThreadIds = interruptedThreadIds
+        .filter(Option.isSome)
+        .map((threadId) => threadId.value);
+      if (actuallyInterruptedThreadIds.length === 0) {
+        return;
+      }
       yield* Effect.logWarning("provider.runtime.reconciled-interrupted-sessions", {
         recovery: commandTag,
-        threadCount: interruptedThreads.length,
-        threadIds: interruptedThreads.map((thread) => thread.id),
+        threadCount: actuallyInterruptedThreadIds.length,
+        threadIds: actuallyInterruptedThreadIds,
       });
     },
   );
@@ -2174,12 +2206,7 @@ const make = Effect.gen(function* () {
     const firstByThreadId = new Map(firstObservation.map((thread) => [thread.id, thread]));
     const confirmedMissing = secondObservation.filter((thread) => {
       const first = firstByThreadId.get(thread.id);
-      return (
-        first?.session?.status === thread.session?.status &&
-        first?.session?.activeTurnId === thread.session?.activeTurnId &&
-        first?.session?.updatedAt === thread.session?.updatedAt &&
-        first?.backgroundLiveness === thread.backgroundLiveness
-      );
+      return first !== undefined && hasSameRecoveryObservation(first, thread);
     });
     yield* interruptMissingActiveSessions(
       confirmedMissing,
