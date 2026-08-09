@@ -2,7 +2,12 @@ import type { UsageProviderKind } from "@t3tools/contracts";
 import { useCallback, useMemo, useRef, useState } from "react";
 
 import type { DailyTotals } from "@t3tools/shared/usageMerge";
-import { formatDayShort, formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
+import {
+  formatCostEstimate,
+  formatDayShort,
+  formatTokens,
+  formatUsd,
+} from "@t3tools/shared/usageFormat";
 import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_MARK, PROVIDER_ORDER } from "./usageProviders";
 
 const VIEW_WIDTH = 960;
@@ -11,6 +16,17 @@ const TICK_COUNT = 4;
 const PLOT_TOP = 8;
 
 export type UsageChartMetric = "tokens" | "cost";
+
+/** Formats a plotted value with the pricing coverage carried by its day column. */
+export function formatChartValue(
+  metric: UsageChartMetric,
+  value: number,
+  unpricedShare: number,
+  hasActivity: boolean,
+): string {
+  if (metric === "cost" && !hasActivity) return "—";
+  return metric === "tokens" ? formatTokens(value) : formatCostEstimate(value, unpricedShare).value;
+}
 
 interface UsageProviderChartProps {
   readonly days: readonly string[];
@@ -23,8 +39,12 @@ export interface DayColumn {
   readonly bands: readonly {
     readonly provider: UsageProviderKind;
     readonly value: number;
+    readonly unpricedShare: number;
+    readonly hasActivity: boolean;
   }[];
   readonly total: number;
+  readonly unpricedShare: number;
+  readonly hasActivity: boolean;
 }
 
 interface Point {
@@ -172,8 +192,15 @@ export function buildDayColumns(
     const bands = PROVIDER_ORDER.map((provider) => ({
       provider,
       value: valueFor(entry, provider, metric),
+      unpricedShare: entry?.byProvider.get(provider)?.unpricedShare ?? 0,
+      hasActivity: entry?.byProvider.has(provider) ?? false,
     }));
-    return { bands, total: bands.reduce((sum, band) => sum + band.value, 0) };
+    return {
+      bands,
+      total: bands.reduce((sum, band) => sum + band.value, 0),
+      unpricedShare: entry?.unpricedShare ?? 0,
+      hasActivity: entry !== undefined,
+    };
   });
 }
 
@@ -336,6 +363,7 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
               <div className="mb-1 text-muted-foreground">{formatDayShort(hoveredDay)}</div>
               {PROVIDER_ORDER.map((provider) => {
                 const Mark = PROVIDER_MARK[provider];
+                const band = hoveredColumn?.bands.find((entry) => entry.provider === provider);
                 return (
                   <div key={provider} className="flex items-center justify-between gap-3">
                     <span className="flex items-center gap-1.5 text-muted-foreground">
@@ -343,8 +371,11 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
                       {PROVIDER_LABEL[provider]}
                     </span>
                     <span className="text-foreground tabular-nums">
-                      {format(
-                        hoveredColumn?.bands.find((band) => band.provider === provider)?.value ?? 0,
+                      {formatChartValue(
+                        metric,
+                        band?.value ?? 0,
+                        band?.unpricedShare ?? 0,
+                        band?.hasActivity ?? false,
                       )}
                     </span>
                   </div>
@@ -353,7 +384,12 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
               <div className="mt-1 flex items-center justify-between gap-3 border-t border-border pt-1">
                 <span className="text-muted-foreground">Total</span>
                 <span className="text-foreground tabular-nums">
-                  {format(hoveredColumn?.total ?? 0)}
+                  {formatChartValue(
+                    metric,
+                    hoveredColumn?.total ?? 0,
+                    hoveredColumn?.unpricedShare ?? 0,
+                    hoveredColumn?.hasActivity ?? false,
+                  )}
                 </span>
               </div>
             </div>

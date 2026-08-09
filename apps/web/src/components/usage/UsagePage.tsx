@@ -5,8 +5,10 @@ import { useMemo, useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
+import type { DailyTotals, ModelTotals, ProviderTotals } from "@t3tools/shared/usageMerge";
 import {
   enumerateDays,
+  formatCostEstimate,
   formatCount,
   formatDayShort,
   formatPercent,
@@ -23,6 +25,11 @@ const WINDOW_OPTIONS = [
   { days: 30, label: "30 days" },
   { days: 90, label: "90 days" },
 ] as const;
+
+export function formatUsageMetricLabel(metric: UsageChartMetric, unpricedShare: number): string {
+  if (metric === "tokens") return "Processed tokens";
+  return unpricedShare > 0 ? "Raw token cost (partial)" : "Raw token cost";
+}
 
 export function UsagePage() {
   const [windowDays, setWindowDays] = useState<number>(30);
@@ -61,6 +68,7 @@ export function UsagePage() {
   const dailyAverage = activeDays === 0 ? 0 : merged.totalTokens / activeDays;
   const observedInput = merged.uncachedInputTokens + merged.cachedInputTokens;
   const cachedShare = observedInput === 0 ? 0 : merged.cachedInputTokens / observedInput;
+  const costEstimate = formatCostEstimate(merged.costUsd, merged.costQuality.unpricedShare);
 
   return (
     <ScrollArea className="h-full">
@@ -137,58 +145,40 @@ export function UsagePage() {
               <div className="flex flex-col gap-5">
                 <div className="flex flex-col gap-1">
                   <span className="text-xs tracking-wide text-muted-foreground uppercase">
-                    {metric === "cost" ? "Raw token cost" : "Processed tokens"}
+                    {formatUsageMetricLabel(metric, merged.costQuality.unpricedShare)}
                   </span>
                   <span className="text-4xl font-semibold text-foreground tabular-nums">
                     {metric === "cost"
-                      ? `${formatUsd(merged.costUsd)}*`
+                      ? costEstimate.value === "—"
+                        ? costEstimate.value
+                        : `${costEstimate.value}*`
                       : formatTokens(merged.totalTokens)}
                   </span>
                   <span className="text-xs text-muted-foreground">
                     {metric === "cost"
-                      ? "* if billed at full API rate"
+                      ? costEstimate.value === "—"
+                        ? costEstimate.detail
+                        : `* ${costEstimate.detail}`
                       : `Input, cache reads and output across ${formatCount(merged.sessions)} sessions.`}
                   </span>
                 </div>
 
-                {orderedProviders.map((provider) => {
-                  const share = metric === "cost" ? provider.costShare : provider.tokenShare;
-                  return (
-                    <div key={provider.provider} className="flex flex-col gap-1.5">
-                      <div className="flex items-baseline justify-between">
-                        <span className="flex items-center gap-2 text-sm text-foreground">
-                          <ProviderMark provider={provider.provider} className="size-4" />
-                          {PROVIDER_LABEL[provider.provider]}
-                        </span>
-                        <span className="text-sm text-foreground tabular-nums">
-                          {metric === "cost"
-                            ? formatUsd(provider.costUsd)
-                            : formatTokens(provider.totalTokens)}
-                        </span>
-                      </div>
-                      <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
-                        <div
-                          className="h-full"
-                          style={{
-                            width: `${(share * 100).toFixed(1)}%`,
-                            backgroundColor: PROVIDER_COLOR[provider.provider],
-                          }}
-                        />
-                      </div>
-                      <span className="text-xs text-muted-foreground">
-                        {metric === "cost"
-                          ? `${formatPercent(share)} of cost · ${formatTokens(provider.totalTokens)} tokens`
-                          : `${formatPercent(share)} of tokens · ${formatUsd(provider.costUsd)}`}
-                      </span>
-                    </div>
-                  );
-                })}
+                <UsageProviderRows
+                  providers={orderedProviders}
+                  metric={metric}
+                  totalUnpricedShare={merged.costQuality.unpricedShare}
+                />
               </div>
 
               <div className="flex flex-col gap-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <h2 className="text-sm font-medium text-foreground">
-                    Daily {metric === "tokens" ? "processed tokens" : "cost"}
+                    Daily{" "}
+                    {metric === "tokens"
+                      ? "processed tokens"
+                      : merged.costQuality.unpricedShare > 0
+                        ? "cost (partial)"
+                        : "cost"}
                   </h2>
                   <div className="flex items-center gap-4">
                     <div className="flex overflow-hidden rounded-md border border-border">
@@ -269,99 +259,201 @@ export function UsagePage() {
                 </div>
               </div>
 
-              {breakdown === "model" ? (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                      <th className="py-2 font-normal">Model</th>
-                      <th className="py-2 text-right font-normal">Cost</th>
-                      <th className="py-2 text-right font-normal">Share</th>
-                      <th className="py-2 text-right font-normal">Tokens</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {merged.models.length === 0 ? (
-                      <tr>
-                        <td colSpan={4} className="py-6 text-center text-muted-foreground">
-                          No activity in this window.
-                        </td>
-                      </tr>
-                    ) : (
-                      merged.models.map((model) => (
-                        <tr
-                          key={`${model.provider}:${model.model}`}
-                          className="border-b border-border/50"
-                        >
-                          <td className="py-2 text-foreground">
-                            <span className="flex items-center gap-2">
-                              <ProviderMark provider={model.provider} className="size-3.5" />
-                              {model.model}
-                            </span>
-                          </td>
-                          <td className="py-2 text-right text-foreground tabular-nums">
-                            {formatUsd(model.costUsd)}
-                          </td>
-                          <td className="py-2 text-right text-muted-foreground tabular-nums">
-                            {formatPercent(model.costShare)}
-                          </td>
-                          <td className="py-2 text-right text-muted-foreground tabular-nums">
-                            {formatTokens(model.totalTokens)}
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                      <th className="py-2 font-normal">Day</th>
-                      {PROVIDER_ORDER.map((provider) => (
-                        <th key={provider} className="py-2 text-right font-normal">
-                          {PROVIDER_LABEL[provider]}
-                        </th>
-                      ))}
-                      <th className="py-2 text-right font-normal">Total</th>
-                      <th className="py-2 text-right font-normal">Tokens</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recentDays.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="py-6 text-center text-muted-foreground">
-                          No activity in this window.
-                        </td>
-                      </tr>
-                    ) : (
-                      recentDays.map((day) => (
-                        <tr key={day.day} className="border-b border-border/50">
-                          <td className="py-2 text-foreground">{formatDayShort(day.day)}</td>
-                          {PROVIDER_ORDER.map((provider) => (
-                            <td
-                              key={provider}
-                              className="py-2 text-right text-muted-foreground tabular-nums"
-                            >
-                              {formatUsd(day.byProvider.get(provider)?.costUsd ?? 0)}
-                            </td>
-                          ))}
-                          <td className="py-2 text-right text-foreground tabular-nums">
-                            {formatUsd(day.costUsd)}
-                          </td>
-                          <td className="py-2 text-right text-muted-foreground tabular-nums">
-                            {formatTokens(day.totalTokens)}
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              )}
+              <UsageBreakdownTable
+                breakdown={breakdown}
+                models={merged.models}
+                recentDays={recentDays}
+                totalUnpricedShare={merged.costQuality.unpricedShare}
+              />
             </section>
           </>
         )}
       </div>
     </ScrollArea>
+  );
+}
+
+/** Provider totals and share bars for the selected chart metric. */
+export function UsageProviderRows({
+  providers,
+  metric,
+  totalUnpricedShare,
+}: {
+  readonly providers: readonly ProviderTotals[];
+  readonly metric: UsageChartMetric;
+  readonly totalUnpricedShare: number;
+}) {
+  return providers.map((provider) => {
+    const share = metric === "cost" ? provider.costShare : provider.tokenShare;
+    const providerCost = formatCostEstimate(provider.costUsd, provider.unpricedShare);
+    const costShareLabel = totalUnpricedShare > 0 ? "priced cost" : "cost";
+    const costShareText =
+      provider.unpricedShare >= 1
+        ? "No priced-cost share"
+        : `${formatPercent(share)} of ${costShareLabel}`;
+    return (
+      <div key={provider.provider} className="flex flex-col gap-1.5">
+        <div className="flex items-baseline justify-between">
+          <span className="flex items-center gap-2 text-sm text-foreground">
+            <ProviderMark provider={provider.provider} className="size-4" />
+            {PROVIDER_LABEL[provider.provider]}
+          </span>
+          <span className="text-sm text-foreground tabular-nums">
+            {metric === "cost" ? providerCost.value : formatTokens(provider.totalTokens)}
+          </span>
+        </div>
+        <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full"
+            style={{
+              width: `${(share * 100).toFixed(1)}%`,
+              backgroundColor: PROVIDER_COLOR[provider.provider],
+            }}
+          />
+        </div>
+        <span className="text-xs text-muted-foreground">
+          {metric === "cost"
+            ? `${costShareText}${provider.unpricedShare > 0 ? ` · ${formatPercent(provider.unpricedShare)} unpriced` : ""} · ${formatTokens(provider.totalTokens)} tokens`
+            : `${formatPercent(share)} of tokens · ${providerCost.value}`}
+        </span>
+      </div>
+    );
+  });
+}
+
+const COST_GUIDANCE_ID = "usage-cost-guidance";
+
+/** Model/day details with a shared, screen-reader-addressable pricing guide. */
+export function UsageBreakdownTable({
+  breakdown,
+  models,
+  recentDays,
+  totalUnpricedShare,
+}: {
+  readonly breakdown: "model" | "day";
+  readonly models: readonly ModelTotals[];
+  readonly recentDays: readonly DailyTotals[];
+  readonly totalUnpricedShare: number;
+}) {
+  const hasUnpriced = totalUnpricedShare > 0;
+  const describedBy = hasUnpriced ? COST_GUIDANCE_ID : undefined;
+
+  return (
+    <>
+      {hasUnpriced ? (
+        <p id={COST_GUIDANCE_ID} className="text-xs text-muted-foreground">
+          Cost guide: ≥ means a lower-bound estimate from matching API rates; — means no matching
+          rate. Token totals remain complete.
+        </p>
+      ) : null}
+
+      {breakdown === "model" ? (
+        <table className="w-full text-sm" aria-describedby={describedBy}>
+          <thead>
+            <tr className="border-b border-border text-left text-xs text-muted-foreground">
+              <th className="py-2 font-normal">Model</th>
+              <th className="py-2 text-right font-normal">Cost</th>
+              <th className="py-2 text-right font-normal">
+                {hasUnpriced ? "Share of priced cost" : "Share"}
+              </th>
+              <th className="py-2 text-right font-normal">Tokens</th>
+            </tr>
+          </thead>
+          <tbody>
+            {models.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="py-6 text-center text-muted-foreground">
+                  No activity in this window.
+                </td>
+              </tr>
+            ) : (
+              models.map((model) => {
+                const modelCost = formatCostEstimate(model.costUsd, model.unpricedShare);
+                return (
+                  <tr
+                    key={`${model.provider}:${model.model}`}
+                    className="border-b border-border/50"
+                  >
+                    <td className="py-2 text-foreground">
+                      <span className="flex items-center gap-2">
+                        <ProviderMark provider={model.provider} className="size-3.5" />
+                        {model.model}
+                      </span>
+                    </td>
+                    <td
+                      className="py-2 text-right text-foreground tabular-nums"
+                      title={modelCost.detail}
+                    >
+                      {modelCost.value}
+                    </td>
+                    <td className="py-2 text-right text-muted-foreground tabular-nums">
+                      {model.unpricedShare >= 1 ? "—" : formatPercent(model.costShare)}
+                    </td>
+                    <td className="py-2 text-right text-muted-foreground tabular-nums">
+                      {formatTokens(model.totalTokens)}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      ) : (
+        <table className="w-full text-sm" aria-describedby={describedBy}>
+          <thead>
+            <tr className="border-b border-border text-left text-xs text-muted-foreground">
+              <th className="py-2 font-normal">Day</th>
+              {PROVIDER_ORDER.map((provider) => (
+                <th key={provider} className="py-2 text-right font-normal">
+                  {PROVIDER_LABEL[provider]}
+                </th>
+              ))}
+              <th className="py-2 text-right font-normal">Total</th>
+              <th className="py-2 text-right font-normal">Tokens</th>
+            </tr>
+          </thead>
+          <tbody>
+            {recentDays.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="py-6 text-center text-muted-foreground">
+                  No activity in this window.
+                </td>
+              </tr>
+            ) : (
+              recentDays.map((day) => (
+                <tr key={day.day} className="border-b border-border/50">
+                  <td className="py-2 text-foreground">{formatDayShort(day.day)}</td>
+                  {PROVIDER_ORDER.map((provider) => {
+                    const providerDay = day.byProvider.get(provider);
+                    return (
+                      <td
+                        key={provider}
+                        className="py-2 text-right text-muted-foreground tabular-nums"
+                      >
+                        {providerDay === undefined ? (
+                          <span title="No activity">—</span>
+                        ) : (
+                          <CostAmount
+                            costUsd={providerDay.costUsd}
+                            unpricedShare={providerDay.unpricedShare}
+                          />
+                        )}
+                      </td>
+                    );
+                  })}
+                  <td className="py-2 text-right text-foreground tabular-nums">
+                    <CostAmount costUsd={day.costUsd} unpricedShare={day.unpricedShare} />
+                  </td>
+                  <td className="py-2 text-right text-muted-foreground tabular-nums">
+                    {formatTokens(day.totalTokens)}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      )}
+    </>
   );
 }
 
@@ -393,6 +485,17 @@ function Metric({
       <span className="text-xs text-muted-foreground">{detail}</span>
     </div>
   );
+}
+
+function CostAmount({
+  costUsd,
+  unpricedShare,
+}: {
+  readonly costUsd: number;
+  readonly unpricedShare: number;
+}) {
+  const estimate = formatCostEstimate(costUsd, unpricedShare);
+  return <span title={estimate.detail}>{estimate.value}</span>;
 }
 
 /**
