@@ -6,12 +6,16 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { Thread, ThreadShell } from "../types";
 import {
+  AgentsClearedAtByThreadSchema,
+  MAX_AGENTS_CLEARED_AT_ENTRIES,
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
+  boundAgentsClearedAtByThread,
   branchMismatchKey,
   buildExpiredTerminalContextToastCopy,
   buildLoadingThreadFromShell,
@@ -715,5 +719,42 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingApproval: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingUserInput: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, threadError: "failed" })).toBe(true);
+  });
+});
+
+const AgentsClearedAtByThreadJson = Schema.fromJsonString(AgentsClearedAtByThreadSchema);
+const encodeAgentsClearedAtByThread = Schema.encodeSync(AgentsClearedAtByThreadJson);
+const decodeAgentsClearedAtByThread = Schema.decodeSync(AgentsClearedAtByThreadJson);
+
+describe("boundAgentsClearedAtByThread", () => {
+  const entries = (count: number, startMinute = 0): Record<string, string> =>
+    Object.fromEntries(
+      Array.from({ length: count }, (_, index) => [
+        `thread-${index}`,
+        `2026-08-01T00:${String(startMinute + index).padStart(2, "0")}:00.000Z`,
+      ]),
+    );
+
+  it("passes an under-cap map through by reference", () => {
+    const under = entries(MAX_AGENTS_CLEARED_AT_ENTRIES);
+    expect(boundAgentsClearedAtByThread(under)).toBe(under);
+  });
+
+  it("keeps the newest cutoffs and drops the oldest past the cap", () => {
+    const over = entries(MAX_AGENTS_CLEARED_AT_ENTRIES + 3);
+    const bounded = boundAgentsClearedAtByThread(over);
+
+    expect(Object.keys(bounded)).toHaveLength(MAX_AGENTS_CLEARED_AT_ENTRIES);
+    expect(bounded["thread-0"]).toBeUndefined();
+    expect(bounded["thread-1"]).toBeUndefined();
+    expect(bounded["thread-2"]).toBeUndefined();
+    expect(bounded[`thread-${MAX_AGENTS_CLEARED_AT_ENTRIES + 2}`]).toBeDefined();
+  });
+
+  it("round-trips through the persisted schema", () => {
+    const value = { "env:thread": "2026-08-01T00:00:00.000Z" };
+    const encoded = encodeAgentsClearedAtByThread(value);
+
+    expect(decodeAgentsClearedAtByThread(encoded)).toEqual(value);
   });
 });

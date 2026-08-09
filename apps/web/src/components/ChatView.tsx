@@ -291,6 +291,10 @@ import {
   getStartedThreadModelChangeBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
+  AGENTS_CLEARED_AT_BY_THREAD_KEY,
+  AgentsClearedAtByThreadSchema,
+  boundAgentsClearedAtByThread,
+  EMPTY_AGENTS_CLEARED_AT_BY_THREAD,
   type LocalDispatchSnapshot,
   PullRequestDialogState,
   cloneComposerImageForRetry,
@@ -1361,6 +1365,11 @@ function ChatViewContent(props: ChatViewProps) {
     {},
     LastInvokedScriptByProjectSchema,
   );
+  const [agentsClearedAtByThreadKey, setAgentsClearedAtByThreadKey] = useLocalStorage(
+    AGENTS_CLEARED_AT_BY_THREAD_KEY,
+    EMPTY_AGENTS_CLEARED_AT_BY_THREAD,
+    AgentsClearedAtByThreadSchema,
+  );
   const legendListRef = useRef<LegendListRef | null>(null);
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
   const [composerOverlayHeight, setComposerOverlayHeight] = useState(0);
@@ -1543,6 +1552,30 @@ function ChatViewContent(props: ChatViewProps) {
     [activeThreadEnvironmentId, activeThreadId],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  const activeAgentsClearedAt =
+    activeThreadKey === null ? null : (agentsClearedAtByThreadKey[activeThreadKey] ?? null);
+  const handleClearInactiveAgents = useCallback(() => {
+    if (activeThreadKey === null) {
+      return;
+    }
+    const clearedAt = new Date().toISOString();
+    setAgentsClearedAtByThreadKey((current) =>
+      boundAgentsClearedAtByThread({ ...current, [activeThreadKey]: clearedAt }),
+    );
+  }, [activeThreadKey, setAgentsClearedAtByThreadKey]);
+  const handleShowAllAgents = useCallback(() => {
+    if (activeThreadKey === null) {
+      return;
+    }
+    setAgentsClearedAtByThreadKey((current) => {
+      if (current[activeThreadKey] === undefined) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[activeThreadKey];
+      return next;
+    });
+  }, [activeThreadKey, setAgentsClearedAtByThreadKey]);
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
     readonly messageId: MessageId | null;
@@ -5986,6 +6019,9 @@ function ChatViewContent(props: ChatViewProps) {
         model={agentPanelModel}
         environmentId={activeThreadRef?.environmentId ?? null}
         threadId={activeThreadRef?.threadId ?? null}
+        clearedAt={activeAgentsClearedAt}
+        onClearInactive={handleClearInactiveAgents}
+        onShowAll={handleShowAllAgents}
       />
     ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
       activeProject &&

@@ -23,11 +23,37 @@ import {
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
+export const AGENTS_CLEARED_AT_BY_THREAD_KEY = "t3code:agents-cleared-at-by-thread";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
+export const MAX_AGENTS_CLEARED_AT_ENTRIES = 200;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
+
+/** thread key -> ISO cutoff for the Agents panel's hidden history. */
+export const AgentsClearedAtByThreadSchema = Schema.Record(Schema.String, Schema.String);
+
+export const EMPTY_AGENTS_CLEARED_AT_BY_THREAD: Record<string, string> = {};
+
+/**
+ * Bounds the persisted cutoff map so a long-lived install cannot grow it
+ * without limit; the oldest cutoffs fall off first (ISO sorts lexically).
+ */
+export function boundAgentsClearedAtByThread(
+  entries: Record<string, string>,
+): Record<string, string> {
+  const pairs = Object.entries(entries);
+  if (pairs.length <= MAX_AGENTS_CLEARED_AT_ENTRIES) {
+    return entries;
+  }
+  return Object.fromEntries(
+    pairs
+      .slice()
+      .sort((a, b) => b[1].localeCompare(a[1]))
+      .slice(0, MAX_AGENTS_CLEARED_AT_ENTRIES),
+  );
+}
 
 export function scheduleEnvironmentReconnectWarning(showWarning: () => void): () => void {
   const timeoutId = globalThis.setTimeout(showWarning, ENVIRONMENT_RECONNECT_WARNING_GRACE_MS);

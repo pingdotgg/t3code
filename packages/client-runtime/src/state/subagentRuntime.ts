@@ -854,6 +854,82 @@ export function deriveAgentPanelModel({
   };
 }
 
+function workflowGroupEntries(group: AgentPanelWorkflowGroup): ReadonlyArray<RuntimeSubagent> {
+  return [
+    group.workflow,
+    ...group.phases.flatMap((phase) => phase.members),
+    ...group.unphasedMembers,
+  ];
+}
+
+/**
+ * Clearable = not actively working. Terminal rows are plainly done, and an
+ * idle row is resting-but-resumable — it piles up in the panel exactly like
+ * terminal history, which is the thing the user wants gone. Only
+ * pending/running/waiting survive a clear.
+ */
+function isClearableSubagent(agent: RuntimeSubagent): boolean {
+  return !isActiveSubagentStatus(agent.status);
+}
+
+function clearedByCutoff(agent: RuntimeSubagent, cutoff: number): boolean {
+  if (!isClearableSubagent(agent)) {
+    return false;
+  }
+  const updatedAt = Date.parse(agent.updatedAt);
+  // An undateable row cannot be shown to postdate the cutoff, and keeping it
+  // would latch the clear affordance on with nothing left to clear.
+  return Number.isNaN(updatedAt) || updatedAt <= cutoff;
+}
+
+export interface ClearedAgentPanelModel {
+  readonly model: AgentPanelModel;
+  /** Rows the cutoff hid, for the "N hidden · Show all" affordance. */
+  readonly hiddenCount: number;
+}
+
+/**
+ * Presentation-only history cutoff. Workflows stay atomic: any still-working
+ * or newer row preserves its entire coordinator/member group.
+ */
+export function applyAgentPanelClearedAt(
+  model: AgentPanelModel,
+  clearedAt: string | null,
+): ClearedAgentPanelModel {
+  if (clearedAt === null) {
+    return { model, hiddenCount: 0 };
+  }
+  const cutoff = Date.parse(clearedAt);
+  if (Number.isNaN(cutoff)) {
+    return { model, hiddenCount: 0 };
+  }
+
+  const groupEntries = model.workflows.map(workflowGroupEntries);
+  const totalCount =
+    groupEntries.reduce((sum, entries) => sum + entries.length, 0) + model.directAgents.length;
+  const visibleAgents = [
+    ...groupEntries.flatMap((entries) =>
+      entries.every((agent) => clearedByCutoff(agent, cutoff)) ? [] : entries,
+    ),
+    ...model.directAgents.filter((agent) => !clearedByCutoff(agent, cutoff)),
+  ];
+  const hiddenCount = totalCount - visibleAgents.length;
+
+  // Nothing hidden: hand back the same reference so the panel skips a re-derive.
+  return {
+    model: hiddenCount === 0 ? model : deriveAgentPanelModel({ agents: visibleAgents }),
+    hiddenCount,
+  };
+}
+
+/** Whether clearing now would hide anything. */
+export function hasClearableAgents(model: AgentPanelModel): boolean {
+  return (
+    model.directAgents.some(isClearableSubagent) ||
+    model.workflows.some((group) => workflowGroupEntries(group).every(isClearableSubagent))
+  );
+}
+
 /**
  * Members ordered by urgency for the capped inline workflow card: running and
  * failed first, then waiting, then most recently updated.
