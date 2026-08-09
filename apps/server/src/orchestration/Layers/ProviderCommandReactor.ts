@@ -9,6 +9,7 @@ import {
   type ProjectId,
   type OrchestrationSession,
   ThreadId,
+  type ThreadTurnStartDelivery,
   TURN_START_DELIVERY_PROTOCOL,
   type ProviderSession,
   type RuntimeMode,
@@ -403,6 +404,7 @@ const make = Effect.gen(function* () {
   const setThreadSession = (input: {
     readonly threadId: ThreadId;
     readonly session: OrchestrationSession;
+    readonly turnStartDelivery?: ThreadTurnStartDelivery;
     readonly createdAt: string;
   }) =>
     serverCommandId("provider-session-set").pipe(
@@ -412,6 +414,9 @@ const make = Effect.gen(function* () {
           commandId,
           threadId: input.threadId,
           session: input.session,
+          ...(input.turnStartDelivery !== undefined
+            ? { turnStartDelivery: input.turnStartDelivery }
+            : {}),
           createdAt: input.createdAt,
         }),
       ),
@@ -494,7 +499,7 @@ const make = Effect.gen(function* () {
     createdAt: string,
     options?: {
       readonly modelSelection?: ModelSelection;
-      readonly pendingTurnStart?: boolean;
+      readonly pendingTurnStart?: ThreadTurnStartDelivery;
     },
   ) {
     const thread = yield* resolveThread(threadId);
@@ -569,19 +574,24 @@ const make = Effect.gen(function* () {
       });
     }
     const preferredProvider: ProviderDriverKind = desiredDriverKind;
-    if (options?.pendingTurnStart === true && thread.session?.status !== "running") {
+    if (options?.pendingTurnStart !== undefined) {
+      const runningSession = thread.session?.status === "running" ? thread.session : null;
       yield* setThreadSession({
         threadId,
-        session: {
-          threadId,
-          status: "starting",
-          providerName: activeSession?.provider ?? preferredProvider,
-          providerInstanceId: activeSession?.providerInstanceId ?? desiredInstanceId,
-          runtimeMode: desiredRuntimeMode,
-          activeTurnId: null,
-          lastError: null,
-          updatedAt: createdAt,
-        },
+        session:
+          runningSession === null
+            ? {
+                threadId,
+                status: "starting",
+                providerName: activeSession?.provider ?? preferredProvider,
+                providerInstanceId: activeSession?.providerInstanceId ?? desiredInstanceId,
+                runtimeMode: desiredRuntimeMode,
+                activeTurnId: null,
+                lastError: null,
+                updatedAt: createdAt,
+              }
+            : { ...runningSession, updatedAt: createdAt },
+        turnStartDelivery: options.pendingTurnStart,
         createdAt,
       });
     }
@@ -656,7 +666,7 @@ const make = Effect.gen(function* () {
           session: {
             threadId,
             status:
-              options?.pendingTurnStart === true && session.status === "ready"
+              options?.pendingTurnStart !== undefined && session.status === "ready"
                 ? "starting"
                 : mapProviderSessionStatusToOrchestrationStatus(session.status),
             providerName: session.provider,
@@ -745,6 +755,8 @@ const make = Effect.gen(function* () {
 
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
+    readonly messageId: MessageId;
+    readonly requestSequence: number;
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
@@ -759,7 +771,10 @@ const make = Effect.gen(function* () {
     }
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
-      pendingTurnStart: true,
+      pendingTurnStart: {
+        messageId: input.messageId,
+        requestSequence: input.requestSequence,
+      },
     });
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
@@ -1089,7 +1104,8 @@ const make = Effect.gen(function* () {
       if (
         Option.isNone(pendingTurnStart) ||
         pendingTurnStart.value.messageId !== event.payload.messageId ||
-        pendingTurnStart.value.requestSequence !== event.sequence
+        pendingTurnStart.value.requestSequence !== event.sequence ||
+        pendingTurnStart.value.deliverySequence !== null
       ) {
         return;
       }
@@ -1156,6 +1172,8 @@ const make = Effect.gen(function* () {
 
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
+      messageId: event.payload.messageId,
+      requestSequence: event.sequence,
       messageText: message.text,
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.modelSelection !== undefined
@@ -1172,10 +1190,11 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    // `buildSendTurnRequestForThread` durably moves a pending non-running
-    // session to `starting` before any provider process or request can begin.
-    // Keep first-turn title/branch generators after that same marker too, so a
-    // restart can never replay auxiliary model or Git side effects either.
+    // `buildSendTurnRequestForThread` durably correlates this exact pending
+    // message with a lifecycle event before any provider process or request can
+    // begin, including steering an already-running session. Keep first-turn
+    // title/branch generators after that same marker too, so a restart can
+    // never replay auxiliary model or Git side effects either.
     const isFirstUserMessageTurn =
       thread.messages.filter((entry) => entry.role === "user").length === 1;
     if (isFirstUserMessageTurn) {
@@ -1488,25 +1507,12 @@ const make = Effect.gen(function* () {
       return;
     }
     const sessionStatus = thread.session?.status;
-    if (sessionStatus === "starting" || sessionStatus === "running") {
-      return;
-    }
-    if (
-      sessionStatus === "error" ||
-      sessionStatus === "stopped" ||
-      sessionStatus === "interrupted"
-    ) {
-      // Re-emit the terminal lifecycle through the domain path so the pending
-      // projection converges even if a prior projector pass was interrupted.
-      yield* settleUnrecoverablePendingTurnStart(
-        pending.threadId,
-        pending.messageId,
-        thread.session?.lastError ?? "The provider turn did not start.",
-      );
-      return;
-    }
+    const sessionMayStillBeLive = sessionStatus === "starting" || sessionStatus === "running";
 
     if (pending.requestSequence === null) {
+      if (sessionMayStillBeLive) {
+        return;
+      }
       yield* settleUnrecoverablePendingTurnStart(
         pending.threadId,
         pending.messageId,
@@ -1526,6 +1532,9 @@ const make = Effect.gen(function* () {
       event.payload.messageId !== pending.messageId ||
       event.payload.deliveryProtocol !== TURN_START_DELIVERY_PROTOCOL
     ) {
+      if (sessionMayStillBeLive) {
+        return;
+      }
       yield* settleUnrecoverablePendingTurnStart(
         pending.threadId,
         pending.messageId,
@@ -1534,11 +1543,24 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    // The delivery protocol proves this exact event would have durably moved
-    // the session to `starting` before any provider call. Seeing it still
-    // pending with a null/ready/idle session therefore proves the side effect
-    // never began and makes replay safe. The shared serial worker and pending
-    // sequence guard make hot-stream/recovery overlap idempotent in-process.
+    if (pending.deliverySequence !== null) {
+      if (sessionMayStillBeLive) {
+        // ProviderRuntimeIngestion owns active-session liveness recovery.
+        return;
+      }
+      yield* settleUnrecoverablePendingTurnStart(
+        pending.threadId,
+        pending.messageId,
+        "This message crossed a server restart after provider delivery began. It was not replayed automatically because doing so could duplicate provider actions. Retry the message if no response appears.",
+      );
+      return;
+    }
+
+    // The exact protocol-marked request has no correlated delivery marker, so
+    // the reactor provably never crossed the pre-provider boundary. Replay is
+    // safe even when this message was steering an older running session. The
+    // shared serial worker, delivery marker, and sequence guard make hot-stream
+    // and recovery overlap idempotent in-process.
     recoveredTurnStartSequences.add(event.sequence);
     yield* worker.enqueue(event);
   });

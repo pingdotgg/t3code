@@ -4,7 +4,7 @@ import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 export const PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL = 1 as const;
 export const PROVIDER_LIFECYCLE_RECOVERY_REQUIRED_REASON =
   "This T3 Code release does not include the required automatic provider lifecycle recovery. The current server was kept running.";
-export const PENDING_TURN_RECOVERY_PROTOCOL = 1 as const;
+export const PENDING_TURN_RECOVERY_PROTOCOL = 2 as const;
 export const PENDING_TURN_RECOVERY_REQUIRED_REASON =
   "This T3 Code release does not include the required durable pending-turn recovery. The current server was kept running.";
 

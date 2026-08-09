@@ -1154,6 +1154,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: event.payload.threadId,
             messageId: event.payload.messageId,
             requestSequence: event.sequence,
+            deliverySequence: null,
             sourceProposedPlanThreadId: event.payload.sourceProposedPlan?.threadId ?? null,
             sourceProposedPlanId: event.payload.sourceProposedPlan?.planId ?? null,
             requestedAt: event.payload.createdAt,
@@ -1162,6 +1163,21 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         }
 
         case "thread.session-set": {
+          const turnStartDelivery = event.payload.turnStartDelivery;
+          if (turnStartDelivery !== undefined) {
+            yield* projectionTurnRepository.markPendingTurnDeliveryStarted({
+              threadId: event.payload.threadId,
+              messageId: turnStartDelivery.messageId,
+              requestSequence: turnStartDelivery.requestSequence,
+              deliverySequence: event.sequence,
+            });
+            if (event.payload.session.status === "running") {
+              // This is a durable pre-delivery marker for a message steering an
+              // already-running session, not a provider turn-start signal. The
+              // provider's later running event owns pending-to-turn promotion.
+              return;
+            }
+          }
           const turnId = event.payload.session.activeTurnId;
           if (turnId === null || event.payload.session.status !== "running") {
             if (

@@ -950,11 +950,22 @@ export const ClientOrchestrationCommand = Schema.Union([
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
+/**
+ * Correlates a durable session lifecycle write with the exact pending user
+ * message whose provider delivery is about to begin.
+ */
+export const ThreadTurnStartDelivery = Schema.Struct({
+  messageId: MessageId,
+  requestSequence: NonNegativeInt,
+});
+export type ThreadTurnStartDelivery = typeof ThreadTurnStartDelivery.Type;
+
 const ThreadSessionSetCommand = Schema.Struct({
   type: Schema.Literal("thread.session.set"),
   commandId: CommandId,
   threadId: ThreadId,
   session: OrchestrationSession,
+  turnStartDelivery: Schema.optional(ThreadTurnStartDelivery),
   createdAt: IsoDateTime,
 });
 
@@ -1231,18 +1242,19 @@ export const ThreadMessageSentPayload = Schema.Struct({
 });
 
 /**
- * Marks turn-start intents emitted by a server that durably records the
- * `starting` lifecycle state before invoking a provider. A reactor may replay
+ * Marks turn-start intents emitted by a server that durably records a
+ * correlated delivery marker before invoking a provider. A reactor may replay
  * only events carrying this protocol after a restart; older events have an
  * ambiguous provider-side delivery boundary and must be failed visibly rather
  * than duplicated.
  */
-export const TURN_START_DELIVERY_PROTOCOL = 1 as const;
+export const TURN_START_DELIVERY_PROTOCOL = 2 as const;
+const PersistedTurnStartDeliveryProtocol = Schema.Literals([1, TURN_START_DELIVERY_PROTOCOL]);
 
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
-  deliveryProtocol: Schema.optional(Schema.Literal(TURN_START_DELIVERY_PROTOCOL)),
+  deliveryProtocol: Schema.optional(PersistedTurnStartDeliveryProtocol),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
@@ -1292,6 +1304,7 @@ export const ThreadSessionStopRequestedPayload = Schema.Struct({
 export const ThreadSessionSetPayload = Schema.Struct({
   threadId: ThreadId,
   session: OrchestrationSession,
+  turnStartDelivery: Schema.optional(ThreadTurnStartDelivery),
 });
 
 export const ThreadProposedPlanUpsertedPayload = Schema.Struct({

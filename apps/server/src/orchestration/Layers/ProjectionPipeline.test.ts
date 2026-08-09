@@ -6,6 +6,7 @@ import {
   MessageId,
   ProjectId,
   ThreadId,
+  TURN_START_DELIVERY_PROTOCOL,
   TurnId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -2537,6 +2538,185 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
             AND state = 'pending'
         `;
         assert.deepEqual(pendingRows, []);
+      }),
+    );
+
+    it.effect(
+      "marks delivery on a running session without assigning the message to its old turn",
+      () =>
+        Effect.gen(function* () {
+          const projectionPipeline = yield* OrchestrationProjectionPipeline;
+          const eventStore = yield* OrchestrationEventStore;
+          const sql = yield* SqlClient.SqlClient;
+          const threadId = ThreadId.make("thread-running-delivery-marker");
+          const messageId = MessageId.make("message-running-delivery-marker");
+          const requestedAt = "2026-02-26T14:10:00.000Z";
+
+          const request = yield* eventStore.append({
+            type: "thread.turn-start-requested",
+            eventId: EventId.make("evt-running-delivery-request"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: requestedAt,
+            commandId: CommandId.make("cmd-running-delivery-request"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-running-delivery-request"),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId,
+              deliveryProtocol: TURN_START_DELIVERY_PROTOCOL,
+              runtimeMode: "approval-required",
+              createdAt: requestedAt,
+            },
+          });
+          const marker = yield* eventStore.append({
+            type: "thread.session-set",
+            eventId: EventId.make("evt-running-delivery-marker"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: requestedAt,
+            commandId: CommandId.make("cmd-running-delivery-marker"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-running-delivery-marker"),
+            metadata: {},
+            payload: {
+              threadId,
+              session: {
+                threadId,
+                status: "running",
+                providerName: "codex",
+                runtimeMode: "approval-required",
+                activeTurnId: TurnId.make("old-running-turn"),
+                lastError: null,
+                updatedAt: requestedAt,
+              },
+              turnStartDelivery: {
+                messageId,
+                requestSequence: request.sequence,
+              },
+            },
+          });
+
+          yield* projectionPipeline.bootstrap;
+
+          const rows = yield* sql<{
+            readonly turnId: string | null;
+            readonly requestSequence: number | null;
+            readonly deliverySequence: number | null;
+          }>`
+          SELECT
+            turn_id AS "turnId",
+            request_sequence AS "requestSequence",
+            delivery_sequence AS "deliverySequence"
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+        `;
+          assert.deepEqual(rows, [
+            {
+              turnId: null,
+              requestSequence: request.sequence,
+              deliverySequence: marker.sequence,
+            },
+          ]);
+        }),
+    );
+
+    it.effect("does not let a stale delivery marker claim a newer pending request", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-stale-delivery-marker");
+        const firstMessageId = MessageId.make("message-stale-delivery-first");
+        const secondMessageId = MessageId.make("message-stale-delivery-second");
+        const requestedAt = "2026-02-26T14:20:00.000Z";
+
+        const firstRequest = yield* eventStore.append({
+          type: "thread.turn-start-requested",
+          eventId: EventId.make("evt-stale-delivery-first-request"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: requestedAt,
+          commandId: CommandId.make("cmd-stale-delivery-first-request"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-stale-delivery-first-request"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId: firstMessageId,
+            deliveryProtocol: TURN_START_DELIVERY_PROTOCOL,
+            runtimeMode: "approval-required",
+            createdAt: requestedAt,
+          },
+        });
+        const secondRequest = yield* eventStore.append({
+          type: "thread.turn-start-requested",
+          eventId: EventId.make("evt-stale-delivery-second-request"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: requestedAt,
+          commandId: CommandId.make("cmd-stale-delivery-second-request"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-stale-delivery-second-request"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId: secondMessageId,
+            deliveryProtocol: TURN_START_DELIVERY_PROTOCOL,
+            runtimeMode: "approval-required",
+            createdAt: requestedAt,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.session-set",
+          eventId: EventId.make("evt-stale-delivery-first-marker"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: requestedAt,
+          commandId: CommandId.make("cmd-stale-delivery-first-marker"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-stale-delivery-first-marker"),
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "starting",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: requestedAt,
+            },
+            turnStartDelivery: {
+              messageId: firstMessageId,
+              requestSequence: firstRequest.sequence,
+            },
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const rows = yield* sql<{
+          readonly messageId: string;
+          readonly requestSequence: number | null;
+          readonly deliverySequence: number | null;
+        }>`
+          SELECT
+            pending_message_id AS "messageId",
+            request_sequence AS "requestSequence",
+            delivery_sequence AS "deliverySequence"
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+        `;
+        assert.deepEqual(rows, [
+          {
+            messageId: secondMessageId,
+            requestSequence: secondRequest.sequence,
+            deliverySequence: null,
+          },
+        ]);
       }),
     );
   },

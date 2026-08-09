@@ -73,6 +73,7 @@ export const ProjectionPendingTurnStart = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   requestSequence: Schema.NullOr(NonNegativeInt),
+  deliverySequence: Schema.NullOr(NonNegativeInt),
   sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
   requestedAt: IsoDateTime,
@@ -94,6 +95,15 @@ export const GetProjectionPendingTurnStartInput = Schema.Struct({
   threadId: ThreadId,
 });
 export type GetProjectionPendingTurnStartInput = typeof GetProjectionPendingTurnStartInput.Type;
+
+export const MarkProjectionPendingTurnDeliveryInput = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  requestSequence: NonNegativeInt,
+  deliverySequence: NonNegativeInt,
+});
+export type MarkProjectionPendingTurnDeliveryInput =
+  typeof MarkProjectionPendingTurnDeliveryInput.Type;
 
 export const DeleteProjectionTurnsByThreadInput = Schema.Struct({
   threadId: ThreadId,
@@ -138,6 +148,14 @@ export interface ProjectionTurnRepositoryShape {
     ReadonlyArray<ProjectionPendingTurnStart>,
     ProjectionRepositoryError
   >;
+
+  /**
+   * Marks the exact current pending request as having crossed the durable
+   * pre-provider delivery boundary. Stale markers cannot alter newer requests.
+   */
+  readonly markPendingTurnDeliveryStarted: (
+    input: MarkProjectionPendingTurnDeliveryInput,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**
    * Deletes only pending-start placeholder rows (`turnId = null`) for a thread and leaves concrete turn rows untouched.

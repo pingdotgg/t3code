@@ -49,6 +49,22 @@ it("blocks a candidate that would remove durable pending-turn recovery", () => {
   });
 });
 
+it("blocks protocol one because it lacks request-correlated delivery markers", () => {
+  expect(
+    decodeServicePreflightResult({
+      status: "ready",
+      version: "1.2.4",
+      launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+      providerLifecycleRecoveryProtocol: PROVIDER_LIFECYCLE_RECOVERY_PROTOCOL,
+      pendingTurnRecoveryProtocol: 1,
+    }),
+  ).toEqual({
+    status: "blocked",
+    version: "1.2.4",
+    reason: PENDING_TURN_RECOVERY_REQUIRED_REASON,
+  });
+});
+
 it("blocks a candidate that would remove automatic provider lifecycle recovery", () => {
   expect(
     decodeServicePreflightResult({
