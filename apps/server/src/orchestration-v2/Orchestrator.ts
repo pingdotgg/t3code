@@ -1669,6 +1669,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // snooze's return ticket is spent (the thread is on top NOW).
           const alreadyPinned = thread.pinnedAt != null;
           const promotes = thread.settledOverride === "settled" || thread.snoozedUntil != null;
+          // Settled → keep-active is a new active pin; stamp establishment now.
+          // An existing keep-active pin keeps its floor. Clearing to null only
+          // when there is no override left after pin.
+          const nextOverride =
+            thread.settledOverride === "settled" ? ("active" as const) : thread.settledOverride;
           return {
             ...thread,
             pinnedAt: alreadyPinned ? thread.pinnedAt : now,
@@ -1678,10 +1683,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(alreadyPinned || command.orderKey === undefined
               ? {}
               : { pinOrderKey: command.orderKey }),
-            settledOverride:
-              thread.settledOverride === "settled" ? "active" : thread.settledOverride,
+            settledOverride: nextOverride,
             settledAt: thread.settledOverride === "settled" ? null : thread.settledAt,
-            settledOverrideAt: null,
+            settledOverrideAt:
+              nextOverride === null
+                ? null
+                : thread.settledOverride === "settled"
+                  ? now
+                  : (thread.settledOverrideAt ?? thread.updatedAt),
             snoozedUntil: null,
             snoozedAt: null,
             updatedAt: alreadyPinned && !promotes ? thread.updatedAt : now,

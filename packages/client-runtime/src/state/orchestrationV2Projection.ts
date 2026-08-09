@@ -183,6 +183,7 @@ export function applyOrchestrationV2ProjectionEvent(
         settlement: {
           settledOverride: event.payload.settledOverride,
           settledAt: event.payload.settledAt,
+          settledOverrideAt: event.payload.settledOverrideAt ?? null,
           updatedAt: event.payload.updatedAt,
           ...(event.type === "thread.settled" ? { pinnedAt: event.payload.pinnedAt ?? null } : {}),
         },
@@ -193,6 +194,10 @@ export function applyOrchestrationV2ProjectionEvent(
             projection.thread.settledAt === null
               ? null
               : DateTime.toEpochMillis(projection.thread.settledAt),
+          settledOverrideAtMs:
+            projection.thread.settledOverrideAt == null
+              ? null
+              : DateTime.toEpochMillis(projection.thread.settledOverrideAt),
           updatedAtMs: DateTime.toEpochMillis(projection.thread.updatedAt),
         },
       });

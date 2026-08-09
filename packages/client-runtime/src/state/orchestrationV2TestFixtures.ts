@@ -79,6 +79,7 @@ export const v2Projection: OrchestrationV2ThreadProjection = {
     archivedAt: null,
     settledOverride: null,
     settledAt: null,
+    settledOverrideAt: null,
     lastVisitedAt: null,
     deletedAt: null,
   },
