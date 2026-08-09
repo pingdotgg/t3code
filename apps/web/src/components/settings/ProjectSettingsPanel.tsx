@@ -86,6 +86,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
+import { ProjectFaviconPickerDialog } from "./ProjectFaviconPickerDialog";
 
 export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
@@ -221,6 +222,7 @@ export function ProjectSettingsPanel({
               <ProjectFavicon
                 environmentId={group.environmentId}
                 cwd={group.workspaceRoot}
+                faviconPath={group.faviconPath}
                 className="size-4 shrink-0"
               />
               <span className="min-w-0 flex-1 truncate">{group.displayName}</span>
@@ -295,6 +297,7 @@ function ProjectDetail({
     group.memberProjects.find(
       (member) => member.environmentId === group.environmentId && member.id === group.id,
     ) ?? group.memberProjects[0]!;
+  const faviconPath = representative.faviconPath ?? null;
 
   const threadCountByMember = useMemo(() => {
     const counts = new Map<string, number>();
@@ -328,6 +331,7 @@ function ProjectDetail({
       input: Partial<{
         defaultModelSelection: ModelSelection | null;
         defaultThreadEnvMode: ThreadEnvMode | null;
+        faviconPath: string | null;
         scripts: ReadonlyArray<ReturnType<typeof buildProjectScript>>;
       }>,
       failureTitle: string,
@@ -388,6 +392,25 @@ function ProjectDetail({
         { defaultThreadEnvMode: mode },
         "Failed to update new-thread workspace",
       ),
+    [updateAllMembers],
+  );
+
+  // ----- favicon -----
+  const [faviconPickerOpen, setFaviconPickerOpen] = useState(false);
+  const [isSavingFavicon, setIsSavingFavicon] = useState(false);
+  const savingFaviconRef = useRef(false);
+  const setFaviconPath = useCallback(
+    async (faviconPath: string | null) => {
+      if (savingFaviconRef.current) return;
+      savingFaviconRef.current = true;
+      setIsSavingFavicon(true);
+      try {
+        await updateAllMembers({ faviconPath }, "Failed to update project icon");
+      } finally {
+        savingFaviconRef.current = false;
+        setIsSavingFavicon(false);
+      }
+    },
     [updateAllMembers],
   );
 
@@ -692,6 +715,7 @@ function ProjectDetail({
         <ProjectFavicon
           environmentId={group.environmentId}
           cwd={group.workspaceRoot}
+          faviconPath={group.faviconPath}
           className="size-8 shrink-0"
         />
         <div className="min-w-0 flex-1">
@@ -722,6 +746,43 @@ function ProjectDetail({
           </SelectPopup>
         </Select>
       </div>
+
+      <SettingsSection title="Appearance">
+        <SettingsRow
+          id="project-favicon"
+          title="Project icon"
+          description={faviconPath ?? "Automatic"}
+          resetAction={
+            faviconPath !== null ? (
+              <SettingResetButton
+                label="project icon"
+                disabled={isSavingFavicon}
+                onClick={() => void setFaviconPath(null)}
+              />
+            ) : null
+          }
+          control={
+            <div className="flex items-center gap-2">
+              <ProjectFavicon
+                environmentId={representative.environmentId}
+                cwd={representative.workspaceRoot}
+                faviconPath={faviconPath}
+                className="size-6"
+              />
+              <Button
+                size="xs"
+                variant="outline"
+                type="button"
+                aria-label="Choose a project icon file"
+                disabled={isSavingFavicon}
+                onClick={() => setFaviconPickerOpen(true)}
+              >
+                Choose file
+              </Button>
+            </div>
+          }
+        />
+      </SettingsSection>
 
       <SettingsSection title="Model">
         <SettingsRow
@@ -1067,6 +1128,15 @@ function ProjectDetail({
         onSubmit={submitScript}
         onDelete={deleteScript}
         onClose={() => setEditorRequest(null)}
+      />
+      <ProjectFaviconPickerDialog
+        key={`${representative.environmentId}:${representative.workspaceRoot}:${faviconPickerOpen}`}
+        cwd={representative.workspaceRoot}
+        environmentId={representative.environmentId}
+        onOpenChange={setFaviconPickerOpen}
+        onSelect={(path) => void setFaviconPath(path)}
+        open={faviconPickerOpen}
+        projectName={group.displayName}
       />
     </SettingsPageContainer>
   );
