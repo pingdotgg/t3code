@@ -190,26 +190,29 @@ export function useNewThreadHandler() {
             const defaultEnvMode = await resolveDefaultEnvMode();
             // The await yields. If the draft was opened (a concurrent
             // invocation's navigation landed) or promoted to a real thread
-            // in the meantime, resetting context now would wipe state
-            // written after the snapshot above — leave it alone, matching
-            // the isDraftAlreadyOpen case.
+            // in the meantime, this invocation is a stale loser: resetting
+            // context, remapping (which wipes branch/worktree on a member
+            // change), or navigating would all clobber state written after
+            // the snapshot above. Bail out entirely — the winner already
+            // did this work.
             const routeTargetNow = getCurrentRouteTarget();
             const openedMeanwhile =
               routeTargetNow?.kind === "draft" &&
               routeTargetNow.draftId === reusableStoredDraftThread.draftId;
             const promotedMeanwhile =
               storedDraftThreadRef !== null && readThreadShell(storedDraftThreadRef) !== null;
-            if (!openedMeanwhile && !promotedMeanwhile) {
-              workspaceContext = {
-                branch: null,
-                worktreePath: null,
-                envMode: defaultEnvMode,
-                startFromOrigin: resolveNewDraftStartFromOrigin({
-                  envMode: defaultEnvMode,
-                  newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
-                }),
-              };
+            if (openedMeanwhile || promotedMeanwhile) {
+              return;
             }
+            workspaceContext = {
+              branch: null,
+              worktreePath: null,
+              envMode: defaultEnvMode,
+              startFromOrigin: resolveNewDraftStartFromOrigin({
+                envMode: defaultEnvMode,
+                newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
+              }),
+            };
           }
           if (workspaceContext) {
             setDraftThreadContext(reusableStoredDraftThread.draftId, {
