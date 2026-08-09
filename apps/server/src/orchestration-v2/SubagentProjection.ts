@@ -73,6 +73,7 @@ export function makeSubagentChildThread(input: {
     archivedAt: null,
     settledOverride: null,
     settledAt: null,
+    settledOverrideAt: null,
     snoozedUntil: null,
     snoozedAt: null,
     lastVisitedAt: null,

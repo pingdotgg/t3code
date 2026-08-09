@@ -18,7 +18,7 @@ describe("shouldApplyActivityUnsettle", () => {
   it("never clears when there is no override", () => {
     expect(
       shouldApplyActivityUnsettle(
-        { settledOverride: null, settledAtMs: null, updatedAtMs: T1 },
+        { settledOverride: null, settledAtMs: null, settledOverrideAtMs: null, updatedAtMs: T1 },
         T2,
       ),
     ).toBe(false);
@@ -27,19 +27,19 @@ describe("shouldApplyActivityUnsettle", () => {
   it("blocks delayed activity older than a settled pin", () => {
     expect(
       shouldApplyActivityUnsettle(
-        { settledOverride: "settled", settledAtMs: T2, updatedAtMs: T2 },
+        { settledOverride: "settled", settledAtMs: T2, settledOverrideAtMs: null, updatedAtMs: T2 },
         T1,
       ),
     ).toBe(false);
     expect(
       shouldApplyActivityUnsettle(
-        { settledOverride: "settled", settledAtMs: T1, updatedAtMs: T1 },
+        { settledOverride: "settled", settledAtMs: T1, settledOverrideAtMs: null, updatedAtMs: T1 },
         T1,
       ),
     ).toBe(true);
     expect(
       shouldApplyActivityUnsettle(
-        { settledOverride: "settled", settledAtMs: T1, updatedAtMs: T1 },
+        { settledOverride: "settled", settledAtMs: T1, settledOverrideAtMs: null, updatedAtMs: T1 },
         T2,
       ),
     ).toBe(true);
@@ -48,13 +48,23 @@ describe("shouldApplyActivityUnsettle", () => {
   it("blocks delayed activity older than an active pin (updatedAt)", () => {
     expect(
       shouldApplyActivityUnsettle(
-        { settledOverride: "active", settledAtMs: null, updatedAtMs: T2 },
+        {
+          settledOverride: "active",
+          settledAtMs: null,
+          settledOverrideAtMs: null,
+          updatedAtMs: T2,
+        },
         T1,
       ),
     ).toBe(false);
     expect(
       shouldApplyActivityUnsettle(
-        { settledOverride: "active", settledAtMs: null, updatedAtMs: T1 },
+        {
+          settledOverride: "active",
+          settledAtMs: null,
+          settledOverrideAtMs: null,
+          updatedAtMs: T1,
+        },
         T2,
       ),
     ).toBe(true);
@@ -62,11 +72,12 @@ describe("shouldApplyActivityUnsettle", () => {
 });
 
 describe("settledOverrideTimestampMs", () => {
-  it("uses settledAt for settled and updatedAt for active", () => {
+  it("uses settledAt for settled and updatedAt for active without overrideAt", () => {
     expect(
       settledOverrideTimestampMs({
         settledOverride: "settled",
         settledAtMs: T1,
+        settledOverrideAtMs: null,
         updatedAtMs: T2,
       }),
     ).toBe(T1);
@@ -74,6 +85,7 @@ describe("settledOverrideTimestampMs", () => {
       settledOverrideTimestampMs({
         settledOverride: "active",
         settledAtMs: null,
+        settledOverrideAtMs: null,
         updatedAtMs: T2,
       }),
     ).toBe(T2);
@@ -81,9 +93,29 @@ describe("settledOverrideTimestampMs", () => {
       settledOverrideTimestampMs({
         settledOverride: null,
         settledAtMs: null,
+        settledOverrideAtMs: null,
         updatedAtMs: T2,
       }),
     ).toBeNull();
+  });
+
+  it("prefers settledOverrideAt over settledAt and updatedAt", () => {
+    expect(
+      settledOverrideTimestampMs({
+        settledOverride: "settled",
+        settledAtMs: T1,
+        settledOverrideAtMs: T0,
+        updatedAtMs: T2,
+      }),
+    ).toBe(T0);
+    expect(
+      settledOverrideTimestampMs({
+        settledOverride: "active",
+        settledAtMs: null,
+        settledOverrideAtMs: T1,
+        updatedAtMs: T2,
+      }),
+    ).toBe(T1);
   });
 });
 
@@ -94,11 +126,13 @@ describe("applySettlementFieldsToThread", () => {
       archivedAt: "2026-07-01T09:00:00.000Z",
       settledOverride: "settled",
       settledAt: "2026-07-01T10:00:00.000Z",
+      settledOverrideAt: null,
       updatedAt: "2026-07-01T10:00:00.000Z",
     };
     const next = applySettlementFieldsToThread(current, {
       settledOverride: null,
       settledAt: null,
+      settledOverrideAt: null,
       updatedAt: "2026-07-01T11:00:00.000Z",
     });
     expect(next).toEqual({
@@ -106,6 +140,7 @@ describe("applySettlementFieldsToThread", () => {
       archivedAt: "2026-07-01T09:00:00.000Z",
       settledOverride: null,
       settledAt: null,
+      settledOverrideAt: null,
       updatedAt: "2026-07-01T11:00:00.000Z",
     });
   });
@@ -116,6 +151,7 @@ describe("reduceThreadSettlementEvent", () => {
     title: "Live title",
     settledOverride: "settled",
     settledAt: "2026-07-01T12:00:00.000Z",
+    settledOverrideAt: null,
     updatedAt: "2026-07-01T12:00:00.000Z",
   };
 
@@ -126,12 +162,14 @@ describe("reduceThreadSettlementEvent", () => {
       settlement: {
         settledOverride: null,
         settledAt: null,
+        settledOverrideAt: null,
         updatedAt: "2026-07-01T11:00:00.000Z",
       },
       activityAtMs: T1,
       currentTimestamps: {
         settledOverride: "settled",
         settledAtMs: T2,
+        settledOverrideAtMs: null,
         updatedAtMs: T2,
       },
     });
@@ -143,6 +181,7 @@ describe("reduceThreadSettlementEvent", () => {
       title: "Live title",
       settledOverride: "active",
       settledAt: null,
+      settledOverrideAt: null,
       updatedAt: "2026-07-01T12:00:00.000Z",
     };
     const next = reduceThreadSettlementEvent({
@@ -151,12 +190,14 @@ describe("reduceThreadSettlementEvent", () => {
       settlement: {
         settledOverride: null,
         settledAt: null,
+        settledOverrideAt: null,
         updatedAt: "2026-07-01T11:00:00.000Z",
       },
       activityAtMs: T1,
       currentTimestamps: {
         settledOverride: "active",
         settledAtMs: null,
+        settledOverrideAtMs: null,
         updatedAtMs: T2,
       },
     });
@@ -170,12 +211,14 @@ describe("reduceThreadSettlementEvent", () => {
       settlement: {
         settledOverride: null,
         settledAt: null,
+        settledOverrideAt: null,
         updatedAt: "2026-07-01T12:00:00.000Z",
       },
       activityAtMs: T2,
       currentTimestamps: {
         settledOverride: "settled",
         settledAtMs: T2,
+        settledOverrideAtMs: null,
         updatedAtMs: T2,
       },
     });
@@ -188,6 +231,7 @@ describe("reduceThreadSettlementEvent", () => {
       title: "Live title",
       settledOverride: null,
       settledAt: null,
+      settledOverrideAt: null,
       updatedAt: "2026-07-01T10:00:00.000Z",
     };
     const next = reduceThreadSettlementEvent({
@@ -196,12 +240,14 @@ describe("reduceThreadSettlementEvent", () => {
       settlement: {
         settledOverride: "settled",
         settledAt: "2026-07-01T12:00:00.000Z",
+        settledOverrideAt: null,
         updatedAt: "2026-07-01T12:00:00.000Z",
       },
       activityAtMs: T0,
       currentTimestamps: {
         settledOverride: null,
         settledAtMs: null,
+        settledOverrideAtMs: null,
         updatedAtMs: T0,
       },
     });
@@ -215,12 +261,14 @@ describe("reduceThreadSettlementEvent", () => {
       settlement: {
         settledOverride: "active",
         settledAt: null,
+        settledOverrideAt: null,
         updatedAt: "2026-07-01T12:30:00.000Z",
       },
       activityAtMs: T0,
       currentTimestamps: {
         settledOverride: "settled",
         settledAtMs: T2,
+        settledOverrideAtMs: null,
         updatedAtMs: T2,
       },
     });
@@ -233,6 +281,7 @@ describe("reduceThreadSettlementEvent", () => {
       ...base,
       settledOverride: null,
       settledAt: null,
+      settledOverrideAt: null,
       pinnedAt: "2026-07-01T11:00:00.000Z",
     };
     const next = reduceThreadSettlementEvent({
@@ -241,6 +290,7 @@ describe("reduceThreadSettlementEvent", () => {
       settlement: {
         settledOverride: "settled",
         settledAt: "2026-07-01T12:00:00.000Z",
+        settledOverrideAt: null,
         updatedAt: "2026-07-01T12:00:00.000Z",
         pinnedAt: null,
       },
@@ -248,6 +298,7 @@ describe("reduceThreadSettlementEvent", () => {
       currentTimestamps: {
         settledOverride: null,
         settledAtMs: null,
+        settledOverrideAtMs: null,
         updatedAtMs: T1,
       },
     });
@@ -266,12 +317,14 @@ describe("reduceThreadSettlementEvent", () => {
       settlement: {
         settledOverride: null,
         settledAt: null,
+        settledOverrideAt: null,
         updatedAt: "2026-07-01T12:00:00.000Z",
       },
       activityAtMs: T2,
       currentTimestamps: {
         settledOverride: "settled",
         settledAtMs: T2,
+        settledOverrideAtMs: null,
         updatedAtMs: T2,
       },
     });
@@ -284,6 +337,7 @@ describe("reduceThreadSettlementEvent", () => {
       ...base,
       settledOverride: "settled",
       settledAt: "2026-07-01T11:00:00.000Z",
+      settledOverrideAt: null,
       updatedAt: "2026-07-01T13:00:00.000Z",
     };
     const T3 = Date.parse("2026-07-01T13:00:00.000Z");
@@ -293,16 +347,51 @@ describe("reduceThreadSettlementEvent", () => {
       settlement: {
         settledOverride: null,
         settledAt: null,
+        settledOverrideAt: null,
         updatedAt: "2026-07-01T12:00:00.000Z",
       },
       activityAtMs: T2,
       currentTimestamps: {
         settledOverride: "settled",
         settledAtMs: T1,
+        settledOverrideAtMs: null,
         updatedAtMs: T3,
       },
     });
     expect(next.settledOverride).toBeNull();
+    expect(next.updatedAt).toBe("2026-07-01T13:00:00.000Z");
+  });
+
+  it("clears a keep-active pin after rename when settledOverrideAt is stable", () => {
+    // Keep-active at T1, metadata rename advances updatedAt to T3, delayed
+    // activity at T2 still clears because override establishment is T1.
+    const T3 = Date.parse("2026-07-01T13:00:00.000Z");
+    const active: ThreadFixture = {
+      title: "Renamed title",
+      settledOverride: "active",
+      settledAt: null,
+      settledOverrideAt: "2026-07-01T11:00:00.000Z",
+      updatedAt: "2026-07-01T13:00:00.000Z",
+    };
+    const next = reduceThreadSettlementEvent({
+      current: active,
+      eventType: "thread.unsettled",
+      settlement: {
+        settledOverride: null,
+        settledAt: null,
+        settledOverrideAt: null,
+        updatedAt: "2026-07-01T12:00:00.000Z",
+      },
+      activityAtMs: T2,
+      currentTimestamps: {
+        settledOverride: "active",
+        settledAtMs: null,
+        settledOverrideAtMs: T1,
+        updatedAtMs: T3,
+      },
+    });
+    expect(next.settledOverride).toBeNull();
+    expect(next.settledOverrideAt).toBeNull();
     expect(next.updatedAt).toBe("2026-07-01T13:00:00.000Z");
   });
 });

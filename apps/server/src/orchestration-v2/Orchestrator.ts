@@ -1357,6 +1357,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       archivedAt: null,
       settledOverride: null,
       settledAt: null,
+      settledOverrideAt: null,
       snoozedUntil: null,
       snoozedAt: null,
       lastVisitedAt: null,
@@ -1619,6 +1620,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             settledOverride: "settled" as const,
             settledAt: alreadySettled ? thread.settledAt : now,
+            // Freeze establishment time so renames cannot advance the pin floor.
+            settledOverrideAt: alreadySettled
+              ? (thread.settledOverrideAt ?? thread.settledAt)
+              : now,
             pinnedAt: null,
             pinOrderKey: null,
             updatedAt: alreadySettled ? thread.updatedAt : now,
@@ -1630,6 +1635,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             settledOverride: "active" as const,
             settledAt: null,
+            settledOverrideAt: alreadyPinnedActive
+              ? (thread.settledOverrideAt ?? thread.updatedAt)
+              : now,
             updatedAt: alreadyPinnedActive ? thread.updatedAt : now,
           };
         }
@@ -1673,6 +1681,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             settledOverride:
               thread.settledOverride === "settled" ? "active" : thread.settledOverride,
             settledAt: thread.settledOverride === "settled" ? null : thread.settledAt,
+            settledOverrideAt: null,
             snoozedUntil: null,
             snoozedAt: null,
             updatedAt: alreadyPinned && !promotes ? thread.updatedAt : now,
@@ -2917,6 +2926,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             settledOverride: null,
             settledAt: null,
+            settledOverrideAt: null,
             updatedAt: occurredAt,
           },
         });

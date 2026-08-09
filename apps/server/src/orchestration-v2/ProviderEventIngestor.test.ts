@@ -127,6 +127,7 @@ function threadCreatedEvent(
           : settledOverride === "settled"
             ? now
             : null,
+      settledOverrideAt: null,
     };
 
     return {
@@ -1056,6 +1057,7 @@ layer("ProviderEventIngestorV2", (it) => {
             title: "Stale pre-rename title",
             settledOverride: null,
             settledAt: null,
+            settledOverrideAt: null,
             updatedAt: activityAt,
           },
         };
@@ -1144,6 +1146,7 @@ layer("ProviderEventIngestorV2", (it) => {
               ...threadEvent.payload,
               settledOverride: override,
               settledAt: override === "settled" ? pinAt : null,
+              settledOverrideAt: null,
               updatedAt: pinAt,
             },
           };

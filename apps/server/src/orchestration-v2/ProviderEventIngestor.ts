@@ -390,6 +390,7 @@ export const layer: Layer.Layer<
                 ...projection.thread,
                 settledOverride: null,
                 settledAt: null,
+                settledOverrideAt: null,
                 updatedAt: activityAt,
               },
             }),

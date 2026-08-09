@@ -11,6 +11,12 @@ export type SettledOverride = "settled" | "active" | null;
 export type SettledThreadFields = {
   readonly settledOverride: SettledOverride;
   readonly settledAt: unknown;
+  /**
+   * When the current settledOverride was established. Stable across later
+   * metadata renames that advance updatedAt. Null when no override is set, or
+   * for rows that predate the field (callers fall back in settledOverrideTimestampMs).
+   */
+  readonly settledOverrideAt?: unknown;
   readonly updatedAt: unknown;
   readonly pinnedAt?: unknown;
 };
@@ -23,13 +29,19 @@ export type SettledThreadTimestamps = {
   readonly settledOverride: SettledOverride;
   /** settledAt when override is "settled"; ignored otherwise. */
   readonly settledAtMs: number | null;
-  /** Thread updatedAt; used as the active-pin timestamp. */
+  /**
+   * Dedicated override establishment time when present. Null for pre-field rows
+   * and for threads with no override.
+   */
+  readonly settledOverrideAtMs: number | null;
+  /** Thread updatedAt; legacy fallback for active pins without settledOverrideAt. */
   readonly updatedAtMs: number;
 };
 
 export type SettlementFieldPatch = {
   readonly settledOverride: SettledOverride;
   readonly settledAt: unknown;
+  readonly settledOverrideAt: unknown;
   readonly updatedAt: unknown;
   /**
    * When set (including explicit null), replaces current.pinnedAt.
@@ -40,12 +52,14 @@ export type SettlementFieldPatch = {
 
 /**
  * Timestamp that the current explicit override was established at.
- * - settled: settledAt (server accept time of the settle)
- * - active: updatedAt (server accept time of the user unsettle pin)
+ * Prefers settledOverrideAt when present. Fallbacks keep pre-field rows honest:
+ * - settled: settledAt
+ * - active: updatedAt (legacy; can drift on metadata renames)
  * - null override: no pin
  */
 export function settledOverrideTimestampMs(state: SettledThreadTimestamps): number | null {
   if (state.settledOverride === null) return null;
+  if (state.settledOverrideAtMs !== null) return state.settledOverrideAtMs;
   if (state.settledOverride === "settled") return state.settledAtMs;
   return state.updatedAtMs;
 }
@@ -78,6 +92,7 @@ export function applySettlementFieldsToThread<T extends SettledThreadFields>(
     ...current,
     settledOverride: settlement.settledOverride,
     settledAt: settlement.settledAt,
+    settledOverrideAt: settlement.settledOverrideAt,
     updatedAt: settlement.updatedAt,
   };
   if ("pinnedAt" in settlement) {
@@ -115,6 +130,7 @@ export function reduceThreadSettlementEvent<T extends SettledThreadFields>(input
     return applySettlementFieldsToThread(current, {
       settledOverride: null,
       settledAt: null,
+      settledOverrideAt: null,
       updatedAt,
     });
   }
