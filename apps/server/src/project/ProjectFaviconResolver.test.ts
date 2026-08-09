@@ -160,6 +160,109 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
       }),
     );
 
+    it.effect("resolves icon hrefs from object-literal route metadata", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "src/routes/__root.tsx",
+          `export const Route = createRootRoute({
+  head: () => ({
+    links: [
+      { rel: "stylesheet", href: "/app.css" },
+      { rel: "icon", href: "/brand/logo.svg" },
+    ],
+  }),
+});`,
+        );
+        yield* writeTextFile(cwd, "public/brand/logo.svg", "<svg>brand</svg>");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("public/brand/logo.svg");
+      }),
+    );
+
+    it.effect("resolves object-literal icon metadata when href precedes rel", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "src/root.tsx",
+          `const links = [{ href: "/brand/logo.svg", rel: "shortcut icon" }];`,
+        );
+        yield* writeTextFile(cwd, "public/brand/logo.svg", "<svg>brand</svg>");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("public/brand/logo.svg");
+      }),
+    );
+
+    it.effect("resolves object-literal icon metadata alongside nested objects", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "src/root.tsx",
+          `const links = [{ attributes: {}, rel: "icon", href: "/brand/logo.svg" }];`,
+        );
+        yield* writeTextFile(cwd, "public/brand/logo.svg", "<svg>brand</svg>");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("public/brand/logo.svg");
+      }),
+    );
+
+    it.effect("skips icon metadata without an href and keeps scanning", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "src/root.tsx",
+          `const links = [{ rel: "icon" }, { rel: "icon", href: "/brand/logo.svg" }];`,
+        );
+        yield* writeTextFile(cwd, "public/brand/logo.svg", "<svg>brand</svg>");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("public/brand/logo.svg");
+      }),
+    );
+
+    // A large icon source with no icon metadata used to pin the server's event loop for
+    // minutes: the object pattern was unanchored, so it restarted at every offset and
+    // rescanned forward from each one. Anchoring keeps this proportional to file size.
+    it.effect("scans large icon sources without an icon in reasonable time", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        // Mirrors a generated single-file build: large, brace-sparse, and no icon metadata.
+        const filler = `<p>${"pokopia companion guide ".repeat(24)}</p>\n`;
+        yield* writeTextFile(
+          cwd,
+          "index.html",
+          `<!doctype html><html><head><title>guide</title></head><body>\n${filler.repeat(1200)}</body></html>`,
+        );
+
+        const startedAt = performance.now();
+        const resolved = yield* resolver.resolvePath(cwd);
+        const elapsedMs = performance.now() - startedAt;
+
+        expect(resolved).toBeNull();
+        expect(elapsedMs).toBeLessThan(5_000);
+      }),
+    );
+
     it.effect("returns null when no icon is present", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
