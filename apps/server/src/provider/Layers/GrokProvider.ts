@@ -30,6 +30,11 @@ import {
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
 import { makeGrokAcpRuntime, resolveGrokAcpBaseModelId } from "../acp/GrokAcpSupport.ts";
+import {
+  GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS,
+  PROVIDER_VERSION_PROBE_TIMEOUT_MS,
+  resolveProviderProbeCwd,
+} from "../providerProbeTimeouts.ts";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",
@@ -41,8 +46,7 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
 
-const VERSION_PROBE_TIMEOUT_MS = 4_000;
-const GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
+const VERSION_PROBE_TIMEOUT_MS = PROVIDER_VERSION_PROBE_TIMEOUT_MS;
 
 const GROK_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
@@ -129,11 +133,12 @@ const discoverGrokModelsViaAcp = (
 ) =>
   Effect.gen(function* () {
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const probeCwd = resolveProviderProbeCwd(undefined, environment);
     const acp = yield* makeGrokAcpRuntime({
       grokSettings,
       environment,
       childProcessSpawner,
-      cwd: process.cwd(),
+      cwd: probeCwd,
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
     const started = yield* acp.start();
@@ -146,12 +151,14 @@ const runGrokVersionCommand = (
 ) =>
   Effect.gen(function* () {
     const command = grokSettings.binaryPath || "grok";
+    const probeCwd = resolveProviderProbeCwd(undefined, environment);
     const spawnCommand = yield* resolveSpawnCommand(command, ["--version"], {
       env: environment,
     });
     return yield* spawnAndCollect(
       command,
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+        cwd: probeCwd,
         env: environment,
         shell: spawnCommand.shell,
       }),

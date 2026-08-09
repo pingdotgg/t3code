@@ -512,7 +512,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           );
 
           yield* Effect.yieldNow;
-          yield* TestClock.adjust("11 seconds");
+          // AUTH_PROBE_TIMEOUT_MS is platform-aware (15s non-Windows, 45s Windows).
+          // Advance past either bound so the timeout fires in CI on all platforms.
+          yield* TestClock.adjust("46 seconds");
           yield* Effect.yieldNow;
 
           const status = yield* Fiber.join(statusFiber);

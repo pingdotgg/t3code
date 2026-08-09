@@ -1,0 +1,54 @@
+# Windows provider status probe timeouts
+
+## Problem
+
+On Windows, T3 Code provider health checks for **Codex**, **Cursor**, and **Grok** often reported:
+
+- `Timed out while checking Codex app-server provider status.`
+- `Cursor Agent CLI is installed but timed out while running \`agent about\`.`
+- `Grok CLI is installed but ACP startup timed out after 15000ms.`
+
+Claude and OpenCode continued to work because they do not rely on the same ACP/stdio cold-start path.
+
+Root causes observed on Windows:
+
+1. **Too-short timeouts** — e.g. Cursor `agent about` was capped at **8s** while cold starts commonly take **7–12s**.
+2. **Invalid / unstable `process.cwd()`** for desktop probes when no project folder is open.
+3. **Open stdin** on non-interactive probes — some CLIs wait for EOF and never exit until the probe times out.
+
+## Changes
+
+| Area | Change |
+|------|--------|
+| `providerProbeTimeouts.ts` | Platform-aware timeouts + `resolveProviderProbeCwd()` |
+| `providerSnapshot.ts` | Longer auth probe timeout; close stdin after spawn |
+| `CursorProvider.ts` | Longer about/ACP timeouts; safe cwd; close stdin |
+| `GrokProvider.ts` | Longer ACP timeout; safe cwd |
+| `CodexProvider.ts` | Safe cwd for app-server probe |
+
+### Timeouts (Windows / non-Windows)
+
+| Probe | Windows | Other |
+|-------|---------|-------|
+| Version (`--version`) | 15s | 4s |
+| Codex app-server auth | 45s | 15s |
+| Cursor `agent about` | 45s | 20s |
+| Cursor ACP discovery | 45s | 20s |
+| Grok ACP discovery | 45s | 20s |
+
+Env override for probe cwd (optional):
+
+- `T3_PROVIDER_CWD`
+- `T3CODE_PROVIDER_CWD`
+
+## How to verify
+
+```bash
+cd Documents/t3-code-fork/t3code
+pnpm install
+pnpm --filter @t3tools/server test -- src/provider/providerProbeTimeouts.test.ts
+pnpm --filter @t3tools/server test -- src/provider/Layers/CursorProvider.test.ts
+pnpm --filter @t3tools/server test -- src/provider/Layers/ProviderRegistry.test.ts
+```
+
+Then run the desktop app from this fork and open a real project folder before checking Providers.

@@ -18,9 +18,15 @@ import { isWindowsCommandNotFound } from "../processRunner.ts";
 import { createProviderVersionAdvisory } from "./providerMaintenance.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 
-export const DEFAULT_TIMEOUT_MS = 4_000;
+import {
+  PROVIDER_AUTH_PROBE_TIMEOUT_MS,
+  PROVIDER_VERSION_PROBE_TIMEOUT_MS,
+} from "./providerProbeTimeouts.ts";
+
+/** @deprecated Prefer PROVIDER_VERSION_PROBE_TIMEOUT_MS for new code. */
+export const DEFAULT_TIMEOUT_MS = PROVIDER_VERSION_PROBE_TIMEOUT_MS;
 // Auth status checks involve disk/network lookups and can be slow on first run (especially Windows)
-export const AUTH_PROBE_TIMEOUT_MS = 10_000;
+export const AUTH_PROBE_TIMEOUT_MS = PROVIDER_AUTH_PROBE_TIMEOUT_MS;
 
 export interface CommandResult {
   readonly stdout: string;
@@ -76,6 +82,9 @@ export const spawnAndCollect = (binaryPath: string, command: ChildProcess.Comman
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(command);
+    // Close stdin immediately. Non-interactive probes (`agent about`, `grok --version`,
+    // etc.) can hang on Windows if stdin stays open waiting for EOF.
+    yield* Stream.run(Stream.empty, child.stdin).pipe(Effect.ignore);
     const [stdout, stderr, exitCode] = yield* Effect.all(
       [
         collectStreamAsString(child.stdout),
