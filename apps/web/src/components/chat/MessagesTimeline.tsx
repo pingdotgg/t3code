@@ -12,9 +12,6 @@ import {
   formatSubagentTokenCount,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 
-const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
-const NOOP_OPEN_AGENTS = () => {};
-const NOOP_SCROLL_OFFSET_CHANGE = () => {};
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import {
   createContext,
@@ -121,6 +118,10 @@ import {
   parseReviewCommentMessageSegments,
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
+
+const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
+const NOOP_OPEN_AGENTS = () => {};
+const NOOP_SCROLL_OFFSET_CHANGE = () => {};
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via Context.
@@ -634,7 +635,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               onManualNavigation();
               void listRef.current?.scrollToIndex({
                 index: item.rowIndex,
-                animated: true,
+                animated: false,
                 viewOffset: 24,
               });
             }}

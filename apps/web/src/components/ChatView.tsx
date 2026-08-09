@@ -1165,6 +1165,7 @@ type LocalThreadErrorEntry = {
 // Module state survives route changes but resets when the client reloads.
 type TimelineScrollPosition =
   | { readonly kind: "automatic"; readonly offset: number }
+  | { readonly kind: "follow-end" }
   | {
       readonly kind: "manual";
       readonly offset: number;
@@ -1183,6 +1184,9 @@ function resolveTimelineEntryScrollMode(input: {
   readonly runningTurnId: TurnId | null;
   readonly savedPosition: TimelineScrollPosition | undefined;
 }): TimelineEntryScrollMode {
+  if (input.savedPosition?.kind === "follow-end") {
+    return { kind: "follow-end" };
+  }
   if (input.runningTurnId !== null) {
     if (
       input.savedPosition?.kind === "manual" &&
@@ -1198,7 +1202,7 @@ function resolveTimelineEntryScrollMode(input: {
   if (input.latestTurnId) {
     return { kind: "anchor-response", turnId: input.latestTurnId };
   }
-  return input.savedPosition
+  return input.savedPosition?.kind === "automatic"
     ? { kind: "restore-position", offset: input.savedPosition.offset }
     : { kind: "follow-end" };
 }
@@ -1590,35 +1594,34 @@ function ChatViewContent(props: ChatViewProps) {
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const activeRunningTurnId =
     activeThread?.session?.status === "running" ? activeThread.session.activeTurnId : null;
-  const runningTurnOnEntryRef = useRef<{
+  const timelineEntryScrollModeRef = useRef<{
     readonly captured: boolean;
     readonly threadKey: string | null;
-    readonly turnId: TurnId | null;
+    readonly mode: TimelineEntryScrollMode;
   }>({
     captured: !threadDetailLoading,
     threadKey: activeThreadKey,
-    turnId: threadDetailLoading ? null : activeRunningTurnId,
+    mode: resolveTimelineEntryScrollMode({
+      latestTurnId: threadDetailLoading ? null : (activeThread?.latestTurn?.turnId ?? null),
+      runningTurnId: threadDetailLoading ? null : activeRunningTurnId,
+      savedPosition: restoredTimelineScrollPosition,
+    }),
   });
   if (
-    runningTurnOnEntryRef.current.threadKey !== activeThreadKey ||
-    (!runningTurnOnEntryRef.current.captured && !threadDetailLoading)
+    timelineEntryScrollModeRef.current.threadKey !== activeThreadKey ||
+    (!timelineEntryScrollModeRef.current.captured && !threadDetailLoading)
   ) {
-    runningTurnOnEntryRef.current = {
+    timelineEntryScrollModeRef.current = {
       captured: !threadDetailLoading,
       threadKey: activeThreadKey,
-      turnId: threadDetailLoading ? null : activeRunningTurnId,
-    };
-  }
-  const runningTurnOnEntry = runningTurnOnEntryRef.current.turnId;
-  const timelineEntryScrollMode = useMemo(
-    () =>
-      resolveTimelineEntryScrollMode({
-        latestTurnId: activeThread?.latestTurn?.turnId ?? null,
-        runningTurnId: runningTurnOnEntry,
+      mode: resolveTimelineEntryScrollMode({
+        latestTurnId: threadDetailLoading ? null : (activeThread?.latestTurn?.turnId ?? null),
+        runningTurnId: threadDetailLoading ? null : activeRunningTurnId,
         savedPosition: restoredTimelineScrollPosition,
       }),
-    [activeThread?.latestTurn?.turnId, restoredTimelineScrollPosition, runningTurnOnEntry],
-  );
+    };
+  }
+  const timelineEntryScrollMode = timelineEntryScrollModeRef.current.mode;
   const [manuallyNavigatedTimelineEntry, setManuallyNavigatedTimelineEntry] = useState<{
     readonly threadKey: string;
     readonly turnId: TurnId | null;
@@ -3681,6 +3684,8 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const timelineScrollModeRef = useRef<TimelineScrollMode>("following-end");
   const preserveInitialResponsePositionRef = useRef(false);
+  const pendingEntryResponseAnchorMessageIdRef = useRef(entryResponseAnchorMessageId);
+  pendingEntryResponseAnchorMessageIdRef.current = entryResponseAnchorMessageId;
   // State mirror of the follow mode refs. LegendList's maintainScrollAtEnd
   // re-pins on its own (independent of the refs), so the timeline needs a
   // render-visible flag to switch it off once the user scrolls away.
@@ -3702,6 +3707,7 @@ function ChatViewContent(props: ChatViewProps) {
     anchorUserScrollGenerationRef.current += 1;
     timelineScrollModeRef.current = "free-scrolling";
     preserveInitialResponsePositionRef.current = false;
+    pendingEntryResponseAnchorMessageIdRef.current = null;
     liveFollowUserScrollGenerationRef.current = null;
     setTimelineLiveFollowEnabled(false);
     pendingTimelineAnchorRef.current = null;
@@ -3778,23 +3784,35 @@ function ChatViewContent(props: ChatViewProps) {
   );
   // Live-follow stays active after send/thread-open until an actual list scroll
   // gesture opts out.
-  const scrollToEnd = useCallback((animated = false) => {
-    isAtEndRef.current = true;
-    timelineScrollModeRef.current = "following-end";
-    preserveInitialResponsePositionRef.current = false;
-    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-    setTimelineLiveFollowEnabled(true);
-    pendingTimelineAnchorRef.current = null;
-    activeTimelineAnchorIndexRef.current = null;
-    showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(false);
-    setTimelineAnchor((current) =>
-      current.messageId === null ? current : { ...current, messageId: null },
-    );
-    requestAnimationFrame(() => {
-      void legendListRef.current?.scrollToEnd?.({ animated });
-    });
-  }, []);
+  const scrollToEnd = useCallback(
+    (animated = false) => {
+      isAtEndRef.current = true;
+      timelineScrollModeRef.current = "following-end";
+      preserveInitialResponsePositionRef.current = false;
+      pendingEntryResponseAnchorMessageIdRef.current = null;
+      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+      setTimelineLiveFollowEnabled(true);
+      pendingTimelineAnchorRef.current = null;
+      pendingTimelineManualScrollRef.current = null;
+      activeTimelineAnchorIndexRef.current = null;
+      timelineScrollPositionByThreadKey.set(routeThreadKey, { kind: "follow-end" });
+      if (timelineEntryScrollMode.kind === "anchor-response") {
+        setManuallyNavigatedTimelineEntry({
+          threadKey: routeThreadKey,
+          turnId: timelineEntryScrollMode.turnId,
+        });
+      }
+      showScrollDebouncer.current.cancel();
+      setShowScrollToBottom(false);
+      setTimelineAnchor((current) =>
+        current.messageId === null ? current : { ...current, messageId: null },
+      );
+      requestAnimationFrame(() => {
+        void legendListRef.current?.scrollToEnd?.({ animated });
+      });
+    },
+    [routeThreadKey, timelineEntryScrollMode],
+  );
   useEffect(() => {
     let removeListeners: (() => void) | null = null;
     let frame: number | null = null;
@@ -3913,8 +3931,18 @@ function ChatViewContent(props: ChatViewProps) {
     // Anchored-end space can be remeasured when the turn completes. Once the
     // user has scrolled away (or returned to ordinary end-following), that
     // remeasurement must not restart the send-time anchor positioning.
-    if (timelineScrollModeRef.current !== "anchoring-new-turn") {
+    const isEntryAnchor = pendingEntryResponseAnchorMessageIdRef.current === messageId;
+    const isSendAnchor =
+      timelineScrollModeRef.current === "anchoring-new-turn" &&
+      (pendingTimelineAnchorRef.current === messageId ||
+        positionedTimelineAnchorRef.current === messageId);
+    if (!isSendAnchor && !isEntryAnchor) {
       return;
+    }
+    if (isEntryAnchor && !isSendAnchor) {
+      timelineScrollModeRef.current = "anchoring-entry";
+      preserveInitialResponsePositionRef.current = true;
+      liveFollowUserScrollGenerationRef.current = null;
     }
     if (pendingTimelineAnchorRef.current === messageId) {
       pendingTimelineAnchorRef.current = null;
@@ -3955,36 +3983,44 @@ function ChatViewContent(props: ChatViewProps) {
     requestAnimationFrame(() => positionAnchor(12));
   }, []);
 
-  const onIsAtEndChange = useCallback((isAtEnd: boolean) => {
-    if (
-      !isAtEnd &&
-      liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current
-    ) {
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
-      return;
-    }
-    if (isAtEndRef.current === isAtEnd) return;
-    isAtEndRef.current = isAtEnd;
-    if (isAtEnd) {
-      if (preserveInitialResponsePositionRef.current) {
-        timelineScrollModeRef.current = "free-scrolling";
-        liveFollowUserScrollGenerationRef.current = null;
+  const onIsAtEndChange = useCallback(
+    (isAtEnd: boolean) => {
+      if (
+        !isAtEnd &&
+        liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current
+      ) {
         showScrollDebouncer.current.cancel();
         setShowScrollToBottom(false);
         return;
       }
-      timelineScrollModeRef.current = "following-end";
-      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-      setTimelineLiveFollowEnabled(true);
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
-    } else {
-      timelineScrollModeRef.current = "free-scrolling";
-      liveFollowUserScrollGenerationRef.current = null;
-      showScrollDebouncer.current.maybeExecute();
-    }
-  }, []);
+      if (isAtEndRef.current === isAtEnd) return;
+      isAtEndRef.current = isAtEnd;
+      if (isAtEnd) {
+        pendingTimelineManualScrollRef.current = null;
+        timelineScrollPositionByThreadKey.set(routeThreadKey, { kind: "follow-end" });
+        if (preserveInitialResponsePositionRef.current) {
+          preserveInitialResponsePositionRef.current = false;
+          pendingEntryResponseAnchorMessageIdRef.current = null;
+          if (timelineEntryScrollMode.kind === "anchor-response") {
+            setManuallyNavigatedTimelineEntry({
+              threadKey: routeThreadKey,
+              turnId: timelineEntryScrollMode.turnId,
+            });
+          }
+        }
+        timelineScrollModeRef.current = "following-end";
+        liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+        setTimelineLiveFollowEnabled(true);
+        showScrollDebouncer.current.cancel();
+        setShowScrollToBottom(false);
+      } else {
+        timelineScrollModeRef.current = "free-scrolling";
+        liveFollowUserScrollGenerationRef.current = null;
+        showScrollDebouncer.current.maybeExecute();
+      }
+    },
+    [routeThreadKey, timelineEntryScrollMode],
+  );
 
   const onTimelineScrollOffsetChange = useCallback(
     (offset: number) => {
@@ -4017,7 +4053,11 @@ function ChatViewContent(props: ChatViewProps) {
 
       timelineScrollPositionByThreadKey.set(
         routeThreadKey,
-        existing?.kind === "manual" ? { ...existing, offset } : { kind: "automatic", offset },
+        timelineScrollModeRef.current === "following-end"
+          ? { kind: "follow-end" }
+          : existing?.kind === "manual"
+            ? { ...existing, offset }
+            : { kind: "automatic", offset },
       );
     },
     [routeThreadKey],
@@ -4080,7 +4120,11 @@ function ChatViewContent(props: ChatViewProps) {
     isAtEndRef.current = true;
     preserveInitialResponsePositionRef.current = timelineEntryScrollMode.kind === "anchor-response";
     timelineScrollModeRef.current =
-      timelineEntryScrollMode.kind === "follow-end" ? "following-end" : "free-scrolling";
+      timelineEntryScrollMode.kind === "follow-end"
+        ? "following-end"
+        : timelineEntryScrollMode.kind === "anchor-response"
+          ? "anchoring-entry"
+          : "free-scrolling";
     liveFollowUserScrollGenerationRef.current =
       timelineEntryScrollMode.kind === "follow-end" ? anchorUserScrollGenerationRef.current : null;
     setTimelineLiveFollowEnabled(timelineEntryScrollMode.kind === "follow-end");

@@ -1,4 +1,8 @@
-export type TimelineScrollMode = "following-end" | "anchoring-new-turn" | "free-scrolling";
+export type TimelineScrollMode =
+  | "following-end"
+  | "anchoring-new-turn"
+  | "anchoring-entry"
+  | "free-scrolling";
 
 export interface TimelineListMeasurementState {
   readonly data: readonly unknown[];
