@@ -1623,8 +1623,13 @@ function ChatViewContent(props: ChatViewProps) {
   // the branch mismatch banner.
   const [, setThreadErrorBannerDismissTick] = useState(0);
   const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
-  const interactionMode =
-    composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
+  // Plan mode is legacy (Settings → Beta). With the flag off the effective
+  // mode is forced to "default", even for threads with a stored plan mode,
+  // so nobody is trapped in plan mode while its toggle is hidden. The next
+  // send persists "default" back to the thread.
+  const interactionMode = settings.planModeEnabled
+    ? (composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE)
+    : DEFAULT_INTERACTION_MODE;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
@@ -5158,7 +5163,10 @@ function ChatViewContent(props: ChatViewProps) {
       });
       return;
     }
+    // Legacy plan mode: /plan and /default only act when the beta flag is on;
+    // otherwise they send as plain text like any other message.
     const standaloneSlashCommand =
+      settings.planModeEnabled &&
       composerImages.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerElementContexts.length === 0 &&
