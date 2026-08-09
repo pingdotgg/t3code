@@ -1,5 +1,6 @@
 package com.t3tools.android.nativeapp
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -17,5 +18,12 @@ class MainActivity : ComponentActivity() {
         T3NativeApp(viewModel)
       }
     }
+    if (savedInstanceState == null) viewModel.handleSystemIntent(intent)
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    viewModel.handleSystemIntent(intent)
   }
 }

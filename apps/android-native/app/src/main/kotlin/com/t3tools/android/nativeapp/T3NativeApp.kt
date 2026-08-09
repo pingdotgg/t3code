@@ -174,6 +174,7 @@ private const val CONNECT = "connect"
 private const val HOME = "home"
 private const val NEW_TASK = "new-task"
 private const val NEW_TASK_ROUTE = "new-task?projectId={projectId}"
+private const val INCOMING_SHARE = "share/{shareId}"
 private const val ADD_PROJECT = "add-project"
 private const val SETTINGS = "settings"
 private const val ARCHIVED_THREADS = "settings/archived"
@@ -197,6 +198,7 @@ fun T3NativeApp(viewModel: AppViewModel) {
   val runtime by viewModel.runtime.collectAsState()
   val dispatchState by viewModel.dispatchState.collectAsState()
   val gitState by viewModel.gitState.collectAsState()
+  val incomingShares by viewModel.incomingShares.collectAsState()
   val navController = rememberNavController()
   val start = remember { if (runtime.environment == null) ONBOARDING else HOME }
 
@@ -205,14 +207,29 @@ fun T3NativeApp(viewModel: AppViewModel) {
       when (event) {
         AppEvent.OpenHome -> navController.navigate(HOME) {
           popUpTo(ONBOARDING) { inclusive = true }
-        }
-        is AppEvent.OpenNewTask -> navController.navigate(
-          "$NEW_TASK?projectId=${Uri.encode(event.projectId)}",
-        ) {
-          popUpTo(ADD_PROJECT) { inclusive = true }
           launchSingleTop = true
         }
-        is AppEvent.OpenThread -> navController.navigate("thread/${event.threadId}")
+        AppEvent.OpenAddEnvironment -> navController.navigate(ONBOARDING) {
+          launchSingleTop = true
+        }
+        is AppEvent.OpenNewTask -> {
+          val route = event.projectId?.let { "$NEW_TASK?projectId=${Uri.encode(it)}" } ?: NEW_TASK
+          navController.navigate(route) {
+            if (event.clearEntryRoute) popUpTo(0)
+            else popUpTo(ADD_PROJECT) { inclusive = true }
+            launchSingleTop = true
+          }
+        }
+        is AppEvent.OpenIncomingShare -> navController.navigate(
+          "share/${Uri.encode(event.shareId)}",
+        ) {
+          popUpTo(0)
+          launchSingleTop = true
+        }
+        is AppEvent.OpenThread -> navController.navigate("thread/${Uri.encode(event.threadId)}") {
+          if (event.clearEntryRoute) popUpTo(0)
+          launchSingleTop = true
+        }
       }
     }
   }
@@ -249,6 +266,8 @@ fun T3NativeApp(viewModel: AppViewModel) {
         onNewTask = { navController.navigate(NEW_TASK) },
         onAddProject = { navController.navigate(ADD_PROJECT) },
         onOpenThread = { navController.navigate("thread/$it") },
+        pendingShares = incomingShares,
+        onOpenShare = { navController.navigate("share/${Uri.encode(it)}") },
         onAddEnvironment = { navController.navigate(ONBOARDING) },
         onSettings = { navController.navigate(SETTINGS) },
       )
@@ -270,6 +289,20 @@ fun T3NativeApp(viewModel: AppViewModel) {
         initialProjectId = entry.arguments?.getString("projectId"),
         onBack = { navController.popBackStack() },
         onAddProject = { navController.navigate(ADD_PROJECT) },
+      )
+    }
+    composable(
+      route = INCOMING_SHARE,
+      arguments = listOf(navArgument("shareId") { type = NavType.StringType }),
+    ) { entry ->
+      val shareId = requireNotNull(entry.arguments?.getString("shareId"))
+      IncomingShareScreen(
+        share = incomingShares.firstOrNull { it.id == shareId },
+        runtime = runtime,
+        dispatchState = dispatchState,
+        viewModel = viewModel,
+        onBack = { navController.popBackStack() },
+        onAddEnvironment = { navController.navigate(ONBOARDING) },
       )
     }
     composable(ADD_PROJECT) {
@@ -721,6 +754,8 @@ private fun HomeScreen(
   onNewTask: () -> Unit,
   onAddProject: () -> Unit,
   onOpenThread: (String) -> Unit,
+  pendingShares: List<IncomingShare>,
+  onOpenShare: (String) -> Unit,
   onAddEnvironment: () -> Unit,
   onSettings: () -> Unit,
 ) {
@@ -866,6 +901,29 @@ private fun HomeScreen(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
       ) {
+        pendingShares.firstOrNull()?.let { share ->
+          item(key = "incoming-share-${share.id}") {
+            Card(onClick = { onOpenShare(share.id) }) {
+              Row(
+                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+              ) {
+                Icon(Icons.Rounded.PhotoLibrary, contentDescription = null)
+                Column(Modifier.weight(1f)) {
+                  Text("Shared content waiting", fontWeight = FontWeight.SemiBold)
+                  Text(
+                    share.summaryLabel(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  )
+                }
+                Text("Resume", color = MaterialTheme.colorScheme.primary)
+              }
+            }
+          }
+        }
+
         // Active / pinned cards first, then pending, then shelves (RN v2 order).
         threadListRows(
           rows = activeItems,
@@ -1572,6 +1630,115 @@ private fun ArchivedThreadsScreen(
     )
   }
 }
+
+@Composable
+private fun IncomingShareScreen(
+  share: IncomingShare?,
+  runtime: OnlineChatState,
+  dispatchState: DispatchState,
+  viewModel: AppViewModel,
+  onBack: () -> Unit,
+  onAddEnvironment: () -> Unit,
+) {
+  val environments = runtime.environments
+  var environmentId by remember(share?.id, environments) {
+    mutableStateOf(
+      runtime.environment?.environmentId
+        ?.takeIf { selected -> environments.any { it.environmentId == selected } }
+        ?: environments.firstOrNull()?.environmentId.orEmpty(),
+    )
+  }
+
+  BackHandler(onBack = onBack)
+  Scaffold(topBar = { BackTopBar("Shared content", onBack) }) { padding ->
+    Column(
+      Modifier
+        .fillMaxSize()
+        .padding(padding)
+        .verticalScroll(rememberScrollState())
+        .padding(20.dp),
+      verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+      if (share == null) {
+        Text("This shared content is no longer available.")
+        Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Done") }
+        return@Column
+      }
+
+      Text(
+        "Choose where to continue. The content will be added to a new task draft.",
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+      if (share.text.isNotBlank()) {
+        Card(Modifier.fillMaxWidth()) {
+          Text(
+            share.text,
+            modifier = Modifier.padding(16.dp),
+            maxLines = 10,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+      }
+      if (share.images.isNotEmpty()) {
+        Card(Modifier.fillMaxWidth()) {
+          Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+              if (share.images.size == 1) "1 image" else "${share.images.size} images",
+              fontWeight = FontWeight.SemiBold,
+            )
+            share.images.forEach { image ->
+              Text(
+                image.name,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
+          }
+        }
+      }
+      share.warning?.let {
+        Text(it, color = MaterialTheme.colorScheme.error)
+      }
+
+      if (environments.isEmpty()) {
+        Text("Add an environment before creating the task.")
+        Button(onClick = onAddEnvironment, modifier = Modifier.fillMaxWidth()) {
+          Text("Add environment")
+        }
+      } else {
+        SelectionField(
+          label = "Environment",
+          selected = environments.firstOrNull { it.environmentId == environmentId }?.label
+            ?: "Choose environment",
+          options = environments.map { it.environmentId to it.label },
+          onSelect = { environmentId = it },
+        )
+        Button(
+          onClick = { viewModel.acceptIncomingShare(share.id, environmentId) },
+          enabled = environmentId.isNotBlank() && dispatchState !is DispatchState.Sending,
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text(if (dispatchState is DispatchState.Sending) "Preparing…" else "Continue to new task")
+        }
+      }
+      TextButton(
+        onClick = { viewModel.discardIncomingShare(share.id) },
+        enabled = dispatchState !is DispatchState.Sending,
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Text("Discard shared content")
+      }
+      RuntimeError(runtime.error, dispatchState)
+    }
+  }
+}
+
+private fun IncomingShare.summaryLabel(): String = buildList {
+  if (text.isNotBlank()) add("Text")
+  if (images.isNotEmpty()) add(if (images.size == 1) "1 image" else "${images.size} images")
+}.joinToString(" · ")
 
 @Composable
 private fun NewTaskScreen(

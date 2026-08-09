@@ -62,6 +62,34 @@ class AttachmentStore(private val context: Context) {
     }
   }
 
+  suspend fun importIncoming(
+    environmentId: String,
+    images: List<IncomingShareImage>,
+    existingCount: Int,
+  ) = withContext(Dispatchers.IO) {
+    synchronized(fileLock) {
+      val remaining = (MaxComposerAttachments - existingCount).coerceAtLeast(0)
+      if (remaining == 0) {
+        return@synchronized AttachmentImportResult(
+          emptyList(),
+          "You can attach up to $MaxComposerAttachments images per message.",
+        )
+      }
+      val imported = mutableListOf<DraftImageAttachment>()
+      var error: String? = if (images.size > remaining) {
+        "Only the first $remaining shared images were added."
+      } else {
+        null
+      }
+      images.take(remaining).forEach { image ->
+        runCatching { importIncomingOne(environmentId, image) }
+          .onSuccess(imported::add)
+          .onFailure { failure -> error = failure.message ?: "Could not add a shared image." }
+      }
+      AttachmentImportResult(imported, error)
+    }
+  }
+
   fun materialize(attachment: DraftImageAttachment) = synchronized(fileLock) {
     val file = ownedFile(attachment.path)
     require(file.length() == attachment.sizeBytes) { "Attachment file changed or is unavailable." }
@@ -101,13 +129,35 @@ class AttachmentStore(private val context: Context) {
     val name = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
       if (it.moveToFirst()) it.getString(0) else null
     }?.take(255)?.takeIf(String::isNotBlank) ?: "image"
+    val input = resolver.openInputStream(uri) ?: error("Image is unavailable.")
+    return input.use { importOne(environmentId, name, mimeType, it) }
+  }
+
+  private fun importIncomingOne(
+    environmentId: String,
+    image: IncomingShareImage,
+  ): DraftImageAttachment {
+    val source = File(image.path).canonicalFile
+    val incomingRoot = incomingShareRoot(context).canonicalFile.path + File.separator
+    require(source.path.startsWith(incomingRoot) && source.length() == image.sizeBytes) {
+      "A shared image changed or is unavailable."
+    }
+    return source.inputStream().use {
+      importOne(environmentId, image.name, image.mimeType, it)
+    }
+  }
+
+  private fun importOne(
+    environmentId: String,
+    name: String,
+    mimeType: String,
+    input: InputStream,
+  ): DraftImageAttachment {
     val id = UUID.randomUUID().toString()
     val directory = environmentDirectory(environmentId).apply { mkdirs() }
     val destination = File(directory, "$id.image")
     val temporary = File(directory, "$id.tmp")
-    val size = resolver.openInputStream(uri)?.use { input ->
-      copyOwnedAttachment(input, temporary, MaxComposerImageBytes)
-    } ?: error("Image is unavailable.")
+    val size = copyOwnedAttachment(input, temporary, MaxComposerImageBytes)
     check(temporary.renameTo(destination)) {
       temporary.delete()
       "Could not finish saving image."

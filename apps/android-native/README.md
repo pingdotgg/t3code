@@ -1,6 +1,6 @@
-# T3 Code Native Android — Phase 3 complete
+# T3 Code Native Android — Phase 4A
 
-Independent native Android client for T3 Code. Phase 3 is complete across project, files, Git, terminal, review, and attachment journeys. The post-Phase 3 thread-feed pass also matches the React Native client's chronological work timeline, settled-turn folding, Markdown support, and fast cached catch-up behavior.
+Independent native Android client for T3 Code. Phase 3 is complete across project, files, Git, terminal, review, and attachment journeys. Phase 4A adds Android share targets, app shortcuts, and strict app links without changing the server contract.
 
 ## Modules
 
@@ -86,6 +86,14 @@ T3_NATIVE_PROMPT='Count slowly from one to twenty, one number per line.' \
 ```
 
 It must exit 0 after pairing, loading the shell, creating one task with atomic `thread.turn.start`, recovering an uncertain retry by deterministic thread id, streaming assistant output, dispatching `thread.turn.interrupt`, reconnecting from the saved bearer credential, probing the server, and resuming shell/thread streams without duplicate sequences.
+
+## Phase 4A system integration
+
+Android can share text, one image, or multiple images into an app-private recovery inbox. The user then chooses an environment and continues through the existing new-task draft, including its project selection and attachment limits. The inbox survives process death and remains resumable from Home until accepted or explicitly discarded.
+
+The launcher exposes a static New task shortcut and up to three dynamic recent-thread shortcuts. Only the documented `t3code-native` routes are accepted; arbitrary commands, paths, query parameters, and server URLs are rejected.
+
+The Phase 4A capability matrix and S25 acceptance steps live in [`docs/PHASE4A.md`](docs/PHASE4A.md).
 
 ## Phase 3E boundaries
 

@@ -1,5 +1,6 @@
 package com.t3tools.android.nativeapp
 
+import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -40,16 +41,17 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -61,8 +63,16 @@ sealed interface DispatchState {
 
 sealed interface AppEvent {
   data object OpenHome : AppEvent
-  data class OpenNewTask(val projectId: String) : AppEvent
-  data class OpenThread(val threadId: String) : AppEvent
+  data object OpenAddEnvironment : AppEvent
+  data class OpenNewTask(
+    val projectId: String? = null,
+    val clearEntryRoute: Boolean = false,
+  ) : AppEvent
+  data class OpenIncomingShare(val shareId: String) : AppEvent
+  data class OpenThread(
+    val threadId: String,
+    val clearEntryRoute: Boolean = false,
+  ) : AppEvent
 }
 
 data class AddProjectUiState(
@@ -147,14 +157,19 @@ class AppViewModel(
   private val repository: OnlineChatRepository,
   private val draftStore: DraftStore,
   private val attachmentStore: AttachmentStore,
+  private val incomingShareStore: IncomingShareStore,
+  private val launcherShortcutStore: LauncherShortcutStore,
 ) : ViewModel() {
   val runtime: StateFlow<OnlineChatState> = repository.state
 
   private val mutableDispatchState = MutableStateFlow<DispatchState>(DispatchState.Idle)
   val dispatchState = mutableDispatchState.asStateFlow()
 
-  private val mutableEvents = MutableSharedFlow<AppEvent>(extraBufferCapacity = 2)
-  val events: SharedFlow<AppEvent> = mutableEvents.asSharedFlow()
+  private val mutableEvents = Channel<AppEvent>(Channel.BUFFERED)
+  val events = mutableEvents.receiveAsFlow()
+
+  private val mutableIncomingShares = MutableStateFlow(incomingShareStore.loadAll())
+  val incomingShares = mutableIncomingShares.asStateFlow()
 
   private val mutableDraftRevision = MutableStateFlow(0)
   val draftRevision = mutableDraftRevision.asStateFlow()
@@ -209,8 +224,104 @@ class AppViewModel(
 
   private var retryable: RetryableDispatch? = null
 
-  init {
-    viewModelScope.launch { runCatching { repository.restore() } }
+  private val restoreJob = viewModelScope.launch { runCatching { repository.restore() } }
+
+  fun handleSystemIntent(intent: Intent) {
+    val shareRequest = intent.incomingShareRequest()
+    if (shareRequest != null) {
+      viewModelScope.launch {
+        runCatching { incomingShareStore.ingest(shareRequest) }
+          .onSuccess { share ->
+            mutableIncomingShares.value = incomingShareStore.loadAll()
+            mutableEvents.trySend(AppEvent.OpenIncomingShare(share.id))
+          }
+          .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+      }
+      return
+    }
+    val route = if (intent.action == Intent.ACTION_VIEW) {
+      parseSystemRoute(intent.dataString)
+    } else {
+      null
+    } ?: return
+    viewModelScope.launch {
+      restoreJob.join()
+      when (route) {
+        SystemRoute.AddEnvironment -> mutableEvents.trySend(AppEvent.OpenAddEnvironment)
+        SystemRoute.NewTask -> {
+          if (runtime.value.environment == null) {
+            mutableEvents.trySend(AppEvent.OpenAddEnvironment)
+          } else {
+            mutableEvents.trySend(AppEvent.OpenNewTask(clearEntryRoute = true))
+          }
+        }
+        is SystemRoute.Thread -> runCatching {
+          require(runtime.value.environments.any { it.environmentId == route.environmentId }) {
+            "This shortcut belongs to an environment that is no longer saved."
+          }
+          repository.selectEnvironment(route.environmentId)
+        }.onSuccess {
+          mutableEvents.trySend(AppEvent.OpenThread(route.threadId, clearEntryRoute = true))
+        }.onFailure {
+          mutableDispatchState.value = DispatchState.Failed(it.safeMessage())
+        }
+      }
+    }
+  }
+
+  fun acceptIncomingShare(shareId: String, environmentId: String) {
+    viewModelScope.launch {
+      restoreJob.join()
+      mutableDispatchState.value = DispatchState.Sending
+      var imported = emptyList<DraftImageAttachment>()
+      var draftSaved = false
+      runCatching {
+        require(runtime.value.environments.any { it.environmentId == environmentId }) {
+          "Choose a saved environment."
+        }
+        val share = requireNotNull(incomingShareStore.load(shareId)) {
+          "The shared content is no longer available."
+        }
+        repository.selectEnvironment(environmentId)
+        val draftKey = DraftStore.newTaskKey(environmentId)
+        val current = draftStore.load(draftKey)
+        val attachmentResult = if (share.images.isEmpty()) {
+          AttachmentImportResult(emptyList())
+        } else {
+          attachmentStore.importIncoming(environmentId, share.images, current.attachments.size)
+        }
+        imported = attachmentResult.attachments
+        draftStore.save(
+          draftKey,
+          current.copy(
+            text = mergeSharedText(current.text, share.text),
+            attachments = current.attachments + attachmentResult.attachments,
+          ),
+        )
+        draftSaved = true
+        incomingShareStore.remove(shareId)
+        listOfNotNull(share.warning, attachmentResult.error).joinToString(" ").ifBlank { null }
+      }.onSuccess { warning ->
+        mutableIncomingShares.value = incomingShareStore.loadAll()
+        mutableDraftRevision.update { it + 1 }
+        mutableDispatchState.value = warning?.let(DispatchState::Failed) ?: DispatchState.Idle
+        mutableEvents.trySend(AppEvent.OpenNewTask(clearEntryRoute = true))
+      }.onFailure { failure ->
+        if (!draftSaved) attachmentStore.delete(imported)
+        mutableDispatchState.value = DispatchState.Failed(failure.safeMessage())
+      }
+    }
+  }
+
+  fun discardIncomingShare(shareId: String) {
+    viewModelScope.launch(Dispatchers.IO) {
+      runCatching { incomingShareStore.remove(shareId) }
+        .onSuccess {
+          mutableIncomingShares.value = incomingShareStore.loadAll()
+          mutableEvents.trySend(AppEvent.OpenHome)
+        }
+        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
   }
 
   fun pair(host: String, code: String) {
@@ -219,7 +330,11 @@ class AppViewModel(
       runCatching { repository.pair(buildPairingUrl(host, code)) }
         .onSuccess {
           mutableDispatchState.value = DispatchState.Idle
-          mutableEvents.tryEmit(AppEvent.OpenHome)
+          mutableEvents.trySend(
+            incomingShareStore.loadAll().firstOrNull()?.let {
+              AppEvent.OpenIncomingShare(it.id)
+            } ?: AppEvent.OpenHome,
+          )
         }
         .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
     }
@@ -263,13 +378,25 @@ class AppViewModel(
   }
 
   fun forgetEnvironment() {
+    val environmentId = runtime.value.environment?.environmentId
     viewModelScope.launch {
       repository.forget()
+      environmentId?.let(launcherShortcutStore::removeEnvironment)
       mutableDispatchState.value = DispatchState.Idle
     }
   }
 
-  fun selectThread(threadId: String) = repository.selectThread(threadId)
+  fun selectThread(threadId: String) {
+    val state = runtime.value
+    val environmentId = state.environment?.environmentId
+    val thread = state.shell.threads[threadId] ?: state.thread.detail?.summary
+    if (environmentId != null && thread != null) {
+      launcherShortcutStore.record(
+        RecentThreadShortcut(environmentId, threadId, thread.title),
+      )
+    }
+    repository.selectThread(threadId)
+  }
 
   fun clearSelectedThread() {
     repository.clearSelectedThread()
@@ -338,7 +465,7 @@ class AppViewModel(
         repository.dispatch(environmentId, createProjectCommand(resolvedPath, projectId))
       }.onSuccess {
         mutableAddProjectState.value = AddProjectUiState()
-        mutableEvents.tryEmit(AppEvent.OpenNewTask(projectId))
+        mutableEvents.trySend(AppEvent.OpenNewTask(projectId))
       }.onFailure { error ->
         mutableAddProjectState.update {
           it.copy(submitting = false, error = error.safeMessage())
@@ -1634,7 +1761,7 @@ class AppViewModel(
       runCatching { repository.connectRelay(environmentId) }
         .onSuccess {
           mutableDispatchState.value = DispatchState.Idle
-          mutableEvents.tryEmit(AppEvent.OpenHome)
+          mutableEvents.trySend(AppEvent.OpenHome)
         }
         .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
     }
@@ -1709,7 +1836,7 @@ class AppViewModel(
     viewModelScope.launch { repository.cleanupAttachments() }
     mutableDispatchState.value = DispatchState.Idle
     repository.selectThread(start.threadId)
-    mutableEvents.tryEmit(AppEvent.OpenThread(start.threadId))
+    mutableEvents.trySend(AppEvent.OpenThread(start.threadId))
   }
 
   private fun dispatchAction(
@@ -1787,7 +1914,13 @@ class AppViewModel(
   class Factory(private val graph: AppGraph) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
-      AppViewModel(graph.chatRepository, graph.draftStore, graph.attachmentStore) as T
+      AppViewModel(
+        graph.chatRepository,
+        graph.draftStore,
+        graph.attachmentStore,
+        graph.incomingShareStore,
+        graph.launcherShortcutStore,
+      ) as T
   }
 }
 

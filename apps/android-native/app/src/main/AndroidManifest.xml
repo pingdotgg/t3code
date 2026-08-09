@@ -18,6 +18,23 @@
         <action android:name="android.intent.action.MAIN" />
         <category android:name="android.intent.category.LAUNCHER" />
       </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.SEND" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="text/plain" />
+        <data android:mimeType="image/*" />
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.SEND_MULTIPLE" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="image/*" />
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="t3code-native" />
+      </intent-filter>
       <!-- Clerk Android OAuth return: clerk://<applicationId>.callback -->
       <intent-filter>
         <action android:name="android.intent.action.VIEW" />
@@ -40,6 +57,9 @@
           android:host="com.t3tools.t3code.native.experimental"
           android:pathPrefix="/oauth" />
       </intent-filter>
+      <meta-data
+        android:name="android.app.shortcuts"
+        android:resource="@xml/shortcuts" />
     </activity>
   </application>
 </manifest>
