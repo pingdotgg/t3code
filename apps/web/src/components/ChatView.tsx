@@ -1264,6 +1264,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const replaceDraftThreadId = useComposerDraftStore((store) => store.replaceDraftThreadId);
   const getDraftSessionByLogicalProjectKey = useComposerDraftStore(
     (store) => store.getDraftSessionByLogicalProjectKey,
   );
@@ -4840,6 +4841,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     let turnStartSucceeded = false;
+    let draftBootstrapAttempted = false;
     if (failure === null && turnAttachmentsResult._tag === "Success") {
       const bootstrap =
         isLocalDraftThread || baseBranchForWorktree
@@ -4871,6 +4873,7 @@ function ChatViewContent(props: ChatViewProps) {
                 : {}),
             }
           : undefined;
+      draftBootstrapAttempted = bootstrap?.createThread !== undefined;
       beginLocalDispatch({ preparingWorktree: false });
       const startResult = await startThreadTurn({
         environmentId,
@@ -4898,6 +4901,11 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     if (failure !== null) {
+      if (draftBootstrapAttempted && draftId !== null) {
+        // A failed bootstrap may have already created and tombstoned this id.
+        // Keep the draft content, but reserve a fresh server thread id for retry.
+        replaceDraftThreadId(draftId, newThreadId());
+      }
       if (
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0 &&

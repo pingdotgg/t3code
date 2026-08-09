@@ -767,6 +767,30 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 
+  it("replaces a failed draft thread id without losing draft state", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      branch: "feature/retry",
+      worktreePath: "/tmp/retry-worktree",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    store.setPrompt(draftId, "retry this draft");
+    store.markDraftThreadPromoting(draftId);
+
+    store.replaceDraftThreadId(draftId, otherThreadId);
+
+    expect(store.getDraftThreadByProjectRef(projectRef)).toMatchObject({
+      threadId: otherThreadId,
+      branch: "feature/retry",
+      worktreePath: "/tmp/retry-worktree",
+      promotedTo: null,
+    });
+    expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toBe(
+      "retry this draft",
+    );
+  });
+
   it("clears only matching project draft mapping entries", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });

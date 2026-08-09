@@ -390,6 +390,8 @@ interface ComposerDraftStoreState {
       interactionMode?: ProviderInteractionMode;
     },
   ) => void;
+  /** Replaces a draft's reserved server thread id after a failed bootstrap. */
+  replaceDraftThreadId: (threadRef: ComposerThreadTarget, threadId: ThreadId) => void;
   clearProjectDraftThreadId: (projectRef: ScopedProjectRef) => void;
   clearProjectDraftThreadById: (
     projectRef: ScopedProjectRef,
@@ -2399,6 +2401,28 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               draftThreadsByThreadKey: {
                 ...state.draftThreadsByThreadKey,
                 [threadKey]: nextDraftThread,
+              },
+            };
+          });
+        },
+        replaceDraftThreadId: (threadRef, threadId) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0 || threadId.length === 0) {
+            return;
+          }
+          set((state) => {
+            const existing = state.draftThreadsByThreadKey[threadKey];
+            if (!existing || (existing.threadId === threadId && existing.promotedTo === null)) {
+              return state;
+            }
+            return {
+              draftThreadsByThreadKey: {
+                ...state.draftThreadsByThreadKey,
+                [threadKey]: {
+                  ...existing,
+                  threadId,
+                  promotedTo: null,
+                },
               },
             };
           });
