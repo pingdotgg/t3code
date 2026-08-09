@@ -187,6 +187,7 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
     }
     navigation.dispatch(StackActions.replace("Home"));
   }, [navigation]);
+  const handleRouteNavigateUp = props.onReturnToThread ?? handleNavigateUp;
   const { state: workspaceState } = useWorkspaceState();
   const { connectionState } = useRemoteConnectionStatus();
   const { selectedThread } = useThreadSelection();
@@ -208,7 +209,7 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
   const selectedThreadDetailState = useSelectedThreadDetailState();
 
   if (environmentId === null || threadIdRaw === null) {
-    return <OpeningThreadRouteScreen onNavigateUp={handleNavigateUp} />;
+    return <OpeningThreadRouteScreen onNavigateUp={handleRouteNavigateUp} />;
   }
 
   // Render the full thread chrome (header, feed, composer) as soon as the
@@ -225,10 +226,10 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
     routeConnectionState === "reconnecting";
 
   if (stillHydrating) {
-    return <OpeningThreadRouteScreen onNavigateUp={handleNavigateUp} />;
+    return <OpeningThreadRouteScreen onNavigateUp={handleRouteNavigateUp} />;
   }
 
-  return <ThreadUnavailableScreen onNavigateUp={handleNavigateUp} />;
+  return <ThreadUnavailableScreen onNavigateUp={handleRouteNavigateUp} />;
 }
 
 function ThreadRouteContent(
