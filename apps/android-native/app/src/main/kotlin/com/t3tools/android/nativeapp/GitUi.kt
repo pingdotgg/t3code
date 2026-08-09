@@ -9,9 +9,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -25,7 +27,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AccountTree
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.RateReview
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -38,6 +42,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -46,6 +51,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -55,6 +61,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -64,11 +71,11 @@ import com.t3tools.android.protocol.GitStackedAction
 import com.t3tools.android.protocol.VcsChangedFile
 
 @Composable
-fun GitOverviewScreen(
+fun GitOverviewDrawer(
   threadId: String,
   state: GitUiState,
   viewModel: AppViewModel,
-  onBack: () -> Unit,
+  onDismiss: () -> Unit,
   onCommit: () -> Unit,
   onBranches: () -> Unit,
   onReview: () -> Unit,
@@ -79,6 +86,7 @@ fun GitOverviewScreen(
   val quick = resolveGitQuickAction(status, busy)
   val context = LocalContext.current
   var pendingAction by remember { mutableStateOf<GitStackedAction?>(null) }
+  val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
   fun run(action: GitStackedAction) {
     if (requiresDefaultBranchConfirmation(action, status?.isDefaultRef == true)) {
@@ -88,131 +96,130 @@ fun GitOverviewScreen(
     }
   }
 
-  Scaffold(
-    topBar = {
-      TopAppBar(
-        title = {
-          Column {
-            Text(status?.refName ?: "Repository", maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-              gitStatusSummary(status),
-              style = MaterialTheme.typography.labelSmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-          }
-        },
-        navigationIcon = {
-          IconButton(onClick = onBack) {
-            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
-          }
-        },
-        actions = {
-          IconButton(onClick = viewModel::refreshGitStatus, enabled = !busy) {
-            Icon(Icons.Rounded.Refresh, contentDescription = "Refresh repository status")
-          }
-        },
-        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Black),
+  ModalBottomSheet(
+    onDismissRequest = onDismiss,
+    sheetState = sheetState,
+    containerColor = Color(0xFF141417),
+    contentColor = Color.White,
+    shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+    scrimColor = Color.Black.copy(alpha = 0.65f),
+  ) {
+    Column(Modifier.fillMaxWidth().fillMaxHeight(0.94f)) {
+      DrawerHeader(
+        icon = Icons.Rounded.AccountTree,
+        title = status?.refName ?: "Repository",
+        subtitle = gitStatusSummary(status),
+        onDismiss = onDismiss,
       )
-    },
-  ) { padding ->
-    LazyColumn(
-      modifier = Modifier.fillMaxSize().padding(padding),
-      contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-      verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-      if (state.loading && status == null) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-      item { GitStatusCard(state) }
-      if (status?.isRepo == true) {
-        item {
-          Button(
-            onClick = {
-              when (quick.kind) {
-                GitQuickActionKind.RunAction -> quick.action?.let(::run)
-                GitQuickActionKind.Pull -> viewModel.pullGit()
-                GitQuickActionKind.OpenPr -> status.pullRequest?.url?.let(context::openExternalUrl)
-                GitQuickActionKind.Hint -> Unit
-              }
-            },
-            enabled = quick.enabled && !busy,
-            modifier = Modifier.fillMaxWidth(),
-          ) { Text(quick.label) }
-          quick.hint?.let {
-            Text(
-              it,
-              modifier = Modifier.padding(top = 6.dp),
-              style = MaterialTheme.typography.bodySmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-          }
-        }
-        item {
-          GitActionCard {
-            GitActionRow(
-              title = "Commit",
-              detail = status.workingTree.let {
-                "${it.files.size} files · +${it.insertions} / -${it.deletions}"
-              },
-              enabled = status.hasWorkingTreeChanges && !busy,
-              onClick = onCommit,
-            )
-            HorizontalDivider()
-            GitActionRow(
-              title = "Push",
-              detail = if (status.aheadCount > 0) "${status.aheadCount} commits ahead" else "No commits to push",
-              enabled = !status.hasWorkingTreeChanges && status.aheadCount > 0 &&
-                status.behindCount == 0 && (status.hasUpstream || status.hasPrimaryRemote) && !busy,
-              onClick = { run(GitStackedAction.Push) },
-            )
-            HorizontalDivider()
-            GitActionRow(
-              title = if (status.pullRequest?.state == "open") "View PR" else "Create PR",
-              detail = status.pullRequest?.let { "PR #${it.number} · ${it.state}" }
-                ?: "Push this branch and open a pull request",
-              enabled = if (status.pullRequest?.state == "open") !busy else {
-                !status.hasWorkingTreeChanges && status.aheadCount > 0 && status.behindCount == 0 &&
-                  (status.hasUpstream || status.hasPrimaryRemote) && !busy
-              },
+      LazyColumn(
+        modifier = Modifier.fillMaxWidth().weight(1f),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+      ) {
+        if (state.loading && status == null) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        item { GitStatusCard(state, busy, viewModel::refreshGitStatus) }
+        if (status?.isRepo == true) {
+          item {
+            Button(
               onClick = {
-                status.pullRequest?.takeIf { it.state == "open" }?.url?.let(context::openExternalUrl)
-                  ?: run(GitStackedAction.CreatePr)
+                when (quick.kind) {
+                  GitQuickActionKind.RunAction -> quick.action?.let(::run)
+                  GitQuickActionKind.Pull -> viewModel.pullGit()
+                  GitQuickActionKind.OpenPr -> status.pullRequest?.url?.let(context::openExternalUrl)
+                  GitQuickActionKind.Hint -> Unit
+                }
               },
-            )
-            if (status.behindCount > 0) {
-              HorizontalDivider()
-              GitActionRow(
-                title = "Pull latest",
-                detail = "${status.behindCount} commits behind upstream",
-                enabled = status.aheadCount == 0 && !busy,
-                onClick = viewModel::pullGit,
+              enabled = quick.enabled && !busy,
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Icon(Icons.Rounded.Check, contentDescription = null)
+              Spacer(Modifier.width(8.dp))
+              Text(quick.label)
+            }
+            quick.hint?.let {
+              Text(
+                it,
+                modifier = Modifier.padding(top = 6.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
               )
             }
-            HorizontalDivider()
-            GitActionRow(
-              title = "Review changes",
-              detail = "Inspect turn, working tree, and branch diffs",
-              enabled = !busy,
-              onClick = onReview,
-            )
-            HorizontalDivider()
-            GitActionRow(
-              title = "Branches & worktrees",
-              detail = "Switch or create a branch or worktree",
-              enabled = !busy,
-              onClick = onBranches,
-            )
           }
-        }
-        if (status.workingTree.files.isNotEmpty()) {
           item {
-            Text("Changed files", fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(8.dp))
-            GitChangedFiles(status.workingTree.files.take(8))
+            GitActionCard {
+              GitActionRow(
+                icon = Icons.Rounded.Check,
+                title = "Commit",
+                detail = status.workingTree.let {
+                  "${it.files.size} files · +${it.insertions} / -${it.deletions}"
+                },
+                enabled = status.hasWorkingTreeChanges && !busy,
+                onClick = onCommit,
+              )
+              HorizontalDivider()
+              GitActionRow(
+                icon = Icons.AutoMirrored.Rounded.OpenInNew,
+                title = "Push",
+                detail = if (status.aheadCount > 0) "${status.aheadCount} commits ahead" else "No commits to push",
+                enabled = !status.hasWorkingTreeChanges && status.aheadCount > 0 &&
+                  status.behindCount == 0 && (status.hasUpstream || status.hasPrimaryRemote) && !busy,
+                onClick = { run(GitStackedAction.Push) },
+              )
+              HorizontalDivider()
+              GitActionRow(
+                icon = Icons.AutoMirrored.Rounded.OpenInNew,
+                title = if (status.pullRequest?.state == "open") "View PR" else "Create PR",
+                detail = status.pullRequest?.let { "PR #${it.number} · ${it.state}" }
+                  ?: "Push this branch and open a pull request",
+                enabled = if (status.pullRequest?.state == "open") !busy else {
+                  !status.hasWorkingTreeChanges && status.aheadCount > 0 && status.behindCount == 0 &&
+                    (status.hasUpstream || status.hasPrimaryRemote) && !busy
+                },
+                onClick = {
+                  status.pullRequest?.takeIf { it.state == "open" }?.url?.let(context::openExternalUrl)
+                    ?: run(GitStackedAction.CreatePr)
+                },
+              )
+              if (status.behindCount > 0) {
+                HorizontalDivider()
+                GitActionRow(
+                  icon = Icons.Rounded.Refresh,
+                  title = "Pull latest",
+                  detail = "${status.behindCount} commits behind upstream",
+                  enabled = status.aheadCount == 0 && !busy,
+                  onClick = viewModel::pullGit,
+                )
+              }
+              HorizontalDivider()
+              GitActionRow(
+                icon = Icons.Rounded.RateReview,
+                title = "Review changes",
+                detail = "Inspect turn, working tree, and branch diffs",
+                enabled = !busy,
+                onClick = onReview,
+              )
+              HorizontalDivider()
+              GitActionRow(
+                icon = Icons.Rounded.AccountTree,
+                title = "Branches & worktrees",
+                detail = "Switch or create a branch or worktree",
+                enabled = !busy,
+                onClick = onBranches,
+              )
+            }
+          }
+          if (status.workingTree.files.isNotEmpty()) {
+            item {
+              Text("Changed files", fontWeight = FontWeight.SemiBold)
+              Spacer(Modifier.height(8.dp))
+              GitChangedFiles(status.workingTree.files.take(8))
+            }
           }
         }
-      }
-      state.error?.let { error ->
-        item {
-          Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        state.error?.let { error ->
+          item {
+            Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+          }
         }
       }
     }
@@ -473,36 +480,84 @@ fun GitProgressOverlay(state: GitProgressUiState?, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun GitStatusCard(state: GitUiState) {
+private fun GitStatusCard(
+  state: GitUiState,
+  busy: Boolean = false,
+  onRefresh: (() -> Unit)? = null,
+) {
   val status = state.status
-  Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-      Text(status?.refName ?: if (status?.isRepo == false) "Not a repository" else "Checking repository", fontWeight = FontWeight.Bold)
-      Text(gitStatusSummary(status), color = MaterialTheme.colorScheme.onSurfaceVariant)
-      status?.takeIf { it.isRepo }?.let {
+  Card(
+    shape = RoundedCornerShape(20.dp),
+    colors = CardDefaults.cardColors(containerColor = Color(0xFF1D1D21)),
+  ) {
+    Row(
+      modifier = Modifier.fillMaxWidth().padding(16.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Text(
-          "${if (it.hasUpstream) "Tracking upstream" else "No upstream"} · ${if (it.hasPrimaryRemote) "Remote ready" else "No primary remote"}",
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          status?.refName ?: if (status?.isRepo == false) "Not a repository" else "Checking repository",
+          fontWeight = FontWeight.Bold,
         )
+        Text(gitStatusSummary(status), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        status?.takeIf { it.isRepo }?.let {
+          Text(
+            "${if (it.hasUpstream) "Tracking upstream" else "No upstream"} · ${if (it.hasPrimaryRemote) "Remote ready" else "No primary remote"}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
+        state.operation?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
       }
-      state.operation?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+      onRefresh?.let {
+        IconButton(onClick = it, enabled = !busy) {
+          Icon(Icons.Rounded.Refresh, contentDescription = "Refresh repository status")
+        }
+      }
     }
   }
 }
 
 @Composable
 private fun GitActionCard(content: @Composable ColumnScope.() -> Unit) {
-  Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+  Card(
+    shape = RoundedCornerShape(20.dp),
+    colors = CardDefaults.cardColors(containerColor = Color(0xFF1D1D21)),
+  ) {
     Column(content = content)
   }
 }
 
 @Composable
-private fun GitActionRow(title: String, detail: String, enabled: Boolean, onClick: () -> Unit) {
-  TextButton(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
+private fun GitActionRow(
+  icon: ImageVector,
+  title: String,
+  detail: String,
+  enabled: Boolean,
+  onClick: () -> Unit,
+) {
+  TextButton(
+    onClick = onClick,
+    enabled = enabled,
+    modifier = Modifier.fillMaxWidth(),
+    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+  ) {
+    Surface(
+      modifier = Modifier.width(40.dp).height(40.dp),
+      shape = RoundedCornerShape(12.dp),
+      color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+      Box(contentAlignment = Alignment.Center) {
+        Icon(icon, contentDescription = null, modifier = Modifier.width(20.dp).height(20.dp))
+      }
+    }
+    Spacer(Modifier.width(12.dp))
     Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
-      Text(title, color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+      Text(
+        title,
+        fontWeight = FontWeight.SemiBold,
+        color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+      )
       Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
   }
@@ -510,7 +565,10 @@ private fun GitActionRow(title: String, detail: String, enabled: Boolean, onClic
 
 @Composable
 private fun GitChangedFiles(files: List<VcsChangedFile>) {
-  Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+  Card(
+    shape = RoundedCornerShape(20.dp),
+    colors = CardDefaults.cardColors(containerColor = Color(0xFF1D1D21)),
+  ) {
     Column {
       files.forEachIndexed { index, file ->
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {

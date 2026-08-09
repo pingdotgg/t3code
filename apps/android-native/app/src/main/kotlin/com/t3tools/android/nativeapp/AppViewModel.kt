@@ -16,6 +16,7 @@ import com.t3tools.android.protocol.TerminalAttachEvent
 import com.t3tools.android.protocol.TerminalBufferState
 import com.t3tools.android.protocol.TerminalMetadataEvent
 import com.t3tools.android.protocol.TerminalStatus
+import com.t3tools.android.protocol.VcsRef
 import com.t3tools.android.protocol.WorktreeBootstrap
 import com.t3tools.android.protocol.WorkspaceContentMatch
 import com.t3tools.android.protocol.WorkspaceEntry
@@ -112,7 +113,17 @@ data class WorktreeChoice(
   val enabled: Boolean,
   val baseBranch: String,
   val branch: String,
+  val startFromOrigin: Boolean,
   val runSetupScript: Boolean,
+)
+
+data class NewTaskBranchesUiState(
+  val environmentId: String? = null,
+  val projectId: String? = null,
+  val refs: List<VcsRef> = emptyList(),
+  val isRepo: Boolean = true,
+  val loading: Boolean = false,
+  val error: String? = null,
 )
 
 private data class GitTarget(
@@ -183,6 +194,9 @@ class AppViewModel(
   private val mutableGitState = MutableStateFlow(GitUiState())
   val gitState = mutableGitState.asStateFlow()
 
+  private val mutableNewTaskBranchesState = MutableStateFlow(NewTaskBranchesUiState())
+  val newTaskBranchesState = mutableNewTaskBranchesState.asStateFlow()
+
   private val mutableTerminalState = MutableStateFlow(TerminalUiState())
   val terminalState = mutableTerminalState.asStateFlow()
 
@@ -207,6 +221,7 @@ class AppViewModel(
   private var workspaceFileJob: Job? = null
   private var gitStatusJob: Job? = null
   private var gitMutationJob: Job? = null
+  private var newTaskBranchesJob: Job? = null
   private var terminalMetadataJob: Job? = null
   private var terminalAttachJob: Job? = null
   private var terminalWriteJob: Job? = null
@@ -648,6 +663,43 @@ class AppViewModel(
         }
         .onFailure { error ->
           mutableGitState.update { it.copy(refsLoading = false, error = error.safeMessage()) }
+        }
+    }
+  }
+
+  fun loadNewTaskBranches(projectId: String, force: Boolean = false) {
+    val state = runtime.value
+    val environmentId = state.environment?.environmentId ?: return
+    val project = state.shell.projects[projectId] ?: return
+    val current = mutableNewTaskBranchesState.value
+    if (!force && current.environmentId == environmentId && current.projectId == projectId) return
+
+    newTaskBranchesJob?.cancel()
+    mutableNewTaskBranchesState.value = NewTaskBranchesUiState(
+      environmentId = environmentId,
+      projectId = projectId,
+      loading = true,
+    )
+    newTaskBranchesJob = viewModelScope.launch {
+      runCatching { repository.listVcsRefs(environmentId, project.workspaceRoot) }
+        .onSuccess { result ->
+          mutableNewTaskBranchesState.update { latest ->
+            if (latest.environmentId != environmentId || latest.projectId != projectId) latest
+            else latest.copy(
+              refs = result.refs,
+              isRepo = result.isRepo,
+              loading = false,
+              error = null,
+            )
+          }
+        }
+        .onFailure { error ->
+          if (error !is CancellationException) {
+            mutableNewTaskBranchesState.update { latest ->
+              if (latest.environmentId != environmentId || latest.projectId != projectId) latest
+              else latest.copy(loading = false, error = error.safeMessage())
+            }
+          }
         }
     }
   }
@@ -1569,6 +1621,9 @@ class AppViewModel(
   ) {
     val state = runtime.value
     val project = state.shell.projects[projectId] ?: return
+    if (worktree.enabled && worktree.baseBranch.isBlank()) {
+      return fail("Select a base branch before starting the task.")
+    }
     val fallbackModel = project.defaultModelSelection
       ?: state.providerModels.firstOrNull()?.let { ModelSelection(it.instanceId, it.model) }
       ?: return fail("No ready model is available.")
@@ -1588,8 +1643,9 @@ class AppViewModel(
       worktree = if (worktree.enabled) {
         WorktreeBootstrap(
           projectCwd = project.workspaceRoot,
-          baseBranch = worktree.baseBranch.ifBlank { "main" },
+          baseBranch = worktree.baseBranch.trim(),
           branch = worktree.branch.ifBlank { null },
+          startFromOrigin = worktree.startFromOrigin,
           runSetupScript = worktree.runSetupScript,
         )
       } else {

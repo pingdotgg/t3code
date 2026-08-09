@@ -563,10 +563,12 @@ private fun MarkdownFile(markdown: String) {
   AndroidView(
     factory = {
       TextView(it).apply {
-        setTextColor(android.graphics.Color.rgb(244, 244, 245))
+        setTextColor(android.graphics.Color.rgb(229, 229, 229))
         setTextIsSelectable(true)
         movementMethod = LinkMovementMethod.getInstance()
         textSize = 15f
+        includeFontPadding = false
+        setLineSpacing(0f, 1.27f)
         setPadding(36, 24, 36, 48)
       }
     },

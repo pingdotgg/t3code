@@ -13,6 +13,13 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.graphicsLayer
@@ -24,10 +31,12 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -63,6 +72,7 @@ import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Clear
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CreateNewFolder
 import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.FilterAlt
@@ -72,12 +82,12 @@ import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Public
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.rounded.Terminal
-import androidx.compose.material.icons.rounded.RateReview
 import androidx.compose.material.icons.rounded.Unarchive
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.WarningAmber
@@ -130,6 +140,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
@@ -152,11 +163,13 @@ import com.t3tools.android.protocol.ProviderOptionDescriptor
 import com.t3tools.android.protocol.ThreadDetail
 import com.t3tools.android.protocol.ThreadSummary
 import com.t3tools.android.protocol.ChatImageAttachment
+import com.t3tools.android.protocol.ChatMessage
 import com.t3tools.android.protocol.DEFAULT_TERMINAL_ID
 import com.t3tools.android.protocol.nextTerminalId
 import io.noties.markwon.Markwon
 import coil.compose.AsyncImage
 import java.io.File
+import java.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.delay
@@ -172,17 +185,17 @@ import kotlinx.serialization.json.contentOrNull
 private const val ONBOARDING = "onboarding"
 private const val CONNECT = "connect"
 private const val HOME = "home"
-private const val NEW_TASK = "new-task"
-private const val NEW_TASK_ROUTE = "new-task?projectId={projectId}"
 private const val INCOMING_SHARE = "share/{shareId}"
 private const val ADD_PROJECT = "add-project"
 private const val SETTINGS = "settings"
 private const val ARCHIVED_THREADS = "settings/archived"
 private const val THREAD = "thread/{threadId}"
 private const val THREAD_FILES = "thread/{threadId}/files"
-private const val THREAD_GIT = "thread/{threadId}/git"
 private const val THREAD_GIT_COMMIT = "thread/{threadId}/git/commit"
 private const val THREAD_GIT_BRANCHES = "thread/{threadId}/git/branches"
+private const val MESSAGE_ENTRY_MILLIS = 220
+private const val FRESH_MESSAGE_WINDOW_MILLIS = 3_000
+private const val PAGE_TRANSITION_MILLIS = 220
 
 private val markdownRenderDispatcher = Dispatchers.Default.limitedParallelism(1)
 
@@ -190,6 +203,8 @@ private data class RenderedMarkdown(
   val source: String,
   val content: Spanned,
 )
+
+private data class NewTaskDrawerState(val projectId: String?)
 private const val THREAD_TERMINAL = "thread/{threadId}/terminal/{terminalId}"
 private const val THREAD_REVIEW = "thread/{threadId}/review"
 
@@ -201,24 +216,39 @@ fun T3NativeApp(viewModel: AppViewModel) {
   val incomingShares by viewModel.incomingShares.collectAsState()
   val navController = rememberNavController()
   val start = remember { if (runtime.environment == null) ONBOARDING else HOME }
+  var newTaskDrawer by remember { mutableStateOf<NewTaskDrawerState?>(null) }
+  var gitDrawerThreadId by remember { mutableStateOf<String?>(null) }
+  var reopenGitDrawerThreadId by remember { mutableStateOf<String?>(null) }
 
   LaunchedEffect(viewModel) {
     viewModel.events.collectLatest { event ->
       when (event) {
-        AppEvent.OpenHome -> navController.navigate(HOME) {
-          popUpTo(ONBOARDING) { inclusive = true }
-          launchSingleTop = true
-        }
-        AppEvent.OpenAddEnvironment -> navController.navigate(ONBOARDING) {
-          launchSingleTop = true
-        }
-        is AppEvent.OpenNewTask -> {
-          val route = event.projectId?.let { "$NEW_TASK?projectId=${Uri.encode(it)}" } ?: NEW_TASK
-          navController.navigate(route) {
-            if (event.clearEntryRoute) popUpTo(0)
-            else popUpTo(ADD_PROJECT) { inclusive = true }
+        AppEvent.OpenHome -> {
+          newTaskDrawer = null
+          gitDrawerThreadId = null
+          reopenGitDrawerThreadId = null
+          navController.navigate(HOME) {
+            popUpTo(ONBOARDING) { inclusive = true }
             launchSingleTop = true
           }
+        }
+        AppEvent.OpenAddEnvironment -> {
+          newTaskDrawer = null
+          gitDrawerThreadId = null
+          reopenGitDrawerThreadId = null
+          navController.navigate(ONBOARDING) { launchSingleTop = true }
+        }
+        is AppEvent.OpenNewTask -> {
+          reopenGitDrawerThreadId = null
+          if (event.clearEntryRoute) {
+            navController.navigate(HOME) {
+              popUpTo(0)
+              launchSingleTop = true
+            }
+          } else if (navController.currentDestination?.route == ADD_PROJECT) {
+            navController.popBackStack()
+          }
+          newTaskDrawer = NewTaskDrawerState(event.projectId)
         }
         is AppEvent.OpenIncomingShare -> navController.navigate(
           "share/${Uri.encode(event.shareId)}",
@@ -226,9 +256,14 @@ fun T3NativeApp(viewModel: AppViewModel) {
           popUpTo(0)
           launchSingleTop = true
         }
-        is AppEvent.OpenThread -> navController.navigate("thread/${Uri.encode(event.threadId)}") {
-          if (event.clearEntryRoute) popUpTo(0)
-          launchSingleTop = true
+        is AppEvent.OpenThread -> {
+          newTaskDrawer = null
+          gitDrawerThreadId = null
+          reopenGitDrawerThreadId = null
+          navController.navigate("thread/${Uri.encode(event.threadId)}") {
+            if (event.clearEntryRoute) popUpTo(0)
+            launchSingleTop = true
+          }
         }
       }
     }
@@ -241,7 +276,34 @@ fun T3NativeApp(viewModel: AppViewModel) {
   }
 
   Box(Modifier.fillMaxSize()) {
-    NavHost(navController = navController, startDestination = start) {
+    NavHost(
+      navController = navController,
+      startDestination = start,
+      enterTransition = {
+        fadeIn(tween(PAGE_TRANSITION_MILLIS)) + slideInHorizontally(
+          animationSpec = tween(PAGE_TRANSITION_MILLIS),
+          initialOffsetX = { it / 10 },
+        )
+      },
+      exitTransition = {
+        fadeOut(tween(PAGE_TRANSITION_MILLIS)) + slideOutHorizontally(
+          animationSpec = tween(PAGE_TRANSITION_MILLIS),
+          targetOffsetX = { -it / 20 },
+        )
+      },
+      popEnterTransition = {
+        fadeIn(tween(PAGE_TRANSITION_MILLIS)) + slideInHorizontally(
+          animationSpec = tween(PAGE_TRANSITION_MILLIS),
+          initialOffsetX = { -it / 20 },
+        )
+      },
+      popExitTransition = {
+        fadeOut(tween(PAGE_TRANSITION_MILLIS)) + slideOutHorizontally(
+          animationSpec = tween(PAGE_TRANSITION_MILLIS),
+          targetOffsetX = { it / 10 },
+        )
+      },
+    ) {
     composable(ONBOARDING) {
       OnboardingScreen(
         runtime = runtime,
@@ -263,32 +325,15 @@ fun T3NativeApp(viewModel: AppViewModel) {
         runtime = runtime,
         dispatchState = dispatchState,
         viewModel = viewModel,
-        onNewTask = { navController.navigate(NEW_TASK) },
-        onAddProject = { navController.navigate(ADD_PROJECT) },
+        onNewTask = {
+          reopenGitDrawerThreadId = null
+          newTaskDrawer = NewTaskDrawerState(null)
+        },
         onOpenThread = { navController.navigate("thread/$it") },
         pendingShares = incomingShares,
         onOpenShare = { navController.navigate("share/${Uri.encode(it)}") },
         onAddEnvironment = { navController.navigate(ONBOARDING) },
         onSettings = { navController.navigate(SETTINGS) },
-      )
-    }
-    composable(
-      route = NEW_TASK_ROUTE,
-      arguments = listOf(
-        navArgument("projectId") {
-          type = NavType.StringType
-          nullable = true
-          defaultValue = null
-        },
-      ),
-    ) { entry ->
-      NewTaskScreen(
-        runtime = runtime,
-        dispatchState = dispatchState,
-        viewModel = viewModel,
-        initialProjectId = entry.arguments?.getString("projectId"),
-        onBack = { navController.popBackStack() },
-        onAddProject = { navController.navigate(ADD_PROJECT) },
       )
     }
     composable(
@@ -348,8 +393,7 @@ fun T3NativeApp(viewModel: AppViewModel) {
           navController.popBackStack()
         },
         onFiles = { navController.navigate("thread/$threadId/files") },
-        onGit = { navController.navigate("thread/$threadId/git") },
-        onReview = { navController.navigate("thread/$threadId/review") },
+        onGit = { gitDrawerThreadId = threadId },
         onTerminal = {
           navController.navigate("thread/$threadId/terminal/$DEFAULT_TERMINAL_ID")
         },
@@ -367,51 +411,57 @@ fun T3NativeApp(viewModel: AppViewModel) {
       )
     }
     composable(
-      route = THREAD_GIT,
-      arguments = listOf(navArgument("threadId") { type = NavType.StringType }),
-    ) { entry ->
-      val threadId = requireNotNull(entry.arguments?.getString("threadId"))
-      GitOverviewScreen(
-        threadId = threadId,
-        state = gitState,
-        viewModel = viewModel,
-        onBack = { navController.popBackStack() },
-        onCommit = { navController.navigate("thread/$threadId/git/commit") },
-        onBranches = { navController.navigate("thread/$threadId/git/branches") },
-        onReview = { navController.navigate("thread/$threadId/review") },
-      )
-    }
-    composable(
       route = THREAD_GIT_COMMIT,
       arguments = listOf(navArgument("threadId") { type = NavType.StringType }),
     ) { entry ->
+      val threadId = requireNotNull(entry.arguments?.getString("threadId"))
       GitCommitScreen(
-        threadId = requireNotNull(entry.arguments?.getString("threadId")),
+        threadId = threadId,
         state = gitState,
         viewModel = viewModel,
-        onBack = { navController.popBackStack() },
+        onBack = {
+          navController.popBackStack()
+          reopenGitDrawerThreadId?.takeIf { it == threadId }?.let {
+            reopenGitDrawerThreadId = null
+            gitDrawerThreadId = it
+          }
+        },
       )
     }
     composable(
       route = THREAD_GIT_BRANCHES,
       arguments = listOf(navArgument("threadId") { type = NavType.StringType }),
     ) { entry ->
+      val threadId = requireNotNull(entry.arguments?.getString("threadId"))
       GitBranchesScreen(
-        threadId = requireNotNull(entry.arguments?.getString("threadId")),
+        threadId = threadId,
         state = gitState,
         viewModel = viewModel,
-        onBack = { navController.popBackStack() },
+        onBack = {
+          navController.popBackStack()
+          reopenGitDrawerThreadId?.takeIf { it == threadId }?.let {
+            reopenGitDrawerThreadId = null
+            gitDrawerThreadId = it
+          }
+        },
       )
     }
     composable(
       route = THREAD_REVIEW,
       arguments = listOf(navArgument("threadId") { type = NavType.StringType }),
     ) { entry ->
+      val threadId = requireNotNull(entry.arguments?.getString("threadId"))
       ReviewScreen(
-        threadId = requireNotNull(entry.arguments?.getString("threadId")),
+        threadId = threadId,
         connectionPhase = runtime.connectionPhase,
         viewModel = viewModel,
-        onBack = { navController.popBackStack() },
+        onBack = {
+          navController.popBackStack()
+          reopenGitDrawerThreadId?.takeIf { it == threadId }?.let {
+            reopenGitDrawerThreadId = null
+            gitDrawerThreadId = it
+          }
+        },
       )
     }
     composable(
@@ -461,6 +511,42 @@ fun T3NativeApp(viewModel: AppViewModel) {
         )
       }
     }
+    }
+    newTaskDrawer?.let { drawer ->
+      NewTaskDrawer(
+        runtime = runtime,
+        dispatchState = dispatchState,
+        viewModel = viewModel,
+        initialProjectId = drawer.projectId,
+        onDismiss = { newTaskDrawer = null },
+        onAddProject = {
+          newTaskDrawer = null
+          navController.navigate(ADD_PROJECT)
+        },
+      )
+    }
+    gitDrawerThreadId?.let { threadId ->
+      GitOverviewDrawer(
+        threadId = threadId,
+        state = gitState,
+        viewModel = viewModel,
+        onDismiss = { gitDrawerThreadId = null },
+        onCommit = {
+          gitDrawerThreadId = null
+          reopenGitDrawerThreadId = threadId
+          navController.navigate("thread/$threadId/git/commit")
+        },
+        onBranches = {
+          gitDrawerThreadId = null
+          reopenGitDrawerThreadId = threadId
+          navController.navigate("thread/$threadId/git/branches")
+        },
+        onReview = {
+          gitDrawerThreadId = null
+          reopenGitDrawerThreadId = threadId
+          navController.navigate("thread/$threadId/review")
+        },
+      )
     }
     GitProgressOverlay(gitState.progress, viewModel::dismissGitProgress)
   }
@@ -752,7 +838,6 @@ private fun HomeScreen(
   dispatchState: DispatchState,
   viewModel: AppViewModel,
   onNewTask: () -> Unit,
-  onAddProject: () -> Unit,
   onOpenThread: (String) -> Unit,
   pendingShares: List<IncomingShare>,
   onOpenShare: (String) -> Unit,
@@ -820,20 +905,6 @@ private fun HomeScreen(
           }
         },
         actions = {
-          IconButton(onClick = onAddProject) {
-            Icon(
-              imageVector = Icons.Rounded.CreateNewFolder,
-              contentDescription = "Add project",
-              tint = Color.White,
-            )
-          }
-          IconButton(onClick = { showFilterSheet = true }) {
-            Icon(
-              imageVector = if (isFiltered) Icons.Rounded.FilterAlt else Icons.Rounded.FilterList,
-              contentDescription = "Filter threads",
-              tint = if (isFiltered) MaterialTheme.colorScheme.primary else Color.White,
-            )
-          }
           IconButton(onClick = onSettings) {
             Icon(
               imageVector = Icons.Rounded.Settings,
@@ -854,13 +925,28 @@ private fun HomeScreen(
         runtime.shellSyncPhase == SyncPhase.Synchronizing) {
         LinearProgressIndicator(Modifier.fillMaxWidth())
       }
-      OutlinedTextField(
-        value = search,
-        onValueChange = { search = it },
-        label = { Text("Search threads") },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-      )
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        OutlinedTextField(
+          value = search,
+          onValueChange = { search = it },
+          label = { Text("Search threads") },
+          singleLine = true,
+          modifier = Modifier.weight(1f),
+        )
+        IconButton(onClick = { showFilterSheet = true }) {
+          Icon(
+            imageVector = if (isFiltered) Icons.Rounded.FilterAlt else Icons.Rounded.FilterList,
+            contentDescription = "Filter threads",
+            tint = if (isFiltered) MaterialTheme.colorScheme.primary else Color.White,
+          )
+        }
+      }
 
       if (isFiltered) {
         Row(
@@ -1741,16 +1827,17 @@ private fun IncomingShare.summaryLabel(): String = buildList {
 }.joinToString(" · ")
 
 @Composable
-private fun NewTaskScreen(
+private fun NewTaskDrawer(
   runtime: OnlineChatState,
   dispatchState: DispatchState,
   viewModel: AppViewModel,
   initialProjectId: String?,
-  onBack: () -> Unit,
+  onDismiss: () -> Unit,
   onAddProject: () -> Unit,
 ) {
   val environmentId = runtime.environment?.environmentId ?: return
   val draftRevision by viewModel.draftRevision.collectAsState()
+  val branchesState by viewModel.newTaskBranchesState.collectAsState()
   val draftKey = remember(environmentId) { DraftStore.newTaskKey(environmentId) }
   var draft by remember(draftKey) { mutableStateOf(viewModel.loadDraft(draftKey)) }
   LaunchedEffect(draftRevision, draftKey) { draft = viewModel.loadDraft(draftKey) }
@@ -1763,99 +1850,355 @@ private fun NewTaskScreen(
     if (requested != null) projectId = requested
     else if (projects.none { it.id == projectId }) projectId = projects.firstOrNull()?.id.orEmpty()
   }
-  var worktree by remember { mutableStateOf(false) }
-  var baseBranch by remember { mutableStateOf("main") }
-  var branch by remember { mutableStateOf("") }
-  var runSetup by remember { mutableStateOf(false) }
+  val project = projects.firstOrNull { it.id == projectId }
+  var worktree by remember(environmentId, projectId) { mutableStateOf(false) }
+  var baseBranch by remember(environmentId, projectId) { mutableStateOf("") }
+  var startFromOrigin by remember(environmentId, projectId) { mutableStateOf(true) }
+  var runSetup by remember(environmentId, projectId) { mutableStateOf(false) }
 
-  BackHandler(onBack = onBack)
-  Scaffold(topBar = { BackTopBar("New task", onBack) }) { padding ->
-    Column(
-      Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
-      verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-      SelectionField(
-        label = "Project",
-        selected = projects.firstOrNull { it.id == projectId }?.title ?: "Choose project",
-        options = projects.map { it.id to it.title },
-        onSelect = { projectId = it },
+  LaunchedEffect(environmentId, projectId) {
+    if (projectId.isNotBlank()) viewModel.loadNewTaskBranches(projectId)
+  }
+  val projectBranchesState = branchesState.takeIf {
+    it.environmentId == environmentId && it.projectId == projectId
+  } ?: NewTaskBranchesUiState(environmentId = environmentId, projectId = projectId, loading = true)
+  LaunchedEffect(worktree, projectBranchesState.refs, projectId) {
+    if (worktree && baseBranch.isBlank()) {
+      baseBranch = projectBranchesState.refs.firstOrNull { it.isDefault }?.name
+        ?: projectBranchesState.refs.firstOrNull { it.current }?.name
+        ?: ""
+    }
+  }
+  val fallbackModelSelection = project?.defaultModelSelection
+    ?: runtime.providerModels.firstOrNull { it.isDefault }?.let {
+      ModelSelection(it.instanceId, it.model, it.optionsWith(null))
+    }
+    ?: runtime.providerModels.firstOrNull()?.let {
+      ModelSelection(it.instanceId, it.model, it.optionsWith(null))
+    }
+
+  val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+  ModalBottomSheet(
+    onDismissRequest = onDismiss,
+    sheetState = sheetState,
+    containerColor = Color(0xFF141417),
+    contentColor = Color.White,
+    shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+    scrimColor = Color.Black.copy(alpha = 0.65f),
+  ) {
+    Column(Modifier.fillMaxWidth()) {
+      DrawerHeader(
+        icon = Icons.Rounded.EditNote,
+        title = "New task",
+        subtitle = "Start something in your workspace",
+        onDismiss = onDismiss,
+        showCloseButton = false,
       )
-      OutlinedButton(onClick = onAddProject, modifier = Modifier.fillMaxWidth()) {
-        Icon(Icons.Rounded.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(8.dp))
-        Text("Add project")
-      }
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-      ) {
-        val selectedModel = runtime.providerModels.firstOrNull {
-          it.instanceId == draft.modelInstanceId && it.model == draft.model
-        } ?: runtime.providerModels.firstOrNull { it.isDefault } ?: runtime.providerModels.firstOrNull()
-        SelectionField(
-          label = "Model",
-          selected = selectedModel?.modelLabel ?: "Default",
-          options = runtime.providerModels.map { "${it.instanceId}:${it.model}" to it.modelLabel },
-          onSelect = { key ->
-            val m = runtime.providerModels.first { "${it.instanceId}:${it.model}" == key }
-            draft = draft.copy(modelInstanceId = m.instanceId, model = m.model).also { viewModel.saveDraft(draftKey, it) }
-          },
-          modifier = Modifier.weight(1f),
-        )
-        SelectionField(
-          label = "Access",
-          selected = when (draft.runtimeMode) {
-            "approval-required" -> "Ask"
-            "auto-accept-edits" -> "Auto edits"
-            "auto" -> "Auto"
-            else -> "Full"
-          },
-          options = listOf(
-            "approval-required" to "Ask",
-            "auto-accept-edits" to "Auto edits",
-            "auto" to "Auto",
-            "full-access" to "Full",
-          ),
-          onSelect = { draft = draft.copy(runtimeMode = it).also { next -> viewModel.saveDraft(draftKey, next) } },
-          modifier = Modifier.weight(1f),
-        )
-      }
-      ToggleRow("Create worktree", worktree) { worktree = it }
-      if (worktree) {
-        OutlinedTextField(baseBranch, { baseBranch = it }, label = { Text("Base branch") })
-        OutlinedTextField(branch, { branch = it }, label = { Text("Branch (optional)") })
-        ToggleRow("Run setup script", runSetup) { runSetup = it }
-      }
-      OutlinedTextField(
-        value = draft.text,
-        onValueChange = {
-          draft = draft.copy(text = it)
-          viewModel.saveDraft(draftKey, draft)
-        },
-        label = { Text("Task") },
-        minLines = 5,
-        modifier = Modifier.fillMaxWidth(),
+      DispatchFailure(dispatchState, viewModel::retryDispatch)
+      NewTaskContextStrip(
+        environments = runtime.environments,
+        selectedEnvironmentId = environmentId,
+        onSelectEnvironment = viewModel::selectEnvironment,
+        projects = projects,
+        selectedProjectId = projectId,
+        onSelectProject = { projectId = it },
+        onAddProject = onAddProject,
+        worktree = worktree,
+        onWorktreeChange = { worktree = it },
+        branchesState = projectBranchesState,
+        baseBranch = baseBranch,
+        onBaseBranchChange = { baseBranch = it },
+        startFromOrigin = startFromOrigin,
+        onStartFromOriginChange = { startFromOrigin = it },
+        runSetup = runSetup,
+        onRunSetupChange = { runSetup = it },
+        onRefreshBranches = { viewModel.loadNewTaskBranches(projectId, force = true) },
       )
-      ComposerAttachmentActions(
+      ChatComposerArea(
+        defaultModelSelection = fallbackModelSelection,
         draft = draft,
-        onAdd = { viewModel.importDraftAttachments(draftKey, it) },
-        onRemove = { viewModel.removeDraftAttachment(draftKey, it) },
-        enabled = dispatchState !is DispatchState.Sending,
-      )
-      Button(
-        onClick = {
+        models = runtime.providerModels,
+        lockProvider = false,
+        queuedMessageCount = 0,
+        active = false,
+        placeholder = project?.let { "Describe a task in ${it.title}…" } ?: "Describe a task…",
+        enabled = projectId.isNotBlank() && fallbackModelSelection != null &&
+          (!worktree || baseBranch.isNotBlank()) && runtime.shell.sequence >= 0,
+        sending = dispatchState is DispatchState.Sending,
+        onDraftUpdate = { next ->
+          draft = next
+          viewModel.saveDraft(draftKey, next)
+        },
+        onAddAttachments = { viewModel.importDraftAttachments(draftKey, it) },
+        onRemoveAttachment = { viewModel.removeDraftAttachment(draftKey, it) },
+        onSend = {
           viewModel.createTask(
             projectId = projectId,
             draftKey = draftKey,
             draft = draft,
-            worktree = WorktreeChoice(worktree, baseBranch, branch, runSetup),
+            worktree = WorktreeChoice(
+              enabled = worktree,
+              baseBranch = baseBranch,
+              branch = "",
+              startFromOrigin = startFromOrigin,
+              runSetupScript = runSetup,
+            ),
           )
         },
-        enabled = (draft.text.isNotBlank() || draft.attachments.isNotEmpty()) && projectId.isNotBlank() &&
-          runtime.shell.sequence >= 0 && dispatchState !is DispatchState.Sending,
-        modifier = Modifier.fillMaxWidth(),
-      ) { Text(if (dispatchState is DispatchState.Sending) "Creating…" else "Create task") }
-      DispatchFailure(dispatchState, viewModel::retryDispatch)
+        onInterrupt = null,
+      )
+    }
+  }
+}
+
+@Composable
+private fun NewTaskContextStrip(
+  environments: List<SavedEnvironment>,
+  selectedEnvironmentId: String,
+  onSelectEnvironment: (String) -> Unit,
+  projects: List<Project>,
+  selectedProjectId: String,
+  onSelectProject: (String) -> Unit,
+  onAddProject: () -> Unit,
+  worktree: Boolean,
+  onWorktreeChange: (Boolean) -> Unit,
+  branchesState: NewTaskBranchesUiState,
+  baseBranch: String,
+  onBaseBranchChange: (String) -> Unit,
+  startFromOrigin: Boolean,
+  onStartFromOriginChange: (Boolean) -> Unit,
+  runSetup: Boolean,
+  onRunSetupChange: (Boolean) -> Unit,
+  onRefreshBranches: () -> Unit,
+) {
+  var showProjects by remember { mutableStateOf(false) }
+  var showEnvironments by remember { mutableStateOf(false) }
+  var showWorkspace by remember { mutableStateOf(false) }
+  var showBranches by remember { mutableStateOf(false) }
+  val currentBranch = branchesState.refs.firstOrNull { it.current }?.name
+  val workspaceLabel = if (worktree) "New worktree" else {
+    currentBranch?.let { "Current · $it" } ?: "Current checkout"
+  }
+
+  Surface(
+    shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 10.dp, bottomEnd = 10.dp),
+    color = Color(0xFF1D1D21),
+    border = BorderStroke(1.dp, Color(0xFF34343A)),
+    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+  ) {
+    Row(
+      modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(8.dp),
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Box {
+        NewTaskContextPill(
+          icon = Icons.Rounded.FolderOpen,
+          label = projects.firstOrNull { it.id == selectedProjectId }?.title ?: "Project",
+          onClick = { showProjects = true },
+        )
+        ComposerOptionsMenu(showProjects, { showProjects = false }) {
+          ComposerMenuSection("Project")
+          projects.forEach { project ->
+            ComposerMenuChoice(
+              label = project.title,
+              description = project.workspaceRoot,
+              selected = project.id == selectedProjectId,
+              onClick = {
+                showProjects = false
+                onSelectProject(project.id)
+              },
+            )
+          }
+          HorizontalDivider(color = Color(0xFF3F3F46))
+          DropdownMenuItem(
+            text = { Text("Add project") },
+            leadingIcon = { Icon(Icons.Rounded.CreateNewFolder, contentDescription = null) },
+            onClick = {
+              showProjects = false
+              onAddProject()
+            },
+          )
+        }
+      }
+
+      Box {
+        NewTaskContextPill(
+          icon = Icons.Rounded.Public,
+          label = environments.firstOrNull { it.environmentId == selectedEnvironmentId }?.label
+            ?: "Environment",
+          onClick = { showEnvironments = true },
+        )
+        ComposerOptionsMenu(showEnvironments, { showEnvironments = false }) {
+          ComposerMenuSection("Environment")
+          environments.forEach { environment ->
+            ComposerMenuChoice(
+              label = environment.label,
+              selected = environment.environmentId == selectedEnvironmentId,
+              onClick = {
+                showEnvironments = false
+                onSelectEnvironment(environment.environmentId)
+              },
+            )
+          }
+        }
+      }
+
+      Box {
+        NewTaskContextPill(
+          icon = Icons.Rounded.AccountTree,
+          label = workspaceLabel,
+          onClick = { showWorkspace = true },
+        )
+        ComposerOptionsMenu(showWorkspace, { showWorkspace = false }) {
+          ComposerMenuSection("Workspace")
+          ComposerMenuChoice(
+            label = "Current checkout",
+            selected = !worktree,
+            onClick = {
+              showWorkspace = false
+              onWorktreeChange(false)
+            },
+          )
+          ComposerMenuChoice(
+            label = "New worktree",
+            selected = worktree,
+            onClick = {
+              showWorkspace = false
+              onWorktreeChange(true)
+            },
+          )
+          if (worktree) {
+            HorizontalDivider(color = Color(0xFF3F3F46))
+            ComposerMenuChoice(
+              label = "Start from origin",
+              description = "Base the worktree on the latest origin branch",
+              selected = startFromOrigin,
+              onClick = {
+                showWorkspace = false
+                onStartFromOriginChange(!startFromOrigin)
+              },
+            )
+            ComposerMenuChoice(
+              label = "Run setup script",
+              selected = runSetup,
+              onClick = {
+                showWorkspace = false
+                onRunSetupChange(!runSetup)
+              },
+            )
+          }
+        }
+      }
+
+      if (worktree) {
+        Box {
+          NewTaskContextPill(
+            icon = Icons.Rounded.AccountTree,
+            label = when {
+              branchesState.loading -> "Loading branches…"
+              baseBranch.isNotBlank() -> baseBranch
+              !branchesState.isRepo -> "Not a Git project"
+              else -> "Choose branch"
+            },
+            onClick = { showBranches = true },
+          )
+          ComposerOptionsMenu(showBranches, { showBranches = false }) {
+            ComposerMenuSection("Base branch")
+            branchesState.refs.distinctBy { it.name }.forEach { branch ->
+              ComposerMenuChoice(
+                label = branch.name,
+                description = when {
+                  branch.isDefault -> "Default"
+                  branch.current -> "Current"
+                  branch.isRemote -> "Remote"
+                  branch.worktreePath != null -> "Worktree"
+                  else -> null
+                },
+                selected = branch.name == baseBranch,
+                onClick = {
+                  showBranches = false
+                  onBaseBranchChange(branch.name)
+                },
+              )
+            }
+            if (!branchesState.loading && branchesState.refs.isEmpty()) {
+              DropdownMenuItem(
+                text = { Text(branchesState.error ?: "No branches available") },
+                enabled = false,
+                onClick = {},
+              )
+            }
+            HorizontalDivider(color = Color(0xFF3F3F46))
+            DropdownMenuItem(
+              text = { Text("Refresh branches") },
+              leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },
+              onClick = {
+                showBranches = false
+                onRefreshBranches()
+              },
+            )
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun NewTaskContextPill(icon: ImageVector, label: String, onClick: () -> Unit) {
+  Surface(
+    onClick = onClick,
+    shape = RoundedCornerShape(12.dp),
+    color = Color(0xFF29292F),
+    modifier = Modifier.height(34.dp),
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+      Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp))
+      Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+      Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(14.dp))
+    }
+  }
+}
+
+@Composable
+internal fun DrawerHeader(
+  icon: ImageVector,
+  title: String,
+  subtitle: String,
+  onDismiss: () -> Unit,
+  showCloseButton: Boolean = true,
+) {
+  Row(
+    modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, bottom = 16.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Surface(
+      modifier = Modifier.size(44.dp),
+      shape = RoundedCornerShape(14.dp),
+      color = MaterialTheme.colorScheme.primaryContainer,
+    ) {
+      Box(contentAlignment = Alignment.Center) {
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+      }
+    }
+    Spacer(Modifier.width(12.dp))
+    Column(Modifier.weight(1f)) {
+      Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+      Text(
+        subtitle,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+    }
+    if (showCloseButton) {
+      IconButton(onClick = onDismiss) {
+        Icon(Icons.Rounded.Close, contentDescription = "Close")
+      }
     }
   }
 }
@@ -1870,7 +2213,6 @@ private fun ThreadScreen(
   onBack: () -> Unit,
   onFiles: () -> Unit,
   onGit: () -> Unit,
-  onReview: () -> Unit,
   onTerminal: () -> Unit,
 ) {
   val detail = runtime.thread.detail
@@ -1898,7 +2240,9 @@ private fun ThreadScreen(
             detail?.summary?.title ?: "Thread",
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.titleMedium.copy(
+              fontSize = (MaterialTheme.typography.titleMedium.fontSize.value - 0.5f).sp,
+            ),
             fontWeight = FontWeight.SemiBold,
           )
         },
@@ -1908,23 +2252,37 @@ private fun ThreadScreen(
           }
         },
         actions = {
-          IconButton(onClick = onReview, enabled = detail != null) {
-            Icon(Icons.Rounded.RateReview, contentDescription = "Review changes")
-          }
-          IconButton(onClick = onTerminal, enabled = detail != null) {
-            Icon(Icons.Rounded.Terminal, contentDescription = "Open terminal")
-          }
-          TextButton(onClick = onGit, enabled = detail != null) {
-            Icon(Icons.Rounded.AccountTree, contentDescription = null)
-            Spacer(Modifier.width(5.dp))
-            Text(
-              gitState.status?.refName ?: "Git",
-              maxLines = 1,
-              overflow = TextOverflow.Ellipsis,
-            )
-          }
-          IconButton(onClick = onFiles, enabled = detail != null) {
-            Icon(Icons.Rounded.FolderOpen, contentDescription = "Files")
+          CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 40.dp) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              TextButton(
+                onClick = onGit,
+                enabled = detail != null,
+                modifier = Modifier.height(40.dp),
+                contentPadding = PaddingValues(horizontal = 2.dp),
+              ) {
+                Icon(Icons.Rounded.AccountTree, contentDescription = null)
+                Spacer(Modifier.width(4.dp))
+                Text(
+                  gitState.status?.refName ?: "Git",
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+              }
+              IconButton(
+                onClick = onFiles,
+                enabled = detail != null,
+                modifier = Modifier.size(40.dp),
+              ) {
+                Icon(Icons.Rounded.FolderOpen, contentDescription = "Files")
+              }
+              IconButton(
+                onClick = onTerminal,
+                enabled = detail != null,
+                modifier = Modifier.size(40.dp),
+              ) {
+                Icon(Icons.Rounded.Terminal, contentDescription = "Open terminal")
+              }
+            }
           }
         },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Black),
@@ -1946,12 +2304,18 @@ private fun ThreadScreen(
               ThreadRequests(detail, viewModel)
               DispatchFailure(dispatchState, viewModel::retryDispatch)
               ChatComposerArea(
-                detail = detail,
+                defaultModelSelection = detail.summary.modelSelection,
+                contextWindowUsage = remember(detail.activities) {
+                  deriveLatestContextWindowUsage(detail.activities)
+                },
                 draft = draft,
                 models = runtime.providerModels,
+                lockProvider = true,
                 queuedMessageCount = runtime.pendingTasks.count {
                   it.threadId == threadId && !it.createsThread && it.status == PendingTaskStatus.Queued
                 },
+                active = detail.summary.session?.status in setOf("starting", "running"),
+                placeholder = "Send a message…",
                 enabled = runtime.shell.sequence >= 0,
                 sending = dispatchState is DispatchState.Sending,
                 onDraftUpdate = { next ->
@@ -1962,7 +2326,6 @@ private fun ThreadScreen(
                 onRemoveAttachment = { viewModel.removeDraftAttachment(draftKey, it) },
                 onSend = { viewModel.sendThreadTurn(threadId, draftKey, draft) },
                 onInterrupt = { viewModel.interrupt(threadId) },
-                onStop = { viewModel.stop(threadId) },
               )
             }
           }.single().measure(constraints.copy(minHeight = 0))
@@ -2043,6 +2406,12 @@ private fun ThreadFeed(
     )
   }
   val bottomFirstEntries = remember(entries) { entries.asReversed() }
+  val shownEntryIds = remember(detail.summary.id) {
+    entries.mapTo(mutableSetOf(), ThreadFeedItem::id)
+  }
+  LaunchedEffect(entries) {
+    shownEntryIds.retainAll(entries.map(ThreadFeedItem::id).toSet())
+  }
   LaunchedEffect(state, detail.summary.id) {
     snapshotFlow {
       Triple(state.firstVisibleItemIndex, state.firstVisibleItemScrollOffset, isFeedDragged)
@@ -2082,133 +2451,170 @@ private fun ThreadFeed(
     verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Bottom),
   ) {
     items(bottomFirstEntries, key = ThreadFeedItem::id) { entry ->
-      when (entry) {
-        is ThreadFeedItem.Message -> {
-          val message = entry.message
-          if (message.role == "assistant") {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-              if (message.text.isNotBlank()) MarkdownMessage(message.text, markwon)
-              message.attachments.forEach { SentAttachmentImage(environmentId, it, viewModel) }
-              val turnStillRunning = latestTurn?.let {
-                message.turnId == it.id && (it.state == "running" || it.completedAt == null)
-              } == true
-              if (message.text.isNotBlank() && message.id in terminalAssistantMessageIds &&
-                !message.streaming && !turnStillRunning) {
-                MessageCopyButton(message.text)
-              }
-            }
-          } else {
-            Column(horizontalAlignment = Alignment.End) {
-              Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = if (message.role == "user") Color(0xFF172554) else MaterialTheme.colorScheme.surface,
-                modifier = Modifier.fillMaxWidth(),
-              ) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                  if (message.text.isNotBlank()) {
-                    SelectionContainer { UserMessageContent(message.text) }
+      FreshFeedEntry(entry, shownEntryIds) {
+        when (entry) {
+            is ThreadFeedItem.Message -> {
+              val message = entry.message
+              if (message.text.isNotBlank() || message.attachments.isNotEmpty()) {
+                if (message.role == "assistant") {
+                  Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (message.text.isNotBlank()) MarkdownMessage(message.text, markwon)
+                    message.attachments.forEach { SentAttachmentImage(environmentId, it, viewModel) }
+                    val turnStillRunning = latestTurn?.let {
+                      message.turnId == it.id && (it.state == "running" || it.completedAt == null)
+                    } == true
+                    if (message.text.isNotBlank() && message.id in terminalAssistantMessageIds &&
+                      !message.streaming && !turnStillRunning) {
+                      MessageCopyButton(message.text)
+                    }
                   }
-                  message.attachments.forEach { SentAttachmentImage(environmentId, it, viewModel) }
-                }
-              }
-              if (message.role == "user" && message.text.isNotBlank()) {
-                MessageCopyButton(message.text)
-              }
-            }
-          }
-        }
-
-        is ThreadFeedItem.TurnFold -> {
-          Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .clickable {
-                expandedTurnIds = if (entry.turnId in expandedTurnIds) {
-                  expandedTurnIds - entry.turnId
                 } else {
-                  expandedTurnIds + entry.turnId
+                  Column(horizontalAlignment = Alignment.End) {
+                    Surface(
+                      shape = RoundedCornerShape(16.dp),
+                      color = if (message.role == "user") Color(0xFF172554) else MaterialTheme.colorScheme.surface,
+                      modifier = Modifier.fillMaxWidth(),
+                    ) {
+                      Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (message.text.isNotBlank()) {
+                          SelectionContainer { UserMessageContent(message.text) }
+                        }
+                        message.attachments.forEach { SentAttachmentImage(environmentId, it, viewModel) }
+                      }
+                    }
+                    if (message.role == "user" && message.text.isNotBlank()) {
+                      MessageCopyButton(message.text)
+                    }
+                  }
                 }
               }
-              .padding(vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
-          ) {
-            Icon(
-              Icons.Rounded.KeyboardArrowDown,
-              contentDescription = if (entry.expanded) "Collapse work" else "Expand work",
-              tint = MaterialTheme.colorScheme.onSurfaceVariant,
-              modifier = Modifier
-                .size(18.dp)
-                .graphicsLayer { rotationZ = if (entry.expanded) 180f else 0f },
-            )
-            Text(
-              entry.label,
-              style = MaterialTheme.typography.labelMedium,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-          }
-        }
+            }
 
-        is ThreadFeedItem.ActivityGroup -> entry.activities.forEach { activity ->
-          ThreadActivityRow(
-            activity = activity,
-            expanded = activity.id in expandedActivityIds,
-            onToggle = {
-              expandedActivityIds = if (activity.id in expandedActivityIds) {
-                expandedActivityIds - activity.id
-              } else {
-                expandedActivityIds + activity.id
+            is ThreadFeedItem.TurnFold -> {
+              Row(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .clickable {
+                    expandedTurnIds = if (entry.turnId in expandedTurnIds) {
+                      expandedTurnIds - entry.turnId
+                    } else {
+                      expandedTurnIds + entry.turnId
+                    }
+                  }
+                  .padding(vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+              ) {
+                Icon(
+                  Icons.Rounded.KeyboardArrowDown,
+                  contentDescription = if (entry.expanded) "Collapse work" else "Expand work",
+                  tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                  modifier = Modifier
+                    .size(18.dp)
+                    .graphicsLayer { rotationZ = if (entry.expanded) 180f else 0f },
+                )
+                Text(
+                  entry.label,
+                  style = MaterialTheme.typography.labelMedium,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
               }
-            },
-            onCopy = {
-              val text = listOfNotNull(activity.summary, activity.detail, activity.expandedBody)
-                .distinct().joinToString("\n")
-              context.getSystemService(ClipboardManager::class.java)
-                .setPrimaryClip(ClipData.newPlainText("T3 activity", text))
-            },
-          )
-        }
-
-        is ThreadFeedItem.Plan -> ThreadPlanRow(
-          plan = entry,
-          expanded = entry.id in expandedPlanIds,
-          onToggle = {
-            expandedPlanIds = if (entry.id in expandedPlanIds) {
-              expandedPlanIds - entry.id
-            } else {
-              expandedPlanIds + entry.id
             }
-          },
-        )
 
-        is ThreadFeedItem.WorkToggle -> TextButton(
-          onClick = {
-            expandedWorkGroupIds = if (entry.groupId in expandedWorkGroupIds) {
-              expandedWorkGroupIds - entry.groupId
-            } else {
-              expandedWorkGroupIds + entry.groupId
+            is ThreadFeedItem.ActivityGroup -> entry.activities.forEach { activity ->
+              ThreadActivityRow(
+                activity = activity,
+                expanded = activity.id in expandedActivityIds,
+                onToggle = {
+                  expandedActivityIds = if (activity.id in expandedActivityIds) {
+                    expandedActivityIds - activity.id
+                  } else {
+                    expandedActivityIds + activity.id
+                  }
+                },
+                onCopy = {
+                  val text = listOfNotNull(activity.summary, activity.detail, activity.expandedBody)
+                    .distinct().joinToString("\n")
+                  context.getSystemService(ClipboardManager::class.java)
+                    .setPrimaryClip(ClipData.newPlainText("T3 activity", text))
+                },
+              )
             }
-          },
-        ) {
-          Text(if (entry.expanded) "Show less" else "${entry.hiddenCount} more")
-        }
 
-        is ThreadFeedItem.Working -> Row(
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
-          modifier = Modifier.padding(vertical = 7.dp),
-        ) {
-          LinearProgressIndicator(Modifier.width(28.dp).height(2.dp))
-          Text(
-            entry.stepLabel?.let { "Working… · $it" } ?: "Working…",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-          )
+            is ThreadFeedItem.Plan -> ThreadPlanRow(
+              plan = entry,
+              expanded = entry.id in expandedPlanIds,
+              onToggle = {
+                expandedPlanIds = if (entry.id in expandedPlanIds) {
+                  expandedPlanIds - entry.id
+                } else {
+                  expandedPlanIds + entry.id
+                }
+              },
+            )
+
+            is ThreadFeedItem.WorkToggle -> TextButton(
+              onClick = {
+                expandedWorkGroupIds = if (entry.groupId in expandedWorkGroupIds) {
+                  expandedWorkGroupIds - entry.groupId
+                } else {
+                  expandedWorkGroupIds + entry.groupId
+                }
+              },
+            ) {
+              Text(if (entry.expanded) "Show less" else "${entry.hiddenCount} more")
+            }
+
+            is ThreadFeedItem.Working -> Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+              modifier = Modifier
+                .padding(vertical = 7.dp),
+            ) {
+              LinearProgressIndicator(Modifier.width(28.dp).height(2.dp))
+              Text(
+                entry.stepLabel?.let { "Working… · $it" } ?: "Working…",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
         }
       }
     }
+  }
+}
+
+@Composable
+private fun FreshFeedEntry(
+  entry: ThreadFeedItem,
+  shownEntryIds: MutableSet<String>,
+  content: @Composable () -> Unit,
+) {
+  val shouldAnimate = remember(entry.id, entry.createdAt) {
+    entry.id !in shownEntryIds && runCatching {
+      Instant.now().toEpochMilli() - Instant.parse(entry.createdAt).toEpochMilli() < FRESH_MESSAGE_WINDOW_MILLIS
+    }.getOrDefault(false)
+  }
+  var visible by remember(entry.id) { mutableStateOf(!shouldAnimate) }
+  val rise = with(LocalDensity.current) { 10.dp.roundToPx() }
+  LaunchedEffect(entry.id) {
+    shownEntryIds += entry.id
+    visible = true
+  }
+  AnimatedVisibility(
+    visible = visible,
+    enter = if (entry is ThreadFeedItem.Message && entry.message.role == "assistant") {
+      fadeIn(tween(MESSAGE_ENTRY_MILLIS))
+    } else {
+      fadeIn(tween(MESSAGE_ENTRY_MILLIS)) + slideInVertically(
+        animationSpec = tween(MESSAGE_ENTRY_MILLIS),
+        initialOffsetY = { rise },
+      )
+    },
+  ) {
+    content()
   }
 }
 
@@ -2467,10 +2873,12 @@ private fun MarkdownMessage(markdown: String, markwon: Markwon) {
   AndroidView(
     factory = {
       TextView(it).apply {
-        setTextColor(android.graphics.Color.rgb(244, 244, 245))
+        setTextColor(android.graphics.Color.rgb(229, 229, 229))
         setTextIsSelectable(true)
         movementMethod = LinkMovementMethod.getInstance()
         textSize = 15f
+        includeFontPadding = false
+        setLineSpacing(0f, 1.27f)
         setPadding(4, 6, 4, 6)
       }
     },
@@ -2740,38 +3148,78 @@ private fun ComposerMenuChoice(
 }
 
 @Composable
+private fun ComposerModelChoice(
+  model: ProviderModel,
+  selectedInstanceId: String?,
+  selectedModelId: String?,
+  selectedOptions: JsonElement?,
+  draft: ComposerDraft,
+  onSelect: (ComposerDraft) -> Unit,
+) {
+  val selected = model.instanceId == selectedInstanceId && model.model == selectedModelId
+  ComposerMenuChoice(
+    label = model.modelLabel,
+    description = model.providerLabel,
+    selected = selected,
+    onClick = {
+      onSelect(
+        draft.copy(
+          modelInstanceId = model.instanceId,
+          model = model.model,
+          modelOptions = if (selected) selectedOptions else model.optionsWith(null),
+        ),
+      )
+    },
+  )
+}
+
+@Composable
 private fun ChatComposerArea(
-  detail: ThreadDetail,
+  defaultModelSelection: ModelSelection?,
+  contextWindowUsage: ContextWindowUsage? = null,
   draft: ComposerDraft,
   models: List<ProviderModel>,
+  lockProvider: Boolean,
   queuedMessageCount: Int,
+  active: Boolean,
+  placeholder: String,
   enabled: Boolean,
   sending: Boolean,
   onDraftUpdate: (ComposerDraft) -> Unit,
   onAddAttachments: (List<Uri>) -> Unit,
   onRemoveAttachment: (String) -> Unit,
   onSend: () -> Unit,
-  onInterrupt: () -> Unit,
-  onStop: () -> Unit,
+  onInterrupt: (() -> Unit)?,
 ) {
   var showModelMenu by remember { mutableStateOf(false) }
   var showAccessMenu by remember { mutableStateOf(false) }
   var showTraitsMenu by remember { mutableStateOf(false) }
 
-  val threadInstanceId = detail.summary.modelSelection.instanceId
-  val availableModels = remember(threadInstanceId, models) {
-    resolveThreadProviderModels(threadInstanceId, models)
+  var expandedProviderId by remember { mutableStateOf<String?>(null) }
+
+  val defaultInstanceId = defaultModelSelection?.instanceId
+  val availableModels = remember(defaultInstanceId, models, lockProvider) {
+    if (lockProvider && defaultInstanceId != null) {
+      resolveThreadProviderModels(defaultInstanceId, models)
+    } else {
+      models
+    }
   }
 
-  val selectedInstanceId = draft.modelInstanceId ?: detail.summary.modelSelection.instanceId
-  val selectedModelId = draft.model ?: detail.summary.modelSelection.model
+  val selectedInstanceId = draft.modelInstanceId ?: defaultModelSelection?.instanceId
+  val selectedModelId = draft.model ?: defaultModelSelection?.model
   val selectedModel = availableModels.firstOrNull {
     it.instanceId == selectedInstanceId && it.model == selectedModelId
   } ?: availableModels.firstOrNull { it.isDefault } ?: availableModels.firstOrNull()
+  val providerGroups = remember(availableModels, selectedModel?.instanceId) {
+    availableModels.groupBy(ProviderModel::instanceId).values.sortedBy { group ->
+      if (group.firstOrNull()?.instanceId == selectedModel?.instanceId) 0 else 1
+    }
+  }
   val selectedOptions = if (draft.modelInstanceId != null && draft.model != null) {
     draft.modelOptions
   } else {
-    detail.summary.modelSelection.options
+    defaultModelSelection?.options
   }
   val plainText = plainReviewMessageText(draft.text)
   val slashTrigger = composerSlashTrigger(plainText)
@@ -2793,9 +3241,6 @@ private fun ChatComposerArea(
       }
     }.distinctBy { it.name.lowercase() }
   }
-
-  val session = detail.summary.session
-  val active = session?.status in setOf("starting", "running")
 
   Column(
     modifier = Modifier
@@ -2857,137 +3302,86 @@ private fun ChatComposerArea(
       }
     }
     val composerShape = RoundedCornerShape(20.dp)
-    Surface(
-      shape = composerShape,
-      color = Color(0xFF141417),
-      border = BorderStroke(1.dp, Color(0xFF27272A)),
+    Box(
       modifier = Modifier.fillMaxWidth(),
     ) {
-      Column(
-        modifier = Modifier
-          .fillMaxWidth()
-          .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+      Surface(
+        shape = composerShape,
+        color = Color(0xFF141417),
+        border = BorderStroke(1.dp, Color(0xFF27272A)),
+        modifier = Modifier.fillMaxWidth(),
       ) {
-        ComposerAttachmentStrip(draft.attachments, onRemoveAttachment, removable = !sending)
-        val reviewComments = remember(draft.text) { parseReviewComments(draft.text) }
-        reviewComments.forEach { comment ->
-          ReviewCommentCard(
-            comment = comment,
-            onRemove = {
-              onDraftUpdate(draft.copy(text = removeReviewComment(draft.text, comment.id)))
-            },
-          )
-        }
-        // Message input text field with minimal internal margins on all sides
-        BasicTextField(
-          value = plainReviewMessageText(draft.text),
-          onValueChange = {
-            onDraftUpdate(draft.copy(text = replacePlainReviewMessageText(draft.text, it)))
-          },
-          minLines = 2,
-          maxLines = 6,
-          textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
-          cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-          decorationBox = { innerTextField ->
-            Box(
-              modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 4.dp),
-            ) {
-              if (draft.text.isEmpty()) {
-                Text(
-                  if (enabled) "Send a message…" else "Waiting for sync…",
-                  color = Color(0xFF71717A),
-                  style = MaterialTheme.typography.bodyMedium,
-                )
-              }
-              innerTextField()
-            }
-          },
-          modifier = Modifier.fillMaxWidth(),
-        )
-
-        // Bottom action bar
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween,
-          verticalAlignment = Alignment.CenterVertically,
+        Column(
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+          verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-          // Left side: attachments and server-driven settings
-          Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-              .weight(1f)
-              .horizontalScroll(rememberScrollState()),
-          ) {
-            ComposerAttachmentButtons(
-              existingCount = draft.attachments.size,
-              onAdd = onAddAttachments,
-              enabled = !sending,
+          ComposerAttachmentStrip(draft.attachments, onRemoveAttachment, removable = !sending)
+          val reviewComments = remember(draft.text) { parseReviewComments(draft.text) }
+          reviewComments.forEach { comment ->
+            ReviewCommentCard(
+              comment = comment,
+              onRemove = {
+                onDraftUpdate(draft.copy(text = removeReviewComment(draft.text, comment.id)))
+              },
             )
-            // Model selector
-            Box {
-              Surface(
-                onClick = { showModelMenu = true },
-                shape = RoundedCornerShape(12.dp),
-                color = Color(0xFF27272A),
-                modifier = Modifier.height(30.dp),
+          }
+          // Message input text field with minimal internal margins on all sides
+          BasicTextField(
+            value = plainReviewMessageText(draft.text),
+            onValueChange = {
+              onDraftUpdate(draft.copy(text = replacePlainReviewMessageText(draft.text, it)))
+            },
+            minLines = 2,
+            maxLines = 6,
+            textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            decorationBox = { innerTextField ->
+              Box(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .padding(horizontal = 4.dp, vertical = 4.dp),
               ) {
-                Row(
-                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
+                if (draft.text.isEmpty()) {
                   Text(
-                    text = selectedModel?.modelLabel ?: "Default Model",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White,
-                    maxLines = 1,
-                  )
-                  Icon(
-                    imageVector = Icons.Rounded.KeyboardArrowDown,
-                    contentDescription = null,
-                    modifier = Modifier.size(14.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    if (enabled) placeholder else "Waiting for sync…",
+                    color = Color(0xFF71717A),
+                    style = MaterialTheme.typography.bodyMedium,
                   )
                 }
+                innerTextField()
               }
+            },
+            modifier = Modifier.fillMaxWidth(),
+          )
 
-              ComposerOptionsMenu(
-                expanded = showModelMenu,
-                onDismissRequest = { showModelMenu = false },
-              ) {
-                ComposerMenuSection("Models")
-                availableModels.forEach { model ->
-                  val isSelected = model.instanceId == selectedInstanceId && model.model == selectedModelId
-                  ComposerMenuChoice(
-                    label = model.modelLabel,
-                    description = model.providerLabel,
-                    selected = isSelected,
-                    onClick = {
-                      showModelMenu = false
-                      val options = if (isSelected) selectedOptions else model.optionsWith(null)
-                      onDraftUpdate(
-                        draft.copy(
-                          modelInstanceId = model.instanceId,
-                          model = model.model,
-                          modelOptions = options,
-                        ),
-                      )
-                    },
-                  )
-                }
-              }
-            }
-
-            selectedModel?.takeIf { it.optionDescriptors.isNotEmpty() }?.let { optionModel ->
-              val (traitsLabel, fastEnabled) = traitsTriggerLabel(optionModel.optionDescriptors, selectedOptions)
+          // Bottom action bar
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            // Left side: attachments and server-driven settings
+            Row(
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              modifier = Modifier
+                .weight(1f)
+                .horizontalScroll(rememberScrollState()),
+            ) {
+              ComposerAttachmentButtons(
+                existingCount = draft.attachments.size,
+                onAdd = onAddAttachments,
+                enabled = !sending,
+              )
+              // Model selector
               Box {
                 Surface(
-                  onClick = { showTraitsMenu = true },
+                  onClick = {
+                    expandedProviderId = selectedModel?.instanceId
+                    showModelMenu = true
+                  },
                   shape = RoundedCornerShape(12.dp),
                   color = Color(0xFF27272A),
                   modifier = Modifier.height(30.dp),
@@ -2997,197 +3391,307 @@ private fun ChatComposerArea(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                   ) {
-                    if (fastEnabled) {
-                      Icon(
-                        Icons.Rounded.Bolt,
-                        contentDescription = "Fast mode",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(14.dp),
-                      )
-                    }
                     Text(
-                      traitsLabel,
+                      text = selectedModel?.modelLabel ?: "Default Model",
                       style = MaterialTheme.typography.labelMedium,
                       fontWeight = FontWeight.SemiBold,
                       color = Color.White,
+                      maxLines = 1,
                     )
                     Icon(
-                      Icons.Rounded.KeyboardArrowDown,
-                      contentDescription = "Model options",
+                      imageVector = Icons.Rounded.KeyboardArrowDown,
+                      contentDescription = null,
                       modifier = Modifier.size(14.dp),
                       tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                   }
                 }
+
                 ComposerOptionsMenu(
-                  expanded = showTraitsMenu,
-                  onDismissRequest = { showTraitsMenu = false },
+                  expanded = showModelMenu,
+                  onDismissRequest = { showModelMenu = false },
                 ) {
-                  optionModel.optionDescriptors.forEachIndexed { index, descriptor ->
-                    if (index > 0) {
-                      HorizontalDivider(
-                        color = Color(0xFF3F3F46),
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                  if (lockProvider) {
+                    ComposerMenuSection("Models")
+                    availableModels.forEach { model ->
+                      ComposerModelChoice(
+                        model = model,
+                        selectedInstanceId = selectedInstanceId,
+                        selectedModelId = selectedModelId,
+                        selectedOptions = selectedOptions,
+                        onSelect = { next ->
+                          showModelMenu = false
+                          onDraftUpdate(next)
+                        },
+                        draft = draft,
                       )
                     }
-                    ComposerMenuSection(if (descriptor.isSpeedOption()) "Speed" else descriptor.label)
-                    val currentValue = descriptor.valueFrom(selectedOptions)
-                    if (descriptor.type == "select") {
-                      descriptor.choices.filterNot {
-                        it.id in descriptor.promptInjectedValues || it.id == "ultracode"
-                      }.forEach { choice ->
-                        val isSelected = choice.id == currentValue?.contentOrNull
-                        ComposerMenuChoice(
-                          label = choice.label,
-                          selected = isSelected,
-                          icon = if (descriptor.isSpeedOption() && choice.label.equals("Fast", true)) {
-                            Icons.Rounded.Bolt
-                          } else {
-                            null
-                          },
-                          onClick = {
-                            showTraitsMenu = false
-                            onDraftUpdate(
-                              draft.copy(
-                                modelInstanceId = optionModel.instanceId,
-                                model = optionModel.model,
-                                modelOptions = optionModel.optionsWith(
-                                  selectedOptions,
-                                  descriptor.id,
-                                  JsonPrimitive(choice.id),
-                                ),
-                              ),
+                  } else {
+                    ComposerMenuSection("Providers")
+                    providerGroups.forEach { group ->
+                      val provider = group.first()
+                      val expanded = provider.instanceId == expandedProviderId
+                      DropdownMenuItem(
+                        text = {
+                          Column {
+                            Text(provider.providerLabel, fontWeight = FontWeight.SemiBold)
+                            Text(
+                              "${group.size} model${if (group.size == 1) "" else "s"}",
+                              style = MaterialTheme.typography.bodySmall,
+                              color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                          },
-                        )
-                      }
-                    } else if (descriptor.type == "boolean") {
-                      val currentBoolean = currentValue?.booleanOrNull ?: false
-                      val labels = if (descriptor.isSpeedOption()) {
-                        listOf(false to "Standard", true to "Fast")
-                      } else {
-                        listOf(false to "Off", true to "On")
-                      }
-                      labels.forEach { (value, label) ->
-                        val isSelected = currentBoolean == value
-                        ComposerMenuChoice(
-                          label = label,
-                          selected = isSelected,
-                          icon = if (descriptor.isSpeedOption() && value) Icons.Rounded.Bolt else null,
-                          onClick = {
-                            showTraitsMenu = false
-                            onDraftUpdate(
-                              draft.copy(
-                                modelInstanceId = optionModel.instanceId,
-                                model = optionModel.model,
-                                modelOptions = optionModel.optionsWith(
-                                  selectedOptions,
-                                  descriptor.id,
-                                  JsonPrimitive(value),
-                                ),
-                              ),
-                            )
-                          },
-                        )
+                          }
+                        },
+                        onClick = {
+                          expandedProviderId = provider.instanceId.takeUnless { expanded }
+                        },
+                        leadingIcon = {
+                          Icon(Icons.Rounded.SmartToy, contentDescription = null)
+                        },
+                        trailingIcon = {
+                          Icon(
+                            Icons.Rounded.KeyboardArrowDown,
+                            contentDescription = null,
+                            modifier = Modifier.graphicsLayer { rotationZ = if (expanded) 180f else 0f },
+                          )
+                        },
+                      )
+                      if (expanded) {
+                        group.forEach { model ->
+                          ComposerModelChoice(
+                            model = model,
+                            selectedInstanceId = selectedInstanceId,
+                            selectedModelId = selectedModelId,
+                            selectedOptions = selectedOptions,
+                            onSelect = { next ->
+                              showModelMenu = false
+                              onDraftUpdate(next)
+                            },
+                            draft = draft,
+                          )
+                        }
                       }
                     }
                   }
                 }
               }
+
+              selectedModel?.takeIf { it.optionDescriptors.isNotEmpty() }?.let { optionModel ->
+                val (traitsLabel, fastEnabled) = traitsTriggerLabel(optionModel.optionDescriptors, selectedOptions)
+                Box {
+                  Surface(
+                    onClick = { showTraitsMenu = true },
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFF27272A),
+                    modifier = Modifier.height(30.dp),
+                  ) {
+                    Row(
+                      modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                      if (fastEnabled) {
+                        Icon(
+                          Icons.Rounded.Bolt,
+                          contentDescription = "Fast mode",
+                          tint = MaterialTheme.colorScheme.primary,
+                          modifier = Modifier.size(14.dp),
+                        )
+                      }
+                      Text(
+                        traitsLabel,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                      )
+                      Icon(
+                        Icons.Rounded.KeyboardArrowDown,
+                        contentDescription = "Model options",
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                      )
+                    }
+                  }
+                  ComposerOptionsMenu(
+                    expanded = showTraitsMenu,
+                    onDismissRequest = { showTraitsMenu = false },
+                  ) {
+                    optionModel.optionDescriptors.forEachIndexed { index, descriptor ->
+                      if (index > 0) {
+                        HorizontalDivider(
+                          color = Color(0xFF3F3F46),
+                          modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        )
+                      }
+                      ComposerMenuSection(if (descriptor.isSpeedOption()) "Speed" else descriptor.label)
+                      val currentValue = descriptor.valueFrom(selectedOptions)
+                      if (descriptor.type == "select") {
+                        descriptor.choices.filterNot {
+                          it.id in descriptor.promptInjectedValues || it.id == "ultracode"
+                        }.forEach { choice ->
+                          val isSelected = choice.id == currentValue?.contentOrNull
+                          ComposerMenuChoice(
+                            label = choice.label,
+                            selected = isSelected,
+                            icon = if (descriptor.isSpeedOption() && choice.label.equals("Fast", true)) {
+                              Icons.Rounded.Bolt
+                            } else {
+                              null
+                            },
+                            onClick = {
+                              showTraitsMenu = false
+                              onDraftUpdate(
+                                draft.copy(
+                                  modelInstanceId = optionModel.instanceId,
+                                  model = optionModel.model,
+                                  modelOptions = optionModel.optionsWith(
+                                    selectedOptions,
+                                    descriptor.id,
+                                    JsonPrimitive(choice.id),
+                                  ),
+                                ),
+                              )
+                            },
+                          )
+                        }
+                      } else if (descriptor.type == "boolean") {
+                        val currentBoolean = currentValue?.booleanOrNull ?: false
+                        val labels = if (descriptor.isSpeedOption()) {
+                          listOf(false to "Standard", true to "Fast")
+                        } else {
+                          listOf(false to "Off", true to "On")
+                        }
+                        labels.forEach { (value, label) ->
+                          val isSelected = currentBoolean == value
+                          ComposerMenuChoice(
+                            label = label,
+                            selected = isSelected,
+                            icon = if (descriptor.isSpeedOption() && value) Icons.Rounded.Bolt else null,
+                            onClick = {
+                              showTraitsMenu = false
+                              onDraftUpdate(
+                                draft.copy(
+                                  modelInstanceId = optionModel.instanceId,
+                                  model = optionModel.model,
+                                  modelOptions = optionModel.optionsWith(
+                                    selectedOptions,
+                                    descriptor.id,
+                                    JsonPrimitive(value),
+                                  ),
+                                ),
+                              )
+                            },
+                          )
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+
+              // Access mode
+              val accessLabel = runtimeModeLabel(draft.runtimeMode)
+              Box {
+                Surface(
+                  onClick = { showAccessMenu = true },
+                  shape = RoundedCornerShape(12.dp),
+                  color = Color(0xFF27272A),
+                  modifier = Modifier.height(30.dp),
+                ) {
+                  Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                  ) {
+                    Icon(
+                      imageVector = runtimeModeIcon(draft.runtimeMode),
+                      contentDescription = null,
+                      modifier = Modifier.size(14.dp),
+                      tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                      text = accessLabel,
+                      style = MaterialTheme.typography.labelMedium,
+                      fontWeight = FontWeight.SemiBold,
+                      color = Color.White,
+                    )
+                  }
+                }
+
+                ComposerOptionsMenu(
+                  expanded = showAccessMenu,
+                  onDismissRequest = { showAccessMenu = false },
+                ) {
+                  ComposerMenuSection("Runtime")
+                  listOf("approval-required", "auto-accept-edits", "auto", "full-access").forEach { key ->
+                    val isSel = draft.runtimeMode == key
+                    ComposerMenuChoice(
+                      label = runtimeModeLabel(key),
+                      description = runtimeModeDescription(key),
+                      selected = isSel,
+                      icon = runtimeModeIcon(key),
+                      onClick = {
+                        showAccessMenu = false
+                        onDraftUpdate(draft.copy(runtimeMode = key))
+                      },
+                    )
+                  }
+                }
+              }
             }
 
-            // Access mode
-            val accessLabel = runtimeModeLabel(draft.runtimeMode)
-            Box {
-              Surface(
-                onClick = { showAccessMenu = true },
-                shape = RoundedCornerShape(12.dp),
-                color = Color(0xFF27272A),
-                modifier = Modifier.height(30.dp),
-              ) {
-                Row(
-                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(4.dp),
+            // Right side: Stop and Send/Queue
+            Row(
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              if (active) {
+                IconButton(
+                  onClick = { onInterrupt?.invoke() },
+                  modifier = Modifier
+                    .size(38.dp)
+                    .background(Color(0xFFEF4444), CircleShape),
                 ) {
                   Icon(
-                    imageVector = runtimeModeIcon(draft.runtimeMode),
-                    contentDescription = null,
-                    modifier = Modifier.size(14.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                  )
-                  Text(
-                    text = accessLabel,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White,
+                    imageVector = Icons.Rounded.Stop,
+                    contentDescription = "Interrupt",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp),
                   )
                 }
               }
-
-              ComposerOptionsMenu(
-                expanded = showAccessMenu,
-                onDismissRequest = { showAccessMenu = false },
-              ) {
-                ComposerMenuSection("Runtime")
-                listOf("approval-required", "auto-accept-edits", "auto", "full-access").forEach { key ->
-                  val isSel = draft.runtimeMode == key
-                  ComposerMenuChoice(
-                    label = runtimeModeLabel(key),
-                    description = runtimeModeDescription(key),
-                    selected = isSel,
-                    icon = runtimeModeIcon(key),
-                    onClick = {
-                      showAccessMenu = false
-                      onDraftUpdate(draft.copy(runtimeMode = key))
-                    },
-                  )
-                }
-              }
-            }
-
-          }
-
-          // Right side: Stop and Send/Queue
-          Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-          ) {
-            if (active) {
+              val canSend = enabled &&
+                (draft.text.isNotBlank() || draft.attachments.isNotEmpty()) && !sending
               IconButton(
-                onClick = onInterrupt,
+                onClick = onSend,
+                enabled = canSend,
                 modifier = Modifier
                   .size(38.dp)
-                  .background(Color(0xFFEF4444), CircleShape),
+                  .background(
+                    if (canSend) MaterialTheme.colorScheme.primary else Color(0xFF27272A),
+                    CircleShape,
+                  ),
               ) {
                 Icon(
-                  imageVector = Icons.Rounded.Stop,
-                  contentDescription = "Interrupt",
-                  tint = Color.White,
-                  modifier = Modifier.size(20.dp),
+                  imageVector = Icons.AutoMirrored.Rounded.Send,
+                  contentDescription = if (active || queuedMessageCount > 0) "Queue message" else "Send message",
+                  tint = if (canSend) Color.White else Color(0xFF71717A),
+                  modifier = Modifier.size(18.dp),
                 )
               }
             }
-            val canSend = enabled &&
-              (draft.text.isNotBlank() || draft.attachments.isNotEmpty()) && !sending
-            IconButton(
-              onClick = onSend,
-              enabled = canSend,
-              modifier = Modifier
-                .size(38.dp)
-                .background(
-                  if (canSend) MaterialTheme.colorScheme.primary else Color(0xFF27272A),
-                  CircleShape,
-                ),
-            ) {
-              Icon(
-                imageVector = Icons.AutoMirrored.Rounded.Send,
-                contentDescription = if (active || queuedMessageCount > 0) "Queue message" else "Send message",
-                tint = if (canSend) Color.White else Color(0xFF71717A),
-                modifier = Modifier.size(18.dp),
-              )
-            }
           }
+        }
+      }
+      contextWindowUsage?.let { usage ->
+        Box(Modifier.matchParentSize()) {
+          ContextWindowMeter(
+            usage = usage,
+            modifier = Modifier
+              .align(Alignment.BottomEnd)
+              .height(116.dp)
+              .offset(x = 14.dp),
+          )
         }
       }
     }
@@ -3199,6 +3703,46 @@ private fun ChatComposerArea(
         modifier = Modifier.padding(start = 6.dp, top = 5.dp),
       )
     }
+  }
+}
+
+@Composable
+private fun ContextWindowMeter(
+  usage: ContextWindowUsage,
+  modifier: Modifier = Modifier,
+) {
+  val fillColor = if (usage.usedPercentage > 90f) {
+    MaterialTheme.colorScheme.error
+  } else {
+    Color(0xFFA1A1AA)
+  }
+  Column(
+    modifier = modifier.width(20.dp).padding(vertical = 2.dp),
+    horizontalAlignment = Alignment.CenterHorizontally,
+    verticalArrangement = Arrangement.spacedBy(4.dp),
+  ) {
+    Box(
+      modifier = Modifier
+        .weight(1f)
+        .width(3.dp)
+        .clip(RoundedCornerShape(50))
+        .background(Color(0xFF27272A)),
+    ) {
+      Box(
+        modifier = Modifier
+          .fillMaxWidth()
+          .fillMaxHeight(usage.fraction)
+          .align(Alignment.BottomCenter)
+          .background(fillColor),
+      )
+    }
+    Text(
+      text = usage.label,
+      color = if (usage.usedPercentage > 90f) fillColor else Color(0xFFA1A1AA),
+      fontSize = 9.sp,
+      lineHeight = 10.sp,
+      maxLines = 1,
+    )
   }
 }
 
