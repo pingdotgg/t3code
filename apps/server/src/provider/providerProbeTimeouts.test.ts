@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
 import * as NodeFs from "node:fs";
 import * as NodeOs from "node:os";
 import * as NodePath from "node:path";
@@ -31,16 +31,18 @@ describe("providerProbeTimeouts", () => {
     expect(providerVersionProbeTimeoutMsFor(false)).toBe(4_000);
   });
 
-  it("Effect timeout values follow HostProcessPlatform", async () => {
-    const winAbout = await Effect.runPromise(
-      cursorAboutTimeoutMs.pipe(Effect.provideService(HostProcessPlatform, "win32")),
-    );
-    const linuxAuth = await Effect.runPromise(
-      providerAuthProbeTimeoutMs.pipe(Effect.provideService(HostProcessPlatform, "linux")),
-    );
-    expect(winAbout).toBe(45_000);
-    expect(linuxAuth).toBe(15_000);
-  });
+  it.effect("Effect timeout values follow HostProcessPlatform", () =>
+    Effect.gen(function* () {
+      const winAbout = yield* cursorAboutTimeoutMs.pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+      );
+      const linuxAuth = yield* providerAuthProbeTimeoutMs.pipe(
+        Effect.provideService(HostProcessPlatform, "linux"),
+      );
+      expect(winAbout).toBe(45_000);
+      expect(linuxAuth).toBe(15_000);
+    }),
+  );
 
   it("resolveProviderProbeCwdSync prefers explicit cwd when it is usable", () => {
     const preferred = NodeOs.tmpdir();
@@ -65,21 +67,23 @@ describe("providerProbeTimeouts", () => {
     expect(isUsableProbeDirectory(missing)).toBe(false);
   });
 
-  it("resolveProviderProbeCwd Effect form matches sync", async () => {
-    const preferred = NodeOs.tmpdir();
-    const viaEffect = await Effect.runPromise(resolveProviderProbeCwd(preferred, {}));
-    expect(viaEffect).toBe(resolveProviderProbeCwdSync(preferred, {}));
-    expect(NodeFs.statSync(viaEffect).isDirectory()).toBe(true);
-  });
+  it.effect("resolveProviderProbeCwd Effect form matches sync", () =>
+    Effect.gen(function* () {
+      const preferred = NodeOs.tmpdir();
+      const viaEffect = yield* resolveProviderProbeCwd(preferred, {});
+      expect(viaEffect).toBe(resolveProviderProbeCwdSync(preferred, {}));
+      expect(NodeFs.statSync(viaEffect).isDirectory()).toBe(true);
+    }),
+  );
 
-  it("resolveProviderProbeCwd uses HostProcessWorkingDirectory as a candidate", async () => {
-    const preferredMissing = NodePath.join(NodeOs.tmpdir(), `t3-missing-wd-${Date.now()}`);
-    const overrideCwd = NodeOs.tmpdir();
-    const viaEffect = await Effect.runPromise(
-      resolveProviderProbeCwd(preferredMissing, {}).pipe(
+  it.effect("resolveProviderProbeCwd uses HostProcessWorkingDirectory as a candidate", () =>
+    Effect.gen(function* () {
+      const preferredMissing = NodePath.join(NodeOs.tmpdir(), `t3-missing-wd-${Date.now()}`);
+      const overrideCwd = NodeOs.tmpdir();
+      const viaEffect = yield* resolveProviderProbeCwd(preferredMissing, {}).pipe(
         Effect.provideService(HostProcessWorkingDirectory, overrideCwd),
-      ),
-    );
-    expect(viaEffect).toBe(overrideCwd);
-  });
+      );
+      expect(viaEffect).toBe(overrideCwd);
+    }),
+  );
 });
