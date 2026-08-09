@@ -2,7 +2,10 @@ import { T3_PROJECT_FILE_NAME, type EnvironmentId, type ThreadEnvMode } from "@t
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 
-import { getProjectFileQueryAtom } from "~/components/files/projectFilesQueryState";
+import {
+  getProjectFileQueryAtom,
+  resolveProjectFileQueryData,
+} from "~/components/files/projectFilesQueryState";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
 /**
@@ -11,7 +14,9 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
  * Imperative counterpart to `useT3ProjectFileScripts` for the new-thread
  * path, which resolves defaults at call time rather than render time. The
  * file query atom caches per (environment, cwd), so repeat calls don't
- * re-fetch. Missing, truncated, or invalid files resolve to null.
+ * re-fetch. Optimistic in-app writes overlay the query result, matching what
+ * `useProjectFileQuery` renders. Missing, truncated, or invalid files
+ * resolve to null.
  */
 export async function readT3ProjectFileDefaultThreadEnvMode(
   environmentId: EnvironmentId,
@@ -22,6 +27,12 @@ export async function readT3ProjectFileDefaultThreadEnvMode(
     getProjectFileQueryAtom(environmentId, workspaceRoot, T3_PROJECT_FILE_NAME),
     { reportDefect: false, reportFailure: false },
   );
-  if (result._tag !== "Success" || result.value.truncated) return null;
-  return parseT3ProjectFile(result.value.contents)?.defaultThreadEnvMode ?? null;
+  const data = resolveProjectFileQueryData(
+    environmentId,
+    workspaceRoot,
+    T3_PROJECT_FILE_NAME,
+    result._tag === "Success" ? result.value : null,
+  );
+  if (data === null || data.truncated) return null;
+  return parseT3ProjectFile(data.contents)?.defaultThreadEnvMode ?? null;
 }
