@@ -967,9 +967,14 @@ const makeWsRpcLayer = (
                 path: null,
               });
               targetWorktreePath = worktree.worktree.path;
+              // This is the one place an ephemeral per-thread worktree is
+              // created, and attach-managed is the only command that marks one.
+              // The marker is what later lets drivers treat the worktree as
+              // theirs; every other worktree a thread can point at is the
+              // user's and keeps its clean-tree guards.
               yield* orchestrationEngine.dispatch({
-                type: "thread.meta.update",
-                commandId: yield* serverCommandId("bootstrap-thread-meta-update"),
+                type: "thread.worktree.attach-managed",
+                commandId: yield* serverCommandId("bootstrap-thread-worktree-attach"),
                 threadId: command.threadId,
                 branch: worktree.worktree.refName,
                 worktreePath: targetWorktreePath,

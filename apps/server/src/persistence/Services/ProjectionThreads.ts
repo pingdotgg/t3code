@@ -33,6 +33,9 @@ export const ProjectionThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
+  /** 0/1: was this worktree created by the thread bootstrap? See the
+      OrchestrationThread contract for why a user's worktree never is. */
+  worktreeManaged: NonNegativeInt,
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

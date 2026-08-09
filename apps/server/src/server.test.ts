@@ -7320,7 +7320,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           dispatchedCommands.map((command) => command.type),
           [
             "thread.create",
-            "thread.meta.update",
+            "thread.worktree.attach-managed",
             "thread.activity.append",
             "thread.activity.append",
             "thread.turn.start",
@@ -7566,7 +7566,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.sequence, 4);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
-        ["thread.create", "thread.meta.update", "thread.activity.append", "thread.turn.start"],
+        [
+          "thread.create",
+          "thread.worktree.attach-managed",
+          "thread.activity.append",
+          "thread.turn.start",
+        ],
       );
       const setupFailureActivity = dispatchedCommands.find(
         (command): command is Extract<OrchestrationCommand, { type: "thread.activity.append" }> =>
@@ -7687,7 +7692,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.sequence, 4);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
-        ["thread.create", "thread.meta.update", "thread.activity.append", "thread.turn.start"],
+        [
+          "thread.create",
+          "thread.worktree.attach-managed",
+          "thread.activity.append",
+          "thread.turn.start",
+        ],
       );
       const setupActivities = dispatchedCommands.filter(
         (command): command is Extract<OrchestrationCommand, { type: "thread.activity.append" }> =>

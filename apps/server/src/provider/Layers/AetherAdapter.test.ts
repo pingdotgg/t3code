@@ -175,12 +175,17 @@ const startInput = (overrides?: {
   readonly resumeCursor?: unknown;
   readonly modelSelection?: { readonly instanceId: ProviderInstanceId; readonly model: string };
   readonly threadId?: ThreadId;
+  readonly cwd?: string;
+  readonly managedWorktree?: boolean;
 }) => ({
   threadId: overrides?.threadId ?? ThreadId.make("thread-1"),
-  cwd: "/repo",
+  cwd: overrides?.cwd ?? "/repo",
   runtimeMode: "full-access" as const,
   ...(overrides?.resumeCursor !== undefined ? { resumeCursor: overrides.resumeCursor } : {}),
   ...(overrides?.modelSelection !== undefined ? { modelSelection: overrides.modelSelection } : {}),
+  ...(overrides?.managedWorktree !== undefined
+    ? { managedWorktree: overrides.managedWorktree }
+    : {}),
 });
 
 const withAdapter = <A, E>(
@@ -353,6 +358,102 @@ describe("AetherAdapter startSession", () => {
       expect(error.message).toContain("no 'origin' remote");
     }),
   );
+
+  // T10: a driver-owned per-thread worktree (managedWorktree) is created clean
+  // from origin/{base} and only the driver writes to it, so the clean-tree /
+  // pushed / in-sync preflight is skipped there.
+  it.effect(
+    "skips the clean-tree preflight for a managed worktree even when it is dirty and has no upstream",
+    () =>
+      withAdapter(
+        {
+          // The worktree's temp branch is dirty (mirror output from a prior
+          // turn) and has no upstream (git worktree add -b makes a local-only
+          // branch) — both would fail the shared-checkout preflight.
+          git: gitWith({
+            ...cleanStatus,
+            hasWorkingTreeChanges: true,
+            hasUpstream: false,
+            upstreamRef: null,
+            aheadCount: 4,
+          }),
+          restClient: { ...unusedRestClient, listProjects: () => Effect.succeed([project()]) },
+        },
+        (adapter) =>
+          Effect.gen(function* () {
+            const session = yield* adapter.startSession(
+              startInput({ cwd: "/worktrees/thread-1", managedWorktree: true }),
+            );
+            expect(session.status).toBe("ready");
+            expect(session.cwd).toBe("/worktrees/thread-1");
+          }),
+      ),
+  );
+
+  it.effect(
+    "still refuses the shared 'Current checkout' with uncommitted changes when not a managed worktree",
+    () =>
+      Effect.gen(function* () {
+        const error = yield* withAdapter(
+          {
+            git: gitWith({ ...cleanStatus, hasWorkingTreeChanges: true }),
+            restClient: { ...unusedRestClient, listProjects: () => Effect.succeed([project()]) },
+          },
+          (adapter) =>
+            Effect.flip(adapter.startSession(startInput({ cwd: "/repo", managedWorktree: false }))),
+        );
+        expect(error._tag).toBe("ProviderAdapterValidationError");
+        expect(error.message).toContain("Commit or stash");
+      }),
+  );
+
+  it.effect(
+    "still refuses a dirty worktree the user already had, since it carries no managed marker",
+    () =>
+      Effect.gen(function* () {
+        const error = yield* withAdapter(
+          {
+            git: gitWith({ ...cleanStatus, hasWorkingTreeChanges: true }),
+            restClient: { ...unusedRestClient, listProjects: () => Effect.succeed([project()]) },
+          },
+          (adapter) =>
+            // A secondary worktree of the user's own looks exactly like a
+            // driver-owned one from the path alone, so only the absent marker
+            // separates them — and it must keep their work safe.
+            Effect.flip(adapter.startSession(startInput({ cwd: "/worktrees/user-branch" }))),
+        );
+        expect(error._tag).toBe("ProviderAdapterValidationError");
+        expect(error.message).toContain("Commit or stash");
+      }),
+  );
+
+  it.effect("registers the worktree cwd as the mirror target, not the shared checkout", () => {
+    const registeredCwds: Array<string> = [];
+    return withAdapter(
+      {
+        git: gitWith({ ...cleanStatus, hasUpstream: false, upstreamRef: null }),
+        restClient: { ...unusedRestClient, listProjects: () => Effect.succeed([project()]) },
+        mirrorRegistry: {
+          register: (cwd) =>
+            Effect.sync(() => {
+              registeredCwds.push(cwd);
+            }),
+          deregister: () => Effect.void,
+        },
+      },
+      (adapter) =>
+        Effect.gen(function* () {
+          const session = yield* adapter.startSession(
+            startInput({ cwd: "/worktrees/thread-1", managedWorktree: true }),
+          );
+          // The mirror re-baselines and applies diffs against the session
+          // cwd; registering the worktree path (never "/repo") is proof the
+          // mirror targets the isolated worktree, not the shared checkout.
+          expect(session.cwd).toBe("/worktrees/thread-1");
+          expect(registeredCwds).toEqual(["/worktrees/thread-1"]);
+        }),
+    );
+  });
 
   it.effect("matches an ssh local origin against an https project repo_url", () =>
     withAdapter(

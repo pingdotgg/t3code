@@ -616,6 +616,23 @@ function resumePreflightIssue(status: GitStatusDetails, cwd: string): string | u
   return undefined;
 }
 
+/**
+ * Structural-only preflight for a driver-owned, per-thread worktree: it is
+ * created clean from origin/{base} and only the driver writes to it, so the
+ * clean-tree/pushed/in-sync checks do not apply (its temp branch has no
+ * upstream by design). Only the structural checks that the mirror engine
+ * itself relies on remain.
+ */
+function managedWorktreePreflightIssue(status: GitStatusDetails, cwd: string): string | undefined {
+  if (!status.isRepo) {
+    return `'${cwd}' is not a git repository. Aether cloud tasks need a git checkout of the linked repository.`;
+  }
+  if (status.branch === null) {
+    return "The Aether worktree is on a detached HEAD. This should not happen for a managed worktree.";
+  }
+  return undefined;
+}
+
 /** Snapshot item for a timeline row — minimal, per t3's opaque snapshot type. */
 function snapshotItemFromMessage(row: AetherTimelineMessage): unknown {
   if (row.role === "user") {
@@ -1438,17 +1455,26 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       });
     }
 
-    // (1) Mirror preflight. A FRESH thread requires a clean tree on a
-    // pushed, in-sync branch — the mirror's base state. A RESUMED thread's
-    // mirror is dirty BY DESIGN (it holds the applied cumulative diff), so
-    // only the structural checks apply; content integrity is enforced by the
-    // sync engine's fingerprint verify instead.
+    // (1) Mirror preflight. A FRESH thread on the shared "Current checkout"
+    // requires a clean tree on a pushed, in-sync branch — the mirror's base
+    // state — because that mode can clobber the user's uncommitted work. A
+    // RESUMED thread's mirror is dirty BY DESIGN (it holds the applied
+    // cumulative diff), so only the structural checks apply; content integrity
+    // is enforced by the sync engine's fingerprint verify instead. A driver-
+    // owned per-thread worktree (input.managedWorktree) is created clean from
+    // origin/{base} and only the driver writes to it, so the clean-tree checks
+    // are unnecessary there and are skipped.
     const resume = parseAetherResume(input.resumeCursor);
     const isResume = resume !== undefined;
     const status = yield* options.git
       .statusDetails(cwd)
       .pipe(Effect.mapError(toGitRequestError("startSession")));
-    const issue = isResume ? resumePreflightIssue(status, cwd) : preflightIssue(status, cwd);
+    const issue =
+      input.managedWorktree === true
+        ? managedWorktreePreflightIssue(status, cwd)
+        : isResume
+          ? resumePreflightIssue(status, cwd)
+          : preflightIssue(status, cwd);
     if (issue !== undefined) {
       return yield* new ProviderAdapterValidationError({
         provider: PROVIDER,
