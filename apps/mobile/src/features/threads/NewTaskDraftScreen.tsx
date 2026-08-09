@@ -63,6 +63,7 @@ import {
   resolveNewTaskWorkspaceLabel,
 } from "./new-task-context-presentation";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
+import { resolveProjectThreadWorkspaceSelection } from "./projectThreadCreationValidation";
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
@@ -641,10 +642,15 @@ export function NewTaskDraftScreen(props: {
         selectedEnvironmentServerConfig,
         draft.modelSelection ?? null,
       ) ?? flow.selectedModel;
-    const workspaceMode = draft.workspaceSelection?.mode ?? flow.workspaceMode;
-    const selectedBranchName = draft.workspaceSelection?.branch ?? flow.selectedBranchName;
-    const selectedWorktreePath =
-      draft.workspaceSelection?.worktreePath ?? flow.selectedWorktreePath;
+    const workspaceSelection = resolveProjectThreadWorkspaceSelection({
+      isGitRepo: flow.isGitRepo,
+      environmentMode: draft.workspaceSelection?.mode ?? flow.workspaceMode,
+      branch: draft.workspaceSelection?.branch ?? flow.selectedBranchName,
+      worktreePath: draft.workspaceSelection?.worktreePath ?? flow.selectedWorktreePath,
+    });
+    const workspaceMode = workspaceSelection.environmentMode;
+    const selectedBranchName = workspaceSelection.branch;
+    const selectedWorktreePath = workspaceSelection.worktreePath;
     const startFromOrigin = draft.workspaceSelection?.startFromOrigin ?? flow.startFromOrigin;
     const runtimeMode = draft.runtimeMode ?? flow.runtimeMode;
     const interactionMode = flow.planModeEnabled
@@ -909,7 +915,7 @@ export function NewTaskDraftScreen(props: {
     </View>
   );
 
-  const workspaceControls = (
+  const workspaceControls = flow.isGitRepo ? (
     <View className="flex-row items-center gap-1 px-2">
       <ComposerInlineControl
         accessibilityHint={`Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`}
@@ -937,11 +943,11 @@ export function NewTaskDraftScreen(props: {
         onPress={() => openContextPicker("NewTaskBranch")}
       />
     </View>
-  );
+  ) : null;
 
   const composerDock = (
     <View className="bg-sheet px-4 pt-1" style={{ paddingBottom: controlsBottomPadding }}>
-      <View className="pb-1">{workspaceControls}</View>
+      {workspaceControls ? <View className="pb-1">{workspaceControls}</View> : null}
 
       <ComposerSurface
         animateLayout={false}
