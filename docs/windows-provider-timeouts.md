@@ -18,13 +18,13 @@ Root causes observed on Windows:
 
 ## Changes
 
-| Area                       | Change                                                |
-| -------------------------- | ----------------------------------------------------- |
-| `providerProbeTimeouts.ts` | Platform-aware timeouts + `resolveProviderProbeCwd()` |
-| `providerSnapshot.ts`      | Longer auth probe timeout; close stdin after spawn    |
-| `CursorProvider.ts`        | Longer about/ACP timeouts; safe cwd; close stdin      |
-| `GrokProvider.ts`          | Longer ACP timeout; safe cwd                          |
-| `CodexProvider.ts`         | Safe cwd for app-server probe                         |
+| Area                       | Change                                                        |
+| -------------------------- | ------------------------------------------------------------- |
+| `providerProbeTimeouts.ts` | Timeouts via `HostProcessPlatform`; accessible cwd resolution |
+| `providerSnapshot.ts`      | Close stdin after spawn for CLI health probes                 |
+| `CursorProvider.ts`        | Longer about/ACP timeouts; safe cwd; close stdin              |
+| `GrokProvider.ts`          | Longer ACP/version timeouts; safe cwd                         |
+| `CodexProvider.ts`         | Longer auth probe timeout; safe cwd                           |
 
 ### Timeouts (Windows / non-Windows)
 

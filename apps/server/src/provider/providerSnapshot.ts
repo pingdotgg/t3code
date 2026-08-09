@@ -18,16 +18,6 @@ import { isWindowsCommandNotFound } from "../processRunner.ts";
 import { createProviderVersionAdvisory } from "./providerMaintenance.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 
-import {
-  PROVIDER_AUTH_PROBE_TIMEOUT_MS,
-  PROVIDER_VERSION_PROBE_TIMEOUT_MS,
-} from "./providerProbeTimeouts.ts";
-
-/** @deprecated Prefer PROVIDER_VERSION_PROBE_TIMEOUT_MS for new code. */
-export const DEFAULT_TIMEOUT_MS = PROVIDER_VERSION_PROBE_TIMEOUT_MS;
-// Auth status checks involve disk/network lookups and can be slow on first run (especially Windows)
-export const AUTH_PROBE_TIMEOUT_MS = PROVIDER_AUTH_PROBE_TIMEOUT_MS;
-
 export interface CommandResult {
   readonly stdout: string;
   readonly stderr: string;

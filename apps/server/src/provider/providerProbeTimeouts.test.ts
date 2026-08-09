@@ -2,45 +2,73 @@ import { describe, expect, it } from "vite-plus/test";
 import * as NodeFs from "node:fs";
 import * as NodeOs from "node:os";
 import * as NodePath from "node:path";
+import * as Effect from "effect/Effect";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
-  CURSOR_ABOUT_TIMEOUT_MS,
-  CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS,
-  GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS,
-  PROVIDER_AUTH_PROBE_TIMEOUT_MS,
-  PROVIDER_VERSION_PROBE_TIMEOUT_MS,
+  cursorAboutTimeoutMs,
+  cursorAboutTimeoutMsFor,
+  cursorAcpModelDiscoveryTimeoutMsFor,
+  grokAcpModelDiscoveryTimeoutMsFor,
+  isUsableProbeDirectory,
+  providerAuthProbeTimeoutMs,
+  providerAuthProbeTimeoutMsFor,
+  providerVersionProbeTimeoutMsFor,
   resolveProviderProbeCwd,
+  resolveProviderProbeCwdSync,
 } from "./providerProbeTimeouts.ts";
 
 describe("providerProbeTimeouts", () => {
-  it("uses higher probe timeouts on Windows", () => {
-    if (process.platform === "win32") {
-      expect(CURSOR_ABOUT_TIMEOUT_MS).toBeGreaterThanOrEqual(30_000);
-      expect(CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS).toBeGreaterThanOrEqual(30_000);
-      expect(GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS).toBeGreaterThanOrEqual(30_000);
-      expect(PROVIDER_AUTH_PROBE_TIMEOUT_MS).toBeGreaterThanOrEqual(30_000);
-      expect(PROVIDER_VERSION_PROBE_TIMEOUT_MS).toBeGreaterThanOrEqual(10_000);
-    } else {
-      expect(CURSOR_ABOUT_TIMEOUT_MS).toBeGreaterThanOrEqual(15_000);
-      expect(PROVIDER_AUTH_PROBE_TIMEOUT_MS).toBeGreaterThanOrEqual(10_000);
-    }
+  it("uses higher probe timeouts on Windows via pure helpers", () => {
+    expect(cursorAboutTimeoutMsFor(true)).toBe(45_000);
+    expect(cursorAcpModelDiscoveryTimeoutMsFor(true)).toBe(45_000);
+    expect(grokAcpModelDiscoveryTimeoutMsFor(true)).toBe(45_000);
+    expect(providerAuthProbeTimeoutMsFor(true)).toBe(45_000);
+    expect(providerVersionProbeTimeoutMsFor(true)).toBe(15_000);
+
+    expect(cursorAboutTimeoutMsFor(false)).toBe(20_000);
+    expect(providerAuthProbeTimeoutMsFor(false)).toBe(15_000);
+    expect(providerVersionProbeTimeoutMsFor(false)).toBe(4_000);
   });
 
-  it("resolveProviderProbeCwd prefers explicit cwd when it exists", () => {
+  it("Effect timeout values follow HostProcessPlatform", async () => {
+    const winAbout = await Effect.runPromise(
+      cursorAboutTimeoutMs.pipe(Effect.provideService(HostProcessPlatform, "win32")),
+    );
+    const linuxAuth = await Effect.runPromise(
+      providerAuthProbeTimeoutMs.pipe(Effect.provideService(HostProcessPlatform, "linux")),
+    );
+    expect(winAbout).toBe(45_000);
+    expect(linuxAuth).toBe(15_000);
+  });
+
+  it("resolveProviderProbeCwdSync prefers explicit cwd when it is usable", () => {
     const preferred = NodeOs.tmpdir();
-    expect(resolveProviderProbeCwd(preferred)).toBe(preferred);
+    expect(resolveProviderProbeCwdSync(preferred)).toBe(preferred);
   });
 
-  it("resolveProviderProbeCwd ignores non-directories and falls back", () => {
+  it("resolveProviderProbeCwdSync ignores non-directories and falls back", () => {
     const missing = NodePath.join(NodeOs.tmpdir(), `t3-missing-cwd-${Date.now()}`);
-    const resolved = resolveProviderProbeCwd(missing, {
+    const resolved = resolveProviderProbeCwdSync(missing, {
       T3_PROVIDER_CWD: NodeOs.tmpdir(),
     });
     expect(resolved).toBe(NodeOs.tmpdir());
   });
 
-  it("resolveProviderProbeCwd always returns an existing directory", () => {
-    const resolved = resolveProviderProbeCwd(null, {});
-    expect(NodeFs.statSync(resolved).isDirectory()).toBe(true);
+  it("resolveProviderProbeCwdSync always returns an existing usable directory", () => {
+    const resolved = resolveProviderProbeCwdSync(null, {});
+    expect(isUsableProbeDirectory(resolved)).toBe(true);
+  });
+
+  it("isUsableProbeDirectory rejects missing paths", () => {
+    const missing = NodePath.join(NodeOs.tmpdir(), `t3-no-such-dir-${Date.now()}`);
+    expect(isUsableProbeDirectory(missing)).toBe(false);
+  });
+
+  it("resolveProviderProbeCwd Effect form matches sync", async () => {
+    const preferred = NodeOs.tmpdir();
+    const viaEffect = await Effect.runPromise(resolveProviderProbeCwd(preferred, {}));
+    expect(viaEffect).toBe(resolveProviderProbeCwdSync(preferred, {}));
+    expect(NodeFs.statSync(viaEffect).isDirectory()).toBe(true);
   });
 });

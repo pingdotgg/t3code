@@ -11,7 +11,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import type { CursorSettings } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 
-import { CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS } from "../providerProbeTimeouts.ts";
+import { cursorAcpModelDiscoveryTimeoutMsFor } from "../providerProbeTimeouts.ts";
 import {
   buildCursorProviderSnapshot,
   buildCursorCapabilitiesFromConfigOptions,
@@ -334,11 +334,11 @@ describe("buildCursorProviderSnapshot", () => {
           status: "ready",
           auth: { status: "authenticated", type: "Team", label: "Cursor Team Subscription" },
         },
-        discoveryWarning: `Cursor ACP model discovery timed out after ${CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
+        discoveryWarning: `Cursor ACP model discovery timed out after ${cursorAcpModelDiscoveryTimeoutMsFor(process.platform === "win32")}ms.`,
       }),
     ).toMatchObject({
       status: "warning",
-      message: `Cursor ACP model discovery timed out after ${CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
+      message: `Cursor ACP model discovery timed out after ${cursorAcpModelDiscoveryTimeoutMsFor(process.platform === "win32")}ms.`,
       models: [],
     });
   });

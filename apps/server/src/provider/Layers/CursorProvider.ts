@@ -48,8 +48,8 @@ import {
 import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import { CursorListAvailableModelsResponse } from "../acp/CursorAcpExtension.ts";
 import {
-  CURSOR_ABOUT_TIMEOUT_MS,
-  CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS,
+  cursorAboutTimeoutMs,
+  cursorAcpModelDiscoveryTimeoutMs,
   resolveProviderProbeCwd,
 } from "../providerProbeTimeouts.ts";
 
@@ -411,7 +411,7 @@ const makeCursorAcpProbeRuntime = (
 ) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const probeCwd = resolveProviderProbeCwd(undefined, environment);
+    const probeCwd = yield* resolveProviderProbeCwd(undefined, environment);
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
         spawn: {
@@ -951,7 +951,7 @@ const runCursorCommand = (
 ) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const probeCwd = resolveProviderProbeCwd(undefined, environment);
+    const probeCwd = yield* resolveProviderProbeCwd(undefined, environment);
     const spawnCommand = yield* resolveSpawnCommand(
       cursorSettings.binaryPath,
       args,
@@ -1019,8 +1019,9 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   }
 
   // Single `agent about` probe: returns version + auth status in one call.
+  const aboutTimeoutMs = yield* cursorAboutTimeoutMs;
   const aboutProbe = yield* runCursorAboutCommand(cursorSettings, environment).pipe(
-    Effect.timeoutOption(CURSOR_ABOUT_TIMEOUT_MS),
+    Effect.timeoutOption(aboutTimeoutMs),
     Effect.result,
   );
 
@@ -1090,9 +1091,10 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   let discoveredModels = Option.none<ReadonlyArray<ServerProviderModel>>();
   let discoveryWarning: string | undefined;
   if (parsed.auth.status !== "unauthenticated") {
+    const acpDiscoveryTimeoutMs = yield* cursorAcpModelDiscoveryTimeoutMs;
     const discoveryExit = yield* Effect.exit(
       discoverCursorModelsViaAcp(cursorSettings, environment).pipe(
-        Effect.timeoutOption(CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS),
+        Effect.timeoutOption(acpDiscoveryTimeoutMs),
       ),
     );
     if (Exit.isFailure(discoveryExit)) {
@@ -1101,7 +1103,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       });
       discoveryWarning = CURSOR_ACP_MODEL_DISCOVERY_FAILED_MESSAGE;
     } else if (Option.isNone(discoveryExit.value)) {
-      discoveryWarning = `Cursor ACP model discovery timed out after ${CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`;
+      discoveryWarning = `Cursor ACP model discovery timed out after ${acpDiscoveryTimeoutMs}ms.`;
     } else if (discoveryExit.value.value.length === 0) {
       discoveryWarning = "Cursor ACP model discovery returned no built-in models.";
     } else {
