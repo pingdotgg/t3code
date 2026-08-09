@@ -51,7 +51,7 @@ import {
   pruneScanCache,
   type ScanCache,
 } from "./usageScanCache.ts";
-import type { UsageRecord } from "./usageTranscripts.ts";
+import { dropReplayedRolloutHead, type UsageRecord } from "./usageTranscripts.ts";
 
 const LITELLM_RATES_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
@@ -354,7 +354,10 @@ export const make = Effect.gen(function* () {
 
       for (const file of files) {
         livePaths.add(file.path);
-        const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
+        const parsed = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
+        // Applied after the cache on purpose: cached entries keep the raw
+        // records, so the replay heuristic can evolve without a version bump.
+        const records = provider === "codex" ? dropReplayedRolloutHead(parsed) : parsed;
         if (records.length === 0) {
           skippedFiles += 1;
           continue;
