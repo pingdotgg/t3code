@@ -17,6 +17,7 @@ import {
   type WebAssetBrand,
 } from "./lib/brand-assets.ts";
 import { getDefaultBuildArch } from "./lib/build-target-arch.ts";
+import { CLI_EXTERNAL_PACKAGE_UNPACK_GLOBS } from "./lib/cli-external-packages.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 
@@ -633,13 +634,21 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // are dead weight. The trailing dash keeps the SDK's own JS package.
   "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
 ] as const;
-// The WSL backend launches the server with plain `wsl.exe -- node`, which
-// cannot read inside an asar archive — and the server bundle externalizes its
-// runtime deps, so the whole node_modules tree must be unpacked, not just the
-// bundle (otherwise ERR_MODULE_NOT_FOUND: "Cannot find package 'effect'").
-// The Windows primary backend reads the same files through the asar redirect,
-// so nothing is duplicated.
-export const WINDOWS_ASAR_UNPACK = ["apps/server/dist/**", "**/node_modules/**"] as const;
+// The WSL backend launches the server with plain `wsl.exe -- node`, which cannot
+// read inside an asar archive, so everything it loads must be on the real
+// filesystem. This used to unpack `**\/node_modules\/**` wholesale, because the
+// server bundle externalized its runtime deps and the Linux Node would fail with
+// ERR_MODULE_NOT_FOUND ("Cannot find package 'effect'") before it even reached
+// node-pty.
+//
+// The CLI bundle now inlines its JS dependencies, so the only things that still
+// have to be loose are the server bundle itself and the packages the bundle
+// leaves external — derived from the same list the bundler uses, so the two
+// cannot drift apart.
+export const WINDOWS_ASAR_UNPACK = [
+  "apps/server/dist/**",
+  ...CLI_EXTERNAL_PACKAGE_UNPACK_GLOBS,
+] as const;
 export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/resource-monitor",
