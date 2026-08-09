@@ -133,13 +133,17 @@ describe("WSL runtime cache", () => {
     expect(sanitizeWslRuntimeId("1.2.3/x64; touch /tmp/nope")).toBe("1.2.3_x64__touch__tmp_nope");
   });
 
-  it("installs through a temporary directory and only reuses completed caches", () => {
+  it("installs through a temporary directory and only reuses valid completed caches", () => {
     const script = buildWslRuntimeInstallScript(
       "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
       "1.2.3-x64",
     );
 
-    expect(script).toContain('if [ -f "$ready_marker" ]');
+    expect(script).toContain('  [ -f "$ready_marker" ] &&');
+    expect(script).toContain('  [ -f "$runtime_root/apps/server/dist/bin.mjs" ] &&');
+    expect(script).toContain('  [ -f "$runtime_root/node_modules/effect/package.json" ]');
+    expect(script).toContain("if runtime_is_ready; then");
+    expect(script).toContain('mv -T "$runtime_root" "$runtime_stale"');
     expect(script).toContain('mktemp -d "$runtime_parent/.1.2.3-x64.tmp.XXXXXX"');
     expect(script).toContain(
       "tar -xzf '/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz' -C \"$runtime_tmp\"",
