@@ -50,10 +50,23 @@ const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(value);
 
-async function createOrchestrationSystem() {
+async function createOrchestrationSystem(
+  options: {
+    readonly decorateEventStore?: (
+      eventStore: OrchestrationEventStoreShape,
+    ) => OrchestrationEventStoreShape;
+  } = {},
+) {
   const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-orchestration-engine-test-",
   });
+  const eventStoreLayer =
+    options.decorateEventStore === undefined
+      ? OrchestrationEventStoreLive
+      : Layer.effect(
+          OrchestrationEventStore,
+          Effect.map(OrchestrationEventStore, options.decorateEventStore),
+        ).pipe(Layer.provide(OrchestrationEventStoreLive));
   const orchestrationLayer = Layer.mergeAll(
     OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
@@ -64,7 +77,7 @@ async function createOrchestrationSystem() {
     Layer.provideMerge(TurnAdmissionGate.layer),
     Layer.provide(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),
-    Layer.provide(OrchestrationEventStoreLive),
+    Layer.provide(eventStoreLayer),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     Layer.provide(RepositoryIdentityResolver.layer),
     Layer.provide(SqlitePersistenceMemory),
@@ -403,6 +416,104 @@ describe("OrchestrationEngine", () => {
       ),
     );
     expect(events.map((event) => event.type)).toEqual(["project.created", "thread.created"]);
+    await system.dispose();
+  });
+
+  it("keeps queued turn admission held when the requesting fiber disconnects", async () => {
+    const appendEntered = await Effect.runPromise(Deferred.make<void>());
+    const releaseAppend = await Effect.runPromise(Deferred.make<void>());
+    const system = await createOrchestrationSystem({
+      decorateEventStore: (eventStore) => ({
+        ...eventStore,
+        append: (event) =>
+          event.type === "thread.turn-start-requested"
+            ? Deferred.succeed(appendEntered, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseAppend)),
+                Effect.andThen(eventStore.append(event)),
+              )
+            : eventStore.append(event),
+      }),
+    });
+    const { engine, turnAdmissionGate } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-project-disconnected-turn-create"),
+        projectId: asProjectId("project-disconnected-turn"),
+        title: "Disconnected Turn Project",
+        workspaceRoot: "/tmp/project-disconnected-turn",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-disconnected-turn-create"),
+        threadId: ThreadId.make("thread-disconnected-turn"),
+        projectId: asProjectId("project-disconnected-turn"),
+        title: "Disconnected Turn Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    await system.run(
+      Effect.gen(function* () {
+        const requestingFiber = yield* Effect.forkChild(
+          engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make("cmd-turn-disconnected-requester"),
+            threadId: ThreadId.make("thread-disconnected-turn"),
+            message: {
+              messageId: asMessageId("msg-disconnected-requester"),
+              role: "user",
+              text: "persist even if this request disconnects",
+              attachments: [],
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            createdAt,
+          }),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(appendEntered);
+        yield* Fiber.interrupt(requestingFiber);
+
+        const handoffEntered = yield* Deferred.make<void>();
+        const handoffFiber = yield* Effect.forkChild(
+          turnAdmissionGate.commitUpdateHandoff(
+            Deferred.succeed(handoffEntered, undefined).pipe(Effect.as("launcher-id")),
+          ),
+          { startImmediately: true },
+        );
+        yield* Effect.yieldNow;
+        expect(yield* Deferred.isDone(handoffEntered)).toBe(false);
+
+        yield* Deferred.succeed(releaseAppend, undefined);
+        yield* Deferred.await(handoffEntered);
+        expect(yield* Fiber.join(handoffFiber)).toBe("launcher-id");
+      }),
+    );
+
+    const events = await system.run(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(events.map((event) => event.type)).toContain("thread.turn-start-requested");
     await system.dispose();
   });
 

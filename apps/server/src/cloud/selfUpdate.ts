@@ -16,7 +16,7 @@ import * as Ref from "effect/Ref";
 
 import * as ServerConfig from "../config.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { TurnAdmissionGate } from "../orchestration/TurnAdmissionGate.ts";
+import * as TurnAdmissionGate from "../orchestration/TurnAdmissionGate.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
@@ -55,7 +55,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const path = yield* Path.Path;
   const execPath = yield* HostProcessExecutablePath;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  const turnAdmissionGate = yield* TurnAdmissionGate;
+  const turnAdmissionGate = yield* TurnAdmissionGate.TurnAdmissionGate;
   const inFlight = yield* Ref.make(false);
 
   const capability: ServerSelfUpdateCapability | null =

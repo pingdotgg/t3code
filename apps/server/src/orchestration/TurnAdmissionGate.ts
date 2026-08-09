@@ -3,25 +3,24 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
 
-export interface TurnAdmissionGateShape {
-  /** Serialize turn acceptance with update handoff and fail once handoff commits. */
-  readonly admitTurn: <A, E, R, EClosed>(
-    effect: Effect.Effect<A, E, R>,
-    onClosed: () => EClosed,
-  ) => Effect.Effect<A, E | EClosed, R>;
+export class TurnAdmissionGate extends Context.Service<
+  TurnAdmissionGate,
+  {
+    /** Serialize queued turn processing with update handoff and fail once handoff commits. */
+    readonly admitTurn: <A, E, R, EClosed>(
+      effect: Effect.Effect<A, E, R>,
+      onClosed: () => EClosed,
+    ) => Effect.Effect<A, E | EClosed, R>;
 
-  /**
-   * On success, permanently close turn admission in this process. A failed
-   * launcher handoff leaves admission open.
-   */
-  readonly commitUpdateHandoff: <A, E, R>(
-    handoff: Effect.Effect<A, E, R>,
-  ) => Effect.Effect<A, E, R>;
-}
-
-export class TurnAdmissionGate extends Context.Service<TurnAdmissionGate, TurnAdmissionGateShape>()(
-  "t3/orchestration/TurnAdmissionGate",
-) {}
+    /**
+     * On success, permanently close turn admission in this process. A failed
+     * launcher handoff leaves admission open.
+     */
+    readonly commitUpdateHandoff: <A, E, R>(
+      handoff: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E, R>;
+  }
+>()("t3/orchestration/TurnAdmissionGate") {}
 
 export const make = Effect.gen(function* () {
   const semaphore = yield* Semaphore.make(1);
