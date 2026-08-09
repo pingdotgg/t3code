@@ -66,6 +66,24 @@ describe("scan cache round trip", () => {
     expect(decodeScanCache({ version: 999, models: [], sessions: [], files: {} }).size).toBe(0);
   });
 
+  it("invalidates entries produced before fork-aware Codex parsing", () => {
+    const legacy = {
+      ...encodeScanCache(cacheWith([["/codex/fork.jsonl", 100, [record()]]])),
+      version: 1,
+    };
+
+    expect(decodeScanCache(legacy).size).toBe(0);
+  });
+
+  it("invalidates shared version 2 entries that are not fork-aware", () => {
+    const preForkAware = {
+      ...encodeScanCache(cacheWith([["/codex/fork.jsonl", 100, [record()]]])),
+      version: 2,
+    };
+
+    expect(decodeScanCache(preForkAware).size).toBe(0);
+  });
+
   it("skips malformed file entries but keeps good ones", () => {
     const encoded = encodeScanCache(cacheWith([["/good.jsonl", 100, [record()]]]));
     const withJunk = {

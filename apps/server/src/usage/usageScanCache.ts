@@ -18,7 +18,12 @@ import type { UsageProviderKind } from "@t3tools/contracts";
 
 import type { UsageRecord } from "./usageTranscripts.ts";
 
-export const USAGE_SCAN_CACHE_VERSION = 1 as const;
+/**
+ * Version 3: Codex fork parsing excludes inherited parent history. Version 2
+ * is also emitted by a non-fork-aware Claude cache revision, so it cannot
+ * safely identify entries produced by the updated Codex parser.
+ */
+export const USAGE_SCAN_CACHE_VERSION = 3 as const;
 
 export interface CachedFile {
   readonly size: number;
