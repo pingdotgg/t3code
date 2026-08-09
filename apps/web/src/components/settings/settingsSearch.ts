@@ -17,14 +17,30 @@ export interface SettingsSearchItem {
 
 /**
  * Sections built entirely on settings that persist to the primary
- * environment's `settings.json`. They have no backing store where no primary
- * environment exists (notably the hosted static web app), so the nav, the
- * search index and the route itself all drop them there rather than showing a
- * page whose every write is discarded.
+ * environment's `settings.json`. The hosted static web app never owns a
+ * primary connection target, so these render nothing but their own empty
+ * state there and are not worth offering.
  */
-export const PRIMARY_ONLY_SETTINGS_PATHS: ReadonlySet<SettingsPath> = new Set<SettingsPath>([
+const PRIMARY_ONLY_SETTINGS_PATHS: ReadonlySet<SettingsPath> = new Set<SettingsPath>([
   "/settings/source-control",
 ]);
+
+/**
+ * Whether a settings section is worth listing in the current app mode. Drives
+ * the sidebar nav and the search index together, so a hidden section cannot be
+ * reached from inside settings by either route.
+ *
+ * Deliberately keyed off the build/origin-derived hosted flag rather than the
+ * live environment catalog: the catalog hydrates asynchronously, so a
+ * catalog-derived answer reports "hidden" for the first frame on every
+ * platform and makes sections flicker in after load.
+ */
+export function isSettingsPathListed(
+  to: SettingsPath,
+  input: { readonly hostedStaticApp: boolean },
+): boolean {
+  return !input.hostedStaticApp || !PRIMARY_ONLY_SETTINGS_PATHS.has(to);
+}
 
 /**
  * Section labels in sidebar order. The sidebar nav and the search-result

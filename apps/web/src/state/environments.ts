@@ -77,19 +77,6 @@ export function usePrimaryEnvironment(): EnvironmentPresentation | null {
   return useEnvironment(usePrimaryEnvironmentId());
 }
 
-/**
- * Whether the settings that persist to the primary environment's
- * `settings.json` have anywhere to be written.
- *
- * The hosted static web app never owns a `PrimaryConnectionTarget`, so those
- * settings have no backing store there even while remote environments are
- * connected and working. Surfaces built entirely on them stay hidden rather
- * than accepting edits that `useUpdatePrimarySettings` silently discards.
- */
-export function usePrimarySettingsWritable(): boolean {
-  return usePrimaryEnvironmentId() !== null;
-}
-
 export function useEnvironmentHttpBaseUrl(environmentId: EnvironmentId | null): string | null {
   const prepared = usePreparedConnection(environmentId);
   return Option.isSome(prepared) ? prepared.value.httpBaseUrl : null;

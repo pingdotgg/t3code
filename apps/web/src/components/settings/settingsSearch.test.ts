@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  PRIMARY_ONLY_SETTINGS_PATHS,
+  isSettingsPathListed,
   searchableSetting,
   searchSettings,
   SETTINGS_SEARCH_ITEMS,
-  SETTINGS_SECTION_LABELS,
   type SettingsSearchItem,
 } from "./settingsSearch";
 
@@ -79,18 +78,16 @@ describe("searchSettings", () => {
     });
   });
 
-  it("gates only sections that exist as settings paths", () => {
-    for (const path of PRIMARY_ONLY_SETTINGS_PATHS) {
-      expect(SETTINGS_SECTION_LABELS[path]).toBeDefined();
+  it("lists every section outside the hosted static app", () => {
+    for (const item of SETTINGS_SEARCH_ITEMS) {
+      expect(isSettingsPathListed(item.to, { hostedStaticApp: false })).toBe(true);
     }
   });
 
-  it("drops gated sections from the search index", () => {
-    const ungated = SETTINGS_SEARCH_ITEMS.filter(
-      (item) => !PRIMARY_ONLY_SETTINGS_PATHS.has(item.to),
-    );
-    expect(searchSettings("source control", ungated)).toEqual([]);
-    expect(searchSettings("source control").map((item) => item.id)).toEqual(["source-control"]);
+  it("stops listing primary-only sections in the hosted static app", () => {
+    expect(isSettingsPathListed("/settings/source-control", { hostedStaticApp: true })).toBe(false);
+    expect(isSettingsPathListed("/settings/providers", { hostedStaticApp: true })).toBe(true);
+    expect(isSettingsPathListed("/settings/general", { hostedStaticApp: true })).toBe(true);
   });
 
   it("routes appearance settings to their current section", () => {
