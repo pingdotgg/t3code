@@ -2,7 +2,10 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import ProjectionTurnsKeysetIndexMigration from "./037_ProjectionTurnsKeysetIndex.ts";
-import ScheduledTasksMigration from "./045_ScheduledTasks.ts";
+import ProjectionThreadsPinOrderKeyMigration from "./038_ProjectionThreadsPinOrderKey.ts";
+import ProjectionProjectsDefaultThreadEnvModeMigration from "./039_ProjectionProjectsDefaultThreadEnvMode.ts";
+import ProjectionProjectFaviconPathMigration from "./040_ProjectionProjectFaviconPath.ts";
+import ScheduledTasksMigration from "./048_ScheduledTasks.ts";
 
 /**
  * Tracks the incremental import of v1 materialized thread state into the v2
@@ -12,35 +15,52 @@ import ScheduledTasksMigration from "./045_ScheduledTasks.ts";
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // Compatibility for databases that ran this migration as private id 045 before
-  // ProjectionTurnsKeysetIndex and ScheduledTasks landed in the released slots.
+  // Compatibility for databases that ran v2 migrations under private ids before
+  // main inserted released migrations into the 037-040 and 048 slots.
   yield* ProjectionTurnsKeysetIndexMigration;
+  yield* ProjectionThreadsPinOrderKeyMigration;
+  yield* ProjectionProjectsDefaultThreadEnvModeMigration;
+  yield* ProjectionProjectFaviconPathMigration;
   yield* ScheduledTasksMigration;
   yield* sql`
     UPDATE effect_sql_migrations
     SET name = CASE migration_id
       WHEN 37 THEN 'ProjectionTurnsKeysetIndex'
-      WHEN 38 THEN 'OrchestrationV2'
-      WHEN 39 THEN 'OrchestrationV2Subagents'
-      WHEN 40 THEN 'OrchestrationV2Foundation'
-      WHEN 41 THEN 'OrchestrationV2ProviderSessionBindings'
-      WHEN 42 THEN 'OrchestrationV2ThreadLaunchWorkflows'
-      WHEN 43 THEN 'ApplicationEventSource'
-      WHEN 44 THEN 'OrchestrationV2EffectCancellation'
-      WHEN 45 THEN 'ScheduledTasks'
+      WHEN 38 THEN 'ProjectionThreadsPinOrderKey'
+      WHEN 39 THEN 'ProjectionProjectsDefaultThreadEnvMode'
+      WHEN 40 THEN 'ProjectionProjectFaviconPath'
+      WHEN 41 THEN 'OrchestrationV2'
+      WHEN 42 THEN 'OrchestrationV2Subagents'
+      WHEN 43 THEN 'OrchestrationV2Foundation'
+      WHEN 44 THEN 'OrchestrationV2ProviderSessionBindings'
+      WHEN 45 THEN 'OrchestrationV2ThreadLaunchWorkflows'
+      WHEN 46 THEN 'ApplicationEventSource'
+      WHEN 47 THEN 'OrchestrationV2EffectCancellation'
+      WHEN 48 THEN 'ScheduledTasks'
       ELSE name
     END
-    WHERE migration_id BETWEEN 37 AND 45
+    WHERE migration_id BETWEEN 37 AND 48
       AND EXISTS (
         SELECT 1
         FROM effect_sql_migrations
-        WHERE migration_id = 37 AND name = 'OrchestrationV2'
+        WHERE migration_id IN (37, 38) AND name = 'OrchestrationV2'
       )
   `;
   yield* sql`
     UPDATE effect_sql_migrations
-    SET name = 'ScheduledTasks'
-    WHERE migration_id = 45 AND name = 'LegacyV1ImportState'
+    SET name = CASE migration_id
+      WHEN 45 THEN 'OrchestrationV2ThreadLaunchWorkflows'
+      WHEN 46 THEN 'ApplicationEventSource'
+      WHEN 47 THEN 'OrchestrationV2EffectCancellation'
+      WHEN 48 THEN 'ScheduledTasks'
+      ELSE name
+    END
+    WHERE migration_id BETWEEN 45 AND 48
+      AND EXISTS (
+        SELECT 1
+        FROM effect_sql_migrations
+        WHERE migration_id = 45 AND name = 'LegacyV1ImportState'
+      )
   `;
 
   yield* sql`

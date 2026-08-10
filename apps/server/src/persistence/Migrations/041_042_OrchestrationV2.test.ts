@@ -253,7 +253,7 @@ it.effect("upgrades a database that already ran legacy import as private migrati
       VALUES (45, 'LegacyV1ImportState')
     `;
 
-    yield* runMigrations({ toMigrationInclusive: 46 });
+    yield* runMigrations({ toMigrationInclusive: 49 });
 
     const requiredTables = yield* sql<{ readonly name: string }>`
       SELECT name
@@ -273,14 +273,17 @@ it.effect("upgrades a database that already ran legacy import as private migrati
     }>`
       SELECT migration_id, name
       FROM effect_sql_migrations
-      WHERE migration_id IN (45, 46)
+      WHERE migration_id BETWEEN 45 AND 49
       ORDER BY migration_id
     `;
     assert.deepStrictEqual(
       migrations.map(({ migration_id, name }) => [migration_id, name]),
       [
-        [45, "ScheduledTasks"],
-        [46, "LegacyV1ImportState"],
+        [45, "OrchestrationV2ThreadLaunchWorkflows"],
+        [46, "ApplicationEventSource"],
+        [47, "OrchestrationV2EffectCancellation"],
+        [48, "ScheduledTasks"],
+        [49, "LegacyV1ImportState"],
       ],
     );
   }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
@@ -323,7 +326,7 @@ it.effect("upgrades a database that ran v2 migrations before the final id shift"
       WHERE migration_id BETWEEN 37 AND 45
     `;
 
-    yield* runMigrations({ toMigrationInclusive: 46 });
+    yield* runMigrations({ toMigrationInclusive: 49 });
 
     const keysetIndexes = yield* sql<{ readonly name: string }>`
       SELECT name
@@ -338,22 +341,25 @@ it.effect("upgrades a database that ran v2 migrations before the final id shift"
     }>`
       SELECT migration_id, name
       FROM effect_sql_migrations
-      WHERE migration_id BETWEEN 37 AND 46
+      WHERE migration_id BETWEEN 37 AND 49
       ORDER BY migration_id
     `;
     assert.deepStrictEqual(
       migrations.map(({ migration_id, name }) => [migration_id, name]),
       [
         [37, "ProjectionTurnsKeysetIndex"],
-        [38, "OrchestrationV2"],
-        [39, "OrchestrationV2Subagents"],
-        [40, "OrchestrationV2Foundation"],
-        [41, "OrchestrationV2ProviderSessionBindings"],
-        [42, "OrchestrationV2ThreadLaunchWorkflows"],
-        [43, "ApplicationEventSource"],
-        [44, "OrchestrationV2EffectCancellation"],
-        [45, "ScheduledTasks"],
-        [46, "LegacyV1ImportState"],
+        [38, "ProjectionThreadsPinOrderKey"],
+        [39, "ProjectionProjectsDefaultThreadEnvMode"],
+        [40, "ProjectionProjectFaviconPath"],
+        [41, "OrchestrationV2"],
+        [42, "OrchestrationV2Subagents"],
+        [43, "OrchestrationV2Foundation"],
+        [44, "OrchestrationV2ProviderSessionBindings"],
+        [45, "OrchestrationV2ThreadLaunchWorkflows"],
+        [46, "ApplicationEventSource"],
+        [47, "OrchestrationV2EffectCancellation"],
+        [48, "ScheduledTasks"],
+        [49, "LegacyV1ImportState"],
       ],
     );
   }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
