@@ -51,8 +51,9 @@ the active selection are stored separately in Application Support.
 - Workspace files and previews, working-tree review, Git status and common actions,
   plus Ghostty-rendered terminal sessions with VT/ANSI output, scrollback, hardware
   and software keyboard controls, and per-thread session switching.
-- Native settings with persisted appearance and behavior preferences, platform
-  deep links, shortcuts, background refresh, and notification routing.
+- Native settings with app and connected-environment version details, persisted
+  appearance and behavior preferences, platform deep links, shortcuts,
+  background refresh, and notification routing.
 - A Share extension that imports text, URLs, and images into persistent project
   drafts, plus Home Screen widgets and aggregate Live Activities for active work.
 - DPoP-bound T3 Connect sessions with account-scoped relay credentials, APNs

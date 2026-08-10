@@ -75,10 +75,20 @@ final class CoreContractTests: XCTestCase {
     func testServerConfigAdvertisesThreadSnapshotPagination() throws {
         let config = try JSONDecoder.t3.decode(
             ServerConfigSnapshot.self,
-            from: Data(#"{"providers":[],"threadSnapshotPagination":true}"#.utf8)
+            from: Data(
+                #"{"environment":{"environmentId":"server-1","label":"Studio","platform":{"os":"darwin","arch":"arm64"},"serverVersion":"0.2.0","capabilities":{"repositoryIdentity":true}},"providers":[],"threadSnapshotPagination":true}"#.utf8
+            )
         )
 
         XCTAssertEqual(config.threadSnapshotPagination, true)
+        XCTAssertEqual(config.environment?.serverVersion, "0.2.0")
+        XCTAssertEqual(config.serverVersion(fallingBackTo: "0.1.0"), "0.2.0")
+
+        let legacyConfig = try JSONDecoder.t3.decode(
+            ServerConfigSnapshot.self,
+            from: Data(#"{"providers":[]}"#.utf8)
+        )
+        XCTAssertEqual(legacyConfig.serverVersion(fallingBackTo: "0.1.0"), "0.1.0")
     }
 
     func testCommandBuildersMatchOrchestrationContract() throws {

@@ -35,6 +35,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
     public let id: String
     public var name: String
     public var endpoint: String
+    public var serverVersion: String?
     /// Internal stream-leader compatibility. Product routing must use the
     /// project or thread environment instead.
     public var isActive: Bool
@@ -49,6 +50,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         id: String,
         name: String,
         endpoint: String,
+        serverVersion: String? = nil,
         isActive: Bool = false,
         isEnabled: Bool = true,
         source: Source = .direct,
@@ -58,6 +60,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         self.id = id
         self.name = name
         self.endpoint = endpoint
+        self.serverVersion = serverVersion
         self.isActive = isActive
         self.isEnabled = isEnabled
         self.source = source
@@ -69,6 +72,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         case id
         case name
         case endpoint
+        case serverVersion
         case isActive
         case isEnabled
         case source
@@ -81,6 +85,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         endpoint = try container.decode(String.self, forKey: .endpoint)
+        serverVersion = try container.decodeIfPresent(String.self, forKey: .serverVersion)
         isActive = try container.decodeIfPresent(Bool.self, forKey: .isActive) ?? false
         isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
         source = try container.decodeIfPresent(Source.self, forKey: .source) ?? .direct
