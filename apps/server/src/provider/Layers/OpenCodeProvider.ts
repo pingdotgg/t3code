@@ -160,7 +160,19 @@ function inferDefaultVariant(
   return undefined;
 }
 
-function inferDefaultAgent(agents: ReadonlyArray<Agent>): string | undefined {
+function inferDefaultAgent(
+  agents: ReadonlyArray<Agent>,
+  configuredDefault: string | undefined,
+): string | undefined {
+  const configured = configuredDefault?.trim();
+  if (configured !== undefined && configured.length > 0) {
+    // Only honour a configured default that is actually selectable here, so a
+    // hidden or subagent-only value still falls back to the built-in ordering.
+    const configuredAgent = agents.find((agent) => agent.name === configured);
+    if (configuredAgent !== undefined) {
+      return configuredAgent.name;
+    }
+  }
   return agents.find((agent) => agent.name === "build")?.name ?? agents[0]?.name ?? undefined;
 }
 
@@ -172,6 +184,7 @@ function openCodeCapabilitiesForModel(input: {
   readonly providerID: string;
   readonly model: ProviderListResponse["all"][number]["models"][string];
   readonly agents: ReadonlyArray<Agent>;
+  readonly defaultAgent: string | undefined;
 }): ModelCapabilities {
   const variantValues = Object.keys(input.model.variants ?? {});
   const defaultVariant = inferDefaultVariant(input.providerID, variantValues);
@@ -183,7 +196,7 @@ function openCodeCapabilitiesForModel(input: {
   const primaryAgents = input.agents.filter(
     (agent) => !agent.hidden && (agent.mode === "primary" || agent.mode === "all"),
   );
-  const defaultAgent = inferDefaultAgent(primaryAgents);
+  const defaultAgent = inferDefaultAgent(primaryAgents, input.defaultAgent);
   const agentOptions = primaryAgents.map((agent) =>
     defaultAgent === agent.name
       ? { id: agent.name, label: titleCaseSlug(agent.name), isDefault: true as const }
@@ -242,6 +255,7 @@ function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerPr
           providerID: provider.id,
           model,
           agents: input.agents,
+          defaultAgent: input.defaultAgent,
         }),
       });
     }

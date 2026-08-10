@@ -207,6 +207,80 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
+  it.effect("prefers OpenCode's configured default agent over the built-in fallback", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["openai"],
+          all: [
+            {
+              id: "openai",
+              name: "OpenAI",
+              models: { "gpt-5.4": { id: "gpt-5.4", name: "GPT-5.4" } },
+            },
+          ],
+          default: {},
+        },
+        agents: [
+          { name: "build", hidden: false, mode: "primary" },
+          { name: "plan", hidden: false, mode: "primary" },
+        ],
+        defaultAgent: "plan",
+      };
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+      const model = snapshot.models.find((entry) => entry.slug === "openai/gpt-5.4");
+
+      NodeAssert.ok(model);
+      const agentDescriptor = model.capabilities?.optionDescriptors?.find(
+        (descriptor) => descriptor.id === "agent" && descriptor.type === "select",
+      );
+      NodeAssert.ok(agentDescriptor && agentDescriptor.type === "select");
+      NodeAssert.equal(
+        agentDescriptor.options.find((option) => option.isDefault === true)?.id,
+        "plan",
+      );
+      NodeAssert.equal(agentDescriptor.currentValue, "plan");
+    }),
+  );
+
+  it.effect("ignores a configured default agent that is not selectable", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["openai"],
+          all: [
+            {
+              id: "openai",
+              name: "OpenAI",
+              models: { "gpt-5.4": { id: "gpt-5.4", name: "GPT-5.4" } },
+            },
+          ],
+          default: {},
+        },
+        agents: [
+          { name: "build", hidden: false, mode: "primary" },
+          { name: "plan", hidden: false, mode: "primary" },
+          { name: "reviewer", hidden: false, mode: "subagent" },
+        ],
+        defaultAgent: "reviewer",
+      };
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+      const model = snapshot.models.find((entry) => entry.slug === "openai/gpt-5.4");
+
+      NodeAssert.ok(model);
+      const agentDescriptor = model.capabilities?.optionDescriptors?.find(
+        (descriptor) => descriptor.id === "agent" && descriptor.type === "select",
+      );
+      NodeAssert.ok(agentDescriptor && agentDescriptor.type === "select");
+      NodeAssert.equal(
+        agentDescriptor.options.find((option) => option.isDefault === true)?.id,
+        "build",
+      );
+    }),
+  );
+
   it.effect("does not spawn a local server for health check (uses CLI instead)", () =>
     Effect.gen(function* () {
       yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
