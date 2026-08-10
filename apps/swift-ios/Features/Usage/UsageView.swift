@@ -143,7 +143,9 @@ public struct UsageView: View {
                 .tint(T3Colors.textPrimary)
             }
 
-            if merged.daily.contains(where: { $0.totalTokens > 0 }) {
+            if merged.daily.contains(where: {
+                metric == .cost ? $0.costUsd > 0 : $0.totalTokens > 0
+            }) {
                 UsageDailyChart(
                     input: windowInput,
                     daily: merged.daily,
