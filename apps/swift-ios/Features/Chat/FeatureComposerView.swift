@@ -749,7 +749,7 @@ private struct FeatureComposerTextInput: UIViewRepresentable {
         textView.adjustsFontForContentSizeCategory = true
         textView.textContainerInset = .zero
         textView.textContainer.lineFragmentPadding = 0
-        textView.isScrollEnabled = false
+        textView.isScrollEnabled = true
         textView.accessibilityIdentifier = "message-composer"
         updateAccessibility(textView)
         return textView
@@ -781,7 +781,7 @@ private struct FeatureComposerTextInput: UIViewRepresentable {
             context.coordinator.lastAppliedSelectionRequestID = selectionRequest.id
         }
         updateAccessibility(textView)
-        Self.updateScrolling(textView)
+        textView.isScrollEnabled = true
 
         if context.coordinator.lastAppliedFocus != focused.wrappedValue {
             context.coordinator.lastAppliedFocus = focused.wrappedValue
@@ -802,8 +802,13 @@ private struct FeatureComposerTextInput: UIViewRepresentable {
         let fittingSize = uiView.sizeThatFits(
             CGSize(width: width, height: .greatestFiniteMagnitude)
         )
-        let maximumHeight = (uiView.font?.lineHeight ?? 22) * 7
-        return CGSize(width: width, height: min(fittingSize.height, maximumHeight))
+        return CGSize(
+            width: width,
+            height: FeatureComposerTextInputSizing.height(
+                fittingHeight: fittingSize.height,
+                proposedHeight: proposal.height
+            )
+        )
     }
 
     private func updateAccessibility(_ textView: FeatureComposerUITextView) {
@@ -812,11 +817,6 @@ private struct FeatureComposerTextInput: UIViewRepresentable {
             ? "Enter a message or paste images to attach them."
             : "Enter a message."
         textView.accessibilityValue = text.isEmpty ? placeholder : nil
-    }
-
-    private static func updateScrolling(_ textView: UITextView) {
-        let maximumHeight = (textView.font?.lineHeight ?? 22) * 7
-        textView.isScrollEnabled = textView.contentSize.height > maximumHeight
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
@@ -829,7 +829,7 @@ private struct FeatureComposerTextInput: UIViewRepresentable {
         }
 
         func textViewDidChange(_ textView: UITextView) {
-            FeatureComposerTextInput.updateScrolling(textView)
+            textView.isScrollEnabled = true
             guard parent.text != textView.text else { return }
             parent.text = textView.text
         }
@@ -846,6 +846,13 @@ private struct FeatureComposerTextInput: UIViewRepresentable {
             }
         }
 
+    }
+}
+
+enum FeatureComposerTextInputSizing {
+    static func height(fittingHeight: CGFloat, proposedHeight: CGFloat?) -> CGFloat {
+        guard let proposedHeight, proposedHeight.isFinite else { return fittingHeight }
+        return min(fittingHeight, proposedHeight)
     }
 }
 
