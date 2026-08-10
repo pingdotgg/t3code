@@ -7,6 +7,10 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import {
+  buildStartProjectTaskInput,
+  type ProjectTaskWorkspace,
+} from "@t3tools/client-runtime/operations/thread-tasks";
 
 import { toUploadChatImageAttachments, type DraftComposerImageAttachment } from "./composerImages";
 
@@ -40,6 +44,28 @@ export interface ProjectThreadStartTurnSpec {
   readonly worktreeBranchName: string;
 }
 
+function resolveProjectTaskWorkspace(spec: ProjectThreadStartTurnSpec): ProjectTaskWorkspace {
+  if (spec.workspaceMode === "local") {
+    return {
+      mode: "local",
+      branch: spec.branch,
+      worktreePath: spec.worktreePath,
+    };
+  }
+
+  const baseBranch = spec.branch;
+  if (baseBranch === null) {
+    throw new Error("A base branch is required to create a worktree task.");
+  }
+  return {
+    mode: "worktree",
+    projectCwd: spec.projectCwd,
+    baseBranch,
+    worktreeBranch: spec.worktreeBranchName,
+    startFromOrigin: spec.startFromOrigin,
+  };
+}
+
 /**
  * Single source of the `thread.turn.start` bootstrap payload used to create a
  * thread from a project draft — shared by the immediate send path and the
@@ -47,43 +73,19 @@ export interface ProjectThreadStartTurnSpec {
  */
 export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpec) {
   const title = deriveThreadTitleFromPrompt(spec.text);
-  const isWorktree = spec.workspaceMode === "worktree";
-  return {
+  return buildStartProjectTaskInput({
     commandId: CommandId.make(spec.commandId),
     threadId: ThreadId.make(spec.threadId),
-    message: {
-      messageId: MessageId.make(spec.messageId),
-      role: "user" as const,
-      text: spec.text,
-      attachments: toUploadChatImageAttachments(spec.attachments),
-    },
-    modelSelection: spec.modelSelection,
+    messageId: MessageId.make(spec.messageId),
+    projectId: spec.projectId,
+    title,
     titleSeed: title,
+    text: spec.text,
+    attachments: toUploadChatImageAttachments(spec.attachments),
+    modelSelection: spec.modelSelection,
     runtimeMode: spec.runtimeMode,
     interactionMode: spec.interactionMode,
-    bootstrap: {
-      createThread: {
-        projectId: spec.projectId,
-        title,
-        modelSelection: spec.modelSelection,
-        runtimeMode: spec.runtimeMode,
-        interactionMode: spec.interactionMode,
-        branch: spec.branch,
-        worktreePath: isWorktree ? null : spec.worktreePath,
-        createdAt: spec.createdAt,
-      },
-      ...(isWorktree
-        ? {
-            prepareWorktree: {
-              projectCwd: spec.projectCwd,
-              baseBranch: spec.branch!,
-              branch: spec.worktreeBranchName,
-              ...(spec.startFromOrigin ? { startFromOrigin: true } : {}),
-            },
-            runSetupScript: true,
-          }
-        : {}),
-    },
     createdAt: spec.createdAt,
-  };
+    workspace: resolveProjectTaskWorkspace(spec),
+  });
 }

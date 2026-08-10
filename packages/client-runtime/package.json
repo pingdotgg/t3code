@@ -31,6 +31,14 @@
       "types": "./src/operations/projects.ts",
       "default": "./src/operations/projects.ts"
     },
+    "./operations/thread-supervisor": {
+      "types": "./src/operations/threadSupervisor.ts",
+      "default": "./src/operations/threadSupervisor.ts"
+    },
+    "./operations/thread-tasks": {
+      "types": "./src/operations/threadTasks.ts",
+      "default": "./src/operations/threadTasks.ts"
+    },
     "./platform": {
       "types": "./src/platform/index.ts",
       "default": "./src/platform/index.ts"
@@ -142,6 +150,10 @@
     "./state/thread-search": {
       "types": "./src/state/threadSearch.ts",
       "default": "./src/state/threadSearch.ts"
+    },
+    "./state/thread-operational-status": {
+      "types": "./src/state/threadOperationalStatus.ts",
+      "default": "./src/state/threadOperationalStatus.ts"
     },
     "./state/vcs": {
       "types": "./src/state/vcs.ts",
