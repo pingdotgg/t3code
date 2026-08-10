@@ -7,6 +7,7 @@ import {
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
+  resolveAnchorRepoRoot,
   WORKTREE_BRANCH_PREFIX,
 } from "./git.ts";
 
@@ -98,6 +99,36 @@ describe("isTemporaryWorktreeBranch", () => {
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/feature/demo`)).toBe(false);
     expect(isTemporaryWorktreeBranch("main")).toBe(false);
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef-extra`)).toBe(false);
+  });
+});
+
+describe("resolveAnchorRepoRoot", () => {
+  it("keeps the workspace root for a single-repo project", () => {
+    expect(resolveAnchorRepoRoot({ workspaceRoot: "/repos/app" })).toBe("/repos/app");
+    expect(resolveAnchorRepoRoot({ workspaceRoot: "/repos/app", repoRoots: [] })).toBe(
+      "/repos/app",
+    );
+    expect(resolveAnchorRepoRoot({ workspaceRoot: "/repos/app", repoRoots: ["/repos/app"] })).toBe(
+      "/repos/app",
+    );
+  });
+
+  it("falls back to the first repo root when the anchor is not a repo", () => {
+    expect(
+      resolveAnchorRepoRoot({
+        workspaceRoot: "/repos",
+        repoRoots: ["/repos/api", "/repos/web"],
+      }),
+    ).toBe("/repos/api");
+  });
+
+  it("prefers the anchor itself when the workspace file lists it", () => {
+    expect(
+      resolveAnchorRepoRoot({
+        workspaceRoot: "/repos/api",
+        repoRoots: ["/repos/web", "/repos/api"],
+      }),
+    ).toBe("/repos/api");
   });
 });
 

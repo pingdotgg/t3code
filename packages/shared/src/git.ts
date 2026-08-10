@@ -109,6 +109,26 @@ export function isTemporaryWorktreeBranch(refName: string): boolean {
 }
 
 /**
+ * The repo root that stands in for the project as a whole in single-repo git
+ * flows: branch listing, checkout, and the base ref an isolated run branches
+ * from.
+ *
+ * `workspaceRoot` is only a repo for single-repo projects. For a workspace-file
+ * project it is the anchor directory holding the `.code-workspace`, which is
+ * usually not a git repo at all, so git commands run there fail or report
+ * `isRepo: false`. Prefer the repo root that *is* the anchor when the workspace
+ * file lists it, else the first root in workspace-file order.
+ */
+export function resolveAnchorRepoRoot(input: {
+  readonly workspaceRoot: string;
+  readonly repoRoots?: ReadonlyArray<string> | undefined;
+}): string {
+  const repoRoots = input.repoRoots ?? [];
+  const anchorRoot = repoRoots.find((repoRoot) => repoRoot === input.workspaceRoot);
+  return anchorRoot ?? repoRoots[0] ?? input.workspaceRoot;
+}
+
+/**
  * Normalize a git remote URL into a stable comparison key.
  */
 export function normalizeGitRemoteUrl(value: string): string {

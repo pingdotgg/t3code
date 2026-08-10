@@ -62,6 +62,7 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import { resolveAnchorRepoRoot } from "@t3tools/shared/git";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
@@ -921,32 +922,6 @@ const makeWsRpcLayer = (
             if (bootstrap?.prepareWorktree) {
               const prepare = bootstrap.prepareWorktree;
 
-              // Resolve the anchor repo's base ref, honoring `startFromOrigin`:
-              // fetch origin and pin to the resolved remote-tracking commit so
-              // the worktree branches off the latest upstream tip.
-              let anchorBaseRef = prepare.baseBranch;
-              // "Start from origin" is a stored default; repos without an
-              // origin remote fall back to the local base branch instead of
-              // failing the whole bootstrap on `git fetch origin`.
-              const startFromOrigin =
-                prepare.startFromOrigin === true &&
-                (yield* gitWorkflow.remoteExists({
-                  cwd: prepare.projectCwd,
-                  remoteName: "origin",
-                }));
-              if (startFromOrigin) {
-                yield* gitWorkflow.fetchRemote({
-                  cwd: prepare.projectCwd,
-                  remoteName: "origin",
-                });
-                const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
-                  cwd: prepare.projectCwd,
-                  refName: prepare.baseBranch,
-                  fallbackRemoteName: "origin",
-                });
-                anchorBaseRef = resolvedRemoteBase.commitSha;
-              }
-
               // Resolve the project so an isolated run fans out across every repo
               // root (Phase 4 / D3). Multi-repo projects create one worktree per
               // `repoRoot`; single-root projects fall back to the anchor cwd,
@@ -967,6 +942,42 @@ const makeWsRpcLayer = (
                 projectShell?.repoRoots && projectShell.repoRoots.length > 0
                   ? projectShell.repoRoots
                   : [prepare.projectCwd];
+              // `projectCwd` is the client's anchor, which for a workspace-file
+              // project is the directory holding the `.code-workspace` and not a
+              // repo. The base ref the user picked belongs to the anchor *repo*;
+              // running git in the anchor directory itself would fail, and it
+              // would never match a `repoRoot` below, silently dropping the
+              // chosen base for every root.
+              const anchorRepoRoot = resolveAnchorRepoRoot({
+                workspaceRoot: prepare.projectCwd,
+                repoRoots,
+              });
+
+              // Resolve the anchor repo's base ref, honoring `startFromOrigin`:
+              // fetch origin and pin to the resolved remote-tracking commit so
+              // the worktree branches off the latest upstream tip.
+              let anchorBaseRef = prepare.baseBranch;
+              // "Start from origin" is a stored default; repos without an
+              // origin remote fall back to the local base branch instead of
+              // failing the whole bootstrap on `git fetch origin`.
+              const startFromOrigin =
+                prepare.startFromOrigin === true &&
+                (yield* gitWorkflow.remoteExists({
+                  cwd: anchorRepoRoot,
+                  remoteName: "origin",
+                }));
+              if (startFromOrigin) {
+                yield* gitWorkflow.fetchRemote({
+                  cwd: anchorRepoRoot,
+                  remoteName: "origin",
+                });
+                const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
+                  cwd: anchorRepoRoot,
+                  refName: prepare.baseBranch,
+                  fallbackRemoteName: "origin",
+                });
+                anchorBaseRef = resolvedRemoteBase.commitSha;
+              }
 
               // Each repo branches from its own base: the anchor repo uses the
               // resolved base ref (honoring `startFromOrigin`), while cousin
@@ -975,7 +986,7 @@ const makeWsRpcLayer = (
               const targets = yield* Effect.forEach(
                 repoRoots,
                 (repoRoot): Effect.Effect<WorktreeFanoutTarget> =>
-                  repoRoot === prepare.projectCwd
+                  repoRoot === anchorRepoRoot
                     ? Effect.succeed({
                         repoRoot,
                         baseRef: anchorBaseRef,
@@ -1010,7 +1021,7 @@ const makeWsRpcLayer = (
                 worktreePath: entry.worktreePath,
               }));
               const anchorWorktree =
-                created.find((entry) => entry.repoRoot === prepare.projectCwd) ?? created[0];
+                created.find((entry) => entry.repoRoot === anchorRepoRoot) ?? created[0];
               targetWorktreePath = anchorWorktree?.worktreePath ?? null;
 
               yield* orchestrationEngine.dispatch({
