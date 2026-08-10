@@ -285,6 +285,7 @@ describe("DesktopBackendConfiguration", () => {
       assert.deepEqual(observedNodePtyRoots, [linuxAppRoot]);
       assert.equal(config.entryPath, entryPath);
       assert.include(config.args, `${linuxAppRoot}/apps/server/dist/bin.mjs`);
+      assert.equal(config.wslRuntimeId, "1.2.3-x64");
       assert.isTrue(Option.isNone(config.preflightFailure));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -339,6 +340,7 @@ describe("DesktopBackendConfiguration", () => {
       assert.deepEqual(observedNodePtyRoots, [mountedAppRoot]);
       assert.equal(config.entryPath, entryPath);
       assert.include(config.args, `${mountedAppRoot}/apps/server/dist/bin.mjs`);
+      assert.isUndefined(config.wslRuntimeId);
       assert.isTrue(Option.isNone(config.preflightFailure));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

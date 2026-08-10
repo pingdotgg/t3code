@@ -23,6 +23,7 @@ const PROBE_TIMEOUT = Duration.seconds(10);
 const TOOLCHAIN_TIMEOUT = Duration.seconds(10);
 const BUILD_TIMEOUT = Duration.minutes(5);
 const RUNTIME_INSTALL_TIMEOUT = Duration.minutes(2);
+const RUNTIME_PRUNE_TIMEOUT = Duration.seconds(30);
 const USER_HOME_TIMEOUT = Duration.seconds(5);
 const TOOLCHAIN_TRANSPORT_RETRY_LIMIT = 12;
 const BUILD_TRANSPORT_RETRY_LIMIT = 2;
@@ -95,6 +96,7 @@ export class DesktopWslEnvironment extends Context.Service<
       windowsArchivePath: string,
       runtimeId: string,
     ) => Effect.Effect<PrepareWslRuntimeResult>;
+    readonly pruneRuntimes: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
     readonly ensureNodePty: (
       distro: string | null,
       linuxAppRoot: string,
@@ -298,6 +300,32 @@ export const buildWslRuntimeInstallScript = (
     "  exit 1",
     "fi",
     `printf 'runtimeRoot:%s\\n' "$runtime_root"`,
+  ].join("\n");
+};
+
+export const buildWslRuntimePruneScript = (runtimeId: string): string => {
+  const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
+  return [
+    "set -eu",
+    'runtime_parent="$HOME/.t3/runtime"',
+    `current_runtime="$runtime_parent/${safeRuntimeId}"`,
+    '[ -d "$runtime_parent" ] || exit 0',
+    'previous_runtime=""',
+    'for candidate in "$runtime_parent"/*; do',
+    '  [ -d "$candidate" ] || continue',
+    '  [ "$candidate" != "$current_runtime" ] || continue',
+    `  [ -f "$candidate/${WSL_RUNTIME_READY_MARKER}" ] || continue`,
+    '  if [ -z "$previous_runtime" ] || [ "$candidate" -nt "$previous_runtime" ]; then',
+    '    previous_runtime="$candidate"',
+    "  fi",
+    "done",
+    'for candidate in "$runtime_parent"/*; do',
+    '  [ -d "$candidate" ] || continue',
+    '  [ "$candidate" != "$current_runtime" ] || continue',
+    '  [ "$candidate" != "$previous_runtime" ] || continue',
+    `  [ -f "$candidate/${WSL_RUNTIME_READY_MARKER}" ] || continue`,
+    '  rm -rf -- "$candidate"',
+    "done",
   ].join("\n");
 };
 
@@ -709,6 +737,26 @@ const prepareWslRuntimeImpl = Effect.fn("desktop.wsl.prepareRuntimeImpl")(functi
     : { ok: true, linuxAppRoot };
 });
 
+const pruneWslRuntimesImpl = Effect.fn("desktop.wsl.pruneRuntimesImpl")(function* (
+  distro: string | null,
+  runtimeId: string,
+): Effect.fn.Return<void, never, ChildProcessSpawner.ChildProcessSpawner> {
+  const result = yield* runWslShell(
+    distro,
+    buildWslRuntimePruneScript(runtimeId),
+    RUNTIME_PRUNE_TIMEOUT,
+    { resolveNode: false },
+  );
+  if (result.transportFailure === null && result.exitCode === 0) return;
+
+  const detail = `${result.stdout}${result.stderr}`.trim().slice(-500);
+  yield* Effect.logWarning("Could not prune old WSL runtime caches.", {
+    distro,
+    runtimeId,
+    detail: detail || `exit ${result.exitCode}`,
+  });
+});
+
 export const probeWslDistros: Effect.Effect<
   readonly WslDistro[],
   DesktopWslDistroListError,
@@ -908,6 +956,7 @@ export interface DesktopWslEnvironmentTestStub {
     windowsArchivePath: string,
     runtimeId: string,
   ) => PrepareWslRuntimeResult;
+  readonly pruneRuntimes?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
   readonly ensureNodePty?: (
     distro: string | null,
     linuxAppRoot: string,
@@ -937,6 +986,7 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
             reason: "prepareRuntime stub not configured",
           },
         ),
+      pruneRuntimes: (distro, runtimeId) => stub.pruneRuntimes?.(distro, runtimeId) ?? Effect.void,
       ensureNodePty: (distro, linuxAppRoot, options) =>
         Effect.succeed(
           stub.ensureNodePty?.(distro, linuxAppRoot, options) ?? {
@@ -1023,6 +1073,10 @@ export const layer = Layer.effect(
         provideSpawner(
           prepareWslRuntimeImpl(distro, windowsArchivePath, runtimeId, windowsToWslPath),
         ).pipe(Effect.withSpan("desktop.wsl.prepareRuntime")),
+      pruneRuntimes: (distro, runtimeId) =>
+        provideSpawner(pruneWslRuntimesImpl(distro, runtimeId)).pipe(
+          Effect.withSpan("desktop.wsl.pruneRuntimes"),
+        ),
       ensureNodePty: (distro, linuxAppRoot, options) =>
         provideSpawner(ensureNodePtyImpl(distro, linuxAppRoot, options)).pipe(
           Effect.withSpan("desktop.wsl.ensureNodePty"),

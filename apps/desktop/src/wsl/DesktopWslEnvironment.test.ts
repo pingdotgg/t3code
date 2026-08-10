@@ -10,6 +10,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  buildWslRuntimePruneScript,
   buildWslRuntimeInstallScript,
   buildWslNodeEnvPreamble,
   DesktopWslDistroListError,
@@ -173,6 +174,17 @@ describe("WSL runtime cache", () => {
     );
     expect(parseWslRuntimeRoot("runtimeRoot:relative/path\n")).toBeNull();
     expect(parseWslRuntimeRoot("noise\n")).toBeNull();
+  });
+
+  it("prunes completed runtimes except the current and newest previous cache", () => {
+    const script = buildWslRuntimePruneScript("1.2.3/x64");
+
+    expect(script).toContain('current_runtime="$runtime_parent/1.2.3_x64"');
+    expect(script).toContain('[ "$candidate" -nt "$previous_runtime" ]');
+    expect(script).toContain('[ "$candidate" != "$current_runtime" ] || continue');
+    expect(script).toContain('[ "$candidate" != "$previous_runtime" ] || continue');
+    expect(script).toContain('[ -f "$candidate/.t3code-wsl-runtime-ready" ] || continue');
+    expect(script).toContain('rm -rf -- "$candidate"');
   });
 });
 

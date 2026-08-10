@@ -222,6 +222,7 @@ interface WslPreflightSuccess {
   // PATH captured from the same login shell after the shared resolver loaded
   // version managers. The launch forwards this value directly without a shell.
   readonly resolvedPath: string;
+  readonly runtimeId?: string;
 }
 
 interface WslPreflightFailure {
@@ -312,6 +313,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
   }
 
   let linuxAppRoot = mountedAppRoot.value;
+  let runtimeId: string | undefined;
   if (input.windowsRuntimeArchivePath !== null) {
     const runtime = yield* wslEnv.prepareRuntime(
       runningDistro,
@@ -320,6 +322,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
     );
     if (runtime.ok) {
       linuxAppRoot = runtime.linuxAppRoot;
+      runtimeId = input.runtimeId;
     } else {
       yield* Effect.logWarning(
         "Could not stage the WSL runtime; launching from the mounted application instead.",
@@ -348,6 +351,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
     linuxEntryPath,
     nodePath: nodePtyResult.nodePath,
     resolvedPath: nodePtyResult.resolvedPath,
+    ...(runtimeId === undefined ? {} : { runtimeId }),
   } as const;
 });
 
@@ -578,6 +582,9 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     httpBaseUrl,
     captureOutput: true,
     ...(runningDistro !== null ? { runningDistro } : {}),
+    ...(preflight._tag === "Ready" && preflight.runtimeId !== undefined
+      ? { wslRuntimeId: preflight.runtimeId }
+      : {}),
   };
 
   // Forward the dev-server URL as an explicit CLI flag so the WSL backend's
