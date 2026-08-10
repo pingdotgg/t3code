@@ -1,6 +1,6 @@
 import { cn } from "~/lib/utils";
 
-/** Browser-window thumbnail glyph for the "Local" recommendation cards. */
+/** Browser-window thumbnail glyph for preview recommendation cards. */
 export function BrowserMockup({ className }: { className?: string }) {
   return (
     <div

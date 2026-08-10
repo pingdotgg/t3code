@@ -836,10 +836,9 @@ describe("composerDraftStore project draft thread mapping", () => {
     }
   });
 
-  it("clears orphaned composer drafts when remapping a project to a new draft thread", () => {
+  it("clears empty composer drafts when remapping a project to a new draft thread", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });
-    store.setPrompt(draftId, "orphan me");
 
     store.setProjectDraftThreadId(projectRef, otherDraftId, { threadId: otherThreadId });
 
@@ -847,6 +846,39 @@ describe("composerDraftStore project draft thread mapping", () => {
       otherThreadId,
     );
     expect(useComposerDraftStore.getState().getDraftThread(draftId)).toBeNull();
+    expect(draftByKey(draftId)).toBeUndefined();
+  });
+
+  it("keeps invested composer drafts alive unmapped when remapping a project to a new draft thread", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setPrompt(draftId, "keep me around");
+
+    store.setProjectDraftThreadId(projectRef, otherDraftId, { threadId: otherThreadId });
+
+    // The mapping moved to the fresh draft...
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectRef(projectRef)?.threadId).toBe(
+      otherThreadId,
+    );
+    // ...but the invested draft survives with its content for the sidebar
+    // draft rows to surface.
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)?.threadId).toBe(threadId);
+    expect(draftByKey(draftId)?.prompt).toBe("keep me around");
+  });
+
+  it("clears every session for a project, including unmapped invested drafts", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setPrompt(draftId, "invested");
+    // The remap leaves the invested draft alive unmapped; project removal
+    // must still sweep it, or its sidebar row outlives the project.
+    store.setProjectDraftThreadId(projectRef, otherDraftId, { threadId: otherThreadId });
+
+    store.clearProjectDraftThreadId(projectRef);
+
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectRef(projectRef)).toBeNull();
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)).toBeNull();
+    expect(useComposerDraftStore.getState().getDraftThread(otherDraftId)).toBeNull();
     expect(draftByKey(draftId)).toBeUndefined();
   });
 
@@ -1103,13 +1135,14 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 
-  it("clears branch and worktree context when remapping a draft to another environment", () => {
+  it("clears branch and worktree but keeps env mode when remapping a draft to another environment", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, {
       threadId,
       branch: "feature/local-only",
       worktreePath: "/tmp/local-worktree",
       envMode: "worktree",
+      startFromOrigin: true,
     });
 
     store.setLogicalProjectDraftThreadId(scopedProjectKey(projectRef), remoteProjectRef, draftId, {
@@ -1121,17 +1154,19 @@ describe("composerDraftStore project draft thread mapping", () => {
       projectId,
       branch: null,
       worktreePath: null,
-      envMode: "local",
+      envMode: "worktree",
+      startFromOrigin: true,
     });
   });
 
-  it("clears branch and worktree context when changing a draft thread project ref", () => {
+  it("clears branch and worktree but keeps env mode when changing a draft thread project ref", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, {
       threadId,
       branch: "feature/local-only",
       worktreePath: "/tmp/local-worktree",
       envMode: "worktree",
+      startFromOrigin: true,
     });
 
     store.setDraftThreadContext(draftId, {
@@ -1143,7 +1178,8 @@ describe("composerDraftStore project draft thread mapping", () => {
       projectId,
       branch: null,
       worktreePath: null,
-      envMode: "local",
+      envMode: "worktree",
+      startFromOrigin: true,
     });
   });
 });

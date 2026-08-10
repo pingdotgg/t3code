@@ -14,7 +14,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { GitCommandError } from "@t3tools/contracts";
+import { GitCommandError, type ReviewDiffFileContentsInput } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
 import { makeGitVcsDriverCore, splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
@@ -77,6 +77,20 @@ const writeTextFile = (
     yield* fileSystem.makeDirectory(pathService.dirname(filePath), { recursive: true });
     yield* fileSystem.writeFileString(filePath, contents);
   });
+
+const makeReviewDiffFileContentsInput = (
+  cwd: string,
+  overrides: Partial<Omit<ReviewDiffFileContentsInput, "cwd">> = {},
+): ReviewDiffFileContentsInput => ({
+  cwd,
+  sourceKind: "working-tree",
+  changeType: "change",
+  baseRef: "HEAD",
+  headRef: null,
+  oldPath: "README.md",
+  newPath: "README.md",
+  ...overrides,
+});
 
 const git = (
   cwd: string,
@@ -152,6 +166,51 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
     ]);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("invalidates origin remote cache when a driver mutation adds origin", () =>
+  Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const cwd = yield* makeTmpDir();
+    const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+    yield* initRepoWithCommit(cwd);
+    yield* git(remote, ["init", "--bare"]);
+
+    const before = yield* driver.statusDetailsLocal(cwd);
+    assert.equal(before.hasOriginRemote, false);
+
+    yield* driver.ensureRemote({ cwd, preferredName: "origin", url: remote });
+
+    const after = yield* driver.statusDetailsLocal(cwd);
+    assert.equal(after.hasOriginRemote, true);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("re-reads origin remote status after cache TTL expiry and bypassed invalidation", () =>
+  Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const cwd = yield* makeTmpDir();
+    const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+    yield* initRepoWithCommit(cwd);
+    yield* git(remote, ["init", "--bare"]);
+
+    // First call caches hasOriginRemote = false (5-min TTL)
+    assert.equal((yield* driver.statusDetailsLocal(cwd)).hasOriginRemote, false);
+
+    // Add origin via raw git (bypasses invalidation hook)
+    yield* git(cwd, ["remote", "add", "origin", remote]);
+
+    // Cache still has the stale false (TTL not yet expired)
+    const stillCached = yield* driver.statusDetailsLocal(cwd);
+    assert.equal(stillCached.hasOriginRemote, false);
+
+    // Advance past the 5-minute TTL so the cache entry expires
+    yield* TestClock.adjust("6 minutes");
+
+    // After expiry, the next call re-executes and picks up the remote
+    const afterExpiry = yield* driver.statusDetailsLocal(cwd);
+    assert.equal(afterExpiry.hasOriginRemote, true);
+  }).pipe(Effect.provide(TestLayer)),
+);
 
 it.effect("coalesces concurrent ref pages into one repository snapshot", () =>
   Effect.scoped(
@@ -758,6 +817,107 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         );
       }),
     );
+
+    it.effect("loads full file contents for working-tree diff expansion", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const pathService = yield* Path.Path;
+        yield* writeTextFile(cwd, "nested/.keep", "");
+        yield* writeTextFile(cwd, "README.md", "# changed\nunchanged context\n");
+
+        const contents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(pathService.join(cwd, "nested")),
+        );
+
+        assert.strictEqual(contents.oldContents, "# test\n");
+        assert.strictEqual(contents.newContents, "# changed\nunchanged context\n");
+      }),
+    );
+
+    it.effect("attributes working-tree filesystem failures to the failing operation", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const error = yield* driver
+          .getReviewDiffFileContents(
+            makeReviewDiffFileContentsInput(cwd, {
+              changeType: "new",
+              oldPath: "missing.ts",
+              newPath: "missing.ts",
+            }),
+          )
+          .pipe(Effect.flip);
+
+        assert.deepInclude(error, {
+          _tag: "GitCommandError",
+          operation: "GitVcsDriver.getReviewDiffFileContents.workingTree.fs.realPath",
+          command: "fs.realPath",
+          cwd,
+          detail: "Could not resolve diff file 'missing.ts'.",
+        });
+      }),
+    );
+
+    it.effect("loads new and deleted files without reading their missing side", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        yield* writeTextFile(cwd, "added.ts", "export const added = true;\n");
+        yield* fileSystem.remove(pathService.join(cwd, "README.md"));
+
+        const [added, deleted] = yield* Effect.all([
+          driver.getReviewDiffFileContents(
+            makeReviewDiffFileContentsInput(cwd, {
+              changeType: "new",
+              oldPath: "added.ts",
+              newPath: "added.ts",
+            }),
+          ),
+          driver.getReviewDiffFileContents(
+            makeReviewDiffFileContentsInput(cwd, { changeType: "deleted" }),
+          ),
+        ]);
+
+        assert.deepStrictEqual(added, {
+          oldContents: "",
+          newContents: "export const added = true;\n",
+        });
+        assert.deepStrictEqual(deleted, {
+          oldContents: "# test\n",
+          newContents: "",
+        });
+      }),
+    );
+
+    it.effect("loads merge-base and head contents for branch diff expansion", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/context"]);
+        yield* writeTextFile(cwd, "README.md", "# branch change\nunchanged context\n");
+        yield* git(cwd, ["add", "README.md"]);
+        yield* git(cwd, ["commit", "-m", "change readme"]);
+
+        const contents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, {
+            sourceKind: "branch-range",
+            baseRef: initialBranch,
+            headRef: "feature/context",
+          }),
+        );
+
+        assert.strictEqual(contents.oldContents, "# test\n");
+        assert.strictEqual(contents.newContents, "# branch change\nunchanged context\n");
+      }),
+    );
   });
 
   describe("repository status", () => {
@@ -995,6 +1155,52 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(status.aheadCount, 1);
         assert.equal(status.behindCount, 0);
         assert.equal(status.aheadOfDefaultCount, 1);
+      }),
+    );
+
+    it.effect("reports combined staged and unstaged edits to the same file", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "feature.ts", "// line one\n");
+        yield* git(cwd, ["add", "feature.ts"]);
+        yield* git(cwd, ["commit", "-m", "add feature"]);
+        yield* writeTextFile(cwd, "feature.ts", "// line one\n// line two\n");
+        yield* git(cwd, ["add", "feature.ts"]);
+        yield* writeTextFile(cwd, "feature.ts", "// line one\n// line two\n// line three\n");
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.equal(status.isRepo, true);
+        assert.equal(status.hasWorkingTreeChanges, true);
+        const file = status.workingTree.files.find((f) => f.path === "feature.ts");
+        assert.ok(file);
+        // HEAD has 1 line. Staged has 2 lines (+1). Unstaged has 3 lines (+2 from HEAD).
+        // Combined net from HEAD: +2 insertions.
+        assert.equal(file.insertions, 2);
+        assert.equal(file.deletions, 0);
+      }),
+    );
+
+    it.effect("reports staged file counts on unborn HEAD without failing", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        yield* git(cwd, ["config", "user.email", "test@test.com"]);
+        yield* git(cwd, ["config", "user.name", "Test"]);
+        yield* writeTextFile(cwd, "initial.ts", "// first file\n");
+        yield* git(cwd, ["add", "initial.ts"]);
+
+        const status = yield* driver.statusDetails(cwd);
+
+        assert.equal(status.isRepo, true);
+        assert.equal(status.workingTree.files.length, 1);
+        const file = status.workingTree.files[0];
+        if (file) {
+          assert.equal(file.path, "initial.ts");
+          assert.equal(file.insertions, 1);
+        }
       }),
     );
   });

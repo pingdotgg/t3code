@@ -3,6 +3,7 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useMemo, type ComponentProps } from "react";
@@ -14,6 +15,7 @@ import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { cn } from "../../lib/cn";
+import { HOME_HORIZONTAL_INSET } from "../../lib/layoutMetrics";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -21,6 +23,7 @@ import { useThreadPr, type ThreadPr } from "../../state/use-thread-pr";
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { resolveThreadStatus } from "./threadPresentation";
+import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 
 /**
  * Shared presentation for the thread lists: the compact (phone) Home list and
@@ -31,7 +34,7 @@ import { resolveThreadStatus } from "./threadPresentation";
 export type ThreadListVariant = "compact" | "sidebar";
 
 /** Left inset that aligns compact secondary rows with the title column. */
-export const THREAD_LIST_COMPACT_INSET = 20;
+export const THREAD_LIST_COMPACT_INSET = HOME_HORIZONTAL_INSET;
 const SIDEBAR_ROW_RADIUS = 12;
 
 function pullRequestTintColor(
@@ -131,6 +134,7 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
       >
         <ProjectFavicon
           environmentId={props.project.environmentId}
+          faviconPath={props.project.faviconPath}
           open={!props.collapsed}
           size={compact ? 22 : 18}
           projectTitle={props.project.title}
@@ -416,6 +420,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly thread: EnvironmentThreadShell;
   readonly environmentLabel: string | null;
   readonly projectCwd: string | null;
+  readonly searchMatch?: EnvironmentThreadSearchMatch;
+  readonly searchQuery?: string;
   readonly isLast: boolean;
   /** Sidebar only: the thread currently open in the detail pane. */
   readonly selected?: boolean;
@@ -569,6 +575,13 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                 />
               </View>
             </View>
+            {props.searchMatch ? (
+              <ThreadSearchMatchExcerpt
+                compact
+                match={props.searchMatch}
+                query={props.searchQuery ?? ""}
+              />
+            ) : null}
             {subtitleRow}
           </View>
         </View>
@@ -623,6 +636,13 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               </Text>
             </View>
           </View>
+          {props.searchMatch ? (
+            <ThreadSearchMatchExcerpt
+              match={props.searchMatch}
+              query={props.searchQuery ?? ""}
+              selected={selected}
+            />
+          ) : null}
           {subtitleRow}
         </View>
       </Pressable>
