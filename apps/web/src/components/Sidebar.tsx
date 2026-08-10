@@ -28,7 +28,7 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   AlarmClockIcon,
@@ -154,7 +154,6 @@ import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
-import { primaryServerProvidersAtom } from "../state/server";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Button } from "./ui/button";
@@ -176,6 +175,9 @@ import {
 // stays behind an explicit Show more.
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
+// Stable identity for environments whose config hasn't arrived yet, so a
+// row that can't resolve its provider doesn't re-render on every pass.
+const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, ProviderInstanceEntry> = new Map();
 
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
@@ -1769,16 +1771,6 @@ export default function Sidebar() {
     () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
     [sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
-  const providerEntryByInstanceId = useMemo(
-    () =>
-      new Map(
-        deriveProviderInstanceEntries(serverProviders).map(
-          (entry) => [entry.instanceId as string, entry] as const,
-        ),
-      ),
-    [serverProviders],
-  );
   const projectCwdByKey = useMemo(
     () =>
       new Map(
@@ -1918,6 +1910,26 @@ export default function Sidebar() {
   // merging, no optimistic holds. Archived threads remain hidden here —
   // archive keeps its original "remove from sidebar" meaning.
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  // Provider metadata is per environment, never global. Instance ids are
+  // user-defined and a driver's default id is the driver kind itself, so
+  // `claudeAgent` exists on every server that runs Claude — with a
+  // different name and accent on each. Resolving a remote thread against
+  // the primary server's list would paint another machine's account onto
+  // it, which is exactly the confusion the badge exists to remove.
+  const providerEntriesByEnvironment = useMemo(() => {
+    const byEnvironment = new Map<EnvironmentId, ReadonlyMap<string, ProviderInstanceEntry>>();
+    for (const [environmentId, config] of serverConfigs) {
+      byEnvironment.set(
+        environmentId,
+        new Map(
+          deriveProviderInstanceEntries(config.providers).map(
+            (entry) => [entry.instanceId as string, entry] as const,
+          ),
+        ),
+      );
+    }
+    return byEnvironment;
+  }, [serverConfigs]);
   const {
     pinnedThreads,
     reorderablePinnedKeys,
@@ -3436,7 +3448,10 @@ export default function Sidebar() {
                           ) ?? null
                         }
                         environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
-                        providerEntryByInstanceId={providerEntryByInstanceId}
+                        providerEntryByInstanceId={
+                          providerEntriesByEnvironment.get(thread.environmentId) ??
+                          EMPTY_PROVIDER_ENTRIES
+                        }
                         isHighlighted={activeSearchResultIndex === index}
                         isRouteActive={routeThreadKey === threadKey}
                         resultId={`sidebar-thread-search-result-${index}`}
@@ -3543,7 +3558,10 @@ export default function Sidebar() {
                             `${thread.environmentId}:${thread.projectId}`,
                           ) ?? null
                         }
-                        providerEntryByInstanceId={providerEntryByInstanceId}
+                        providerEntryByInstanceId={
+                          providerEntriesByEnvironment.get(thread.environmentId) ??
+                          EMPTY_PROVIDER_ENTRIES
+                        }
                         timestampFormat={timestampFormat}
                         onThreadClick={handleThreadClick}
                         onThreadActivate={navigateToThread}
