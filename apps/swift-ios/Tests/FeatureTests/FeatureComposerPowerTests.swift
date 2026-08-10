@@ -97,6 +97,15 @@ struct FeatureComposerPowerTests {
             ],
             [UTType.utf8PlainText.identifier: Data("first".utf8)],
             [
+                UTType.utf16PlainText.identifier:
+                    "UTF-16".data(using: .utf16)!,
+            ],
+            [
+                UTType.utf16ExternalPlainText.identifier:
+                    "external UTF-16".data(using: .utf16LittleEndian)!,
+            ],
+            [UTType.swiftSource.identifier: Data("let x = 1\0".utf8)],
+            [
                 UTType.html.identifier: Data("<b>second</b>".utf8),
                 UTType.utf8PlainText.identifier: "second",
             ],
@@ -104,7 +113,7 @@ struct FeatureComposerPowerTests {
 
         #expect(
             FeatureComposerPasteTextPolicy.text(from: pasteboard)
-                == "image metadata\nfirst\nsecond"
+                == "image metadata\nfirst\nUTF-16\nexternal UTF-16\nlet x = 1\nsecond"
         )
     }
 

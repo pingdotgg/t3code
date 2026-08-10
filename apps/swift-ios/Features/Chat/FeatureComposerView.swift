@@ -712,7 +712,7 @@ enum FeatureComposerPasteTextPolicy {
                     return string
                 }
                 if let data = value as? Data,
-                   let string = String(data: data, encoding: .utf8),
+                   let string = utf8String(from: data, typeIdentifier: typeIdentifier),
                    !string.isEmpty {
                     return string
                 }
@@ -721,6 +721,29 @@ enum FeatureComposerPasteTextPolicy {
         }
         guard !strings.isEmpty else { return nil }
         return strings.joined(separator: "\n")
+    }
+
+    private static func utf8String(from data: Data, typeIdentifier: String) -> String? {
+        guard let type = UTType(typeIdentifier) else { return nil }
+        if type.conforms(to: .utf16PlainText)
+            || type.conforms(to: .utf16ExternalPlainText) {
+            if data.starts(with: [0xFF, 0xFE]) || data.starts(with: [0xFE, 0xFF]) {
+                return String(data: data, encoding: .utf16)
+            }
+            if type.conforms(to: .utf16ExternalPlainText) {
+                return String(data: data, encoding: .utf16LittleEndian)
+                    ?? String(data: data, encoding: .utf16BigEndian)
+            }
+            return String(data: data, encoding: .utf16)
+                ?? String(data: data, encoding: .utf16LittleEndian)
+                ?? String(data: data, encoding: .utf16BigEndian)
+        }
+        var utf8Data = data
+        while utf8Data.last == 0 {
+            utf8Data.removeLast()
+        }
+        guard type.conforms(to: .utf8PlainText) || !utf8Data.contains(0) else { return nil }
+        return String(data: utf8Data, encoding: .utf8)
     }
 
     private static func preferredPlainTextTypes(
