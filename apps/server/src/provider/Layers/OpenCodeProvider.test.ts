@@ -35,6 +35,7 @@ const runtimeMock = {
     inventory: {
       providerList: { connected: [] as string[], all: [] as unknown[], default: {} },
       agents: [] as unknown[],
+      version: "1.18.16",
     } as unknown,
   },
   reset() {
@@ -44,6 +45,7 @@ const runtimeMock = {
     this.state.inventory = {
       providerList: { connected: [], all: [] as unknown[], default: {} },
       agents: [] as unknown[],
+      version: "1.18.16",
     };
   },
 };
@@ -164,6 +166,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
           { name: "hidden-primary", hidden: true, mode: "primary" },
           { name: "hidden-all", hidden: true, mode: "all" },
         ],
+        version: "1.18.16",
       };
 
       const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());

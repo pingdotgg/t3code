@@ -9,6 +9,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
   buildServerProvider,
   nonEmptyTrimmed,
@@ -26,6 +27,7 @@ const OPENCODE_PRESENTATION = {
   displayName: "OpenCode",
   showInteractionModeToggle: false,
 } as const;
+const MINIMUM_OPENCODE_VERSION = "1.14.19";
 
 class OpenCodeProbeError extends Data.TaggedError("OpenCodeProbeError")<{
   readonly cause: unknown;
@@ -375,6 +377,26 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
+  const version = inventoryExit.value.version;
+  if (
+    !isExternalServer &&
+    version !== null &&
+    compareSemverVersions(version, MINIMUM_OPENCODE_VERSION) < 0
+  ) {
+    return buildServerProvider({
+      presentation: OPENCODE_PRESENTATION,
+      enabled: openCodeSettings.enabled,
+      checkedAt,
+      models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
+      probe: {
+        installed: true,
+        version,
+        status: "error",
+        auth: { status: "unknown" },
+        message: `OpenCode v${version} is too old. Upgrade to v${MINIMUM_OPENCODE_VERSION} or newer.`,
+      },
+    });
+  }
   const connectedCount = inventoryExit.value.providerList.connected.length;
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,
@@ -383,7 +405,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     models,
     probe: {
       installed: true,
-      version: null,
+      version,
       status: connectedCount > 0 ? "ready" : "warning",
       auth: {
         status: connectedCount > 0 ? "authenticated" : "unknown",

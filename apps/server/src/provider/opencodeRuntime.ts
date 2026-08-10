@@ -100,6 +100,7 @@ export interface OpenCodeCommandResult {
 export interface OpenCodeInventory {
   readonly providerList: ProviderListResponse;
   readonly agents: ReadonlyArray<Agent>;
+  readonly version: string | null;
 }
 
 export interface ParsedOpenCodeModelSlug {
@@ -429,7 +430,9 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
                 ]
                   .filter(Boolean)
                   .join("\n\n"),
-                cause: { exitCode, stdout, stderr },
+                cause: (yield* isWindowsCommandNotFound(exitCode, stderr))
+                  ? new Error(`spawn ${input.binaryPath} ENOENT`)
+                  : { exitCode, stdout, stderr },
               }),
             ).pipe(Effect.ignore);
           }),
@@ -537,10 +540,15 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       Effect.map((result) => result.data ?? []),
     );
 
-  const loadOpenCodeInventory: OpenCodeRuntimeShape["loadOpenCodeInventory"] = (client) =>
-    Effect.all([loadProviders(client), loadAgents(client)], { concurrency: "unbounded" }).pipe(
-      Effect.map(([providerList, agents]) => ({ providerList, agents })),
+  const loadVersion = (client: OpencodeClient) =>
+    runOpenCodeSdk("global.health", () => client.global.health()).pipe(
+      Effect.map((result) => result.data?.version ?? null),
     );
+
+  const loadOpenCodeInventory: OpenCodeRuntimeShape["loadOpenCodeInventory"] = (client) =>
+    Effect.all([loadProviders(client), loadAgents(client), loadVersion(client)], {
+      concurrency: "unbounded",
+    }).pipe(Effect.map(([providerList, agents, version]) => ({ providerList, agents, version })));
 
   return {
     startOpenCodeServerProcess,
