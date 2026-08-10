@@ -83,8 +83,14 @@ public struct UsageView: View {
     private var coverageNotice: some View {
         let failed = environments.filter { $0.errorMessage != nil }
         let stale = environments.filter { merged.staleEnvironments.contains($0.environmentID) }
-        if !failed.isEmpty || !stale.isEmpty || !merged.duplicateSources.isEmpty {
+        if errorMessage != nil
+            || !failed.isEmpty
+            || !stale.isEmpty
+            || !merged.duplicateSources.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
+                if errorMessage != nil {
+                    Text("Couldn’t refresh usage. The totals below are from the last successful scan.")
+                }
                 ForEach(failed) { environment in
                     Text("\(environment.label) could not report usage.")
                 }
