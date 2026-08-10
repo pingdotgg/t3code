@@ -176,6 +176,32 @@ export function getAddProjectInitialQuery(baseDirectory: string | null | undefin
   return trimmed.length === 0 ? "~/" : ensureBrowseDirectoryPath(trimmed);
 }
 
+/**
+ * Folder name `git clone` would pick for a looked-up repository. Providers
+ * report `owner/repo`, and Azure DevOps reports `org/project/repo`, so the
+ * last segment is the repository itself.
+ */
+export function getCloneDirectoryName(nameWithOwner: string | null | undefined): string {
+  const segments = (nameWithOwner ?? "").split("/").filter((segment) => segment.trim().length > 0);
+  return segments.at(-1)?.trim() ?? "";
+}
+
+/**
+ * Clone destination proposed for a directory: the directory the user picked
+ * plus the repository folder inside it. Without a name the directory is the
+ * destination, which is what the raw clone URL flow keeps doing.
+ */
+export function getCloneDestinationPath(
+  directoryPath: string,
+  directoryName: string | null | undefined,
+): string {
+  const name = directoryName?.trim() ?? "";
+  if (name.length === 0) {
+    return directoryPath;
+  }
+  return `${ensureBrowseDirectoryPath(directoryPath)}${name}`;
+}
+
 export function resolveAddProjectPath(input: {
   readonly rawPath: string;
   readonly currentProjectCwd?: string | null;

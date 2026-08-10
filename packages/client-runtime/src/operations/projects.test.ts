@@ -13,6 +13,8 @@ import {
   canCreateProjectInEnvironment,
   findExistingAddProject,
   getAddProjectInitialQuery,
+  getCloneDestinationPath,
+  getCloneDirectoryName,
   resolveAddProjectPath,
   sortAddProjectProviderSources,
 } from "./projects.ts";
@@ -32,6 +34,23 @@ describe("add project shared logic", () => {
     expect(getAddProjectInitialQuery("")).toBe("~/");
     expect(getAddProjectInitialQuery("/work")).toBe("/work/");
     expect(getAddProjectInitialQuery("C:\\work")).toBe("C:\\work\\");
+  });
+
+  it("derives the clone folder name from the repository name with owner", () => {
+    expect(getCloneDirectoryName("owner/repo")).toBe("repo");
+    expect(getCloneDirectoryName("org/project/repo")).toBe("repo");
+    expect(getCloneDirectoryName("repo")).toBe("repo");
+    expect(getCloneDirectoryName("owner/repo/")).toBe("repo");
+    expect(getCloneDirectoryName("")).toBe("");
+    expect(getCloneDirectoryName(null)).toBe("");
+  });
+
+  it("proposes the clone destination inside the selected directory", () => {
+    expect(getCloneDestinationPath("~/Projects/", "repo")).toBe("~/Projects/repo");
+    expect(getCloneDestinationPath("~/Projects", "repo")).toBe("~/Projects/repo");
+    expect(getCloneDestinationPath("C:\\work\\", "repo")).toBe("C:\\work\\repo");
+    expect(getCloneDestinationPath("~/Projects/", null)).toBe("~/Projects/");
+    expect(getCloneDestinationPath("~/Projects/", "")).toBe("~/Projects/");
   });
 
   it("rejects unsupported windows paths on non-windows environments", () => {
