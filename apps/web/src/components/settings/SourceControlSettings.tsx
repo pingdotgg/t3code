@@ -453,6 +453,15 @@ function githubAccountSelection(account: GitHubAuthAccount): GitHubAccountSelect
   };
 }
 
+function hasMultipleGitHubAccountsOnHost(accounts: ReadonlyArray<GitHubAuthAccount>): boolean {
+  return accounts.some(
+    (account, index) =>
+      accounts.findIndex(
+        (candidate) => candidate.host.toLowerCase() === account.host.toLowerCase(),
+      ) !== index,
+  );
+}
+
 function GitHubAccountSelect({
   accounts,
   value,
@@ -513,6 +522,10 @@ function GitHubAccountSettings({
   }
   const selectableHosts = [...accountsByHost.entries()].filter(
     ([, hostAccounts]) => hostAccounts.length > 1,
+  );
+  const selectableHostKeys = new Set(selectableHosts.map(([host]) => host));
+  const hiddenDefaultHosts = Object.keys(settings.githubDefaultAccounts).filter(
+    (host) => !selectableHostKeys.has(host.toLowerCase()),
   );
   const selectableAccounts = selectableHosts.flatMap(([, hostAccounts]) => hostAccounts);
   const initialAccount =
@@ -660,6 +673,27 @@ function GitHubAccountSettings({
             Add
           </Button>
         </form>
+        {hiddenDefaultHosts.length > 0 ? (
+          <div className="flex flex-col gap-2 rounded-lg border border-border/60 p-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-xs font-medium text-foreground">Unavailable saved defaults</div>
+              <div className="text-xs text-muted-foreground">
+                Saved defaults for {hiddenDefaultHosts.join(", ")} are no longer selectable.
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                const next = { ...settings.githubDefaultAccounts };
+                for (const host of hiddenDefaultHosts) delete next[host];
+                updateSettings({ githubDefaultAccounts: next });
+              }}
+            >
+              Clear unavailable defaults
+            </Button>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -748,6 +782,7 @@ function EmptySourceControlDiscovery({
 
 export function SourceControlSettingsPanel() {
   const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const settings = usePrimarySettings();
   const discovery = useEnvironmentQuery(
     environmentId === null
       ? null
@@ -814,7 +849,10 @@ export function SourceControlSettingsPanel() {
             >
               {result.sourceControlProviders.map((item) => (
                 <DiscoveryItemRow key={`provider:${item.kind}`} item={item}>
-                  {item.kind === "github" ? (
+                  {item.kind === "github" &&
+                  (hasMultipleGitHubAccountsOnHost(item.auth.githubAccounts ?? []) ||
+                    Object.keys(settings.githubDefaultAccounts).length > 0 ||
+                    Object.keys(settings.githubAccountOverrides).length > 0) ? (
                     <GitHubAccountSettings accounts={item.auth.githubAccounts ?? []} />
                   ) : undefined}
                 </DiscoveryItemRow>
