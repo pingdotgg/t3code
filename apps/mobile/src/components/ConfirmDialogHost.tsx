@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { KeyboardAvoidingView, Modal, Platform, Pressable, View } from "react-native";
 
 import { cn } from "../lib/cn";
+import { useUniwindTheme } from "../lib/useUniwindTheme";
 import { AppText, AppTextInput } from "./AppText";
 
 export type ConfirmDialogRequest = {
@@ -52,6 +53,7 @@ export function showTextInputDialog(request: TextInputDialogRequest): void {
 export function ConfirmDialogHost() {
   const [request, setRequest] = useState<DialogRequest | null>(null);
   const [inputValue, setInputValue] = useState("");
+  const inputSelection = useUniwindTheme()["--color-user-bubble"];
   useEffect(() => {
     presentRequest = setRequest;
     return () => {
@@ -111,6 +113,7 @@ export function ConfirmDialogHost() {
                 onSubmitEditing={inputIsEmpty ? undefined : handleConfirm}
                 returnKeyType="done"
                 selectTextOnFocus
+                selectionColor={inputSelection}
                 value={inputValue}
               />
             ) : null}
