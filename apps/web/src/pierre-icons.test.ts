@@ -1,6 +1,7 @@
 import { assert, describe, it } from "vite-plus/test";
 
 import {
+  basenameOfPath,
   hasSpecificPierreIconForFileName,
   resolvePierreIconForEntry,
   syntheticFileNameForLanguageId,
@@ -8,6 +9,11 @@ import {
 } from "./pierre-icons";
 
 describe("Pierre file icons", () => {
+  it("extracts filenames from Unix and Windows paths", () => {
+    assert.equal(basenameOfPath("/Users/cole/project/notes.txt"), "notes.txt");
+    assert.equal(basenameOfPath("C:\\Users\\cole\\project\\notes.txt"), "notes.txt");
+  });
+
   it("uses Pierre exact filename and complete-set extension mappings", () => {
     assert.equal(resolvePierreIconForEntry("Dockerfile", "file")?.token, "docker");
     assert.equal(resolvePierreIconForEntry("src/Button.tsx", "file")?.token, "react");
