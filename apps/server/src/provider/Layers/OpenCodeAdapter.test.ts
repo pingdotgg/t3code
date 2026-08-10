@@ -134,7 +134,6 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         external: Boolean(serverUrl),
       };
     }),
-  runOpenCodeCommand: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),
   createOpenCodeSdkClient: ({ baseUrl, serverPassword }) =>
     ({
       session: {

@@ -29,7 +29,6 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { isWindowsCommandNotFound } from "../processRunner.ts";
-import { collectStreamAsString } from "./providerSnapshot.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -91,12 +90,6 @@ export const runOpenCodeSdk = <A>(
       new OpenCodeRuntimeError({ operation, detail: openCodeRuntimeErrorDetail(cause), cause }),
   }).pipe(Effect.withSpan(`opencode.${operation}`));
 
-export interface OpenCodeCommandResult {
-  readonly stdout: string;
-  readonly stderr: string;
-  readonly code: number;
-}
-
 export interface OpenCodeInventory {
   readonly providerList: ProviderListResponse;
   readonly agents: ReadonlyArray<Agent>;
@@ -135,11 +128,6 @@ export interface OpenCodeRuntimeShape {
     readonly hostname?: string;
     readonly timeoutMs?: number;
   }) => Effect.Effect<OpenCodeServerConnection, OpenCodeRuntimeError, Scope.Scope>;
-  readonly runOpenCodeCommand: (input: {
-    readonly binaryPath: string;
-    readonly args: ReadonlyArray<string>;
-    readonly environment?: NodeJS.ProcessEnv;
-  }) => Effect.Effect<OpenCodeCommandResult, OpenCodeRuntimeError>;
   readonly createOpenCodeSdkClient: (input: {
     readonly baseUrl: string;
     readonly directory: string;
@@ -282,42 +270,6 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
   const hostPlatform = yield* HostProcessPlatform;
   const resolveCommand = (command: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
     resolveSpawnCommand(command, args, env ? { env } : {});
-
-  const runOpenCodeCommand: OpenCodeRuntimeShape["runOpenCodeCommand"] = (input) =>
-    Effect.gen(function* () {
-      const spawnCommand = yield* resolveCommand(input.binaryPath, input.args, input.environment);
-      const child = yield* spawner.spawn(
-        ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-          shell: spawnCommand.shell,
-          ...(input.environment ? { env: input.environment } : { extendEnv: true }),
-        }),
-      );
-      const [stdout, stderr, code] = yield* Effect.all(
-        [collectStreamAsString(child.stdout), collectStreamAsString(child.stderr), child.exitCode],
-        { concurrency: "unbounded" },
-      );
-      const exitCode = Number(code);
-      if (yield* isWindowsCommandNotFound(exitCode, stderr)) {
-        return yield* new OpenCodeRuntimeError({
-          operation: "runOpenCodeCommand",
-          detail: `spawn ${input.binaryPath} ENOENT`,
-        });
-      }
-      return {
-        stdout,
-        stderr,
-        code: exitCode,
-      } satisfies OpenCodeCommandResult;
-    }).pipe(
-      Effect.scoped,
-      Effect.mapError((cause) =>
-        ensureRuntimeError(
-          "runOpenCodeCommand",
-          `Failed to execute '${input.binaryPath} ${input.args.join(" ")}': ${openCodeRuntimeErrorDetail(cause)}`,
-          cause,
-        ),
-      ),
-    );
 
   const startOpenCodeServerProcess: OpenCodeRuntimeShape["startOpenCodeServerProcess"] = (input) =>
     Effect.gen(function* () {
@@ -554,7 +506,6 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
   return {
     startOpenCodeServerProcess,
     connectToOpenCodeServer,
-    runOpenCodeCommand,
     createOpenCodeSdkClient,
     loadOpenCodeInventory,
   } satisfies OpenCodeRuntimeShape;
