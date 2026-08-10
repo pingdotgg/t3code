@@ -205,8 +205,7 @@ class NativeDatabaseTest {
     )
     assertEquals(9L, database.loadThread(env.environmentId, "thread-1")?.sequence)
 
-    database.saveAppSettings(AppSettings(groupThreadsByProject = false, compactThreadRows = true))
-    assertEquals(false, database.appSettings().groupThreadsByProject)
+    database.saveAppSettings(AppSettings(compactThreadRows = true))
     assertEquals(true, database.appSettings().compactThreadRows)
   }
 }

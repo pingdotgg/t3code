@@ -61,6 +61,7 @@ data class ThreadSummary(
   val worktreePath: String?,
   val latestTurn: LatestTurn?,
   val session: ThreadSession?,
+  val createdAt: String = "",
   val updatedAt: String,
   val archivedAt: String?,
   val settledOverride: String? = null,

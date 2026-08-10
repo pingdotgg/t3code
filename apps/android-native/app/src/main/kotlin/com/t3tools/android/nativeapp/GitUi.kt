@@ -356,11 +356,10 @@ fun GitBranchesScreen(
       verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
       item {
-        OutlinedTextField(
+        CompactInputField(
           value = branchName,
           onValueChange = { branchName = it },
-          label = { Text("New branch") },
-          placeholder = { Text("feature/native-git") },
+          placeholder = "New branch name",
           modifier = Modifier.fillMaxWidth(),
         )
         Button(
@@ -378,16 +377,16 @@ fun GitBranchesScreen(
       }
       item {
         Text("New worktree", fontWeight = FontWeight.SemiBold)
-        OutlinedTextField(
+        CompactInputField(
           value = baseBranch,
           onValueChange = { baseBranch = it },
-          label = { Text("Base branch") },
+          placeholder = "Base branch",
           modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         )
-        OutlinedTextField(
+        CompactInputField(
           value = worktreeBranch,
           onValueChange = { worktreeBranch = it },
-          label = { Text("New branch") },
+          placeholder = "New branch name",
           modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         )
         OutlinedButton(

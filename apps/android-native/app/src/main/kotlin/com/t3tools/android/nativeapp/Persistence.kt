@@ -43,7 +43,6 @@ data class CachedServerConfig(
 
 @Serializable
 data class AppSettings(
-  val groupThreadsByProject: Boolean = true,
   val compactThreadRows: Boolean = false,
   val betaFeatures: Boolean = true,
   val terminalFontSize: Float = 10.5f,

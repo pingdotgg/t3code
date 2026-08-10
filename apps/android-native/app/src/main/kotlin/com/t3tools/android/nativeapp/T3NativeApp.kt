@@ -577,18 +577,16 @@ private fun OnboardingScreen(
       }
       HorizontalDivider()
       Text("Direct pairing", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-      OutlinedTextField(
+      CompactInputField(
         value = host,
         onValueChange = { host = it },
-        label = { Text("Host or pairing URL") },
-        singleLine = true,
+        placeholder = "Host or pairing URL",
         modifier = Modifier.fillMaxWidth(),
       )
-      OutlinedTextField(
+      CompactInputField(
         value = code,
         onValueChange = { code = it },
-        label = { Text("Pairing code") },
-        singleLine = true,
+        placeholder = "Pairing code",
         modifier = Modifier.fillMaxWidth(),
       )
       Button(
@@ -917,11 +915,10 @@ private fun HomeScreen(
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
       ) {
-        OutlinedTextField(
+        CompactSearchField(
           value = search,
           onValueChange = { search = it },
-          label = { Text("Search threads") },
-          singleLine = true,
+          placeholder = "Search threads",
           modifier = Modifier.weight(1f),
         )
         IconButton(onClick = { showFilterSheet = true }) {
@@ -1003,7 +1000,6 @@ private fun HomeScreen(
           viewModel = viewModel,
           capabilities = caps,
           compact = runtime.settings.compactThreadRows,
-          groupByProject = runtime.settings.groupThreadsByProject,
           onOpenThread = onOpenThread,
         )
 
@@ -1039,7 +1035,6 @@ private fun HomeScreen(
               viewModel = viewModel,
               capabilities = caps,
               compact = true,
-              groupByProject = runtime.settings.groupThreadsByProject,
               onOpenThread = onOpenThread,
             )
           }
@@ -1062,7 +1057,6 @@ private fun HomeScreen(
               viewModel = viewModel,
               capabilities = caps,
               compact = true,
-              groupByProject = runtime.settings.groupThreadsByProject,
               onOpenThread = onOpenThread,
             )
             if (layout.hiddenSettledCount > 0) {
@@ -1113,50 +1107,36 @@ private fun LazyListScope.threadListRows(
   viewModel: AppViewModel,
   capabilities: ThreadCapabilities,
   compact: Boolean,
-  groupByProject: Boolean,
   onOpenThread: (String) -> Unit,
 ) {
   val orderedPinned = sortPinnedThreads(
     runtime.shell.threads.values.filter { it.pinnedAt != null && it.archivedAt == null },
   )
   val firstPinKey = orderedPinned.firstOrNull()?.pinOrderKey
-  val groups = groupThreadListV2Items(rows, groupByProject)
-  groups.forEach { (projectId, projectRows) ->
-    if (projectId != null) {
-      item(key = "$keyPrefix:project:$projectId") {
-        Text(
-          runtime.shell.projects[projectId]?.title ?: "Project",
-          modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
-          style = MaterialTheme.typography.labelLarge,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-      }
-    }
-    items(projectRows, key = { "$keyPrefix:${it.thread.id}" }) { item ->
-      val project = runtime.shell.projects[item.thread.projectId]
-      val pinnedIndex = orderedPinned.indexOfFirst { it.id == item.thread.id }
-      ThreadListV2Row(
-        item = item,
-        capabilities = capabilities,
-        compact = compact,
-        projectTitle = project?.title,
-        providerDriver = resolveProviderDriver(
-          item.thread.modelSelection.instanceId,
-          runtime.providerModels,
-        ),
-        faviconUrl = project?.let { runtime.projectFavicons[it.id] },
-        newPinOrderKey = pinOrderKeyBetween(null, firstPinKey),
-        canMovePinnedUp = capabilities.pinReorder && pinnedIndex > 0,
-        canMovePinnedDown = capabilities.pinReorder && pinnedIndex in 0 until orderedPinned.lastIndex,
-        onOpen = { onOpenThread(item.thread.id) },
-        onAction = { command, value ->
-          viewModel.threadAction(command, item.thread.id, value)
-        },
-        onMovePinned = { direction ->
-          viewModel.reorderPinned(planPinnedMove(orderedPinned, item.thread.id, direction))
-        },
-      )
-    }
+  items(rows, key = { "$keyPrefix:${it.thread.id}" }) { item ->
+    val project = runtime.shell.projects[item.thread.projectId]
+    val pinnedIndex = orderedPinned.indexOfFirst { it.id == item.thread.id }
+    ThreadListV2Row(
+      item = item,
+      capabilities = capabilities,
+      compact = compact,
+      projectTitle = project?.title,
+      providerDriver = resolveProviderDriver(
+        item.thread.modelSelection.instanceId,
+        runtime.providerModels,
+      ),
+      faviconUrl = project?.let { runtime.projectFavicons[it.id] },
+      newPinOrderKey = pinOrderKeyBetween(null, firstPinKey),
+      canMovePinnedUp = capabilities.pinReorder && pinnedIndex > 0,
+      canMovePinnedDown = capabilities.pinReorder && pinnedIndex in 0 until orderedPinned.lastIndex,
+      onOpen = { onOpenThread(item.thread.id) },
+      onAction = { command, value ->
+        viewModel.threadAction(command, item.thread.id, value)
+      },
+      onMovePinned = { direction ->
+        viewModel.reorderPinned(planPinnedMove(orderedPinned, item.thread.id, direction))
+      },
+    )
   }
 }
 
@@ -1387,7 +1367,7 @@ private fun PendingTaskRow(task: PendingTask, viewModel: AppViewModel) {
 }
 
 @Composable
-private fun EnvironmentDialog(
+private fun EnvironmentDrawer(
   runtime: OnlineChatState,
   viewModel: AppViewModel,
   onAdd: () -> Unit,
@@ -1396,52 +1376,95 @@ private fun EnvironmentDialog(
   val environment = runtime.environment ?: return
   var label by remember(environment) { mutableStateOf(environment.label) }
   var url by remember(environment) { mutableStateOf(environment.httpBaseUrl) }
-  AlertDialog(
+  val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+  ModalBottomSheet(
     onDismissRequest = dismiss,
-    title = { Text("Environment") },
-    text = {
+    sheetState = sheetState,
+    containerColor = Color(0xFF141417),
+    contentColor = Color.White,
+    shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+    scrimColor = Color.Black.copy(alpha = 0.65f),
+  ) {
+    Column(Modifier.fillMaxWidth().imePadding()) {
+      DrawerHeader(
+        icon = Icons.Rounded.Public,
+        title = "Environment",
+        subtitle = "Switch or edit your current connection",
+        onDismiss = dismiss,
+        showCloseButton = false,
+      )
       Column(
-        Modifier.verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier
+          .fillMaxWidth()
+          .verticalScroll(rememberScrollState())
+          .padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
       ) {
+        Text("Environments", style = MaterialTheme.typography.labelLarge)
         runtime.environments.forEach { item ->
           val status = runtime.environmentStatuses[item.environmentId]
-          OutlinedButton(
+          val selected = item.environmentId == environment.environmentId
+          Surface(
             onClick = { viewModel.selectEnvironment(item.environmentId) },
+            shape = RoundedCornerShape(14.dp),
+            color = if (selected) Color(0xFF1E293B) else Color(0xFF202024),
             modifier = Modifier.fillMaxWidth(),
           ) {
-            Column(Modifier.fillMaxWidth()) {
-              Text(if (item.environmentId == environment.environmentId) "${item.label} · selected" else item.label)
-              Text(
-                status?.connectionPhase?.name ?: "Loading",
-                style = MaterialTheme.typography.labelSmall,
-              )
+            Row(
+              modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+              Column(Modifier.weight(1f)) {
+                Text(item.label, fontWeight = FontWeight.SemiBold)
+                Text(
+                  status?.connectionPhase?.name ?: "Loading",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+              }
+              if (selected) {
+                Icon(Icons.Rounded.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
+              }
             }
           }
         }
         OutlinedButton(onClick = onAdd, modifier = Modifier.fillMaxWidth()) { Text("Add environment") }
         HorizontalDivider()
-        OutlinedTextField(label, { label = it }, label = { Text("Label") })
-        OutlinedTextField(
-          url,
-          { url = it },
-          label = { Text("URL") },
-          enabled = environment.kind == EnvironmentKind.Bearer,
+        Text("Current environment", style = MaterialTheme.typography.labelLarge)
+        CompactInputField(
+          value = label,
+          onValueChange = { label = it },
+          placeholder = "Label",
+          modifier = Modifier.fillMaxWidth(),
         )
-        OutlinedButton(onClick = {
-          viewModel.forgetEnvironment()
-          dismiss()
-        }) { Text("Forget environment") }
+        CompactInputField(
+          value = url,
+          onValueChange = { url = it },
+          placeholder = "URL",
+          enabled = environment.kind == EnvironmentKind.Bearer,
+          modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+          onClick = {
+            viewModel.updateEnvironment(label, url)
+            dismiss()
+          },
+          enabled = environment.kind == EnvironmentKind.Bearer && label.isNotBlank() && url.isNotBlank(),
+          modifier = Modifier.fillMaxWidth(),
+        ) { Text("Save") }
+        TextButton(
+          onClick = {
+            viewModel.forgetEnvironment()
+            dismiss()
+          },
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text("Forget environment", color = MaterialTheme.colorScheme.error)
+        }
       }
-    },
-    confirmButton = {
-      Button(onClick = {
-        viewModel.updateEnvironment(label, url)
-        dismiss()
-      }, enabled = environment.kind == EnvironmentKind.Bearer) { Text("Save") }
-    },
-    dismissButton = { TextButton(onClick = dismiss) { Text("Cancel") } },
-  )
+    }
+  }
 }
 
 @Composable
@@ -1536,11 +1559,6 @@ private fun SettingsScreen(
         viewModel.updateSettings(runtime.settings.copy(compactThreadRows = it))
       }
       HorizontalDivider()
-      Text("Grouping", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-      ToggleRow("Group threads by project", runtime.settings.groupThreadsByProject) {
-        viewModel.updateSettings(runtime.settings.copy(groupThreadsByProject = it))
-      }
-      HorizontalDivider()
       Text("Threads", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
       OutlinedButton(onClick = onOpenArchivedThreads, modifier = Modifier.fillMaxWidth()) {
         Icon(Icons.Rounded.Archive, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -1584,7 +1602,7 @@ private fun SettingsScreen(
   }
 
   if (showEditEnv) {
-    EnvironmentDialog(
+    EnvironmentDrawer(
       runtime = runtime,
       viewModel = viewModel,
       onAdd = {
@@ -1628,11 +1646,10 @@ private fun ArchivedThreadsScreen(
   BackHandler(onBack = onBack)
   Scaffold(topBar = { BackTopBar("Archived Threads", onBack) }) { padding ->
     Column(Modifier.fillMaxSize().padding(padding)) {
-      OutlinedTextField(
+      CompactSearchField(
         value = search,
         onValueChange = { search = it },
-        label = { Text("Search archived threads") },
-        singleLine = true,
+        placeholder = "Search archived threads",
         modifier = Modifier.fillMaxWidth().padding(16.dp),
       )
       RuntimeError(runtime.error, dispatchState)
@@ -2551,7 +2568,7 @@ private fun ThreadFeed(
                 }
               },
             ) {
-              Text(if (entry.expanded) "Show less" else "${entry.hiddenCount} more")
+              Text(workToggleLabel(entry))
             }
 
             is ThreadFeedItem.Working -> Row(
@@ -2561,18 +2578,31 @@ private fun ThreadFeed(
                 .padding(vertical = 7.dp),
             ) {
               LinearProgressIndicator(Modifier.width(28.dp).height(2.dp))
-              Text(
-                entry.stepLabel?.let { "Working… · $it" } ?: "Working…",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-              )
+              WorkingStatusText(entry.createdAt, entry.stepLabel)
             }
         }
       }
     }
   }
+}
+
+@Composable
+private fun WorkingStatusText(startedAt: String, stepLabel: String?) {
+  var now by remember(startedAt) { mutableStateOf(Instant.now().toString()) }
+  LaunchedEffect(startedAt) {
+    while (true) {
+      now = Instant.now().toString()
+      delay(1_000)
+    }
+  }
+  val elapsed = formatWorkingTimer(startedAt, now) ?: "0s"
+  Text(
+    stepLabel?.let { "Working for $elapsed · $it" } ?: "Working for $elapsed",
+    style = MaterialTheme.typography.labelMedium,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    maxLines = 1,
+    overflow = TextOverflow.Ellipsis,
+  )
 }
 
 @Composable

@@ -187,6 +187,36 @@ class ThreadFeedModelTest {
   }
 
   @Test
+  fun labels_collapsed_tool_history_like_the_web_client() {
+    val feed = buildThreadFeed(
+      detail(
+        activities = listOf(
+          activity("tool-1", "tool.completed", "Read files", "turn-1", "2026-08-09T00:00:01Z"),
+          activity("tool-2", "tool.completed", "Run tests", "turn-1", "2026-08-09T00:00:02Z"),
+          activity("tool-3", "tool.completed", "Check status", "turn-1", "2026-08-09T00:00:03Z"),
+        ),
+      ),
+    )
+
+    val collapsed = presentThreadFeed(
+      feed,
+      latestTurn = LatestTurn("turn-1", "running", startedAt = "2026-08-09T00:00:00Z"),
+      expandedTurnIds = emptySet(),
+    )
+      .filterIsInstance<ThreadFeedItem.WorkToggle>()
+      .single()
+    assertEquals("+2 previous tool calls", workToggleLabel(collapsed))
+    assertEquals("Show fewer tool calls", workToggleLabel(collapsed.copy(expanded = true)))
+  }
+
+  @Test
+  fun formats_the_live_working_timer() {
+    assertEquals("0s", formatWorkingTimer("2026-08-09T00:00:00Z", "2026-08-09T00:00:00.900Z"))
+    assertEquals("12s", formatWorkingTimer("2026-08-09T00:00:00Z", "2026-08-09T00:00:12Z"))
+    assertEquals("1m 5s", formatWorkingTimer("2026-08-09T00:00:00Z", "2026-08-09T00:01:05Z"))
+  }
+
+  @Test
   fun keeps_only_the_latest_plan_outside_settled_turn_folds() {
     val latestTurn = LatestTurn(
       id = "turn-2",
@@ -327,6 +357,7 @@ class ThreadFeedModelTest {
       worktreePath = null,
       latestTurn = latestTurn,
       session = session,
+      createdAt = "2026-08-09T00:00:00Z",
       updatedAt = "2026-08-09T00:00:00Z",
       archivedAt = null,
       hasPendingApprovals = false,

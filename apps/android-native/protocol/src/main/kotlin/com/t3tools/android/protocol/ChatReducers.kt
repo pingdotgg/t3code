@@ -250,6 +250,7 @@ private fun JsonObject.toThreadSummary(): ThreadSummary? {
       )
     },
     session = obj("session")?.toThreadSession(),
+    createdAt = text("createdAt") ?: text("updatedAt") ?: "",
     updatedAt = text("updatedAt") ?: "",
     archivedAt = nullableText("archivedAt"),
     settledOverride = nullableText("settledOverride"),

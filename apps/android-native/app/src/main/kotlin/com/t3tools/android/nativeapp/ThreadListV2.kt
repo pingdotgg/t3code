@@ -62,13 +62,6 @@ fun filterThreadListV2Items(
   ThreadFilterStatus.Settled -> items.filter { !it.snoozed && it.variant == ThreadListV2Variant.Slim }
 }
 
-fun groupThreadListV2Items(
-  items: List<ThreadListV2Item>,
-  enabled: Boolean,
-): List<Pair<String?, List<ThreadListV2Item>>> =
-  if (enabled) items.groupBy { it.thread.projectId }.entries.map { it.key to it.value }
-  else listOf(null to items)
-
 data class SnoozePreset(
   val id: String,
   val label: String,
@@ -154,14 +147,15 @@ fun canSnoozeThread(thread: ThreadSummary): Boolean {
 
 fun sortThreadsForListV2(threads: List<ThreadSummary>): List<ThreadSummary> =
   threads.sortedWith(
-    compareByDescending<ThreadSummary> { parseInstant(it.updatedAt)?.toEpochMilli() ?: 0L }
+    compareByDescending<ThreadSummary> { parseInstant(it.createdAt)?.toEpochMilli() ?: 0L }
       .thenBy(ThreadSummary::id),
   )
 
-fun sortPinnedThreads(threads: List<ThreadSummary>): List<ThreadSummary> =
-  threads.sortedWith(
-    compareBy<ThreadSummary> { it.pinOrderKey ?: "~" }.thenBy(ThreadSummary::id),
-  )
+fun sortPinnedThreads(threads: List<ThreadSummary>): List<ThreadSummary> {
+  val (keyed, keyless) = threads.partition { it.pinOrderKey != null }
+  return keyed.sortedWith(compareBy<ThreadSummary> { it.pinOrderKey }.thenBy(ThreadSummary::id)) +
+    sortThreadsForListV2(keyless)
+}
 
 data class PinOrderAssignment(val threadId: String, val orderKey: String)
 

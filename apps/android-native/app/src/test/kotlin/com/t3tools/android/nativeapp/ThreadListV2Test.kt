@@ -53,7 +53,7 @@ class ThreadListV2Test {
   }
 
   @Test
-  fun filters_and_groups_the_rendered_items() {
+  fun filters_the_rendered_items() {
     val layout = buildThreadListV2Layout(
       threads = listOf(
         summary("active"),
@@ -70,8 +70,32 @@ class ThreadListV2Test {
       listOf("snoozed"),
       filterThreadListV2Items(layout.items, ThreadFilterStatus.Snoozed).map { it.thread.id },
     )
-    assertEquals(1, groupThreadListV2Items(layout.items, enabled = false).size)
-    assertEquals("proj", groupThreadListV2Items(layout.items, enabled = true).single().first)
+  }
+
+  @Test
+  fun orders_active_threads_globally_by_creation_time() {
+    val layout = buildThreadListV2Layout(
+      threads = listOf(
+        summary("older-new-activity", projectId = "project-a", createdAt = "2026-08-01T10:00:00Z", updatedAt = "2026-08-08T11:00:00Z"),
+        summary("newer", projectId = "project-b", createdAt = "2026-08-08T10:00:00Z", updatedAt = "2026-08-08T10:00:00Z"),
+      ),
+      settlementSupported = false,
+      snoozeSupported = false,
+      now = now,
+    )
+
+    assertEquals(listOf("newer", "older-new-activity"), layout.items.map { it.thread.id })
+  }
+
+  @Test
+  fun orders_keyless_pins_by_creation_time_after_ordered_pins() {
+    val threads = listOf(
+      summary("older-keyless", createdAt = "2026-08-01T10:00:00Z", pinnedAt = now.toString()),
+      summary("ordered", createdAt = "2026-08-01T10:00:00Z", pinnedAt = now.toString(), pinOrderKey = "m"),
+      summary("newer-keyless", createdAt = "2026-08-08T10:00:00Z", pinnedAt = now.toString()),
+    )
+
+    assertEquals(listOf("ordered", "newer-keyless", "older-keyless"), sortPinnedThreads(threads).map { it.id })
   }
 
   @Test
@@ -211,8 +235,10 @@ class ThreadListV2Test {
 
   private fun summary(
     id: String,
+    projectId: String = "proj",
     title: String = id,
     updatedAt: String = "2026-08-08T11:00:00Z",
+    createdAt: String = updatedAt,
     archivedAt: String? = null,
     settledOverride: String? = null,
     settledAt: String? = null,
@@ -226,7 +252,7 @@ class ThreadListV2Test {
     latestTurn: LatestTurn? = null,
   ) = ThreadSummary(
     id = id,
-    projectId = "proj",
+    projectId = projectId,
     title = title,
     modelSelection = ModelSelection("i", "m"),
     runtimeMode = "full-access",
@@ -235,6 +261,7 @@ class ThreadListV2Test {
     worktreePath = null,
     latestTurn = latestTurn,
     session = session,
+    createdAt = createdAt,
     updatedAt = updatedAt,
     archivedAt = archivedAt,
     settledOverride = settledOverride,

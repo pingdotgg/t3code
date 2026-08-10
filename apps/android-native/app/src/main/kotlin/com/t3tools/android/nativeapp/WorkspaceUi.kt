@@ -157,17 +157,13 @@ fun AddProjectScreen(
           modifier = Modifier.fillMaxWidth(),
         )
       }
-      OutlinedTextField(
+      CompactInputField(
         value = state.path,
         onValueChange = viewModel::updateAddProjectPath,
-        label = { Text(if (clone) "Clone destination" else "Project path") },
-        placeholder = { Text("~/projects/my-app") },
-        singleLine = true,
-        trailingIcon = {
-          IconButton(onClick = { viewModel.browseProjectPath() }) {
-            Icon(Icons.Rounded.Search, contentDescription = "Browse path")
-          }
-        },
+        placeholder = if (clone) "Clone destination" else "Project path",
+        trailingIcon = Icons.Rounded.Search,
+        trailingContentDescription = "Browse path",
+        onTrailingClick = viewModel::browseProjectPath,
         modifier = Modifier.fillMaxWidth(),
       )
       Button(
@@ -295,12 +291,10 @@ fun WorkspaceFilesScreen(
   ) { padding ->
     Column(Modifier.fillMaxSize().padding(padding)) {
       if (state.loadingEntries || state.searching) LinearProgressIndicator(Modifier.fillMaxWidth())
-      OutlinedTextField(
+      CompactSearchField(
         value = query,
         onValueChange = { query = it },
-        label = { Text(if (mode == WorkspaceSearchMode.Files) "Search files" else "Search contents") },
-        leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
-        singleLine = true,
+        placeholder = if (mode == WorkspaceSearchMode.Files) "Search files" else "Search contents",
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
       )
       Row(

@@ -56,6 +56,7 @@ internal sealed interface ThreadFeedItem {
     override val createdAt: String,
     val groupId: String,
     val hiddenCount: Int,
+    val onlyToolActivities: Boolean,
     val expanded: Boolean,
   ) : ThreadFeedItem
 
@@ -224,9 +225,36 @@ private fun MutableList<ThreadFeedItem>.appendPresentedEntry(
       createdAt = entry.createdAt,
       groupId = entry.id,
       hiddenCount = activities.size - 1,
+      onlyToolActivities = activities.all(ThreadFeedActivity::toolLike),
       expanded = expanded,
     ),
   )
+}
+
+internal fun workToggleLabel(toggle: ThreadFeedItem.WorkToggle): String {
+  val singular = toggle.hiddenCount == 1
+  val noun = if (toggle.onlyToolActivities) {
+    if (singular) "tool call" else "tool calls"
+  } else {
+    if (singular) "log entry" else "log entries"
+  }
+  return if (toggle.expanded) {
+    "Show fewer ${if (toggle.onlyToolActivities) "tool calls" else "log entries"}"
+  } else {
+    "+${toggle.hiddenCount} previous $noun"
+  }
+}
+
+internal fun formatWorkingTimer(startIso: String, endIso: String): String? {
+  val startedAt = runCatching { Instant.parse(startIso).toEpochMilli() }.getOrNull() ?: return null
+  val endedAt = runCatching { Instant.parse(endIso).toEpochMilli() }.getOrNull() ?: return null
+  val elapsedSeconds = ((endedAt - startedAt).coerceAtLeast(0L)) / 1_000
+  if (elapsedSeconds < 60) return "${elapsedSeconds}s"
+  val hours = elapsedSeconds / 3_600
+  val minutes = (elapsedSeconds % 3_600) / 60
+  val seconds = elapsedSeconds % 60
+  if (hours > 0) return if (minutes > 0) "${hours}h ${minutes}m" else "${hours}h"
+  return if (seconds > 0) "${minutes}m ${seconds}s" else "${minutes}m"
 }
 
 private data class TurnFold(
