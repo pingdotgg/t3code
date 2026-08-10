@@ -31,7 +31,10 @@ struct PlatformRootView: View {
         }
         .environment(\.openURL, OpenURLAction { url in
             do {
-                let route = try PlatformDeepLinkParser.parseInAppLink(url)
+                let route = try PlatformDeepLinkParser.parseInAppLink(
+                    url,
+                    knownEnvironmentIDs: Set(model.snapshot.environments.map(\.id))
+                )
                 handle(route)
                 return .handled
             } catch {

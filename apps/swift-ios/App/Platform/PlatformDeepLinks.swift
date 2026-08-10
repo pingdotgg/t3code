@@ -143,29 +143,43 @@ enum PlatformDeepLinkParser {
     /// chat can contain a thread URL copied from the web or Electron client.
     /// A loopback URL points back at the machine that rendered the message, not
     /// at the phone, so translate its route locally instead of opening Safari.
-    static func parseInAppLink(_ url: URL) throws -> PlatformRoute {
+    static func parseInAppLink(
+        _ url: URL,
+        knownEnvironmentIDs: Set<String>
+    ) throws -> PlatformRoute {
+        let route: PlatformRoute
         if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
            let scheme = components.scheme?.lowercased() {
             if ["t3code", "t3code-dev"].contains(scheme),
                components.host?.lowercased() == "app" {
-                return try webThreadRoute(components)
+                route = try webThreadRoute(components)
+                return try validatedInAppThreadRoute(route, knownEnvironmentIDs: knownEnvironmentIDs)
             }
 
             if ["http", "https"].contains(scheme),
                let host = components.host?.lowercased(),
                isLoopbackHost(host) {
-                return try webThreadRoute(components)
+                route = try webThreadRoute(components)
+                return try validatedInAppThreadRoute(route, knownEnvironmentIDs: knownEnvironmentIDs)
+            }
+
+            if ["http", "https"].contains(scheme) {
+                route = try parse(url)
+                return try validatedInAppThreadRoute(route, knownEnvironmentIDs: knownEnvironmentIDs)
             }
         }
 
-        return try parse(url)
+        throw PlatformDeepLinkError.unsupportedURL
     }
 
-    static func parseInAppLink(_ value: String) throws -> PlatformRoute {
+    static func parseInAppLink(
+        _ value: String,
+        knownEnvironmentIDs: Set<String>
+    ) throws -> PlatformRoute {
         guard let url = URL(string: value.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             throw PlatformDeepLinkError.unsupportedURL
         }
-        return try parseInAppLink(url)
+        return try parseInAppLink(url, knownEnvironmentIDs: knownEnvironmentIDs)
     }
 
     private static func navigationRoute(
@@ -252,6 +266,17 @@ enum PlatformDeepLinkParser {
             environmentID: try validatedIdentifier(segments[0]),
             threadID: try validatedIdentifier(segments[1])
         )
+    }
+
+    private static func validatedInAppThreadRoute(
+        _ route: PlatformRoute,
+        knownEnvironmentIDs: Set<String>
+    ) throws -> PlatformRoute {
+        guard case let .thread(environmentID?, _) = route,
+              knownEnvironmentIDs.contains(environmentID) else {
+            throw PlatformDeepLinkError.unsupportedURL
+        }
+        return route
     }
 
     private static func isLoopbackHost(_ host: String) -> Bool {

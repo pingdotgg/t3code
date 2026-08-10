@@ -56,7 +56,10 @@ struct PlatformDeepLinkTests {
             "http://[::1]:3773/environment-1/thread-7",
         ] {
             #expect(
-                try PlatformDeepLinkParser.parseInAppLink(try #require(URL(string: value)))
+                try PlatformDeepLinkParser.parseInAppLink(
+                    try #require(URL(string: value)),
+                    knownEnvironmentIDs: ["environment-1"]
+                )
                     == .thread(environmentID: "environment-1", threadID: "thread-7")
             )
         }
@@ -66,12 +69,14 @@ struct PlatformDeepLinkTests {
     func resolvesElectronThreadLinksTappedInApp() throws {
         #expect(
             try PlatformDeepLinkParser.parseInAppLink(
-                try #require(URL(string: "t3code://app/environment-1/thread-7"))
+                try #require(URL(string: "t3code://app/environment-1/thread-7")),
+                knownEnvironmentIDs: ["environment-1"]
             ) == .thread(environmentID: "environment-1", threadID: "thread-7")
         )
         #expect(
             try PlatformDeepLinkParser.parseInAppLink(
-                try #require(URL(string: "t3code-dev://app/environment-1/thread-7"))
+                try #require(URL(string: "t3code-dev://app/environment-1/thread-7")),
+                knownEnvironmentIDs: ["environment-1"]
             ) == .thread(environmentID: "environment-1", threadID: "thread-7")
         )
     }
@@ -83,7 +88,26 @@ struct PlatformDeepLinkTests {
             "http://127.example.com/environment/thread",
         ] {
             #expect(throws: PlatformDeepLinkError.unsupportedURL) {
-                try PlatformDeepLinkParser.parseInAppLink(value)
+                try PlatformDeepLinkParser.parseInAppLink(
+                    value,
+                    knownEnvironmentIDs: ["environment"]
+                )
+            }
+        }
+    }
+
+    @Test
+    func rejectsInAppLinksOutsideKnownThreadRoutes() {
+        for value in [
+            "t3code://connect?url=ws%3A%2F%2Fhost.example&token=secret",
+            "http://localhost:3773/settings/general",
+            "t3code://app/unknown/thread-7",
+        ] {
+            #expect(throws: PlatformDeepLinkError.unsupportedURL) {
+                try PlatformDeepLinkParser.parseInAppLink(
+                    value,
+                    knownEnvironmentIDs: ["environment-1"]
+                )
             }
         }
     }
