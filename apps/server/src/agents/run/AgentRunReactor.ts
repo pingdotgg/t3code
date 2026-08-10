@@ -6,6 +6,7 @@ import {
   type ProviderRuntimeEvent,
   type RuntimeTaskUsage as RuntimeTaskUsageType,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -145,12 +146,14 @@ export const appendAgentRunTaskActivity = Effect.fn("AgentRunReactor.appendAgent
       })
       .pipe(
         Effect.catchCause((cause) =>
-          Effect.logWarning("Could not append Agent run parent task activity", {
-            runId: input.run.id,
-            parentThreadId: input.run.parentThreadId,
-            status: input.status,
-            cause,
-          }),
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.interrupt
+            : Effect.logWarning("Could not append Agent run parent task activity", {
+                runId: input.run.id,
+                parentThreadId: input.run.parentThreadId,
+                status: input.status,
+                cause: Cause.pretty(cause),
+              }),
         ),
       );
   },

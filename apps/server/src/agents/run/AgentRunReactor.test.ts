@@ -12,6 +12,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Duration from "effect/Duration";
@@ -225,6 +226,22 @@ it.effect("keeps AgentRun lifecycle authoritative when its parent activity appen
     });
 
     assert.equal(appendAttempts, 1);
+  }),
+);
+
+it.effect("preserves interruption while appending a parent task activity", () =>
+  Effect.gen(function* () {
+    const exit = yield* appendAgentRunTaskActivity({
+      engine: { dispatch: () => Effect.interrupt },
+      run,
+      status: "completed",
+      createdAt: occurredAt,
+    }).pipe(Effect.exit);
+
+    assert.equal(exit._tag, "Failure");
+    if (exit._tag === "Failure") {
+      assert.isTrue(Cause.hasInterruptsOnly(exit.cause));
+    }
   }),
 );
 
