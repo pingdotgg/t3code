@@ -275,7 +275,7 @@ export interface GitHubPullRequestDiffSlice {
 export class GitHubPullRequestCli extends Context.Service<
   GitHubPullRequestCli,
   {
-    readonly getAuthScope: (input: {
+    readonly getBatchKey: (input: {
       readonly cwd: string;
       readonly host: string;
       readonly repository: string;
@@ -674,7 +674,7 @@ export const make = Effect.gen(function* () {
       .execute({
         cwd: input.cwd,
         host: input.host,
-        repository: input.repository,
+        repositories: [input.repository],
         args: ["api", "graphql", "--hostname", input.host, "--input", "-"],
         stdin: encodeGraphQlRequestJson({ query: input.query, variables: input.variables }),
       })
@@ -768,7 +768,7 @@ export const make = Effect.gen(function* () {
       .execute({
         cwd: input.cwd,
         host: input.host,
-        repository: input.repository,
+        repositories: [input.repository],
         args: [
           "api",
           "--hostname",
@@ -832,7 +832,7 @@ export const make = Effect.gen(function* () {
         const refsResult = yield* github.execute({
           cwd: input.cwd,
           host: input.host,
-          repository: input.repository,
+          repositories: [input.repository],
           args: [
             "api",
             "--hostname",
@@ -874,7 +874,7 @@ export const make = Effect.gen(function* () {
             .execute({
               cwd: input.cwd,
               host: input.host,
-              repository: input.repository,
+              repositories: [input.repository],
               args: [
                 "api",
                 "--hostname",
@@ -917,15 +917,19 @@ export const make = Effect.gen(function* () {
       });
 
   return GitHubPullRequestCli.of({
-    getAuthScope: (input) =>
-      github.getAuthScope?.(input) ?? Effect.succeed(`active:${input.host.toLowerCase()}`),
+    getBatchKey: (input) =>
+      github.getBatchKey({
+        cwd: input.cwd,
+        host: input.host,
+        repositories: [input.repository],
+      }),
 
     getViewerLogin: (input) =>
       github
         .execute({
           cwd: input.cwd,
           host: input.host,
-          repository: input.repository,
+          repositories: [input.repository],
           args: ["api", "user", "--hostname", input.host, "--jq", ".login"],
         })
         .pipe(
@@ -949,7 +953,7 @@ export const make = Effect.gen(function* () {
           .execute({
             cwd: input.cwd,
             host: input.host,
-            repository: input.repository,
+            repositories: [input.repository],
             args: [
               "pr",
               "list",
@@ -1102,7 +1106,7 @@ export const make = Effect.gen(function* () {
         .execute({
           cwd: input.cwd,
           host: input.host,
-          repository: input.repository,
+          repositories: [input.repository],
           args: [
             "pr",
             "view",
@@ -1133,7 +1137,7 @@ export const make = Effect.gen(function* () {
         .execute({
           cwd: input.cwd,
           host: input.host,
-          repository: input.repository,
+          repositories: [input.repository],
           args: [
             "pr",
             "view",
@@ -1188,7 +1192,7 @@ export const make = Effect.gen(function* () {
         .execute({
           cwd: input.cwd,
           host: input.host,
-          repository: input.repository,
+          repositories: [input.repository],
           args: ["pr", "diff", String(input.number), ...repositoryArgs(input), "--color", "never"],
           maxOutputBytes: DIFF_MAX_OUTPUT_BYTES,
           timeoutMs: DIFF_TIMEOUT_MS,
@@ -1334,7 +1338,7 @@ export const make = Effect.gen(function* () {
         .execute({
           cwd: input.cwd,
           host: input.host,
-          repository: input.repository,
+          repositories: [input.repository],
           args: [
             "api",
             "graphql",
@@ -1367,7 +1371,7 @@ export const make = Effect.gen(function* () {
         .execute({
           cwd: input.cwd,
           host: input.host,
-          repository: input.repository,
+          repositories: [input.repository],
           args: [
             "repo",
             "view",
@@ -1432,7 +1436,7 @@ export const make = Effect.gen(function* () {
         .execute({
           cwd: input.cwd,
           host: input.host,
-          repository: input.repository,
+          repositories: [input.repository],
           // Posting to a login GitHub has already been asked about is what a re-request is, so
           // there is nothing to say here about somebody who has reviewed once already. The body
           // travels over stdin for the reason every other one does: argv is visible in process
@@ -1458,7 +1462,7 @@ export const make = Effect.gen(function* () {
         .execute({
           cwd: input.cwd,
           host: input.host,
-          repository: input.repository,
+          repositories: [input.repository],
           args: ["pr", subcommand!, String(input.number), ...repositoryArgs(input), ...flags],
         })
         .pipe(Effect.asVoid);
@@ -1469,7 +1473,7 @@ export const make = Effect.gen(function* () {
         .execute({
           cwd: input.cwd,
           host: input.host,
-          repository: input.repository,
+          repositories: [input.repository],
           // The body travels over stdin: argv is visible in process listings and is echoed
           // back inside process-runner failure messages.
           args: [
@@ -1490,7 +1494,7 @@ export const make = Effect.gen(function* () {
         .execute({
           cwd: input.cwd,
           host: input.host,
-          repository: input.repository,
+          repositories: [input.repository],
           // The whole review is one request, so nothing is visible to anyone else until the
           // verdict is sent. The payload travels over stdin for the same reason a comment
           // body does: argv is visible in process listings and echoed back in failures.

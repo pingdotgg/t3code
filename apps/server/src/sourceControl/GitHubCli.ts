@@ -14,6 +14,7 @@ import {
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as GitHubCredentials from "./GitHubCredentials.ts";
 import {
   decodeGitHubPullRequestJson,
   decodeGitHubPullRequestListJson,
@@ -79,80 +80,32 @@ export class GitHubCliCommandError extends Schema.TaggedErrorClass<GitHubCliComm
   }
 }
 
-export class GitHubAccountSettingsUnavailableError extends Schema.TaggedErrorClass<GitHubAccountSettingsUnavailableError>()(
-  "GitHubAccountSettingsUnavailableError",
+export class GitHubCredentialError extends Schema.TaggedErrorClass<GitHubCredentialError>()(
+  "GitHubCredentialError",
   {
     command: Schema.Literal("gh"),
     cwd: Schema.String,
     host: Schema.String,
-    cause: Schema.Defect(),
+    reason: GitHubCredentials.GitHubCredentialReason,
   },
 ) {
   get detail(): string {
-    return `GitHub account settings could not be loaded for ${this.host}.`;
+    switch (this.reason._tag) {
+      case "SettingsUnavailable":
+        return `GitHub account settings could not be loaded for ${this.host}.`;
+      case "SelectionConflict":
+        return `Repositories on ${this.host} require different GitHub accounts: ${this.reason.repositories.join(", ")}.`;
+      case "HostMismatch":
+        return `GitHub account ${this.reason.login} belongs to ${this.reason.accountHost}, not ${this.host}.`;
+      case "TokenUnavailable":
+        return this.reason.kind === "env-missing"
+          ? `GitHub token source ${this.reason.tokenSource} is unavailable for ${this.reason.login} on ${this.host}.`
+          : `GitHub CLI returned no token for ${this.reason.login} on ${this.host}.`;
+    }
   }
 
   override get message(): string {
-    return `GitHub CLI failed in accountSelection: ${this.detail}`;
-  }
-}
-
-export class GitHubAccountSelectionConflictError extends Schema.TaggedErrorClass<GitHubAccountSelectionConflictError>()(
-  "GitHubAccountSelectionConflictError",
-  {
-    command: Schema.Literal("gh"),
-    cwd: Schema.String,
-    host: Schema.String,
-    repositories: Schema.Array(Schema.String),
-  },
-) {
-  get detail(): string {
-    return `Repositories on ${this.host} require different GitHub accounts: ${this.repositories.join(", ")}.`;
-  }
-
-  override get message(): string {
-    return `GitHub CLI failed in accountSelection: ${this.detail}`;
-  }
-}
-
-export class GitHubAccountHostMismatchError extends Schema.TaggedErrorClass<GitHubAccountHostMismatchError>()(
-  "GitHubAccountHostMismatchError",
-  {
-    command: Schema.Literal("gh"),
-    cwd: Schema.String,
-    host: Schema.String,
-    accountHost: Schema.String,
-    login: Schema.String,
-  },
-) {
-  get detail(): string {
-    return `GitHub account ${this.login} belongs to ${this.accountHost}, not ${this.host}.`;
-  }
-
-  override get message(): string {
-    return `GitHub CLI failed in accountSelection: ${this.detail}`;
-  }
-}
-
-export class GitHubAccountTokenUnavailableError extends Schema.TaggedErrorClass<GitHubAccountTokenUnavailableError>()(
-  "GitHubAccountTokenUnavailableError",
-  {
-    command: Schema.Literal("gh"),
-    cwd: Schema.String,
-    host: Schema.String,
-    login: Schema.String,
-    tokenSource: Schema.String,
-    reason: Schema.Literals(["env-missing", "empty-output"]),
-  },
-) {
-  get detail(): string {
-    return this.reason === "env-missing"
-      ? `GitHub token source ${this.tokenSource} is unavailable for ${this.login} on ${this.host}.`
-      : `GitHub CLI returned no token for ${this.login} on ${this.host}.`;
-  }
-
-  override get message(): string {
-    return `GitHub CLI failed in tokenFor: ${this.detail}`;
+    return `GitHub CLI credential selection failed: ${this.detail}`;
   }
 }
 
@@ -219,10 +172,7 @@ export const GitHubCliError = Schema.Union([
   GitHubCliAuthenticationError,
   GitHubPullRequestNotFoundError,
   GitHubCliCommandError,
-  GitHubAccountSettingsUnavailableError,
-  GitHubAccountSelectionConflictError,
-  GitHubAccountHostMismatchError,
-  GitHubAccountTokenUnavailableError,
+  GitHubCredentialError,
   GitHubPullRequestListDecodeError,
   GitHubChangeRequestListDecodeError,
   GitHubPullRequestDecodeError,
@@ -279,11 +229,7 @@ export interface GitHubRepositoryCloneUrls {
   readonly sshUrl: string;
 }
 
-interface GitHubAuthTarget {
-  readonly host?: string;
-  readonly repositories?: ReadonlyArray<string>;
-  readonly repository?: string;
-}
+type GitHubAuthTarget = GitHubCredentials.GitHubCredentialTarget;
 
 const GITHUB_TOKEN_ENV_SOURCES = new Set([
   "GH_TOKEN",
@@ -292,15 +238,10 @@ const GITHUB_TOKEN_ENV_SOURCES = new Set([
   "GITHUB_ENTERPRISE_TOKEN",
 ]);
 
-function selectionKey(selection: GitHubAccountSelection): string {
-  return `${selection.host.toLowerCase()}\n${selection.login.toLowerCase()}\n${selection.tokenSource}`;
-}
-
 function definedAuthTarget(input: GitHubAuthTarget): GitHubAuthTarget {
   return {
     ...(input.host === undefined ? {} : { host: input.host }),
     ...(input.repositories === undefined ? {} : { repositories: input.repositories }),
-    ...(input.repository === undefined ? {} : { repository: input.repository }),
   };
 }
 
@@ -312,7 +253,6 @@ export class GitHubCli extends Context.Service<
       readonly args: ReadonlyArray<string>;
       readonly host?: string;
       readonly repositories?: ReadonlyArray<string>;
-      readonly repository?: string;
       readonly timeoutMs?: number;
       /** Piped to the child's stdin, for payloads that must never appear in argv. */
       readonly stdin?: string;
@@ -320,7 +260,7 @@ export class GitHubCli extends Context.Service<
     }) => Effect.Effect<VcsProcess.VcsProcessOutput, GitHubCliError>;
 
     /** Stable, non-secret identity for the credential that will serve this target. */
-    readonly getAuthScope?: (
+    readonly getBatchKey: (
       input: GitHubAuthTarget & { readonly cwd: string },
     ) => Effect.Effect<string, GitHubCliError>;
 
@@ -440,69 +380,31 @@ export const make = Effect.gen(function* () {
   const vcsProcess = yield* VcsProcess.VcsProcess;
   const settings = yield* ServerSettings.ServerSettingsService;
 
-  const accountSelection = Effect.fn("GitHubCli.accountSelection")(function* (
+  const credentialRoute = Effect.fn("GitHubCli.credentialRoute")(function* (
     input: GitHubAuthTarget & { readonly cwd: string },
-  ): Effect.fn.Return<GitHubAccountSelection | undefined, GitHubCliError> {
+  ): Effect.fn.Return<GitHubCredentials.GitHubCredentialRoute, GitHubCliError> {
     const host = (input.host ?? "github.com").toLowerCase();
     const current = yield* settings.getSettings.pipe(
       Effect.mapError(
         (cause) =>
-          new GitHubAccountSettingsUnavailableError({
+          new GitHubCredentialError({
             command: "gh",
             cwd: input.cwd,
             host,
-            cause,
+            reason: { _tag: "SettingsUnavailable", cause },
           }),
       ),
     );
-    const defaults = new Map(
-      Object.entries(current.githubDefaultAccounts).map(([accountHost, account]) => [
-        accountHost.toLowerCase(),
-        account,
-      ]),
-    );
-    const overrides = new Map(
-      Object.entries(current.githubAccountOverrides).map(([ownerKey, account]) => [
-        ownerKey.toLowerCase(),
-        account,
-      ]),
-    );
-    const defaultAccount = defaults.get(host);
-    const repositories = input.repositories ?? (input.repository ? [input.repository] : []);
-    const accounts =
-      repositories.length === 0
-        ? [defaultAccount]
-        : repositories.map((repository) => {
-            const owner = repository.trim().split("/")[0]?.toLowerCase();
-            return owner === undefined
-              ? defaultAccount
-              : (overrides.get(`${host}/${owner}`) ?? defaultAccount);
-          });
-    const byKey = new Map(
-      accounts.map((account) => [
-        account === undefined ? `active:${host}` : selectionKey(account),
-        account,
-      ]),
-    );
-    if (byKey.size > 1) {
-      return yield* new GitHubAccountSelectionConflictError({
+    const selected = GitHubCredentials.selectCredentialRoute(current, input);
+    if (Result.isFailure(selected)) {
+      return yield* new GitHubCredentialError({
         command: "gh",
         cwd: input.cwd,
         host,
-        repositories,
+        reason: selected.failure,
       });
     }
-    const account = byKey.values().next().value;
-    if (account !== undefined && account.host.toLowerCase() !== host) {
-      return yield* new GitHubAccountHostMismatchError({
-        command: "gh",
-        cwd: input.cwd,
-        host,
-        accountHost: account.host,
-        login: account.login,
-      });
-    }
-    return account;
+    return selected.success;
   });
 
   const tokenFor = Effect.fn("GitHubCli.tokenFor")(function* (input: {
@@ -512,13 +414,16 @@ export const make = Effect.gen(function* () {
     if (GITHUB_TOKEN_ENV_SOURCES.has(input.account.tokenSource)) {
       const token = process.env[input.account.tokenSource]?.trim();
       if (token !== undefined && token.length > 0) return token;
-      return yield* new GitHubAccountTokenUnavailableError({
+      return yield* new GitHubCredentialError({
         command: "gh",
         cwd: input.cwd,
         host: input.account.host,
-        login: input.account.login,
-        tokenSource: input.account.tokenSource,
-        reason: "env-missing",
+        reason: {
+          _tag: "TokenUnavailable",
+          login: input.account.login,
+          tokenSource: input.account.tokenSource,
+          kind: "env-missing",
+        },
       });
     }
 
@@ -533,13 +438,16 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
     const token = output.stdout.trim();
     if (token.length === 0) {
-      return yield* new GitHubAccountTokenUnavailableError({
+      return yield* new GitHubCredentialError({
         command: "gh",
         cwd: input.cwd,
         host: input.account.host,
-        login: input.account.login,
-        tokenSource: input.account.tokenSource,
-        reason: "empty-output",
+        reason: {
+          _tag: "TokenUnavailable",
+          login: input.account.login,
+          tokenSource: input.account.tokenSource,
+          kind: "empty-output",
+        },
       });
     }
     return token;
@@ -561,27 +469,21 @@ export const make = Effect.gen(function* () {
 
   const execute: GitHubCli["Service"]["execute"] = Effect.fn("GitHubCli.execute")(
     function* (input) {
-      const account = yield* accountSelection(input);
-      if (account === undefined) return yield* run(input);
+      const route = yield* credentialRoute(input);
+      if (route.account === undefined) return yield* run(input);
 
-      const host = (input.host ?? "github.com").toLowerCase();
-      const token = yield* tokenFor({ account, cwd: input.cwd });
+      const token = yield* tokenFor({ account: route.account, cwd: input.cwd });
       const tokenVariable =
-        host === "github.com" || host.endsWith(".ghe.com") ? "GH_TOKEN" : "GH_ENTERPRISE_TOKEN";
+        route.host === "github.com" || route.host.endsWith(".ghe.com")
+          ? "GH_TOKEN"
+          : "GH_ENTERPRISE_TOKEN";
       return yield* run(input, { [tokenVariable]: token });
     },
   );
 
   return GitHubCli.of({
     execute,
-    getAuthScope: (input) =>
-      accountSelection(input).pipe(
-        Effect.map((account) =>
-          account === undefined
-            ? `active:${(input.host ?? "github.com").toLowerCase()}`
-            : selectionKey(account),
-        ),
-      ),
+    getBatchKey: (input) => credentialRoute(input).pipe(Effect.map((route) => route.key)),
     listOpenPullRequests: (input) =>
       execute({
         cwd: input.cwd,
@@ -659,6 +561,7 @@ export const make = Effect.gen(function* () {
       execute({
         cwd: input.cwd,
         ...definedAuthTarget(input),
+        repositories: [input.repository],
         args: ["repo", "view", input.repository, "--json", "nameWithOwner,url,sshUrl"],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
@@ -680,6 +583,7 @@ export const make = Effect.gen(function* () {
       execute({
         cwd: input.cwd,
         ...definedAuthTarget(input),
+        repositories: [input.repository],
         args: ["repo", "create", input.repository, `--${input.visibility}`],
       }).pipe(
         Effect.map((result) =>

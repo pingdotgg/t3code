@@ -211,10 +211,10 @@ it.effect("drops transport ports from GitHub Enterprise auth targets", () =>
     }
 
     assert.deepStrictEqual(
-      listInputs.map(({ host, repository }) => ({ host, repository })),
+      listInputs.map(({ host, repositories }) => ({ host, repositories })),
       [
-        { host: "github.example", repository: "owner/repo" },
-        { host: "github.example", repository: "owner/repo" },
+        { host: "github.example", repositories: ["owner/repo"] },
+        { host: "github.example", repositories: ["owner/repo"] },
       ],
     );
   }),

@@ -474,11 +474,11 @@ export const make = Effect.gen(function* () {
     return Effect.succeed(decoded);
   };
 
-  /** One viewer lookup per credential scope, which may differ by repository on the same host. */
+  /** One viewer lookup per provider batch key, which may differ by repository on the same host. */
   type ResolvedViewer = {
     readonly host: string;
     readonly kind: SourceControlProviderKind;
-    readonly scope: string;
+    readonly batchKey: string;
     readonly projects: ReadonlyArray<SupportedProject>;
     readonly viewer: string | null;
     readonly error: PullRequestProviderError | null;
@@ -488,7 +488,7 @@ export const make = Effect.gen(function* () {
   // per read, three reads per page. Only a success is believed for a while: a failure is the
   // "is this host set up" answer the provider switcher shows, and holding it would keep saying
   // signed-out after the reader has signed in.
-  const viewersByScope = new Map<
+  const viewersByBatchKey = new Map<
     string,
     { readonly at: number; readonly result: Omit<ResolvedViewer, "projects"> }
   >();
@@ -498,11 +498,11 @@ export const make = Effect.gen(function* () {
     viewerRoots: WorkspaceProjects["viewerRoots"],
   ) =>
     Effect.gen(function* () {
-      const scoped = yield* Effect.forEach(
+      const keyed = yield* Effect.forEach(
         projects,
         (project) =>
           (
-            project.api.getAuthScope?.({
+            project.api.getBatchKey?.({
               cwd: project.project.workspaceRoot,
               host: project.host,
               repository: project.repository,
@@ -511,10 +511,10 @@ export const make = Effect.gen(function* () {
             Effect.match({
               onFailure: (error) => ({
                 project,
-                scope: `unavailable:${listCursorKey(project.host, project.repository)}`,
+                batchKey: `unavailable:${listCursorKey(project.host, project.repository)}`,
                 error,
               }),
-              onSuccess: (scope) => ({ project, scope, error: null }),
+              onSuccess: (batchKey) => ({ project, batchKey, error: null }),
             }),
           ),
         { concurrency: REPOSITORY_CONCURRENCY },
@@ -522,17 +522,17 @@ export const make = Effect.gen(function* () {
       const groups = new Map<
         string,
         {
-          scope: string;
+          batchKey: string;
           projects: SupportedProject[];
           error: PullRequestProviderError | null;
         }
       >();
-      for (const entry of scoped) {
-        const key = `${entry.project.host}\n${entry.scope}`;
+      for (const entry of keyed) {
+        const key = `${entry.project.host}\n${entry.batchKey}`;
         const held = groups.get(key);
         if (held === undefined) {
           groups.set(key, {
-            scope: entry.scope,
+            batchKey: entry.batchKey,
             projects: [entry.project],
             error: entry.error,
           });
@@ -543,7 +543,7 @@ export const make = Effect.gen(function* () {
         [...groups.entries()],
         ([cacheKey, group]) =>
           Effect.flatMap(Clock.currentTimeMillis, (now): Effect.Effect<ResolvedViewer> => {
-            const held = viewersByScope.get(cacheKey);
+            const held = viewersByBatchKey.get(cacheKey);
             if (held !== undefined && now - held.at <= Duration.toMillis(VIEWER_CACHE_TTL)) {
               return Effect.succeed({ ...held.result, projects: group.projects });
             }
@@ -553,7 +553,7 @@ export const make = Effect.gen(function* () {
               return Effect.succeed({
                 host: first.host,
                 kind: api.kind,
-                scope: group.scope,
+                batchKey: group.batchKey,
                 projects: group.projects,
                 viewer: null,
                 error: group.error,
@@ -577,7 +577,7 @@ export const make = Effect.gen(function* () {
               Effect.map((viewer) => ({
                 host: first.host,
                 kind: api.kind,
-                scope: group.scope,
+                batchKey: group.batchKey,
                 projects: group.projects,
                 viewer: viewer as string | null,
                 error: null as PullRequestProviderError | null,
@@ -585,14 +585,14 @@ export const make = Effect.gen(function* () {
               Effect.tap((result) =>
                 Effect.map(Clock.currentTimeMillis, (at) => {
                   const { projects: _projects, ...cached } = result;
-                  viewersByScope.set(cacheKey, { at, result: cached });
+                  viewersByBatchKey.set(cacheKey, { at, result: cached });
                 }),
               ),
               Effect.catch((error) =>
                 Effect.succeed({
                   host: first.host,
                   kind: api.kind,
-                  scope: group.scope,
+                  batchKey: group.batchKey,
                   projects: group.projects,
                   viewer: null,
                   error,
@@ -655,17 +655,17 @@ export const make = Effect.gen(function* () {
 
       const viewerResults = yield* resolveViewers(projects, viewerRoots);
       const viewers: Record<string, string> = {};
-      const scopes = new Map<string, string>();
-      const viewerScopeCounts = new Map<string, number>();
+      const batchKeys = new Map<string, string>();
+      const viewerBatchCounts = new Map<string, number>();
       for (const result of viewerResults) {
-        viewerScopeCounts.set(result.host, (viewerScopeCounts.get(result.host) ?? 0) + 1);
+        viewerBatchCounts.set(result.host, (viewerBatchCounts.get(result.host) ?? 0) + 1);
       }
       for (const result of viewerResults) {
-        const hostHasMultipleScopes = (viewerScopeCounts.get(result.host) ?? 0) > 1;
+        const hostHasMultipleBatches = (viewerBatchCounts.get(result.host) ?? 0) > 1;
         for (const project of result.projects) {
           const key = listCursorKey(project.host, project.repository);
-          scopes.set(key, result.scope);
-          if (result.viewer !== null && hostHasMultipleScopes) viewers[key] = result.viewer;
+          batchKeys.set(key, result.batchKey);
+          if (result.viewer !== null && hostHasMultipleBatches) viewers[key] = result.viewer;
         }
         if (result.viewer !== null && viewers[result.host] === undefined) {
           viewers[result.host] = result.viewer;
@@ -673,7 +673,7 @@ export const make = Effect.gen(function* () {
       }
 
       const viewerOf = (project: SupportedProject): string | undefined =>
-        (viewerScopeCounts.get(project.host) ?? 0) > 1
+        (viewerBatchCounts.get(project.host) ?? 0) > 1
           ? viewers[listCursorKey(project.host, project.repository)]
           : viewers[project.host];
 
@@ -930,7 +930,7 @@ export const make = Effect.gen(function* () {
           separate.push(project);
           continue;
         }
-        const key = `${project.host}\n${scopes.get(listCursorKey(project.host, project.repository)) ?? ""}\n${cursorOf(project)?.updatedBefore ?? ""}`;
+        const key = `${project.host}\n${batchKeys.get(listCursorKey(project.host, project.repository)) ?? ""}\n${cursorOf(project)?.updatedBefore ?? ""}`;
         const group = together.get(key);
         if (group === undefined) together.set(key, [project]);
         else group.push(project);
@@ -1429,32 +1429,32 @@ export const make = Effect.gen(function* () {
         }
         wanted.set(`${project.project.id} ${ref.number}`, { project, number: ref.number });
       }
-      const scoped = yield* Effect.forEach(
+      const keyed = yield* Effect.forEach(
         [...wanted.values()],
         (entry) =>
           (
-            entry.project.api.getAuthScope?.({
+            entry.project.api.getBatchKey?.({
               cwd: entry.project.project.workspaceRoot,
               host: entry.project.host,
               repository: entry.project.repository,
             }) ?? Effect.succeed(`host:${entry.project.host}`)
           ).pipe(
-            Effect.map((scope) => ({ ...entry, scope })),
+            Effect.map((batchKey) => ({ ...entry, batchKey })),
             Effect.orElseSucceed(() => null),
           ),
         { concurrency: REPOSITORY_CONCURRENCY },
       );
-      type ScopedStat = Exclude<(typeof scoped)[number], null>;
-      const byScope = new Map<string, Array<ScopedStat>>();
-      for (const entry of scoped) {
+      type BatchedStat = Exclude<(typeof keyed)[number], null>;
+      const byBatchKey = new Map<string, Array<BatchedStat>>();
+      for (const entry of keyed) {
         if (entry === null) continue;
-        const key = `${entry.project.host}\n${entry.scope}`;
-        const held = byScope.get(key);
-        if (held === undefined) byScope.set(key, [entry]);
+        const key = `${entry.project.host}\n${entry.batchKey}`;
+        const held = byBatchKey.get(key);
+        if (held === undefined) byBatchKey.set(key, [entry]);
         else held.push(entry);
       }
       const stats = yield* Effect.forEach(
-        [...byScope.values()],
+        [...byBatchKey.values()],
         (entries) => {
           const first = entries[0]!;
           const readStats = first.project.api.listChangeRequestStats;
@@ -1736,7 +1736,7 @@ export const make = Effect.gen(function* () {
         listingsEpoch = ++epochCounter;
         // A whole-workspace refresh is the reader asking to be re-answered from the hosts,
         // and that includes who the hosts say they are.
-        viewersByScope.clear();
+        viewersByBatchKey.clear();
         return;
       }
       bumpRefEpoch(input.reference);

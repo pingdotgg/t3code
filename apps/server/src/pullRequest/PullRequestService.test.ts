@@ -1060,7 +1060,7 @@ it.effect("keeps owner-specific accounts separate on the same GitHub host", () =
       ],
       providers: [
         fakeProvider("github", {
-          getAuthScope: (input) => Effect.succeed(input.repository.split("/")[0]!),
+          getBatchKey: (input) => Effect.succeed(input.repository.split("/")[0]!),
           getViewer: (input) =>
             Effect.succeed(input.repository.startsWith("acme/") ? "work-user" : "bilal"),
           listChangeRequests: (input) => {

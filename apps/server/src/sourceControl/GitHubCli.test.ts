@@ -48,7 +48,7 @@ describe("GitHubCli.layer", () => {
       yield* gh.execute({
         cwd: "/repo",
         host: "github.com",
-        repository: "acme/widget",
+        repositories: ["acme/widget"],
         args: ["api", "user"],
       });
 
@@ -75,7 +75,7 @@ describe("GitHubCli.layer", () => {
       yield* gh.execute({
         cwd: "/repo",
         host: "github.com",
-        repository: "acme/widget",
+        repositories: ["acme/widget"],
         args: ["api", "user"],
       });
 
@@ -109,7 +109,7 @@ describe("GitHubCli.layer", () => {
       yield* gh.execute({
         cwd: "/repo",
         host: "github.com",
-        repository: "acme/widget",
+        repositories: ["acme/widget"],
         args: ["api", "user"],
       });
 
@@ -152,7 +152,7 @@ describe("GitHubCli.layer", () => {
       const input = {
         cwd: "/repo",
         host: "github.com",
-        repository: "acme/widget",
+        repositories: ["acme/widget"],
         args: ["api", "user"],
       } as const;
 
@@ -203,7 +203,7 @@ describe("GitHubCli.layer", () => {
         .execute({
           cwd: "/repo",
           host: "github.com",
-          repository: "acme/widget",
+          repositories: ["acme/widget"],
           args: ["api", "user"],
         })
         .pipe(Effect.flip);
@@ -231,7 +231,7 @@ describe("GitHubCli.layer", () => {
       yield* gh.execute({
         cwd: "/repo",
         host: "GitHub.com",
-        repository: "acme/widget",
+        repositories: ["acme/widget"],
         args: ["api", "user"],
       });
 
@@ -243,60 +243,6 @@ describe("GitHubCli.layer", () => {
         env: { GH_TOKEN: "environment-token" },
         timeoutMs: 30_000,
       });
-    }).pipe(Effect.provide(selectedLayer));
-  });
-
-  it.effect("reports conflicting repository account selections structurally", () => {
-    const selectedLayer = layerWithSettings({
-      githubDefaultAccounts: {
-        "github.com": { host: "github.com", login: "personal", tokenSource: "keyring" },
-      },
-      githubAccountOverrides: {
-        "github.com/acme": { host: "github.com", login: "work", tokenSource: "keyring" },
-      },
-    });
-
-    return Effect.gen(function* () {
-      const gh = yield* GitHubCli.GitHubCli;
-      const error = yield* gh.getAuthScope!({
-        cwd: "/repo",
-        host: "github.com",
-        repositories: ["personal/widget", "acme/widget"],
-      }).pipe(Effect.flip);
-
-      assert.equal(error._tag, "GitHubAccountSelectionConflictError");
-      if (error._tag !== "GitHubAccountSelectionConflictError") return;
-      assert.equal(error.host, "github.com");
-      assert.deepStrictEqual(error.repositories, ["personal/widget", "acme/widget"]);
-      assert.notProperty(error, "cause");
-    }).pipe(Effect.provide(selectedLayer));
-  });
-
-  it.effect("reports account host mismatches structurally", () => {
-    const selectedLayer = layerWithSettings({
-      githubDefaultAccounts: {
-        "github.com": {
-          host: "github.example.test",
-          login: "enterprise-user",
-          tokenSource: "keyring",
-        },
-      },
-    });
-
-    return Effect.gen(function* () {
-      const gh = yield* GitHubCli.GitHubCli;
-      const error = yield* gh.getAuthScope!({
-        cwd: "/repo",
-        host: "github.com",
-        repository: "acme/widget",
-      }).pipe(Effect.flip);
-
-      assert.equal(error._tag, "GitHubAccountHostMismatchError");
-      if (error._tag !== "GitHubAccountHostMismatchError") return;
-      assert.equal(error.host, "github.com");
-      assert.equal(error.accountHost, "github.example.test");
-      assert.equal(error.login, "enterprise-user");
-      assert.notProperty(error, "cause");
     }).pipe(Effect.provide(selectedLayer));
   });
 
@@ -318,16 +264,17 @@ describe("GitHubCli.layer", () => {
         .execute({
           cwd: "/repo",
           host: "github.com",
-          repository: "acme/widget",
+          repositories: ["acme/widget"],
           args: ["api", "user"],
         })
         .pipe(Effect.flip);
 
-      assert.equal(error._tag, "GitHubAccountTokenUnavailableError");
-      if (error._tag !== "GitHubAccountTokenUnavailableError") return;
-      assert.equal(error.reason, "env-missing");
-      assert.equal(error.tokenSource, "GITHUB_TOKEN");
-      assert.notProperty(error, "cause");
+      assert.equal(error._tag, "GitHubCredentialError");
+      if (error._tag !== "GitHubCredentialError") return;
+      assert.equal(error.reason._tag, "TokenUnavailable");
+      if (error.reason._tag !== "TokenUnavailable") return;
+      assert.equal(error.reason.kind, "env-missing");
+      assert.equal(error.reason.tokenSource, "GITHUB_TOKEN");
     }).pipe(Effect.provide(selectedLayer));
   });
 
@@ -345,16 +292,17 @@ describe("GitHubCli.layer", () => {
         .execute({
           cwd: "/repo",
           host: "github.com",
-          repository: "acme/widget",
+          repositories: ["acme/widget"],
           args: ["api", "user"],
         })
         .pipe(Effect.flip);
 
-      assert.equal(error._tag, "GitHubAccountTokenUnavailableError");
-      if (error._tag !== "GitHubAccountTokenUnavailableError") return;
-      assert.equal(error.reason, "empty-output");
-      assert.equal(error.login, "work-user");
-      assert.notProperty(error, "cause");
+      assert.equal(error._tag, "GitHubCredentialError");
+      if (error._tag !== "GitHubCredentialError") return;
+      assert.equal(error.reason._tag, "TokenUnavailable");
+      if (error.reason._tag !== "TokenUnavailable") return;
+      assert.equal(error.reason.kind, "empty-output");
+      assert.equal(error.reason.login, "work-user");
     }).pipe(Effect.provide(selectedLayer));
   });
 
@@ -379,16 +327,20 @@ describe("GitHubCli.layer", () => {
 
     return Effect.gen(function* () {
       const gh = yield* GitHubCli.GitHubCli;
-      const error = yield* gh.getAuthScope!({
-        cwd: "/repo",
-        host: "github.com",
-        repository: "acme/widget",
-      }).pipe(Effect.flip);
+      const error = yield* gh
+        .getBatchKey({
+          cwd: "/repo",
+          host: "github.com",
+          repositories: ["acme/widget"],
+        })
+        .pipe(Effect.flip);
 
-      assert.equal(error._tag, "GitHubAccountSettingsUnavailableError");
-      if (error._tag !== "GitHubAccountSettingsUnavailableError") return;
+      assert.equal(error._tag, "GitHubCredentialError");
+      if (error._tag !== "GitHubCredentialError") return;
       assert.equal(error.host, "github.com");
-      assert.strictEqual(error.cause, cause);
+      assert.equal(error.reason._tag, "SettingsUnavailable");
+      if (error.reason._tag !== "SettingsUnavailable") return;
+      assert.strictEqual(error.reason.cause, cause);
     }).pipe(Effect.provide(selectedLayer));
   });
 

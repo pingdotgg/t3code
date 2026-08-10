@@ -24,7 +24,7 @@ import {
 function authTarget(context: SourceControlProvider.SourceControlProviderContext | undefined) {
   if (context === undefined) return {};
   const [host, ...path] = normalizeGitRemoteUrl(context.remoteUrl).split("/");
-  return host && path.length >= 2 ? { host, repository: path.join("/") } : {};
+  return host && path.length >= 2 ? { host, repositories: [path.join("/")] } : {};
 }
 
 function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeRequest {

@@ -69,7 +69,7 @@ function reasonFor(
   if (error._tag === "GitHubCliUnavailableError") return "missing-tool";
   if (
     error._tag === "GitHubCliAuthenticationError" ||
-    error._tag === "GitHubAccountTokenUnavailableError"
+    (error._tag === "GitHubCredentialError" && error.reason._tag === "TokenUnavailable")
   )
     return "unauthenticated";
   return "failed";
@@ -118,7 +118,7 @@ export const make = Effect.gen(function* () {
     kind: "github",
     capabilities: CAPABILITIES,
 
-    getAuthScope: (input) => cli.getAuthScope(input).pipe(Effect.mapError(fail("getAuthScope"))),
+    getBatchKey: (input) => cli.getBatchKey(input).pipe(Effect.mapError(fail("getBatchKey"))),
 
     getViewer: (input) =>
       cli

@@ -493,6 +493,8 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
   return {
     service: {
       execute,
+      getBatchKey: (input) =>
+        Effect.succeed(`active:${(input.host ?? "github.com").toLowerCase()}`),
       listOpenPullRequests: (input) =>
         execute({
           cwd: input.cwd,

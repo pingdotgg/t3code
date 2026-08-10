@@ -200,8 +200,8 @@ export interface PullRequestProviderApi {
     readonly repository: string;
   }) => Effect.Effect<string, PullRequestProviderError>;
 
-  /** Credential identity used to keep same-host repository batches account-safe. */
-  readonly getAuthScope?: (
+  /** Opaque identity used to keep only compatible repositories in the same provider batch. */
+  readonly getBatchKey?: (
     input: ProviderRepositoryRef,
   ) => Effect.Effect<string, PullRequestProviderError>;
 
