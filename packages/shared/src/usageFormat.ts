@@ -34,6 +34,24 @@ export function formatUsd(value: number): string {
   return formatCurrency(value, "USD");
 }
 
+/**
+ * Fraction digits for compact currency so sub-unit amounts stay distinct.
+ *
+ * A fixed `maximumFractionDigits: 1` rounds every cent-scale tick to `$0`, so a
+ * chart with peak `$0.04` labels `$0.01`–`$0.04` identically. Once the value is
+ * at least 1 major unit, one digit is enough for compact suffixes (`$1.2K`).
+ * For currencies without minor units, keep whole amounts below the compact
+ * threshold but allow a fractional scaled significand (`¥1.5K`).
+ */
+function compactCurrencyFractionDigits(value: number, currency: string): number {
+  const currencyFractionDigits =
+    getCurrencyFormatter(currency).resolvedOptions().maximumFractionDigits ?? 2;
+  const abs = Math.abs(value);
+  if (currencyFractionDigits === 0) return abs >= 1_000 ? 1 : 0;
+  if (!(abs > 0) || abs >= 1) return 1;
+  return Math.min(6, Math.max(currencyFractionDigits, Math.ceil(-Math.log10(abs) - 1e-12)));
+}
+
 /** Short chart-axis form (`$1.2K`, `BIF 2M`) so wide currencies stay readable. */
 export function formatCurrencyCompact(value: number, currency = "USD"): string {
   const maximumFractionDigits = compactCurrencyFractionDigits(value, currency);

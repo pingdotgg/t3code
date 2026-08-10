@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatCurrencyCompact } from "../../usage/usageFormat";
+import { formatCurrencyCompact } from "@t3tools/shared/usageFormat";
 import { buildDayColumns, niceScale } from "./UsageProviderChart";
 
 describe("niceScale", () => {
