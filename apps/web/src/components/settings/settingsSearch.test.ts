@@ -1,18 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  DEFAULT_SETTINGS_PATH,
   searchableSetting,
   searchSettings,
   SETTINGS_SEARCH_ITEMS,
   type SettingsSearchItem,
 } from "./settingsSearch";
-
-describe("settings entry route", () => {
-  it("opens the concrete default section without passing through the redirect-only route", () => {
-    expect(DEFAULT_SETTINGS_PATH).toBe("/settings/general");
-  });
-});
 
 const ITEMS: ReadonlyArray<SettingsSearchItem> = [
   {

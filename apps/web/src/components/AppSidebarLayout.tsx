@@ -18,7 +18,6 @@ import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../ho
 import LegacyThreadSidebar from "./LegacySidebar";
 import ThreadSidebar from "./Sidebar";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
-import { DEFAULT_SETTINGS_PATH } from "./settings/settingsSearch";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
 import { useProjects } from "../state/entities";
@@ -182,7 +181,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       if (action === "open-settings") {
         const isSettingsRoute = /^\/settings(\/|$)/.test(pathname);
         if (!isSettingsRoute) {
-          void navigate({ to: DEFAULT_SETTINGS_PATH });
+          void navigate({ to: "/settings" });
         }
       }
     });
