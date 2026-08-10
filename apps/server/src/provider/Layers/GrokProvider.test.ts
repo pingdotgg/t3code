@@ -81,14 +81,20 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
     }),
   );
 
-  it.effect("reports an error when ACP model discovery is unavailable", () =>
+  it.effect("keeps discovered skills when ACP model discovery is unavailable", () =>
     Effect.gen(function* () {
       const snapshot = yield* Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-success-" });
+          const skillPath = path.join(dir, ".grok", "skills", "review", "SKILL.md");
           const grokPath = path.join(dir, "grok");
+          yield* fs.makeDirectory(path.dirname(skillPath), { recursive: true });
+          yield* fs.writeFileString(
+            skillPath,
+            ["---", "name: review", "description: Review the change.", "---"].join("\n"),
+          );
           yield* fs.writeFileString(
             grokPath,
             ["#!/bin/sh", 'printf "grok-cli 0.0.99\\n"', "exit 0", ""].join("\n"),
@@ -97,6 +103,8 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
           return yield* checkGrokProviderStatus(
             decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            process.env,
+            dir,
           );
         }),
       );
@@ -105,6 +113,13 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       expect(snapshot.installed).toBe(true);
       expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-build"]);
       expect(snapshot.message).toContain("ACP startup failed");
+      expect(snapshot.skills.find((skill) => skill.name === "review")).toEqual({
+        name: "review",
+        description: "Review the change.",
+        path: expect.stringContaining("/.grok/skills/review/SKILL.md"),
+        scope: "project",
+        enabled: true,
+      });
     }),
   );
 });
