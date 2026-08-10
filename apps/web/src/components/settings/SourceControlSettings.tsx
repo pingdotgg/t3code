@@ -453,15 +453,6 @@ function githubAccountSelection(account: GitHubAuthAccount): GitHubAccountSelect
   };
 }
 
-function hasMultipleGitHubAccountsOnHost(accounts: ReadonlyArray<GitHubAuthAccount>): boolean {
-  return accounts.some(
-    (account, index) =>
-      accounts.findIndex(
-        (candidate) => candidate.host.toLowerCase() === account.host.toLowerCase(),
-      ) !== index,
-  );
-}
-
 function GitHubAccountSelect({
   accounts,
   value,
@@ -529,8 +520,31 @@ function GitHubAccountSettings({
   const [accountKey, setAccountKey] = useState(
     initialAccount === undefined ? "" : githubAccountKey(initialAccount),
   );
+  const hasSavedRouting =
+    Object.keys(settings.githubDefaultAccounts).length > 0 ||
+    Object.keys(settings.githubAccountOverrides).length > 0;
 
-  if (selectableAccounts.length === 0) return null;
+  if (selectableAccounts.length === 0) {
+    if (!hasSavedRouting) return null;
+    return (
+      <div className="flex flex-col gap-3 border-t border-border/60 pt-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-xs font-medium text-foreground">Saved account routing</div>
+          <div className="text-xs text-muted-foreground">
+            Multiple signed-in accounts are no longer available. Clear saved routing to use the
+            active GitHub account.
+          </div>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => updateSettings({ githubDefaultAccounts: {}, githubAccountOverrides: {} })}
+        >
+          Clear saved routing
+        </Button>
+      </div>
+    );
+  }
   const normalizedOwner = owner.trim().replace(/^\/+|\/+$/g, "");
   const overrideAccount =
     selectableAccounts.find((entry) => githubAccountKey(entry) === accountKey) ??
@@ -800,8 +814,7 @@ export function SourceControlSettingsPanel() {
             >
               {result.sourceControlProviders.map((item) => (
                 <DiscoveryItemRow key={`provider:${item.kind}`} item={item}>
-                  {item.kind === "github" &&
-                  hasMultipleGitHubAccountsOnHost(item.auth.githubAccounts ?? []) ? (
+                  {item.kind === "github" ? (
                     <GitHubAccountSettings accounts={item.auth.githubAccounts ?? []} />
                   ) : undefined}
                 </DiscoveryItemRow>
