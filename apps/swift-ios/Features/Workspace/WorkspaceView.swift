@@ -809,6 +809,45 @@ struct HomeThreadRowContext: Equatable {
     }
 }
 
+struct HomeThreadPullRequestPresentation: Equatable {
+    let number: Int
+    let state: String
+    let destination: URL
+
+    var shortLabel: String { "#\(number)" }
+    var accessibilityLabel: String { "Pull request \(number), \(state)" }
+    var accessibilityActionName: String { "Open pull request \(number), \(state)" }
+    func accessibilityValue(appending baseValue: String) -> String {
+        "\(baseValue). \(accessibilityLabel)."
+    }
+
+    init?(
+        thread: FeatureThread,
+        status: FeatureSourceControlStatus
+    ) {
+        guard let threadBranch = Self.normalizedBranch(thread.branch),
+              let statusBranch = Self.normalizedBranch(status.branch),
+              threadBranch == statusBranch,
+              let pullRequest = status.pullRequest,
+              pullRequest.number > 0,
+              let destination = pullRequest.safeExternalURL else {
+            return nil
+        }
+        let normalizedState = pullRequest.state.trimmingCharacters(in: .whitespacesAndNewlines)
+        number = pullRequest.number
+        state = normalizedState.isEmpty ? "unknown state" : normalizedState
+        self.destination = destination
+    }
+
+    private static func normalizedBranch(_ branch: String?) -> String? {
+        guard let branch = branch?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !branch.isEmpty else {
+            return nil
+        }
+        return branch
+    }
+}
+
 struct FeatureThreadRow: View {
     enum Style: Equatable {
         case rich
@@ -822,6 +861,7 @@ struct FeatureThreadRow: View {
     let style: Style
     let now: Date
     let allowsMultilineTitle: Bool
+    let pullRequest: HomeThreadPullRequestPresentation?
 
     init(
         thread: FeatureThread,
@@ -830,7 +870,8 @@ struct FeatureThreadRow: View {
         isSelected: Bool = false,
         style: Style = .rich,
         now: Date = .now,
-        allowsMultilineTitle: Bool = false
+        allowsMultilineTitle: Bool = false,
+        pullRequest: HomeThreadPullRequestPresentation? = nil
     ) {
         self.thread = thread
         self.context = context
@@ -839,6 +880,7 @@ struct FeatureThreadRow: View {
         self.style = style
         self.now = now
         self.allowsMultilineTitle = allowsMultilineTitle
+        self.pullRequest = pullRequest
     }
 
     var body: some View {
@@ -893,6 +935,7 @@ struct FeatureThreadRow: View {
                         .foregroundStyle(T3Colors.syntaxProperty)
                 }
                 Spacer(minLength: 8)
+                pullRequestLink
                 if let environmentLabel {
                     HStack(spacing: 4) {
                         Image(systemName: environmentIcon)
@@ -934,6 +977,7 @@ struct FeatureThreadRow: View {
                 .foregroundStyle(T3Colors.textSecondary)
                 .lineLimit(allowsMultilineTitle ? 2 : 1)
             Spacer(minLength: 8)
+            pullRequestLink
             if thread.pinnedAt != nil {
                 Image(systemName: "pin.fill")
                     .font(.system(size: 9, weight: .semibold))
@@ -951,6 +995,35 @@ struct FeatureThreadRow: View {
             isSelected ? T3Colors.subtleStrong : Color.clear,
             in: RoundedRectangle(cornerRadius: 7)
         )
+    }
+
+    @ViewBuilder
+    private var pullRequestLink: some View {
+        if let pullRequest {
+            Link(destination: pullRequest.destination) {
+                HStack(spacing: 3) {
+                    Text(pullRequest.shortLabel)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 8, weight: .bold))
+                }
+                .font(T3Typography.homeMetadata.weight(.semibold))
+                .foregroundStyle(T3Colors.accent)
+                .contentShape(Rectangle())
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 15)
+            .contentShape(Rectangle())
+            .padding(.horizontal, -7)
+            .padding(.vertical, -15)
+            .buttonStyle(.plain)
+            .layoutPriority(1)
+            .accessibilityLabel(pullRequest.accessibilityLabel)
+            .accessibilityHint("Opens pull request in the browser")
+            .accessibilityIdentifier("thread-\(thread.id)-pull-request")
+        }
     }
 
     @ViewBuilder

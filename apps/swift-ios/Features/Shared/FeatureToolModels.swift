@@ -825,6 +825,19 @@ public struct FeaturePullRequest: Sendable, Equatable, Hashable, Codable {
         self.state = state
         self.url = url
     }
+
+    /// Only hand credential-free web destinations to the system browser.
+    public var safeExternalURL: URL? {
+        guard let url,
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              url.host?.isEmpty == false,
+              url.user == nil,
+              url.password == nil else {
+            return nil
+        }
+        return url
+    }
 }
 
 public enum FeatureSourceControlAction: String, CaseIterable, Sendable, Codable {

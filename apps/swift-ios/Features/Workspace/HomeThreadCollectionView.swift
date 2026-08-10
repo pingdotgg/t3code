@@ -59,6 +59,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
 
     static func dismantleUIView(_ collectionView: UICollectionView, coordinator: Coordinator) {
         coordinator.invalidateTimer()
+        coordinator.invalidatePullRequestLookups()
         collectionView.delegate = nil
     }
 
@@ -77,6 +78,12 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         private var timer: Timer?
         private var timerTick = 0
         private var timerInterval: TimeInterval = 0
+        private var pullRequestResolutions: [
+            HomeThreadPullRequestLookupKey: HomeThreadPullRequestResolution
+        ] = [:]
+        private var pullRequestTasks: [
+            HomeThreadPullRequestLookupKey: (token: UUID, task: Task<Void, Never>)
+        ] = [:]
 
         init(parent: HomeThreadCollectionView) {
             self.parent = parent
@@ -117,6 +124,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 seenIdentifiers.insert(item.id).inserted
             }
             itemsByID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+            prunePullRequestLookups(to: Set(items.compactMap(\.pullRequestLookupKey)))
             // After items land: picks 1 Hz when a working thread is present,
             // 60s otherwise, and is a no-op when the interval is unchanged.
             startTimer()
@@ -149,6 +157,12 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         func invalidateTimer() {
             timer?.invalidate()
             timer = nil
+        }
+
+        func invalidatePullRequestLookups() {
+            pullRequestTasks.values.forEach { $0.task.cancel() }
+            pullRequestTasks.removeAll()
+            pullRequestResolutions.removeAll()
         }
 
         func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
@@ -250,12 +264,21 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             now: Date
         ) {
             guard let item = itemsByID[identifier] else { return }
+            let pullRequest: HomeThreadPullRequestPresentation?
+            if case let .thread(thread, _, _, _, _) = item {
+                loadPullRequestIfNeeded(for: thread)
+                pullRequest = HomeThreadPullRequestLookupKey(thread: thread)
+                    .flatMap { pullRequestResolutions[$0]?.presentation }
+            } else {
+                pullRequest = nil
+            }
             cell.contentConfiguration = UIHostingConfiguration {
                 HomeCollectionCellContent(
                     item: item,
                     projectFaviconClient: parent.projectFaviconClient,
                     isSelected: identifier.threadID == selectedThreadID,
-                    now: now
+                    now: now,
+                    pullRequest: pullRequest
                 )
             }
             .margins(.all, 0)
@@ -268,6 +291,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         }
 
         private func configureAccessibility(_ cell: HomeCollectionCell, item: HomeCollectionItem) {
+            cell.accessibilityCustomActions = nil
             switch item {
             case let .thread(thread, context, _, _, _):
                 cell.isAccessibilityElement = true
@@ -275,8 +299,19 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     ? [.button, .selected]
                     : .button
                 cell.accessibilityLabel = thread.title
-                cell.accessibilityValue = threadAccessibilityValue(thread, context: context)
+                let baseValue = threadAccessibilityValue(thread, context: context)
+                cell.accessibilityValue = baseValue
                 cell.accessibilityHint = "Opens task"
+                if let key = HomeThreadPullRequestLookupKey(thread: thread),
+                   let pullRequest = pullRequestResolutions[key]?.presentation {
+                    cell.accessibilityValue = pullRequest.accessibilityValue(appending: baseValue)
+                    cell.accessibilityCustomActions = [
+                        UIAccessibilityCustomAction(name: pullRequest.accessibilityActionName) { _ in
+                            UIApplication.shared.open(pullRequest.destination)
+                            return true
+                        },
+                    ]
+                }
                 cell.onAccessibilityActivate = { [weak self] in
                     guard let self else { return }
                     let previousSelection = self.selectedThreadID
@@ -323,6 +358,51 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 cell.isAccessibilityElement = false
                 cell.onAccessibilityActivate = nil
             }
+        }
+
+        private func loadPullRequestIfNeeded(for thread: FeatureThread) {
+            guard let key = HomeThreadPullRequestLookupKey(thread: thread),
+                  pullRequestResolutions[key] == nil,
+                  pullRequestTasks[key] == nil else { return }
+            let token = UUID()
+            let client = parent.projectFaviconClient
+            let task = Task { [weak self] in
+                let presentation: HomeThreadPullRequestPresentation?
+                do {
+                    let status = try await client.sourceControlStatus(threadID: thread.id)
+                    presentation = HomeThreadPullRequestPresentation(thread: thread, status: status)
+                } catch {
+                    guard let self, pullRequestTasks[key]?.token == token else { return }
+                    pullRequestTasks[key] = nil
+                    return
+                }
+                guard !Task.isCancelled, let self,
+                      pullRequestTasks[key]?.token == token else { return }
+                pullRequestTasks[key] = nil
+                pullRequestResolutions[key] = .resolved(presentation)
+                reconfigureThreadRows(matching: key)
+            }
+            pullRequestTasks[key] = (token, task)
+        }
+
+        private func prunePullRequestLookups(to activeKeys: Set<HomeThreadPullRequestLookupKey>) {
+            pullRequestResolutions = pullRequestResolutions.filter { activeKeys.contains($0.key) }
+            let inactiveTasks = pullRequestTasks.filter { !activeKeys.contains($0.key) }
+            for (key, lookup) in inactiveTasks {
+                lookup.task.cancel()
+                pullRequestTasks[key] = nil
+            }
+        }
+
+        private func reconfigureThreadRows(matching key: HomeThreadPullRequestLookupKey) {
+            guard let dataSource else { return }
+            let identifiers = itemsByID.compactMap { identifier, item in
+                item.pullRequestLookupKey == key ? identifier : nil
+            }
+            guard !identifiers.isEmpty else { return }
+            var snapshot = dataSource.snapshot()
+            snapshot.reconfigureItems(identifiers)
+            dataSource.apply(snapshot, animatingDifferences: false)
         }
 
         private func threadAccessibilityValue(
@@ -645,6 +725,7 @@ private struct HomeCollectionCellContent: View {
     let projectFaviconClient: any FeatureClient
     let isSelected: Bool
     let now: Date
+    let pullRequest: HomeThreadPullRequestPresentation?
 
     @ViewBuilder
     var body: some View {
@@ -657,7 +738,8 @@ private struct HomeCollectionCellContent: View {
                 isSelected: isSelected,
                 style: style,
                 now: now,
-                allowsMultilineTitle: allowsMultilineTitle
+                allowsMultilineTitle: allowsMultilineTitle,
+                pullRequest: pullRequest
             )
         case let .shelfHeader(shelf, count, isExpanded):
             HomeShelfHeader(
@@ -694,6 +776,40 @@ private struct HomeCollectionCellContent: View {
                 .padding(.horizontal, 18)
                 .padding(.vertical, 3)
         }
+    }
+}
+
+struct HomeThreadPullRequestLookupKey: Hashable {
+    let environmentID: String?
+    let projectID: String
+    let branch: String
+    let worktreePath: String?
+
+    init?(thread: FeatureThread) {
+        guard let branch = thread.branch?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !branch.isEmpty else { return nil }
+        environmentID = thread.environmentID
+        projectID = thread.projectID
+        self.branch = branch
+        let path = thread.worktreePath?.trimmingCharacters(in: .whitespacesAndNewlines)
+        worktreePath = path?.isEmpty == false ? path : nil
+    }
+}
+
+private enum HomeThreadPullRequestResolution {
+    case resolved(HomeThreadPullRequestPresentation?)
+
+    var presentation: HomeThreadPullRequestPresentation? {
+        switch self {
+        case let .resolved(presentation): presentation
+        }
+    }
+}
+
+private extension HomeCollectionItem {
+    var pullRequestLookupKey: HomeThreadPullRequestLookupKey? {
+        guard case let .thread(thread, _, _, _, _) = self else { return nil }
+        return HomeThreadPullRequestLookupKey(thread: thread)
     }
 }
 

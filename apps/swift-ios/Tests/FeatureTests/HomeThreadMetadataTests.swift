@@ -195,4 +195,190 @@ struct HomeThreadMetadataTests {
             ) == nil
         )
     }
+
+    @Test
+    func pullRequestPresentationCarriesSafeDestinationNumberStateAndAccessibility() throws {
+        let thread = pullRequestThread(branch: " feature/pr-links ")
+        let destination = try #require(URL(string: "https://github.com/pingdotgg/t3code/pull/5804"))
+        let presentation = try #require(HomeThreadPullRequestPresentation(
+            thread: thread,
+            status: FeatureSourceControlStatus(
+                branch: "feature/pr-links",
+                pullRequest: FeaturePullRequest(
+                    number: 5804,
+                    title: "Link thread rows",
+                    state: " open ",
+                    url: destination
+                )
+            )
+        ))
+
+        #expect(presentation.number == 5804)
+        #expect(presentation.state == "open")
+        #expect(presentation.destination == destination)
+        #expect(presentation.shortLabel == "#5804")
+        #expect(presentation.accessibilityLabel == "Pull request 5804, open")
+        #expect(presentation.accessibilityActionName == "Open pull request 5804, open")
+        #expect(
+            presentation.accessibilityValue(appending: "Ready. Project t3code")
+                == "Ready. Project t3code. Pull request 5804, open."
+        )
+    }
+
+    @Test
+    func pullRequestPresentationRejectsMissingMismatchedOrMalformedRemoteData() {
+        let thread = pullRequestThread(branch: "feature/pr-links")
+        let validPullRequest = FeaturePullRequest(
+            number: 5804,
+            title: "Link thread rows",
+            state: "open",
+            url: URL(string: "https://github.com/pingdotgg/t3code/pull/5804")
+        )
+
+        #expect(HomeThreadPullRequestPresentation(
+            thread: thread,
+            status: FeatureSourceControlStatus(branch: "feature/other", pullRequest: validPullRequest)
+        ) == nil)
+        #expect(HomeThreadPullRequestPresentation(
+            thread: thread,
+            status: FeatureSourceControlStatus(branch: nil, pullRequest: validPullRequest)
+        ) == nil)
+        #expect(HomeThreadPullRequestPresentation(
+            thread: thread,
+            status: FeatureSourceControlStatus(branch: "feature/pr-links", pullRequest: nil)
+        ) == nil)
+
+        for unsafeURL in [
+            nil,
+            URL(string: "t3code-swiftui://pull/5804"),
+            URL(string: "https://token@example.com/pull/5804"),
+            URL(string: "https:///pull/5804"),
+            URL(string: "not a remote URL"),
+        ] {
+            var pullRequest = validPullRequest
+            pullRequest.url = unsafeURL
+            #expect(HomeThreadPullRequestPresentation(
+                thread: thread,
+                status: FeatureSourceControlStatus(
+                    branch: "feature/pr-links",
+                    pullRequest: pullRequest
+                )
+            ) == nil)
+        }
+
+        var invalidNumber = validPullRequest
+        invalidNumber.number = 0
+        #expect(HomeThreadPullRequestPresentation(
+            thread: thread,
+            status: FeatureSourceControlStatus(
+                branch: "feature/pr-links",
+                pullRequest: invalidNumber
+            )
+        ) == nil)
+
+        var missingBranch = thread
+        missingBranch.branch = "  "
+        #expect(HomeThreadPullRequestPresentation(
+            thread: missingBranch,
+            status: FeatureSourceControlStatus(
+                branch: "feature/pr-links",
+                pullRequest: validPullRequest
+            )
+        ) == nil)
+    }
+
+    @Test
+    func pullRequestLookupKeysAndDestinationsDoNotFollowRecycledThreadIDs() throws {
+        let first = pullRequestThread(
+            id: "first-row",
+            environmentID: "mac",
+            branch: " feature/pr-links ",
+            worktreePath: " /worktrees/pr-links "
+        )
+        let recycled = pullRequestThread(
+            id: "recycled-row",
+            environmentID: "mac",
+            branch: "feature/pr-links",
+            worktreePath: "/worktrees/pr-links"
+        )
+        let otherCheckout = pullRequestThread(
+            id: "other-row",
+            environmentID: "mac",
+            branch: "feature/other",
+            worktreePath: "/worktrees/other"
+        )
+        let firstKey = try #require(HomeThreadPullRequestLookupKey(thread: first))
+        let recycledKey = try #require(HomeThreadPullRequestLookupKey(thread: recycled))
+        let otherKey = try #require(HomeThreadPullRequestLookupKey(thread: otherCheckout))
+
+        #expect(firstKey == recycledKey)
+        #expect(firstKey != otherKey)
+
+        let firstDestination = URL(string: "https://github.com/pingdotgg/t3code/pull/5804")
+        let otherDestination = URL(string: "https://github.com/pingdotgg/t3code/pull/5999")
+        let firstPresentation = try #require(HomeThreadPullRequestPresentation(
+            thread: first,
+            status: FeatureSourceControlStatus(
+                branch: "feature/pr-links",
+                pullRequest: FeaturePullRequest(
+                    number: 5804,
+                    title: "First",
+                    state: "open",
+                    url: firstDestination
+                )
+            )
+        ))
+        let otherPresentation = try #require(HomeThreadPullRequestPresentation(
+            thread: otherCheckout,
+            status: FeatureSourceControlStatus(
+                branch: "feature/other",
+                pullRequest: FeaturePullRequest(
+                    number: 5999,
+                    title: "Other",
+                    state: "merged",
+                    url: otherDestination
+                )
+            )
+        ))
+
+        #expect(firstPresentation.destination == firstDestination)
+        #expect(otherPresentation.destination == otherDestination)
+        #expect(firstPresentation.accessibilityActionName != otherPresentation.accessibilityActionName)
+        #expect(HomeThreadPullRequestLookupKey(thread: pullRequestThread(branch: nil)) == nil)
+    }
+
+    @Test
+    func blankPullRequestStateHasATruthfulAccessibilityFallback() throws {
+        let presentation = try #require(HomeThreadPullRequestPresentation(
+            thread: pullRequestThread(branch: "feature/pr-links"),
+            status: FeatureSourceControlStatus(
+                branch: "feature/pr-links",
+                pullRequest: FeaturePullRequest(
+                    number: 5804,
+                    title: "Link thread rows",
+                    state: "   ",
+                    url: URL(string: "http://127.0.0.1/pull/5804")
+                )
+            )
+        ))
+
+        #expect(presentation.state == "unknown state")
+        #expect(presentation.accessibilityLabel == "Pull request 5804, unknown state")
+    }
+
+    private func pullRequestThread(
+        id: String = "thread",
+        environmentID: String? = "environment",
+        branch: String?,
+        worktreePath: String? = "/worktrees/pr-links"
+    ) -> FeatureThread {
+        FeatureThread(
+            id: id,
+            projectID: "project",
+            environmentID: environmentID,
+            title: "Build",
+            branch: branch,
+            worktreePath: worktreePath
+        )
+    }
 }
