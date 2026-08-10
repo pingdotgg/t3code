@@ -1814,6 +1814,21 @@ export default function Sidebar() {
   );
   const [projectScopeQuery, setProjectScopeQuery] = useState("");
   const projectScopeFilter = useComboboxFilter();
+  // Filtering derives from the same React state that controls the input, so
+  // the visible query and the visible list can never desync — the peer wiring
+  // in DiffPanel and BranchToolbarBranchSelector. "All projects" is a scope
+  // reset, not a searchable entry: it only shows while the query is empty, so
+  // it can't outrank a project match under autoHighlight and no-hit queries
+  // reach the empty state.
+  const filteredProjectScopeItems = useMemo(() => {
+    const query = projectScopeQuery.trim();
+    if (query.length === 0) return projectScopeItems;
+    return projectScopeItems.filter(
+      (item) =>
+        item.value !== "all" &&
+        projectScopeFilter.contains(item, query, (candidate) => candidate.label),
+    );
+  }, [projectScopeFilter, projectScopeItems, projectScopeQuery]);
   const scopedProjectGroup = useMemo(
     () =>
       projectScopeKey === null
@@ -1873,7 +1888,10 @@ export default function Sidebar() {
     (event: ReactMouseEvent<HTMLButtonElement>, projectGroup: SidebarProjectSnapshot) => {
       event.preventDefault();
       event.stopPropagation();
+      // Programmatic close skips onOpenChange, so drop the query here too —
+      // a stale query must not survive into the next open.
       setProjectScopeMenuOpen(false);
+      setProjectScopeQuery("");
       if (isMobile) {
         setOpenMobile(false);
       }
@@ -3273,23 +3291,14 @@ export default function Sidebar() {
               <div className="flex items-center gap-1">
                 <Combobox
                   items={projectScopeItems}
+                  filteredItems={filteredProjectScopeItems}
                   autoHighlight
-                  // "All projects" is a scope reset, not a searchable entry:
-                  // hide it while filtering so it can't outrank a project
-                  // match under autoHighlight, and so no-hit queries reach
-                  // the empty state. Same convention as DiffPanel's
-                  // "Automatic" row.
-                  filter={(item, query, itemToString) =>
-                    item.value === "all"
-                      ? query.trim().length === 0
-                      : projectScopeFilter.contains(item, query, itemToString)
-                  }
                   itemToStringLabel={(item) => item.label}
                   isItemEqualToValue={(a, b) => a.value === b.value}
                   open={projectScopeMenuOpen}
                   onOpenChange={(open) => {
                     setProjectScopeMenuOpen(open);
-                    if (!open) setProjectScopeQuery("");
+                    setProjectScopeQuery("");
                   }}
                   value={selectedProjectScopeItem}
                   onValueChange={(item) => {
