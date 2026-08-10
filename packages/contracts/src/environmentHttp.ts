@@ -48,6 +48,16 @@ import {
   RelayEnvironmentMintResponse,
   RelayLinkProofRequest,
 } from "./relay.ts";
+import {
+  EnvironmentVoiceRateLimitedError,
+  EnvironmentVoiceTimeoutError,
+  EnvironmentVoiceUnavailableError,
+  EnvironmentVoiceUpstreamError,
+  VoiceCredentialMutation,
+  VoiceCredentialStatus,
+  VoiceRealtimeClientSecret,
+  VoiceRealtimeClientSecretRequest,
+} from "./voice.ts";
 
 const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
@@ -90,6 +100,9 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "orchestration_snapshot_failed",
   "orchestration_thread_snapshot_failed",
   "orchestration_dispatch_failed",
+  "voice_credential_load_failed",
+  "voice_credential_update_failed",
+  "voice_session_issuance_failed",
   "internal_error",
 ]);
 export type EnvironmentInternalErrorReason = typeof EnvironmentInternalErrorReason.Type;
@@ -304,6 +317,18 @@ const EnvironmentOrchestrationThreadSnapshotErrors = [
 const EnvironmentOrchestrationDispatchErrors = [
   EnvironmentRequestInvalidError,
   EnvironmentScopeRequiredError,
+  EnvironmentInternalError,
+] as const;
+const EnvironmentVoiceCredentialErrors = [
+  EnvironmentScopeRequiredError,
+  EnvironmentInternalError,
+] as const;
+const EnvironmentVoiceClientSecretErrors = [
+  EnvironmentScopeRequiredError,
+  EnvironmentVoiceUnavailableError,
+  EnvironmentVoiceRateLimitedError,
+  EnvironmentVoiceUpstreamError,
+  EnvironmentVoiceTimeoutError,
   EnvironmentInternalError,
 ] as const;
 
@@ -522,6 +547,31 @@ export class EnvironmentPullRequestsHttpApi extends HttpApiGroup.make("pullReque
   }).middleware(EnvironmentAuthenticatedAuth),
 ) {}
 
+export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
+  .add(
+    HttpApiEndpoint.get("credentialStatus", "/api/voice/openai/credential", {
+      headers: OptionalBearerHeaders,
+      success: VoiceCredentialStatus,
+      error: EnvironmentVoiceCredentialErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("updateCredential", "/api/voice/openai/credential", {
+      headers: OptionalBearerHeaders,
+      payload: VoiceCredentialMutation,
+      success: VoiceCredentialStatus,
+      error: EnvironmentVoiceCredentialErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("clientSecret", "/api/voice/realtime/client-secret", {
+      headers: OptionalBearerHeaders,
+      payload: VoiceRealtimeClientSecretRequest,
+      success: VoiceRealtimeClientSecret,
+      error: EnvironmentVoiceClientSecretErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
   .add(
     HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
@@ -588,4 +638,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
+  .add(EnvironmentVoiceHttpApi)
   .add(EnvironmentConnectHttpApi) {}

@@ -150,6 +150,8 @@ import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClien
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as OpenAiRealtime from "./voice/OpenAiRealtime.ts";
+import * as OpenAiRealtimeCredential from "./voice/OpenAiRealtimeCredential.ts";
 import * as Data from "effect/Data";
 
 import { makeOrchestrationIntegrationHarness } from "../integration/OrchestrationEngineHarness.integration.ts";
@@ -419,6 +421,7 @@ const buildAppUnderTest = (options?: {
     desktopTelemetryReceiver?: Partial<
       DesktopTelemetryReceiver.DesktopTelemetryReceiver["Service"]
     >;
+    openAiRealtime?: Partial<OpenAiRealtime.OpenAiRealtime["Service"]>;
   };
 }) =>
   Effect.gen(function* () {
@@ -948,6 +951,18 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provideMerge(makeAuthTestLayer()),
       Layer.provideMerge(ServerSecretStore.layer),
+      Layer.provide(
+        Layer.mock(OpenAiRealtime.OpenAiRealtime)({
+          mint: () =>
+            Effect.fail(
+              new OpenAiRealtime.OpenAiRealtimeUnavailableError({
+                reason: "not_configured",
+              }),
+            ),
+          ...options?.layers?.openAiRealtime,
+        }),
+      ),
+      Layer.provide(OpenAiRealtimeCredential.layer.pipe(Layer.provide(ServerSecretStore.layer))),
       Layer.provide(workspaceAndProjectServicesLayer),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(layerConfig),
@@ -8016,6 +8031,198 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assertFailure(result, terminalError);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("requires access:write for OpenAI credential status and never caches failures", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const credentialUrl = yield* getHttpServerUrl("/api/voice/openai/credential");
+
+      const unauthenticated = yield* fetchEffect(credentialUrl);
+      assert.equal(unauthenticated.status, 401);
+      assert.equal(unauthenticated.headers["cache-control"], "no-store");
+      assert.equal(unauthenticated.headers.pragma, "no-cache");
+
+      const token = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        scope: "orchestration:read orchestration:operate",
+      });
+      assert.equal(token.response.status, 200);
+      assert.isString(token.body.access_token);
+      const forbidden = yield* fetchEffect(credentialUrl, {
+        headers: { authorization: `Bearer ${token.body.access_token}` },
+      });
+      const body = yield* responseJsonEffect<{
+        readonly _tag: string;
+        readonly requiredScope: string;
+      }>(forbidden);
+
+      assert.equal(forbidden.status, 403);
+      assert.equal(body._tag, "EnvironmentScopeRequiredError");
+      assert.equal(body.requiredScope, "access:write");
+      assert.equal(forbidden.headers["cache-control"], "no-store");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("sets, reports, and removes the fixed OpenAI credential through an admin session", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const credentialUrl = yield* getHttpServerUrl("/api/voice/openai/credential");
+      const cookie = yield* getAuthenticatedSessionCookieHeader();
+      const secret = "sk-http-boundary-test";
+
+      const setResponse = yield* fetchEffect(credentialUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: jsonRequestBody({ action: "set", apiKey: secret }),
+      });
+      const setBody = yield* responseJsonEffect<{
+        readonly configured: boolean;
+        readonly source: string | null;
+      }>(setResponse);
+      assert.equal(setResponse.status, 200);
+      assert.deepEqual(setBody, { configured: true, source: "stored" });
+      assert.isFalse("apiKey" in setBody);
+      assert.equal(setResponse.headers["cache-control"], "no-store");
+
+      const statusResponse = yield* fetchEffect(credentialUrl, { headers: { cookie } });
+      assert.deepEqual(yield* responseJsonEffect(statusResponse), {
+        configured: true,
+        source: "stored",
+      });
+
+      const removeResponse = yield* fetchEffect(credentialUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: jsonRequestBody({ action: "remove" }),
+      });
+      const removeBody = yield* responseJsonEffect<{
+        readonly configured: boolean;
+        readonly source: string | null;
+      }>(removeResponse);
+      assert.equal(removeResponse.status, 200);
+      assert.notEqual(removeBody.source, "stored");
+      assert.equal(removeBody.configured, removeBody.source === "environment");
+      assert.equal(removeResponse.headers["cache-control"], "no-store");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "mints typed client secrets with orchestration:operate and enforces the voice allowlist",
+    () =>
+      Effect.gen(function* () {
+        const mintCalls: OpenAiRealtime.OpenAiRealtimeMintInput[] = [];
+        yield* buildAppUnderTest({
+          layers: {
+            openAiRealtime: {
+              mint: (input) =>
+                Effect.sync(() => {
+                  mintCalls.push(input);
+                  return {
+                    clientSecret: "ek_http_test",
+                    expiresAt: 4_102_444_800,
+                    sessionId: "sess_http_test",
+                  };
+                }),
+            },
+          },
+        });
+        const token = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+          scope: "orchestration:operate",
+        });
+        assert.isString(token.body.access_token);
+        const clientSecretUrl = yield* getHttpServerUrl("/api/voice/realtime/client-secret");
+        const headers = {
+          authorization: `Bearer ${token.body.access_token}`,
+          "content-type": "application/json",
+        };
+
+        const response = yield* fetchEffect(clientSecretUrl, {
+          method: "POST",
+          headers,
+          body: jsonRequestBody({ voice: "cedar" }),
+        });
+        assert.equal(response.status, 200);
+        assert.deepEqual(yield* responseJsonEffect(response), {
+          clientSecret: "ek_http_test",
+          expiresAt: 4_102_444_800,
+          sessionId: "sess_http_test",
+        });
+        assert.equal(response.headers["cache-control"], "no-store");
+        assert.equal(mintCalls.length, 1);
+        assert.equal(mintCalls[0]?.voice, "cedar");
+        assert.isNotEmpty(String(mintCalls[0]?.authSessionId));
+
+        const defaultResponse = yield* fetchEffect(clientSecretUrl, {
+          method: "POST",
+          headers,
+          body: jsonRequestBody({}),
+        });
+        assert.equal(defaultResponse.status, 200);
+        assert.equal(mintCalls.length, 2);
+        assert.equal(mintCalls[1]?.voice, "marin");
+
+        const invalid = yield* fetchEffect(clientSecretUrl, {
+          method: "POST",
+          headers,
+          body: jsonRequestBody({ voice: "robot" }),
+        });
+        assert.equal(invalid.status, 400);
+        assert.equal(invalid.headers["cache-control"], "no-store");
+        assert.equal(mintCalls.length, 2);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("returns a redacted typed rate-limit response from the voice boundary", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          openAiRealtime: {
+            mint: () =>
+              Effect.fail(
+                new OpenAiRealtime.OpenAiRealtimeRateLimitedError({
+                  reason: "upstream_rate_limit",
+                  retryAfterSeconds: 3,
+                }),
+              ),
+          },
+        },
+      });
+      const token = yield* getAuthenticatedBearerSessionToken();
+      const clientSecretUrl = yield* getHttpServerUrl("/api/voice/realtime/client-secret");
+      const response = yield* fetchEffect(clientSecretUrl, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: jsonRequestBody({}),
+      });
+      const body = yield* responseJsonEffect<{
+        readonly _tag: string;
+        readonly code: string;
+        readonly reason: string;
+        readonly retryAfterSeconds: number;
+      }>(response);
+
+      assert.equal(response.status, 429);
+      assert.deepEqual(
+        {
+          tag: body._tag,
+          code: body.code,
+          reason: body.reason,
+          retryAfterSeconds: body.retryAfterSeconds,
+        },
+        {
+          tag: "EnvironmentVoiceRateLimitedError",
+          code: "rate_limited",
+          reason: "upstream_rate_limit",
+          retryAfterSeconds: 3,
+        },
+      );
+      assert.equal(response.headers["retry-after"], "3");
+      assert.equal(response.headers["cache-control"], "no-store");
+      assert.isFalse("clientSecret" in body);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 });

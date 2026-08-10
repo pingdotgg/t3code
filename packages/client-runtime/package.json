@@ -158,6 +158,10 @@
     "./state/vcs": {
       "types": "./src/state/vcs.ts",
       "default": "./src/state/vcs.ts"
+    },
+    "./state/voice": {
+      "types": "./src/state/voiceHttp.ts",
+      "default": "./src/state/voiceHttp.ts"
     }
   },
   "scripts": {

@@ -105,14 +105,15 @@ export const makeEnvironmentHttpApiUrlBuilder = (httpBaseUrl: string) =>
     baseUrl: remoteApiBaseUrl(httpBaseUrl),
   });
 
-const failRemoteRequest = (
+const failRemoteRequest = <DeclaredError>(
   requestUrl: string,
   cause: unknown,
-): Effect.Effect<never, RemoteEnvironmentRequestError> => {
+  isDeclaredError: (cause: unknown) => cause is DeclaredError,
+): Effect.Effect<never, RemoteEnvironmentRequestError | DeclaredError> => {
   if (cause instanceof RemoteEnvironmentAuthTimeoutError) {
     return Effect.fail(cause);
   }
-  if (isEnvironmentHttpCommonError(cause)) {
+  if (isEnvironmentHttpCommonError(cause) || isDeclaredError(cause)) {
     return Effect.fail(cause);
   }
   if (Schema.isSchemaError(cause)) {
@@ -145,11 +146,12 @@ const failRemoteRequest = (
   );
 };
 
-export const executeEnvironmentHttpRequest = <A, E, R>(
+const executeEnvironmentHttpRequestWith = <A, E, R, DeclaredError>(
   requestUrl: string,
   timeoutMs: number,
   request: Effect.Effect<A, E, R>,
-): Effect.Effect<A, RemoteEnvironmentRequestError, R> =>
+  isDeclaredError: (cause: unknown) => cause is DeclaredError,
+): Effect.Effect<A, RemoteEnvironmentRequestError | DeclaredError, R> =>
   request.pipe(
     Effect.timeoutOption(Duration.millis(timeoutMs)),
     Effect.flatMap(
@@ -158,5 +160,25 @@ export const executeEnvironmentHttpRequest = <A, E, R>(
         onSome: Effect.succeed,
       }),
     ),
-    Effect.catch((cause) => failRemoteRequest(requestUrl, cause)),
+    Effect.catch((cause) => failRemoteRequest(requestUrl, cause, isDeclaredError)),
   );
+
+export const executeEnvironmentHttpRequest = <A, E, R>(
+  requestUrl: string,
+  timeoutMs: number,
+  request: Effect.Effect<A, E, R>,
+): Effect.Effect<A, RemoteEnvironmentRequestError, R> =>
+  executeEnvironmentHttpRequestWith(
+    requestUrl,
+    timeoutMs,
+    request,
+    (_cause): _cause is never => false,
+  );
+
+export const executeEnvironmentHttpRequestWithDeclaredError = <A, E, R, DeclaredError>(
+  requestUrl: string,
+  timeoutMs: number,
+  request: Effect.Effect<A, E, R>,
+  isDeclaredError: (cause: unknown) => cause is DeclaredError,
+): Effect.Effect<A, RemoteEnvironmentRequestError | DeclaredError, R> =>
+  executeEnvironmentHttpRequestWith(requestUrl, timeoutMs, request, isDeclaredError);
