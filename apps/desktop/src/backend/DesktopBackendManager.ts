@@ -65,6 +65,12 @@ const MAX_PREFLIGHT_FAILURE_ATTEMPTS = 5;
 // onPreflightFailed — a live-but-unreachable backend must not present as an
 // indefinite "connecting" state.
 const MAX_READINESS_FAILURE_ATTEMPTS = 3;
+// After this many consecutive runs that spawned but exited without ever
+// becoming ready, surface via onPreflightFailed instead of restarting
+// forever. Scoped strictly to post-spawn exits: pre-spawn preflight retries
+// (WSL cold-start) have their own counter, and a crash AFTER the backend was
+// ready resets the streak — that's a different failure than "never comes up".
+const MAX_EXIT_FAILURE_ATTEMPTS = 5;
 const DEFAULT_BACKEND_READINESS_TIMEOUT = Duration.minutes(1);
 // Budget for probing URLs recovered from the backend's persisted runtime
 // state (server-runtime.json) after every static candidate timed out.
@@ -345,6 +351,11 @@ interface BackendManagerState {
   // Consecutive readiness timeouts (process alive, no candidate URL
   // answering), reset when a run reaches ready or an external stop() runs.
   readonly readinessFailureAttempt: number;
+  // Consecutive runs that spawned but exited before ever becoming ready.
+  // Reset when a run reaches ready, on external stop(), and on a fresh
+  // manual start — so the cap firing once doesn't permanently remove the
+  // retry budget.
+  readonly exitFailureAttempt: number;
   readonly restartFiber: Option.Option<Fiber.Fiber<void, never>>;
   readonly nextRunId: number;
 }
@@ -357,6 +368,7 @@ const initialState: BackendManagerState = {
   restartAttempt: 0,
   preflightFailureAttempt: 0,
   readinessFailureAttempt: 0,
+  exitFailureAttempt: 0,
   restartFiber: Option.none(),
   nextRunId: 1,
 };
@@ -799,6 +811,9 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           ready: false,
           config: Option.some(config.value),
           preflightFailureAttempt: resetFatalPreflightCounter ? 0 : latest.preflightFailureAttempt,
+          // A fresh manual start gets a fresh never-ready exit budget; a
+          // restart-loop start (desiredRunning already set) keeps the streak.
+          exitFailureAttempt: current.desiredRunning ? latest.exitFailureAttempt : 0,
         }));
 
         const preflightFailure = config.value.preflightFailure;
@@ -895,55 +910,80 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
         ) {
           yield* mutex.withPermits(1)(
             Effect.gen(function* () {
-              const { isCurrentRun, nextState, pid, exitObserved, stopRequested, wasReady } =
-                yield* Ref.modify(
-                  state,
-                  (
-                    latest,
-                  ): readonly [
-                    {
-                      readonly isCurrentRun: boolean;
-                      readonly nextState: BackendManagerState;
-                      readonly pid: Option.Option<number>;
-                      readonly exitObserved: boolean;
-                      readonly stopRequested: boolean;
-                      readonly wasReady: boolean;
-                    },
-                    BackendManagerState,
-                  ] => {
-                    const currentRun = Option.getOrUndefined(latest.active);
-                    if (currentRun?.id !== runId) {
-                      return [
-                        {
-                          isCurrentRun: false,
-                          nextState: latest,
-                          pid: Option.none<number>(),
-                          exitObserved: false,
-                          stopRequested: false,
-                          wasReady: false,
-                        },
-                        latest,
-                      ] as const;
-                    }
-
-                    const next = {
-                      ...latest,
-                      active: Option.none<ActiveBackendRun>(),
-                      ready: false,
-                    };
+              const {
+                isCurrentRun,
+                nextState,
+                pid,
+                exitObserved,
+                stopRequested,
+                wasReady,
+                exitFailureAttempt,
+              } = yield* Ref.modify(
+                state,
+                (
+                  latest,
+                ): readonly [
+                  {
+                    readonly isCurrentRun: boolean;
+                    readonly nextState: BackendManagerState;
+                    readonly pid: Option.Option<number>;
+                    readonly exitObserved: boolean;
+                    readonly stopRequested: boolean;
+                    readonly wasReady: boolean;
+                    // Some(n) when this exit counted toward the
+                    // never-became-ready streak.
+                    readonly exitFailureAttempt: Option.Option<number>;
+                  },
+                  BackendManagerState,
+                ] => {
+                  const currentRun = Option.getOrUndefined(latest.active);
+                  if (currentRun?.id !== runId) {
                     return [
                       {
-                        isCurrentRun: true,
-                        nextState: next,
-                        pid: currentRun.pid,
-                        exitObserved: currentRun.exitObserved,
-                        stopRequested: currentRun.stopRequested,
-                        wasReady: latest.ready,
+                        isCurrentRun: false,
+                        nextState: latest,
+                        pid: Option.none<number>(),
+                        exitObserved: false,
+                        stopRequested: false,
+                        wasReady: false,
+                        exitFailureAttempt: Option.none<number>(),
                       },
-                      next,
+                      latest,
                     ] as const;
-                  },
-                );
+                  }
+
+                  const countsTowardExitCap =
+                    currentRun.exitObserved &&
+                    !currentRun.stopRequested &&
+                    !latest.ready &&
+                    latest.desiredRunning;
+                  const nextExitFailureAttempt = latest.ready
+                    ? 0
+                    : countsTowardExitCap
+                      ? latest.exitFailureAttempt + 1
+                      : latest.exitFailureAttempt;
+                  const next = {
+                    ...latest,
+                    active: Option.none<ActiveBackendRun>(),
+                    ready: false,
+                    exitFailureAttempt: nextExitFailureAttempt,
+                  };
+                  return [
+                    {
+                      isCurrentRun: true,
+                      nextState: next,
+                      pid: currentRun.pid,
+                      exitObserved: currentRun.exitObserved,
+                      stopRequested: currentRun.stopRequested,
+                      wasReady: latest.ready,
+                      exitFailureAttempt: countsTowardExitCap
+                        ? Option.some(nextExitFailureAttempt)
+                        : Option.none<number>(),
+                    },
+                    next,
+                  ] as const;
+                },
+              );
 
               if (isCurrentRun) {
                 yield* desktopTelemetryPublisher.removeControlSource(spec.id);
@@ -962,6 +1002,36 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               }
 
               if (isCurrentRun && nextState.desiredRunning) {
+                if (
+                  Option.isSome(exitFailureAttempt) &&
+                  exitFailureAttempt.value >= MAX_EXIT_FAILURE_ATTEMPTS
+                ) {
+                  // The backend spawns fine but keeps dying before it ever
+                  // answers a readiness probe. Silent restarts can't fix
+                  // that — surface it exactly like an exhausted preflight
+                  // (dialog + Windows fallback on the primary, inline error
+                  // on the WSL secondary) instead of looping forever.
+                  yield* logInstanceError(
+                    "backend keeps exiting before becoming ready; surfacing",
+                    { reason, attempt: exitFailureAttempt.value },
+                  );
+                  const shouldRestart = yield* (
+                    spec.onPreflightFailed?.({
+                      reason: `The backend exited ${exitFailureAttempt.value} times in a row before becoming ready (last exit: ${reason}).`,
+                      fatal: false,
+                      retryLimit: MAX_EXIT_FAILURE_ATTEMPTS,
+                    }) ?? Effect.succeed(false)
+                  );
+                  yield* Ref.update(state, (latest) => ({
+                    ...latest,
+                    exitFailureAttempt: 0,
+                    ...(shouldRestart ? {} : { desiredRunning: false }),
+                  }));
+                  if (shouldRestart) {
+                    yield* scheduleRestart(reason);
+                  }
+                  return;
+                }
                 yield* scheduleRestart(reason);
               }
             }),
@@ -1000,6 +1070,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                   ...latest,
                   restartAttempt: 0,
                   readinessFailureAttempt: 0,
+                  exitFailureAttempt: 0,
                   ready: true,
                   // Rebind the advertised base URL to the candidate that
                   // actually answered, so consumers that read currentConfig
@@ -1187,6 +1258,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               desiredRunning: false,
               ready: false,
               readinessFailureAttempt: 0,
+              exitFailureAttempt: 0,
               active,
               restartFiber: Option.none<Fiber.Fiber<void, never>>(),
             },

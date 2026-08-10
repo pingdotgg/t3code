@@ -1590,6 +1590,67 @@ describe("DesktopBackendManager", () => {
     ),
   );
 
+  it.effect("caps runs that keep exiting before ready and surfaces via onPreflightFailed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const starts = yield* Queue.unbounded<number>();
+        const failures = yield* Queue.unbounded<string>();
+        const preflightFailures: Array<DesktopBackendManager.PreflightFailure> = [];
+        let startCount = 0;
+
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.sync(() => {
+              startCount += 1;
+              return makeProcess({
+                exitCode: Queue.offer(starts, startCount).pipe(
+                  Effect.as(ChildProcessSpawner.ExitCode(1)),
+                ),
+              });
+            }),
+          ),
+        );
+
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          httpClientLayer: httpClientLayer(() => Effect.never),
+          onPreflightFailed: (failure) =>
+            Effect.sync(() => {
+              preflightFailures.push(failure);
+              return false;
+            }),
+          backendOutputLog: {
+            persistFailure: ({ details }) => Queue.offer(failures, details).pipe(Effect.asVoid),
+          },
+        });
+
+        yield* instance.start;
+        assert.equal(yield* Queue.take(starts), 1);
+        yield* Queue.take(failures);
+
+        // Four more spawn-then-exit-before-ready cycles exhaust the cap.
+        for (let attempt = 2; attempt <= 5; attempt += 1) {
+          yield* TestClock.adjust(Duration.seconds(15));
+          assert.equal(yield* Queue.take(starts), attempt);
+          yield* Queue.take(failures);
+        }
+
+        // The fifth never-ready exit surfaces instead of scheduling another
+        // silent restart; onPreflightFailed returned false, so the instance
+        // stops.
+        yield* TestClock.adjust(Duration.seconds(30));
+        assert.lengthOf(preflightFailures, 1);
+        assert.include(preflightFailures[0]!.reason, "5 times");
+        assert.isFalse(preflightFailures[0]!.fatal);
+        assert.equal(yield* Queue.size(starts), 0);
+        const snapshot = yield* instance.snapshot;
+        assert.isFalse(snapshot.desiredRunning);
+        assert.isFalse(snapshot.restartScheduled);
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
   it.effect("stop reports whether the child fully finalized within the timeout", () =>
     Effect.scoped(
       Effect.gen(function* () {
