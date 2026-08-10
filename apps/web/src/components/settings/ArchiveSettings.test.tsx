@@ -1,27 +1,30 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ComponentProps, ReactNode, Ref } from "react";
+import type { ConfirmDialogOptions } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+
+type CapturedButtonClick = (event: unknown) => unknown;
 
 const testDoubles = vi.hoisted(() => ({
   inputRef: null as Ref<HTMLInputElement> | null,
-  initialArchiveSearchQuery: "",
+  archiveSearchQueryOverride: null as string | null,
   navigate: vi.fn(),
-  confirm: vi.fn(async () => false),
-  contextMenu: vi.fn(async () => null as string | null),
+  confirm: vi.fn(async (_message: string, _options?: ConfirmDialogOptions) => false),
+  contextMenu: vi.fn(),
   contextMenuResult: null as string | null,
-  buttonClicks: new Map<string, (event: unknown) => void>(),
+  buttonClicks: new Map<string, CapturedButtonClick[]>(),
   archiveState: {
     snapshots: [] as ReadonlyArray<unknown>,
     isLoading: false,
   },
 }));
 
-vi.mock("react", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react")>();
+vi.mock("./ArchiveSettings.logic", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./ArchiveSettings.logic")>();
   return {
     ...actual,
-    useState: (initialState: unknown) =>
-      actual.useState(initialState === "" ? testDoubles.initialArchiveSearchQuery : initialState),
+    parseArchivedThreadSearchInput: (query: string) =>
+      actual.parseArchivedThreadSearchInput(testDoubles.archiveSearchQueryOverride ?? query),
   };
 });
 
@@ -42,19 +45,25 @@ vi.mock("../ui/input", () => ({
   },
 }));
 
-vi.mock("../ui/button", () => ({
-  Button: ({
-    children,
-    onClick,
-    ...buttonProps
-  }: ComponentProps<"button"> & { onClick?: (event: unknown) => void }) => {
-    const label = buttonProps["aria-label"];
-    if (typeof label === "string" && onClick) {
-      testDoubles.buttonClicks.set(label, onClick);
-    }
-    return <button {...buttonProps}>{children}</button>;
-  },
-}));
+vi.mock("../ui/button", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ui/button")>();
+  return {
+    ...actual,
+    Button: ({
+      children,
+      onClick,
+      ...buttonProps
+    }: ComponentProps<"button"> & { onClick?: CapturedButtonClick }) => {
+      const label = buttonProps["aria-label"];
+      if (typeof label === "string" && onClick) {
+        const clicks = testDoubles.buttonClicks.get(label) ?? [];
+        clicks.push(onClick);
+        testDoubles.buttonClicks.set(label, clicks);
+      }
+      return <button {...buttonProps}>{children}</button>;
+    },
+  };
+});
 
 vi.mock("../ui/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => children,
@@ -106,7 +115,7 @@ import { ArchivedThreadsPanel } from "./ArchiveSettings";
 
 afterEach(() => {
   testDoubles.inputRef = null;
-  testDoubles.initialArchiveSearchQuery = "";
+  testDoubles.archiveSearchQueryOverride = null;
   testDoubles.navigate.mockReset();
   testDoubles.confirm.mockClear();
   testDoubles.contextMenu.mockClear();
@@ -162,15 +171,18 @@ const populatedArchiveSnapshots = [
   },
 ] as const;
 
-function renderPopulatedArchive() {
+function renderPopulatedArchive(searchQuery?: string) {
   testDoubles.archiveState.snapshots = populatedArchiveSnapshots;
-  testDoubles.initialArchiveSearchQuery = "Archived";
+  testDoubles.archiveSearchQueryOverride = searchQuery ?? null;
   renderToStaticMarkup(<ArchivedThreadsPanel />);
 }
 
 function clickCapturedButton(label: string, currentTarget: unknown = {}) {
-  const onClick = testDoubles.buttonClicks.get(label);
-  if (!onClick) throw new Error(`Expected ${label} button to be rendered`);
+  const clicks = testDoubles.buttonClicks.get(label) ?? [];
+  if (clicks.length !== 1) {
+    throw new Error(`Expected exactly one ${label} button, received ${clicks.length}`);
+  }
+  const onClick = clicks[0]!;
   onClick({ currentTarget, stopPropagation: vi.fn() });
 }
 
@@ -240,7 +252,8 @@ describe("ArchivedThreadsPanel", () => {
   );
 
   it("requests a destructive confirmation for a single archived-thread delete", async () => {
-    renderPopulatedArchive();
+    // Searching expands the project so its row actions are rendered.
+    renderPopulatedArchive("Archived");
 
     clickCapturedButton("Delete");
 
@@ -262,7 +275,7 @@ describe("ArchivedThreadsPanel", () => {
 
     await vi.waitFor(() => {
       expect(testDoubles.confirm).toHaveBeenCalledWith(
-        expect.stringContaining('Delete matching archived conversations in "Archive project"?'),
+        expect.stringContaining('Delete all archived conversations in "Archive project"?'),
         { variant: "destructive" },
       );
     });
@@ -276,11 +289,9 @@ describe("ArchivedThreadsPanel", () => {
       getBoundingClientRect: () => ({ right: 80, bottom: 40 }),
     });
 
-    await vi.waitFor(() => {
-      expect(testDoubles.confirm).toHaveBeenCalledWith(
-        expect.stringContaining('Unarchive matching archived conversations in "Archive project"?'),
-        undefined,
-      );
-    });
+    await vi.waitFor(() => expect(testDoubles.confirm).toHaveBeenCalled());
+    const [message, options] = testDoubles.confirm.mock.calls[0]!;
+    expect(message).toContain('Unarchive all archived conversations in "Archive project"?');
+    expect(options?.variant).not.toBe("destructive");
   });
 });
