@@ -188,6 +188,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings,
   availableEditors,
   openInCwd,
+  openInWorkspaceFile = null,
   compact = false,
   enableShortcut = true,
 }: {
@@ -195,6 +196,12 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
+  /**
+   * The project's `.code-workspace` file, when it has one. Editors that
+   * understand workspace files open this instead of `openInCwd` so a multi-repo
+   * project lands as a multi-root workspace; the server picks per editor.
+   */
+  openInWorkspaceFile?: string | null;
   compact?: boolean;
   enableShortcut?: boolean;
 }) {
@@ -216,12 +223,20 @@ export const OpenInPicker = memo(function OpenInPicker({
         input: {
           cwd: openInCwd,
           editor,
+          ...(openInWorkspaceFile ? { workspaceFile: openInWorkspaceFile } : {}),
         },
       });
       setPreferredEditor(editor);
       return result;
     },
-    [environmentId, openInCwd, openInEditorMutation, preferredEditor, setPreferredEditor],
+    [
+      environmentId,
+      openInCwd,
+      openInWorkspaceFile,
+      openInEditorMutation,
+      preferredEditor,
+      setPreferredEditor,
+    ],
   );
 
   const openFavoriteEditorShortcutLabel = useMemo(
@@ -242,6 +257,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         input: {
           cwd: openInCwd,
           editor: preferredEditor,
+          ...(openInWorkspaceFile ? { workspaceFile: openInWorkspaceFile } : {}),
         },
       });
     };
@@ -252,6 +268,7 @@ export const OpenInPicker = memo(function OpenInPicker({
     environmentId,
     keybindings,
     openInCwd,
+    openInWorkspaceFile,
     openInEditorMutation,
     preferredEditor,
   ]);
