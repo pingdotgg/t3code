@@ -219,7 +219,9 @@ describe("isTerminalCopyShortcut", () => {
     expect(isTerminalCopyShortcut(event({ metaKey: true }), "MacIntel")).toBe(true);
   });
 
-  it("uses the conventional Ctrl+Shift+C shortcut elsewhere", () => {
+  it("preserves Ctrl+C on Windows and uses Ctrl+Shift+C on Linux", () => {
+    expect(isTerminalCopyShortcut(event({ ctrlKey: true }), "Win32")).toBe(true);
+    expect(isTerminalCopyShortcut(event({ ctrlKey: true, shiftKey: true }), "Win32")).toBe(true);
     expect(isTerminalCopyShortcut(event({ ctrlKey: true }), "Linux x86_64")).toBe(false);
     expect(isTerminalCopyShortcut(event({ ctrlKey: true, shiftKey: true }), "Linux x86_64")).toBe(
       true,
@@ -246,7 +248,9 @@ describe("isTerminalPasteShortcut", () => {
     expect(isTerminalPasteShortcut(event({ ctrlKey: true }), "MacIntel")).toBe(false);
   });
 
-  it("preserves Ctrl+V and uses Ctrl+Shift+V elsewhere", () => {
+  it("preserves Ctrl+V on Windows and uses Ctrl+Shift+V on Linux", () => {
+    expect(isTerminalPasteShortcut(event({ ctrlKey: true }), "Win32")).toBe(true);
+    expect(isTerminalPasteShortcut(event({ ctrlKey: true, shiftKey: true }), "Win32")).toBe(true);
     expect(isTerminalPasteShortcut(event({ ctrlKey: true }), "Linux x86_64")).toBe(false);
     expect(isTerminalPasteShortcut(event({ ctrlKey: true, shiftKey: true }), "Linux x86_64")).toBe(
       true,
