@@ -38,7 +38,9 @@ struct PlatformRootView: View {
                 handle(route)
                 return .handled
             } catch {
-                return .systemAction(url)
+                return PlatformDeepLinkParser.claimsInAppURL(url)
+                    ? .discarded
+                    : .systemAction(url)
             }
         })
         .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in

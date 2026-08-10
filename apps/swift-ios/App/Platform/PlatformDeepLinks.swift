@@ -83,6 +83,9 @@ enum PlatformDeepLinkError: LocalizedError, Equatable {
 }
 
 enum PlatformDeepLinkParser {
+    private static let t3Schemes: Set<String> = [
+        "t3", "t3code", "t3code-dev", "t3code-swiftui", "t3code-swiftui-dev",
+    ]
     private static let trustedWebHosts: Set<String> = [
         "app.t3.codes",
         "t3.codes",
@@ -97,7 +100,7 @@ enum PlatformDeepLinkParser {
         }
 
         let query = queryValues(components.queryItems ?? [])
-        if ["t3", "t3code", "t3code-swiftui", "t3code-swiftui-dev"].contains(scheme) {
+        if t3Schemes.contains(scheme) {
             let segments = customSchemeSegments(components)
             if isConnectionRoute(segments: segments, query: query) {
                 return try connectionRoute(url)
@@ -150,9 +153,12 @@ enum PlatformDeepLinkParser {
         let route: PlatformRoute
         if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
            let scheme = components.scheme?.lowercased() {
-            if ["t3code", "t3code-dev"].contains(scheme),
-               components.host?.lowercased() == "app" {
-                route = try webThreadRoute(components)
+            if t3Schemes.contains(scheme) {
+                route = if components.host?.lowercased() == "app" {
+                    try webThreadRoute(components)
+                } else {
+                    try parse(url)
+                }
                 return try validatedInAppThreadRoute(route, knownEnvironmentIDs: knownEnvironmentIDs)
             }
 
@@ -170,6 +176,15 @@ enum PlatformDeepLinkParser {
         }
 
         throw PlatformDeepLinkError.unsupportedURL
+    }
+
+    static func claimsInAppURL(_ url: URL) -> Bool {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let scheme = components.scheme?.lowercased() else { return false }
+        if t3Schemes.contains(scheme) { return true }
+        guard ["http", "https"].contains(scheme),
+              let host = components.host?.lowercased() else { return false }
+        return trustedWebHosts.contains(host) || isLoopbackHost(host)
     }
 
     static func parseInAppLink(

@@ -110,6 +110,15 @@ struct PlatformDeepLinkTests {
                 )
             }
         }
+        #expect(PlatformDeepLinkParser.claimsInAppURL(
+            URL(string: "t3code-swiftui://connect?endpoint=https://attacker.example")!
+        ))
+        #expect(PlatformDeepLinkParser.claimsInAppURL(
+            URL(string: "https://app.t3.codes/connect?endpoint=https://attacker.example")!
+        ))
+        #expect(!PlatformDeepLinkParser.claimsInAppURL(
+            URL(string: "https://example.com/connect")!
+        ))
     }
 
     @Test
