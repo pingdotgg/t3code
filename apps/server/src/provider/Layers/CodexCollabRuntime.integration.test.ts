@@ -24,6 +24,8 @@ import { makeCodexSessionRuntime } from "./CodexSessionRuntime.ts";
 
 const ROOT = wireFixture.rootThreadId;
 const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
+const CHILD_C = "019fcfd6-1806-7de1-8564-de69fd55bff3";
+const CHILD_D = "019fcfd6-1806-7de1-8564-de69fd55bff4";
 
 /**
  * The captured sequence, extended with the shapes the live capture didn't
@@ -196,10 +198,53 @@ function buildOutOfOrderNamingScript() {
           threadId: ROOT,
           turnId: rootTurnId,
           item: {
+            type: "collabAgentToolCall",
+            id: "call_direct_spawn_ordered_second",
+            tool: "spawnAgent",
+            status: "completed",
+            senderThreadId: ROOT,
+            receiverThreadIds: [CHILD_C, CHILD_D],
+            prompt: "Return one concise result.",
+            agentsStates: {
+              [CHILD_C]: { status: "pendingInit", message: null },
+              [CHILD_D]: { status: "pendingInit", message: null },
+            },
+          },
+          completedAtMs: 1785898350000,
+        },
+      },
+      {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: rootTurnId,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_direct_wait_reordered",
+            tool: "wait",
+            status: "completed",
+            senderThreadId: ROOT,
+            // Non-spawn calls can list receivers in any order, but they must
+            // not change the original spawn positions.
+            receiverThreadIds: [CHILD_D, CHILD_C],
+            agentsStates: {
+              [CHILD_C]: { status: "running", message: null },
+              [CHILD_D]: { status: "running", message: null },
+            },
+          },
+          completedAtMs: 1785898350000,
+        },
+      },
+      {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: rootTurnId,
+          item: {
             type: "agentMessage",
             id: "root-order-summary",
             phase: "final_answer",
-            text: "Agents:\n- Alpha\n- Beta",
+            text: "Agents:\n- Alpha\n- Beta\n- Gamma\n- Delta",
           },
           completedAtMs: 1785898350000,
         },
@@ -276,7 +321,7 @@ describe("CodexSessionRuntime collab integration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("assigns coordinator names in receiver order after child-first registration", () =>
+  it.effect("assigns names in global spawn order and ignores later non-spawn receiver order", () =>
     Effect.gen(function* () {
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       NodeFS.writeFileSync(scriptPath, JSON.stringify(buildOutOfOrderNamingScript()), "utf8");
@@ -311,6 +356,8 @@ describe("CodexSessionRuntime collab integration", () => {
         [
           [CHILD_A, "Alpha"],
           [CHILD_B, "Beta"],
+          [CHILD_C, "Gamma"],
+          [CHILD_D, "Delta"],
         ],
       );
 
