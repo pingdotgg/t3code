@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   actionableLocalBranches,
   applyWorkingTreeEnrichments,
+  beginVersionControlAction,
   beginDetailRequest,
   branchOwnsOperationCwd,
   clearResolvedDetailError,
@@ -103,6 +104,17 @@ function snapshot(): VcsPanelSnapshotResult {
 }
 
 describe("native Version Control model", () => {
+  it("acquires mutation keys synchronously until the action releases them", () => {
+    const runningActionKeys = new Set<string>();
+
+    expect(beginVersionControlAction(runningActionKeys, "push")).toBe(true);
+    expect(beginVersionControlAction(runningActionKeys, "push")).toBe(false);
+    expect(beginVersionControlAction(runningActionKeys, "stash")).toBe(true);
+
+    runningActionKeys.delete("push");
+    expect(beginVersionControlAction(runningActionKeys, "push")).toBe(true);
+  });
+
   it("merges the current working tree and preserves aggregate selected stats", () => {
     const [changeSet] = panelChangeSets(snapshot(), "/repo");
     expect(changeSet?.files).toEqual([

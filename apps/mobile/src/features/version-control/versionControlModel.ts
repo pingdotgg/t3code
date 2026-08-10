@@ -293,6 +293,15 @@ export function selectedFileStats(
   );
 }
 
+export function beginVersionControlAction(
+  runningActionKeys: Set<string>,
+  actionKey: string,
+): boolean {
+  if (runningActionKeys.has(actionKey)) return false;
+  runningActionKeys.add(actionKey);
+  return true;
+}
+
 export function fileStatusLetter(status: VcsPanelFileChange["status"]): string {
   switch (status) {
     case "added":

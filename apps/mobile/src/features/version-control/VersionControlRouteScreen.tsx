@@ -30,6 +30,7 @@ import { vcsEnvironment } from "../../state/vcs";
 import {
   actionableLocalBranches,
   applyWorkingTreeEnrichments,
+  beginVersionControlAction,
   beginDetailRequest,
   branchOwnsOperationCwd,
   clearResolvedDetailError,
@@ -117,6 +118,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
   const [settledSnapshotCwd, setSettledSnapshotCwd] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const runningActionKeysRef = useRef(new Set<string>());
   const [error, setError] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [actionableExpanded, setActionableExpanded] = useState(true);
@@ -304,6 +306,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
 
   const runAction = useCallback(
     async (label: string, action: () => Promise<unknown>) => {
+      if (!beginVersionControlAction(runningActionKeysRef.current, label)) return false;
       setBusyAction(label);
       setError(null);
       setMutationError(null);
@@ -315,10 +318,14 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
       } catch (cause) {
         if (!(cause instanceof VersionControlCommandInterrupted)) actionError = errorMessage(cause);
       } finally {
-        await refreshSnapshot();
-        statusQuery.refresh();
-        if (actionError) setMutationError(actionError);
-        setBusyAction(null);
+        try {
+          await refreshSnapshot();
+          statusQuery.refresh();
+          if (actionError) setMutationError(actionError);
+        } finally {
+          runningActionKeysRef.current.delete(label);
+          setBusyAction((current) => (current === label ? null : current));
+        }
       }
       return succeeded;
     },
