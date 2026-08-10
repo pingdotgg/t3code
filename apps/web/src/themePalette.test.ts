@@ -113,6 +113,8 @@ describe("theme files", () => {
       expect(contrastRatio(colors.text, colors.canvas)).toBeGreaterThanOrEqual(7);
       expect(contrastRatio(colors.textMuted, colors.canvas)).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(colors.textMuted, colors.canvas)).toBeLessThan(5.5);
+      expect(contrastRatio(colors.mutedForeground, colors.muted)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(colors.placeholder, colors.surfaceRaised)).toBeGreaterThanOrEqual(4.5);
       expect(colors.secondaryLabel).toBe(colors.textMuted);
       expect(contrastRatio(colors.accentForeground, colors.accent)).toBeGreaterThanOrEqual(4.5);
       expect(
@@ -169,7 +171,7 @@ describe("theme files", () => {
       colors: {
         canvas: "#07152f",
         accent: "#67c2ff",
-        placeholder: "#8f8699",
+        placeholder: "#968d9f",
       },
     });
   });
@@ -315,9 +317,7 @@ describe("theme files", () => {
         4.5,
       );
       expect(contrastRatio(colors.sidebarForeground, colors.sidebar)).toBeGreaterThanOrEqual(4.5);
-      // The live light primary is intended for filled controls and clears the
-      // non-text UI-component threshold rather than normal-text AA.
-      expect(contrastRatio(colors.accentForeground, colors.accent)).toBeGreaterThanOrEqual(3);
+      expect(contrastRatio(colors.accentForeground, colors.accent)).toBeGreaterThanOrEqual(4.5);
     }
   });
 
@@ -340,9 +340,7 @@ describe("theme files", () => {
             1,
           );
         }
-        expect(contrastRatio(colors!.accentForeground, colors!.accent)).toBeGreaterThanOrEqual(
-          theme === T3_CHAT_THEME ? 3 : 4.5,
-        );
+        expect(contrastRatio(colors!.accentForeground, colors!.accent)).toBeGreaterThanOrEqual(4.5);
         expect(
           contrastRatio(colors!.toolbarControlForeground, colors!.toolbarControl),
         ).toBeGreaterThanOrEqual(4.5);
@@ -351,7 +349,14 @@ describe("theme files", () => {
         ).toBeGreaterThanOrEqual(4.5);
         expect(
           contrastRatio(colors!.messageActionForeground, colors!.messageAction),
-        ).toBeGreaterThanOrEqual(theme === T3_CHAT_THEME ? 3 : 4.5);
+        ).toBeGreaterThanOrEqual(4.5);
+        expect(
+          contrastRatio(colors!.messageActionForeground, colors!.messageActionHover),
+        ).toBeGreaterThanOrEqual(4.5);
+        expect(contrastRatio(colors!.mutedForeground, colors!.muted)).toBeGreaterThanOrEqual(4.5);
+        expect(contrastRatio(colors!.placeholder, colors!.surfaceRaised)).toBeGreaterThanOrEqual(
+          4.5,
+        );
       }
     }
   });

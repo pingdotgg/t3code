@@ -150,10 +150,19 @@ export function useProjectFilePickerQuery(
   cwd: string,
   query: string,
   limit: number,
+  options?: { readonly imageOnly?: boolean },
 ) {
-  const search = useProjectPathSearch({ environmentId, cwd, query, kind: "file" }, limit, {
-    allowEmptyQuery: true,
-  });
+  const search = useProjectPathSearch(
+    {
+      environmentId,
+      cwd,
+      query,
+      kind: "file",
+      ...(options?.imageOnly ? { imageOnly: true } : {}),
+    },
+    limit,
+    { allowEmptyQuery: true },
+  );
 
   return {
     entries: search.isPending ? [] : search.entries,
