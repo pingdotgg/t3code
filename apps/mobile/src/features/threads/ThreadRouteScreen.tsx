@@ -130,17 +130,46 @@ interface ThreadRouteScreenProps extends ThreadRouteScreenRouteProps {
 
 function ThreadRouteStateScreen(props: {
   readonly children: ReactNode;
+  readonly fileInspectorSupported: boolean;
   readonly onNavigateUp: () => void;
+  readonly onReturnToThread?: () => void;
   readonly title: string;
+  readonly usesSplitView: boolean;
 }) {
+  const actions = useMemo<ReadonlyArray<AndroidHeaderAction>>(
+    () => [
+      ...(props.usesSplitView && props.onReturnToThread
+        ? [
+            {
+              accessibilityLabel: "Return to chat",
+              icon: "chevron.left" as const,
+              onPress: props.onReturnToThread,
+            },
+          ]
+        : []),
+      ...ANDROID_THREAD_LOADING_ACTIONS,
+      ...(props.fileInspectorSupported
+        ? [
+            {
+              accessibilityLabel: "Toggle inspector",
+              icon: "sidebar.right" as const,
+              disabled: true,
+              onPress: () => undefined,
+            },
+          ]
+        : []),
+    ],
+    [props.fileInspectorSupported, props.onReturnToThread, props.usesSplitView],
+  );
+
   return (
     <>
       {Platform.OS === "android" ? (
         <AndroidScreenHeader
           title={props.title}
           reserveSubtitleSpace
-          onBack={props.onNavigateUp}
-          actions={ANDROID_THREAD_LOADING_ACTIONS}
+          onBack={props.usesSplitView ? undefined : props.onNavigateUp}
+          actions={actions}
         />
       ) : null}
       {props.children}
@@ -148,9 +177,14 @@ function ThreadRouteStateScreen(props: {
   );
 }
 
-function ThreadUnavailableScreen(props: { readonly onNavigateUp: () => void }) {
+function ThreadUnavailableScreen(props: {
+  readonly fileInspectorSupported: boolean;
+  readonly onNavigateUp: () => void;
+  readonly onReturnToThread?: () => void;
+  readonly usesSplitView: boolean;
+}) {
   return (
-    <ThreadRouteStateScreen title="Thread unavailable" onNavigateUp={props.onNavigateUp}>
+    <ThreadRouteStateScreen title="Thread unavailable" {...props}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{
@@ -170,9 +204,14 @@ function ThreadUnavailableScreen(props: { readonly onNavigateUp: () => void }) {
   );
 }
 
-function OpeningThreadRouteScreen(props: { readonly onNavigateUp: () => void }) {
+function OpeningThreadRouteScreen(props: {
+  readonly fileInspectorSupported: boolean;
+  readonly onNavigateUp: () => void;
+  readonly onReturnToThread?: () => void;
+  readonly usesSplitView: boolean;
+}) {
   return (
-    <ThreadRouteStateScreen title="Opening thread…" onNavigateUp={props.onNavigateUp}>
+    <ThreadRouteStateScreen title="Opening thread…" {...props}>
       <OpeningThreadLoadingScreen />
     </ThreadRouteStateScreen>
   );
@@ -180,6 +219,7 @@ function OpeningThreadRouteScreen(props: { readonly onNavigateUp: () => void }) 
 
 export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
   const navigation = useNavigation();
+  const { fileInspector, layout } = useAdaptiveWorkspaceLayout();
   const handleNavigateUp = useCallback(() => {
     if (navigation.canGoBack()) {
       navigation.goBack();
@@ -207,9 +247,15 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
       ? null
       : scopedThreadKey(selectedThread.environmentId, selectedThread.id);
   const selectedThreadDetailState = useSelectedThreadDetailState();
+  const routeStateScreenProps = {
+    fileInspectorSupported: fileInspector.supported,
+    onNavigateUp: handleRouteNavigateUp,
+    onReturnToThread: props.onReturnToThread,
+    usesSplitView: layout.usesSplitView,
+  };
 
   if (environmentId === null || threadIdRaw === null) {
-    return <OpeningThreadRouteScreen onNavigateUp={handleRouteNavigateUp} />;
+    return <OpeningThreadRouteScreen {...routeStateScreenProps} />;
   }
 
   // Render the full thread chrome (header, feed, composer) as soon as the
@@ -226,10 +272,10 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
     routeConnectionState === "reconnecting";
 
   if (stillHydrating) {
-    return <OpeningThreadRouteScreen onNavigateUp={handleRouteNavigateUp} />;
+    return <OpeningThreadRouteScreen {...routeStateScreenProps} />;
   }
 
-  return <ThreadUnavailableScreen onNavigateUp={handleRouteNavigateUp} />;
+  return <ThreadUnavailableScreen {...routeStateScreenProps} />;
 }
 
 function ThreadRouteContent(
