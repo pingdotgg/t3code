@@ -21,10 +21,16 @@ export function buildThreadListMenuActions(input: {
       : []),
   ];
   const utilityActions: MenuAction[] = [
-    { id: "mark-unread", title: "Mark unread", image: "bell.badge" },
+    { id: "mark-unread", title: "Mark unread", image: "envelope.badge" },
     { id: "copy-path", title: "Copy path", image: "doc.on.doc" },
     ...(input.thread.branch
-      ? [{ id: "copy-branch", title: "Copy branch", image: "arrow.branch" } satisfies MenuAction]
+      ? [
+          {
+            id: "copy-branch",
+            title: "Copy branch",
+            image: "arrow.triangle.branch",
+          } satisfies MenuAction,
+        ]
       : []),
   ];
   return [

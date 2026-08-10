@@ -60,6 +60,7 @@ import IconLayoutSidebar from "@tabler/icons-react-native/IconLayoutSidebar";
 import IconLayoutSidebarRight from "@tabler/icons-react-native/IconLayoutSidebarRight";
 import IconLetterSpacing from "@tabler/icons-react-native/IconLetterSpacing";
 import IconLink from "@tabler/icons-react-native/IconLink";
+import IconMail from "@tabler/icons-react-native/IconMail";
 import IconMessage from "@tabler/icons-react-native/IconMessage";
 import IconMinus from "@tabler/icons-react-native/IconMinus";
 import IconMoon from "@tabler/icons-react-native/IconMoon";
@@ -128,6 +129,7 @@ const ANDROID_ICON_BY_SF_SYMBOL: Partial<Record<SFSymbol, Icon>> = {
   "chevron.up": IconChevronUp,
   desktopcomputer: IconDeviceDesktop,
   "doc.on.doc": IconCopy,
+  "envelope.badge": IconMail,
   "doc.text": IconFileText,
   ellipsis: IconDots,
   moon: IconMoon,

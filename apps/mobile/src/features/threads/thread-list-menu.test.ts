@@ -28,6 +28,11 @@ describe("buildThreadListMenuActions", () => {
       "copy-path",
       "copy-branch",
     ]);
+    expect(actions[3]?.subactions?.map((action) => action.image)).toEqual([
+      "envelope.badge",
+      "doc.on.doc",
+      "arrow.triangle.branch",
+    ]);
   });
 
   it("gates title regeneration and the branch action", () => {
