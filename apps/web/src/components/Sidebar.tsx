@@ -3332,16 +3332,16 @@ export default function Sidebar() {
                     <ChevronDownIcon className="-mr-px size-4 shrink-0" />
                   </ComboboxTrigger>
                   <ComboboxPopup align="start" className="w-(--anchor-width)">
-                    <div className="shrink-0 px-2 pt-2 pb-1">
-                      <div className="relative">
+                    <div className="shrink-0 px-3 pt-2.5">
+                      <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
                         <SearchIcon
                           aria-hidden="true"
-                          className="pointer-events-none absolute top-1/2 left-2.5 z-10 size-4 shrink-0 -translate-y-1/2 text-muted-foreground/55"
+                          className="pointer-events-none absolute top-1.5 left-0 size-4 shrink-0 text-muted-foreground/55"
                         />
                         <ComboboxInput
                           aria-label="Search projects"
-                          className="[&_input]:h-8 [&_input]:ps-8.5 [&_input]:font-sans"
-                          inputClassName="rounded-md bg-secondary text-sm"
+                          className="[&_input]:h-6.5 [&_input]:ps-5 [&_input]:font-sans [&_input]:leading-6.5"
+                          inputClassName="rounded-none bg-transparent text-sm"
                           placeholder="Search projects..."
                           showTrigger={false}
                           size="sm"
