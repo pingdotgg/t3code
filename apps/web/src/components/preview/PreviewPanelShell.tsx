@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { Fragment, type CSSProperties, type ReactNode, useEffect, useState } from "react";
 
 import { isElectron } from "~/env";
 import { useResizableWidth } from "~/hooks/useResizableWidth";
@@ -26,12 +26,16 @@ export function getPreviewPanelMaxWidth(viewportWidth: number): number {
 export function PreviewPanelShell(props: {
   mode: PreviewPanelMode;
   maximized?: boolean;
+  open?: boolean;
+  onExitComplete?: () => void;
   children: ReactNode;
 }) {
   const useDragRegion = isElectron && props.mode !== "sheet" && props.mode !== "embedded";
   const isInline = props.mode === "inline";
+  const maximized = props.maximized === true;
+  const open = props.open ?? true;
   const maxWidth = useViewportClampedMaxWidth();
-  const { width, handlers } = useResizableWidth({
+  const { width, isResizing, handlers } = useResizableWidth({
     storageKey: PREVIEW_PANEL_WIDTH_STORAGE_KEY,
     defaultWidth: PREVIEW_PANEL_DEFAULT_WIDTH,
     minWidth: PREVIEW_PANEL_MIN_WIDTH,
@@ -39,23 +43,76 @@ export function PreviewPanelShell(props: {
     edge: "left",
   });
 
+  const panelContents = (
+    <>
+      {isInline && !maximized ? (
+        <RightPanelResizeHandle key="resize-handle" handlers={handlers} />
+      ) : null}
+      {useDragRegion ? (
+        <div key="drag-region" className="electron-drag-region h-0 w-full" aria-hidden />
+      ) : null}
+      <Fragment key="panel-contents">{props.children}</Fragment>
+    </>
+  );
+
+  if (isInline) {
+    return (
+      <div
+        className={cn(
+          "right-panel-inline-frame relative h-full min-h-0 min-w-0 self-stretch",
+          maximized
+            ? open
+              ? "flex-1"
+              : "right-panel-inline-maximized-exit absolute inset-0 z-40"
+            : "right-panel-inline-gap shrink-0",
+        )}
+        style={maximized ? undefined : ({ "--right-panel-width": `${width}px` } as CSSProperties)}
+        data-preview-panel-mode={props.mode}
+        data-preview-panel-maximized={maximized ? "true" : "false"}
+        data-right-panel-open={open ? "true" : "false"}
+        data-right-panel-resizing={!maximized && isResizing ? "true" : undefined}
+        aria-hidden={open ? undefined : true}
+        inert={open ? undefined : true}
+        onTransitionEnd={(event) => {
+          if (open || event.target !== event.currentTarget || event.propertyName !== "width") {
+            return;
+          }
+          props.onExitComplete?.();
+        }}
+      >
+        <div
+          className={cn(
+            "right-panel-inline-body right-panel-inline-surface flex h-full min-h-0 min-w-0 flex-col border-l border-border bg-background",
+            maximized ? "relative w-full" : "absolute inset-y-0 right-0 w-(--right-panel-width)",
+          )}
+          onTransitionEnd={(event) => {
+            if (
+              open ||
+              !maximized ||
+              event.target !== event.currentTarget ||
+              event.propertyName !== "translate"
+            ) {
+              return;
+            }
+            props.onExitComplete?.();
+          }}
+        >
+          {panelContents}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(
         "relative flex h-full min-h-0 min-w-0 flex-col self-stretch bg-background",
-        isInline
-          ? props.maximized
-            ? "flex-1 border-l border-border"
-            : "shrink-0 border-l border-border"
-          : "w-full",
+        "w-full",
       )}
-      style={isInline && !props.maximized ? { width: `${width}px` } : undefined}
       data-preview-panel-mode={props.mode}
-      data-preview-panel-maximized={props.maximized ? "true" : "false"}
+      data-preview-panel-maximized={maximized ? "true" : "false"}
     >
-      {isInline && !props.maximized ? <RightPanelResizeHandle handlers={handlers} /> : null}
-      {useDragRegion ? <div className="electron-drag-region h-0 w-full" aria-hidden /> : null}
-      {props.children}
+      {panelContents}
     </div>
   );
 }
