@@ -20,7 +20,6 @@ require_cmd() {
 
 require_cmd awk
 require_cmd base64
-require_cmd git
 require_cmd mktemp
 require_cmd plutil
 require_cmd xcodebuild
@@ -79,49 +78,16 @@ build_settings=(
 )
 
 if [[ "${CONFIGURATION}" == "Debug" ]]; then
-  GIT_COMMIT="$(git -C "${APP_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-  if [[ "${GIT_COMMIT}" != "unknown" ]] && \
-     [[ -n "$(git -C "${APP_DIR}" status --porcelain -- . 2>/dev/null)" ]]; then
-    GIT_COMMIT="${GIT_COMMIT}-dirty"
-  fi
-
-  GIT_REPO_URL="$(git -C "${APP_DIR}" remote get-url upstream 2>/dev/null || true)"
-  if [[ -z "${GIT_REPO_URL}" ]]; then
-    GIT_REPO_URL="$(git -C "${APP_DIR}" remote get-url origin 2>/dev/null || true)"
-  fi
-  GIT_REPO_URL="${GIT_REPO_URL%.git}"
-  case "${GIT_REPO_URL}" in
-    https://*@*) GIT_REPO_URL="https://${GIT_REPO_URL#*@}" ;;
-    ssh://git@*) GIT_REPO_URL="https://${GIT_REPO_URL#ssh://git@}" ;;
-    git@*) GIT_REPO_URL="https://$(printf '%s' "${GIT_REPO_URL#git@}" | tr ':' '/')" ;;
-  esac
-  build_settings+=(
-    "T3_GIT_COMMIT=${GIT_COMMIT}"
-    "T3_GIT_REPO_URL=${GIT_REPO_URL}"
-  )
-
   CHANGELOG_FILE="$(mktemp -t t3-swift-changelog.XXXXXX)"
+  trap 'unlink "${CHANGELOG_FILE:-}" "${DEVICE_JSON:-}" 2>/dev/null || true' EXIT
   CHANGELOG_BASE_REF="${T3_SWIFT_CHANGELOG_BASE_REF:-upstream/t3code/rebuild-mobile-app-swift}"
-  changelog_arguments=("${APP_DIR}/../.." "${CHANGELOG_BASE_REF}" "${CHANGELOG_FILE}")
-  CHANGELOG_SUMMARIES="${T3_SWIFT_CHANGELOG_SUMMARIES:-}"
-  if [[ "${T3_SWIFT_CHANGELOG_USE_LUNA:-0}" == "1" ]]; then
-    CHANGELOG_SUMMARIES="$(mktemp -t t3-swift-changelog-summaries.XXXXXX)"
-    "${SCRIPT_DIR}/generate-luna-changelog-summaries.sh" \
-      "${APP_DIR}/../.." "${CHANGELOG_BASE_REF}" "${CHANGELOG_SUMMARIES}"
-  fi
-  if [[ -n "${CHANGELOG_SUMMARIES}" ]]; then
-    changelog_arguments+=("${CHANGELOG_SUMMARIES}")
-  fi
-  xcrun swift "${SCRIPT_DIR}/generate-build-changelog.swift" "${changelog_arguments[@]}"
+  xcrun swift "${SCRIPT_DIR}/generate-build-changelog.swift" \
+    "${APP_DIR}/../.." "${CHANGELOG_BASE_REF}" "${CHANGELOG_FILE}"
   BUILD_CHANGELOG="$(base64 < "${CHANGELOG_FILE}" | tr -d '\n')"
-  unlink "${CHANGELOG_FILE}"
-  if [[ "${T3_SWIFT_CHANGELOG_USE_LUNA:-0}" == "1" ]]; then
-    unlink "${CHANGELOG_SUMMARIES}"
-  fi
   build_settings+=("T3_BUILD_CHANGELOG=${BUILD_CHANGELOG}")
 fi
 DEVICE_JSON="$(mktemp -t t3-swift-devices.XXXXXX)"
-trap 'unlink "${DEVICE_JSON}" 2>/dev/null || true' EXIT
+trap 'unlink "${CHANGELOG_FILE:-}" "${DEVICE_JSON:-}" 2>/dev/null || true' EXIT
 xcrun devicectl list devices --json-output "${DEVICE_JSON}" --quiet >/dev/null
 DESTINATION_ID="$(
   xcrun swift "${SCRIPT_DIR}/resolve-device-udid.swift" "${DEVICE_JSON}" "${DEVICE_ID}"

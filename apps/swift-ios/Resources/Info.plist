@@ -34,10 +34,6 @@
             </dict>
         </dict>
     </dict>
-    <key>T3GitCommit</key>
-    <string>$(T3_GIT_COMMIT)</string>
-    <key>T3GitRepoURL</key>
-    <string>$(T3_GIT_REPO_URL)</string>
     <key>T3BuildChangelog</key>
     <string>$(T3_BUILD_CHANGELOG)</string>
     <key>T3ConnectClerkJWTTemplate</key>

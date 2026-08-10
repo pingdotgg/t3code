@@ -6,10 +6,15 @@ public struct SettingsView: View {
     @State private var settings: FeatureSettings
     @State private var isSaving = false
     @State private var saveErrorMessage: String?
+    private let appVersionLabel: String
+    private let buildChangelog: BuildChangelog?
 
     public init(model: FeatureRootModel) {
         self.model = model
         _settings = State(initialValue: model.snapshot.settings)
+        let info = Bundle.main.infoDictionary
+        appVersionLabel = SettingsAboutMetadata.appVersionLabel(info: info)
+        buildChangelog = BuildChangelog.load(info: info)
     }
 
     public var body: some View {
@@ -210,13 +215,6 @@ public struct SettingsView: View {
             ?? "T3 Code SwiftUI"
     }
 
-    private var appVersionLabel: String {
-        SettingsAboutMetadata.appVersionLabel(info: Bundle.main.infoDictionary)
-    }
-
-    private var buildChangelog: BuildChangelog? {
-        BuildChangelog.load(info: Bundle.main.infoDictionary)
-    }
     private var canSave: Bool {
         !isSaving && settings != model.snapshot.settings
     }
