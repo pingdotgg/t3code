@@ -393,6 +393,9 @@ export function parseCursorUsageCsv(csvText: string): {
   return { ok: true, records, message: null };
 }
 
+const CURSOR_CSV_TIMEOUT_MS = 30_000;
+const CURSOR_REFRESH_TIMEOUT_MS = 15_000;
+
 const cursorFetchFailed = (message: string): CursorCsvFetchResult => ({
   records: [],
   status: "failed",
@@ -412,7 +415,7 @@ const refreshAccessToken = Effect.fn("usageCursor.refreshAccessToken")(function*
     httpClient.execute,
     Effect.flatMap(HttpClientResponse.filterStatusOk),
     Effect.flatMap((response) => response.json),
-    Effect.timeout(15_000),
+    Effect.timeout(CURSOR_REFRESH_TIMEOUT_MS),
     Effect.catchCause(() => Effect.succeed(null)),
   );
   if (typeof body !== "object" || body === null) return null;
@@ -420,6 +423,11 @@ const refreshAccessToken = Effect.fn("usageCursor.refreshAccessToken")(function*
   return typeof accessToken === "string" && accessToken.length > 0 ? accessToken : null;
 });
 
+/**
+ * One export attempt: deadline covers headers and body together (same as the
+ * old `AbortSignal.timeout` on `fetch`), so a stalled CSV transfer cannot hang
+ * `readSummary`.
+ */
 const fetchCsvOnce = Effect.fn("usageCursor.fetchCsvOnce")(function* (
   sessionToken: string,
   sinceMs: number,
@@ -431,14 +439,25 @@ const fetchCsvOnce = Effect.fn("usageCursor.fetchCsvOnce")(function* (
   url.searchParams.set("endDate", String(Math.trunc(untilMs)));
   url.searchParams.set("strategy", "tokens");
 
-  return yield* HttpClientRequest.get(url.toString()).pipe(
-    HttpClientRequest.setHeaders({
-      Cookie: `WorkosCursorSessionToken=${sessionToken}`,
-      Accept: "text/csv",
-    }),
-    httpClient.execute,
-    Effect.timeout(30_000),
-  );
+  return yield* Effect.gen(function* () {
+    const response = yield* HttpClientRequest.get(url.toString()).pipe(
+      HttpClientRequest.setHeaders({
+        Cookie: `WorkosCursorSessionToken=${sessionToken}`,
+        Accept: "text/csv",
+      }),
+      httpClient.execute,
+    );
+    if (
+      response.status === 401 ||
+      response.status === 403 ||
+      response.status < 200 ||
+      response.status >= 300
+    ) {
+      return { kind: "http" as const, status: response.status };
+    }
+    const text = yield* response.text;
+    return { kind: "csv" as const, text };
+  }).pipe(Effect.timeout(CURSOR_CSV_TIMEOUT_MS));
 });
 
 /**
@@ -459,14 +478,18 @@ export const fetchCursorUsageRecords = Effect.fn("fetchCursorUsageRecords")(func
 
   let accessToken = input.auth.accessToken;
   let sessionToken = session.sessionToken;
-  let response = yield* fetchCsvOnce(sessionToken, input.sinceMs, input.untilMs).pipe(
+  let result = yield* fetchCsvOnce(sessionToken, input.sinceMs, input.untilMs).pipe(
     Effect.catchCause(() => Effect.succeed(null)),
   );
-  if (response === null) {
+  if (result === null) {
     return cursorFetchFailed("Cursor usage export request failed.");
   }
 
-  if ((response.status === 401 || response.status === 403) && input.auth.refreshToken !== null) {
+  if (
+    result.kind === "http" &&
+    (result.status === 401 || result.status === 403) &&
+    input.auth.refreshToken !== null
+  ) {
     const refreshed = yield* refreshAccessToken(input.auth.refreshToken);
     if (refreshed !== null) {
       accessToken = refreshed;
@@ -474,33 +497,26 @@ export const fetchCursorUsageRecords = Effect.fn("fetchCursorUsageRecords")(func
       const nextSession = cursorSessionFromAccessToken(accessToken);
       if (nextSession !== null) {
         sessionToken = nextSession.sessionToken;
-        response = yield* fetchCsvOnce(sessionToken, input.sinceMs, input.untilMs).pipe(
+        result = yield* fetchCsvOnce(sessionToken, input.sinceMs, input.untilMs).pipe(
           Effect.catchCause(() => Effect.succeed(null)),
         );
-        if (response === null) {
+        if (result === null) {
           return cursorFetchFailed("Cursor usage export request failed after refresh.");
         }
       }
     }
   }
 
-  if (response.status === 401 || response.status === 403) {
-    return cursorFetchFailed("Cursor session expired. Sign in via the Cursor app.");
-  }
-  if (response.status < 200 || response.status >= 300) {
-    return cursorFetchFailed(`Cursor usage export returned HTTP ${response.status}.`);
-  }
-
-  const text = yield* response.text.pipe(
-    Effect.catchCause(() => Effect.succeed(null)),
-  );
-  if (text === null) {
-    return cursorFetchFailed("Cursor usage export body transfer failed.");
+  if (result.kind === "http") {
+    if (result.status === 401 || result.status === 403) {
+      return cursorFetchFailed("Cursor session expired. Sign in via the Cursor app.");
+    }
+    return cursorFetchFailed(`Cursor usage export returned HTTP ${result.status}.`);
   }
 
   // Validity comes from the parsed header row so quoted CSV headers
   // (`"Date","Model",...`) are accepted the same as bare `Date,Model,...`.
-  const parsed = parseCursorUsageCsv(text);
+  const parsed = parseCursorUsageCsv(result.text);
   if (!parsed.ok) {
     return cursorFetchFailed(parsed.message ?? "Cursor usage export could not be parsed.");
   }
