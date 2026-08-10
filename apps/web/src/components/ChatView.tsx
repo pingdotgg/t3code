@@ -4607,7 +4607,18 @@ function ChatViewContent(props: ChatViewProps) {
         modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
       };
 
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: shortcutContext,
+      });
+
+      // chat.interrupt outranks type-to-focus while a turn is running: a
+      // printable-key binding would otherwise be typed into the composer
+      // instead of stopping the turn. When idle, the key keeps its usual
+      // meaning, so bindings like plain Escape stay safe.
+      const interruptClaimsKey = command === "chat.interrupt" && phase === "running";
+
       if (
+        !interruptClaimsKey &&
         !shortcutContext.terminalFocus &&
         !shortcutContext.modelPickerOpen &&
         shouldTypeToFocusComposer(event)
@@ -4619,9 +4630,6 @@ function ChatViewContent(props: ChatViewProps) {
         }
       }
 
-      const command = resolveShortcutCommand(event, keybindings, {
-        context: shortcutContext,
-      });
       if (!command) return;
 
       if (command === "terminal.toggle") {
@@ -4707,9 +4715,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       if (command === "chat.interrupt") {
-        // Claims the key only while a turn is running, so a binding like
-        // plain Escape keeps its usual meaning the rest of the time.
-        if (phase !== "running") return;
+        if (!interruptClaimsKey) return;
         event.preventDefault();
         event.stopPropagation();
         void onInterrupt();
