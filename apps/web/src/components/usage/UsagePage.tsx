@@ -1,12 +1,6 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
-import {
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-} from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import { isElectron } from "../../env";
 import { useUsageCurrency } from "../../hooks/useUsageCurrency";
@@ -221,15 +215,19 @@ export function UsagePage() {
                 />
 
                 {/* Cost first: the financial answer, then the provider split.
-                Fixed minmax(0,20rem) jumps when currency width changes; at lg the
-                measured column width eases when currency changes. */}
+                Single-column below lg so the summary stretches with the chart;
+                at lg the measured column width eases when currency changes. */}
                 <section
-                  className="grid gap-6 lg:grid-cols-[minmax(0,var(--usage-summary-col,20rem))_minmax(0,1fr)]"
+                  className={cn(
+                    "grid gap-6 lg:grid-cols-[var(--usage-summary-col)_minmax(0,1fr)]",
+                    transitionEnabled &&
+                      "ease-out max-lg:transition-none lg:transition-[grid-template-columns]",
+                  )}
                   style={
                     {
                       "--usage-summary-col": `${summaryColPx}px`,
-                      transition: transitionEnabled
-                        ? `grid-template-columns ${SUMMARY_WIDTH_TRANSITION_MS}ms ease`
+                      transitionDuration: transitionEnabled
+                        ? `${SUMMARY_WIDTH_TRANSITION_MS}ms`
                         : undefined,
                     } as CSSProperties
                   }
@@ -257,13 +255,13 @@ export function UsagePage() {
                     {orderedProviders.map((provider) => {
                       const share = metric === "cost" ? provider.costShare : provider.tokenShare;
                       return (
-                        <div key={provider.provider} className="flex flex-col gap-1.5">
-                          <div className="flex items-baseline justify-between">
-                            <span className="flex items-center gap-2 text-sm text-foreground">
+                        <div key={provider.provider} className="flex min-w-0 flex-col gap-1.5">
+                          <div className="flex min-w-0 items-baseline justify-between gap-3">
+                            <span className="flex min-w-0 items-center gap-2 text-sm text-foreground">
                               <ProviderMark provider={provider.provider} className="size-4" />
-                              {PROVIDER_LABEL[provider.provider]}
+                              <span className="truncate">{PROVIDER_LABEL[provider.provider]}</span>
                             </span>
-                            <span className="text-sm text-foreground tabular-nums">
+                            <span className="shrink-0 text-right text-sm text-foreground tabular-nums">
                               {metric === "cost"
                                 ? formatCostCompact(provider.costUsd)
                                 : formatTokens(provider.totalTokens)}
@@ -288,7 +286,7 @@ export function UsagePage() {
                     })}
                   </div>
 
-                  <div className="flex flex-col gap-3">
+                  <div className="flex min-w-0 flex-col gap-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <h2 className="text-sm font-medium text-foreground">
                         Daily {metric === "tokens" ? "processed tokens" : "cost"}
@@ -318,8 +316,9 @@ export function UsagePage() {
                       days={days}
                       daily={merged.daily}
                       metric={metric}
-                      formatCost={formatCost}
-                      formatCostCompact={formatCostCompact}
+                      toDisplayCost={toDisplayCost}
+                      formatCost={formatDisplayCost}
+                      formatCostCompact={formatDisplayCostCompact}
                     />
                   </div>
                 </section>
