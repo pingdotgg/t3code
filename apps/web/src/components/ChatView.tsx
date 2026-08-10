@@ -148,6 +148,7 @@ import { AgentsPanel } from "./AgentsPanel";
 import {
   deriveAgentPanelModel,
   foldSubagentActivities,
+  latestAgentActivityAt,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
@@ -1554,15 +1555,6 @@ function ChatViewContent(props: ChatViewProps) {
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const activeAgentsClearedAt =
     activeThreadKey === null ? null : (agentsClearedAtByThreadKey[activeThreadKey] ?? null);
-  const handleClearInactiveAgents = useCallback(() => {
-    if (activeThreadKey === null) {
-      return;
-    }
-    const clearedAt = new Date().toISOString();
-    setAgentsClearedAtByThreadKey((current) =>
-      boundAgentsClearedAtByThread({ ...current, [activeThreadKey]: clearedAt }),
-    );
-  }, [activeThreadKey, setAgentsClearedAtByThreadKey]);
   const handleShowAllAgents = useCallback(() => {
     if (activeThreadKey === null) {
       return;
@@ -2173,15 +2165,31 @@ function ChatViewContent(props: ChatViewProps) {
   // Native subagent fold: memoized by activity-list identity, shared by the
   // Agents surface, live strip, and workflow cards. v2Projection is null
   // until orchestration-v2 lands (source precedence lives in the derive).
-  // sessionLive derives interruption for agents orphaned by session death.
+  // sessionLive derives interruption for agents orphaned by session death;
+  // the session's updatedAt dates that derived transition.
   const agentSessionLive = phase !== "disconnected";
+  const agentSessionUpdatedAt = activeThread?.session?.updatedAt;
   const agentPanelModel = useMemo(
     () =>
       deriveAgentPanelModel({
-        agents: foldSubagentActivities(threadActivities, { sessionLive: agentSessionLive }),
+        agents: foldSubagentActivities(threadActivities, {
+          sessionLive: agentSessionLive,
+          sessionUpdatedAt: agentSessionUpdatedAt,
+        }),
       }),
-    [agentSessionLive, threadActivities],
+    [agentSessionLive, agentSessionUpdatedAt, threadActivities],
   );
+  const handleClearInactiveAgents = useCallback(() => {
+    if (activeThreadKey === null) {
+      return;
+    }
+    // Cutoff comes from the rows themselves: updatedAt is server-stamped, and
+    // a client clock ahead of the server would hide rows that settle later.
+    const clearedAt = latestAgentActivityAt(agentPanelModel) ?? new Date().toISOString();
+    setAgentsClearedAtByThreadKey((current) =>
+      boundAgentsClearedAtByThread({ ...current, [activeThreadKey]: clearedAt }),
+    );
+  }, [activeThreadKey, agentPanelModel, setAgentsClearedAtByThreadKey]);
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
     [threadActivities],
