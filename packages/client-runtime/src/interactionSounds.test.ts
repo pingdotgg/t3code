@@ -345,6 +345,42 @@ describe("interaction sounds", () => {
     expect(firstLive.cues).toEqual([]);
   });
 
+  it("plays later cues after the first live snapshot seeds the baseline", () => {
+    const running = makeThread({
+      latestTurn: {
+        turnId: TurnId.make("turn-1"),
+        initiatingUserMessageId: MessageId.make("message-1"),
+        state: "running",
+        requestedAt: "2026-07-11T12:00:00.000Z",
+        startedAt: "2026-07-11T12:00:01.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+    });
+    const completed = makeThread({
+      latestTurn: {
+        ...running.latestTurn!,
+        state: "completed",
+        completedAt: "2026-07-11T12:00:05.000Z",
+      },
+    });
+    let environmentObservedLive = false;
+    const firstLive = observeThreadSoundState(null, running, {
+      environmentLive: true,
+      environmentPreviouslyLive: environmentObservedLive,
+      settingsHydrated: true,
+    });
+    environmentObservedLive = true;
+    const laterUpdate = observeThreadSoundState(firstLive.state, completed, {
+      environmentLive: true,
+      environmentPreviouslyLive: environmentObservedLive,
+      settingsHydrated: true,
+    });
+
+    expect(firstLive.cues).toEqual([]);
+    expect(laterUpdate.cues).toEqual(["success"]);
+  });
+
   it("detects a user-input request received while its environment is synchronizing", () => {
     const idle = makeThread();
     const pendingInputDuringSync = makeThread({ hasPendingUserInput: true });

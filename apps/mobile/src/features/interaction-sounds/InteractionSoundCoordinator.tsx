@@ -77,16 +77,21 @@ function InteractionSoundThreadCoordinator({
 }) {
   const thread = useThreadShell(threadRef);
   const previousStateRef = useRef<ThreadSoundStateByKey | null>(null);
+  const environmentObservedLiveRef = useRef(environmentPreviouslyLive);
 
   useEffect(() => {
     if (thread === null) {
       return;
     }
+    const environmentWasLive = environmentObservedLiveRef.current || environmentPreviouslyLive;
     const observation = observeThreadSoundState(previousStateRef.current, thread, {
       environmentLive,
-      environmentPreviouslyLive,
+      environmentPreviouslyLive: environmentWasLive,
       settingsHydrated,
     });
+    if (environmentLive || environmentPreviouslyLive) {
+      environmentObservedLiveRef.current = true;
+    }
     previousStateRef.current = observation.state;
     for (const cue of observation.cues) {
       if (shouldPlayInteractionSound(cue, completionSoundEnabled)) {
