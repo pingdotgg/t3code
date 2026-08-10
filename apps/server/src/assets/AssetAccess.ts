@@ -192,6 +192,7 @@ const resolveCanonicalGeneratedImage = Effect.fn("AssetAccess.resolveCanonicalGe
 
 const resolveCanonicalGeneratedImageForRequest = (absolutePath: string) =>
   resolveCanonicalGeneratedImage(absolutePath).pipe(
+    Effect.map((canonicalPath) => (canonicalPath === absolutePath ? canonicalPath : null)),
     Effect.tapError((cause) =>
       Effect.logError("Failed to resolve generated image asset.", {
         absolutePath,

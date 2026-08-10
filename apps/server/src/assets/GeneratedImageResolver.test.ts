@@ -32,6 +32,22 @@ describe("generated image resolution", () => {
     ).toBe(path);
   });
 
+  it("preserves filesystem-significant whitespace in the saved path", () => {
+    const path = "/provider/session/ generated.png ";
+    expect(
+      findGeneratedImagePath(
+        [activity({ type: "imageGeneration", status: "completed", savedPath: path })],
+        ACTIVITY_ID,
+      ),
+    ).toBe(path);
+    expect(
+      findGeneratedImagePath(
+        [activity({ type: "imageGeneration", status: "completed", savedPath: "   " })],
+        ACTIVITY_ID,
+      ),
+    ).toBeNull();
+  });
+
   it("rejects other image activities, incomplete generations, and mismatched ids", () => {
     expect(
       findGeneratedImagePath(

@@ -31,6 +31,6 @@ export function findGeneratedImagePath(
     return null;
   }
 
-  const savedPath = item.savedPath.trim();
-  return savedPath.length > 0 ? savedPath : null;
+  const savedPath = item.savedPath;
+  return savedPath.trim().length > 0 ? savedPath : null;
 }

@@ -237,6 +237,10 @@ describe("AssetAccess", () => {
       });
       expect(yield* resolveAsset(token, "other.png")).toBeNull();
       expect(yield* resolveAsset(token, "../generated.png")).toBeNull();
+
+      yield* fileSystem.remove(imagePath);
+      yield* fileSystem.symlink(siblingPath, imagePath);
+      expect(yield* resolveAsset(token, "generated.png")).toBeNull();
     }).pipe(Effect.provide(testLayer)),
   );
 
