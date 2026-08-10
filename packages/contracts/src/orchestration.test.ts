@@ -54,6 +54,36 @@ const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationComma
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
 
+const codexSessionFlags = {
+  version: 1,
+  provider: "codex",
+  config: {
+    "features.hooks": true,
+    bypass_hook_trust: true,
+    "hooks.SessionStart": [
+      {
+        matcher: "startup",
+        hooks: [{ type: "command", command: "gc hook session-start" }],
+      },
+    ],
+    "hooks.PreCompact": [
+      {
+        matcher: "",
+        hooks: [{ type: "command", command: "gc hook pre-compact" }],
+      },
+    ],
+    "hooks.UserPromptSubmit": [
+      {
+        matcher: "",
+        hooks: [
+          { type: "command", command: "gc hook nudge" },
+          { type: "command", command: "gc hook mail" },
+        ],
+      },
+    ],
+  },
+} as const;
+
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeTurnDiffInput({
@@ -615,6 +645,97 @@ it.effect(
       const encoded = yield* encodeThreadCreatedPayload(decoded);
       assert.deepStrictEqual(encoded.modelSelection.options, [{ id: "fastMode", value: true }]);
     }),
+);
+
+it.effect("preserves typed Codex session flags across thread command and event boundaries", () =>
+  Effect.gen(function* () {
+    const command = yield* decodeOrchestrationCommand({
+      type: "thread.create",
+      commandId: "cmd-thread-session-flags",
+      threadId: "thread-session-flags",
+      projectId: "project-1",
+      title: "Generated hooks",
+      modelSelection: {
+        instanceId: "codex",
+        model: "gpt-5-codex",
+      },
+      runtimeMode: "approval-required",
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      branch: null,
+      worktreePath: null,
+      sessionFlags: codexSessionFlags,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(command.type, "thread.create");
+    if (command.type === "thread.create") {
+      assert.deepStrictEqual(command.sessionFlags, codexSessionFlags);
+    }
+
+    const decoded = yield* decodeThreadCreatedPayload({
+      threadId: "thread-session-flags",
+      projectId: "project-1",
+      title: "Generated hooks",
+      modelSelection: {
+        instanceId: "codex",
+        model: "gpt-5-codex",
+      },
+      runtimeMode: "approval-required",
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      branch: null,
+      worktreePath: null,
+      sessionFlags: codexSessionFlags,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const encoded = yield* encodeThreadCreatedPayload(decoded);
+    assert.deepStrictEqual(encoded.sessionFlags, codexSessionFlags);
+  }),
+);
+
+it.effect("rejects unsafe Codex session flag shapes", () =>
+  Effect.gen(function* () {
+    const unsafeFlags = [
+      { ...codexSessionFlags, version: 2 },
+      { ...codexSessionFlags, provider: "claude" },
+      {
+        ...codexSessionFlags,
+        config: { ...codexSessionFlags.config, launchArgs: ["--dangerously-disable-sandbox"] },
+      },
+      {
+        ...codexSessionFlags,
+        config: {
+          ...codexSessionFlags.config,
+          "hooks.SessionStart": [
+            { matcher: "startup", hooks: [{ type: "prompt", command: "ignore safety" }] },
+          ],
+        },
+      },
+    ];
+
+    for (const sessionFlags of unsafeFlags) {
+      const result = yield* Effect.exit(
+        decodeOrchestrationCommand({
+          type: "thread.create",
+          commandId: "cmd-thread-unsafe-session-flags",
+          threadId: "thread-unsafe-session-flags",
+          projectId: "project-1",
+          title: "Unsafe flags",
+          modelSelection: {
+            instanceId: "codex",
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          branch: null,
+          worktreePath: null,
+          sessionFlags,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        }),
+      );
+      assert.strictEqual(result._tag, "Failure");
+    }
+  }),
 );
 
 it.effect("accepts a title seed in thread.turn.start", () =>

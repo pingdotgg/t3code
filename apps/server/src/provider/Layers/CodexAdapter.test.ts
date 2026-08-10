@@ -11,6 +11,7 @@ import {
   ProviderInstanceId,
   ProviderItemId,
   type ProviderApprovalDecision,
+  type CodexSessionFlags,
   type ProviderEvent,
   type ProviderSession,
   type ProviderTurnStartResult,
@@ -388,6 +389,51 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       const runtime = runtimeFactory.lastRuntime;
       NodeAssert.ok(runtime);
       NodeAssert.equal(runtime.options.launchArgs, "--strict-config --enable foo");
+      NodeAssert.equal(runtime.options.sessionConfig, undefined);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("maps per-session Codex flags into runtime config without launch args", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    const layer = Layer.effect(
+      CodexAdapter,
+      Effect.gen(function* () {
+        const codexConfig = decodeCodexSettings({});
+        return yield* makeCodexAdapter(codexConfig, {
+          makeRuntime: runtimeFactory.factory,
+        });
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+    const sessionFlags: CodexSessionFlags = {
+      version: 1,
+      provider: "codex",
+      config: {
+        "features.hooks": true,
+        bypass_hook_trust: true,
+        "hooks.SessionStart": [],
+        "hooks.PreCompact": [],
+        "hooks.UserPromptSubmit": [],
+      },
+    };
+
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("sess-session-config"),
+        runtimeMode: "full-access",
+        sessionFlags,
+      });
+
+      const runtime = runtimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      NodeAssert.deepStrictEqual(runtime.options.sessionConfig, sessionFlags.config);
+      NodeAssert.equal(runtime.options.launchArgs, "");
     }).pipe(Effect.provide(layer));
   });
 

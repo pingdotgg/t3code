@@ -1,5 +1,6 @@
 import {
   ApprovalRequestId,
+  type CodexSessionConfig,
   DEFAULT_MODEL,
   EventId,
   ProviderDriverKind,
@@ -106,6 +107,7 @@ export interface CodexSessionRuntimeOptions {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
   readonly appServerArgs?: ReadonlyArray<string>;
+  readonly sessionConfig?: CodexSessionConfig;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -302,6 +304,7 @@ function buildThreadStartParams(input: {
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
+  readonly sessionConfig: CodexSessionConfig | undefined;
 }): EffectCodexSchema.V2ThreadStartParams {
   const config = runtimeModeToThreadConfig(input.runtimeMode);
   return {
@@ -311,6 +314,7 @@ function buildThreadStartParams(input: {
     approvalsReviewer: config.approvalsReviewer,
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
+    ...(input.sessionConfig !== undefined ? { config: input.sessionConfig } : {}),
   };
 }
 
@@ -461,6 +465,7 @@ export const openCodexThread = (input: {
   readonly cwd: string;
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
+  readonly sessionConfig?: CodexSessionConfig;
   readonly resumeThreadId: string | undefined;
 }): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
@@ -469,6 +474,7 @@ export const openCodexThread = (input: {
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
     serviceTier: input.serviceTier,
+    sessionConfig: input.sessionConfig,
   });
 
   if (resumeThreadId === undefined) {
@@ -1695,6 +1701,7 @@ export const makeCodexSessionRuntime = (
         cwd: options.cwd,
         requestedModel,
         serviceTier: options.serviceTier,
+        ...(options.sessionConfig !== undefined ? { sessionConfig: options.sessionConfig } : {}),
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
       });
 

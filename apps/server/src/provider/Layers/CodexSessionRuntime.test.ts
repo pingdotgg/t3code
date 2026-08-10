@@ -4,7 +4,7 @@ import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe } from "vite-plus/test";
-import { DEFAULT_MODEL, ThreadId } from "@t3tools/contracts";
+import { DEFAULT_MODEL, ThreadId, type CodexSessionConfig } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 
@@ -393,6 +393,82 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
+  const sessionConfig: CodexSessionConfig = {
+    "features.hooks": true,
+    bypass_hook_trust: true,
+    "hooks.SessionStart": [],
+    "hooks.PreCompact": [],
+    "hooks.UserPromptSubmit": [],
+  };
+
+  it.effect("forwards per-session config to a fresh thread/start", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
+      const client = {
+        request: <M extends "thread/start" | "thread/resume">(
+          method: M,
+          payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          calls.push({ method, payload });
+          return Effect.succeed(
+            makeThreadOpenResponse("fresh-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
+          );
+        },
+      };
+
+      yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        sessionConfig,
+        resumeThreadId: undefined,
+      });
+
+      NodeAssert.equal(calls[0]?.method, "thread/start");
+      NodeAssert.deepStrictEqual(
+        (calls[0]?.payload as { config?: unknown } | undefined)?.config,
+        sessionConfig,
+      );
+    }),
+  );
+
+  it.effect("forwards per-session config to thread/resume", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
+      const client = {
+        request: <M extends "thread/start" | "thread/resume">(
+          method: M,
+          payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          calls.push({ method, payload });
+          return Effect.succeed(
+            makeThreadOpenResponse("resumed-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
+          );
+        },
+      };
+
+      yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        sessionConfig,
+        resumeThreadId: "resumed-thread",
+      });
+
+      NodeAssert.equal(calls[0]?.method, "thread/resume");
+      NodeAssert.deepStrictEqual(
+        (calls[0]?.payload as { config?: unknown } | undefined)?.config,
+        sessionConfig,
+      );
+    }),
+  );
+
   it.effect("falls back to thread/start when resume fails recoverably", () =>
     Effect.gen(function* () {
       const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
@@ -422,6 +498,7 @@ describe("openCodexThread", () => {
         cwd: "/tmp/project",
         requestedModel: "gpt-5.3-codex",
         serviceTier: undefined,
+        sessionConfig,
         resumeThreadId: "stale-thread",
       });
 
@@ -429,6 +506,14 @@ describe("openCodexThread", () => {
       NodeAssert.deepStrictEqual(
         calls.map((call) => call.method),
         ["thread/resume", "thread/start"],
+      );
+      NodeAssert.deepStrictEqual(
+        (calls[0]?.payload as { config?: unknown } | undefined)?.config,
+        sessionConfig,
+      );
+      NodeAssert.deepStrictEqual(
+        (calls[1]?.payload as { config?: unknown } | undefined)?.config,
+        sessionConfig,
       );
     }),
   );

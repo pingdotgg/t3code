@@ -20,6 +20,7 @@ import {
   ProjectId,
   ThreadId,
   TurnId,
+  type CodexSessionFlags,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -150,6 +151,7 @@ describe("ProviderCommandReactor", () => {
     readonly requiresNewThreadForModelChange?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
+    readonly sessionFlags?: CodexSessionFlags;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -446,6 +448,7 @@ describe("ProviderCommandReactor", () => {
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
+        ...(input?.sessionFlags !== undefined ? { sessionFlags: input.sessionFlags } : {}),
         createdAt: now,
       }),
     );
@@ -551,6 +554,46 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.status).toBe("starting");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
+
+  effectIt.effect("carries projected Codex session flags into provider session start", () =>
+    Effect.gen(function* () {
+      const sessionFlags: CodexSessionFlags = {
+        version: 1,
+        provider: "codex",
+        config: {
+          "features.hooks": true,
+          bypass_hook_trust: true,
+          "hooks.SessionStart": [
+            {
+              matcher: "startup",
+              hooks: [{ type: "command", command: "gc hook session-start" }],
+            },
+          ],
+          "hooks.PreCompact": [],
+          "hooks.UserPromptSubmit": [],
+        },
+      };
+      const harness = yield* Effect.promise(() => createHarness({ sessionFlags }));
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-session-flags"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-session-flags"),
+          role: "user",
+          text: "start generated hooks",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      yield* Effect.promise(() => waitFor(() => harness.startSession.mock.calls.length === 1));
+      expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({ sessionFlags });
+    }),
+  );
 
   effectIt.effect("projects starting before a slow provider session finishes", () =>
     Effect.gen(function* () {

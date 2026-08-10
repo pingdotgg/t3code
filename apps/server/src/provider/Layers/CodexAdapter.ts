@@ -1679,6 +1679,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? { model: input.modelSelection.model }
             : {}),
           ...(serviceTier ? { serviceTier } : {}),
+          ...(input.sessionFlags !== undefined ? { sessionConfig: input.sessionFlags.config } : {}),
           ...(mcpSession
             ? {
                 environment: {

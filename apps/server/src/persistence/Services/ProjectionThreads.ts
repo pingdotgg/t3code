@@ -8,6 +8,7 @@
  */
 import {
   CommandId,
+  CodexSessionFlags,
   IsoDateTime,
   ModelSelection,
   NonNegativeInt,
@@ -33,6 +34,7 @@ export const ProjectionThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
+  sessionFlags: Schema.optional(CodexSessionFlags),
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

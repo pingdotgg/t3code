@@ -127,6 +127,33 @@ export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
+
+const CodexSessionCommandHook = Schema.Struct({
+  type: Schema.Literal("command"),
+  command: TrimmedNonEmptyString,
+}).annotate({ parseOptions: { onExcessProperty: "error" } });
+
+const CodexSessionHookEntry = Schema.Struct({
+  matcher: Schema.String,
+  hooks: Schema.Array(CodexSessionCommandHook),
+}).annotate({ parseOptions: { onExcessProperty: "error" } });
+
+export const CodexSessionConfig = Schema.Struct({
+  "features.hooks": Schema.Literal(true),
+  bypass_hook_trust: Schema.Literal(true),
+  "hooks.SessionStart": Schema.Array(CodexSessionHookEntry),
+  "hooks.PreCompact": Schema.Array(CodexSessionHookEntry),
+  "hooks.UserPromptSubmit": Schema.Array(CodexSessionHookEntry),
+}).annotate({ parseOptions: { onExcessProperty: "error" } });
+export type CodexSessionConfig = typeof CodexSessionConfig.Type;
+
+export const CodexSessionFlags = Schema.Struct({
+  version: Schema.Literal(1),
+  provider: Schema.Literal("codex"),
+  config: CodexSessionConfig,
+}).annotate({ parseOptions: { onExcessProperty: "error" } });
+export type CodexSessionFlags = typeof CodexSessionFlags.Type;
+
 export const ProviderRequestKind = Schema.Literals(["command", "file-read", "file-change"]);
 export type ProviderRequestKind = typeof ProviderRequestKind.Type;
 export const AssistantDeliveryMode = Schema.Literals(["buffered", "streaming"]);
@@ -372,6 +399,7 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  sessionFlags: Schema.optional(CodexSessionFlags),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -663,6 +691,7 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  sessionFlags: Schema.optional(CodexSessionFlags),
   createdAt: IsoDateTime,
 });
 
@@ -1119,6 +1148,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  sessionFlags: Schema.optional(CodexSessionFlags),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
