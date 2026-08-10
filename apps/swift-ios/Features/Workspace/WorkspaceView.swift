@@ -19,6 +19,136 @@ struct FeatureWorkspaceNavigationRequest: Equatable, Sendable {
     }
 }
 
+struct FeatureNewTaskPresentationRequest: Equatable, Sendable {
+    let initialProjectID: String?
+    let incomingShareID: String?
+
+    static func newTask(initialProjectID: String?) -> Self {
+        Self(initialProjectID: initialProjectID, incomingShareID: nil)
+    }
+
+    static func sharedNewTask(shareID: String) -> Self {
+        Self(initialProjectID: nil, incomingShareID: shareID)
+    }
+}
+
+struct FeatureNewTaskPresentation: Identifiable, Equatable, Sendable {
+    let id: UUID
+    let request: FeatureNewTaskPresentationRequest
+
+    init(id: UUID = UUID(), request: FeatureNewTaskPresentationRequest) {
+        self.id = id
+        self.request = request
+    }
+}
+
+struct FeatureNewTaskPresentationEffects: Equatable, Sendable {
+    var presentation: FeatureNewTaskPresentation?
+    var dismissalID: UUID?
+    var released: [FeatureNewTaskPresentationRequest] = []
+
+    var isEmpty: Bool {
+        presentation == nil && dismissalID == nil && released.isEmpty
+    }
+}
+
+struct FeatureNewTaskPresentationCoordinator: Equatable, Sendable {
+    private(set) var current: FeatureNewTaskPresentation?
+    private(set) var pending: FeatureNewTaskPresentationRequest?
+    private(set) var deferred: FeatureNewTaskPresentationRequest?
+    private var dismissingID: UUID?
+
+    mutating func request(
+        _ request: FeatureNewTaskPresentationRequest,
+        deferredByModal: Bool
+    ) -> FeatureNewTaskPresentationEffects {
+        if current == nil, deferredByModal {
+            let displaced = deferred
+            deferred = request
+            return FeatureNewTaskPresentationEffects(
+                released: displaced.map { [$0] } ?? []
+            )
+        }
+
+        guard current != nil else {
+            let presentation = FeatureNewTaskPresentation(request: request)
+            current = presentation
+            return FeatureNewTaskPresentationEffects(presentation: presentation)
+        }
+
+        let displaced = pending
+        pending = request
+        var effects = FeatureNewTaskPresentationEffects(
+            released: displaced.map { [$0] } ?? []
+        )
+        if dismissingID == nil, let current {
+            dismissingID = current.id
+            effects.dismissalID = current.id
+        }
+        return effects
+    }
+
+    mutating func beginDismissal(id: UUID) -> FeatureNewTaskPresentationEffects {
+        guard current?.id == id else { return FeatureNewTaskPresentationEffects() }
+        guard dismissingID == nil else { return FeatureNewTaskPresentationEffects() }
+        dismissingID = id
+        return FeatureNewTaskPresentationEffects(dismissalID: id)
+    }
+
+    mutating func completeDismissal(
+        id: UUID,
+        deferredByModal: Bool
+    ) -> FeatureNewTaskPresentationEffects {
+        guard let dismissed = current,
+              dismissed.id == id,
+              dismissingID == id else {
+            return FeatureNewTaskPresentationEffects()
+        }
+
+        current = nil
+        dismissingID = nil
+        var effects = FeatureNewTaskPresentationEffects(released: [dismissed.request])
+        guard let next = pending else { return effects }
+        pending = nil
+
+        if deferredByModal {
+            if let displaced = deferred { effects.released.append(displaced) }
+            deferred = next
+        } else {
+            let presentation = FeatureNewTaskPresentation(request: next)
+            current = presentation
+            effects.presentation = presentation
+        }
+        return effects
+    }
+
+    mutating func resumeDeferred() -> FeatureNewTaskPresentationEffects {
+        guard current == nil, let request = deferred else {
+            return FeatureNewTaskPresentationEffects()
+        }
+        deferred = nil
+        let presentation = FeatureNewTaskPresentation(request: request)
+        current = presentation
+        return FeatureNewTaskPresentationEffects(presentation: presentation)
+    }
+
+    mutating func cancelAll() -> FeatureNewTaskPresentationEffects {
+        var released: [FeatureNewTaskPresentationRequest] = []
+        let dismissalID = current?.id
+        if let current { released.append(current.request) }
+        if let pending { released.append(pending) }
+        if let deferred { released.append(deferred) }
+        current = nil
+        pending = nil
+        deferred = nil
+        dismissingID = nil
+        return FeatureNewTaskPresentationEffects(
+            dismissalID: dismissalID,
+            released: released
+        )
+    }
+}
+
 public struct WorkspaceView: View {
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -38,10 +168,11 @@ public struct WorkspaceView: View {
     @State private var isSettledExpanded = true
     @State private var isArchiveExpanded = false
     @State private var settledLimit = 12
-    @State private var showingNewTask = false
-    @State private var newTaskInitialProjectID: String?
-    @State private var newTaskIncomingShareID: String?
-    @State private var dismissingNewTaskContext: NewTaskDismissalContext?
+    @State private var newTaskPresentationCoordinator = FeatureNewTaskPresentationCoordinator()
+    @State private var presentedNewTask: FeatureNewTaskPresentation?
+    @State private var newTaskAwaitingDismissalID: UUID?
+    @State private var newTaskDismissalFallback: Task<Void, Never>?
+    @State private var consumedNavigationRequestID: UUID?
     @State private var threadDetailPresentationRevision = 0
     @State private var sharedThreadImports: [String: [FeatureComposerIncomingShareDraft]] = [:]
     @State private var showingAddProject = false
@@ -138,24 +269,25 @@ public struct WorkspaceView: View {
             detail
         }
         .navigationSplitViewStyle(.balanced)
-        .sheet(isPresented: $showingNewTask, onDismiss: newTaskDidDismiss) {
+        .sheet(item: newTaskPresentationBinding, onDismiss: newTaskDidDismiss) { presentation in
             NewThreadView(
                 model: model,
                 submit: submitNewTask,
                 onCreated: { thread in
+                    cancelNewTaskPresentations()
                     openThread(thread.id)
-                    showingNewTask = false
                 },
                 onCreateProject: openProjectCreation,
-                initialProjectID: newTaskInitialProjectID,
-                incomingShareID: newTaskIncomingShareID,
+                initialProjectID: presentation.request.initialProjectID,
+                incomingShareID: presentation.request.incomingShareID,
                 acknowledgeIncomingShare: acknowledgeIncomingShare
             )
+            .id(presentation.id)
         }
-        .sheet(isPresented: $showingAddProject) {
+        .sheet(isPresented: $showingAddProject, onDismiss: resumeModalDeferredNewTask) {
             AddProjectView(model: model)
         }
-        .sheet(isPresented: $showingSettings) {
+        .sheet(isPresented: $showingSettings, onDismiss: resumeModalDeferredNewTask) {
             SettingsView(model: model)
         }
         .alert(
@@ -186,6 +318,9 @@ public struct WorkspaceView: View {
         }
         .onChange(of: navigationRequest?.id, initial: true) { _, _ in
             consumeNavigationRequest()
+        }
+        .onChange(of: renamingThread?.id) { _, newValue in
+            if newValue == nil { resumeModalDeferredNewTask() }
         }
         // A request that arrives before its thread or project exists in the
         // snapshot stays pending; retry it as data lands so cold-start deep
@@ -585,7 +720,7 @@ public struct WorkspaceView: View {
 
     @MainActor
     private func openProjectCreation() {
-        showingNewTask = false
+        cancelNewTaskPresentations()
         showingAddProject = true
     }
 
@@ -595,15 +730,16 @@ public struct WorkspaceView: View {
 
     private func openNewTaskOrProjectCreation(initialProjectID: String?) {
         if creationProjects.isEmpty {
+            cancelNewTaskPresentations()
             showingAddProject = true
         } else {
-            newTaskInitialProjectID = initialProjectID
-            showingNewTask = true
+            requestNewTaskPresentation(.newTask(initialProjectID: initialProjectID))
         }
     }
 
     private func consumeNavigationRequest() {
-        guard let navigationRequest else { return }
+        guard let navigationRequest,
+              consumedNavigationRequestID != navigationRequest.id else { return }
         switch navigationRequest.destination {
         case let .thread(id):
             guard model.snapshot.threads.contains(where: { $0.id == id }) else { return }
@@ -630,51 +766,134 @@ public struct WorkspaceView: View {
                model.snapshot.projects.contains(where: { $0.id == projectID }) {
                 selectedProjectID = projectID
             }
-            dismissTransientPresentations()
-            Task { @MainActor in
-                await Task.yield()
-                openNewTaskOrProjectCreation(initialProjectID: projectID)
-            }
+            requestNewTaskPresentation(.newTask(initialProjectID: projectID))
         case let .sharedNewTask(shareID):
-            dismissTransientPresentations()
-            Task { @MainActor in
-                await Task.yield()
-                newTaskInitialProjectID = nil
-                newTaskIncomingShareID = shareID
-                showingNewTask = true
-            }
+            requestNewTaskPresentation(.sharedNewTask(shareID: shareID))
         }
+        consumedNavigationRequestID = navigationRequest.id
         onNavigationRequestConsumed(navigationRequest.id)
     }
 
     private func dismissTransientPresentations() {
-        if showingNewTask {
-            dismissingNewTaskContext = NewTaskDismissalContext(
-                initialProjectID: newTaskInitialProjectID,
-                incomingShareID: newTaskIncomingShareID
-            )
-        }
-        showingNewTask = false
+        cancelNewTaskPresentations()
         showingAddProject = false
         showingSettings = false
         renamingThread = nil
     }
 
-    private func newTaskDidDismiss() {
-        let dismissed = dismissingNewTaskContext ?? NewTaskDismissalContext(
-            initialProjectID: newTaskInitialProjectID,
-            incomingShareID: newTaskIncomingShareID
+    private var newTaskPresentationBinding: Binding<FeatureNewTaskPresentation?> {
+        Binding(
+            get: { presentedNewTask },
+            set: { next in
+                if next == nil, let current = presentedNewTask {
+                    beginNewTaskDismissal(id: current.id)
+                }
+                presentedNewTask = next
+            }
         )
-        let resolution = dismissed.resolve(
-            currentInitialProjectID: newTaskInitialProjectID,
-            currentIncomingShareID: newTaskIncomingShareID
+    }
+
+    private var isNewTaskDeferredByModal: Bool {
+        showingAddProject || showingSettings || renamingThread != nil
+    }
+
+    private func requestNewTaskPresentation(_ request: FeatureNewTaskPresentationRequest) {
+        let deferredByModal = isNewTaskDeferredByModal
+        let effects = newTaskPresentationCoordinator.request(
+            request,
+            deferredByModal: deferredByModal
         )
-        if let shareID = resolution.releasedIncomingShareID {
-            releaseIncomingSharePresentation(shareID)
+        applyNewTaskPresentationEffects(effects)
+        guard deferredByModal else { return }
+        showingAddProject = false
+        showingSettings = false
+        renamingThread = nil
+        resumeModalDeferredNewTaskAfterYield()
+    }
+
+    private func beginNewTaskDismissal(id: UUID) {
+        let effects = newTaskPresentationCoordinator.beginDismissal(id: id)
+        applyNewTaskPresentationEffects(effects)
+        scheduleNewTaskDismissalFallback(id: id)
+    }
+
+    private func completeNewTaskDismissal(id: UUID) {
+        let effects = newTaskPresentationCoordinator.completeDismissal(
+            id: id,
+            deferredByModal: isNewTaskDeferredByModal
+        )
+        guard !effects.isEmpty else { return }
+        if newTaskAwaitingDismissalID == id {
+            newTaskAwaitingDismissalID = nil
         }
-        newTaskInitialProjectID = resolution.remainingInitialProjectID
-        newTaskIncomingShareID = resolution.remainingIncomingShareID
-        dismissingNewTaskContext = nil
+        newTaskDismissalFallback?.cancel()
+        newTaskDismissalFallback = nil
+        applyNewTaskPresentationEffects(effects)
+    }
+
+    private func cancelNewTaskPresentations() {
+        newTaskDismissalFallback?.cancel()
+        newTaskDismissalFallback = nil
+        applyNewTaskPresentationEffects(newTaskPresentationCoordinator.cancelAll())
+        // The item is the UI source of truth. Clear it even if a stale
+        // callback briefly left it out of sync with the pure coordinator.
+        presentedNewTask = nil
+        newTaskAwaitingDismissalID = nil
+        newTaskDismissalFallback?.cancel()
+        newTaskDismissalFallback = nil
+    }
+
+    private func resumeModalDeferredNewTask() {
+        guard !isNewTaskDeferredByModal else { return }
+        applyNewTaskPresentationEffects(newTaskPresentationCoordinator.resumeDeferred())
+    }
+
+    private func newTaskDidDismiss() {
+        guard let id = newTaskAwaitingDismissalID else { return }
+        completeNewTaskDismissal(id: id)
+    }
+
+    private func resumeModalDeferredNewTaskAfterYield() {
+        Task { @MainActor in
+            await Task.yield()
+            resumeModalDeferredNewTask()
+        }
+    }
+
+    private func scheduleNewTaskDismissalFallback(id: UUID) {
+        newTaskDismissalFallback?.cancel()
+        newTaskDismissalFallback = Task { @MainActor in
+            do {
+                try await Task.sleep(for: .milliseconds(900))
+            } catch {
+                return
+            }
+            completeNewTaskDismissal(id: id)
+        }
+    }
+
+    private func applyNewTaskPresentationEffects(
+        _ effects: FeatureNewTaskPresentationEffects
+    ) {
+        for request in effects.released {
+            if let shareID = request.incomingShareID {
+                releaseIncomingSharePresentation(shareID)
+            }
+        }
+        if let dismissalID = effects.dismissalID,
+           presentedNewTask?.id == dismissalID {
+            newTaskAwaitingDismissalID = dismissalID
+            presentedNewTask = nil
+            scheduleNewTaskDismissalFallback(id: dismissalID)
+        }
+        if let presentation = effects.presentation {
+            Task { @MainActor in
+                await Task.yield()
+                guard newTaskPresentationCoordinator.current?.id == presentation.id,
+                      presentedNewTask == nil else { return }
+                presentedNewTask = presentation
+            }
+        }
     }
 
     private func projectMenuTitle(_ project: FeatureProject) -> String {
@@ -704,6 +923,25 @@ struct NewTaskDismissalContext: Equatable {
                 ? nil
                 : currentIncomingShareID,
             releasedIncomingShareID: incomingShareID
+        )
+    }
+}
+
+struct NewTaskPresentationIdentity: Hashable {
+    let initialProjectID: String?
+    let incomingShareID: String?
+}
+
+enum NewTaskDismissalPolicy {
+    static func resolveStaleDismissal(
+        dismissing: NewTaskDismissalContext?,
+        currentInitialProjectID: String?,
+        currentIncomingShareID: String?
+    ) -> NewTaskDismissalResolution {
+        NewTaskDismissalResolution(
+            remainingInitialProjectID: currentInitialProjectID,
+            remainingIncomingShareID: currentIncomingShareID,
+            releasedIncomingShareID: dismissing?.incomingShareID
         )
     }
 }

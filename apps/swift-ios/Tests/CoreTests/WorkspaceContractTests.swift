@@ -3,6 +3,147 @@ import XCTest
 
 @MainActor
 final class WorkspaceContractTests: XCTestCase {
+    func testLatestNewTaskRequestWaitsForCurrentDismissalAndGetsFreshIdentity() {
+        let first = FeatureNewTaskPresentationRequest.newTask(initialProjectID: "project-1")
+        let replacement = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-2")
+        var coordinator = FeatureNewTaskPresentationCoordinator()
+
+        let initial = coordinator.request(first, deferredByModal: false)
+        let firstID = try! XCTUnwrap(initial.presentation?.id)
+        XCTAssertEqual(initial.presentation?.request, first)
+
+        let queued = coordinator.request(replacement, deferredByModal: false)
+        XCTAssertEqual(queued.dismissalID, firstID)
+        XCTAssertNil(queued.presentation)
+        XCTAssertEqual(coordinator.pending, replacement)
+
+        let completed = coordinator.completeDismissal(id: firstID, deferredByModal: false)
+        XCTAssertEqual(completed.released, [first])
+        XCTAssertEqual(completed.presentation?.request, replacement)
+        XCTAssertNotEqual(completed.presentation?.id, firstID)
+    }
+
+    func testOverwrittenPendingShareIsReleasedExactlyOnce() {
+        let active = FeatureNewTaskPresentationRequest.newTask(initialProjectID: "project-1")
+        let firstShare = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-1")
+        let latestShare = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-2")
+        var coordinator = FeatureNewTaskPresentationCoordinator()
+
+        _ = coordinator.request(active, deferredByModal: false)
+        _ = coordinator.request(firstShare, deferredByModal: false)
+        let overwritten = coordinator.request(latestShare, deferredByModal: false)
+
+        XCTAssertEqual(overwritten.released, [firstShare])
+        XCTAssertEqual(coordinator.pending, latestShare)
+        XCTAssertNil(coordinator.completeDismissal(id: UUID(), deferredByModal: false).presentation)
+        XCTAssertEqual(coordinator.pending, latestShare)
+    }
+
+    func testDismissalCompletionIsIdempotentAndRejectsStaleCallbacks() {
+        let share = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-1")
+        var coordinator = FeatureNewTaskPresentationCoordinator()
+        let presentation = try! XCTUnwrap(
+            coordinator.request(share, deferredByModal: false).presentation
+        )
+        _ = coordinator.beginDismissal(id: presentation.id)
+
+        let first = coordinator.completeDismissal(
+            id: presentation.id,
+            deferredByModal: false
+        )
+        let duplicate = coordinator.completeDismissal(
+            id: presentation.id,
+            deferredByModal: false
+        )
+
+        XCTAssertEqual(first.released, [share])
+        XCTAssertTrue(duplicate.isEmpty)
+        XCTAssertNil(coordinator.current)
+    }
+
+    func testDismissalCompletionRequiresAnExplicitMatchingDismissalStart() {
+        let request = FeatureNewTaskPresentationRequest.newTask(initialProjectID: nil)
+        var coordinator = FeatureNewTaskPresentationCoordinator()
+        let presentation = try! XCTUnwrap(
+            coordinator.request(request, deferredByModal: false).presentation
+        )
+
+        let unrelatedDisappearance = coordinator.completeDismissal(
+            id: presentation.id,
+            deferredByModal: false
+        )
+
+        XCTAssertTrue(unrelatedDisappearance.isEmpty)
+        XCTAssertEqual(coordinator.current, presentation)
+    }
+
+    func testFallbackCompletionPromotesTheSameLatestRequest() {
+        let first = FeatureNewTaskPresentationRequest.newTask(initialProjectID: "project-1")
+        let replacement = FeatureNewTaskPresentationRequest.newTask(initialProjectID: "project-2")
+        var coordinator = FeatureNewTaskPresentationCoordinator()
+        let firstID = try! XCTUnwrap(
+            coordinator.request(first, deferredByModal: false).presentation?.id
+        )
+        _ = coordinator.request(replacement, deferredByModal: false)
+
+        let fallback = coordinator.completeDismissal(id: firstID, deferredByModal: false)
+
+        XCTAssertEqual(fallback.presentation?.request, replacement)
+        XCTAssertEqual(fallback.released, [first])
+        XCTAssertTrue(
+            coordinator.completeDismissal(id: firstID, deferredByModal: false).isEmpty
+        )
+    }
+
+    func testLatestModalDeferredRequestResumesAfterModalDismissal() {
+        let firstShare = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-1")
+        let latest = FeatureNewTaskPresentationRequest.newTask(initialProjectID: "project-2")
+        var coordinator = FeatureNewTaskPresentationCoordinator()
+
+        let first = coordinator.request(firstShare, deferredByModal: true)
+        let second = coordinator.request(latest, deferredByModal: true)
+
+        XCTAssertTrue(first.isEmpty)
+        XCTAssertEqual(second.released, [firstShare])
+        XCTAssertEqual(coordinator.deferred, latest)
+        let resumed = coordinator.resumeDeferred()
+        XCTAssertEqual(resumed.presentation?.request, latest)
+        XCTAssertTrue(coordinator.resumeDeferred().isEmpty)
+    }
+
+    func testThreadOrProjectRouteCancelsEveryQueuedNewTaskWithoutGhostReopen() {
+        let active = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-1")
+        let pending = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-2")
+        var coordinator = FeatureNewTaskPresentationCoordinator()
+        let activeID = try! XCTUnwrap(
+            coordinator.request(active, deferredByModal: false).presentation?.id
+        )
+        _ = coordinator.request(pending, deferredByModal: false)
+
+        let cancelled = coordinator.cancelAll()
+
+        XCTAssertEqual(Set(cancelled.released.compactMap(\.incomingShareID)), ["share-1", "share-2"])
+        XCTAssertEqual(cancelled.dismissalID, activeID)
+        XCTAssertNil(coordinator.current)
+        XCTAssertNil(coordinator.pending)
+        XCTAssertTrue(
+            coordinator.completeDismissal(id: activeID, deferredByModal: false).isEmpty
+        )
+        XCTAssertTrue(coordinator.resumeDeferred().isEmpty)
+    }
+
+    func testRouteCancellationAlsoClearsModalDeferredShareExactlyOnce() {
+        let deferred = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-modal")
+        var coordinator = FeatureNewTaskPresentationCoordinator()
+        _ = coordinator.request(deferred, deferredByModal: true)
+
+        let cancelled = coordinator.cancelAll()
+
+        XCTAssertEqual(cancelled.released, [deferred])
+        XCTAssertTrue(coordinator.cancelAll().released.isEmpty)
+        XCTAssertTrue(coordinator.resumeDeferred().isEmpty)
+    }
+
     func testVCSStatusSnapshotDecodesTaggedEffectRPCShape() throws {
         let data = Data(
             """
