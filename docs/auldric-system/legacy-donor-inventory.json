@@ -1,0 +1,2264 @@
+{
+  "schemaVersion": 1,
+  "matchPolicy": "first-match",
+  "source": {
+    "repository": "AuldricAI/Auldric",
+    "commit": "cf6400e77dfaf9569f1ce6eaca4421deb0b2bf23",
+    "rootTree": "3a156d03c69b49523fef05ffc5f6700cff26252e",
+    "fileCount": 5496,
+    "pathListSha256": "3fae0c683f267f7008606170310cc9c5a390f4afaad0ca50039d075c5630041b",
+    "lsTreeSha256": "f517c00133e282cbe422bad6e634704dc43e8d158d47063495bb9bbf9068c8a5"
+  },
+  "authority": {
+    "currentRepositoryState": "Auldrics contains native T3 and the reviewed Marketing documentation spine; legacy completion does not prove current implementation.",
+    "noMechanicalPort": "No legacy commit, file, migration, package, or runtime may be merged, cherry-picked, or copied mechanically.",
+    "t3Wins": "T3 owns Dev and every shared platform concern; only classified Marketing requirements may be rebuilt through supported seams."
+  },
+  "entries": [
+    {
+      "id": "public-marketing-content-and-assets",
+      "selector": { "include": ["^apps/marketing/(?:public/|src/)"] },
+      "pathCapability": "Auldric public positioning, ICP pages, workflow copy, waitlist behavior, legal publication, brand assets, and content tests.",
+      "classification": "keep-rebuild",
+      "legacyEvidenceStatus": "Legacy implementation and focused tests exist at the donor ref; claims and access behavior remain point-in-time evidence.",
+      "currentAuldricsStatus": "Absent. The current apps/marketing is T3 material and is not an Auldric public surface.",
+      "owner": {
+        "issues": [3, 27],
+        "boundary": "Public Auldric surface",
+        "rationale": "The content and brand intent are Marketing-owned, but must be rebuilt in the separately approved public-site boundary."
+      },
+      "integration": {
+        "supportedSeam": "A separately named public application/deployment selected by #27; never overwrite T3 apps/marketing.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "Re-author approved copy and assets; do not migrate runtime state or donor waitlist records.",
+        "backfill": "None unless #27 defines an authorized waitlist import with consent provenance.",
+        "rollback": "Remove the isolated public deployment and retain native T3 apps/marketing unchanged."
+      },
+      "securityTenantRisk": "Claims can overstate unshipped capability; waitlist identity and consent must not become Marketing workspace authorization.",
+      "testsAndProof": [
+        "#27 copy/claim and legal tests",
+        "Public route and waitlist failure-state proof",
+        "Proof that native T3 marketing routes are unchanged"
+      ],
+      "disposition": "rebuild"
+    },
+    {
+      "id": "public-marketing-delivery-scaffolding",
+      "selector": { "include": ["^apps/marketing/"] },
+      "pathCapability": "Astro package, CloudFront/Vercel routing, browser checks, and deployment configuration for the donor public site.",
+      "classification": "split",
+      "legacyEvidenceStatus": "Legacy delivery configuration exists but is environment-specific and coupled to the retired fork.",
+      "currentAuldricsStatus": "No approved Auldric public deployment exists; current files at the same path belong to T3.",
+      "owner": {
+        "issues": [3, 27],
+        "boundary": "Distribution configuration",
+        "rationale": "Only requirements such as clean URLs and truthful download handoff survive; infrastructure must follow the current repository's supported deployment model."
+      },
+      "integration": {
+        "supportedSeam": "A #27-owned additive application and explicit distribution configuration allowed by the T3 baseline guard.",
+        "upstreamDependency": "If no additive public-app/deployment seam is accepted, park rather than edit T3 release infrastructure."
+      },
+      "data": {
+        "migration": "No configuration copy; recreate only approved routes and environment contracts.",
+        "backfill": "None.",
+        "rollback": "Delete the additive surface/config and leave T3 delivery intact."
+      },
+      "securityTenantRisk": "Baked origins, leaked waitlist credentials, or ambiguous downloads could cross environment and identity boundaries.",
+      "testsAndProof": [
+        "Deployment configuration validation",
+        "Remote-origin route proof",
+        "No T3 release-workflow drift"
+      ],
+      "disposition": "split"
+    },
+    {
+      "id": "component-lab-auldric-prototypes",
+      "selector": {
+        "include": [
+          "^apps/component-lab/(?:screenshots/|scripts/capture-right-workspace-proof\\.mjs$|src/components/(?:marketing-prototypes/|product-prototypes/Auldric)|src/data/bento-source-manifest\\.json$|src/lib/auldricMarketingBrand\\.ts$|src/pages/marketing-prototypes/|src/styles/auldric)"
+        ]
+      },
+      "pathCapability": "Marketing-site, shell, right-panel, and brand design prototypes with captured visual evidence.",
+      "classification": "historical-evidence",
+      "legacyEvidenceStatus": "Completed prototypes and screenshots exist; they are design evidence, not production acceptance.",
+      "currentAuldricsStatus": "Absent from the current repository; #13 has not approved these exact designs.",
+      "owner": {
+        "issues": [13, 21, 27],
+        "boundary": "Design evidence",
+        "rationale": "Useful interaction and visual references may inform fresh designs but must not be treated as shipped UI."
+      },
+      "integration": {
+        "supportedSeam": "Current T3 web composition and a separately approved public-site surface.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "No migration; review screenshots and re-create selected patterns.",
+        "backfill": "None.",
+        "rollback": "Discard rebuilt presentation without touching canonical Marketing data."
+      },
+      "securityTenantRisk": "Prototype fixtures can contain invented customer state and must never be seeded into a real organization.",
+      "testsAndProof": [
+        "#13 design review",
+        "Fresh desktop and narrow before/after evidence",
+        "Fixture-only data assertion"
+      ],
+      "disposition": "archive"
+    },
+    {
+      "id": "component-lab-remainder",
+      "selector": { "include": ["^apps/component-lab/"] },
+      "pathCapability": "Legacy component laboratory, artifact/UI prototypes, fixtures, and prototype infrastructure not isolated by the narrower Auldric selector.",
+      "classification": "historical-evidence",
+      "legacyEvidenceStatus": "Legacy development-only prototypes and captured design work exist.",
+      "currentAuldricsStatus": "Not present; no component-lab prototype proves current production behavior.",
+      "owner": {
+        "issues": [13, 14, 19, 25],
+        "boundary": "Historical design evidence",
+        "rationale": "The laboratory contains broad product and artifact design evidence, but neither its app infrastructure nor its mock implementations are portable."
+      },
+      "integration": { "supportedSeam": null, "upstreamDependency": null },
+      "data": {
+        "migration": "None.",
+        "backfill": "None.",
+        "rollback": "Not applicable; the donor ref remains the archive."
+      },
+      "securityTenantRisk": "Prototype fixtures can normalize invented customer state as truth; dependencies and generated assets have not been approved for production.",
+      "testsAndProof": [
+        "Fresh design review and screenshots",
+        "No prototype fixture imported as customer data"
+      ],
+      "disposition": "archive"
+    },
+    {
+      "id": "console-marketing-artifact-workflow-and-brand-domain",
+      "selector": {
+        "include": [
+          "^apps/console/public/assets/brand/",
+          "^apps/console/src/app/api/(?:artifact-comparison-schemes|artifact-components|brand-components|brand-profiles|brand-system|briefs|onboarding|playbooks|prompt-recipes|proposed-plans|source-inventory|strategy-artifacts|strategy-plan-items|strategy-plans|workflows|workspace-artifact-views|workspace-artifacts|workspace-document-views|workspace-evidence|workspace-knowledge|workspace-notes|workspace-review-cycles)/",
+          "^apps/console/src/lib/(?:artifact-view-renderers|artifactComponents|artifactViews|brand-component-renderers|brandComponentViews|document-view-renderers|initWorkflowStore|onboarding|playbooks|workflowArtifact|workspaceKnowledgeHttpError)",
+          "^apps/console/src/pages/(?:artifacts|brand-profiles|brand-system)/"
+        ]
+      },
+      "pathCapability": "Day 0, Strategy/GTM, sources, brand, artifacts, registered views, review, and export APIs and domain services.",
+      "classification": "keep-rebuild",
+      "legacyEvidenceStatus": "Legacy routes, services, renderers, and tests demonstrate domain requirements but use a retired standalone console architecture.",
+      "currentAuldricsStatus": "No equivalent Marketing backend or UI is implemented in current Auldrics.",
+      "owner": {
+        "issues": [8, 9, 11, 18, 19, 22, 23, 24, 25],
+        "boundary": "Marketing domain",
+        "rationale": "These are product-specific capabilities eligible for a fresh implementation behind the isolated Marketing boundary."
+      },
+      "integration": {
+        "supportedSeam": "Typed T3 contracts, server commands/events/projectors, and dumb web projections selected by the owning issues.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "Rebuild schemas and behavior from accepted contracts; never apply console routes or storage code directly.",
+        "backfill": "Only a separately approved, idempotent organization-scoped import may read legacy exports.",
+        "rollback": "Reverse Marketing events/migrations and leave native T3 records untouched."
+      },
+      "securityTenantRisk": "Direct route handlers previously mixed authentication, workspace resolution, and customer content; every access must be organization-scoped and fail closed.",
+      "testsAndProof": [
+        "Contract and decider tests",
+        "Cross-organization denial tests",
+        "Save/read-back/reopen and revision-conflict proof",
+        "Renderer/export parity proof"
+      ],
+      "disposition": "rebuild"
+    },
+    {
+      "id": "console-organization-auth-and-database-boundary",
+      "selector": {
+        "include": [
+          "^apps/console/src/app/api/(?:auldric/clerk|auth|orgs|team-databases)/",
+          "^apps/console/src/lib/(?:clerkUserProfile|desktopOrgScopes|resolveCurrentOrg|resolveHighestOrgRole|sourceControlWriterEnrollment|teamDatabases|workspaceCreation|workspaceScopeOverrides)",
+          "^apps/console/src/pages/(?:account|sign-in|sign-up|team-admin)/",
+          "^apps/console/src/pages/api/(?:auth|orgs)/"
+        ]
+      },
+      "pathCapability": "Legacy identity, organization provisioning, team database, sign-in, and source-control-writer enrollment.",
+      "classification": "split",
+      "legacyEvidenceStatus": "Implemented in the donor against Clerk and a standalone organization database/control plane.",
+      "currentAuldricsStatus": "Native T3 authentication exists; Marketing actor mapping, roles, and organization-owned content stores do not.",
+      "owner": {
+        "issues": [5, 6, 8],
+        "boundary": "Verified T3 actor to Marketing tenancy",
+        "rationale": "Organization and role requirements survive, while authentication, actor, session, and source-control authority remain T3-owned."
+      },
+      "integration": {
+        "supportedSeam": "Opaque verified T3 actor reference mapped to Marketing organization/workspace/role and physical organization-owned content storage.",
+        "upstreamDependency": "Any missing generic actor or authorization seam must be proposed upstream."
+      },
+      "data": {
+        "migration": "Define new identities and stores; do not reuse Clerk tokens, donor actor IDs, or donor database URLs.",
+        "backfill": "Explicit identity mapping and content import only after owner verification and collision checks.",
+        "rollback": "Remove mappings/revoke Marketing roles; do not revoke or mutate the T3 actor."
+      },
+      "securityTenantRisk": "Highest risk: actor substitution, cross-organization access, central-customer-content fallback, and confused-deputy writes.",
+      "testsAndProof": [
+        "Verified/unverified actor matrix",
+        "Role allow/deny tests",
+        "Physical tenant isolation proof",
+        "Revocation and workspace-switch tests"
+      ],
+      "disposition": "split"
+    },
+    {
+      "id": "console-conversation-continuity",
+      "selector": {
+        "include": [
+          "^apps/console/src/app/api/(?:auldric/conversation-state|chat-transcripts)/",
+          "^apps/console/src/lib/(?:consoleWorkspaceSync|workspaceMigrationAuthority)"
+        ]
+      },
+      "pathCapability": "Conversation provenance, transcript capture, workspace binding, migration, and recovery.",
+      "classification": "split",
+      "legacyEvidenceStatus": "Legacy implementation and tests exist against a duplicate conversation-state service.",
+      "currentAuldricsStatus": "T3 conversations exist; no Marketing continuity binding is implemented.",
+      "owner": {
+        "issues": [7, 8],
+        "boundary": "T3-owned conversation with Marketing provenance",
+        "rationale": "Continuity requirements survive, but T3 retains thread, session, transport, and recovery authority."
+      },
+      "integration": {
+        "supportedSeam": "Opaque T3 thread reference stored as Marketing provenance; T3 conversation APIs remain authoritative.",
+        "upstreamDependency": "Park any behavior requiring replacement of T3 conversation recovery or transport."
+      },
+      "data": {
+        "migration": "Do not import donor conversation state; create new bindings against existing T3 thread IDs.",
+        "backfill": "Optional explicit provenance attachment for verified local threads, never inferred cross-organization.",
+        "rollback": "Delete Marketing binding while preserving the T3 thread."
+      },
+      "securityTenantRisk": "Thread identity must never grant workspace authorization or leak transcripts across organizations.",
+      "testsAndProof": [
+        "Thread/workspace mismatch tests",
+        "Cross-organization binding denial",
+        "Unbind/rebind and reopen proof",
+        "Native T3 conversation invariance"
+      ],
+      "disposition": "split"
+    },
+    {
+      "id": "console-marketing-connected-tools",
+      "selector": {
+        "include": [
+          "^apps/console/src/app/api/(?:auldric/app-connections|evidence-intake)/",
+          "^apps/console/src/workers/"
+        ]
+      },
+      "pathCapability": "Marketing-specific source import, connected-tool actions, signals, and background intake work.",
+      "classification": "split",
+      "legacyEvidenceStatus": "Provider-specific donor routes and tests exist, coupled to Nango, Gmail, Resend, X, and console jobs.",
+      "currentAuldricsStatus": "No Marketing source activation layer exists; available T3/app connectors remain independent.",
+      "owner": {
+        "issues": [9],
+        "boundary": "Bounded Marketing evidence adapters",
+        "rationale": "Source capability and evidence behavior are eligible; OAuth, generic connection lifecycle, secrets, and job infrastructure are not."
+      },
+      "integration": {
+        "supportedSeam": "Marketing adapter at an existing authenticated connector boundary with bounded receipts and provenance.",
+        "upstreamDependency": "A missing generic connector or durable-job seam must be upstream or separately approved."
+      },
+      "data": {
+        "migration": "No credentials or connection records migrate; reauthorize providers in the current system.",
+        "backfill": "Imported evidence requires organization scope, source receipt, freshness, and idempotency.",
+        "rollback": "Revoke Marketing adapter access and retain imported evidence only under the approved retention policy."
+      },
+      "securityTenantRisk": "OAuth tokens, sender authority, publishing actions, and background jobs can escape Marketing scope or organization boundaries.",
+      "testsAndProof": [
+        "Provider capability/permission matrix",
+        "Token non-persistence proof",
+        "Bounded import and retry receipts",
+        "No action without explicit approval"
+      ],
+      "disposition": "split"
+    },
+    {
+      "id": "console-public-access-surfaces",
+      "selector": {
+        "include": [
+          "^apps/console/src/app/api/(?:early-access|mobile)/",
+          "^apps/console/src/lib/(?:accessRoutes|desktopAccess|desktopConnect|desktopDownloads|downloadDeviceDetection|earlyAccess|invitedSignUpRoute)",
+          "^apps/console/src/pages/(?:access/|desktop/|download/|operator/early-access/|early-access\\.|earlyAccess|api/early-access|api/operator/early-access)"
+        ]
+      },
+      "pathCapability": "Legacy early-access, download, desktop handoff, and mobile presentation surfaces.",
+      "classification": "split",
+      "legacyEvidenceStatus": "Legacy access flows and presentation tests exist, coupled to the retired console and desktop identity.",
+      "currentAuldricsStatus": "No approved Auldric access/download surface exists.",
+      "owner": {
+        "issues": [3, 27],
+        "boundary": "Public access and distribution",
+        "rationale": "Truthful access requirements may be retained; authentication and distribution mechanics must use current supported owners."
+      },
+      "integration": {
+        "supportedSeam": "#27 public surface linking to supported T3 distribution/authentication entry points.",
+        "upstreamDependency": "Park custom desktop enrollment if T3 exposes no supported handoff."
+      },
+      "data": {
+        "migration": "No early-access or device identity state migrates by default.",
+        "backfill": "Consent-bearing waitlist import only if separately approved.",
+        "rollback": "Disable Auldric access routes without affecting T3 pairing or installs."
+      },
+      "securityTenantRisk": "Invitation state must not imply T3 authentication, device enrollment, or Marketing authorization.",
+      "testsAndProof": [
+        "Anonymous/authenticated access matrix",
+        "Truthful download-state proof",
+        "T3 pairing invariance"
+      ],
+      "disposition": "split"
+    },
+    {
+      "id": "console-generic-work-and-operations",
+      "selector": {
+        "include": [
+          "^apps/console/src/app/(?:api/(?:add-ons|background-jobs|factory-weekly-summary|operator-runbooks|recurring-loops|runbooks|runtime-recovery-events|skills|skillsets|support-requests|task-list|team-value|work(?:/|$)|work-board|work-loops|workspace-tasks|workstreams|wtx)|internal-add-ons)"
+        ]
+      },
+      "pathCapability": "Generic work execution, loops, runs, tasks, support, skills, recovery, billing/value, and operator control-plane behavior.",
+      "classification": "retire",
+      "legacyEvidenceStatus": "Large legacy implementation exists but is outside the approved Marketing product boundary.",
+      "currentAuldricsStatus": "Native T3 owns generic work and runtime behavior; these donor services are absent.",
+      "owner": {
+        "issues": [14],
+        "boundary": "Retired duplicate platform",
+        "rationale": "The canonical authority explicitly assigns generic Work, Loops, Runs, skills, and recovery to T3."
+      },
+      "integration": {
+        "supportedSeam": null,
+        "upstreamDependency": "If Marketing later needs a missing generic work primitive, create an upstream proposal and a new bounded issue."
+      },
+      "data": {
+        "migration": "Do not migrate service state or schemas.",
+        "backfill": "None.",
+        "rollback": "Not applicable; no implementation is introduced."
+      },
+      "securityTenantRisk": "A parallel work control plane could execute actions outside T3 permissions and expose cross-organization task data.",
+      "testsAndProof": [
+        "Inventory exclusion assertion",
+        "T3 native Work/Loops invariance in integrated proof"
+      ],
+      "disposition": "delete"
+    },
+    {
+      "id": "console-standalone-platform-remainder",
+      "selector": { "include": ["^apps/console/"] },
+      "pathCapability": "Standalone Astro console shell, deployment, recovery, generic API infrastructure, and remaining control-plane code.",
+      "classification": "retire",
+      "legacyEvidenceStatus": "Legacy standalone application exists.",
+      "currentAuldricsStatus": "Absent; current architecture requires Marketing beside native T3 rather than a separate runtime console.",
+      "owner": {
+        "issues": [4, 14],
+        "boundary": "Retired runtime fork",
+        "rationale": "The application-level console model conflicts with the selected isolated domain inside T3."
+      },
+      "integration": { "supportedSeam": null, "upstreamDependency": null },
+      "data": {
+        "migration": "None; domain records are handled only by separately classified entries.",
+        "backfill": "None.",
+        "rollback": "Not applicable."
+      },
+      "securityTenantRisk": "Duplicate HTTP/auth/deployment surfaces create identity and permission ambiguity.",
+      "testsAndProof": [
+        "No console package introduced",
+        "T3 server/web remain the only product runtime"
+      ],
+      "disposition": "delete"
+    },
+    {
+      "id": "web-day0-evidence-and-source-ui",
+      "selector": {
+        "include": ["^apps/web/src/auldric/(?:evidence/|onboarding/|sourceCapabilities/)"]
+      },
+      "pathCapability": "Marketing evidence intake, source capability state, bounded turn context, and Day 0 readiness UI hooks.",
+      "classification": "keep-rebuild",
+      "legacyEvidenceStatus": "Legacy client logic and tests exist.",
+      "currentAuldricsStatus": "Not implemented.",
+      "owner": {
+        "issues": [9, 18, 22, 23],
+        "boundary": "Marketing UI",
+        "rationale": "The states are Marketing-specific and map directly to the canonical evidence and Day 0 requirements."
+      },
+      "integration": {
+        "supportedSeam": "Lazy Marketing routes consuming server-owned typed read models.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "Rebuild against new contracts; no local donor caches migrate.",
+        "backfill": "Server-owned import status may project into the UI after canonical read-back.",
+        "rollback": "Remove the Marketing route while retaining canonical records."
+      },
+      "securityTenantRisk": "Client state must never authorize a source or synthesize evidence absent a server receipt.",
+      "testsAndProof": [
+        "Empty/loading/error/denied/stale source states",
+        "Day 0 contextless and useful-context flows",
+        "Narrow and desktop proof"
+      ],
+      "disposition": "rebuild"
+    },
+    {
+      "id": "web-artifact-library-and-presentation-ui",
+      "selector": {
+        "include": [
+          "^apps/web/src/auldric/(?:artifacts/|briefs/|deepResearch/|presentations/|share/)"
+        ]
+      },
+      "pathCapability": "Saved outputs, artifact continuation, deep research, presentation prompts, export, links, and share actions.",
+      "classification": "keep-rebuild",
+      "legacyEvidenceStatus": "Legacy helpers and tests demonstrate desired behavior, but some actions were client-authoritative.",
+      "currentAuldricsStatus": "No Marketing Library or artifact authoring UI is implemented.",
+      "owner": {
+        "issues": [8, 19, 22, 25],
+        "boundary": "Canonical Marketing artifacts",
+        "rationale": "Artifact and presentation experiences are Marketing-owned; durable state must move to the new server contract."
+      },
+      "integration": {
+        "supportedSeam": "Server-owned artifact head/revision/read model and registered renderer projected in Marketing UI.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "Rebuild UI; do not migrate local links, cached markdown, or implicit saved state.",
+        "backfill": "Only canonical imported artifacts with schema/version/provenance.",
+        "rollback": "Restore prior artifact head through an immutable revision event."
+      },
+      "securityTenantRisk": "Share/export can disclose tenant content; generated prompts and client state cannot bypass review or schema validation.",
+      "testsAndProof": [
+        "Revision conflict and read-back tests",
+        "Export permission tests",
+        "Renderer failure states",
+        "Desktop/narrow author-review proof"
+      ],
+      "disposition": "rebuild"
+    },
+    {
+      "id": "web-strategy-workflow-and-shell-ui",
+      "selector": {
+        "include": [
+          "^apps/web/src/auldric/(?:nextActions/|playbooks/|strategy/|workflows/|workspace/|workspaceKnowledgeProject)"
+        ]
+      },
+      "pathCapability": "Strategy/GTM catalogs, readiness, workflow navigation, next actions, workspace layout, and evidence context projection.",
+      "classification": "keep-rebuild",
+      "legacyEvidenceStatus": "Legacy projections, fixtures, hooks, and tests exist; server authority varied by feature.",
+      "currentAuldricsStatus": "Not implemented.",
+      "owner": {
+        "issues": [13, 19, 21, 24, 25],
+        "boundary": "Marketing workflow UI",
+        "rationale": "These are core Marketing product interactions and can be rebuilt after backend definitions and shell contracts land."
+      },
+      "integration": {
+        "supportedSeam": "Explicit Marketing route/lazy boundary with server-served workflow definitions and canonical progress.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "Rebuild from accepted typed definitions; do not preserve donor client fixtures as records.",
+        "backfill": "None beyond canonical workflow projections.",
+        "rollback": "Deactivate Marketing route/projection without changing workflow history."
+      },
+      "securityTenantRisk": "The UI must not mark steps complete, switch organizations, or infer readiness without authorized receipts.",
+      "testsAndProof": [
+        "Definition/projection contract tests",
+        "Blocked/complete/reopened reverse states",
+        "90-day dashboard desktop/narrow proof"
+      ],
+      "disposition": "rebuild"
+    },
+    {
+      "id": "web-auldric-design-systems",
+      "selector": {
+        "include": [
+          "^apps/web/src/auldric/(?:auldric-overrides\\.css$|grid-mechanic/|grid-system/)"
+        ]
+      },
+      "pathCapability": "Legacy Marketing visual overrides and grid/artifact design mechanics.",
+      "classification": "historical-evidence",
+      "legacyEvidenceStatus": "Implemented visual experiments and tests exist.",
+      "currentAuldricsStatus": "Not approved or present in current T3 web.",
+      "owner": {
+        "issues": [13, 25],
+        "boundary": "Design evidence",
+        "rationale": "Visual intent may inform the current design assessment, but CSS overrides and experimental editors are not implementation authority."
+      },
+      "integration": {
+        "supportedSeam": "Current T3 design tokens/components inside the Marketing route.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "None.",
+        "backfill": "None.",
+        "rollback": "Remove Marketing-specific styles/components."
+      },
+      "securityTenantRisk": "Low tenant risk; global CSS leakage and rendering performance regressions are the primary concerns.",
+      "testsAndProof": [
+        "Scoped-style assertion",
+        "Performance and accessibility review",
+        "Fresh before/after images"
+      ],
+      "disposition": "archive"
+    },
+    {
+      "id": "web-conversation-continuity",
+      "selector": { "include": ["^apps/web/src/auldric/(?:conversationWorkspace|threadLaunch)"] },
+      "pathCapability": "Marketing-to-thread launch, mismatch, and recovery behavior.",
+      "classification": "split",
+      "legacyEvidenceStatus": "Legacy client logic/tests exist against duplicate recovery state.",
+      "currentAuldricsStatus": "T3 thread UI exists; Marketing continuity does not.",
+      "owner": {
+        "issues": [7, 21],
+        "boundary": "Marketing provenance over T3 conversations",
+        "rationale": "Launch and mismatch UX can survive while thread/recovery authority stays native T3."
+      },
+      "integration": {
+        "supportedSeam": "T3 thread navigation plus a Marketing-owned opaque provenance binding.",
+        "upstreamDependency": "Any missing navigation/context handoff seam is upstream."
+      },
+      "data": {
+        "migration": "No donor conversation data.",
+        "backfill": "Optional explicit binding after authorization.",
+        "rollback": "Unbind Marketing context; preserve the T3 thread."
+      },
+      "securityTenantRisk": "A URL or thread ID must not select or authorize a Marketing workspace.",
+      "testsAndProof": [
+        "Mismatch denial/recovery",
+        "Unknown binding fallback to Dev",
+        "Thread preservation after unbind"
+      ],
+      "disposition": "split"
+    },
+    {
+      "id": "web-auth-and-desktop-first-run",
+      "selector": { "include": ["^apps/web/src/auldric/(?:auth/|desktopFirstRun)"] },
+      "pathCapability": "Auldric credential runtime, Clerk desktop authentication, credential caches, and first-run diagnostics.",
+      "classification": "replace-with-t3",
+      "legacyEvidenceStatus": "Legacy authentication implementation and tests exist.",
+      "currentAuldricsStatus": "Native T3 authentication/pairing owns this capability.",
+      "owner": {
+        "issues": [5, 6],
+        "boundary": "T3 authentication",
+        "rationale": "Marketing consumes a verified actor; it must not introduce credentials, auth UI, or a device identity."
+      },
+      "integration": {
+        "supportedSeam": "Existing T3 verified actor/session context only.",
+        "upstreamDependency": "Missing actor claims are upstream, never a local credential cache."
+      },
+      "data": {
+        "migration": "Never migrate tokens, credentials, or cache state.",
+        "backfill": "Create Marketing mappings only after current T3 verification.",
+        "rollback": "Delete Marketing mappings without signing the actor out of T3."
+      },
+      "securityTenantRisk": "Critical credential leakage, account confusion, and bypass of T3 pairing/authentication.",
+      "testsAndProof": [
+        "No Auldric credential storage",
+        "Verified actor required",
+        "T3 sign-in/pairing invariance"
+      ],
+      "disposition": "replace"
+    },
+    {
+      "id": "web-connected-tool-and-voice-experiments",
+      "selector": { "include": ["^apps/web/src/auldric/(?:connected-tasks/|upstream/|voice/)"] },
+      "pathCapability": "Connected task triage, upstream intake, and private voice experiments.",
+      "classification": "upstream-dependency",
+      "legacyEvidenceStatus": "Legacy experiments and tests exist, but they rely on generic connector, work, and voice capabilities.",
+      "currentAuldricsStatus": "Not part of the approved first Marketing scope.",
+      "owner": {
+        "issues": [9, 14],
+        "boundary": "Parked generic capability",
+        "rationale": "Marketing-specific source use may be reconsidered only after T3 exposes and owns the generic seam."
+      },
+      "integration": {
+        "supportedSeam": null,
+        "upstreamDependency": "T3-owned connector action, task, upstream-intake, or voice-session seam plus a new executable Marketing issue."
+      },
+      "data": { "migration": "None.", "backfill": "None.", "rollback": "Not applicable." },
+      "securityTenantRisk": "Voice and connected actions can disclose data or act externally without a current permission contract.",
+      "testsAndProof": ["Parked-path assertion", "Future provider permission and consent tests"],
+      "disposition": "retain"
+    },
+    {
+      "id": "web-generic-work-and-command-features",
+      "selector": {
+        "include": [
+          "^apps/web/src/auldric/(?:addOnCommandFlow|level4/|operatorRunbooks/|promptRecipes/|sharedCommandCatalogStatus|tasks/|team-value/|work/|workLoops/|workstreams/|wtx/)"
+        ]
+      },
+      "pathCapability": "Legacy generic commands, workstreams, loops, tasks, runbooks, prompt recipes, and team-value UI.",
+      "classification": "retire",
+      "legacyEvidenceStatus": "Legacy client implementation exists.",
+      "currentAuldricsStatus": "Native T3 owns generic work surfaces; these features are absent and out of scope.",
+      "owner": {
+        "issues": [14],
+        "boundary": "Retired platform UI",
+        "rationale": "These paths would recreate the generic Auldric work runtime explicitly excluded by the authority contract."
+      },
+      "integration": {
+        "supportedSeam": null,
+        "upstreamDependency": "A future missing generic T3 feature requires an upstream issue."
+      },
+      "data": { "migration": "None.", "backfill": "None.", "rollback": "Not applicable." },
+      "securityTenantRisk": "Client command catalogs can bypass T3 modes, permissions, and provider behavior.",
+      "testsAndProof": ["No generic Auldric command/work UI introduced"],
+      "disposition": "delete"
+    },
+    {
+      "id": "web-component-design-prototypes",
+      "selector": {
+        "include": [
+          "^apps/web/src/components/auldric/(?:grid-mechanic/|grid-system/|style-guide/)",
+          "^apps/web/src/routes/grid-(?:mechanic|system)\\.tsx$"
+        ]
+      },
+      "pathCapability": "Legacy in-app grid designers, style-guide surface, and prototype routes.",
+      "classification": "historical-evidence",
+      "legacyEvidenceStatus": "Legacy visual tools, browser examples, and routes exist.",
+      "currentAuldricsStatus": "Not approved or present in current T3 web.",
+      "owner": {
+        "issues": [13, 25],
+        "boundary": "Historical design evidence",
+        "rationale": "They can inform artifact composition and visual direction, but are prototype/editor products outside the first Marketing scope."
+      },
+      "integration": {
+        "supportedSeam": "Current T3 components and scoped Marketing styles.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "None.",
+        "backfill": "None.",
+        "rollback": "Remove rebuilt presentation components."
+      },
+      "securityTenantRisk": "Global styling and generated layout state can leak into Dev or create rendering performance regressions.",
+      "testsAndProof": ["Fresh #13 design review", "Scoped style and performance proof"],
+      "disposition": "archive"
+    },
+    {
+      "id": "web-component-auth-surfaces",
+      "selector": { "include": ["^apps/web/src/components/auldric/auth/"] },
+      "pathCapability": "Legacy Auldric auth status and workspace-access recovery components.",
+      "classification": "replace-with-t3",
+      "legacyEvidenceStatus": "Legacy UI and tests exist against donor auth state.",
+      "currentAuldricsStatus": "Native T3 authentication and pairing are authoritative.",
+      "owner": {
+        "issues": [5, 6],
+        "boundary": "T3 authentication UI",
+        "rationale": "Marketing may show role/workspace authorization errors but cannot own auth status or recovery."
+      },
+      "integration": {
+        "supportedSeam": "Existing T3 actor/session UI plus Marketing-specific authorization state.",
+        "upstreamDependency": "Missing generic recovery UI belongs upstream."
+      },
+      "data": {
+        "migration": "No auth UI/cache state.",
+        "backfill": "None.",
+        "rollback": "Remove Marketing authorization projection only."
+      },
+      "securityTenantRisk": "A parallel recovery UI can train users to bypass T3 authentication or expose account state.",
+      "testsAndProof": [
+        "Native T3 auth/recovery invariance",
+        "Marketing denied state cannot sign in or switch actor"
+      ],
+      "disposition": "replace"
+    },
+    {
+      "id": "web-component-connected-and-upstream-surfaces",
+      "selector": {
+        "include": [
+          "^apps/web/src/components/auldric/(?:appConnections/|connected-tasks/)",
+          "^apps/web/src/components/auldric/workspace/UpstreamIntakeWorkspace",
+          "^apps/web/src/lib/auldric/globalSearchConversationContext"
+        ]
+      },
+      "pathCapability": "Legacy managed connections, connected tasks, upstream intake, and global connected-search context UI.",
+      "classification": "upstream-dependency",
+      "legacyEvidenceStatus": "Legacy components and stores exist.",
+      "currentAuldricsStatus": "Not approved in the first Marketing scope.",
+      "owner": {
+        "issues": [9, 14],
+        "boundary": "Parked connector/work/search surface",
+        "rationale": "These UIs depend on generic connection, task, search, and intake seams owned outside Marketing."
+      },
+      "integration": {
+        "supportedSeam": null,
+        "upstreamDependency": "T3-owned generic connector/action/search seam and a bounded Marketing issue."
+      },
+      "data": { "migration": "None.", "backfill": "None.", "rollback": "Not applicable." },
+      "securityTenantRisk": "Client connection state can imply permissions or expose data/actions from another organization.",
+      "testsAndProof": [
+        "Future connector permission/error/revocation states",
+        "Cross-organization denial"
+      ],
+      "disposition": "retain"
+    },
+    {
+      "id": "web-component-generic-work-surfaces",
+      "selector": {
+        "include": [
+          "^apps/web/src/components/auldric/(?:SharedCommandCatalogNotice|operator-runbooks/)",
+          "^apps/web/src/components/auldric/workspace/(?:WorkspaceBoard|WorkspaceLoop|WorkspaceRuns|WorkspaceWork)",
+          "^apps/web/src/lib/auldric/operatorRunbooksPanelStore"
+        ]
+      },
+      "pathCapability": "Legacy generic command, operator-runbook, work, loop, run, and board components embedded in the Auldric UI.",
+      "classification": "retire",
+      "legacyEvidenceStatus": "Legacy UI implementation exists.",
+      "currentAuldricsStatus": "Generic work and command surfaces remain T3-owned and outside the Marketing product.",
+      "owner": {
+        "issues": [14],
+        "boundary": "Retired generic platform UI",
+        "rationale": "Component placement under an Auldric directory does not make generic Work/Loops/Runs or commands Marketing-owned."
+      },
+      "integration": {
+        "supportedSeam": null,
+        "upstreamDependency": "Missing generic T3 UI belongs upstream."
+      },
+      "data": { "migration": "None.", "backfill": "None.", "rollback": "Not applicable." },
+      "securityTenantRisk": "Generic action surfaces can bypass T3 modes, permissions, and execution receipts.",
+      "testsAndProof": ["No Auldric command/work control surface introduced"],
+      "disposition": "delete"
+    },
+    {
+      "id": "web-component-conversation-continuity",
+      "selector": {
+        "include": [
+          "^apps/web/src/components/auldric/related-chat/",
+          "^apps/web/src/components/chat/ConversationWorkspace",
+          "^apps/web/src/hooks/useThreadStrategyArtifacts",
+          "^apps/web/src/lib/auldric/relatedChat"
+        ]
+      },
+      "pathCapability": "Related-chat, workspace mismatch, thread strategy artifact, and conversation-context presentation.",
+      "classification": "split",
+      "legacyEvidenceStatus": "Legacy UI stores/components and tests exist.",
+      "currentAuldricsStatus": "T3 conversations exist; Marketing continuity/provenance projections do not.",
+      "owner": {
+        "issues": [7, 13, 21, 25],
+        "boundary": "Marketing provenance over T3 threads",
+        "rationale": "Related artifact/context presentation may survive while T3 retains navigation, thread, recovery, and transcript authority."
+      },
+      "integration": {
+        "supportedSeam": "Opaque T3 thread reference and server-authorized Marketing provenance/read models.",
+        "upstreamDependency": "Missing thread-context projection seam is upstream."
+      },
+      "data": {
+        "migration": "No local related-chat drafts or panel state.",
+        "backfill": "Explicit authorized artifact-thread binding only.",
+        "rollback": "Remove binding/panel while preserving T3 thread and artifact revisions."
+      },
+      "securityTenantRisk": "A related thread or URL cannot authorize a workspace or expose an artifact from another organization.",
+      "testsAndProof": [
+        "Mismatch/cross-org denial",
+        "Unbind/reopen states",
+        "T3 thread preservation"
+      ],
+      "disposition": "split"
+    },
+    {
+      "id": "web-production-marketing-components",
+      "selector": {
+        "include": [
+          "^apps/web/src/components/auldric/(?:AuldricWelcomeSurface|artifacts/|image-preview/|presentations/|strategy/|workspace/)",
+          "^apps/web/src/components/chat/Day0",
+          "^apps/web/src/components/strategy(?:Project|Workstream)Defaults",
+          "^apps/web/src/lib/auldric/(?:auldricWorkspacePanelStore|generatedImagePreviewPanelStore|rightPanelPresentationStore|strategyActions|strategyPanelStore|workspaceContextDockStore)",
+          "^apps/web/src/routes/workspace\\.tsx$"
+        ]
+      },
+      "pathCapability": "Legacy Day 0, Strategy/GTM, artifact renderer, presentation, Library/workspace, panel, dashboard, and Marketing welcome components.",
+      "classification": "keep-rebuild",
+      "legacyEvidenceStatus": "Extensive legacy production/prototype components, fixtures, browser cases, and tests exist.",
+      "currentAuldricsStatus": "No current Marketing product UI exists; donor components are not current T3 components.",
+      "owner": {
+        "issues": [13, 18, 19, 21, 22, 23, 24, 25],
+        "boundary": "Marketing UI requirements",
+        "rationale": "The user journeys and renderer behaviors are Marketing-owned and eligible for a fresh, dumb projection over current backend contracts."
+      },
+      "integration": {
+        "supportedSeam": "#4 lazy Marketing route using current T3 primitives and server-owned read models.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "Rebuild selected components; do not carry local panel stores or fixtures as canonical state.",
+        "backfill": "None beyond canonical server projections.",
+        "rollback": "Remove Marketing routes/components while preserving canonical Marketing records and native T3 web."
+      },
+      "securityTenantRisk": "Client fixtures/state must not authorize organizations, mark workflow completion, approve reviews, or become saved truth.",
+      "testsAndProof": [
+        "Desktop and narrow integrated proof",
+        "Empty/loading/error/denied/conflict/reopen states",
+        "Accessibility and renderer performance",
+        "Native T3 web invariance"
+      ],
+      "disposition": "rebuild"
+    },
+    {
+      "id": "web-shared-t3-surface",
+      "selector": { "include": ["^apps/web/"] },
+      "pathCapability": "Shared chat shell, routes, components, RPC, environment, and native T3 web behavior modified by the fork.",
+      "classification": "replace-with-t3",
+      "legacyEvidenceStatus": "Donor contains extensive fork modifications and integrations.",
+      "currentAuldricsStatus": "Current native T3 web at the pinned baseline is authoritative.",
+      "owner": {
+        "issues": [2, 4],
+        "boundary": "T3 web",
+        "rationale": "All non-isolated web behavior resolves to T3; Marketing may attach only at the supported lazy route/domain seam."
+      },
+      "integration": {
+        "supportedSeam": "#4 additive route and lazy domain selection only.",
+        "upstreamDependency": "Any needed shared-shell change must be upstream or allowlisted by #2."
+      },
+      "data": {
+        "migration": "None from donor.",
+        "backfill": "None.",
+        "rollback": "Remove the additive Marketing entry and return to native T3."
+      },
+      "securityTenantRisk": "Shared-shell edits can inject Marketing context into Dev or break remote clients.",
+      "testsAndProof": [
+        "Unknown/missing domain resolves to Dev",
+        "Native chat/settings/command/keybinding invariance",
+        "Web/desktop/mobile connection-mode proof where applicable"
+      ],
+      "disposition": "replace"
+    },
+    {
+      "id": "server-marketing-evidence-and-artifacts",
+      "selector": {
+        "include": [
+          "^apps/server/src/auldric/(?:artifactViews|consultingEvidencePolicy|onboardingReadiness|typedArtifactDashboard|workflowArtifactBrandTransport|workspaceEvidenceContext|workspaceKnowledgeAttachmentSync)"
+        ]
+      },
+      "pathCapability": "Marketing evidence policy/context, readiness, artifact views/dashboard, brand transport, and source attachment sync.",
+      "classification": "keep-rebuild",
+      "legacyEvidenceStatus": "Legacy domain logic and focused tests exist.",
+      "currentAuldricsStatus": "Not implemented.",
+      "owner": {
+        "issues": [8, 9, 18, 19, 25],
+        "boundary": "Marketing server domain",
+        "rationale": "These are bounded Marketing requirements suitable for pure deciders/projectors or adapter-edge effects."
+      },
+      "integration": {
+        "supportedSeam": "Typed Marketing commands/events/receipts behind explicit product-domain selection.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "Rebuild from accepted contracts; do not reuse donor service state.",
+        "backfill": "Organization-scoped, idempotent evidence/artifact import only if separately approved.",
+        "rollback": "Compensating Marketing events or migration rollback; Dev state remains untouched."
+      },
+      "securityTenantRisk": "Evidence/source attachment must be prompt-injection resistant, provenance-bearing, bounded, and tenant-scoped.",
+      "testsAndProof": [
+        "Pure policy/decider tests",
+        "Cross-organization denial",
+        "Evidence budget/receipt tests",
+        "Artifact read-back proof"
+      ],
+      "disposition": "rebuild"
+    },
+    {
+      "id": "server-marketing-prompting",
+      "selector": { "include": ["^apps/server/src/auldric/prompting/"] },
+      "pathCapability": "Domain packs, authority policy, output/posture instructions, audit, compilation, rollout, and provider delivery.",
+      "classification": "split",
+      "legacyEvidenceStatus": "Legacy layered prompt compiler and rollout tests exist, including global/provider delivery machinery.",
+      "currentAuldricsStatus": "No Marketing compiler exists; native provider prompts and Dev instructions are T3-owned.",
+      "owner": {
+        "issues": [4, 9, 18, 19],
+        "boundary": "Explicit Marketing-only compilation",
+        "rationale": "Marketing instruction/evidence requirements survive, while global prompt compilation, provider delivery, and rollout are rejected."
+      },
+      "integration": {
+        "supportedSeam": "A bounded Marketing turn-context seam after explicit domain selection, with missing/unknown domain bypassing compilation.",
+        "upstreamDependency": "If T3 exposes no safe per-turn context seam, park and propose upstream."
+      },
+      "data": {
+        "migration": "Re-author bounded instruction layers; do not port rollout flags or provider delivery code.",
+        "backfill": "None.",
+        "rollback": "Disable Marketing compilation and fall back to native Dev only when the user is in Dev, never as a Marketing data fallback."
+      },
+      "securityTenantRisk": "Highest prompt-boundary risk: global injection, source-as-instruction, unbounded context, and provider divergence.",
+      "testsAndProof": [
+        "Dev prompt byte/semantic invariance",
+        "Explicit-domain gating",
+        "Unknown-domain Dev fallback",
+        "Evidence provenance/budget and injection tests across providers"
+      ],
+      "disposition": "split"
+    },
+    {
+      "id": "server-marketing-app-connections",
+      "selector": {
+        "include": ["^apps/server/src/auldric/(?:appConnections/|nango|resendAppConnection)"]
+      },
+      "pathCapability": "Marketing source/action adapter catalog and Nango/Resend forwarding.",
+      "classification": "split",
+      "legacyEvidenceStatus": "Legacy adapter implementation and tests exist.",
+      "currentAuldricsStatus": "No approved Marketing connector adapter exists.",
+      "owner": {
+        "issues": [9],
+        "boundary": "Marketing adapter boundary",
+        "rationale": "Marketing capability descriptions and bounded evidence imports may survive; OAuth, transport, secrets, and generic connections do not."
+      },
+      "integration": {
+        "supportedSeam": "Current connector/app tool seam with T3-owned credentials and explicit Marketing authorization.",
+        "upstreamDependency": "Missing durable connector/action receipts require upstream work."
+      },
+      "data": {
+        "migration": "No tokens or connection rows migrate.",
+        "backfill": "Evidence only with source receipt, tenant scope, and idempotency.",
+        "rollback": "Revoke adapter and stop jobs; preserve or delete imported evidence per policy."
+      },
+      "securityTenantRisk": "External send/publish capability and token handling can exceed user approval or tenant scope.",
+      "testsAndProof": [
+        "Capability/permission matrix",
+        "No secret persistence in Marketing",
+        "Explicit action approval",
+        "Retry/idempotency receipts"
+      ],
+      "disposition": "split"
+    },
+    {
+      "id": "server-conversation-continuity",
+      "selector": {
+        "include": [
+          "^apps/server/src/auldric/(?:TeamConversationStateClient|conversationAuthority|conversationWorkspaceMigrationCoordinator|localConversationRecoveryCoordinator|sharedConversationState|transcriptCaptureReactor|Services/TranscriptCaptureReactor)"
+        ]
+      },
+      "pathCapability": "Legacy team conversation service, transcript capture, authority, migration, and local recovery.",
+      "classification": "split",
+      "legacyEvidenceStatus": "Legacy services/reactors and tests exist.",
+      "currentAuldricsStatus": "T3 conversation and event history exist; no Marketing provenance layer exists.",
+      "owner": {
+        "issues": [7, 8],
+        "boundary": "T3 conversation authority",
+        "rationale": "Only Marketing provenance and bounded transcript-to-evidence behavior survive."
+      },
+      "integration": {
+        "supportedSeam": "Opaque T3 thread reference and typed Marketing provenance/event receipt.",
+        "upstreamDependency": "Missing transcript/export seam is upstream; no duplicate recovery service."
+      },
+      "data": {
+        "migration": "Do not import conversation state or replace T3 recovery.",
+        "backfill": "Explicit authorized transcript evidence import only.",
+        "rollback": "Delete Marketing provenance/evidence while preserving T3 history."
+      },
+      "securityTenantRisk": "Transcripts can leak sensitive data and thread IDs can be mistaken for authorization.",
+      "testsAndProof": [
+        "Conversation authority tests",
+        "Tenant-scoped transcript import",
+        "T3 recovery/reconnect invariance"
+      ],
+      "disposition": "split"
+    },
+    {
+      "id": "server-duplicate-control-plane-and-work-runtime",
+      "selector": {
+        "include": [
+          "^apps/server/src/auldric/(?:Layers/|Services/(?:AuldricControlPlane|WorkLoopReactor)|addOn|capabilities/|commandRuntime|productContext|sharedCommandCatalog|sharedConversationShell|workLoopReactor)"
+        ]
+      },
+      "pathCapability": "Auldric control plane, command runtime/catalog, product context, conversation shell, capabilities, and work-loop reactor.",
+      "classification": "retire",
+      "legacyEvidenceStatus": "Legacy runtime implementation and tests exist.",
+      "currentAuldricsStatus": "Native T3 orchestration/provider/session/work behavior is authoritative.",
+      "owner": {
+        "issues": [14],
+        "boundary": "Retired runtime fork",
+        "rationale": "This is the duplicate runtime the authority contract explicitly forbids."
+      },
+      "integration": {
+        "supportedSeam": null,
+        "upstreamDependency": "Generic missing capabilities belong upstream."
+      },
+      "data": { "migration": "None.", "backfill": "None.", "rollback": "Not applicable." },
+      "securityTenantRisk": "Parallel commands/reactors could bypass T3 permissions, modes, receipts, and failure isolation.",
+      "testsAndProof": [
+        "No Auldric control-plane/runtime package",
+        "Native T3 orchestration invariance"
+      ],
+      "disposition": "delete"
+    },
+    {
+      "id": "server-external-catalog-and-voice",
+      "selector": {
+        "include": ["^apps/server/src/auldric/(?:externalCatalog|globalSearch|voice/)"]
+      },
+      "pathCapability": "External component catalog, global connected search, and voice provider experiments.",
+      "classification": "upstream-dependency",
+      "legacyEvidenceStatus": "Legacy adapters and tests exist.",
+      "currentAuldricsStatus": "Not approved in the first Marketing scope.",
+      "owner": {
+        "issues": [14, 25],
+        "boundary": "Parked generic provider seam",
+        "rationale": "These capabilities require generic catalog/search/voice infrastructure and new explicit product scope."
+      },
+      "integration": {
+        "supportedSeam": null,
+        "upstreamDependency": "T3-owned catalog/search/voice provider seam and a separately approved Marketing issue."
+      },
+      "data": { "migration": "None.", "backfill": "None.", "rollback": "Not applicable." },
+      "securityTenantRisk": "Remote catalogs/search/voice may exfiltrate prompts, workspace data, or credentials.",
+      "testsAndProof": ["Future consent, allowlist, provenance, and provider-failure tests"],
+      "disposition": "retain"
+    },
+    {
+      "id": "server-shared-t3-runtime",
+      "selector": { "include": ["^apps/server/"] },
+      "pathCapability": "Provider, session, orchestration, auth, WebSocket, Git, terminal, preview, persistence, telemetry, and shared server behavior modified in the fork.",
+      "classification": "replace-with-t3",
+      "legacyEvidenceStatus": "Donor contains a heavily diverged T3 server.",
+      "currentAuldricsStatus": "Pinned native T3 server is present and authoritative.",
+      "owner": {
+        "issues": [2, 4],
+        "boundary": "T3 server",
+        "rationale": "Every shared runtime concern resolves to T3; #4 may use only a supported Marketing seam."
+      },
+      "integration": {
+        "supportedSeam": "Additive Marketing contracts/commands/events at approved boundaries.",
+        "upstreamDependency": "Any shared server modification requires upstream acceptance or a time-bounded #2 allowlist."
+      },
+      "data": {
+        "migration": "No donor runtime or server persistence migrates.",
+        "backfill": "None.",
+        "rollback": "Remove additive Marketing code/migrations while retaining T3 event data."
+      },
+      "securityTenantRisk": "Forked runtime can break provider permissions, remote operation, pairing, and Dev isolation.",
+      "testsAndProof": [
+        "All provider adapter decisions",
+        "Dev behavior invariance",
+        "Local/remote/tunnel tests where contracts cross the wire"
+      ],
+      "disposition": "replace"
+    },
+    {
+      "id": "desktop-brand-evidence",
+      "selector": { "include": ["^apps/desktop/resources/source/auldric-icon-"] },
+      "pathCapability": "Legacy Auldric desktop icon source assets.",
+      "classification": "historical-evidence",
+      "legacyEvidenceStatus": "Legacy vector assets exist.",
+      "currentAuldricsStatus": "Outward desktop identity remains governed by #3; native T3 desktop is authoritative.",
+      "owner": {
+        "issues": [3],
+        "boundary": "Distribution identity evidence",
+        "rationale": "Assets may inform identity decisions but do not authorize a desktop reskin."
+      },
+      "integration": {
+        "supportedSeam": "Only explicit #3 distribution configuration.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "No migration.",
+        "backfill": "None.",
+        "rollback": "Restore native T3 assets."
+      },
+      "securityTenantRisk": "Misbranding can obscure which runtime/auth authority the user is operating.",
+      "testsAndProof": ["#3 identity matrix", "Native T3 internal identity proof"],
+      "disposition": "archive"
+    },
+    {
+      "id": "desktop-auldric-runtime",
+      "selector": {
+        "include": [
+          "^apps/desktop/(?:src/auldric/|src/ipc/methods/auldricAuth\\.ts$|src/app/DesktopArtifactFlavor)"
+        ]
+      },
+      "pathCapability": "Auldric desktop auth/session, source-control writer, trusted console origin, IPC, and artifact-flavor behavior.",
+      "classification": "replace-with-t3",
+      "legacyEvidenceStatus": "Legacy desktop bridge implementation and tests exist.",
+      "currentAuldricsStatus": "Native T3 desktop shell, auth, IPC, and source control are authoritative.",
+      "owner": {
+        "issues": [3, 4, 5, 25],
+        "boundary": "T3 desktop",
+        "rationale": "Marketing UI is web-surface functionality; desktop must not acquire a second auth/session/source-control identity."
+      },
+      "integration": {
+        "supportedSeam": "Desktop wraps the same T3 web Marketing route; no new IPC unless accepted upstream.",
+        "upstreamDependency": "Any missing generic desktop seam is upstream."
+      },
+      "data": {
+        "migration": "Never migrate sessions, tokens, origins, or writer credentials.",
+        "backfill": "None.",
+        "rollback": "Remove Marketing web entry; preserve desktop state."
+      },
+      "securityTenantRisk": "Trusted-origin and writer enrollment code can create credential or arbitrary-write vulnerabilities.",
+      "testsAndProof": [
+        "Desktop uses native T3 identity",
+        "No Auldric auth IPC",
+        "Marketing route smoke through existing wrapper"
+      ],
+      "disposition": "replace"
+    },
+    {
+      "id": "desktop-shared-t3-shell",
+      "selector": { "include": ["^apps/desktop/"] },
+      "pathCapability": "Remaining Electron shell, updates, packaging, notifications, SSH, windows, and resources.",
+      "classification": "replace-with-t3",
+      "legacyEvidenceStatus": "Fork-modified desktop implementation exists.",
+      "currentAuldricsStatus": "Pinned native T3 desktop is present.",
+      "owner": {
+        "issues": [2, 3],
+        "boundary": "T3 desktop",
+        "rationale": "Shared desktop infrastructure is wholly T3-owned."
+      },
+      "integration": {
+        "supportedSeam": "Existing T3 web wrapper and explicit distribution settings only.",
+        "upstreamDependency": "Shared shell changes go upstream."
+      },
+      "data": {
+        "migration": "None.",
+        "backfill": "None.",
+        "rollback": "Native T3 desktop remains the baseline."
+      },
+      "securityTenantRisk": "Packaging or update drift can compromise remote hosts and release trust.",
+      "testsAndProof": [
+        "Native desktop packaging/update checks",
+        "No Marketing-specific process/session behavior"
+      ],
+      "disposition": "replace"
+    },
+    {
+      "id": "contracts-pure-marketing-domain",
+      "selector": {
+        "include": [
+          "^packages/contracts/src/auldric/(?:artifactBrandContext|artifactComponent|artifactDefinition|artifactView|artifacts|bentGridArtifact|brandComponent|brandCopyArtifact|brandProfile|brief|day0OperatingPacket|day0TeamContext|deepResearchArtifact|evidenceContext|evidenceIntake|interactionPosture|libraryPack|marketingBenchmark|onboardingReadiness|planReadiness|playbook|promptOptimization|promptRecipe|shareAction|sourceCapability|strategyArtifact|strategyPlan|strategyRpc|typedArtifactPersistence|typedArtifactSystem|typedStepArtifact|workflow|workflowArtifact|workspaceDocumentView|workspaceNote)(?:\\.|$)"
+        ]
+      },
+      "pathCapability": "Pure Marketing sources, Day 0, Strategy/GTM, artifact, workflow, brand, evidence, review-adjacent, and output contracts.",
+      "classification": "keep-rebuild",
+      "legacyEvidenceStatus": "Typed legacy schemas, fixtures, and contract tests exist.",
+      "currentAuldricsStatus": "No Marketing contracts are implemented in current packages/contracts.",
+      "owner": {
+        "issues": [8, 9, 11, 18, 19, 20],
+        "boundary": "Marketing wire/domain contracts",
+        "rationale": "These names and invariants are eligible evidence; accepted schemas must be freshly authored under current Effect/Schema conventions."
+      },
+      "integration": {
+        "supportedSeam": "Additive subpath contracts consumed by server, web, desktop wrapper, and mobile decisions.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "Re-author/version accepted schemas; no source-file copy.",
+        "backfill": "Schema-versioned import only after canonical storage exists.",
+        "rollback": "Keep old readers through a bounded migration window or remove unshipped schema additions."
+      },
+      "securityTenantRisk": "Contracts must carry organization/workspace scope, expected versions, provenance, and permission-safe error states.",
+      "testsAndProof": [
+        "Schema encode/decode tests",
+        "Version compatibility tests",
+        "Unknown-field and invalid-tenant rejection",
+        "All client/server consumers typecheck"
+      ],
+      "disposition": "rebuild"
+    },
+    {
+      "id": "contracts-mixed-identity-conversation-workspace",
+      "selector": {
+        "include": [
+          "^packages/contracts/src/auldric/(?:auth|chatCapabilityScope|conversationState|transcript|transcriptMemory|workspaceFailure|workspaceProvisioning)(?:\\.|$)"
+        ]
+      },
+      "pathCapability": "Mixed Marketing tenancy/provenance requirements and donor-owned auth/conversation/workspace protocol shapes.",
+      "classification": "split",
+      "legacyEvidenceStatus": "Legacy schemas/tests exist but embed duplicate identity and platform assumptions.",
+      "currentAuldricsStatus": "T3 owns actor/thread/environment contracts; Marketing mappings are absent.",
+      "owner": {
+        "issues": [5, 6, 7, 8],
+        "boundary": "Opaque T3 identities plus Marketing-owned mappings",
+        "rationale": "Only organization/workspace/role/provenance fields survive; runtime identities remain untouched."
+      },
+      "integration": {
+        "supportedSeam": "Additive Marketing records referencing opaque T3 IDs.",
+        "upstreamDependency": "Missing generic identity/thread schema fields require upstream work."
+      },
+      "data": {
+        "migration": "Define new identifiers and mappings; never reinterpret donor IDs as T3 IDs.",
+        "backfill": "Explicit collision-checked mapping only.",
+        "rollback": "Remove mappings while preserving T3 actors/threads/environments."
+      },
+      "securityTenantRisk": "Identifier aliasing and thread-as-authority can cause cross-tenant access.",
+      "testsAndProof": [
+        "ID ownership matrix tests",
+        "Cross-org and revoked-role failures",
+        "Thread provenance cannot authorize content"
+      ],
+      "disposition": "split"
+    },
+    {
+      "id": "contracts-connected-and-external-capabilities",
+      "selector": {
+        "include": [
+          "^packages/contracts/src/auldric/(?:appConnections|connectedTasks|externalCatalog|globalSearch|socialEngagement|voice)(?:\\.|$)"
+        ]
+      },
+      "pathCapability": "Marketing connected-tool, external catalog/search, social, task, and voice shapes.",
+      "classification": "upstream-dependency",
+      "legacyEvidenceStatus": "Legacy schemas and tests exist.",
+      "currentAuldricsStatus": "Not approved in the initial Marketing delivery except bounded evidence capabilities under #9.",
+      "owner": {
+        "issues": [9, 14],
+        "boundary": "Parked adapter contracts",
+        "rationale": "A subset may later be split for Marketing evidence, but generic action/provider protocols require current T3 owners."
+      },
+      "integration": {
+        "supportedSeam": null,
+        "upstreamDependency": "Current connector/provider contracts and a new approved implementation issue."
+      },
+      "data": { "migration": "None.", "backfill": "None.", "rollback": "Not applicable." },
+      "securityTenantRisk": "External actions and content access require consent, secret isolation, tenant scope, and receipts.",
+      "testsAndProof": [
+        "Future capability and permission matrix",
+        "Future action-approval and provider-failure tests"
+      ],
+      "disposition": "retain"
+    },
+    {
+      "id": "contracts-retired-generic-auldric-platform",
+      "selector": {
+        "include": [
+          "^packages/contracts/src/auldric/(?:addOns|command|earlyAccess|fixableIssue|mobileControlSurface|operatorRunbook|productCapability|runbook|runtimeRecovery|skillset|skillsetRpc|supportRequest|taskList|teamValueLedger|workLoop|workspaceWork|workstream|wtx)(?:\\.|$)"
+        ]
+      },
+      "pathCapability": "Generic command, work, loop, task, skill, support, recovery, and platform contracts.",
+      "classification": "retire",
+      "legacyEvidenceStatus": "Legacy contract implementation exists.",
+      "currentAuldricsStatus": "Native T3 owns these generic concepts; donor variants are absent.",
+      "owner": {
+        "issues": [14],
+        "boundary": "Retired generic platform",
+        "rationale": "They are not Marketing-specific and would create a parallel protocol."
+      },
+      "integration": {
+        "supportedSeam": null,
+        "upstreamDependency": "New generic primitives must be proposed upstream."
+      },
+      "data": { "migration": "None.", "backfill": "None.", "rollback": "Not applicable." },
+      "securityTenantRisk": "Parallel generic protocols can bypass provider/mode/permission authority.",
+      "testsAndProof": ["No donor generic contract exports"],
+      "disposition": "delete"
+    },
+    {
+      "id": "contracts-shared-t3-remainder",
+      "selector": { "include": ["^packages/contracts/"] },
+      "pathCapability": "Remaining shared wire contracts and package infrastructure.",
+      "classification": "replace-with-t3",
+      "legacyEvidenceStatus": "Fork-modified shared contracts exist.",
+      "currentAuldricsStatus": "Pinned T3 contracts are authoritative.",
+      "owner": {
+        "issues": [2, 4],
+        "boundary": "T3 contracts",
+        "rationale": "No shared protocol is inherited from the donor."
+      },
+      "integration": {
+        "supportedSeam": "Only additive Marketing contracts approved by their owning issues.",
+        "upstreamDependency": "Shared protocol changes go upstream."
+      },
+      "data": {
+        "migration": "None from donor.",
+        "backfill": "None.",
+        "rollback": "Remove additive unshipped contracts."
+      },
+      "securityTenantRisk": "Protocol drift breaks multi-client, remote, and provider compatibility.",
+      "testsAndProof": ["Targeted contract tests", "Server/web/mobile/desktop type decisions"],
+      "disposition": "replace"
+    },
+    {
+      "id": "database-legacy-sql-history",
+      "selector": {
+        "include": ["^packages/database/src/drizzle/(?:[0-9].*\\.sql$|meta/|schema\\.ts$)"]
+      },
+      "pathCapability": "Legacy standalone database migration chain and snapshots.",
+      "classification": "historical-evidence",
+      "legacyEvidenceStatus": "Applied donor migration history and snapshots exist.",
+      "currentAuldricsStatus": "No Auldric organization database or migration chain exists in current Auldrics.",
+      "owner": {
+        "issues": [5, 6, 8, 14],
+        "boundary": "Schema evidence only",
+        "rationale": "Tables reveal historical invariants, but the migration chain is inseparable from the retired database and must never be applied."
+      },
+      "integration": {
+        "supportedSeam": "Fresh current-repository migrations owned by the bounded data issues.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "Never run or renumber donor SQL.",
+        "backfill": "Design explicit import transforms from exported records only after schema approval.",
+        "rollback": "Use new migration down/compensation strategy; donor migrations are not rollback inputs."
+      },
+      "securityTenantRisk": "Applying donor SQL could create central shared customer tables, stale privileges, or identifier collisions.",
+      "testsAndProof": [
+        "Migration isolation test",
+        "Fresh database apply/rollback",
+        "No donor migration filename/content in current chain"
+      ],
+      "disposition": "archive"
+    },
+    {
+      "id": "database-marketing-content-and-workflows",
+      "selector": {
+        "include": [
+          "^packages/database/src/(?:__tests__/)?(?:artifact|brand|brief|contentLibrary|day0|drizzleWorkflowRun|evidence|importDesktopSourceLibrary|libraryPack|marketingStrategy|promptRecipe|savedOutput|seedBentGrid|seedBrand|seedDeepResearch|seedMarketingStrategy|seedSourceBacked|sourceInventory|sourceLibrary|strategy|typedArtifact|workflowArtifact|workflowRun|workflowSource|workflowStep|workspaceArtifact|workspaceBrand|workspaceDocument|workspaceKnowledge|workspaceNote|workspaceReview)"
+        ]
+      },
+      "pathCapability": "Legacy stores, seeds, tests, projections, and indexing for Marketing sources, knowledge, plans, artifacts, brand, workflow, and review data.",
+      "classification": "keep-rebuild",
+      "legacyEvidenceStatus": "Extensive legacy implementation and tests exist in a standalone database package.",
+      "currentAuldricsStatus": "No canonical Marketing content store exists.",
+      "owner": {
+        "issues": [8, 9, 11, 18, 19],
+        "boundary": "Organization-owned Marketing persistence",
+        "rationale": "Domain invariants are eligible, but storage must be rebuilt in the current event-sourced/server architecture and physical tenant model."
+      },
+      "integration": {
+        "supportedSeam": "Marketing commands/events/projectors and organization-owned database selected by #8.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "Fresh schema and immutable revision model; no database package or SQL copy.",
+        "backfill": "Explicit export/import with tenant proof, schema version, idempotency, provenance, and conflict reporting.",
+        "rollback": "Reversible new migrations or compensating domain events; retain import receipt for deletion/retry."
+      },
+      "securityTenantRisk": "Customer content must never fall back to a central/internal database; search indexes and embeddings require the same tenant boundary.",
+      "testsAndProof": [
+        "Physical organization isolation",
+        "Expected-version/idempotency conflicts",
+        "Save/read-back/reopen",
+        "Index/delete/rebuild lifecycle",
+        "Revision and review provenance"
+      ],
+      "disposition": "rebuild"
+    },
+    {
+      "id": "database-tenant-identity-and-provisioning",
+      "selector": {
+        "include": [
+          "^packages/database/src/(?:__tests__/)?(?:databaseEnv|onboarding|org|organization|scopedQuery|teamAdmin|teamState|workspaceEnvironment)"
+        ]
+      },
+      "pathCapability": "Legacy organization provisioning, workspace database routing, onboarding, scoped query, team admin, and schema health.",
+      "classification": "split",
+      "legacyEvidenceStatus": "Legacy implementation/tests exist with donor-specific actor and database assumptions.",
+      "currentAuldricsStatus": "No Marketing organization/workspace persistence or role mapping exists.",
+      "owner": {
+        "issues": [5, 6, 8],
+        "boundary": "Marketing tenancy",
+        "rationale": "Physical isolation, provisioning lifecycle, and scoped query requirements survive; actor/auth and database framework do not."
+      },
+      "integration": {
+        "supportedSeam": "Verified T3 actor mapping plus organization-owned Marketing database routing.",
+        "upstreamDependency": "Missing verified actor hook is upstream."
+      },
+      "data": {
+        "migration": "Create new organization/workspace IDs and provisioning states.",
+        "backfill": "Collision-checked explicit org/workspace mapping; no heuristic assignment.",
+        "rollback": "Revoke mapping, quarantine organization database, and preserve T3 actor/environment."
+      },
+      "securityTenantRisk": "Critical cross-organization routing, central fallback, stale membership, and provisioning race risks.",
+      "testsAndProof": [
+        "Two-organization physical isolation",
+        "Revoked member denial",
+        "Provision/retry/repair/idempotency",
+        "No internal-doc fallback"
+      ],
+      "disposition": "split"
+    },
+    {
+      "id": "database-conversation-and-transcript-state",
+      "selector": {
+        "include": [
+          "^packages/database/src/(?:__tests__/)?(?:chatTranscript|conversation|localConversation|transcript)"
+        ]
+      },
+      "pathCapability": "Legacy conversation state, recovery, transcript knowledge, and workspace migration storage.",
+      "classification": "split",
+      "legacyEvidenceStatus": "Legacy stores, migrations, CLIs, and tests exist.",
+      "currentAuldricsStatus": "T3 owns conversations; Marketing provenance/import is absent.",
+      "owner": {
+        "issues": [7, 8, 9],
+        "boundary": "Marketing provenance and evidence",
+        "rationale": "Transcript evidence and binding requirements survive, while duplicate conversation/recovery state is rejected."
+      },
+      "integration": {
+        "supportedSeam": "Opaque T3 thread reference and explicit transcript-to-evidence import receipt.",
+        "upstreamDependency": "Transcript export/access seam, if missing, goes upstream."
+      },
+      "data": {
+        "migration": "Do not migrate donor conversation state.",
+        "backfill": "Authorized bounded transcript import with redaction/provenance only.",
+        "rollback": "Delete imported evidence/binding; retain native T3 thread."
+      },
+      "securityTenantRisk": "Transcript leakage, retention violations, and thread-as-authorization confusion.",
+      "testsAndProof": [
+        "Authorization and redaction tests",
+        "Thread preservation",
+        "Cross-org import denial",
+        "Deletion/retention proof"
+      ],
+      "disposition": "split"
+    },
+    {
+      "id": "database-connected-tools-and-social",
+      "selector": {
+        "include": [
+          "^packages/database/src/(?:__tests__/)?(?:appConnection|externalCatalog|globalSearch|gmail|managedApp|resend|socialEngagement|xSocial)"
+        ]
+      },
+      "pathCapability": "Legacy connected-app, external catalog, Gmail/Resend, social memory/action stores and tests.",
+      "classification": "split",
+      "legacyEvidenceStatus": "Provider-specific persistence and tests exist.",
+      "currentAuldricsStatus": "No Marketing connector persistence is approved.",
+      "owner": {
+        "issues": [9],
+        "boundary": "Marketing source receipts, not credential ownership",
+        "rationale": "Evidence/action audit requirements may survive; credentials, OAuth, and provider connection records remain with the current connector owner."
+      },
+      "integration": {
+        "supportedSeam": "Store only organization-scoped Marketing evidence/action receipts referencing opaque connector IDs.",
+        "upstreamDependency": "Generic connector persistence/secret lifecycle is upstream."
+      },
+      "data": {
+        "migration": "No tokens or connection rows migrate.",
+        "backfill": "Evidence/action receipts only after reauthorization and provenance checks.",
+        "rollback": "Revoke connector; delete or retain receipts per audit policy."
+      },
+      "securityTenantRisk": "Secrets, external sends, social publishing, and mined signals can cross user/organization boundaries.",
+      "testsAndProof": [
+        "No secret columns",
+        "Connector authorization checks",
+        "Explicit action approval",
+        "Receipt idempotency and revocation"
+      ],
+      "disposition": "split"
+    },
+    {
+      "id": "database-public-access-and-invitation",
+      "selector": {
+        "include": ["^packages/database/src/(?:__tests__/)?(?:earlyAccess|launchCloseDownCoverage)"]
+      },
+      "pathCapability": "Legacy early-access invitation and launch close-down persistence/tests.",
+      "classification": "split",
+      "legacyEvidenceStatus": "Legacy access records, policies, and tests exist.",
+      "currentAuldricsStatus": "No approved Auldric waitlist/access persistence exists.",
+      "owner": {
+        "issues": [3, 27],
+        "boundary": "Public access intent",
+        "rationale": "Consent, invitation, and close-down requirements may survive, but authentication, device enrollment, and donor database identity do not."
+      },
+      "integration": {
+        "supportedSeam": "#27-owned public data contract with explicit consent and current identity handoff.",
+        "upstreamDependency": "Custom desktop/auth enrollment remains parked without a T3 seam."
+      },
+      "data": {
+        "migration": "No default import of donor access rows.",
+        "backfill": "Consent-bearing, collision-checked waitlist import only if #27 explicitly approves it.",
+        "rollback": "Disable/delete Auldric access records without changing T3 accounts or devices."
+      },
+      "securityTenantRisk": "Invitation state must not become T3 authentication or Marketing workspace authorization.",
+      "testsAndProof": [
+        "Consent and duplicate tests",
+        "Invitation expiry/revocation",
+        "T3 account/pairing invariance"
+      ],
+      "disposition": "split"
+    },
+    {
+      "id": "database-generic-work-and-control-plane",
+      "selector": {
+        "include": [
+          "^packages/database/src/(?:__tests__/)?(?:addOn|agentTrace|backgroundJob|billing|canonicalSkill|dogfood|factory|internal|recurringLoop|runbook|runtimeRecovery|serverSession|skillset|sourceControl|supportRequest|taskList|teamValue|workLoop|workspaceTask|workspaceWork|workstream|wtx)"
+        ]
+      },
+      "pathCapability": "Legacy generic control-plane, work, session, internal-doc, billing, support, task, and source-control stores.",
+      "classification": "retire",
+      "legacyEvidenceStatus": "Legacy implementation/tests exist.",
+      "currentAuldricsStatus": "Outside the approved Marketing domain; native T3 owns generic runtime/work/source-control behavior.",
+      "owner": {
+        "issues": [14],
+        "boundary": "Retired database scope",
+        "rationale": "These tables and stores support the rejected runtime fork rather than Marketing-specific records."
+      },
+      "integration": {
+        "supportedSeam": null,
+        "upstreamDependency": "Any generic missing capability belongs upstream."
+      },
+      "data": {
+        "migration": "Do not migrate.",
+        "backfill": "None.",
+        "rollback": "Not applicable."
+      },
+      "securityTenantRisk": "Importing platform state could grant stale writer/action authority or expose internal documents.",
+      "testsAndProof": ["No generic donor store/schema introduced"],
+      "disposition": "delete"
+    },
+    {
+      "id": "database-package-remainder",
+      "selector": { "include": ["^packages/database/"] },
+      "pathCapability": "Standalone database client, schema, health, environment, package configuration, and remaining donor storage.",
+      "classification": "retire",
+      "legacyEvidenceStatus": "Legacy database package exists.",
+      "currentAuldricsStatus": "No standalone Auldric database package exists or is approved.",
+      "owner": {
+        "issues": [8, 14],
+        "boundary": "Retired storage implementation",
+        "rationale": "Only separately classified Marketing data requirements survive; the package architecture does not."
+      },
+      "integration": {
+        "supportedSeam": null,
+        "upstreamDependency": "A current storage seam must be chosen by #8."
+      },
+      "data": {
+        "migration": "None from donor.",
+        "backfill": "None without a separately reviewed import plan.",
+        "rollback": "Not applicable."
+      },
+      "securityTenantRisk": "A second database client/environment source can route customer content to the wrong store.",
+      "testsAndProof": [
+        "No standalone donor database dependency",
+        "Current storage choice documented by #8"
+      ],
+      "disposition": "delete"
+    },
+    {
+      "id": "shared-pure-marketing-logic",
+      "selector": {
+        "include": [
+          "^packages/shared/src/(?:auldric(?:Artifact|ConsultingEvidence|Day0|Evidence|ImageSlots|ProductCapabilities|SourceCapability|TurnWorkspaceEvidence|TypedArtifact|TypedStep)|gtm|marketingStrategy|typedArtifactProfiles/)"
+        ]
+      },
+      "pathCapability": "Pure Day 0 routing/questions, evidence policy, Strategy/GTM models/fixtures, and typed artifact catalogs/profiles.",
+      "classification": "keep-rebuild",
+      "legacyEvidenceStatus": "Substantial pure logic, 71 typed step profiles, fixtures, and tests exist.",
+      "currentAuldricsStatus": "No Marketing domain logic exists in current packages/shared.",
+      "owner": {
+        "issues": [9, 18, 19],
+        "boundary": "Pure Marketing domain logic",
+        "rationale": "These invariants are the strongest donor material, but must be re-authored minimally against accepted current contracts."
+      },
+      "integration": {
+        "supportedSeam": "Pure functions in additive Marketing modules with no provider/session/storage effects.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "Re-author accepted fixtures/catalog definitions; do not copy generated issue-number profiles wholesale without #19 review.",
+        "backfill": "Versioned definition seeding only.",
+        "rollback": "Revert definition version while preserving immutable artifacts and marking incompatible projections."
+      },
+      "securityTenantRisk": "Fixtures must not become customer records; source text must remain evidence, not executable instruction.",
+      "testsAndProof": [
+        "Pure model/property tests",
+        "Exact 71-step parent/child rollup review",
+        "Source-floor and schema validation",
+        "Definition-version compatibility"
+      ],
+      "disposition": "rebuild"
+    },
+    {
+      "id": "shared-mixed-marketing-workspace-logic",
+      "selector": {
+        "include": [
+          "^packages/shared/src/(?:auldric(?:AddOns|ChatCapabilityScope|Command|RuntimePaths|Workspace)|sampleWorkspace)"
+        ]
+      },
+      "pathCapability": "Mixed Marketing workspace, command/readiness, add-on, runtime-path, review-cycle, and sample-workspace helpers.",
+      "classification": "split",
+      "legacyEvidenceStatus": "Legacy helpers/tests exist with platform and fixture coupling.",
+      "currentAuldricsStatus": "No Marketing workspace model exists; T3 owns runtime paths and generic commands.",
+      "owner": {
+        "issues": [4, 5, 6, 11, 18],
+        "boundary": "Marketing-specific state only",
+        "rationale": "Review/workspace requirements may survive; runtime paths, commands, and generic add-ons do not."
+      },
+      "integration": {
+        "supportedSeam": "Pure Marketing mappings/review rules behind explicit domain selection.",
+        "upstreamDependency": "Generic runtime/command seam remains T3-owned."
+      },
+      "data": {
+        "migration": "No sample/runtime state migrates.",
+        "backfill": "None except explicit organization mapping.",
+        "rollback": "Remove Marketing mapping/review state without changing T3 project paths."
+      },
+      "securityTenantRisk": "Runtime path or sample-state assumptions can access the wrong project or organization.",
+      "testsAndProof": [
+        "Split-plan review",
+        "No runtime path ownership",
+        "Workspace role/review state tests"
+      ],
+      "disposition": "split"
+    },
+    {
+      "id": "shared-explicit-platform-overlap",
+      "selector": {
+        "include": ["^packages/shared/src/(?:preview|sourceControl|sourceControlWriterProof)"]
+      },
+      "pathCapability": "Preview and source-control behavior duplicated in donor shared utilities.",
+      "classification": "replace-with-t3",
+      "legacyEvidenceStatus": "Legacy shared utilities/tests exist.",
+      "currentAuldricsStatus": "Pinned T3 preview/source-control utilities are authoritative.",
+      "owner": {
+        "issues": [2, 20],
+        "boundary": "T3 Dev",
+        "rationale": "Approved briefs are non-executable; all preview/Git/writer authority remains native T3."
+      },
+      "integration": {
+        "supportedSeam": "#20 bounded non-executable brief handed to native T3 Dev.",
+        "upstreamDependency": "Missing Dev handoff capability requires upstream work."
+      },
+      "data": {
+        "migration": "None.",
+        "backfill": "None.",
+        "rollback": "Remove brief linkage only."
+      },
+      "securityTenantRisk": "Writer proof or source-control helpers can turn a Marketing approval into unauthorized code execution.",
+      "testsAndProof": [
+        "Brief is non-executable",
+        "T3 permission/mode remains authoritative",
+        "No automatic branch/file changes"
+      ],
+      "disposition": "replace"
+    },
+    {
+      "id": "shared-t3-remainder",
+      "selector": { "include": ["^packages/shared/"] },
+      "pathCapability": "Remaining shared runtime utilities and package infrastructure.",
+      "classification": "replace-with-t3",
+      "legacyEvidenceStatus": "Fork-modified shared package exists.",
+      "currentAuldricsStatus": "Pinned T3 shared package is authoritative.",
+      "owner": {
+        "issues": [2],
+        "boundary": "T3 shared runtime",
+        "rationale": "No donor shared implementation is inherited implicitly."
+      },
+      "integration": {
+        "supportedSeam": "Only explicit additive Marketing subpath modules.",
+        "upstreamDependency": "Generic changes go upstream."
+      },
+      "data": {
+        "migration": "None.",
+        "backfill": "None.",
+        "rollback": "Remove additive Marketing modules."
+      },
+      "securityTenantRisk": "Shared-package drift reaches every client/provider and can violate Dev invariance.",
+      "testsAndProof": ["Targeted additive-module tests", "Baseline drift guard"],
+      "disposition": "replace"
+    },
+    {
+      "id": "auldric-auth-package",
+      "selector": { "include": ["^packages/auldric-auth/"] },
+      "pathCapability": "Legacy authentication pipeline, token resolution, desktop handoff, and source-control writer enrollment.",
+      "classification": "replace-with-t3",
+      "legacyEvidenceStatus": "Legacy package/tests exist.",
+      "currentAuldricsStatus": "Native T3 authentication/pairing is authoritative.",
+      "owner": {
+        "issues": [5, 6],
+        "boundary": "T3 authentication",
+        "rationale": "Marketing must map a verified actor and cannot own tokens or writer credentials."
+      },
+      "integration": {
+        "supportedSeam": "Verified T3 actor reference only.",
+        "upstreamDependency": "Missing identity claims go upstream."
+      },
+      "data": {
+        "migration": "Never migrate tokens or handoff records.",
+        "backfill": "Explicit Marketing membership mapping after verification.",
+        "rollback": "Remove membership mapping."
+      },
+      "securityTenantRisk": "Critical authentication bypass and source-control write authority risk.",
+      "testsAndProof": [
+        "No package dependency",
+        "No token persistence",
+        "Verified actor/role matrix"
+      ],
+      "disposition": "replace"
+    },
+    {
+      "id": "marketing-benchmark-package",
+      "selector": { "include": ["^packages/auldric-benchmark/src/marketing/"] },
+      "pathCapability": "Marketing-output benchmark cases, scoring, hard-fail validation, model comparisons, and reports.",
+      "classification": "keep-rebuild",
+      "legacyEvidenceStatus": "Legacy benchmark runner, fixtures, and tests exist.",
+      "currentAuldricsStatus": "No current Marketing evaluation suite exists.",
+      "owner": {
+        "issues": [18, 19],
+        "boundary": "Marketing quality evaluation",
+        "rationale": "Output-quality cases are useful acceptance evidence if detached from provider/runtime selection."
+      },
+      "integration": {
+        "supportedSeam": "Fixture-driven evaluation of canonical Marketing outputs; no production model router.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "Review and re-author accepted cases; do not import reports as current quality claims.",
+        "backfill": "None.",
+        "rollback": "Remove/disable benchmark cases without product-data mutation."
+      },
+      "securityTenantRisk": "Fixtures may contain synthetic claims and must not be injected into customer workspaces.",
+      "testsAndProof": [
+        "Deterministic fixture validation",
+        "Hard-fail claim/evidence cases",
+        "No provider selection side effects"
+      ],
+      "disposition": "rebuild"
+    },
+    {
+      "id": "benchmark-agent-runtime-remainder",
+      "selector": { "include": ["^packages/auldric-benchmark/"] },
+      "pathCapability": "Generic agent behavior benchmarks, external runners, and package scaffolding.",
+      "classification": "retire",
+      "legacyEvidenceStatus": "Legacy implementation exists.",
+      "currentAuldricsStatus": "Provider/runtime evaluation remains outside the Marketing domain.",
+      "owner": {
+        "issues": [14],
+        "boundary": "Retired runtime evaluation",
+        "rationale": "Auldric cannot select or redefine provider/agent behavior globally."
+      },
+      "integration": {
+        "supportedSeam": null,
+        "upstreamDependency": "Generic agent evaluation belongs upstream."
+      },
+      "data": { "migration": "None.", "backfill": "None.", "rollback": "Not applicable." },
+      "securityTenantRisk": "External model runners can leak prompts or create unsupported provider behavior.",
+      "testsAndProof": ["No production dependency on donor benchmark runner"],
+      "disposition": "delete"
+    },
+    {
+      "id": "mcp-marketing-runbook-requirements",
+      "selector": {
+        "include": [
+          "^packages/auldric-mcp/operator-runbooks/(?:brand-assess|brand-style-test|brief|case|channel-copy|day0-opener|day0|decision-record|deep-research|distill-framework|distill|evidence-check|frame-opportunities|gtm|launch-claims-audit|launch-loop-spec|marketing-strategy|output-review|pitch|prioritize|product-voice-copy|social-reply|social-research|social-scan|strategy-next|synthesize|voice-profile|website-assess|website-production|workflows|workspace-knowledge-rag-loop)\\.md$"
+        ]
+      },
+      "pathCapability": "Marketing/Strategy-specific operator procedures for evidence, Day 0, GTM, brand, copy, research, review, and website work.",
+      "classification": "keep-rebuild",
+      "legacyEvidenceStatus": "Legacy Markdown procedures exist inside a mixed custom MCP runtime.",
+      "currentAuldricsStatus": "No equivalent current Marketing workflow catalog is implemented.",
+      "owner": {
+        "issues": [9, 18, 19, 25, 27],
+        "boundary": "Marketing procedure requirements",
+        "rationale": "The procedures can inform workflow definitions and review rules; the command/MCP execution mechanism cannot."
+      },
+      "integration": {
+        "supportedSeam": "Backend-served Marketing workflow/action definitions or approved Codex skills, never a duplicate runtime command catalog.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "Review and re-author bounded steps; do not copy executable runbook text wholesale.",
+        "backfill": "Versioned definition seed only.",
+        "rollback": "Deactivate definition version while preserving historical artifact provenance."
+      },
+      "securityTenantRisk": "Legacy runbooks mix source text and instructions; every action needs bounded evidence and current permissions.",
+      "testsAndProof": [
+        "Procedure-to-definition traceability",
+        "No coding/runtime commands",
+        "Source-floor and approval tests"
+      ],
+      "disposition": "rebuild"
+    },
+    {
+      "id": "mcp-runtime-and-generic-runbooks",
+      "selector": { "include": ["^packages/auldric-mcp/"] },
+      "pathCapability": "Custom MCP server, command catalogs/executors, generic coding/operations runbooks, skills, workflows, and test fixtures.",
+      "classification": "retire",
+      "legacyEvidenceStatus": "Large legacy implementation exists.",
+      "currentAuldricsStatus": "Native provider tools/skills and T3 orchestration are authoritative.",
+      "owner": {
+        "issues": [14],
+        "boundary": "Retired command/runtime fork",
+        "rationale": "This package mixes Marketing procedures with coding, Git, deployment, worktree, provider, and runtime commands."
+      },
+      "integration": {
+        "supportedSeam": null,
+        "upstreamDependency": "Generic tool/skill capabilities belong to T3/Codex owners."
+      },
+      "data": { "migration": "None.", "backfill": "None.", "rollback": "Not applicable." },
+      "securityTenantRisk": "A parallel tool server can execute actions beyond T3 modes and permissions.",
+      "testsAndProof": [
+        "No donor MCP server/package introduced",
+        "Native tool permission behavior unchanged"
+      ],
+      "disposition": "delete"
+    },
+    {
+      "id": "nango-marketing-integration",
+      "selector": { "include": ["^nango-integrations/"] },
+      "pathCapability": "Legacy LinkedIn/Nango source and publishing integration.",
+      "classification": "upstream-dependency",
+      "legacyEvidenceStatus": "Provider integration source and configuration exist.",
+      "currentAuldricsStatus": "No approved Nango integration or connector credential owner exists.",
+      "owner": {
+        "issues": [9],
+        "boundary": "Parked Marketing connector",
+        "rationale": "Marketing use is plausible but requires a supported connector seam, explicit scopes, and action approval."
+      },
+      "integration": {
+        "supportedSeam": null,
+        "upstreamDependency": "Approved current connector integration, secret owner, receipts, and a provider-specific implementation issue."
+      },
+      "data": {
+        "migration": "No connection/token migration.",
+        "backfill": "Reauthorize and import only bounded evidence.",
+        "rollback": "Revoke provider and stop actions."
+      },
+      "securityTenantRisk": "Social publishing and OAuth scopes can cause external side effects or cross-account access.",
+      "testsAndProof": [
+        "Future scope/consent tests",
+        "Dry-run and explicit publish approval",
+        "Revocation proof"
+      ],
+      "disposition": "retain"
+    },
+    {
+      "id": "auldric-lint-plugin",
+      "selector": { "include": ["^oxlint-plugin-auldric/"] },
+      "pathCapability": "Fork-specific lint rules and package configuration.",
+      "classification": "retire",
+      "legacyEvidenceStatus": "Legacy plugin implementation/tests exist.",
+      "currentAuldricsStatus": "Current T3 lint configuration/plugin is authoritative.",
+      "owner": {
+        "issues": [2, 14],
+        "boundary": "T3 developer tooling",
+        "rationale": "A fork-specific lint runtime is not a Marketing product requirement."
+      },
+      "integration": {
+        "supportedSeam": null,
+        "upstreamDependency": "Generic lint rules should be proposed upstream."
+      },
+      "data": { "migration": "None.", "backfill": "None.", "rollback": "Not applicable." },
+      "securityTenantRisk": "Low tenant risk; primary risk is permanent fork/tooling drift.",
+      "testsAndProof": ["Current T3 lint remains authoritative"],
+      "disposition": "delete"
+    },
+    {
+      "id": "generic-t3-packages",
+      "selector": {
+        "include": [
+          "^packages/(?:client-runtime|effect-acp|effect-codex-app-server|ssh|tailscale)/"
+        ]
+      },
+      "pathCapability": "Shared client runtime, providers, SSH, and Tailscale infrastructure.",
+      "classification": "replace-with-t3",
+      "legacyEvidenceStatus": "Fork-modified generic packages exist.",
+      "currentAuldricsStatus": "Pinned T3 packages are present and authoritative.",
+      "owner": {
+        "issues": [2],
+        "boundary": "T3 shared platform",
+        "rationale": "These packages are entirely outside Marketing ownership."
+      },
+      "integration": {
+        "supportedSeam": null,
+        "upstreamDependency": "Required generic changes go upstream."
+      },
+      "data": {
+        "migration": "None.",
+        "backfill": "None.",
+        "rollback": "Native T3 package state remains."
+      },
+      "securityTenantRisk": "Forking transport/provider/remote packages breaks security and multi-surface compatibility.",
+      "testsAndProof": ["Baseline drift guard", "No donor package replacement"],
+      "disposition": "replace"
+    },
+    {
+      "id": "donor-marketing-requirement-documents",
+      "selector": {
+        "include": [
+          "^docs/(?:auldric-(?:artifact-design-system|bent-grid-system|brand-application-boundaries|brand-assets|brand-copy-memory-system|brand-source-mapping|branding|central-strategy-spine|closed-loop-marketing|consultancy-evidence-process|copy-governance|copywriting-reference|dashboard-design-system|deep-research-system|document-source-registry|external-component-registry-system|launch-loop-audit|launch-offer-brief|marketing-model-benchmark|marketing-prompt-optimization-product-shape|marketing-prompt-optimization-protocol|marketing-strategy-artifact-system|operating-notes-editorial-plan|panel-shell-behavior|product-proof-checklist|project-brand-profiles|skillset-plan-outline|skillset-workflow-model|social-launch-channel-system|style-guide|ui-quality-skill-plan|visual-anti-patterns|voice-and-meeting-intelligence|website-production-system|workflow-artifact-system|workflow-offer-assessment|workflow-specialist-set-map|workflow-step-artifact-catalog|workflows)\\.md|oldest-playbook-seo-aeo-audit\\.md)$"
+        ]
+      },
+      "pathCapability": "Legacy Marketing requirements for brand/copy, evidence/research, workflows, artifacts, UI, claims, social, voice, and website production.",
+      "classification": "keep-rebuild",
+      "legacyEvidenceStatus": "Point-in-time requirements and design guidance exist; some describe completed donor work.",
+      "currentAuldricsStatus": "Only the reconciled current documentation spine exists; donor completion claims are not current truth.",
+      "owner": {
+        "issues": [3, 8, 9, 11, 13, 18, 19, 25, 27],
+        "boundary": "Requirement evidence",
+        "rationale": "Bounded Marketing requirements may be retained after review against the canonical spine and target issues."
+      },
+      "integration": {
+        "supportedSeam": "Reconciled repository docs and executable issue acceptance criteria.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "Do not copy documents as active authority; distill approved requirements into current docs/contracts.",
+        "backfill": "None.",
+        "rollback": "Revert the current requirement change and retain donor document only as historical provenance."
+      },
+      "securityTenantRisk": "Legacy docs may prescribe unsafe authority, unsupported claims, or broad source/tool access; current spine always wins.",
+      "testsAndProof": [
+        "Documentation authority validator",
+        "Requirement-to-issue traceability",
+        "Claim/evidence review"
+      ],
+      "disposition": "retain"
+    },
+    {
+      "id": "donor-hard-fork-and-runtime-guidance",
+      "selector": {
+        "include": [
+          "^docs/auldric-(?:agent-learning-pipeline|alpha-full-launch-status-2026-05-13|architecture|auth|billing-entitlements-usage-policy|commands|console-production-deploy|current-work-checkpoint-2026-05-13|environments|hard-fork-launch-plan|level-4-sdd-orchestration|migration-matrix|namespace-cleanup|operating-modes|operator-runbooks|plan|skills|upstream-overlays|v3-assessment|worktree-naming|wtx-canonical-identity-control-loop)\\.md$"
+        ]
+      },
+      "pathCapability": "Legacy hard-fork authority, auth/runtime, deployment, command, operating-mode, worktree, billing, and platform guidance.",
+      "classification": "retire",
+      "legacyEvidenceStatus": "Legacy active guidance and completion status exist at the donor ref.",
+      "currentAuldricsStatus": "Superseded by the current canonical Marketing spine and pinned T3 authority.",
+      "owner": {
+        "issues": [2, 3, 14, 17],
+        "boundary": "Superseded authority",
+        "rationale": "These documents prescribe or report the runtime fork that this repository rejects."
+      },
+      "integration": { "supportedSeam": null, "upstreamDependency": null },
+      "data": {
+        "migration": "Do not register as active guidance.",
+        "backfill": "None.",
+        "rollback": "Not applicable; provenance remains at the immutable donor ref."
+      },
+      "securityTenantRisk": "Following these documents would recreate duplicate auth/runtime/deployment and violate Dev isolation.",
+      "testsAndProof": ["Current documentation authority guard rejects hard-fork directives"],
+      "disposition": "delete"
+    },
+    {
+      "id": "donor-auldric-system-docs",
+      "selector": {
+        "include": ["^docs/auldric-system/", "^docs/auldric-launch-readiness\\.md$"]
+      },
+      "pathCapability": "Legacy Auldric system spine, current-state claims, operating model, Day 0, workspace objects, copy, claims, setup, boundaries, and agent contract.",
+      "classification": "historical-evidence",
+      "legacyEvidenceStatus": "A completed legacy documentation spine exists.",
+      "currentAuldricsStatus": "A separately reconciled current spine exists and is authoritative; similarly named donor docs are not current files.",
+      "owner": {
+        "issues": [14, 17],
+        "boundary": "Historical documentation provenance",
+        "rationale": "The donor spine is useful for comparison but cannot override the current repository's rewritten authority."
+      },
+      "integration": {
+        "supportedSeam": "Current docs/auldric-system manifest and validator.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "No direct document copy.",
+        "backfill": "Distill only explicitly approved missing requirements.",
+        "rollback": "Revert current doc change while donor ref remains immutable."
+      },
+      "securityTenantRisk": "Same path/name can cause false assumptions that legacy runtime capability is currently implemented.",
+      "testsAndProof": [
+        "Manifest coverage",
+        "Current-state statements remain explicit",
+        "No legacy completion claim imported"
+      ],
+      "disposition": "archive"
+    },
+    {
+      "id": "donor-plans-prds-reports-and-proofs",
+      "selector": {
+        "include": [
+          "^docs/(?:_archive/|alpha-plans/|planning/|prds/|prototypes/|reports/|research/|screenshots/|worktrees/)",
+          "^docs/.*\\.html$",
+          "^docs/wider-launch-verification\\.md$"
+        ]
+      },
+      "pathCapability": "Completed plans, PRDs, traceability matrices, research, prototypes, reports, screenshots, and QA proof across the donor program.",
+      "classification": "historical-evidence",
+      "legacyEvidenceStatus": "Extensive dated planning and proof corpus exists, including accepted screenshots and completion reports.",
+      "currentAuldricsStatus": "None of this corpus proves current implementation; current Auldrics began from native T3.",
+      "owner": {
+        "issues": [13, 14, 18, 19, 27],
+        "boundary": "Historical product evidence",
+        "rationale": "Use for requirements/test/design discovery only, with each new capability owned by a current issue."
+      },
+      "integration": {
+        "supportedSeam": "Current issue acceptance criteria and fresh integrated proof.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "Do not import as active docs, fixtures, or customer content.",
+        "backfill": "None.",
+        "rollback": "Not applicable; evidence remains at the donor ref."
+      },
+      "securityTenantRisk": "Screenshots/research may contain real or synthetic sensitive data and stale product claims.",
+      "testsAndProof": [
+        "Fresh current-repository tests/screenshots required",
+        "No completion inferred from legacy report status"
+      ],
+      "disposition": "archive"
+    },
+    {
+      "id": "donor-generic-docs",
+      "selector": { "include": ["^docs/"] },
+      "pathCapability": "Remaining generic architecture, provider, source-control, release, observability, worktree, HTML prototype, and documentation files.",
+      "classification": "replace-with-t3",
+      "legacyEvidenceStatus": "Fork-era generic documentation exists.",
+      "currentAuldricsStatus": "Current T3 documentation plus reconciled Auldric spine is authoritative.",
+      "owner": {
+        "issues": [2, 17],
+        "boundary": "T3 and current repository documentation",
+        "rationale": "Generic platform documentation follows current T3; isolated unclassified visual files are not implementation authority."
+      },
+      "integration": {
+        "supportedSeam": "Current docs audience structure and manifest.",
+        "upstreamDependency": "Generic doc corrections should follow T3/upstream ownership."
+      },
+      "data": { "migration": "None.", "backfill": "None.", "rollback": "Current docs remain." },
+      "securityTenantRisk": "Stale operational guidance can cause unsafe deployment/auth/runtime actions.",
+      "testsAndProof": ["Current docs validation", "Baseline guard"],
+      "disposition": "replace"
+    },
+    {
+      "id": "root-day0-evidence-documents",
+      "selector": {
+        "include": ["^(?:cubix-day0-digital-footprint-assessment|day0-analysis)\\.md$"]
+      },
+      "pathCapability": "Example Day 0 source assessment and analysis output.",
+      "classification": "historical-evidence",
+      "legacyEvidenceStatus": "Completed donor examples exist.",
+      "currentAuldricsStatus": "No current Day 0 output exists.",
+      "owner": {
+        "issues": [9, 18],
+        "boundary": "Historical output example",
+        "rationale": "Useful for quality criteria only; it is neither a template nor current customer data."
+      },
+      "integration": {
+        "supportedSeam": "Fresh Day 0 fixtures with synthetic/redacted evidence.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "Do not import into a workspace.",
+        "backfill": "None.",
+        "rollback": "Not applicable."
+      },
+      "securityTenantRisk": "May contain source-derived claims or business context unsuitable for reuse.",
+      "testsAndProof": ["Synthetic fixture review", "No example content in production records"],
+      "disposition": "archive"
+    },
+    {
+      "id": "generated-artifacts-assets-and-temp-proof",
+      "selector": { "include": ["^(?:artifacts/|assets/|tmp/)"] },
+      "pathCapability": "Generated screenshots, social artifacts, brand/release assets, temporary research sources, and UI proof.",
+      "classification": "historical-evidence",
+      "legacyEvidenceStatus": "Binary/generated evidence exists at the donor ref.",
+      "currentAuldricsStatus": "Not current product evidence or approved identity assets.",
+      "owner": {
+        "issues": [3, 13, 14, 27],
+        "boundary": "Historical visual/source evidence",
+        "rationale": "May inform design/identity review but must be regenerated and checked for provenance."
+      },
+      "integration": {
+        "supportedSeam": "Fresh approved assets and current screenshots only.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "No bulk asset copy.",
+        "backfill": "Select assets only after license/provenance/brand approval.",
+        "rollback": "Restore current assets and remove unapproved additions."
+      },
+      "securityTenantRisk": "Temporary captures may include third-party copyrighted or sensitive material; binaries lack current provenance.",
+      "testsAndProof": [
+        "Asset provenance/license review",
+        "Fresh screenshots",
+        "#3 identity approval"
+      ],
+      "disposition": "archive"
+    },
+    {
+      "id": "marketing-copy-and-brand-validation-scripts",
+      "selector": {
+        "include": [
+          "^scripts/(?:check-marketing-copy-governance|marketing-copy-governance|check-brand-icon-assets|lib/brand-assets)"
+        ]
+      },
+      "pathCapability": "Marketing copy governance and brand asset validation logic/tests.",
+      "classification": "keep-rebuild",
+      "legacyEvidenceStatus": "Legacy focused validation tooling exists.",
+      "currentAuldricsStatus": "Current repository has no Auldric public-copy validator or approved Auldric asset set.",
+      "owner": {
+        "issues": [3, 27],
+        "boundary": "Public claims and assets",
+        "rationale": "Validation requirements are eligible once public identity/copy is approved; scripts must be re-authored for current paths."
+      },
+      "integration": {
+        "supportedSeam": "#27 package-local tests and current repository formatting/tooling.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "Re-author rules; do not copy deployment assumptions.",
+        "backfill": "None.",
+        "rollback": "Remove validator with its isolated public surface."
+      },
+      "securityTenantRisk": "Validators can falsely bless unsupported claims if their capability manifest is stale.",
+      "testsAndProof": [
+        "Claim-to-capability tests",
+        "Asset completeness/provenance checks",
+        "Public-copy failure cases"
+      ],
+      "disposition": "rebuild"
+    },
+    {
+      "id": "donor-brand-and-namespace-scripts",
+      "selector": { "include": ["^scripts/(?:apply-web-brand-assets|check-auldric-namespace)"] },
+      "pathCapability": "Global fork rebranding and namespace enforcement.",
+      "classification": "retire",
+      "legacyEvidenceStatus": "Legacy rebranding scripts/tests exist.",
+      "currentAuldricsStatus": "#3 preserves T3 internal identity and allows only bounded outward configuration.",
+      "owner": {
+        "issues": [3, 14],
+        "boundary": "Retired global rebrand",
+        "rationale": "Global replacement conflicts with the identity matrix and upstreamability."
+      },
+      "integration": { "supportedSeam": null, "upstreamDependency": null },
+      "data": {
+        "migration": "None.",
+        "backfill": "None.",
+        "rollback": "Native T3 names/assets remain."
+      },
+      "securityTenantRisk": "Global renaming obscures platform authority and can break protocols, packages, and update identity.",
+      "testsAndProof": ["#3 identity guard", "No global namespace replacement"],
+      "disposition": "delete"
+    },
+    {
+      "id": "donor-scripts-remainder",
+      "selector": { "include": ["^scripts/"] },
+      "pathCapability": "Fork-era build, release, deploy, AWS, CodeMagic, docs sync, task, verification, and generic tooling.",
+      "classification": "replace-with-t3",
+      "legacyEvidenceStatus": "Legacy tooling and tests exist.",
+      "currentAuldricsStatus": "Current T3 scripts and #2 drift tooling are authoritative.",
+      "owner": {
+        "issues": [2, 14],
+        "boundary": "T3 developer/release tooling",
+        "rationale": "Marketing does not own generic build, deploy, CI, release, desktop, or task scripts."
+      },
+      "integration": {
+        "supportedSeam": "Package-local tests for additive Marketing code only.",
+        "upstreamDependency": "Generic tooling changes go upstream."
+      },
+      "data": { "migration": "None.", "backfill": "None.", "rollback": "Current scripts remain." },
+      "securityTenantRisk": "Deployment/secret scripts can target production or mutate release infrastructure.",
+      "testsAndProof": ["Baseline guard", "No donor deploy/release scripts"],
+      "disposition": "replace"
+    },
+    {
+      "id": "legacy-docs-apps",
+      "selector": { "include": ["^(?:apps/docs/|docs-site/)"] },
+      "pathCapability": "Legacy hosted docs applications and content.",
+      "classification": "replace-with-t3",
+      "legacyEvidenceStatus": "Fork-era docs sites exist.",
+      "currentAuldricsStatus": "Current repository docs structure is authoritative; no separate Auldric docs app is approved.",
+      "owner": {
+        "issues": [17, 27],
+        "boundary": "Current documentation/public surface",
+        "rationale": "Auldric public content belongs to #27; generic product docs follow T3."
+      },
+      "integration": {
+        "supportedSeam": "Current docs tree or #27 public surface.",
+        "upstreamDependency": null
+      },
+      "data": {
+        "migration": "No app/content copy.",
+        "backfill": "Distill approved public copy only.",
+        "rollback": "Current docs remain."
+      },
+      "securityTenantRisk": "Stale docs can make false product/security claims.",
+      "testsAndProof": ["Current docs manifest", "Public claim validation"],
+      "disposition": "replace"
+    },
+    {
+      "id": "fork-deployment-ci-and-release-config",
+      "selector": {
+        "include": [
+          "^(?:\\.github/|deploy/|Dockerfile\\.auldric-mcp$|codemagic\\.yaml$|fly\\.auldric-|render\\.yaml$|vercel\\.json$)"
+        ]
+      },
+      "pathCapability": "Fork GitHub Actions, deploy manifests, containers, CodeMagic, Fly, Render, and root Vercel configuration.",
+      "classification": "replace-with-t3",
+      "legacyEvidenceStatus": "Legacy production/CI configuration exists.",
+      "currentAuldricsStatus": "Pinned T3 CI/release/deploy behavior is authoritative; current fork CI is independently verified by #2.",
+      "owner": {
+        "issues": [2, 3, 27],
+        "boundary": "T3 CI/release plus explicit public distribution",
+        "rationale": "No legacy pipeline or production target is portable; #27 may add only isolated configuration."
+      },
+      "integration": {
+        "supportedSeam": "#2-approved additive workflow/config with current secrets and environments.",
+        "upstreamDependency": "Shared CI/release changes go upstream."
+      },
+      "data": {
+        "migration": "No secrets, targets, logs, or workflow state migrate.",
+        "backfill": "None.",
+        "rollback": "Remove isolated workflow/config and leave T3 pipelines intact."
+      },
+      "securityTenantRisk": "Production credentials, artifact signing, deployment identity, and supply-chain integrity.",
+      "testsAndProof": [
+        "Workflow syntax and least-privilege review",
+        "CI actually runs on the fork",
+        "No shared release drift"
+      ],
+      "disposition": "replace"
+    },
+    {
+      "id": "fork-hidden-plans-and-duplicate-docs",
+      "selector": { "include": ["^(?:\\.docs/|\\.plans/)"] },
+      "pathCapability": "Fork-era internal architecture/provider/runtime plans and duplicate documentation.",
+      "classification": "replace-with-t3",
+      "legacyEvidenceStatus": "Historical fork plans/docs exist.",
+      "currentAuldricsStatus": "Current T3 architecture and Auldric canonical spine are authoritative.",
+      "owner": {
+        "issues": [2, 17],
+        "boundary": "Current platform documentation",
+        "rationale": "These mostly describe shared platform work and are not active Marketing requirements."
+      },
+      "integration": {
+        "supportedSeam": "Current docs only.",
+        "upstreamDependency": "Generic plans belong upstream."
+      },
+      "data": { "migration": "None.", "backfill": "None.", "rollback": "Current docs remain." },
+      "securityTenantRisk": "Stale runtime instructions can drive unsafe implementation choices.",
+      "testsAndProof": ["Documentation authority validation"],
+      "disposition": "replace"
+    },
+    {
+      "id": "fork-agent-command-state",
+      "selector": { "include": ["^(?:\\.agent/|\\.auldric/)"] },
+      "pathCapability": "Legacy agent evaluation state and custom Auldric command files.",
+      "classification": "retire",
+      "legacyEvidenceStatus": "Donor-local command/evaluation files exist.",
+      "currentAuldricsStatus": "Native provider instructions/tools and current AGENTS.md are authoritative.",
+      "owner": {
+        "issues": [14, 17],
+        "boundary": "Retired agent runtime state",
+        "rationale": "Custom global commands and local evaluation markers are not product capabilities."
+      },
+      "integration": { "supportedSeam": null, "upstreamDependency": null },
+      "data": { "migration": "None.", "backfill": "None.", "rollback": "Not applicable." },
+      "securityTenantRisk": "Global command files can alter provider behavior outside Marketing-domain selection.",
+      "testsAndProof": ["No donor command directory introduced"],
+      "disposition": "delete"
+    },
+    {
+      "id": "root-workspace-tooling-and-governance",
+      "selector": {
+        "include": [
+          "^(?:\\.cursor/|\\.devcontainer/|\\.vscode/|\\.gitattributes$|\\.gitignore$|\\.mise\\.toml$|\\.oxfmtrc\\.json$|\\.oxlintrc\\.json$|\\.vercelignore$|AGENTS\\.md$|CLAUDE\\.md$|CONTRIBUTING\\.md$|EULA\\.md$|KEYBINDINGS\\.md$|LICENSE$|LICENSES/|README\\.md$|REMOTE\\.md$|THIRD_PARTY_NOTICES\\.md$|TODO\\.md$|WORKTREE_PLAN\\.md$|package\\.json$|patches/|pnpm-lock\\.yaml$|pnpm-workspace\\.yaml$|tsconfig\\.base\\.json$|vite\\.config\\.ts$)"
+        ]
+      },
+      "pathCapability": "Root workspace, legal, package, editor, agent, remote, contribution, and build configuration from the fork.",
+      "classification": "replace-with-t3",
+      "legacyEvidenceStatus": "Fork-era repository configuration and guidance exist.",
+      "currentAuldricsStatus": "Current T3 baseline plus reconciled downstream governance is authoritative.",
+      "owner": {
+        "issues": [2, 3, 17],
+        "boundary": "T3 repository/platform",
+        "rationale": "Only current reviewed downstream governance and bounded distribution identity survive; donor root state is never merged."
+      },
+      "integration": {
+        "supportedSeam": "Current #2 governance files and #3 distribution decisions.",
+        "upstreamDependency": "Generic workspace changes go upstream."
+      },
+      "data": {
+        "migration": "None.",
+        "backfill": "None.",
+        "rollback": "Pinned T3 baseline and current downstream governance remain."
+      },
+      "securityTenantRisk": "Root scripts/config/instructions can silently change dependencies, provider behavior, legal identity, or remote operation.",
+      "testsAndProof": [
+        "Baseline and docs authority guards",
+        "Dependency lock remains current T3-derived"
+      ],
+      "disposition": "replace"
+    }
+  ]
+}
