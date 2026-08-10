@@ -42,6 +42,7 @@ struct FeatureComposerView: View {
         providers: [FeatureProvider],
         threadSelection: FeatureSelection?,
         attachmentContextID: String,
+        attachmentLifecycle injectedAttachmentLifecycle: FeatureAttachmentLifecycle? = nil,
         materializesDefaultSelection: Bool = true,
         isSending: Bool,
         isWorking: Bool,
@@ -60,7 +61,8 @@ struct FeatureComposerView: View {
         _text = text
         _selection = selection
         _attachments = attachments
-        let attachmentLifecycle = FeatureAttachmentLifecycle(contextID: attachmentContextID)
+        let attachmentLifecycle = injectedAttachmentLifecycle
+            ?? FeatureAttachmentLifecycle(contextID: attachmentContextID)
         _attachmentLifecycle = State(initialValue: attachmentLifecycle)
         _pasteQueue = State(
             initialValue: FeatureComposerPasteQueue(lifecycle: attachmentLifecycle)
@@ -131,7 +133,7 @@ struct FeatureComposerView: View {
                 await updatePathSearch()
             }
             .onChange(of: attachmentContextID) {
-                rotateAttachmentLifecycle(to: attachmentContextID)
+                synchronizeAttachmentLifecycle(to: attachmentContextID)
             }
             .alert(
                 "Couldn’t paste image",
@@ -557,6 +559,14 @@ struct FeatureComposerView: View {
         pasteQueue.cancelAll()
         attachmentPreparation.cancelAll()
     }
+
+    private func synchronizeAttachmentLifecycle(to contextID: String) {
+        if attachmentLifecycle.token(for: contextID) == nil {
+            attachmentLifecycle.transition(to: contextID)
+        }
+        pasteQueue.cancelAll()
+        attachmentPreparation.cancelAll()
+    }
 }
 
 enum FeatureComposerCollapsePolicy {
@@ -688,17 +698,23 @@ enum FeatureComposerPasteTextPolicy {
             let itemSet = IndexSet(integer: itemIndex)
             let typeIdentifiers = pasteboard.types(forItemSet: itemSet)?
                 .first ?? []
-            guard !typeIdentifiers.contains(where: {
-                UTType($0)?.conforms(to: .image) == true
-            }) else { return nil }
+            let textTypeIdentifiers = typeIdentifiers.filter {
+                UTType($0)?.conforms(to: .image) != true
+            }
+            guard !textTypeIdentifiers.isEmpty else { return nil }
 
-            for typeIdentifier in preferredPlainTextTypes(in: typeIdentifiers) {
-                if let value = pasteboard.values(
+            for typeIdentifier in preferredPlainTextTypes(in: textTypeIdentifiers) {
+                guard let value = pasteboard.values(
                     forPasteboardType: typeIdentifier,
                     inItemSet: itemSet
-                )?.first as? String,
-                   !value.isEmpty {
-                    return value
+                )?.first else { continue }
+                if let string = value as? String, !string.isEmpty {
+                    return string
+                }
+                if let data = value as? Data,
+                   let string = String(data: data, encoding: .utf8),
+                   !string.isEmpty {
+                    return string
                 }
             }
             return nil

@@ -30,6 +30,7 @@ public struct NewThreadView: View {
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var immediateDraftSaveTasks: [String: Task<Void, Never>] = [:]
     @State private var submittedSuccessfully = false
+    @State private var attachmentLifecycle: FeatureAttachmentLifecycle
     @FocusState private var promptFocused: Bool
 
     public init(
@@ -46,6 +47,9 @@ public struct NewThreadView: View {
         self.onCreateProject = onCreateProject
         self.initialProjectID = initialProjectID
         self.draftStore = draftStore
+        _attachmentLifecycle = State(
+            initialValue: FeatureAttachmentLifecycle(contextID: initialProjectID ?? "")
+        )
     }
 
     public var body: some View {
@@ -76,6 +80,7 @@ public struct NewThreadView: View {
                         providers: creationProviders,
                         threadSelection: nil,
                         attachmentContextID: projectID,
+                        attachmentLifecycle: attachmentLifecycle,
                         isSending: isSubmitting,
                         isWorking: false,
                         focused: $promptFocused,
@@ -562,6 +567,7 @@ public struct NewThreadView: View {
     private func selectProject(_ id: String) -> Bool {
         guard id != projectID else { return true }
         guard creationProjects.contains(where: { $0.id == id }) else { return false }
+        attachmentLifecycle.transition(to: id)
         persistCurrentDraftImmediately()
         projectID = id
         prepareProjectIfNeeded(id)
@@ -587,6 +593,7 @@ public struct NewThreadView: View {
     }
 
     private func selectInitialProject(_ id: String) {
+        attachmentLifecycle.transition(to: id)
         projectID = id
         prepareProjectIfNeeded(id)
     }

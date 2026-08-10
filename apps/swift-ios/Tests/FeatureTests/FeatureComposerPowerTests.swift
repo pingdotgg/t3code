@@ -104,7 +104,7 @@ struct FeatureComposerPowerTests {
 
         #expect(
             FeatureComposerPasteTextPolicy.text(from: pasteboard)
-                == "first\nsecond"
+                == "image metadata\nfirst\nsecond"
         )
     }
 
