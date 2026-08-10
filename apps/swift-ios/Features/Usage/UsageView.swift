@@ -58,6 +58,14 @@ public struct UsageView: View {
                     } description: {
                         Text("Connect an environment to see usage.")
                     }
+                } else if !environments.contains(where: { $0.summary != nil }) {
+                    ContentUnavailableView {
+                        Label("Couldn’t load usage", systemImage: "exclamationmark.circle")
+                    } description: {
+                        Text("No environments could report usage.")
+                    } actions: {
+                        Button("Try again") { Task { await load() } }
+                    }
                 } else {
                     chartCard
                     providersSection
