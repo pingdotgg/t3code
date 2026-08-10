@@ -201,6 +201,37 @@ describe("commandInvariants", () => {
     ).rejects.toThrow("already exists");
   });
 
+  it("treats soft-deleted threads as absent for create flows", async () => {
+    const deletedThread = readModel.threads[0]!;
+    const readModelWithDeletedThread: OrchestrationReadModel = {
+      ...readModel,
+      threads: [{ ...deletedThread, deletedAt: now }, ...readModel.threads.slice(1)],
+    };
+
+    await Effect.runPromise(
+      requireThreadAbsent({
+        readModel: readModelWithDeletedThread,
+        command: {
+          type: "thread.create",
+          commandId: CommandId.make("cmd-4"),
+          threadId: deletedThread.id,
+          projectId: ProjectId.make("project-a"),
+          title: "recreated",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        },
+        threadId: deletedThread.id,
+      }),
+    );
+  });
+
   it("requires non-negative integers", async () => {
     await Effect.runPromise(
       requireNonNegativeInteger({

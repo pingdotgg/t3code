@@ -156,7 +156,8 @@ export function requireThreadAbsent(input: {
   readonly command: OrchestrationCommand;
   readonly threadId: ThreadId;
 }): Effect.Effect<void, OrchestrationCommandInvariantError> {
-  if (!findThreadById(input.readModel, input.threadId)) {
+  const existingThread = findThreadById(input.readModel, input.threadId);
+  if (!existingThread || existingThread.deletedAt !== null) {
     return Effect.void;
   }
   return Effect.fail(
