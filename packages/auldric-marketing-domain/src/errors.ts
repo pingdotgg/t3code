@@ -1,9 +1,7 @@
 import * as Schema from "effect/Schema";
 
 export const MarketingActorResolutionFailureReason = Schema.Literals([
-  "missing_verified_actor",
-  "verification_not_yet_valid",
-  "verification_expired",
+  "request_authority_rejected",
   "actor_binding_missing",
   "actor_binding_revoked",
   "membership_missing",

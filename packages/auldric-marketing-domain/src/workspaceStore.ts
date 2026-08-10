@@ -5,8 +5,10 @@ import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import {
   MarketingActorResolutionError,
@@ -24,15 +26,19 @@ import {
   type MarketingOrganizationId,
   type MarketingReferenceTarget,
   type MarketingT3ReferenceBindingId,
-  type MarketingWorkspaceResolutionInput,
   type MarketingWorkspaceSelection,
-  type VerifiedT3ActorRef,
+  T3ActorIssuer,
+  type T3ActorIssuer as T3ActorIssuerType,
+  T3ActorSubject,
+  type T3ActorSubject as T3ActorSubjectType,
 } from "./identity.ts";
 
 const CONTROL_SCHEMA_VERSION = 1;
 const ORGANIZATION_SCHEMA_VERSION = 1;
 const CONTROL_DATABASE_FILENAME = "control.sqlite";
 const ORGANIZATION_DATABASE_FILENAME = "workspace.sqlite";
+const decodeT3ActorIssuer = Schema.decodeUnknownSync(T3ActorIssuer);
+const decodeT3ActorSubject = Schema.decodeUnknownSync(T3ActorSubject);
 
 type WorkspaceStoreDomainError =
   | MarketingActorResolutionError
@@ -44,19 +50,68 @@ export type OrganizationWorkspaceStoreError =
   | WorkspaceStoreDomainError
   | MarketingWorkspaceStoreError;
 
-export interface OrganizationWorkspaceStoreConfig {
-  /** Dedicated Auldric root. It must not point at T3's state.sqlite file. */
-  readonly stateRoot: string;
+export const MarketingWorkspacePermission = Schema.Literals([
+  "bootstrap-new-organization",
+  "join-existing-organization",
+  "resolve-workspace",
+  "revoke-membership",
+  "delete-workspace",
+  "link-t3-reference",
+  "mark-t3-reference-stale",
+  "delete-t3-reference",
+  "backfill-workspace",
+  "rollback-provisioning",
+]);
+export type MarketingWorkspacePermission = typeof MarketingWorkspacePermission.Type;
+
+export interface MarketingWorkspaceAuthorizationRequirement {
+  readonly permission: MarketingWorkspacePermission;
+  readonly selection: MarketingWorkspaceSelection;
+  readonly targetMarketingActorId?: MarketingActorId;
+  readonly bindingId?: MarketingT3ReferenceBindingId;
 }
 
-export interface ProvisionOrganizationWorkspaceInput {
-  readonly actor: VerifiedT3ActorRef;
-  readonly marketingActorId: MarketingActorId;
+/**
+ * Canonical identity returned only by the server composition adapter after it accepts a
+ * request-scoped T3 principal or invitation capability. This is intentionally not a Schema and is
+ * never accepted from a wire payload.
+ */
+export interface MarketingAuthorizedActorIdentity {
+  readonly issuer: T3ActorIssuerType;
+  readonly subject: T3ActorSubjectType;
+}
+
+export interface OrganizationWorkspaceStoreConfig<RequestAuthority> {
+  /** Dedicated Auldric root. It must not point at T3's state.sqlite file. */
+  readonly stateRoot: string;
+  /**
+   * The T3 server composition root must inject a fail-closed resolver over its opaque,
+   * request-scoped principal type. Marketing has no decoder, issuer, or fallback for that type.
+   */
+  readonly authorize: (
+    requestAuthority: RequestAuthority,
+    requirement: MarketingWorkspaceAuthorizationRequirement,
+  ) => Effect.Effect<MarketingAuthorizedActorIdentity, MarketingActorResolutionError>;
+}
+
+export interface BootstrapOrganizationWorkspaceInput<RequestAuthority> {
+  readonly requestAuthority: RequestAuthority;
   readonly selection: MarketingWorkspaceSelection;
   readonly idempotencyKey: MarketingIdempotencyKey;
 }
 
-export type BackfillOrganizationWorkspaceInput = ProvisionOrganizationWorkspaceInput;
+export type BackfillOrganizationWorkspaceInput<RequestAuthority> =
+  BootstrapOrganizationWorkspaceInput<RequestAuthority>;
+
+export interface JoinOrganizationWorkspaceInput<RequestAuthority> {
+  readonly requestAuthority: RequestAuthority;
+  readonly selection: MarketingWorkspaceSelection;
+}
+
+export interface MarketingWorkspaceResolutionInput<RequestAuthority> {
+  readonly requestAuthority: RequestAuthority;
+  readonly selection: MarketingWorkspaceSelection;
+}
 
 export interface OrganizationWorkspaceBinding {
   readonly marketingActorId: MarketingActorId;
@@ -74,33 +129,37 @@ export interface ResolvedOrganizationWorkspaceDatabase {
   readonly database: NodeSqlite.DatabaseSync;
 }
 
-export interface OrganizationWorkspaceStore {
+export interface OrganizationWorkspaceStore<RequestAuthority> {
   readonly initialize: () => Effect.Effect<void, MarketingWorkspaceStoreError>;
-  readonly provision: (
-    input: ProvisionOrganizationWorkspaceInput,
+  readonly bootstrap: (
+    input: BootstrapOrganizationWorkspaceInput<RequestAuthority>,
   ) => Effect.Effect<OrganizationWorkspaceBinding, OrganizationWorkspaceStoreError>;
   readonly backfill: (
-    input: BackfillOrganizationWorkspaceInput,
+    input: BackfillOrganizationWorkspaceInput<RequestAuthority>,
+  ) => Effect.Effect<OrganizationWorkspaceBinding, OrganizationWorkspaceStoreError>;
+  readonly join: (
+    input: JoinOrganizationWorkspaceInput<RequestAuthority>,
   ) => Effect.Effect<OrganizationWorkspaceBinding, OrganizationWorkspaceStoreError>;
   readonly resolve: <A, E, R>(
-    input: MarketingWorkspaceResolutionInput,
+    input: MarketingWorkspaceResolutionInput<RequestAuthority>,
     use: (workspace: ResolvedOrganizationWorkspaceDatabase) => Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | OrganizationWorkspaceStoreError, R>;
-  /** Control-plane lifecycle operation. Request authorization belongs to the shared T3 seam. */
   readonly revokeMembership: (input: {
-    readonly organizationId: MarketingOrganizationId;
-    readonly marketingActorId: MarketingActorId;
-  }) => Effect.Effect<boolean, MarketingWorkspaceStoreError>;
+    readonly requestAuthority: RequestAuthority;
+    readonly selection: MarketingWorkspaceSelection;
+    readonly targetMarketingActorId: MarketingActorId;
+  }) => Effect.Effect<boolean, OrganizationWorkspaceStoreError>;
   /** Recovery-only operation for provisioning that never reached active state. */
-  readonly rollbackProvisioning: (
-    selection: MarketingWorkspaceSelection,
-  ) => Effect.Effect<boolean, OrganizationWorkspaceStoreError>;
-  /** Control-plane lifecycle operation. Request authorization belongs to the shared T3 seam. */
-  readonly deleteOrganizationWorkspace: (
-    selection: MarketingWorkspaceSelection,
-  ) => Effect.Effect<boolean, OrganizationWorkspaceStoreError>;
+  readonly rollbackProvisioning: (input: {
+    readonly requestAuthority: RequestAuthority;
+    readonly selection: MarketingWorkspaceSelection;
+  }) => Effect.Effect<boolean, OrganizationWorkspaceStoreError>;
+  readonly deleteOrganizationWorkspace: (input: {
+    readonly requestAuthority: RequestAuthority;
+    readonly selection: MarketingWorkspaceSelection;
+  }) => Effect.Effect<boolean, OrganizationWorkspaceStoreError>;
   readonly linkT3Reference: (input: {
-    readonly actor: VerifiedT3ActorRef | null;
+    readonly requestAuthority: RequestAuthority;
     readonly selection: MarketingWorkspaceSelection;
     readonly bindingId: MarketingT3ReferenceBindingId;
     readonly target: MarketingReferenceTarget;
@@ -108,12 +167,12 @@ export interface OrganizationWorkspaceStore {
     readonly expiresAt?: DateTime.Utc;
   }) => Effect.Effect<MarketingT3ReferenceLifecycle, OrganizationWorkspaceStoreError>;
   readonly markT3ReferenceStale: (input: {
-    readonly actor: VerifiedT3ActorRef | null;
+    readonly requestAuthority: RequestAuthority;
     readonly selection: MarketingWorkspaceSelection;
     readonly bindingId: MarketingT3ReferenceBindingId;
   }) => Effect.Effect<MarketingT3ReferenceLifecycle, OrganizationWorkspaceStoreError>;
   readonly deleteT3Reference: (input: {
-    readonly actor: VerifiedT3ActorRef | null;
+    readonly requestAuthority: RequestAuthority;
     readonly selection: MarketingWorkspaceSelection;
     readonly bindingId: MarketingT3ReferenceBindingId;
   }) => Effect.Effect<MarketingT3ReferenceLifecycle, OrganizationWorkspaceStoreError>;
@@ -229,15 +288,119 @@ function withDatabase<A, E, R>(
   );
 }
 
-function migrateControlDatabase(database: NodeSqlite.DatabaseSync): void {
+function userTableNames(database: NodeSqlite.DatabaseSync): ReadonlyArray<string> {
+  return (
+    database
+      .prepare(
+        `SELECT name FROM sqlite_master
+         WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+         ORDER BY name`,
+      )
+      .all() as unknown as ReadonlyArray<{ readonly name: string }>
+  ).map((row) => row.name);
+}
+
+function tableColumns(database: NodeSqlite.DatabaseSync, table: string): ReadonlySet<string> {
+  return new Set(
+    (
+      database.prepare(`PRAGMA table_info(${table})`).all() as unknown as ReadonlyArray<{
+        readonly name: string;
+      }>
+    ).map((row) => row.name),
+  );
+}
+
+function hasExactRequiredColumns(
+  database: NodeSqlite.DatabaseSync,
+  table: string,
+  columns: ReadonlyArray<string>,
+): boolean {
+  const actual = tableColumns(database, table);
+  return actual.size === columns.length && columns.every((column) => actual.has(column));
+}
+
+const controlSchemaV1Columns = {
+  auldric_control_schema_migrations: ["version", "applied_at"],
+  marketing_actors: [
+    "id",
+    "t3_actor_issuer",
+    "t3_actor_subject",
+    "status",
+    "created_at",
+    "revoked_at",
+  ],
+  marketing_organizations: ["id", "state", "created_at", "deleted_at"],
+  marketing_projects: ["id", "organization_id", "state", "created_at", "deleted_at"],
+  marketing_organization_memberships: [
+    "organization_id",
+    "marketing_actor_id",
+    "status",
+    "bound_at",
+    "revoked_at",
+  ],
+  marketing_workspaces: [
+    "id",
+    "organization_id",
+    "project_id",
+    "database_key",
+    "state",
+    "origin",
+    "created_at",
+    "updated_at",
+    "deleted_at",
+  ],
+  marketing_identity_operations: [
+    "idempotency_key",
+    "payload_hash",
+    "state",
+    "organization_id",
+    "workspace_id",
+    "created_at",
+    "updated_at",
+  ],
+  marketing_t3_reference_bindings: [
+    "id",
+    "organization_id",
+    "target_kind",
+    "target_id",
+    "reference_kind",
+    "reference_value",
+    "state",
+    "linked_at",
+    "expires_at",
+    "stale_at",
+    "deleted_at",
+  ],
+} as const;
+
+function verifyControlSchemaV1(database: NodeSqlite.DatabaseSync): void {
+  const expectedTables = Object.keys(controlSchemaV1Columns).sort();
+  const actualTables = userTableNames(database);
+  if (expectedTables.some((table) => !actualTables.includes(table))) {
+    throw new Error("control database has a partial or unidentified schema");
+  }
+  for (const [table, columns] of Object.entries(controlSchemaV1Columns)) {
+    if (!hasExactRequiredColumns(database, table, columns)) {
+      throw new Error(`control database table ${table} does not match schema v1`);
+    }
+  }
+  const versions = database
+    .prepare("SELECT version FROM auldric_control_schema_migrations ORDER BY version")
+    .all() as unknown as ReadonlyArray<SchemaVersionRow>;
+  if (versions.length !== 1 || versions[0]?.version !== CONTROL_SCHEMA_VERSION) {
+    throw new Error("control database migration history is not exactly schema v1");
+  }
+}
+
+function createControlSchemaV1(database: NodeSqlite.DatabaseSync): void {
   runTransaction(database, () => {
     database.exec(`
-      CREATE TABLE IF NOT EXISTS auldric_control_schema_migrations (
+      CREATE TABLE auldric_control_schema_migrations (
         version INTEGER PRIMARY KEY,
         applied_at TEXT NOT NULL
       );
 
-      CREATE TABLE IF NOT EXISTS marketing_actors (
+      CREATE TABLE marketing_actors (
         id TEXT PRIMARY KEY,
         t3_actor_issuer TEXT NOT NULL,
         t3_actor_subject TEXT NOT NULL,
@@ -247,14 +410,14 @@ function migrateControlDatabase(database: NodeSqlite.DatabaseSync): void {
         UNIQUE (t3_actor_issuer, t3_actor_subject)
       );
 
-      CREATE TABLE IF NOT EXISTS marketing_organizations (
+      CREATE TABLE marketing_organizations (
         id TEXT PRIMARY KEY,
         state TEXT NOT NULL CHECK (state IN ('active', 'deleting', 'deleted')),
         created_at TEXT NOT NULL,
         deleted_at TEXT
       );
 
-      CREATE TABLE IF NOT EXISTS marketing_projects (
+      CREATE TABLE marketing_projects (
         id TEXT PRIMARY KEY,
         organization_id TEXT NOT NULL REFERENCES marketing_organizations(id),
         state TEXT NOT NULL CHECK (state IN ('active', 'deleted')),
@@ -263,7 +426,7 @@ function migrateControlDatabase(database: NodeSqlite.DatabaseSync): void {
         UNIQUE (organization_id, id)
       );
 
-      CREATE TABLE IF NOT EXISTS marketing_organization_memberships (
+      CREATE TABLE marketing_organization_memberships (
         organization_id TEXT NOT NULL REFERENCES marketing_organizations(id),
         marketing_actor_id TEXT NOT NULL REFERENCES marketing_actors(id),
         status TEXT NOT NULL CHECK (status IN ('active', 'revoked')),
@@ -272,7 +435,7 @@ function migrateControlDatabase(database: NodeSqlite.DatabaseSync): void {
         PRIMARY KEY (organization_id, marketing_actor_id)
       );
 
-      CREATE TABLE IF NOT EXISTS marketing_workspaces (
+      CREATE TABLE marketing_workspaces (
         id TEXT PRIMARY KEY,
         organization_id TEXT NOT NULL UNIQUE REFERENCES marketing_organizations(id),
         project_id TEXT NOT NULL REFERENCES marketing_projects(id),
@@ -287,7 +450,7 @@ function migrateControlDatabase(database: NodeSqlite.DatabaseSync): void {
         UNIQUE (organization_id, id)
       );
 
-      CREATE TABLE IF NOT EXISTS marketing_identity_operations (
+      CREATE TABLE marketing_identity_operations (
         idempotency_key TEXT PRIMARY KEY,
         payload_hash TEXT NOT NULL,
         state TEXT NOT NULL CHECK (state IN ('pending', 'completed', 'failed')),
@@ -297,7 +460,7 @@ function migrateControlDatabase(database: NodeSqlite.DatabaseSync): void {
         updated_at TEXT NOT NULL
       );
 
-      CREATE TABLE IF NOT EXISTS marketing_t3_reference_bindings (
+      CREATE TABLE marketing_t3_reference_bindings (
         id TEXT PRIMARY KEY,
         organization_id TEXT NOT NULL REFERENCES marketing_organizations(id),
         target_kind TEXT NOT NULL CHECK (
@@ -323,11 +486,18 @@ function migrateControlDatabase(database: NodeSqlite.DatabaseSync): void {
       );
     `);
     database
-      .prepare(
-        "INSERT OR IGNORE INTO auldric_control_schema_migrations(version, applied_at) VALUES (?, ?)",
-      )
+      .prepare("INSERT INTO auldric_control_schema_migrations(version, applied_at) VALUES (?, ?)")
       .run(CONTROL_SCHEMA_VERSION, "schema-v1");
+    verifyControlSchemaV1(database);
   });
+}
+
+function migrateControlDatabase(database: NodeSqlite.DatabaseSync): void {
+  if (userTableNames(database).length === 0) {
+    createControlSchemaV1(database);
+    return;
+  }
+  verifyControlSchemaV1(database);
 }
 
 function readT3ReferenceRow(
@@ -398,25 +568,61 @@ function t3ReferenceLifecycleFromRow(row: T3ReferenceRow): MarketingT3ReferenceL
   });
 }
 
-function migrateManagedOrganizationDatabase(
+const organizationSchemaV1Columns = {
+  auldric_organization_schema_migrations: ["version", "applied_at"],
+  auldric_organization_identity: ["singleton", "organization_id", "database_key", "created_at"],
+  auldric_marketing_workspace_registry: [
+    "workspace_id",
+    "organization_id",
+    "project_id",
+    "created_at",
+  ],
+} as const;
+
+function verifyOrganizationSchemaV1(database: NodeSqlite.DatabaseSync): void {
+  const expectedTables = Object.keys(organizationSchemaV1Columns).sort();
+  const actualTables = userTableNames(database);
+  if (expectedTables.some((table) => !actualTables.includes(table))) {
+    throw new MarketingWorkspaceUnavailableError({
+      reason: "workspace_database_schema_stale",
+    });
+  }
+  for (const [table, columns] of Object.entries(organizationSchemaV1Columns)) {
+    if (!hasExactRequiredColumns(database, table, columns)) {
+      throw new MarketingWorkspaceUnavailableError({
+        reason: "workspace_database_schema_stale",
+      });
+    }
+  }
+  const versions = database
+    .prepare("SELECT version FROM auldric_organization_schema_migrations ORDER BY version")
+    .all() as unknown as ReadonlyArray<SchemaVersionRow>;
+  if (versions.length !== 1 || versions[0]?.version !== ORGANIZATION_SCHEMA_VERSION) {
+    throw new MarketingWorkspaceUnavailableError({
+      reason: "workspace_database_schema_stale",
+    });
+  }
+}
+
+function createManagedOrganizationSchemaV1(
   database: NodeSqlite.DatabaseSync,
   input: { readonly selection: MarketingWorkspaceSelection; readonly databaseKey: string },
 ): void {
   runTransaction(database, () => {
     database.exec(`
-      CREATE TABLE IF NOT EXISTS auldric_organization_schema_migrations (
+      CREATE TABLE auldric_organization_schema_migrations (
         version INTEGER PRIMARY KEY,
         applied_at TEXT NOT NULL
       );
 
-      CREATE TABLE IF NOT EXISTS auldric_organization_identity (
+      CREATE TABLE auldric_organization_identity (
         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
         organization_id TEXT NOT NULL,
         database_key TEXT NOT NULL UNIQUE,
         created_at TEXT NOT NULL
       );
 
-      CREATE TABLE IF NOT EXISTS auldric_marketing_workspace_registry (
+      CREATE TABLE auldric_marketing_workspace_registry (
         workspace_id TEXT PRIMARY KEY,
         organization_id TEXT NOT NULL,
         project_id TEXT NOT NULL,
@@ -424,44 +630,16 @@ function migrateManagedOrganizationDatabase(
       );
     `);
 
-    const identity = database
-      .prepare(
-        `SELECT organization_id AS organizationId, database_key AS databaseKey
-         FROM auldric_organization_identity WHERE singleton = 1`,
-      )
-      .get() as unknown as OrganizationIdentityRow | undefined;
-    if (
-      identity !== undefined &&
-      (identity.organizationId !== input.selection.organizationId ||
-        identity.databaseKey !== input.databaseKey)
-    ) {
-      throw new MarketingWorkspaceCrossOrganizationError({});
-    }
     database
       .prepare(
-        `INSERT OR IGNORE INTO auldric_organization_identity(
+        `INSERT INTO auldric_organization_identity(
            singleton, organization_id, database_key, created_at
          ) VALUES (1, ?, ?, ?)`,
       )
       .run(input.selection.organizationId, input.databaseKey, "schema-v1");
-
-    const workspace = database
-      .prepare(
-        `SELECT workspace_id AS workspaceId, organization_id AS organizationId,
-                project_id AS projectId
-         FROM auldric_marketing_workspace_registry WHERE workspace_id = ?`,
-      )
-      .get(input.selection.workspaceId) as unknown as WorkspaceRegistryRow | undefined;
-    if (
-      workspace !== undefined &&
-      (workspace.organizationId !== input.selection.organizationId ||
-        workspace.projectId !== input.selection.projectId)
-    ) {
-      throw new MarketingWorkspaceConflictError({ reason: "workspace_registry_conflict" });
-    }
     database
       .prepare(
-        `INSERT OR IGNORE INTO auldric_marketing_workspace_registry(
+        `INSERT INTO auldric_marketing_workspace_registry(
            workspace_id, organization_id, project_id, created_at
          ) VALUES (?, ?, ?, ?)`,
       )
@@ -473,39 +651,39 @@ function migrateManagedOrganizationDatabase(
       );
     database
       .prepare(
-        "INSERT OR IGNORE INTO auldric_organization_schema_migrations(version, applied_at) VALUES (?, ?)",
+        "INSERT INTO auldric_organization_schema_migrations(version, applied_at) VALUES (?, ?)",
       )
       .run(ORGANIZATION_SCHEMA_VERSION, "schema-v1");
+    verifyOrganizationSchemaV1(database);
   });
 }
 
-function verifyOrganizationDatabase(
+function migrateManagedOrganizationDatabase(
   database: NodeSqlite.DatabaseSync,
   input: { readonly selection: MarketingWorkspaceSelection; readonly databaseKey: string },
 ): void {
-  let identity: OrganizationIdentityRow | undefined;
-  let workspace: WorkspaceRegistryRow | undefined;
-  try {
-    identity = database
-      .prepare(
-        `SELECT organization_id AS organizationId, database_key AS databaseKey
-         FROM auldric_organization_identity WHERE singleton = 1`,
-      )
-      .get() as unknown as OrganizationIdentityRow | undefined;
-    workspace = database
-      .prepare(
-        `SELECT workspace_id AS workspaceId, organization_id AS organizationId,
-                project_id AS projectId
-         FROM auldric_marketing_workspace_registry WHERE workspace_id = ?`,
-      )
-      .get(input.selection.workspaceId) as unknown as WorkspaceRegistryRow | undefined;
-  } catch {
-    throw new MarketingWorkspaceUnavailableError({
-      reason: "workspace_database_identity_missing",
-    });
+  if (userTableNames(database).length === 0) {
+    createManagedOrganizationSchemaV1(database, input);
+    return;
   }
+  verifyOrganizationSchemaV1(database);
+  verifyOrganizationDatabaseIdentity(database, input);
+}
 
-  if (identity === undefined) {
+function verifyOrganizationDatabaseIdentity(
+  database: NodeSqlite.DatabaseSync,
+  input: { readonly selection: MarketingWorkspaceSelection; readonly databaseKey: string },
+): void {
+  const identityCount = database
+    .prepare("SELECT COUNT(*) AS count FROM auldric_organization_identity")
+    .get() as unknown as { readonly count: number };
+  const identity = database
+    .prepare(
+      `SELECT organization_id AS organizationId, database_key AS databaseKey
+       FROM auldric_organization_identity WHERE singleton = 1`,
+    )
+    .get() as unknown as OrganizationIdentityRow | undefined;
+  if (identityCount.count !== 1 || identity === undefined) {
     throw new MarketingWorkspaceUnavailableError({
       reason: "workspace_database_identity_missing",
     });
@@ -518,30 +696,51 @@ function verifyOrganizationDatabase(
       reason: "workspace_database_identity_mismatch",
     });
   }
+  const workspace = database
+    .prepare(
+      `SELECT workspace_id AS workspaceId, organization_id AS organizationId,
+              project_id AS projectId
+       FROM auldric_marketing_workspace_registry WHERE workspace_id = ?`,
+    )
+    .get(input.selection.workspaceId) as unknown as WorkspaceRegistryRow | undefined;
+  const workspaceCount = database
+    .prepare("SELECT COUNT(*) AS count FROM auldric_marketing_workspace_registry")
+    .get() as unknown as { readonly count: number };
   if (
+    workspaceCount.count !== 1 ||
     workspace === undefined ||
     workspace.organizationId !== input.selection.organizationId ||
     workspace.projectId !== input.selection.projectId
   ) {
     throw new MarketingWorkspaceUnavailableError({ reason: "workspace_registry_stale" });
   }
-  let migration: SchemaVersionRow | undefined;
+}
+
+function verifyOrganizationDatabase(
+  database: NodeSqlite.DatabaseSync,
+  input: { readonly selection: MarketingWorkspaceSelection; readonly databaseKey: string },
+): void {
   try {
-    migration = database
-      .prepare(
-        `SELECT MAX(version) AS version
-         FROM auldric_organization_schema_migrations`,
-      )
-      .get() as unknown as SchemaVersionRow | undefined;
-  } catch {
+    verifyOrganizationSchemaV1(database);
+    verifyOrganizationDatabaseIdentity(database, input);
+  } catch (cause) {
+    if (isMarketingWorkspaceDomainError(cause)) throw cause;
     throw new MarketingWorkspaceUnavailableError({
       reason: "workspace_database_schema_stale",
     });
   }
-  if (migration?.version !== ORGANIZATION_SCHEMA_VERSION) {
-    throw new MarketingWorkspaceUnavailableError({
-      reason: "workspace_database_schema_stale",
-    });
+}
+
+function decodeAuthorizedActor(
+  actor: MarketingAuthorizedActorIdentity,
+): MarketingAuthorizedActorIdentity {
+  try {
+    return {
+      issuer: decodeT3ActorIssuer(actor.issuer),
+      subject: decodeT3ActorSubject(actor.subject),
+    };
+  } catch {
+    throw new MarketingActorResolutionError({ reason: "request_authority_rejected" });
   }
 }
 
@@ -567,13 +766,22 @@ export function organizationWorkspaceDatabasePath(
   return databasePath;
 }
 
-function operationPayloadHash(input: ProvisionOrganizationWorkspaceInput): string {
+interface AuthorizedProvisionOrganizationWorkspaceInput {
+  readonly actor: MarketingAuthorizedActorIdentity;
+  readonly selection: MarketingWorkspaceSelection;
+  readonly idempotencyKey: MarketingIdempotencyKey;
+}
+
+function operationPayloadHash(
+  input: AuthorizedProvisionOrganizationWorkspaceInput,
+  origin: WorkspaceRow["origin"],
+): string {
   return NodeCrypto.createHash("sha256")
     .update(
       JSON.stringify([
+        origin,
         input.actor.issuer,
         input.actor.subject,
-        input.marketingActorId,
         input.selection.organizationId,
         input.selection.projectId,
         input.selection.workspaceId,
@@ -582,20 +790,8 @@ function operationPayloadHash(input: ProvisionOrganizationWorkspaceInput): strin
     .digest("hex");
 }
 
-function assertFreshVerifiedActor(
-  actor: VerifiedT3ActorRef | null,
-  now: DateTime.Utc,
-): Effect.Effect<VerifiedT3ActorRef, MarketingActorResolutionError> {
-  if (actor === null) {
-    return Effect.fail(new MarketingActorResolutionError({ reason: "missing_verified_actor" }));
-  }
-  if (actor.verifiedAt.epochMilliseconds > now.epochMilliseconds) {
-    return Effect.fail(new MarketingActorResolutionError({ reason: "verification_not_yet_valid" }));
-  }
-  if (actor.expiresAt.epochMilliseconds <= now.epochMilliseconds) {
-    return Effect.fail(new MarketingActorResolutionError({ reason: "verification_expired" }));
-  }
-  return Effect.succeed(actor);
+function makeMarketingActorId(): MarketingActorId {
+  return `mact_${NodeCrypto.randomUUID()}` as MarketingActorId;
 }
 
 function removeDatabaseFiles(databasePath: string): void {
@@ -606,33 +802,152 @@ function removeDatabaseFiles(databasePath: string): void {
   }
 }
 
-export function makeOrganizationWorkspaceStore(
-  config: OrganizationWorkspaceStoreConfig,
-): OrganizationWorkspaceStore {
+interface WorkspaceLeaseEntry {
+  active: number;
+  deleting: boolean;
+  drain: Deferred.Deferred<void> | undefined;
+}
+
+export function makeOrganizationWorkspaceStore<RequestAuthority>(
+  config: OrganizationWorkspaceStoreConfig<RequestAuthority>,
+): OrganizationWorkspaceStore<RequestAuthority> {
   const stateRoot = NodePath.resolve(config.stateRoot);
   const controlDatabasePath = NodePath.join(stateRoot, CONTROL_DATABASE_FILENAME);
+  const workspaceLeases = new Map<string, WorkspaceLeaseEntry>();
+  const deletionLocks = new Map<string, Semaphore.Semaphore>();
+  const initializationLock = Semaphore.makeUnsafe(1);
+
+  const authorize = (
+    requestAuthority: RequestAuthority,
+    requirement: MarketingWorkspaceAuthorizationRequirement,
+  ) =>
+    config.authorize(requestAuthority, requirement).pipe(
+      Effect.flatMap((actor) =>
+        Effect.try({
+          try: () => decodeAuthorizedActor(actor),
+          catch: () => new MarketingActorResolutionError({ reason: "request_authority_rejected" }),
+        }),
+      ),
+    );
+
+  const acquireWorkspaceLease = (databaseKey: string) =>
+    Effect.acquireRelease(
+      Effect.try({
+        try: () => {
+          const entry = workspaceLeases.get(databaseKey) ?? {
+            active: 0,
+            deleting: false,
+            drain: undefined,
+          };
+          if (entry.deleting) {
+            throw new MarketingWorkspaceUnavailableError({ reason: "workspace_unavailable" });
+          }
+          entry.active += 1;
+          workspaceLeases.set(databaseKey, entry);
+        },
+        catch: (cause) => mapStoreCause("acquire_workspace_lease", cause),
+      }),
+      () =>
+        Effect.suspend(() => {
+          const entry = workspaceLeases.get(databaseKey);
+          if (entry === undefined || entry.active === 0) return Effect.void;
+          entry.active -= 1;
+          if (entry.active === 0 && !entry.deleting) {
+            workspaceLeases.delete(databaseKey);
+            return Effect.void;
+          }
+          if (entry.active === 0 && entry.drain !== undefined) {
+            return Deferred.succeed(entry.drain, undefined).pipe(Effect.asVoid);
+          }
+          return Effect.void;
+        }).pipe(Effect.orDie),
+    );
+
+  const beginExclusiveDeletion = (databaseKey: string) =>
+    Effect.gen(function* () {
+      const requestedDrain = yield* Deferred.make<void>();
+      const gate = yield* Effect.try({
+        try: () => {
+          const entry = workspaceLeases.get(databaseKey) ?? {
+            active: 0,
+            deleting: false,
+            drain: undefined,
+          };
+          if (!entry.deleting) {
+            entry.deleting = true;
+            entry.drain = requestedDrain;
+          }
+          workspaceLeases.set(databaseKey, entry);
+          return {
+            active: entry.active,
+            drain: entry.drain ?? requestedDrain,
+          };
+        },
+        catch: (cause) => mapStoreCause("begin_workspace_lease_drain", cause),
+      });
+      if (gate.active === 0) {
+        yield* Deferred.succeed(gate.drain, undefined);
+      }
+      return gate;
+    });
+
+  const getDeletionLock = (databaseKey: string) =>
+    Effect.sync(() => {
+      const lock = deletionLocks.get(databaseKey) ?? Semaphore.makeUnsafe(1);
+      deletionLocks.set(databaseKey, lock);
+      return lock;
+    });
+
+  const abortExclusiveDeletion = (databaseKey: string) =>
+    Effect.sync(() => {
+      const entry = workspaceLeases.get(databaseKey);
+      if (entry === undefined) return;
+      if (entry.active === 0) {
+        workspaceLeases.delete(databaseKey);
+        return;
+      }
+      entry.deleting = false;
+      entry.drain = undefined;
+    });
+
+  const finishExclusiveDeletion = (databaseKey: string) =>
+    Effect.try({
+      try: () => {
+        const entry = workspaceLeases.get(databaseKey);
+        if (entry !== undefined && entry.active !== 0) {
+          throw new Error("cannot finish deletion while workspace leases remain active");
+        }
+        workspaceLeases.delete(databaseKey);
+      },
+      catch: (cause) =>
+        new MarketingWorkspaceStoreError({ operation: "finish_lease_drain", cause }),
+    });
 
   const initialize = Effect.fn("OrganizationWorkspaceStore.initialize")(function* () {
-    yield* Effect.try({
-      try: () => NodeFS.mkdirSync(stateRoot, { recursive: true }),
-      catch: (cause) => new MarketingWorkspaceStoreError({ operation: "initialize", cause }),
-    });
-    yield* withDatabase(controlDatabasePath, "initialize", (database) =>
-      Effect.try({
-        try: () => migrateControlDatabase(database),
-        catch: (cause) => new MarketingWorkspaceStoreError({ operation: "initialize", cause }),
+    yield* initializationLock.withPermits(1)(
+      Effect.gen(function* () {
+        yield* Effect.try({
+          try: () => NodeFS.mkdirSync(stateRoot, { recursive: true }),
+          catch: (cause) => new MarketingWorkspaceStoreError({ operation: "initialize", cause }),
+        });
+        yield* withDatabase(controlDatabasePath, "initialize", (database) =>
+          Effect.try({
+            try: () => migrateControlDatabase(database),
+            catch: (cause) => new MarketingWorkspaceStoreError({ operation: "initialize", cause }),
+          }),
+        );
       }),
     );
   });
 
   const prepareControlProvision = Effect.fn("OrganizationWorkspaceStore.prepareControlProvision")(
     function* (
-      input: ProvisionOrganizationWorkspaceInput,
+      input: AuthorizedProvisionOrganizationWorkspaceInput,
       origin: WorkspaceRow["origin"],
       nowIso: string,
     ) {
       const databaseKey = organizationDatabaseKey(input.selection.organizationId);
-      const payloadHash = operationPayloadHash(input);
+      const payloadHash = operationPayloadHash(input, origin);
       return yield* withDatabase(controlDatabasePath, "prepare_provision", (database) =>
         Effect.try({
           try: () =>
@@ -667,7 +982,48 @@ export function makeOrganizationWorkspaceStore(
                     reason: "completed_operation_binding_stale",
                   });
                 }
-                return { databaseKey, alreadyCompleted: true };
+                const completedActor = database
+                  .prepare(
+                    `SELECT id, status FROM marketing_actors
+                     WHERE t3_actor_issuer = ? AND t3_actor_subject = ?`,
+                  )
+                  .get(input.actor.issuer, input.actor.subject) as unknown as ActorRow | undefined;
+                if (completedActor?.status !== "active") {
+                  throw new MarketingActorResolutionError({ reason: "actor_binding_missing" });
+                }
+                const completedMembership = database
+                  .prepare(
+                    `SELECT status FROM marketing_organization_memberships
+                     WHERE organization_id = ? AND marketing_actor_id = ?`,
+                  )
+                  .get(input.selection.organizationId, completedActor.id) as unknown as
+                  | MembershipRow
+                  | undefined;
+                if (completedMembership === undefined) {
+                  throw new MarketingActorResolutionError({ reason: "membership_missing" });
+                }
+                if (completedMembership.status !== "active") {
+                  throw new MarketingActorResolutionError({ reason: "membership_revoked" });
+                }
+                return {
+                  databaseKey,
+                  marketingActorId: completedActor.id as MarketingActorId,
+                  alreadyCompleted: true,
+                };
+              }
+
+              const organization = database
+                .prepare("SELECT state FROM marketing_organizations WHERE id = ?")
+                .get(input.selection.organizationId) as unknown as
+                | { readonly state: "active" | "deleting" | "deleted" }
+                | undefined;
+              if (organization !== undefined && operation === undefined) {
+                throw new MarketingWorkspaceConflictError({
+                  reason: "organization_already_exists",
+                });
+              }
+              if (organization !== undefined && organization.state !== "active") {
+                throw new MarketingWorkspaceConflictError({ reason: "organization_not_active" });
               }
 
               const actorByUpstream = database
@@ -676,34 +1032,21 @@ export function makeOrganizationWorkspaceStore(
                    WHERE t3_actor_issuer = ? AND t3_actor_subject = ?`,
                 )
                 .get(input.actor.issuer, input.actor.subject) as unknown as ActorRow | undefined;
-              if (actorByUpstream !== undefined && actorByUpstream.id !== input.marketingActorId) {
-                throw new MarketingWorkspaceConflictError({ reason: "actor_already_mapped" });
-              }
-              const actorById = database
-                .prepare("SELECT id, status FROM marketing_actors WHERE id = ?")
-                .get(input.marketingActorId) as unknown as ActorRow | undefined;
-              if (actorById !== undefined && actorByUpstream === undefined) {
-                throw new MarketingWorkspaceConflictError({ reason: "actor_id_already_bound" });
-              }
               if (actorByUpstream?.status === "revoked") {
                 throw new MarketingActorResolutionError({ reason: "actor_binding_revoked" });
               }
+              const marketingActorId =
+                actorByUpstream === undefined
+                  ? makeMarketingActorId()
+                  : (actorByUpstream.id as MarketingActorId);
               database
                 .prepare(
                   `INSERT OR IGNORE INTO marketing_actors(
                      id, t3_actor_issuer, t3_actor_subject, status, created_at
                    ) VALUES (?, ?, ?, 'active', ?)`,
                 )
-                .run(input.marketingActorId, input.actor.issuer, input.actor.subject, nowIso);
+                .run(marketingActorId, input.actor.issuer, input.actor.subject, nowIso);
 
-              const organization = database
-                .prepare("SELECT state FROM marketing_organizations WHERE id = ?")
-                .get(input.selection.organizationId) as unknown as
-                | { readonly state: "active" | "deleting" | "deleted" }
-                | undefined;
-              if (organization !== undefined && organization.state !== "active") {
-                throw new MarketingWorkspaceConflictError({ reason: "organization_not_active" });
-              }
               database
                 .prepare(
                   `INSERT OR IGNORE INTO marketing_organizations(id, state, created_at)
@@ -738,7 +1081,7 @@ export function makeOrganizationWorkspaceStore(
                   `SELECT status FROM marketing_organization_memberships
                    WHERE organization_id = ? AND marketing_actor_id = ?`,
                 )
-                .get(input.selection.organizationId, input.marketingActorId) as unknown as
+                .get(input.selection.organizationId, marketingActorId) as unknown as
                 | MembershipRow
                 | undefined;
               if (membership?.status === "revoked") {
@@ -750,7 +1093,7 @@ export function makeOrganizationWorkspaceStore(
                      organization_id, marketing_actor_id, status, bound_at
                    ) VALUES (?, ?, 'active', ?)`,
                 )
-                .run(input.selection.organizationId, input.marketingActorId, nowIso);
+                .run(input.selection.organizationId, marketingActorId, nowIso);
 
               const workspace = database
                 .prepare(
@@ -816,7 +1159,7 @@ export function makeOrganizationWorkspaceStore(
                   nowIso,
                 );
 
-              return { databaseKey, alreadyCompleted: false };
+              return { databaseKey, marketingActorId, alreadyCompleted: false };
             }),
           catch: (cause) => mapStoreCause("prepare_provision", cause),
         }),
@@ -825,17 +1168,22 @@ export function makeOrganizationWorkspaceStore(
   );
 
   const finishControlProvision = Effect.fn("OrganizationWorkspaceStore.finishControlProvision")(
-    function* (input: ProvisionOrganizationWorkspaceInput, nowIso: string) {
+    function* (input: AuthorizedProvisionOrganizationWorkspaceInput, nowIso: string) {
       yield* withDatabase(controlDatabasePath, "finish_provision", (database) =>
         Effect.try({
           try: () =>
             runTransaction(database, () => {
-              database
+              const workspace = database
                 .prepare(
                   `UPDATE marketing_workspaces SET state = 'active', updated_at = ?
-                   WHERE id = ? AND organization_id = ?`,
+                   WHERE id = ? AND organization_id = ? AND state = 'provisioning'`,
                 )
                 .run(nowIso, input.selection.workspaceId, input.selection.organizationId);
+              if (workspace.changes !== 1) {
+                throw new MarketingWorkspaceUnavailableError({
+                  reason: "workspace_unavailable",
+                });
+              }
               database
                 .prepare(
                   `UPDATE marketing_identity_operations SET state = 'completed', updated_at = ?
@@ -851,7 +1199,7 @@ export function makeOrganizationWorkspaceStore(
   );
 
   const failControlProvision = Effect.fn("OrganizationWorkspaceStore.failControlProvision")(
-    function* (input: ProvisionOrganizationWorkspaceInput, nowIso: string) {
+    function* (input: AuthorizedProvisionOrganizationWorkspaceInput, nowIso: string) {
       yield* withDatabase(controlDatabasePath, "fail_provision", (database) =>
         Effect.try({
           try: () =>
@@ -859,7 +1207,7 @@ export function makeOrganizationWorkspaceStore(
               database
                 .prepare(
                   `UPDATE marketing_workspaces SET state = 'unavailable', updated_at = ?
-                   WHERE id = ? AND state <> 'active'`,
+                   WHERE id = ? AND state = 'provisioning'`,
                 )
                 .run(nowIso, input.selection.workspaceId);
               database
@@ -878,582 +1226,1018 @@ export function makeOrganizationWorkspaceStore(
 
   const provisionWithOrigin = Effect.fn("OrganizationWorkspaceStore.provisionWithOrigin")(
     function* (
-      input: ProvisionOrganizationWorkspaceInput,
+      input: BootstrapOrganizationWorkspaceInput<RequestAuthority>,
       origin: WorkspaceRow["origin"],
+      permission: "bootstrap-new-organization" | "backfill-workspace",
     ): Effect.fn.Return<OrganizationWorkspaceBinding, OrganizationWorkspaceStoreError> {
+      const actor = yield* authorize(input.requestAuthority, {
+        permission,
+        selection: input.selection,
+      });
       yield* initialize();
       const now = yield* DateTime.now;
-      yield* assertFreshVerifiedActor(input.actor, now);
       const nowIso = DateTime.formatIso(now);
-      const prepared = yield* prepareControlProvision(input, origin, nowIso);
-      const databasePath = organizationWorkspaceDatabasePath(
-        stateRoot,
-        input.selection.organizationId,
-      );
+      const authorizedInput: AuthorizedProvisionOrganizationWorkspaceInput = {
+        actor,
+        selection: input.selection,
+        idempotencyKey: input.idempotencyKey,
+      };
+      const databaseKey = organizationDatabaseKey(input.selection.organizationId);
+      return yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* acquireWorkspaceLease(databaseKey);
+          const prepared = yield* prepareControlProvision(authorizedInput, origin, nowIso);
+          const databasePath = organizationWorkspaceDatabasePath(
+            stateRoot,
+            input.selection.organizationId,
+          );
 
-      if (prepared.alreadyCompleted) {
+          if (prepared.alreadyCompleted) {
+            const exists = yield* Effect.sync(() => NodeFS.existsSync(databasePath));
+            if (!exists) {
+              return yield* new MarketingWorkspaceUnavailableError({
+                reason: "workspace_database_missing",
+              });
+            }
+            yield* withDatabase(databasePath, "verify_completed_provision", (database) =>
+              Effect.try({
+                try: () =>
+                  verifyOrganizationDatabase(database, {
+                    selection: input.selection,
+                    databaseKey: prepared.databaseKey,
+                  }),
+                catch: (cause) => mapStoreCause("verify_completed_provision", cause),
+              }),
+            );
+            return {
+              marketingActorId: prepared.marketingActorId,
+              selection: input.selection,
+              databaseKey: prepared.databaseKey,
+              state: "active" as const,
+              origin,
+            };
+          }
+
+          const existedBefore = NodeFS.existsSync(databasePath);
+          const provisionDatabase =
+            origin === "managed"
+              ? Effect.try({
+                  try: () => NodeFS.mkdirSync(NodePath.dirname(databasePath), { recursive: true }),
+                  catch: (cause) =>
+                    new MarketingWorkspaceStoreError({
+                      operation: "create_workspace_directory",
+                      cause,
+                    }),
+                }).pipe(
+                  Effect.andThen(
+                    withDatabase(databasePath, "migrate_workspace_database", (database) =>
+                      Effect.try({
+                        try: () =>
+                          migrateManagedOrganizationDatabase(database, {
+                            selection: input.selection,
+                            databaseKey: prepared.databaseKey,
+                          }),
+                        catch: (cause) => mapStoreCause("migrate_workspace_database", cause),
+                      }),
+                    ),
+                  ),
+                )
+              : existedBefore
+                ? withDatabase(databasePath, "verify_backfill_database", (database) =>
+                    Effect.try({
+                      try: () =>
+                        verifyOrganizationDatabase(database, {
+                          selection: input.selection,
+                          databaseKey: prepared.databaseKey,
+                        }),
+                      catch: (cause) => mapStoreCause("verify_backfill_database", cause),
+                    }),
+                  )
+                : Effect.fail(
+                    new MarketingWorkspaceUnavailableError({
+                      reason: "workspace_database_missing",
+                    }),
+                  );
+
+          const result = yield* Effect.result(provisionDatabase);
+          if (result._tag === "Failure") {
+            if (origin === "managed" && !existedBefore) {
+              yield* Effect.try({
+                try: () => removeDatabaseFiles(databasePath),
+                catch: (cause) =>
+                  new MarketingWorkspaceStoreError({
+                    operation: "rollback_workspace_files",
+                    cause,
+                  }),
+              }).pipe(Effect.ignore);
+            }
+            yield* failControlProvision(authorizedInput, nowIso);
+            return yield* result.failure;
+          }
+
+          yield* finishControlProvision(authorizedInput, nowIso);
+          return {
+            marketingActorId: prepared.marketingActorId,
+            selection: input.selection,
+            databaseKey: prepared.databaseKey,
+            state: "active" as const,
+            origin,
+          };
+        }),
+      );
+    },
+  );
+
+  const bootstrap: OrganizationWorkspaceStore<RequestAuthority>["bootstrap"] = (input) =>
+    provisionWithOrigin(input, "managed", "bootstrap-new-organization");
+
+  const backfill: OrganizationWorkspaceStore<RequestAuthority>["backfill"] = (input) =>
+    provisionWithOrigin(input, "backfilled", "backfill-workspace");
+
+  const join: OrganizationWorkspaceStore<RequestAuthority>["join"] = (input) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const actor = yield* authorize(input.requestAuthority, {
+          permission: "join-existing-organization",
+          selection: input.selection,
+        });
+        yield* initialize();
+        const databaseKey = organizationDatabaseKey(input.selection.organizationId);
+        yield* acquireWorkspaceLease(databaseKey);
+
+        const assertActiveBinding = (database: NodeSqlite.DatabaseSync): WorkspaceRow => {
+          const organization = database
+            .prepare("SELECT state FROM marketing_organizations WHERE id = ?")
+            .get(input.selection.organizationId) as unknown as
+            | { readonly state: "active" | "deleting" | "deleted" }
+            | undefined;
+          if (organization?.state !== "active") {
+            throw new MarketingWorkspaceUnavailableError({ reason: "organization_unavailable" });
+          }
+          const project = database
+            .prepare(
+              "SELECT organization_id AS organizationId, state FROM marketing_projects WHERE id = ?",
+            )
+            .get(input.selection.projectId) as unknown as
+            | { readonly organizationId: string; readonly state: "active" | "deleted" }
+            | undefined;
+          if (project?.state !== "active") {
+            throw new MarketingWorkspaceUnavailableError({ reason: "project_unavailable" });
+          }
+          if (project.organizationId !== input.selection.organizationId) {
+            throw new MarketingWorkspaceCrossOrganizationError({});
+          }
+          const workspace = database
+            .prepare(
+              `SELECT organization_id AS organizationId, project_id AS projectId,
+                      id AS workspaceId, database_key AS databaseKey, state, origin
+               FROM marketing_workspaces WHERE id = ?`,
+            )
+            .get(input.selection.workspaceId) as unknown as WorkspaceRow | undefined;
+          if (workspace?.state !== "active") {
+            throw new MarketingWorkspaceUnavailableError({ reason: "workspace_unavailable" });
+          }
+          if (
+            workspace.organizationId !== input.selection.organizationId ||
+            workspace.projectId !== input.selection.projectId
+          ) {
+            throw new MarketingWorkspaceCrossOrganizationError({});
+          }
+          if (workspace.databaseKey !== databaseKey) {
+            throw new MarketingWorkspaceUnavailableError({
+              reason: "workspace_database_identity_mismatch",
+            });
+          }
+          return workspace;
+        };
+
+        yield* withDatabase(controlDatabasePath, "read_join_workspace", (database) =>
+          Effect.try({
+            try: () => assertActiveBinding(database),
+            catch: (cause) => mapStoreCause("read_join_workspace", cause),
+          }),
+        );
+        const databasePath = organizationWorkspaceDatabasePath(
+          stateRoot,
+          input.selection.organizationId,
+        );
+        if (!NodeFS.existsSync(databasePath)) {
+          return yield* new MarketingWorkspaceUnavailableError({
+            reason: "workspace_database_missing",
+          });
+        }
+        yield* withDatabase(databasePath, "verify_join_workspace", (database) =>
+          Effect.try({
+            try: () =>
+              verifyOrganizationDatabase(database, {
+                selection: input.selection,
+                databaseKey,
+              }),
+            catch: (cause) => mapStoreCause("verify_join_workspace", cause),
+          }),
+        );
+
+        const nowIso = DateTime.formatIso(yield* DateTime.now);
+        const marketingActorId = yield* withDatabase(
+          controlDatabasePath,
+          "join_organization",
+          (database) =>
+            Effect.try({
+              try: () =>
+                runTransaction(database, () => {
+                  const workspace = assertActiveBinding(database);
+                  const existingActor = database
+                    .prepare(
+                      `SELECT id, status FROM marketing_actors
+                       WHERE t3_actor_issuer = ? AND t3_actor_subject = ?`,
+                    )
+                    .get(actor.issuer, actor.subject) as unknown as ActorRow | undefined;
+                  if (existingActor?.status === "revoked") {
+                    throw new MarketingActorResolutionError({ reason: "actor_binding_revoked" });
+                  }
+                  const actorId =
+                    existingActor === undefined
+                      ? makeMarketingActorId()
+                      : (existingActor.id as MarketingActorId);
+                  database
+                    .prepare(
+                      `INSERT OR IGNORE INTO marketing_actors(
+                         id, t3_actor_issuer, t3_actor_subject, status, created_at
+                       ) VALUES (?, ?, ?, 'active', ?)`,
+                    )
+                    .run(actorId, actor.issuer, actor.subject, nowIso);
+                  const membership = database
+                    .prepare(
+                      `SELECT status FROM marketing_organization_memberships
+                       WHERE organization_id = ? AND marketing_actor_id = ?`,
+                    )
+                    .get(input.selection.organizationId, actorId) as unknown as
+                    | MembershipRow
+                    | undefined;
+                  if (membership?.status === "revoked") {
+                    throw new MarketingActorResolutionError({ reason: "membership_revoked" });
+                  }
+                  database
+                    .prepare(
+                      `INSERT OR IGNORE INTO marketing_organization_memberships(
+                         organization_id, marketing_actor_id, status, bound_at
+                       ) VALUES (?, ?, 'active', ?)`,
+                    )
+                    .run(input.selection.organizationId, actorId, nowIso);
+                  return { actorId, workspace };
+                }),
+              catch: (cause) => mapStoreCause("join_organization", cause),
+            }),
+        );
+        return {
+          marketingActorId: marketingActorId.actorId,
+          selection: input.selection,
+          databaseKey: marketingActorId.workspace.databaseKey,
+          state: "active",
+          origin: marketingActorId.workspace.origin,
+        };
+      }),
+    );
+
+  const resolveWithPermission = <A, E, R>(
+    input: MarketingWorkspaceResolutionInput<RequestAuthority>,
+    requirement: MarketingWorkspaceAuthorizationRequirement,
+    use: (workspace: ResolvedOrganizationWorkspaceDatabase) => Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E | OrganizationWorkspaceStoreError, R> =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const actor = yield* authorize(input.requestAuthority, requirement);
+        yield* initialize();
+        const resolved = yield* withDatabase(controlDatabasePath, "resolve_workspace", (database) =>
+          Effect.try({
+            try: () => {
+              const actorRow = database
+                .prepare(
+                  `SELECT id, status FROM marketing_actors
+                 WHERE t3_actor_issuer = ? AND t3_actor_subject = ?`,
+                )
+                .get(actor.issuer, actor.subject) as unknown as ActorRow | undefined;
+              if (actorRow === undefined) {
+                throw new MarketingActorResolutionError({ reason: "actor_binding_missing" });
+              }
+              if (actorRow.status !== "active") {
+                throw new MarketingActorResolutionError({ reason: "actor_binding_revoked" });
+              }
+
+              const membership = database
+                .prepare(
+                  `SELECT status FROM marketing_organization_memberships
+                 WHERE organization_id = ? AND marketing_actor_id = ?`,
+                )
+                .get(input.selection.organizationId, actorRow.id) as unknown as
+                | MembershipRow
+                | undefined;
+              if (membership === undefined) {
+                throw new MarketingActorResolutionError({ reason: "membership_missing" });
+              }
+              if (membership.status !== "active") {
+                throw new MarketingActorResolutionError({ reason: "membership_revoked" });
+              }
+
+              const organization = database
+                .prepare("SELECT state FROM marketing_organizations WHERE id = ?")
+                .get(input.selection.organizationId) as unknown as
+                | { readonly state: "active" | "deleting" | "deleted" }
+                | undefined;
+              if (organization?.state !== "active") {
+                throw new MarketingWorkspaceUnavailableError({
+                  reason: "organization_unavailable",
+                });
+              }
+
+              const project = database
+                .prepare(
+                  "SELECT organization_id AS organizationId, state FROM marketing_projects WHERE id = ?",
+                )
+                .get(input.selection.projectId) as unknown as
+                | { readonly organizationId: string; readonly state: "active" | "deleted" }
+                | undefined;
+              if (project === undefined || project.state !== "active") {
+                throw new MarketingWorkspaceUnavailableError({ reason: "project_unavailable" });
+              }
+              if (project.organizationId !== input.selection.organizationId) {
+                throw new MarketingWorkspaceCrossOrganizationError({});
+              }
+
+              const workspace = database
+                .prepare(
+                  `SELECT organization_id AS organizationId, project_id AS projectId,
+                        id AS workspaceId, database_key AS databaseKey, state, origin
+                 FROM marketing_workspaces WHERE id = ?`,
+                )
+                .get(input.selection.workspaceId) as unknown as WorkspaceRow | undefined;
+              if (workspace === undefined || workspace.state !== "active") {
+                throw new MarketingWorkspaceUnavailableError({ reason: "workspace_unavailable" });
+              }
+              if (
+                workspace.organizationId !== input.selection.organizationId ||
+                workspace.projectId !== input.selection.projectId
+              ) {
+                throw new MarketingWorkspaceCrossOrganizationError({});
+              }
+              const expectedKey = organizationDatabaseKey(input.selection.organizationId);
+              if (workspace.databaseKey !== expectedKey) {
+                throw new MarketingWorkspaceUnavailableError({
+                  reason: "workspace_database_identity_mismatch",
+                });
+              }
+              return {
+                marketingActorId: actorRow.id as MarketingActorId,
+                databaseKey: workspace.databaseKey,
+              };
+            },
+            catch: (cause) => mapStoreCause("resolve_workspace", cause),
+          }),
+        );
+
+        yield* acquireWorkspaceLease(resolved.databaseKey);
+
+        const databasePath = organizationWorkspaceDatabasePath(
+          stateRoot,
+          input.selection.organizationId,
+        );
         const exists = yield* Effect.sync(() => NodeFS.existsSync(databasePath));
         if (!exists) {
           return yield* new MarketingWorkspaceUnavailableError({
             reason: "workspace_database_missing",
           });
         }
-        yield* withDatabase(databasePath, "verify_completed_provision", (database) =>
+
+        return yield* withDatabase(databasePath, "open_workspace_database", (database) =>
           Effect.try({
             try: () =>
               verifyOrganizationDatabase(database, {
                 selection: input.selection,
-                databaseKey: prepared.databaseKey,
+                databaseKey: resolved.databaseKey,
               }),
-            catch: (cause) => mapStoreCause("verify_completed_provision", cause),
-          }),
-        );
-        return {
-          marketingActorId: input.marketingActorId,
-          selection: input.selection,
-          databaseKey: prepared.databaseKey,
-          state: "active",
-          origin,
-        };
-      }
-
-      const existedBefore = NodeFS.existsSync(databasePath);
-      const provisionDatabase =
-        origin === "managed"
-          ? Effect.try({
-              try: () => NodeFS.mkdirSync(NodePath.dirname(databasePath), { recursive: true }),
-              catch: (cause) =>
-                new MarketingWorkspaceStoreError({
-                  operation: "create_workspace_directory",
-                  cause,
-                }),
-            }).pipe(
-              Effect.andThen(
-                withDatabase(databasePath, "migrate_workspace_database", (database) =>
-                  Effect.try({
-                    try: () =>
-                      migrateManagedOrganizationDatabase(database, {
-                        selection: input.selection,
-                        databaseKey: prepared.databaseKey,
-                      }),
-                    catch: (cause) => mapStoreCause("migrate_workspace_database", cause),
-                  }),
-                ),
-              ),
-            )
-          : existedBefore
-            ? withDatabase(databasePath, "verify_backfill_database", (database) =>
-                Effect.try({
-                  try: () =>
-                    verifyOrganizationDatabase(database, {
-                      selection: input.selection,
-                      databaseKey: prepared.databaseKey,
-                    }),
-                  catch: (cause) => mapStoreCause("verify_backfill_database", cause),
-                }),
-              )
-            : Effect.fail(
-                new MarketingWorkspaceUnavailableError({
-                  reason: "workspace_database_missing",
-                }),
-              );
-
-      const result = yield* Effect.result(provisionDatabase);
-      if (result._tag === "Failure") {
-        if (origin === "managed" && !existedBefore) {
-          yield* Effect.try({
-            try: () => removeDatabaseFiles(databasePath),
-            catch: (cause) =>
-              new MarketingWorkspaceStoreError({ operation: "rollback_workspace_files", cause }),
-          }).pipe(Effect.ignore);
-        }
-        yield* failControlProvision(input, nowIso);
-        return yield* result.failure;
-      }
-
-      yield* finishControlProvision(input, nowIso);
-      return {
-        marketingActorId: input.marketingActorId,
-        selection: input.selection,
-        databaseKey: prepared.databaseKey,
-        state: "active",
-        origin,
-      };
-    },
-  );
-
-  const provision: OrganizationWorkspaceStore["provision"] = (input) =>
-    provisionWithOrigin(input, "managed");
-
-  const backfill: OrganizationWorkspaceStore["backfill"] = (input) =>
-    provisionWithOrigin(input, "backfilled");
-
-  const resolve: OrganizationWorkspaceStore["resolve"] = (input, use) =>
-    Effect.gen(function* () {
-      yield* initialize();
-      const now = yield* DateTime.now;
-      const actor = yield* assertFreshVerifiedActor(input.actor, now);
-      const resolved = yield* withDatabase(controlDatabasePath, "resolve_workspace", (database) =>
-        Effect.try({
-          try: () => {
-            const actorRow = database
-              .prepare(
-                `SELECT id, status FROM marketing_actors
-                 WHERE t3_actor_issuer = ? AND t3_actor_subject = ?`,
-              )
-              .get(actor.issuer, actor.subject) as unknown as ActorRow | undefined;
-            if (actorRow === undefined) {
-              throw new MarketingActorResolutionError({ reason: "actor_binding_missing" });
-            }
-            if (actorRow.status !== "active") {
-              throw new MarketingActorResolutionError({ reason: "actor_binding_revoked" });
-            }
-
-            const membership = database
-              .prepare(
-                `SELECT status FROM marketing_organization_memberships
-                 WHERE organization_id = ? AND marketing_actor_id = ?`,
-              )
-              .get(input.selection.organizationId, actorRow.id) as unknown as
-              | MembershipRow
-              | undefined;
-            if (membership === undefined) {
-              throw new MarketingActorResolutionError({ reason: "membership_missing" });
-            }
-            if (membership.status !== "active") {
-              throw new MarketingActorResolutionError({ reason: "membership_revoked" });
-            }
-
-            const organization = database
-              .prepare("SELECT state FROM marketing_organizations WHERE id = ?")
-              .get(input.selection.organizationId) as unknown as
-              | { readonly state: "active" | "deleting" | "deleted" }
-              | undefined;
-            if (organization?.state !== "active") {
-              throw new MarketingWorkspaceUnavailableError({
-                reason: "organization_unavailable",
-              });
-            }
-
-            const project = database
-              .prepare(
-                "SELECT organization_id AS organizationId, state FROM marketing_projects WHERE id = ?",
-              )
-              .get(input.selection.projectId) as unknown as
-              | { readonly organizationId: string; readonly state: "active" | "deleted" }
-              | undefined;
-            if (project === undefined || project.state !== "active") {
-              throw new MarketingWorkspaceUnavailableError({ reason: "project_unavailable" });
-            }
-            if (project.organizationId !== input.selection.organizationId) {
-              throw new MarketingWorkspaceCrossOrganizationError({});
-            }
-
-            const workspace = database
-              .prepare(
-                `SELECT organization_id AS organizationId, project_id AS projectId,
-                        id AS workspaceId, database_key AS databaseKey, state, origin
-                 FROM marketing_workspaces WHERE id = ?`,
-              )
-              .get(input.selection.workspaceId) as unknown as WorkspaceRow | undefined;
-            if (workspace === undefined || workspace.state !== "active") {
-              throw new MarketingWorkspaceUnavailableError({ reason: "workspace_unavailable" });
-            }
-            if (
-              workspace.organizationId !== input.selection.organizationId ||
-              workspace.projectId !== input.selection.projectId
-            ) {
-              throw new MarketingWorkspaceCrossOrganizationError({});
-            }
-            const expectedKey = organizationDatabaseKey(input.selection.organizationId);
-            if (workspace.databaseKey !== expectedKey) {
-              throw new MarketingWorkspaceUnavailableError({
-                reason: "workspace_database_identity_mismatch",
-              });
-            }
-            return {
-              marketingActorId: actorRow.id as MarketingActorId,
-              databaseKey: workspace.databaseKey,
-            };
-          },
-          catch: (cause) => mapStoreCause("resolve_workspace", cause),
-        }),
-      );
-
-      const databasePath = organizationWorkspaceDatabasePath(
-        stateRoot,
-        input.selection.organizationId,
-      );
-      const exists = yield* Effect.sync(() => NodeFS.existsSync(databasePath));
-      if (!exists) {
-        return yield* new MarketingWorkspaceUnavailableError({
-          reason: "workspace_database_missing",
-        });
-      }
-
-      return yield* withDatabase(databasePath, "open_workspace_database", (database) =>
-        Effect.try({
-          try: () =>
-            verifyOrganizationDatabase(database, {
-              selection: input.selection,
-              databaseKey: resolved.databaseKey,
-            }),
-          catch: (cause) => mapStoreCause("verify_workspace_database", cause),
-        }).pipe(
-          Effect.andThen(
-            use({
-              marketingActorId: resolved.marketingActorId,
-              selection: input.selection,
-              databaseKey: resolved.databaseKey,
-              databasePath,
-              database,
-            }),
-          ),
-        ),
-      );
-    });
-
-  const revokeMembership: OrganizationWorkspaceStore["revokeMembership"] = (input) =>
-    initialize().pipe(
-      Effect.andThen(
-        DateTime.now.pipe(
-          Effect.map(DateTime.formatIso),
-          Effect.flatMap((nowIso) =>
-            withDatabase(controlDatabasePath, "revoke_membership", (database) =>
-              Effect.try({
-                try: () => {
-                  const result = database
-                    .prepare(
-                      `UPDATE marketing_organization_memberships
-                       SET status = 'revoked', revoked_at = ?
-                       WHERE organization_id = ? AND marketing_actor_id = ? AND status = 'active'`,
-                    )
-                    .run(nowIso, input.organizationId, input.marketingActorId);
-                  return result.changes > 0;
-                },
-                catch: (cause) =>
-                  new MarketingWorkspaceStoreError({ operation: "revoke_membership", cause }),
+            catch: (cause) => mapStoreCause("verify_workspace_database", cause),
+          }).pipe(
+            Effect.andThen(
+              use({
+                marketingActorId: resolved.marketingActorId,
+                selection: input.selection,
+                databaseKey: resolved.databaseKey,
+                databasePath,
+                database,
               }),
             ),
           ),
-        ),
-      ),
+        );
+      }),
     );
 
-  const rollbackProvisioning: OrganizationWorkspaceStore["rollbackProvisioning"] = (selection) =>
-    Effect.gen(function* () {
-      yield* initialize();
-      const databasePath = organizationWorkspaceDatabasePath(stateRoot, selection.organizationId);
-      const nowIso = DateTime.formatIso(yield* DateTime.now);
-      const workspace = yield* withDatabase(
-        controlDatabasePath,
-        "read_rollback_workspace",
-        (database) =>
-          Effect.try({
-            try: () =>
-              database
-                .prepare(
-                  `SELECT organization_id AS organizationId, project_id AS projectId,
-                        id AS workspaceId, database_key AS databaseKey, state, origin
-                 FROM marketing_workspaces WHERE id = ?`,
-                )
-                .get(selection.workspaceId) as unknown as WorkspaceRow | undefined,
-            catch: (cause) =>
-              new MarketingWorkspaceStoreError({ operation: "read_rollback_workspace", cause }),
-          }),
-      );
-      if (workspace === undefined || workspace.state === "rolled_back") {
-        return false;
-      }
-      if (
-        workspace.organizationId !== selection.organizationId ||
-        workspace.projectId !== selection.projectId
-      ) {
-        return yield* new MarketingWorkspaceCrossOrganizationError({});
-      }
-      if (workspace.state === "active" || workspace.state === "deleting") {
-        return yield* new MarketingWorkspaceConflictError({
-          reason: "active_workspace_cannot_be_rolled_back",
-        });
-      }
-      if (workspace.origin === "managed") {
-        yield* Effect.try({
-          try: () => removeDatabaseFiles(databasePath),
-          catch: (cause) =>
-            new MarketingWorkspaceStoreError({ operation: "rollback_workspace_files", cause }),
-        });
-      }
-      yield* withDatabase(controlDatabasePath, "finish_rollback", (database) =>
-        Effect.try({
-          try: () =>
-            database
-              .prepare(
-                `UPDATE marketing_workspaces SET state = 'rolled_back', updated_at = ?
-                 WHERE id = ?`,
-              )
-              .run(nowIso, selection.workspaceId),
-          catch: (cause) =>
-            new MarketingWorkspaceStoreError({ operation: "finish_rollback", cause }),
-        }),
-      );
-      return true;
-    });
+  const resolve: OrganizationWorkspaceStore<RequestAuthority>["resolve"] = (input, use) =>
+    resolveWithPermission(
+      input,
+      { permission: "resolve-workspace", selection: input.selection },
+      use,
+    );
 
-  const deleteOrganizationWorkspace: OrganizationWorkspaceStore["deleteOrganizationWorkspace"] = (
-    selection,
+  const revokeMembership: OrganizationWorkspaceStore<RequestAuthority>["revokeMembership"] = (
+    input,
   ) =>
     Effect.gen(function* () {
+      yield* authorize(input.requestAuthority, {
+        permission: "revoke-membership",
+        selection: input.selection,
+        targetMarketingActorId: input.targetMarketingActorId,
+      });
       yield* initialize();
       const nowIso = DateTime.formatIso(yield* DateTime.now);
-      const databasePath = organizationWorkspaceDatabasePath(stateRoot, selection.organizationId);
-      const changed = yield* withDatabase(
-        controlDatabasePath,
-        "begin_workspace_deletion",
-        (database) =>
-          Effect.try({
-            try: () =>
-              runTransaction(database, () => {
-                const workspace = database
-                  .prepare(
-                    `SELECT organization_id AS organizationId, project_id AS projectId,
-                            id AS workspaceId, database_key AS databaseKey, state, origin
-                     FROM marketing_workspaces WHERE id = ?`,
-                  )
-                  .get(selection.workspaceId) as unknown as WorkspaceRow | undefined;
-                if (workspace === undefined || workspace.state === "deleted") {
+      return yield* withDatabase(controlDatabasePath, "revoke_membership", (database) =>
+        Effect.try({
+          try: () =>
+            runTransaction(database, () => {
+              const workspace = database
+                .prepare(
+                  `SELECT organization_id AS organizationId, project_id AS projectId,
+                          id AS workspaceId, database_key AS databaseKey, state, origin
+                   FROM marketing_workspaces WHERE id = ?`,
+                )
+                .get(input.selection.workspaceId) as unknown as WorkspaceRow | undefined;
+              if (workspace?.state !== "active") {
+                throw new MarketingWorkspaceUnavailableError({ reason: "workspace_unavailable" });
+              }
+              if (
+                workspace.organizationId !== input.selection.organizationId ||
+                workspace.projectId !== input.selection.projectId
+              ) {
+                throw new MarketingWorkspaceCrossOrganizationError({});
+              }
+              const result = database
+                .prepare(
+                  `UPDATE marketing_organization_memberships
+                   SET status = 'revoked', revoked_at = ?
+                   WHERE organization_id = ? AND marketing_actor_id = ? AND status = 'active'`,
+                )
+                .run(nowIso, input.selection.organizationId, input.targetMarketingActorId);
+              return result.changes > 0;
+            }),
+          catch: (cause) => mapStoreCause("revoke_membership", cause),
+        }),
+      );
+    });
+
+  const rollbackProvisioning: OrganizationWorkspaceStore<RequestAuthority>["rollbackProvisioning"] =
+    (input) =>
+      Effect.gen(function* () {
+        yield* authorize(input.requestAuthority, {
+          permission: "rollback-provisioning",
+          selection: input.selection,
+        });
+        yield* initialize();
+        const databaseKey = organizationDatabaseKey(input.selection.organizationId);
+        const databasePath = organizationWorkspaceDatabasePath(
+          stateRoot,
+          input.selection.organizationId,
+        );
+        const nowIso = DateTime.formatIso(yield* DateTime.now);
+        const deletionLock = yield* getDeletionLock(databaseKey);
+        return yield* deletionLock.withPermits(1)(
+          Effect.gen(function* () {
+            let controlMarked = false;
+            const attempt = Effect.uninterruptibleMask((restore) =>
+              Effect.gen(function* () {
+                const gate = yield* beginExclusiveDeletion(databaseKey);
+                const rollback = yield* withDatabase(
+                  controlDatabasePath,
+                  "begin_provisioning_rollback",
+                  (database) =>
+                    Effect.try({
+                      try: () =>
+                        runTransaction(database, () => {
+                          const workspace = database
+                            .prepare(
+                              `SELECT organization_id AS organizationId,
+                                      project_id AS projectId,
+                                      id AS workspaceId,
+                                      database_key AS databaseKey,
+                                      state,
+                                      origin
+                               FROM marketing_workspaces WHERE id = ?`,
+                            )
+                            .get(input.selection.workspaceId) as unknown as
+                            | WorkspaceRow
+                            | undefined;
+                          if (workspace === undefined || workspace.state === "deleted") {
+                            return { kind: "complete" as const };
+                          }
+                          if (
+                            workspace.organizationId !== input.selection.organizationId ||
+                            workspace.projectId !== input.selection.projectId
+                          ) {
+                            throw new MarketingWorkspaceCrossOrganizationError({});
+                          }
+                          if (workspace.databaseKey !== databaseKey) {
+                            throw new MarketingWorkspaceUnavailableError({
+                              reason: "workspace_database_identity_mismatch",
+                            });
+                          }
+                          const organization = database
+                            .prepare("SELECT state FROM marketing_organizations WHERE id = ?")
+                            .get(input.selection.organizationId) as unknown as
+                            | { readonly state: "active" | "deleting" | "deleted" }
+                            | undefined;
+                          if (
+                            workspace.state === "rolled_back" &&
+                            organization?.state === "deleted"
+                          ) {
+                            return { kind: "complete" as const };
+                          }
+                          if (workspace.state === "active") {
+                            throw new MarketingWorkspaceConflictError({
+                              reason: "active_workspace_cannot_be_rolled_back",
+                            });
+                          }
+                          if (workspace.state === "deleting") {
+                            throw new MarketingWorkspaceConflictError({
+                              reason: "workspace_deletion_in_progress",
+                            });
+                          }
+                          if (organization === undefined || organization.state === "deleted") {
+                            throw new MarketingWorkspaceConflictError({
+                              reason: "organization_rollback_state_stale",
+                            });
+                          }
+
+                          database
+                            .prepare(
+                              `UPDATE marketing_workspaces
+                               SET state = 'rolled_back', updated_at = ?
+                               WHERE id = ?`,
+                            )
+                            .run(nowIso, input.selection.workspaceId);
+                          database
+                            .prepare(
+                              `UPDATE marketing_organizations
+                               SET state = 'deleting'
+                               WHERE id = ? AND state <> 'deleting'`,
+                            )
+                            .run(input.selection.organizationId);
+                          database
+                            .prepare(
+                              `UPDATE marketing_identity_operations
+                               SET state = 'failed', updated_at = ?
+                               WHERE organization_id = ? AND workspace_id = ?`,
+                            )
+                            .run(
+                              nowIso,
+                              input.selection.organizationId,
+                              input.selection.workspaceId,
+                            );
+                          return { kind: "rollback" as const, origin: workspace.origin };
+                        }),
+                      catch: (cause) => mapStoreCause("begin_provisioning_rollback", cause),
+                    }),
+                );
+                if (rollback.kind === "complete") {
+                  yield* restore(Deferred.await(gate.drain));
+                  yield* finishExclusiveDeletion(databaseKey);
                   return false;
                 }
-                if (
-                  workspace.organizationId !== selection.organizationId ||
-                  workspace.projectId !== selection.projectId
-                ) {
-                  throw new MarketingWorkspaceCrossOrganizationError({});
-                }
-                database
-                  .prepare(
-                    `UPDATE marketing_workspaces SET state = 'deleting', updated_at = ? WHERE id = ?`,
-                  )
-                  .run(nowIso, selection.workspaceId);
-                database
-                  .prepare(`UPDATE marketing_organizations SET state = 'deleting' WHERE id = ?`)
-                  .run(selection.organizationId);
-                return true;
-              }),
-            catch: (cause) => mapStoreCause("begin_workspace_deletion", cause),
-          }),
-      );
-      if (!changed) return false;
+                controlMarked = true;
 
-      yield* Effect.try({
-        try: () => removeDatabaseFiles(databasePath),
-        catch: (cause) =>
-          new MarketingWorkspaceStoreError({ operation: "delete_workspace_files", cause }),
-      });
-      yield* withDatabase(controlDatabasePath, "finish_workspace_deletion", (database) =>
-        Effect.try({
-          try: () =>
-            runTransaction(database, () => {
-              database
-                .prepare(
-                  `UPDATE marketing_workspaces
-                     SET state = 'deleted', updated_at = ?, deleted_at = ? WHERE id = ?`,
-                )
-                .run(nowIso, nowIso, selection.workspaceId);
-              database
-                .prepare(
-                  `UPDATE marketing_projects SET state = 'deleted', deleted_at = ? WHERE id = ?`,
-                )
-                .run(nowIso, selection.projectId);
-              database
-                .prepare(
-                  `UPDATE marketing_organizations SET state = 'deleted', deleted_at = ? WHERE id = ?`,
-                )
-                .run(nowIso, selection.organizationId);
-            }),
-          catch: (cause) =>
-            new MarketingWorkspaceStoreError({ operation: "finish_workspace_deletion", cause }),
-        }),
-      );
-      return true;
-    });
+                yield* restore(Deferred.await(gate.drain));
 
-  const linkT3Reference: OrganizationWorkspaceStore["linkT3Reference"] = (input) =>
-    Effect.gen(function* () {
-      yield* resolve({ actor: input.actor, selection: input.selection }, () => Effect.void);
-      const now = yield* DateTime.now;
-      if (
-        input.expiresAt !== undefined &&
-        input.expiresAt.epochMilliseconds <= now.epochMilliseconds
-      ) {
-        return yield* new MarketingWorkspaceConflictError({
-          reason: "t3_reference_already_expired",
-        });
-      }
-      const nowIso = DateTime.formatIso(now);
-      return yield* withDatabase(controlDatabasePath, "link_t3_reference", (database) =>
-        Effect.try({
-          try: () =>
-            runTransaction(database, () => {
-              const existingById = database
-                .prepare(
-                  `SELECT id AS bindingId, organization_id AS organizationId,
-                          target_kind AS targetKind, target_id AS targetId,
-                          reference_kind AS referenceKind, reference_value AS referenceValue,
-                          state, linked_at AS linkedAt, expires_at AS expiresAt,
-                          stale_at AS staleAt, deleted_at AS deletedAt
-                   FROM marketing_t3_reference_bindings WHERE id = ?`,
-                )
-                .get(input.bindingId) as unknown as T3ReferenceRow | undefined;
-              if (existingById !== undefined) {
-                if (existingById.organizationId !== input.selection.organizationId) {
-                  throw new MarketingWorkspaceCrossOrganizationError({});
-                }
-                if (
-                  existingById.targetKind !== input.target.kind ||
-                  existingById.targetId !== input.target.id ||
-                  existingById.referenceKind !== input.reference.kind ||
-                  existingById.referenceValue !== input.reference.value ||
-                  existingById.state !== "active"
-                ) {
-                  throw new MarketingWorkspaceConflictError({
-                    reason: "t3_reference_binding_conflict",
+                if (rollback.origin === "managed") {
+                  yield* Effect.try({
+                    try: () => removeDatabaseFiles(databasePath),
+                    catch: (cause) =>
+                      new MarketingWorkspaceStoreError({
+                        operation: "rollback_workspace_files",
+                        cause,
+                      }),
                   });
                 }
-                return t3ReferenceLifecycleFromRow(existingById);
-              }
-
-              database
-                .prepare(
-                  `INSERT INTO marketing_t3_reference_bindings(
-                     id, organization_id, target_kind, target_id,
-                     reference_kind, reference_value, state, linked_at, expires_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
-                )
-                .run(
-                  input.bindingId,
-                  input.selection.organizationId,
-                  input.target.kind,
-                  input.target.id,
-                  input.reference.kind,
-                  input.reference.value,
-                  nowIso,
-                  input.expiresAt === undefined ? null : DateTime.formatIso(input.expiresAt),
+                yield* withDatabase(
+                  controlDatabasePath,
+                  "finish_provisioning_rollback",
+                  (database) =>
+                    Effect.try({
+                      try: () =>
+                        runTransaction(database, () => {
+                          database
+                            .prepare(
+                              `UPDATE marketing_organization_memberships
+                             SET status = 'revoked', revoked_at = COALESCE(revoked_at, ?)
+                             WHERE organization_id = ?`,
+                            )
+                            .run(nowIso, input.selection.organizationId);
+                          database
+                            .prepare(
+                              `UPDATE marketing_t3_reference_bindings
+                             SET state = 'deleted', reference_kind = NULL, reference_value = NULL,
+                                 expires_at = NULL, deleted_at = COALESCE(deleted_at, ?)
+                             WHERE organization_id = ?`,
+                            )
+                            .run(nowIso, input.selection.organizationId);
+                          database
+                            .prepare(
+                              `UPDATE marketing_identity_operations
+                             SET state = 'failed', updated_at = ?
+                             WHERE organization_id = ? AND workspace_id = ?`,
+                            )
+                            .run(
+                              nowIso,
+                              input.selection.organizationId,
+                              input.selection.workspaceId,
+                            );
+                          database
+                            .prepare(
+                              `UPDATE marketing_workspaces
+                             SET state = 'rolled_back', updated_at = ?, deleted_at = ?
+                             WHERE id = ?`,
+                            )
+                            .run(nowIso, nowIso, input.selection.workspaceId);
+                          database
+                            .prepare(
+                              `UPDATE marketing_projects
+                             SET state = 'deleted', deleted_at = COALESCE(deleted_at, ?)
+                             WHERE id = ?`,
+                            )
+                            .run(nowIso, input.selection.projectId);
+                          database
+                            .prepare(
+                              `UPDATE marketing_organizations
+                             SET state = 'deleted', deleted_at = COALESCE(deleted_at, ?)
+                             WHERE id = ?`,
+                            )
+                            .run(nowIso, input.selection.organizationId);
+                        }),
+                      catch: (cause) => mapStoreCause("finish_provisioning_rollback", cause),
+                    }),
                 );
-              const row = readT3ReferenceRow(
-                database,
-                input.selection.organizationId,
-                input.bindingId,
-              );
-              if (row === undefined) {
-                throw new MarketingWorkspaceConflictError({
-                  reason: "t3_reference_write_not_visible",
-                });
-              }
-              return t3ReferenceLifecycleFromRow(row);
-            }),
-          catch: (cause) => mapStoreCause("link_t3_reference", cause),
-        }),
-      );
-    });
+                yield* finishExclusiveDeletion(databaseKey);
+                return true;
+              }),
+            );
+            return yield* attempt.pipe(
+              Effect.onExit(() =>
+                controlMarked ? Effect.void : abortExclusiveDeletion(databaseKey),
+              ),
+            );
+          }),
+        );
+      });
 
-  const markT3ReferenceStale: OrganizationWorkspaceStore["markT3ReferenceStale"] = (input) =>
-    Effect.gen(function* () {
-      yield* resolve({ actor: input.actor, selection: input.selection }, () => Effect.void);
-      const nowIso = DateTime.formatIso(yield* DateTime.now);
-      return yield* withDatabase(controlDatabasePath, "mark_t3_reference_stale", (database) =>
-        Effect.try({
-          try: () =>
-            runTransaction(database, () => {
-              const existing = readT3ReferenceRow(
-                database,
-                input.selection.organizationId,
-                input.bindingId,
+  const deleteOrganizationWorkspace: OrganizationWorkspaceStore<RequestAuthority>["deleteOrganizationWorkspace"] =
+    (input) =>
+      Effect.gen(function* () {
+        yield* authorize(input.requestAuthority, {
+          permission: "delete-workspace",
+          selection: input.selection,
+        });
+        yield* initialize();
+        const nowIso = DateTime.formatIso(yield* DateTime.now);
+        const databaseKey = organizationDatabaseKey(input.selection.organizationId);
+        const databasePath = organizationWorkspaceDatabasePath(
+          stateRoot,
+          input.selection.organizationId,
+        );
+        const deletionLock = yield* getDeletionLock(databaseKey);
+        return yield* deletionLock.withPermits(1)(
+          Effect.gen(function* () {
+            let controlMarked = false;
+            const attempt = Effect.gen(function* () {
+              const gate = yield* beginExclusiveDeletion(databaseKey);
+              const changed = yield* withDatabase(
+                controlDatabasePath,
+                "begin_workspace_deletion",
+                (database) =>
+                  Effect.try({
+                    try: () =>
+                      runTransaction(database, () => {
+                        const workspace = database
+                          .prepare(
+                            `SELECT organization_id AS organizationId, project_id AS projectId,
+                              id AS workspaceId, database_key AS databaseKey, state, origin
+                       FROM marketing_workspaces WHERE id = ?`,
+                          )
+                          .get(input.selection.workspaceId) as unknown as WorkspaceRow | undefined;
+                        if (
+                          workspace === undefined ||
+                          workspace.state === "deleted" ||
+                          workspace.state === "rolled_back"
+                        ) {
+                          return false;
+                        }
+                        if (
+                          workspace.organizationId !== input.selection.organizationId ||
+                          workspace.projectId !== input.selection.projectId
+                        ) {
+                          throw new MarketingWorkspaceCrossOrganizationError({});
+                        }
+                        if (workspace.databaseKey !== databaseKey) {
+                          throw new MarketingWorkspaceUnavailableError({
+                            reason: "workspace_database_identity_mismatch",
+                          });
+                        }
+                        if (
+                          workspace.state === "provisioning" ||
+                          workspace.state === "unavailable"
+                        ) {
+                          throw new MarketingWorkspaceConflictError({
+                            reason: "workspace_requires_provisioning_rollback",
+                          });
+                        }
+                        database
+                          .prepare(
+                            `UPDATE marketing_workspaces
+                       SET state = 'deleting', updated_at = ?
+                       WHERE id = ? AND state <> 'deleting'`,
+                          )
+                          .run(nowIso, input.selection.workspaceId);
+                        database
+                          .prepare(
+                            `UPDATE marketing_organizations SET state = 'deleting'
+                       WHERE id = ? AND state <> 'deleting'`,
+                          )
+                          .run(input.selection.organizationId);
+                        return true;
+                      }),
+                    catch: (cause) => mapStoreCause("begin_workspace_deletion", cause),
+                  }),
               );
-              if (existing === undefined) {
-                throw new MarketingWorkspaceConflictError({
-                  reason: "t3_reference_binding_missing",
-                });
+              if (!changed) {
+                yield* Deferred.await(gate.drain);
+                yield* finishExclusiveDeletion(databaseKey);
+                return false;
               }
-              if (existing.state === "deleted") {
-                throw new MarketingWorkspaceConflictError({
-                  reason: "deleted_t3_reference_cannot_transition",
-                });
-              }
-              if (existing.state === "active") {
-                database
-                  .prepare(
-                    `UPDATE marketing_t3_reference_bindings
-                     SET state = 'stale', stale_at = ?
-                     WHERE id = ? AND organization_id = ?`,
-                  )
-                  .run(nowIso, input.bindingId, input.selection.organizationId);
-              }
-              const row = readT3ReferenceRow(
-                database,
-                input.selection.organizationId,
-                input.bindingId,
-              );
-              if (row === undefined) {
-                throw new MarketingWorkspaceConflictError({
-                  reason: "t3_reference_write_not_visible",
-                });
-              }
-              return t3ReferenceLifecycleFromRow(row);
-            }),
-          catch: (cause) => mapStoreCause("mark_t3_reference_stale", cause),
-        }),
-      );
-    });
+              controlMarked = true;
 
-  const deleteT3Reference: OrganizationWorkspaceStore["deleteT3Reference"] = (input) =>
-    Effect.gen(function* () {
-      yield* resolve({ actor: input.actor, selection: input.selection }, () => Effect.void);
-      const nowIso = DateTime.formatIso(yield* DateTime.now);
-      return yield* withDatabase(controlDatabasePath, "delete_t3_reference", (database) =>
-        Effect.try({
-          try: () =>
-            runTransaction(database, () => {
-              const existing = readT3ReferenceRow(
-                database,
-                input.selection.organizationId,
-                input.bindingId,
-              );
-              if (existing === undefined) {
-                throw new MarketingWorkspaceConflictError({
-                  reason: "t3_reference_binding_missing",
-                });
-              }
-              if (existing.state !== "deleted") {
-                database
-                  .prepare(
-                    `UPDATE marketing_t3_reference_bindings
+              yield* Deferred.await(gate.drain);
+
+              yield* Effect.try({
+                try: () => removeDatabaseFiles(databasePath),
+                catch: (cause) =>
+                  new MarketingWorkspaceStoreError({ operation: "delete_workspace_files", cause }),
+              });
+              yield* withDatabase(controlDatabasePath, "finish_workspace_deletion", (database) =>
+                Effect.try({
+                  try: () =>
+                    runTransaction(database, () => {
+                      database
+                        .prepare(
+                          `UPDATE marketing_organization_memberships
+                     SET status = 'revoked', revoked_at = COALESCE(revoked_at, ?)
+                     WHERE organization_id = ?`,
+                        )
+                        .run(nowIso, input.selection.organizationId);
+                      database
+                        .prepare(
+                          `UPDATE marketing_t3_reference_bindings
                      SET state = 'deleted', reference_kind = NULL, reference_value = NULL,
-                         expires_at = NULL, deleted_at = ?
-                     WHERE id = ? AND organization_id = ?`,
-                  )
-                  .run(nowIso, input.bindingId, input.selection.organizationId);
-              }
-              const row = readT3ReferenceRow(
-                database,
-                input.selection.organizationId,
-                input.bindingId,
+                         expires_at = NULL, deleted_at = COALESCE(deleted_at, ?)
+                     WHERE organization_id = ?`,
+                        )
+                        .run(nowIso, input.selection.organizationId);
+                      database
+                        .prepare(
+                          `UPDATE marketing_workspaces
+                     SET state = 'deleted', updated_at = ?, deleted_at = ? WHERE id = ?`,
+                        )
+                        .run(nowIso, nowIso, input.selection.workspaceId);
+                      database
+                        .prepare(
+                          `UPDATE marketing_projects SET state = 'deleted', deleted_at = ? WHERE id = ?`,
+                        )
+                        .run(nowIso, input.selection.projectId);
+                      database
+                        .prepare(
+                          `UPDATE marketing_organizations SET state = 'deleted', deleted_at = ? WHERE id = ?`,
+                        )
+                        .run(nowIso, input.selection.organizationId);
+                    }),
+                  catch: (cause) => mapStoreCause("finish_workspace_deletion", cause),
+                }),
               );
-              if (row === undefined) {
-                throw new MarketingWorkspaceConflictError({
-                  reason: "t3_reference_write_not_visible",
-                });
-              }
-              return t3ReferenceLifecycleFromRow(row);
+              yield* finishExclusiveDeletion(databaseKey);
+              return true;
+            });
+            return yield* attempt.pipe(
+              Effect.onExit(() =>
+                controlMarked ? Effect.void : abortExclusiveDeletion(databaseKey),
+              ),
+            );
+          }),
+        );
+      });
+
+  const linkT3Reference: OrganizationWorkspaceStore<RequestAuthority>["linkT3Reference"] = (
+    input,
+  ) =>
+    resolveWithPermission(
+      { requestAuthority: input.requestAuthority, selection: input.selection },
+      {
+        permission: "link-t3-reference",
+        selection: input.selection,
+        bindingId: input.bindingId,
+      },
+      () =>
+        Effect.gen(function* () {
+          const now = yield* DateTime.now;
+          if (
+            input.expiresAt !== undefined &&
+            input.expiresAt.epochMilliseconds <= now.epochMilliseconds
+          ) {
+            return yield* new MarketingWorkspaceConflictError({
+              reason: "t3_reference_already_expired",
+            });
+          }
+          const nowIso = DateTime.formatIso(now);
+          const expiresAtIso =
+            input.expiresAt === undefined ? null : DateTime.formatIso(input.expiresAt);
+          return yield* withDatabase(controlDatabasePath, "link_t3_reference", (database) =>
+            Effect.try({
+              try: () =>
+                runTransaction(database, () => {
+                  const existingById = database
+                    .prepare(
+                      `SELECT id AS bindingId, organization_id AS organizationId,
+                                target_kind AS targetKind, target_id AS targetId,
+                                reference_kind AS referenceKind, reference_value AS referenceValue,
+                                state, linked_at AS linkedAt, expires_at AS expiresAt,
+                                stale_at AS staleAt, deleted_at AS deletedAt
+                         FROM marketing_t3_reference_bindings WHERE id = ?`,
+                    )
+                    .get(input.bindingId) as unknown as T3ReferenceRow | undefined;
+                  if (existingById !== undefined) {
+                    if (existingById.organizationId !== input.selection.organizationId) {
+                      throw new MarketingWorkspaceCrossOrganizationError({});
+                    }
+                    if (
+                      existingById.targetKind !== input.target.kind ||
+                      existingById.targetId !== input.target.id ||
+                      existingById.referenceKind !== input.reference.kind ||
+                      existingById.referenceValue !== input.reference.value ||
+                      existingById.expiresAt !== expiresAtIso ||
+                      existingById.state !== "active"
+                    ) {
+                      throw new MarketingWorkspaceConflictError({
+                        reason: "t3_reference_binding_conflict",
+                      });
+                    }
+                    return t3ReferenceLifecycleFromRow(existingById);
+                  }
+
+                  database
+                    .prepare(
+                      `INSERT INTO marketing_t3_reference_bindings(
+                           id, organization_id, target_kind, target_id,
+                           reference_kind, reference_value, state, linked_at, expires_at
+                         ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+                    )
+                    .run(
+                      input.bindingId,
+                      input.selection.organizationId,
+                      input.target.kind,
+                      input.target.id,
+                      input.reference.kind,
+                      input.reference.value,
+                      nowIso,
+                      expiresAtIso,
+                    );
+                  const row = readT3ReferenceRow(
+                    database,
+                    input.selection.organizationId,
+                    input.bindingId,
+                  );
+                  if (row === undefined) {
+                    throw new MarketingWorkspaceConflictError({
+                      reason: "t3_reference_write_not_visible",
+                    });
+                  }
+                  return t3ReferenceLifecycleFromRow(row);
+                }),
+              catch: (cause) => mapStoreCause("link_t3_reference", cause),
             }),
-          catch: (cause) => mapStoreCause("delete_t3_reference", cause),
+          );
         }),
+    );
+
+  const markT3ReferenceStale: OrganizationWorkspaceStore<RequestAuthority>["markT3ReferenceStale"] =
+    (input) =>
+      resolveWithPermission(
+        { requestAuthority: input.requestAuthority, selection: input.selection },
+        {
+          permission: "mark-t3-reference-stale",
+          selection: input.selection,
+          bindingId: input.bindingId,
+        },
+        () =>
+          Effect.gen(function* () {
+            const nowIso = DateTime.formatIso(yield* DateTime.now);
+            return yield* withDatabase(controlDatabasePath, "mark_t3_reference_stale", (database) =>
+              Effect.try({
+                try: () =>
+                  runTransaction(database, () => {
+                    const existing = readT3ReferenceRow(
+                      database,
+                      input.selection.organizationId,
+                      input.bindingId,
+                    );
+                    if (existing === undefined) {
+                      throw new MarketingWorkspaceConflictError({
+                        reason: "t3_reference_binding_missing",
+                      });
+                    }
+                    if (existing.state === "deleted") {
+                      throw new MarketingWorkspaceConflictError({
+                        reason: "deleted_t3_reference_cannot_transition",
+                      });
+                    }
+                    if (existing.state === "active") {
+                      database
+                        .prepare(
+                          `UPDATE marketing_t3_reference_bindings
+                             SET state = 'stale', stale_at = ?
+                             WHERE id = ? AND organization_id = ?`,
+                        )
+                        .run(nowIso, input.bindingId, input.selection.organizationId);
+                    }
+                    const row = readT3ReferenceRow(
+                      database,
+                      input.selection.organizationId,
+                      input.bindingId,
+                    );
+                    if (row === undefined) {
+                      throw new MarketingWorkspaceConflictError({
+                        reason: "t3_reference_write_not_visible",
+                      });
+                    }
+                    return t3ReferenceLifecycleFromRow(row);
+                  }),
+                catch: (cause) => mapStoreCause("mark_t3_reference_stale", cause),
+              }),
+            );
+          }),
       );
-    });
+
+  const deleteT3Reference: OrganizationWorkspaceStore<RequestAuthority>["deleteT3Reference"] = (
+    input,
+  ) =>
+    resolveWithPermission(
+      { requestAuthority: input.requestAuthority, selection: input.selection },
+      {
+        permission: "delete-t3-reference",
+        selection: input.selection,
+        bindingId: input.bindingId,
+      },
+      () =>
+        Effect.gen(function* () {
+          const nowIso = DateTime.formatIso(yield* DateTime.now);
+          return yield* withDatabase(controlDatabasePath, "delete_t3_reference", (database) =>
+            Effect.try({
+              try: () =>
+                runTransaction(database, () => {
+                  const existing = readT3ReferenceRow(
+                    database,
+                    input.selection.organizationId,
+                    input.bindingId,
+                  );
+                  if (existing === undefined) {
+                    throw new MarketingWorkspaceConflictError({
+                      reason: "t3_reference_binding_missing",
+                    });
+                  }
+                  if (existing.state !== "deleted") {
+                    database
+                      .prepare(
+                        `UPDATE marketing_t3_reference_bindings
+                           SET state = 'deleted', reference_kind = NULL, reference_value = NULL,
+                               expires_at = NULL, deleted_at = ?
+                           WHERE id = ? AND organization_id = ?`,
+                      )
+                      .run(nowIso, input.bindingId, input.selection.organizationId);
+                  }
+                  const row = readT3ReferenceRow(
+                    database,
+                    input.selection.organizationId,
+                    input.bindingId,
+                  );
+                  if (row === undefined) {
+                    throw new MarketingWorkspaceConflictError({
+                      reason: "t3_reference_write_not_visible",
+                    });
+                  }
+                  return t3ReferenceLifecycleFromRow(row);
+                }),
+              catch: (cause) => mapStoreCause("delete_t3_reference", cause),
+            }),
+          );
+        }),
+    );
 
   return {
     initialize,
-    provision,
+    bootstrap,
     backfill,
+    join,
     resolve,
     revokeMembership,
     rollbackProvisioning,

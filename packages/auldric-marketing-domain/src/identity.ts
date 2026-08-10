@@ -83,28 +83,6 @@ export const T3ActorSubject = Schema.String.check(
 ).pipe(Schema.brand("T3ActorSubject"));
 export type T3ActorSubject = typeof T3ActorSubject.Type;
 
-export const T3ActorVerificationId = Schema.String.check(
-  Schema.isTrimmed(),
-  Schema.isNonEmpty(),
-  Schema.isMaxLength(500),
-).pipe(Schema.brand("T3ActorVerificationId"));
-export type T3ActorVerificationId = typeof T3ActorVerificationId.Type;
-
-/**
- * Request-bound proof output from a T3-owned actor verifier.
- *
- * Marketing consumes this opaque value. It cannot mint it from an environment
- * session, pairing subject, linked cloud account, thread, or device identity.
- */
-export const VerifiedT3ActorRef = Schema.Struct({
-  issuer: T3ActorIssuer,
-  subject: T3ActorSubject,
-  verificationId: T3ActorVerificationId,
-  verifiedAt: Schema.DateTimeUtc,
-  expiresAt: Schema.DateTimeUtc,
-});
-export type VerifiedT3ActorRef = typeof VerifiedT3ActorRef.Type;
-
 /** T3 currently carries relay device identity as a string, so Marketing brands it locally as opaque. */
 export const T3DeviceIdRef = Schema.String.check(Schema.isTrimmed(), Schema.isNonEmpty()).pipe(
   Schema.brand("T3DeviceIdRef"),
@@ -166,9 +144,3 @@ export const MarketingWorkspaceSelection = Schema.Struct({
   workspaceId: MarketingWorkspaceId,
 });
 export type MarketingWorkspaceSelection = typeof MarketingWorkspaceSelection.Type;
-
-export const MarketingWorkspaceResolutionInput = Schema.Struct({
-  actor: Schema.NullOr(VerifiedT3ActorRef),
-  selection: MarketingWorkspaceSelection,
-});
-export type MarketingWorkspaceResolutionInput = typeof MarketingWorkspaceResolutionInput.Type;

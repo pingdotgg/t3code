@@ -1,7 +1,30 @@
 # Marketing data and evidence
 
-This document preserves the target ownership rules for issues #5, #6, #8, and #9. It does not claim
-that a Marketing database or evidence path exists in this repository today.
+This document preserves the ownership rules for issues #5, #6, #8, and #9. Issue #5 now provides
+the isolated identity-routing and physical organization-database foundation. The T3 request
+authority composition (#6), canonical Marketing records (#8), and evidence path (#9) remain
+pending.
+
+## Implemented issue #5 boundary
+
+- `packages/auldric-marketing-domain` maps only an identity returned by an injected,
+  request-scoped server authorizer. There is no wire-decodable verified-actor DTO or fallback
+  authority.
+- A new-organization bootstrap and an authorized existing-organization join are separate
+  operations. Authentication alone cannot enroll a user into an existing organization.
+- Every organization resolves to a self-identifying physical SQLite database. Strict migrations
+  reject forward, partial, and unidentified schemas.
+- Scoped leases prevent deletion from unlinking an open database. Deletion records a durable
+  `deleting` state, drains without polling, revokes memberships, and erases retained T3 reference
+  values.
+- Failed-provision rollback uses the same exclusive drain and a durable `rolled_back` intent.
+  Interrupted rollback is resumable; successful rollback atomically tombstones its organization,
+  project, and workspace records, revokes memberships, fails provisioning operations, and erases
+  retained T3 reference values. Retained actor mappings are global identity routes, not active
+  organization membership.
+
+This is routing and lifecycle infrastructure, not proof that canonical Marketing content or
+evidence records exist.
 
 ## Ownership target
 

@@ -15,7 +15,6 @@ import {
   MarketingT3ReferenceLifecycle,
   MarketingWorkflowInstanceId,
   MarketingWorkspaceId,
-  VerifiedT3ActorRef,
 } from "./identity.ts";
 
 const uuid = "123e4567-e89b-42d3-a456-426614174000";
@@ -27,7 +26,6 @@ const decodeProjectId = Schema.decodeUnknownSync(MarketingProjectId);
 const decodeReviewId = Schema.decodeUnknownSync(MarketingReviewId);
 const decodeSourceId = Schema.decodeUnknownSync(MarketingSourceId);
 const decodeT3ReferenceLifecycle = Schema.decodeUnknownSync(MarketingT3ReferenceLifecycle);
-const decodeVerifiedT3ActorRef = Schema.decodeUnknownSync(VerifiedT3ActorRef);
 const decodeWorkflowId = Schema.decodeUnknownSync(MarketingWorkflowInstanceId);
 const decodeWorkspaceId = Schema.decodeUnknownSync(MarketingWorkspaceId);
 const isMarketingOrganizationId = Schema.is(MarketingOrganizationId);
@@ -64,23 +62,6 @@ describe("Marketing identity contracts", () => {
     acceptOrganization(projectId);
     // @ts-expect-error T3 thread IDs cannot be passed as Marketing organization IDs.
     acceptOrganization(ThreadId.make("thread-upstream"));
-  });
-
-  it("keeps the verified actor reference independent of T3 session and device identity", () => {
-    const verifiedAt = DateTime.makeUnsafe("2030-01-01T00:00:00.000Z");
-    const expiresAt = DateTime.makeUnsafe("2030-01-01T00:05:00.000Z");
-    const actor = decodeVerifiedT3ActorRef({
-      issuer: "https://identity.t3.codes",
-      subject: "user_123",
-      verificationId: "verification_123",
-      verifiedAt,
-      expiresAt,
-    });
-
-    assert.equal(actor.subject, "user_123");
-    assert.notProperty(actor, "sessionId");
-    assert.notProperty(actor, "threadId");
-    assert.notProperty(actor, "deviceId");
   });
 
   it("requires deleted optional T3 references to erase the upstream identifier", () => {
