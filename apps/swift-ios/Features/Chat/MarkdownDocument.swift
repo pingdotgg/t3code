@@ -20,6 +20,7 @@ struct MarkdownDocument: Equatable, Sendable {
 
 indirect enum MarkdownBlock: Equatable, Sendable {
     case paragraph(String)
+    case image(MarkdownImageReference)
     case heading(level: Int, text: String)
     case unorderedList([MarkdownListItem])
     case orderedList(start: Int, items: [MarkdownListItem])
@@ -27,6 +28,11 @@ indirect enum MarkdownBlock: Equatable, Sendable {
     case table(MarkdownTable)
     case codeBlock(language: String?, code: String)
     case thematicBreak
+}
+
+struct MarkdownImageReference: Equatable, Hashable, Sendable {
+    let source: String
+    let alt: String?
 }
 
 struct MarkdownTable: Equatable, Sendable {
@@ -110,10 +116,102 @@ private struct MarkdownBlockParser {
                 continue
             }
 
-            blocks.append(parseParagraph())
+            let paragraph = parseParagraph()
+            if case let .paragraph(source) = paragraph,
+               let image = Self.imageReference(in: source) {
+                blocks.append(.image(image))
+            } else {
+                blocks.append(paragraph)
+            }
         }
 
         return blocks
+    }
+
+    /// Images need their own block because Foundation's attributed-string
+    /// renderer flattens image Markdown into text. Keep mixed prose inline.
+    static func imageReference(in source: String) -> MarkdownImageReference? {
+        let value = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.contains("\n"), value.hasPrefix("!["), value.hasSuffix(")"),
+              let labelEnd = Self.firstUnescapedLabelEnd(in: value) else { return nil }
+
+        let altStart = value.index(value.startIndex, offsetBy: 2)
+        let alt = Self.removingMarkdownBackslashEscapes(
+            from: String(value[altStart..<labelEnd.lowerBound])
+        )
+        var destination = String(value[labelEnd.upperBound..<value.index(before: value.endIndex)])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !destination.isEmpty else { return nil }
+
+        if destination.hasPrefix("<"), let closing = destination.firstIndex(of: ">") {
+            let pathStart = destination.index(after: destination.startIndex)
+            let remainder = destination[destination.index(after: closing)...]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard remainder.isEmpty || Self.isQuotedTitle(String(remainder)) else { return nil }
+            destination = String(destination[pathStart..<closing])
+        } else if let separator = destination.firstIndex(where: { $0.isWhitespace }) {
+            let remainder = destination[separator...]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard Self.isQuotedTitle(String(remainder)) else { return nil }
+            destination = String(destination[..<separator])
+        }
+
+        destination = Self.removingMarkdownBackslashEscapes(from: destination)
+        guard !destination.isEmpty else { return nil }
+        return MarkdownImageReference(source: destination, alt: alt.isEmpty ? nil : alt)
+    }
+
+    private static func isQuotedTitle(_ value: String) -> Bool {
+        guard value.count >= 2, let first = value.first, let last = value.last else {
+            return false
+        }
+        return (first == "\"" && last == "\"")
+            || (first == "'" && last == "'")
+            || (first == "(" && last == ")")
+    }
+
+    private static func firstUnescapedLabelEnd(in value: String) -> Range<String.Index>? {
+        var index = value.index(value.startIndex, offsetBy: 2)
+        while index < value.endIndex {
+            let next = value.index(after: index)
+            if value[index] == "]", next < value.endIndex, value[next] == "(",
+               !isEscaped(index, in: value) {
+                return index..<value.index(after: next)
+            }
+            index = next
+        }
+        return nil
+    }
+
+    private static func isEscaped(_ index: String.Index, in value: String) -> Bool {
+        var cursor = index
+        var slashCount = 0
+        while cursor > value.startIndex {
+            let preceding = value.index(before: cursor)
+            guard value[preceding] == "\\" else { break }
+            slashCount += 1
+            cursor = preceding
+        }
+        return slashCount.isMultiple(of: 2) == false
+    }
+
+    private static func removingMarkdownBackslashEscapes(from value: String) -> String {
+        let escapable = CharacterSet(charactersIn: "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
+        var result = ""
+        var index = value.startIndex
+        while index < value.endIndex {
+            let character = value[index]
+            let next = value.index(after: index)
+            if character == "\\", next < value.endIndex,
+               value[next].unicodeScalars.allSatisfy(escapable.contains) {
+                result.append(value[next])
+                index = value.index(after: next)
+            } else {
+                result.append(character)
+                index = next
+            }
+        }
+        return result
     }
 
     private mutating func parseCodeBlock(opening: FenceMarker) -> MarkdownBlock {

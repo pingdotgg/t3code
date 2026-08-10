@@ -168,6 +168,7 @@ struct MarkdownRenderedTable: Equatable, @unchecked Sendable {
 
 indirect enum MarkdownRenderedBlock: Equatable, @unchecked Sendable {
     case paragraph(MarkdownRenderedInline)
+    case image(MarkdownImageReference)
     case heading(level: Int, inline: MarkdownRenderedInline)
     case unorderedList([MarkdownRenderedListItem])
     case orderedList(start: Int, items: [MarkdownRenderedListItem])
@@ -380,6 +381,9 @@ final class MarkdownRenderCache: @unchecked Sendable {
             case let .paragraph(source):
                 guard let inline = renderInline(source, style: .body) else { return nil }
                 rendered = .paragraph(inline)
+
+            case let .image(reference):
+                rendered = .image(reference)
 
             case let .heading(level, source):
                 guard let inline = renderInline(source, style: .heading(level: level)) else {

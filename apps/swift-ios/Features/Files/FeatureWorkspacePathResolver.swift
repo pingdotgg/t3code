@@ -130,6 +130,7 @@ public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hasha
     private static func isRecognizableFilePath(_ path: String) -> Bool {
         let name = (path as NSString).lastPathComponent
         if conventionalFileNames.contains(name) { return true }
+        if FeatureFilePreviewKind.infer(path: name) == .image { return true }
         let fileExtension = (name as NSString).pathExtension.lowercased()
         return positionedPathExtensions.contains(fileExtension)
     }

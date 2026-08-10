@@ -355,6 +355,11 @@ public struct ThreadDetailView: View {
             } else {
                 FeatureTranscriptCollectionView(
                     threadID: thread.id,
+                    imageContext: MarkdownImageContext(
+                        client: model.client,
+                        threadID: thread.id,
+                        workspaceRoot: workspaceRoot
+                    ),
                     messages: detail.messages,
                     renderUpdate: model.detailRenderUpdates[thread.id],
                     dynamicTypeSize: dynamicTypeSize,
@@ -718,6 +723,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     }
 
     let threadID: String
+    let imageContext: MarkdownImageContext
     let messages: [FeatureMessage]
     let renderUpdate: FeatureDetailRenderUpdate?
     let dynamicTypeSize: DynamicTypeSize
@@ -754,6 +760,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     func updateUIView(_ collectionView: UICollectionView, context: Context) {
         context.coordinator.update(
             threadID: threadID,
+            imageContext: imageContext,
             messages: messages,
             renderUpdate: renderUpdate,
             dynamicTypeSize: dynamicTypeSize,
@@ -806,6 +813,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var messagesByID: [String: FeatureMessage] = [:]
         private var orderedIDs: [String] = []
         private var currentThreadID: String?
+        private var currentImageContext: MarkdownImageContext?
         private var currentDetailRevision: UInt64?
         private var currentDynamicTypeSize: DynamicTypeSize?
         private var currentIsWorking = false
@@ -859,7 +867,10 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 cell.contentConfiguration = UIHostingConfiguration {
                     FeatureMessageView(
                         message: message,
-                        onOpenURL: { [weak self] url in self?.onOpenURL?(url) == true }
+                        onOpenURL: { [weak self] url in
+                            self?.onOpenURL?(url) == true
+                        },
+                        imageContext: self?.currentImageContext
                     )
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -883,6 +894,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
 
         func update(
             threadID: String,
+            imageContext: MarkdownImageContext,
             messages: [FeatureMessage],
             renderUpdate: FeatureDetailRenderUpdate?,
             dynamicTypeSize: DynamicTypeSize,
@@ -903,6 +915,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             self.onDismissKeyboard = onDismissKeyboard
 
             let threadChanged = currentThreadID != threadID
+            let imageContextChanged = currentImageContext?.id != imageContext.id
             let typeSizeChanged = currentDynamicTypeSize != dynamicTypeSize
             let revisionChanged = currentDetailRevision != renderUpdate?.revision
             let workingChanged = currentIsWorking != isWorking
@@ -911,7 +924,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 || currentIsMonitoring != isMonitoring
             let loadEarlierChanged = currentCanLoadEarlier != canLoadEarlier
                 || currentIsLoadingEarlier != isLoadingEarlier
-            guard threadChanged || typeSizeChanged || revisionChanged || workingChanged
+            guard threadChanged || imageContextChanged || typeSizeChanged || revisionChanged || workingChanged
                 || workingDetailChanged || loadEarlierChanged else { return }
 
             let incremental = !threadChanged
@@ -920,10 +933,11 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             let state = incremental ?? fullState(messages: messages)
             let newIDs = state.ids
             let idsChanged = state.idsChanged
-            let changedIDs = typeSizeChanged
+            let changedIDs = typeSizeChanged || imageContextChanged
                 ? newIDs
                 : state.changedIDs
 
+            currentImageContext = imageContext
             currentDetailRevision = renderUpdate?.revision
             currentDynamicTypeSize = dynamicTypeSize
             currentIsWorking = isWorking
@@ -932,7 +946,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             currentIsMonitoring = isMonitoring
             currentCanLoadEarlier = canLoadEarlier
             currentIsLoadingEarlier = isLoadingEarlier
-            guard threadChanged || idsChanged || !changedIDs.isEmpty || workingChanged
+            guard threadChanged || imageContextChanged || idsChanged || !changedIDs.isEmpty || workingChanged
                 || workingDetailChanged || loadEarlierChanged else { return }
 
             if threadChanged {
@@ -1409,10 +1423,11 @@ private final class BottomAnchoredTranscriptCollectionView: UICollectionView {
     }
 }
 
-private struct FeatureRemoteAttachmentThumbnail: View {
+struct FeatureRemoteAttachmentThumbnail: View {
     private struct Request: Hashable {
         let url: URL
         let maximumPixelSize: Int
+        let maximumDownloadBytes: Int
     }
 
     @SwiftUI.Environment(\.displayScale) private var displayScale
@@ -1421,6 +1436,8 @@ private struct FeatureRemoteAttachmentThumbnail: View {
     @State private var failedRequest: Request?
 
     let url: URL
+    var maximumDownloadBytes = 64 * 1_024 * 1_024
+    var onFailure: (() -> Void)? = nil
 
     var body: some View {
         Group {
@@ -1440,7 +1457,8 @@ private struct FeatureRemoteAttachmentThumbnail: View {
             do {
                 let image = try await FeatureAttachmentThumbnailLoader.image(
                     for: activeRequest.url,
-                    maximumPixelSize: activeRequest.maximumPixelSize
+                    maximumPixelSize: activeRequest.maximumPixelSize,
+                    maximumDownloadBytes: activeRequest.maximumDownloadBytes
                 )
                 try Task.checkCancellation()
                 self.image = image
@@ -1453,6 +1471,7 @@ private struct FeatureRemoteAttachmentThumbnail: View {
                 image = nil
                 loadedRequest = nil
                 failedRequest = activeRequest
+                onFailure?()
             }
         }
     }
@@ -1460,7 +1479,8 @@ private struct FeatureRemoteAttachmentThumbnail: View {
     private var request: Request {
         Request(
             url: url,
-            maximumPixelSize: min(768, max(190, Int(ceil(190 * displayScale))))
+            maximumPixelSize: min(768, max(190, Int(ceil(190 * displayScale)))),
+            maximumDownloadBytes: maximumDownloadBytes
         )
     }
 
@@ -1522,19 +1542,25 @@ private struct FeatureLocalAttachmentThumbnail: View {
 }
 
 private enum FeatureAttachmentThumbnailLoader {
-    static func image(for url: URL, maximumPixelSize: Int) async throws -> UIImage {
-        let cacheKey = "\(url.absoluteString)#\(maximumPixelSize)" as NSString
+    static func image(
+        for url: URL,
+        maximumPixelSize: Int,
+        maximumDownloadBytes: Int
+    ) async throws -> UIImage {
+        let cacheKey = "\(url.absoluteString)#\(maximumPixelSize)#\(maximumDownloadBytes)" as NSString
         if let cached = FeatureAttachmentThumbnailCache.shared.image(for: cacheKey) {
             return cached
         }
 
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await FeatureBoundedDataLoader.data(
+            from: url,
+            maximumBytes: maximumDownloadBytes
+        )
         try Task.checkCancellation()
         if let response = response as? HTTPURLResponse,
            !(200...299).contains(response.statusCode) {
             throw FeatureAttachmentThumbnailError.invalidResponse
         }
-
         let image = try await Task.detached(priority: .utility) {
             try downsample(data: data, maximumPixelSize: maximumPixelSize)
         }.value
@@ -1589,11 +1615,13 @@ private final class FeatureAttachmentThumbnailCache: @unchecked Sendable {
 private enum FeatureAttachmentThumbnailError: Error {
     case invalidResponse
     case decodingFailed
+    case tooLarge
 }
 
 struct FeatureMessageView: View {
     let message: FeatureMessage
     let onOpenURL: (URL) -> Bool
+    var imageContext: MarkdownImageContext?
 
     var body: some View {
         switch message.role {
@@ -1606,7 +1634,8 @@ struct FeatureMessageView: View {
                         MarkdownMessageView(
                             message.text,
                             isStreaming: message.state == .streaming,
-                            onOpenURL: onOpenURL
+                            onOpenURL: onOpenURL,
+                            imageContext: imageContext
                         )
                     }
                 }
@@ -1641,7 +1670,8 @@ struct FeatureMessageView: View {
                     MarkdownMessageView(
                         message.text,
                         isStreaming: message.state == .streaming,
-                        onOpenURL: onOpenURL
+                        onOpenURL: onOpenURL,
+                        imageContext: imageContext
                     )
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
