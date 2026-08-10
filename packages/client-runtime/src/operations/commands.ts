@@ -77,8 +77,16 @@ export interface UnsettleThreadInput extends ThreadCommandInput {
   readonly reason: "user";
 }
 
-export type PinThreadInput = ThreadCommandInput;
+export interface PinThreadInput extends ThreadCommandInput {
+  /** Initial slot in the user-arranged pinned order; omit to pin keyless. */
+  readonly orderKey?: string;
+}
 export type UnpinThreadInput = ThreadCommandInput;
+
+export interface ReorderPinnedThreadInput extends ThreadCommandInput {
+  /** Fractional-index key that sorts between the drop position's neighbors. */
+  readonly orderKey: string;
+}
 
 export interface SnoozeThreadInput extends ThreadCommandInput {
   readonly snoozedUntil: string;
@@ -384,7 +392,25 @@ export const settleThread = Effect.fn("EnvironmentCommands.settleThread")(functi
 export const pinThread = Effect.fn("EnvironmentCommands.pinThread")(function* (
   input: PinThreadInput,
 ) {
-  return yield* simpleThreadCommand("thread.pin", input);
+  const commandId = yield* allocateCommandId(input);
+  return yield* dispatch({
+    type: "thread.pin",
+    commandId,
+    threadId: input.threadId,
+    ...(input.orderKey === undefined ? {} : { orderKey: input.orderKey }),
+  });
+});
+
+export const reorderPinnedThread = Effect.fn("EnvironmentCommands.reorderPinnedThread")(function* (
+  input: ReorderPinnedThreadInput,
+) {
+  const commandId = yield* allocateCommandId(input);
+  return yield* dispatch({
+    type: "thread.pin.reorder",
+    commandId,
+    threadId: input.threadId,
+    orderKey: input.orderKey,
+  });
 });
 
 export const unpinThread = Effect.fn("EnvironmentCommands.unpinThread")(function* (

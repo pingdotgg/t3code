@@ -102,6 +102,7 @@ import {
   RelayClientInstallProgressEventSchema,
   RelayClientStatusSchema,
 } from "./relayClient.ts";
+import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationGetWorkflowScriptError,
   OrchestrationV2DispatchCommandError,
@@ -110,11 +111,6 @@ import {
   OrchestrationV2RpcSchemas,
   OrchestrationV2ThreadLaunchError,
 } from "./orchestrationV2.ts";
-import {
-  RelayClientInstallFailedError,
-  RelayClientInstallProgressEventSchema,
-  RelayClientStatusSchema,
-} from "./relayClient.ts";
 import {
   ProjectListEntriesError,
   ProjectListEntriesInput,

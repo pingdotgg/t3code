@@ -627,7 +627,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.panelAnimationDurationMs,
       settings.enableLegacyTokenStreaming,
       settings.persistComposerContextStrip,
-      settings.enableAssistantStreaming,
       settings.enableProviderUpdateChecks,
       settings.continueThreadsAfterServerUpdate,
       settings.sidebarAutoSettleAfterDays,
