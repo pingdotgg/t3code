@@ -1,6 +1,15 @@
-import type { ContextMenuItem, PreviewSessionSnapshot } from "@t3tools/contracts";
+import type { ContextMenuItem, PreviewSessionSnapshot, PullRequestState } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
-import { Bot, FileDiff, Files, Globe2, Plus, TerminalSquare, X } from "lucide-react";
+import {
+  Bot,
+  FileDiff,
+  Files,
+  GitPullRequest,
+  Globe2,
+  Plus,
+  TerminalSquare,
+  X,
+} from "lucide-react";
 import {
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
@@ -28,6 +37,10 @@ import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 interface RightPanelTabsProps {
   mode: PreviewPanelMode;
   maximized?: boolean;
+  /** Forwarded to PreviewPanelShell so this surface persists its own width. */
+  widthStorageKey?: string;
+  /** Forwarded to PreviewPanelShell as the initial width before a user resize. */
+  defaultWidth?: number;
   layoutControls?: ReactNode;
   surfaces: readonly RightPanelSurface[];
   activeSurfaceId: string | null;
@@ -44,19 +57,35 @@ interface RightPanelTabsProps {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
+  onAddPullRequest: () => void;
   onAddAgents: () => void;
   browserAvailable: boolean;
+  terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
+  pullRequestAvailable: boolean;
+  agentsAvailable: boolean;
+  pullRequestStatuses?: Readonly<Record<string, PullRequestTabStatus>>;
   /** Running + waiting subagents; badges the Agents card in the empty state. */
   liveAgentCount: number;
   children: ReactNode;
 }
 
+export interface PullRequestTabStatus {
+  projectId: string;
+  repository: string;
+  number: number;
+  state: PullRequestState;
+  isDraft: boolean;
+}
+
 const SURFACE_DISABLED_REASONS = {
   browser: "Browser previews are only available in the T3 Code desktop app.",
+  terminal: "Terminal surfaces are only available from a project thread.",
   files: "Files are only available when a project is open.",
   diff: "Diff is only available for server threads in Git repositories.",
+  pullRequest: "This thread's branch has no pull request yet.",
+  agents: "Agents are only available from a thread.",
 } as const;
 
 type TabContextMenuAction = "copy-path" | "close" | "close-others" | "close-to-right" | "close-all";
@@ -94,10 +123,14 @@ function RightPanelEmptyState(props: {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
+  onAddPullRequest: () => void;
   onAddAgents: () => void;
   browserAvailable: boolean;
+  terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
+  pullRequestAvailable: boolean;
+  agentsAvailable: boolean;
   liveAgentCount: number;
 }) {
   const actions = [
@@ -114,8 +147,8 @@ function RightPanelEmptyState(props: {
       label: "Terminal",
       description: "Start a shell in this workspace.",
       icon: TerminalSquare,
-      available: true,
-      disabledReason: null,
+      available: props.terminalAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.terminal,
       onClick: props.onAddTerminal,
       badgeCount: 0,
     },
@@ -138,11 +171,20 @@ function RightPanelEmptyState(props: {
       badgeCount: 0,
     },
     {
+      label: "Pull request",
+      description: "Open the pull request for this thread's branch.",
+      icon: GitPullRequest,
+      available: props.pullRequestAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.pullRequest,
+      onClick: props.onAddPullRequest,
+      badgeCount: 0,
+    },
+    {
       label: "Agents",
       description: "Watch subagents and workflows run.",
       icon: Bot,
-      available: true,
-      disabledReason: null,
+      available: props.agentsAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.agents,
       onClick: props.onAddAgents,
       badgeCount: props.liveAgentCount,
     },
@@ -231,6 +273,8 @@ function surfaceTitle(
         terminalLabelsById.get(surface.activeTerminalId) ??
         getTerminalLabel(surface.activeTerminalId)
       );
+    case "pull-request":
+      return `#${surface.number}`;
     case "agents":
       return "Agents";
     case "preview": {
@@ -266,10 +310,12 @@ function SurfaceIcon({
   surface,
   sessions,
   theme,
+  pullRequestStatuses,
 }: {
   surface: RightPanelSurface;
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>;
   theme: "light" | "dark";
+  pullRequestStatuses: Readonly<Record<string, PullRequestTabStatus>> | undefined;
 }) {
   switch (surface.kind) {
     case "preview": {
@@ -292,6 +338,20 @@ function SurfaceIcon({
       );
     case "terminal":
       return <TerminalSquare className="size-3 shrink-0" />;
+    case "pull-request": {
+      const status = pullRequestStatuses?.[surface.id] ?? null;
+      const toneClassName =
+        status?.state === "merged"
+          ? "text-violet-600 dark:text-violet-300/90"
+          : status?.state === "closed"
+            ? "text-red-600 dark:text-red-300/90"
+            : status?.isDraft
+              ? "text-zinc-500 dark:text-zinc-400/80"
+              : status?.state === "open"
+                ? "text-emerald-600 dark:text-emerald-300/90"
+                : "text-muted-foreground";
+      return <GitPullRequest className={cn("size-3 shrink-0", toneClassName)} />;
+    }
     case "agents":
       return <Bot className="size-3 shrink-0" />;
   }
@@ -382,12 +442,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     <PreviewPanelShell
       mode={props.mode}
       {...(props.maximized !== undefined ? { maximized: props.maximized } : {})}
+      {...(props.widthStorageKey !== undefined ? { widthStorageKey: props.widthStorageKey } : {})}
+      {...(props.defaultWidth !== undefined ? { defaultWidth: props.defaultWidth } : {})}
     >
       <div
         className={cn(
           "workspace-topbar gap-1 pl-2",
           props.mode !== "inline" && "[--workspace-topbar-height:--spacing(11)]",
-          props.mode === "inline" ? "pr-28" : "pr-3",
+          props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3",
           ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
@@ -430,6 +492,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                         surface={surface}
                         sessions={props.previewSessions}
                         theme={resolvedTheme}
+                        pullRequestStatuses={props.pullRequestStatuses}
                       />
                       {pending ? (
                         <span
@@ -474,7 +537,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     <Globe2 />
                     Browser
                   </SurfaceMenuItem>
-                  <SurfaceMenuItem available onClick={props.onAddTerminal}>
+                  <SurfaceMenuItem
+                    available={props.terminalAvailable}
+                    disabledReason={SURFACE_DISABLED_REASONS.terminal}
+                    onClick={props.onAddTerminal}
+                  >
                     <TerminalSquare />
                     Terminal
                   </SurfaceMenuItem>
@@ -494,7 +561,19 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     <FileDiff />
                     Diff
                   </SurfaceMenuItem>
-                  <SurfaceMenuItem available onClick={props.onAddAgents}>
+                  <SurfaceMenuItem
+                    available={props.pullRequestAvailable}
+                    disabledReason={SURFACE_DISABLED_REASONS.pullRequest}
+                    onClick={props.onAddPullRequest}
+                  >
+                    <GitPullRequest />
+                    Pull request
+                  </SurfaceMenuItem>
+                  <SurfaceMenuItem
+                    available={props.agentsAvailable}
+                    disabledReason={SURFACE_DISABLED_REASONS.agents}
+                    onClick={props.onAddAgents}
+                  >
                     <Bot />
                     Agents
                   </SurfaceMenuItem>
@@ -512,10 +591,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddTerminal={props.onAddTerminal}
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
+            onAddPullRequest={props.onAddPullRequest}
             onAddAgents={props.onAddAgents}
             browserAvailable={props.browserAvailable}
+            terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}
+            pullRequestAvailable={props.pullRequestAvailable}
+            agentsAvailable={props.agentsAvailable}
             liveAgentCount={props.liveAgentCount}
           />
         ) : (

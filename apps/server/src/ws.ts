@@ -107,6 +107,7 @@ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
+import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
@@ -408,6 +409,7 @@ const makeWsRpcLayer = (
       );
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const pullRequests = yield* PullRequestService.PullRequestService;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
@@ -1634,6 +1636,68 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "cloud" },
           ),
+        [WS_METHODS.pullRequestsList]: (input) =>
+          observeRpcEffect(WS_METHODS.pullRequestsList, pullRequests.list(input), {
+            "rpc.aggregate": "pull-requests",
+          }),
+        [WS_METHODS.pullRequestsListStats]: (input) =>
+          observeRpcEffect(WS_METHODS.pullRequestsListStats, pullRequests.listStats(input), {
+            "rpc.aggregate": "pull-requests",
+          }),
+        [WS_METHODS.pullRequestsDetail]: (input) =>
+          observeRpcEffect(WS_METHODS.pullRequestsDetail, pullRequests.detail(input), {
+            "rpc.aggregate": "pull-requests",
+          }),
+        [WS_METHODS.pullRequestsActivity]: (input) =>
+          observeRpcEffect(WS_METHODS.pullRequestsActivity, pullRequests.activity(input), {
+            "rpc.aggregate": "pull-requests",
+          }),
+        [WS_METHODS.pullRequestsDiffFileContents]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsDiffFileContents,
+            pullRequests.diffFileContents(input),
+            { "rpc.aggregate": "pull-requests" },
+          ),
+        [WS_METHODS.pullRequestsRunAction]: (input) =>
+          observeRpcEffect(WS_METHODS.pullRequestsRunAction, pullRequests.runAction(input), {
+            "rpc.aggregate": "pull-requests",
+          }),
+        [WS_METHODS.pullRequestsComment]: (input) =>
+          observeRpcEffect(WS_METHODS.pullRequestsComment, pullRequests.comment(input), {
+            "rpc.aggregate": "pull-requests",
+          }),
+        [WS_METHODS.pullRequestsSubmitReview]: (input) =>
+          observeRpcEffect(WS_METHODS.pullRequestsSubmitReview, pullRequests.submitReview(input), {
+            "rpc.aggregate": "pull-requests",
+          }),
+        [WS_METHODS.pullRequestsReplyToThread]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsReplyToThread,
+            pullRequests.replyToThread(input),
+            { "rpc.aggregate": "pull-requests" },
+          ),
+        [WS_METHODS.pullRequestsSetThreadResolution]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsSetThreadResolution,
+            pullRequests.setThreadResolution(input),
+            { "rpc.aggregate": "pull-requests" },
+          ),
+        [WS_METHODS.pullRequestsInvalidate]: (input) =>
+          observeRpcEffect(WS_METHODS.pullRequestsInvalidate, pullRequests.invalidate(input), {
+            "rpc.aggregate": "pull-requests",
+          }),
+        [WS_METHODS.pullRequestsReviewerCandidates]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsReviewerCandidates,
+            pullRequests.reviewerCandidates(input),
+            { "rpc.aggregate": "pull-requests" },
+          ),
+        [WS_METHODS.pullRequestsRequestReviewers]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsRequestReviewers,
+            pullRequests.requestReviewers(input),
+            { "rpc.aggregate": "pull-requests" },
+          ),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlLookupRepository,
@@ -2199,6 +2263,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+    const pullRequests = yield* PullRequestService.PullRequestService;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -2222,6 +2287,9 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
+              // One server-lifetime service means clients share the same PR caches, and a WS
+              // mutation invalidates the HTTP diff cache that every client reads from.
+              Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(
