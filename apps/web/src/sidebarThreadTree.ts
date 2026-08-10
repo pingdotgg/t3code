@@ -392,18 +392,30 @@ export function buildSidebarThreadRows(
 }
 
 /**
- * Trims flattened rows to the preview window, counting only root threads
+ * Trims flattened rows to a root-thread window, counting only root threads
  * against the limit so expanded children of visible roots stay attached.
+ * `requiredThreadKey` widens the window so the active thread always renders,
+ * even when it sits below the window.
  */
 export function selectVisibleThreadRows(input: {
   rowViews: readonly SidebarThreadRowView[];
-  isThreadListExpanded: boolean;
-  previewLimit: number;
-}): { rows: SidebarThreadRowView[]; hasOverflow: boolean } {
-  const rootCount = input.rowViews.reduce((count, row) => (row.depth === 0 ? count + 1 : count), 0);
-  const hasOverflow = rootCount > input.previewLimit;
-  if (input.isThreadListExpanded || !hasOverflow) {
-    return { rows: [...input.rowViews], hasOverflow };
+  rootLimit: number;
+  requiredThreadKey?: string | null;
+}): { rows: readonly SidebarThreadRowView[]; hasOverflow: boolean } {
+  let rootCount = 0;
+  let requiredRootCount = 0;
+  for (const row of input.rowViews) {
+    if (row.depth === 0) {
+      rootCount += 1;
+    }
+    if (input.requiredThreadKey != null && row.threadKey === input.requiredThreadKey) {
+      requiredRootCount = rootCount;
+    }
+  }
+
+  const rootLimit = Math.max(input.rootLimit, requiredRootCount);
+  if (rootCount <= rootLimit) {
+    return { rows: input.rowViews, hasOverflow: false };
   }
 
   const rows: SidebarThreadRowView[] = [];
@@ -411,11 +423,11 @@ export function selectVisibleThreadRows(input: {
   for (const row of input.rowViews) {
     if (row.depth === 0) {
       visibleRootCount += 1;
-    }
-    if (visibleRootCount > input.previewLimit) {
-      break;
+      if (visibleRootCount > rootLimit) {
+        break;
+      }
     }
     rows.push(row);
   }
-  return { rows, hasOverflow };
+  return { rows, hasOverflow: true };
 }

@@ -1,6 +1,14 @@
-import { CircleAlertIcon, GitBranchIcon, ServerIcon, TerminalIcon } from "lucide-react";
+import {
+  CircleAlertIcon,
+  ClockIcon,
+  GitBranchIcon,
+  GitPullRequestIcon,
+  ServerIcon,
+  TerminalIcon,
+} from "lucide-react";
 
 import { usePrimaryEnvironmentId } from "../environments/primary";
+import { formatRelativeTimeLabel } from "../timestampFormat";
 import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
@@ -10,6 +18,7 @@ import type { ProviderInstanceEntry } from "../providerInstances";
 import type { SidebarThreadSummary } from "../types";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
+import { prStatusIndicator } from "./ThreadStatusIndicators";
 import { TooltipPopup } from "./ui/tooltip";
 
 export function terminalProcessLabel(count: number): string {
@@ -52,6 +61,7 @@ export function ThreadDetailsTooltip({
   readonly terminalProcessCount: number;
 }) {
   const driverKind = providerEntry?.driverKind ?? thread.session?.provider ?? null;
+  const prStatus = prStatusIndicator(thread.pullRequest);
   // Transport drops are connection noise, not a thread failure; the same
   // sanitizer the chat surface uses keeps them out of the tooltip.
   const sessionError = sanitizeThreadErrorMessage(thread.session?.lastError);
@@ -107,6 +117,22 @@ export function ThreadDetailsTooltip({
               </div>
             </div>
           ) : null}
+          {prStatus ? (
+            <div className="flex min-w-0 items-center gap-2">
+              <GitPullRequestIcon className={`size-3 shrink-0 ${prStatus.colorClass}`} />
+              <div className="min-w-0 truncate text-foreground/75">{prStatus.tooltip}</div>
+            </div>
+          ) : null}
+          {/* The row itself only reveals its timestamp on hover, so the tooltip
+              is where "when was this last touched" always lives. */}
+          <div className="flex min-w-0 items-center gap-2">
+            <ClockIcon className="size-3 shrink-0 stroke-muted-foreground" />
+            <div className="min-w-0 truncate text-foreground/75">
+              {formatRelativeTimeLabel(
+                thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
+              )}
+            </div>
+          </div>
           {sessionError ? (
             <div className="flex min-w-0 items-start gap-2 text-red-600 dark:text-red-400">
               <CircleAlertIcon className="mt-0.5 size-3 shrink-0 stroke-current" />
