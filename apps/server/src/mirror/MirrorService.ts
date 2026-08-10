@@ -46,7 +46,7 @@ import { ProjectionProjectRepository } from "../persistence/Services/ProjectionP
 import { GitSync, mirrorSnapshotRef } from "./GitSync.ts";
 import { MirrorBundleTransfer } from "./MirrorBundleTransfer.ts";
 import { MirrorHooks } from "./MirrorHooks.ts";
-import { readMirrorIncludePaths } from "./mirrorInclude.ts";
+import { MIRROR_EXTRA_ENV_PATTERNS, readMirrorIncludePaths } from "./mirrorInclude.ts";
 import { diffGitlinks, discoverAllGitlinks, MIRROR_SUBMODULE_MAX_DEPTH } from "./SubmoduleSync.ts";
 
 const SEED_TIMEOUT = Duration.minutes(30);
@@ -165,6 +165,14 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const includePathsFor = readMirrorIncludePaths({ fileSystem, path });
+  /** Union a repo root's t3.json include list with the project's DB-configured extra patterns. */
+  const withExtraIncludePaths = (
+    paths: ReadonlyArray<string>,
+    project: { readonly mirrorIncludeIgnoredFiles?: boolean | null },
+  ): ReadonlyArray<string> =>
+    project.mirrorIncludeIgnoredFiles
+      ? [...new Set([...paths, ...MIRROR_EXTRA_ENV_PATTERNS])]
+      : paths;
 
   const state = yield* SynchronizedRef.make<ServiceState>({
     connections: new Map(),
@@ -415,11 +423,17 @@ export const make = Effect.gen(function* () {
       }
       const runtime = yield* loadRuntime(input.projectId);
       const needsSeed = runtime?.lastSyncedSnapshotOid == null;
+      const extraIncludePaths = project.mirrorIncludeIgnoredFiles ? MIRROR_EXTRA_ENV_PATTERNS : [];
 
       const acquire = Effect.gen(function* () {
         const queue = yield* Queue.unbounded<MirrorStreamEvent>();
         const connectionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
-        yield* Queue.offer(queue, { type: "connected", connectionId, needsSeed });
+        yield* Queue.offer(queue, {
+          type: "connected",
+          connectionId,
+          needsSeed,
+          extraIncludePaths,
+        });
         const connection: AgentConnection = {
           projectId: input.projectId,
           connectionId,
@@ -935,7 +949,8 @@ export const make = Effect.gen(function* () {
           .pipe(Effect.mapError(gitFailed));
         const headCommit = yield* gitSync.headCommit(root).pipe(Effect.mapError(gitFailed));
         if (headCommit !== null && headCommit !== response.snapshotOid) {
-          const includePaths = yield* includePathsFor(root);
+          const localIncludePaths = yield* includePathsFor(root);
+          const includePaths = withExtraIncludePaths(localIncludePaths, project);
           yield* gitSync
             .applySnapshot({
               root,
@@ -1055,7 +1070,8 @@ export const make = Effect.gen(function* () {
             ],
           })
           .pipe(Effect.mapError(gitFailed));
-        const includePaths = yield* includePathsFor(root);
+        const localIncludePaths = yield* includePathsFor(root);
+        const includePaths = withExtraIncludePaths(localIncludePaths, project);
         const apply = yield* gitSync
           .applySnapshot({
             root,
@@ -1116,11 +1132,12 @@ export const make = Effect.gen(function* () {
     if (runtime?.lastSyncedSnapshotOid == null) return;
     const root = project.workspaceRoot;
     const syncId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+    const rootIncludePaths = yield* includePathsFor(root);
     const snapshot = yield* gitSync
       .createSnapshot({
         root,
         syncId,
-        includePaths: yield* includePathsFor(root),
+        includePaths: withExtraIncludePaths(rootIncludePaths, project),
       })
       .pipe(Effect.orDie);
     const branches = yield* gitSync.listBranches(root).pipe(Effect.orElseSucceed(() => []));
@@ -1153,11 +1170,12 @@ export const make = Effect.gen(function* () {
           .pipe(Effect.orElseSucceed(() => false));
         if (!isRepo) continue;
         const nestedSyncId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+        const nestedIncludePaths = yield* includePathsFor(nestedRoot);
         const nestedSnapshot = yield* gitSync
           .createSnapshot({
             root: nestedRoot,
             syncId: nestedSyncId,
-            includePaths: yield* includePathsFor(nestedRoot),
+            includePaths: withExtraIncludePaths(nestedIncludePaths, project),
           })
           .pipe(Effect.option);
         if (Option.isNone(nestedSnapshot)) continue;

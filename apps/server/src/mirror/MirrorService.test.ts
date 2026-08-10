@@ -274,6 +274,7 @@ it.layer(TestLayer)("MirrorService", (it) => {
             },
             defaultModelSelection: null,
             defaultThreadEnvMode: null,
+            mirrorIncludeIgnoredFiles: null,
             scripts: [],
             createdAt: "2026-01-01T00:00:00.000Z",
             updatedAt: "2026-01-01T00:00:00.000Z",

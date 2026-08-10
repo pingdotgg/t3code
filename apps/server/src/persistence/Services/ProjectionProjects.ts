@@ -28,6 +28,7 @@ export const ProjectionProject = Schema.Struct({
   origin: Schema.optional(Schema.NullOr(ProjectOrigin)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   defaultThreadEnvMode: Schema.NullOr(ThreadEnvMode),
+  mirrorIncludeIgnoredFiles: Schema.NullOr(Schema.Boolean),
   faviconPath: Schema.optional(Schema.NullOr(Schema.String)),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,

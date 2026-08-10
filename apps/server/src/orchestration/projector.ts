@@ -216,6 +216,7 @@ export function projectEvent(
             origin: payload.origin ?? null,
             defaultModelSelection: payload.defaultModelSelection,
             defaultThreadEnvMode: null,
+            mirrorIncludeIgnoredFiles: null,
             faviconPath: payload.faviconPath ?? null,
             scripts: payload.scripts,
             createdAt: payload.createdAt,
@@ -251,6 +252,9 @@ export function projectEvent(
                     : {}),
                   ...(payload.defaultThreadEnvMode !== undefined
                     ? { defaultThreadEnvMode: payload.defaultThreadEnvMode }
+                    : {}),
+                  ...(payload.mirrorIncludeIgnoredFiles !== undefined
+                    ? { mirrorIncludeIgnoredFiles: payload.mirrorIncludeIgnoredFiles }
                     : {}),
                   ...(payload.faviconPath !== undefined
                     ? { faviconPath: payload.faviconPath }

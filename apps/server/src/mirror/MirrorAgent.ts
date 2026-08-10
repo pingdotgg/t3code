@@ -95,6 +95,19 @@ export const make = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const managerScope = yield* Scope.make("sequential");
   const includePathsFor = readMirrorIncludePaths({ fileSystem, path });
+  // Extra include patterns the host sent on its most recent "connected"
+  // event for a project, keyed by projectId. Populated per-connection and
+  // consulted by the directive handlers below, which only know their `link`.
+  const extraIncludePathsByProject = yield* SynchronizedRef.make<
+    ReadonlyMap<string, ReadonlyArray<string>>
+  >(new Map());
+  const includePathsWithExtra = (link: MirrorLink, root: string) =>
+    Effect.gen(function* () {
+      const localPaths = yield* includePathsFor(root);
+      const extraByProject = yield* SynchronizedRef.get(extraIncludePathsByProject);
+      const extraPaths = extraByProject.get(link.projectId) ?? [];
+      return extraPaths.length === 0 ? localPaths : [...new Set([...localPaths, ...extraPaths])];
+    });
 
   const agents = yield* SynchronizedRef.make<ReadonlyMap<string, Fiber.Fiber<unknown, unknown>>>(
     new Map(),
@@ -275,7 +288,7 @@ export const make = Effect.gen(function* () {
   > {
     const gitFailed = (cause: { readonly message: string }) =>
       new MirrorSyncFailedError({ projectId: link.projectId, syncId, detail: cause.message });
-    const includePaths = yield* includePathsFor(root);
+    const includePaths = yield* includePathsWithExtra(link, root);
     const snapshot = yield* gitSync
       .createSnapshot({ root, syncId, includePaths })
       .pipe(Effect.mapError(gitFailed));
@@ -323,7 +336,7 @@ export const make = Effect.gen(function* () {
         detail: "Host requested an incremental sync without a base snapshot; reseed required.",
       });
     }
-    const includePaths = yield* includePathsFor(root);
+    const includePaths = yield* includePathsWithExtra(link, root);
     const snapshot = yield* gitSync
       .createSnapshot({ root, syncId, includePaths })
       .pipe(Effect.mapError(gitFailed));
@@ -409,7 +422,7 @@ export const make = Effect.gen(function* () {
         Effect.mapError(gitFailed),
         Effect.ensuring(fileSystem.remove(bundlePath, { force: true }).pipe(Effect.ignore)),
       );
-    const includePaths = yield* includePathsFor(root);
+    const includePaths = yield* includePathsWithExtra(link, root);
     const apply = yield* gitSync
       .applySnapshot({
         root,
@@ -638,6 +651,11 @@ export const make = Effect.gen(function* () {
           Effect.gen(function* () {
             if (event.type === "connected") {
               yield* Ref.set(connectionIdRef, event.connectionId);
+              yield* SynchronizedRef.update(extraIncludePathsByProject, (current) => {
+                const next = new Map(current);
+                next.set(link.projectId, event.extraIncludePaths ?? []);
+                return next;
+              });
               yield* Effect.logInfo("Mirror agent connected to host.", {
                 projectId: link.projectId,
                 needsSeed: event.needsSeed,

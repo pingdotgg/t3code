@@ -15,6 +15,18 @@ import * as Schema from "effect/Schema";
 
 const decodeProjectFile = Schema.decodeUnknownOption(Schema.fromJsonString(T3ProjectFile));
 
+/**
+ * Fixed pattern set force-included when a project's `mirrorIncludeIgnoredFiles`
+ * setting is on. Deliberately not a free-text list: it rides the same
+ * `git add -f` mechanism as `t3.json`'s `mirror.include`, but as a per-project
+ * DB toggle rather than a checked-in, team-shared file.
+ */
+export const MIRROR_EXTRA_ENV_PATTERNS: ReadonlyArray<string> = [
+  ".env",
+  ".env.local",
+  ".env.*.local",
+];
+
 export const readMirrorIncludePaths = (services: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;

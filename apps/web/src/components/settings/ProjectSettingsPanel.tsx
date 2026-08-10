@@ -79,6 +79,7 @@ import {
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   SettingResetButton,
@@ -331,6 +332,7 @@ function ProjectDetail({
       input: Partial<{
         defaultModelSelection: ModelSelection | null;
         defaultThreadEnvMode: ThreadEnvMode | null;
+        mirrorIncludeIgnoredFiles: boolean | null;
         faviconPath: string | null;
         scripts: ReadonlyArray<ReturnType<typeof buildProjectScript>>;
       }>,
@@ -391,6 +393,18 @@ function ProjectDetail({
       void updateAllMembers(
         { defaultThreadEnvMode: mode },
         "Failed to update new-thread workspace",
+      ),
+    [updateAllMembers],
+  );
+
+  // ----- mirror: sync gitignored env files -----
+  const isMirrored = representative.origin != null;
+  const mirrorIncludeIgnoredFiles = representative.mirrorIncludeIgnoredFiles ?? false;
+  const setMirrorIncludeIgnoredFiles = useCallback(
+    (enabled: boolean) =>
+      void updateAllMembers(
+        { mirrorIncludeIgnoredFiles: enabled ? true : null },
+        "Failed to update mirror env-file sync",
       ),
     [updateAllMembers],
   );
@@ -883,6 +897,31 @@ function ProjectDetail({
           }
         />
       </SettingsSection>
+
+      {isMirrored ? (
+        <SettingsSection title="Mirroring">
+          <SettingsRow
+            id="project-mirror-include-ignored-files"
+            title="Sync gitignored env files"
+            description="Also sync .env, .env.local, and .env.*.local files to the mirror, even though they're gitignored."
+            resetAction={
+              representative.mirrorIncludeIgnoredFiles != null ? (
+                <SettingResetButton
+                  label="sync gitignored env files"
+                  onClick={() => setMirrorIncludeIgnoredFiles(false)}
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={mirrorIncludeIgnoredFiles}
+                onCheckedChange={(checked) => setMirrorIncludeIgnoredFiles(Boolean(checked))}
+                aria-label="Sync gitignored env files"
+              />
+            }
+          />
+        </SettingsSection>
+      ) : null}
 
       <SettingsSection
         id="project-scripts"

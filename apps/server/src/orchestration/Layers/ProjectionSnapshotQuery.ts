@@ -75,6 +75,7 @@ const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
     origin: Schema.NullOr(Schema.fromJsonString(ProjectOrigin)),
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
+    mirrorIncludeIgnoredFiles: Schema.NullOr(Schema.Number),
   }),
 );
 const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
@@ -320,6 +321,8 @@ function mapProjectShellRow(
     origin: row.origin ?? null,
     defaultModelSelection: row.defaultModelSelection,
     defaultThreadEnvMode: row.defaultThreadEnvMode,
+    mirrorIncludeIgnoredFiles:
+      row.mirrorIncludeIgnoredFiles === null ? null : row.mirrorIncludeIgnoredFiles === 1,
     faviconPath: row.faviconPath ?? null,
     scripts: row.scripts,
     createdAt: row.createdAt,
@@ -398,6 +401,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           origin_json AS "origin",
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
+          mirror_include_ignored_files AS "mirrorIncludeIgnoredFiles",
           favicon_path AS "faviconPath",
           scripts_json AS "scripts",
           created_at AS "createdAt",
@@ -854,6 +858,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           origin_json AS "origin",
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
+          mirror_include_ignored_files AS "mirrorIncludeIgnoredFiles",
           favicon_path AS "faviconPath",
           scripts_json AS "scripts",
           created_at AS "createdAt",
@@ -879,6 +884,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           origin_json AS "origin",
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
+          mirror_include_ignored_files AS "mirrorIncludeIgnoredFiles",
           favicon_path AS "faviconPath",
           scripts_json AS "scripts",
           created_at AS "createdAt",
@@ -1558,6 +1564,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 origin: row.origin ?? null,
                 defaultModelSelection: row.defaultModelSelection,
                 defaultThreadEnvMode: row.defaultThreadEnvMode,
+                mirrorIncludeIgnoredFiles:
+                  row.mirrorIncludeIgnoredFiles === null
+                    ? null
+                    : row.mirrorIncludeIgnoredFiles === 1,
                 faviconPath: row.faviconPath ?? null,
                 scripts: row.scripts,
                 createdAt: row.createdAt,
@@ -1690,6 +1700,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   origin: row.origin ?? null,
                   defaultModelSelection: row.defaultModelSelection,
                   defaultThreadEnvMode: row.defaultThreadEnvMode,
+                  mirrorIncludeIgnoredFiles:
+                    row.mirrorIncludeIgnoredFiles === null
+                      ? null
+                      : row.mirrorIncludeIgnoredFiles === 1,
                   faviconPath: row.faviconPath ?? null,
                   scripts: row.scripts,
                   createdAt: row.createdAt,
@@ -2184,6 +2198,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                     origin: option.value.origin ?? null,
                     defaultModelSelection: option.value.defaultModelSelection,
                     defaultThreadEnvMode: option.value.defaultThreadEnvMode,
+                    mirrorIncludeIgnoredFiles:
+                      option.value.mirrorIncludeIgnoredFiles === null
+                        ? null
+                        : option.value.mirrorIncludeIgnoredFiles === 1,
                     faviconPath: option.value.faviconPath ?? null,
                     scripts: option.value.scripts,
                     createdAt: option.value.createdAt,

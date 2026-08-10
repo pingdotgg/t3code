@@ -120,6 +120,13 @@ export const MirrorStreamEvent = Schema.Union([
      * to decode.
      */
     supportsSubmodules: Schema.optional(Schema.Boolean),
+    /**
+     * Extra gitignored path patterns to force-include in sync snapshots,
+     * derived from the project's `mirrorIncludeIgnoredFiles` setting. Sent
+     * once per connection rather than per-directive; the origin caches it
+     * for the life of the connection.
+     */
+    extraIncludePaths: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   }),
   Schema.Struct({
     type: Schema.Literal("directive"),
