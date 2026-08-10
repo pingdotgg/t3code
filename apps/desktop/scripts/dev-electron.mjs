@@ -37,12 +37,16 @@ const remoteDebuggingPort = process.env.T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT?.tr
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone dev script has no Effect runtime.
 const hostPlatform = NodeOS.platform();
 
-await waitForResources({
-  baseDir: desktopDir,
-  files: requiredFiles,
-  tcpHost: devServer.hostname,
-  tcpPort: port,
-});
+function waitForDevResources() {
+  return waitForResources({
+    baseDir: desktopDir,
+    files: requiredFiles,
+    tcpHost: devServer.hostname,
+    tcpPort: port,
+  });
+}
+
+await waitForDevResources();
 
 const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
@@ -173,6 +177,9 @@ function scheduleRestart() {
       .catch(() => undefined)
       .then(async () => {
         await stopApp();
+        if (!shuttingDown) {
+          await waitForDevResources();
+        }
         if (!shuttingDown) {
           startApp();
         }
