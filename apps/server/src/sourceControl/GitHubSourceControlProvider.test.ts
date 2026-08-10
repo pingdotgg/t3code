@@ -327,6 +327,7 @@ it("parses GitHub auth status accounts by host and active state", () => {
         account: "active-user",
         authenticated: true,
         active: true,
+        tokenSource: "keyring",
         error: null,
       },
       {
@@ -334,6 +335,7 @@ it("parses GitHub auth status accounts by host and active state", () => {
         account: "stale-user",
         authenticated: false,
         active: false,
+        tokenSource: "keyring",
         error: null,
       },
       {
@@ -341,10 +343,53 @@ it("parses GitHub auth status accounts by host and active state", () => {
         account: "enterprise-user",
         authenticated: true,
         active: false,
+        tokenSource: "keyring",
         error: null,
       },
     ],
   );
+});
+
+it("keeps duplicate GitHub logins distinct by token source", () => {
+  const auth = GitHubSourceControlProvider.discovery.parseAuth(
+    processResult(
+      JSON.stringify({
+        hosts: {
+          "github.com": [
+            {
+              state: "success",
+              active: true,
+              host: "github.com",
+              login: "DominicVonk",
+              tokenSource: "GITHUB_TOKEN",
+            },
+            {
+              state: "success",
+              active: false,
+              host: "github.com",
+              login: "DominicVonk",
+              tokenSource: "keyring",
+            },
+          ],
+        },
+      }),
+    ),
+  );
+
+  assert.deepStrictEqual(auth.githubAccounts, [
+    {
+      host: "github.com",
+      login: "DominicVonk",
+      tokenSource: "GITHUB_TOKEN",
+      active: true,
+    },
+    {
+      host: "github.com",
+      login: "DominicVonk",
+      tokenSource: "keyring",
+      active: false,
+    },
+  ]);
 });
 
 it("reports unauthenticated when GitHub JSON has accounts but none are valid", () => {

@@ -114,8 +114,16 @@ export const make = Effect.gen(function* () {
     kind: "github",
     capabilities: CAPABILITIES,
 
+    getAuthScope: (input) => cli.getAuthScope(input).pipe(Effect.mapError(fail("getAuthScope"))),
+
     getViewer: (input) =>
-      cli.getViewerLogin({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
+      cli
+        .getViewerLogin({
+          cwd: input.cwd,
+          host: input.host,
+          repository: input.repository,
+        })
+        .pipe(Effect.mapError(fail("getViewer"))),
 
     listChangeRequests: (input) =>
       cli

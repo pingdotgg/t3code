@@ -114,6 +114,23 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
 
   it("defaults to an empty record so legacy configs without the key still decode", () => {
     expect(DEFAULT_SERVER_SETTINGS.providerInstances).toEqual({});
+    expect(DEFAULT_SERVER_SETTINGS.githubDefaultAccounts).toEqual({});
+    expect(DEFAULT_SERVER_SETTINGS.githubAccountOverrides).toEqual({});
+  });
+
+  it("accepts GitHub account defaults and owner overrides without token values", () => {
+    const account = {
+      host: "github.com",
+      login: "octocat",
+      tokenSource: "keyring",
+    };
+    const decoded = decodeServerSettingsPatch({
+      githubDefaultAccounts: { "github.com": account },
+      githubAccountOverrides: { "github.com/acme": account },
+    });
+
+    expect(decoded.githubDefaultAccounts).toEqual({ "github.com": account });
+    expect(decoded.githubAccountOverrides).toEqual({ "github.com/acme": account });
   });
 
   it("decodes a fully empty config (legacy on-disk shape) without complaint", () => {

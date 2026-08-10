@@ -6,11 +6,13 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import {
+  type GitHubAccountSelection,
   TrimmedNonEmptyString,
   type SourceControlRepositoryVisibility,
   type VcsError,
 } from "@t3tools/contracts";
 
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import {
   decodeGitHubPullRequestJson,
@@ -196,57 +198,104 @@ export interface GitHubRepositoryCloneUrls {
   readonly sshUrl: string;
 }
 
+interface GitHubAuthTarget {
+  readonly host?: string;
+  readonly repositories?: ReadonlyArray<string>;
+  readonly repository?: string;
+}
+
+const GITHUB_TOKEN_ENV_SOURCES = new Set([
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+  "GH_ENTERPRISE_TOKEN",
+  "GITHUB_ENTERPRISE_TOKEN",
+]);
+
+function selectionKey(selection: GitHubAccountSelection): string {
+  return `${selection.host.toLowerCase()}\n${selection.login.toLowerCase()}\n${selection.tokenSource}`;
+}
+
+function definedAuthTarget(input: GitHubAuthTarget): GitHubAuthTarget {
+  return {
+    ...(input.host === undefined ? {} : { host: input.host }),
+    ...(input.repositories === undefined ? {} : { repositories: input.repositories }),
+    ...(input.repository === undefined ? {} : { repository: input.repository }),
+  };
+}
+
 export class GitHubCli extends Context.Service<
   GitHubCli,
   {
     readonly execute: (input: {
       readonly cwd: string;
       readonly args: ReadonlyArray<string>;
+      readonly host?: string;
+      readonly repositories?: ReadonlyArray<string>;
+      readonly repository?: string;
       readonly timeoutMs?: number;
       /** Piped to the child's stdin, for payloads that must never appear in argv. */
       readonly stdin?: string;
       readonly maxOutputBytes?: number;
     }) => Effect.Effect<VcsProcess.VcsProcessOutput, GitHubCliError>;
 
-    readonly listOpenPullRequests: (input: {
-      readonly cwd: string;
-      readonly headSelector: string;
-      readonly limit?: number;
-    }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
+    /** Stable, non-secret identity for the credential that will serve this target. */
+    readonly getAuthScope?: (
+      input: GitHubAuthTarget & { readonly cwd: string },
+    ) => Effect.Effect<string, GitHubCliError>;
 
-    readonly getPullRequest: (input: {
-      readonly cwd: string;
-      readonly reference: string;
-    }) => Effect.Effect<GitHubPullRequestSummary, GitHubCliError>;
+    readonly listOpenPullRequests: (
+      input: {
+        readonly cwd: string;
+        readonly headSelector: string;
+        readonly limit?: number;
+      } & GitHubAuthTarget,
+    ) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
 
-    readonly getRepositoryCloneUrls: (input: {
-      readonly cwd: string;
-      readonly repository: string;
-    }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
+    readonly getPullRequest: (
+      input: {
+        readonly cwd: string;
+        readonly reference: string;
+      } & GitHubAuthTarget,
+    ) => Effect.Effect<GitHubPullRequestSummary, GitHubCliError>;
 
-    readonly createRepository: (input: {
-      readonly cwd: string;
-      readonly repository: string;
-      readonly visibility: SourceControlRepositoryVisibility;
-    }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
+    readonly getRepositoryCloneUrls: (
+      input: {
+        readonly cwd: string;
+        readonly repository: string;
+      } & GitHubAuthTarget,
+    ) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
 
-    readonly createPullRequest: (input: {
-      readonly cwd: string;
-      readonly baseBranch: string;
-      readonly headSelector: string;
-      readonly title: string;
-      readonly bodyFile: string;
-    }) => Effect.Effect<void, GitHubCliError>;
+    readonly createRepository: (
+      input: {
+        readonly cwd: string;
+        readonly repository: string;
+        readonly visibility: SourceControlRepositoryVisibility;
+      } & GitHubAuthTarget,
+    ) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
 
-    readonly getDefaultBranch: (input: {
-      readonly cwd: string;
-    }) => Effect.Effect<string | null, GitHubCliError>;
+    readonly createPullRequest: (
+      input: {
+        readonly cwd: string;
+        readonly baseBranch: string;
+        readonly headSelector: string;
+        readonly title: string;
+        readonly bodyFile: string;
+      } & GitHubAuthTarget,
+    ) => Effect.Effect<void, GitHubCliError>;
 
-    readonly checkoutPullRequest: (input: {
-      readonly cwd: string;
-      readonly reference: string;
-      readonly force?: boolean;
-    }) => Effect.Effect<void, GitHubCliError>;
+    readonly getDefaultBranch: (
+      input: {
+        readonly cwd: string;
+      } & GitHubAuthTarget,
+    ) => Effect.Effect<string | null, GitHubCliError>;
+
+    readonly checkoutPullRequest: (
+      input: {
+        readonly cwd: string;
+        readonly reference: string;
+        readonly force?: boolean;
+      } & GitHubAuthTarget,
+    ) => Effect.Effect<void, GitHubCliError>;
   }
 >()("t3/sourceControl/GitHubCli") {}
 
@@ -307,26 +356,150 @@ function deriveRepositoryCloneUrlsFromCreateOutput(
 }
 
 export const make = Effect.gen(function* () {
-  const process = yield* VcsProcess.VcsProcess;
+  const vcsProcess = yield* VcsProcess.VcsProcess;
+  const settings = yield* ServerSettingsService;
+  const tokens = new Map<string, string>();
 
-  const execute: GitHubCli["Service"]["execute"] = (input) =>
-    process
+  const accountSelection = Effect.fn("GitHubCli.accountSelection")(function* (
+    input: GitHubAuthTarget & { readonly cwd: string },
+  ): Effect.fn.Return<GitHubAccountSelection | undefined, GitHubCliError> {
+    const host = (input.host ?? "github.com").toLowerCase();
+    const current = yield* settings.getSettings.pipe(
+      Effect.mapError(
+        (cause) => new GitHubCliCommandError({ command: "gh", cwd: input.cwd, cause }),
+      ),
+    );
+    const defaults = new Map(
+      Object.entries(current.githubDefaultAccounts).map(([accountHost, account]) => [
+        accountHost.toLowerCase(),
+        account,
+      ]),
+    );
+    const overrides = new Map(
+      Object.entries(current.githubAccountOverrides).map(([ownerKey, account]) => [
+        ownerKey.toLowerCase(),
+        account,
+      ]),
+    );
+    const defaultAccount = defaults.get(host);
+    const repositories = input.repositories ?? (input.repository ? [input.repository] : []);
+    const accounts =
+      repositories.length === 0
+        ? [defaultAccount]
+        : repositories.map((repository) => {
+            const owner = repository.trim().split("/")[0]?.toLowerCase();
+            return owner === undefined
+              ? defaultAccount
+              : (overrides.get(`${host}/${owner}`) ?? defaultAccount);
+          });
+    const byKey = new Map(
+      accounts.map((account) => [
+        account === undefined ? `active:${host}` : selectionKey(account),
+        account,
+      ]),
+    );
+    if (byKey.size > 1) {
+      return yield* new GitHubCliCommandError({
+        command: "gh",
+        cwd: input.cwd,
+        cause: new Error("Repositories require different GitHub accounts."),
+      });
+    }
+    const account = byKey.values().next().value;
+    if (account !== undefined && account.host.toLowerCase() !== host) {
+      return yield* new GitHubCliAuthenticationError({
+        command: "gh",
+        cwd: input.cwd,
+        cause: new Error("The selected GitHub account belongs to a different host."),
+      });
+    }
+    return account;
+  });
+
+  const tokenFor = Effect.fn("GitHubCli.tokenFor")(function* (input: {
+    readonly account: GitHubAccountSelection;
+    readonly cwd: string;
+  }) {
+    if (GITHUB_TOKEN_ENV_SOURCES.has(input.account.tokenSource)) {
+      const token = process.env[input.account.tokenSource]?.trim();
+      if (token !== undefined && token.length > 0) return token;
+      return yield* new GitHubCliAuthenticationError({
+        command: "gh",
+        cwd: input.cwd,
+        cause: new Error("The selected GitHub token environment variable is unavailable."),
+      });
+    }
+
+    const key = selectionKey(input.account);
+    const cached = tokens.get(key);
+    if (cached !== undefined) return cached;
+
+    const output = yield* vcsProcess
+      .run({
+        operation: "GitHubCli.authToken",
+        command: "gh",
+        args: ["auth", "token", "--hostname", input.account.host, "--user", input.account.login],
+        cwd: input.cwd,
+        timeoutMs: DEFAULT_TIMEOUT_MS,
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) => new GitHubCliAuthenticationError({ command: "gh", cwd: input.cwd, cause }),
+        ),
+      );
+    const token = output.stdout.trim();
+    if (token.length === 0) {
+      return yield* new GitHubCliAuthenticationError({
+        command: "gh",
+        cwd: input.cwd,
+        cause: new Error("GitHub CLI returned an empty account token."),
+      });
+    }
+    tokens.set(key, token);
+    return token;
+  });
+
+  const run = (input: Parameters<GitHubCli["Service"]["execute"]>[0], env?: NodeJS.ProcessEnv) =>
+    vcsProcess
       .run({
         operation: "GitHubCli.execute",
         command: "gh",
         args: input.args,
         cwd: input.cwd,
+        ...(env !== undefined ? { env } : {}),
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.maxOutputBytes !== undefined ? { maxOutputBytes: input.maxOutputBytes } : {}),
       })
       .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
 
+  const execute: GitHubCli["Service"]["execute"] = Effect.fn("GitHubCli.execute")(
+    function* (input) {
+      const account = yield* accountSelection(input);
+      if (account === undefined) return yield* run(input);
+
+      const host = input.host ?? "github.com";
+      const token = yield* tokenFor({ account, cwd: input.cwd });
+      const tokenVariable =
+        host === "github.com" || host.endsWith(".ghe.com") ? "GH_TOKEN" : "GH_ENTERPRISE_TOKEN";
+      return yield* run(input, { [tokenVariable]: token });
+    },
+  );
+
   return GitHubCli.of({
     execute,
+    getAuthScope: (input) =>
+      accountSelection(input).pipe(
+        Effect.map((account) =>
+          account === undefined
+            ? `active:${(input.host ?? "github.com").toLowerCase()}`
+            : selectionKey(account),
+        ),
+      ),
     listOpenPullRequests: (input) =>
       execute({
         cwd: input.cwd,
+        ...definedAuthTarget(input),
         args: [
           "pr",
           "list",
@@ -366,6 +539,7 @@ export const make = Effect.gen(function* () {
     getPullRequest: (input) =>
       execute({
         cwd: input.cwd,
+        ...definedAuthTarget(input),
         args: [
           "pr",
           "view",
@@ -398,6 +572,7 @@ export const make = Effect.gen(function* () {
     getRepositoryCloneUrls: (input) =>
       execute({
         cwd: input.cwd,
+        ...definedAuthTarget(input),
         args: ["repo", "view", input.repository, "--json", "nameWithOwner,url,sshUrl"],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
@@ -418,6 +593,7 @@ export const make = Effect.gen(function* () {
     createRepository: (input) =>
       execute({
         cwd: input.cwd,
+        ...definedAuthTarget(input),
         args: ["repo", "create", input.repository, `--${input.visibility}`],
       }).pipe(
         Effect.map((result) =>
@@ -427,6 +603,7 @@ export const make = Effect.gen(function* () {
     createPullRequest: (input) =>
       execute({
         cwd: input.cwd,
+        ...definedAuthTarget(input),
         args: [
           "pr",
           "create",
@@ -443,6 +620,7 @@ export const make = Effect.gen(function* () {
     getDefaultBranch: (input) =>
       execute({
         cwd: input.cwd,
+        ...definedAuthTarget(input),
         args: ["repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"],
       }).pipe(
         Effect.map((value) => {
@@ -453,6 +631,7 @@ export const make = Effect.gen(function* () {
     checkoutPullRequest: (input) =>
       execute({
         cwd: input.cwd,
+        ...definedAuthTarget(input),
         args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
       }).pipe(Effect.asVoid),
   });

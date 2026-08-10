@@ -5,6 +5,7 @@ import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 
@@ -18,19 +19,118 @@ const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
 
 const mockRun = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
 
-const layer = GitHubCli.layer.pipe(
-  Layer.provide(
-    Layer.mock(VcsProcess.VcsProcess)({
-      run: mockRun,
-    }),
-  ),
-);
+const layerWithSettings = (overrides: Parameters<typeof ServerSettingsService.layerTest>[0] = {}) =>
+  GitHubCli.layer.pipe(
+    Layer.provide(ServerSettingsService.layerTest(overrides)),
+    Layer.provide(
+      Layer.mock(VcsProcess.VcsProcess)({
+        run: mockRun,
+      }),
+    ),
+  );
+
+const layer = layerWithSettings();
+
+const originalGitHubToken = process.env.GITHUB_TOKEN;
 
 afterEach(() => {
+  if (originalGitHubToken === undefined) delete process.env.GITHUB_TOKEN;
+  else process.env.GITHUB_TOKEN = originalGitHubToken;
   mockRun.mockReset();
 });
 
 describe("GitHubCli.layer", () => {
+  it.effect("uses the GitHub CLI active account when no selection is configured", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("ok")));
+      const gh = yield* GitHubCli.GitHubCli;
+
+      yield* gh.execute({
+        cwd: "/repo",
+        host: "github.com",
+        repository: "acme/widget",
+        args: ["api", "user"],
+      });
+
+      expect(mockRun).toHaveBeenCalledTimes(1);
+      expect(mockRun.mock.calls[0]?.[0]).not.toHaveProperty("env");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("selects an environment-backed GitHub credential by token source", () => {
+    process.env.GITHUB_TOKEN = "environment-token";
+    mockRun.mockReturnValueOnce(Effect.succeed(processOutput("ok")));
+    const selectedLayer = layerWithSettings({
+      githubDefaultAccounts: {
+        "github.com": {
+          host: "github.com",
+          login: "DominicVonk",
+          tokenSource: "GITHUB_TOKEN",
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.execute({
+        cwd: "/repo",
+        host: "github.com",
+        repository: "acme/widget",
+        args: ["api", "user"],
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["api", "user"],
+        cwd: "/repo",
+        env: { GH_TOKEN: "environment-token" },
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(selectedLayer));
+  });
+
+  it.effect("selects a keyring credential for a GitHub owner override", () => {
+    mockRun
+      .mockReturnValueOnce(Effect.succeed(processOutput("keyring-token\n")))
+      .mockReturnValueOnce(Effect.succeed(processOutput("ok")));
+    const selectedLayer = layerWithSettings({
+      githubAccountOverrides: {
+        "github.com/acme": {
+          host: "github.com",
+          login: "work-user",
+          tokenSource: "keyring",
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.execute({
+        cwd: "/repo",
+        host: "github.com",
+        repository: "acme/widget",
+        args: ["api", "user"],
+      });
+
+      expect(mockRun).toHaveBeenNthCalledWith(1, {
+        operation: "GitHubCli.authToken",
+        command: "gh",
+        args: ["auth", "token", "--hostname", "github.com", "--user", "work-user"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+      expect(mockRun).toHaveBeenNthCalledWith(2, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["api", "user"],
+        cwd: "/repo",
+        env: { GH_TOKEN: "keyring-token" },
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(selectedLayer));
+  });
+
   it("does not classify a missing cwd as an unavailable gh executable", () => {
     const context = { command: "gh", cwd: "/repo" } as const;
     const missingCwd = new VcsProcessSpawnError({

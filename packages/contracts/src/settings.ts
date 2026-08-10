@@ -495,6 +495,25 @@ export const SourceControlWritingStyleSettings = Schema.Struct({
 });
 export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyleSettings.Type;
 
+export const GitHubAccountSelection = Schema.Struct({
+  host: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  login: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  tokenSource: TrimmedNonEmptyString.check(Schema.isMaxLength(500)),
+});
+export type GitHubAccountSelection = typeof GitHubAccountSelection.Type;
+
+export const GitHubDefaultAccounts = Schema.Record(
+  TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  GitHubAccountSelection,
+);
+export type GitHubDefaultAccounts = typeof GitHubDefaultAccounts.Type;
+
+export const GitHubAccountOverrides = Schema.Record(
+  TrimmedNonEmptyString.check(Schema.isMaxLength(356)),
+  GitHubAccountSelection,
+);
+export type GitHubAccountOverrides = typeof GitHubAccountOverrides.Type;
+
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
 
@@ -587,6 +606,10 @@ export const ServerSettings = Schema.Struct({
   ),
   sourceControlWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  githubDefaultAccounts: GitHubDefaultAccounts.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  githubAccountOverrides: GitHubAccountOverrides.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
   ),
 
   // Legacy single-instance-per-driver settings. Continues to be the source
@@ -731,6 +754,8 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  githubDefaultAccounts: Schema.optionalKey(GitHubDefaultAccounts),
+  githubAccountOverrides: Schema.optionalKey(GitHubAccountOverrides),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),

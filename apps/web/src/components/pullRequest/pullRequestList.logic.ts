@@ -31,7 +31,9 @@ function normalize(value: string | null | undefined): string | null {
  * about the others.
  */
 function isAuthoredByViewer(entry: PullRequestListEntry, viewers: PullRequestViewers): boolean {
-  const viewer = normalize(viewers[entry.host]);
+  const viewer = normalize(
+    viewers[`${entry.host} ${entry.repository.toLowerCase()}`] ?? viewers[entry.host],
+  );
   return viewer !== null && normalize(entry.author?.login) === viewer;
 }
 

@@ -131,6 +131,8 @@ export function applyServerSettingsPatch(
     providerHealthRefreshInterval,
     backgroundActivityProfile,
     backgroundActivity,
+    githubDefaultAccounts,
+    githubAccountOverrides,
     ...patchForMerge
   } = patch;
   const currentBackgroundActivity = normalizeServerBackgroundActivitySettings(current);
@@ -190,6 +192,8 @@ export function applyServerSettingsPatch(
     ...(patch.sourceControlWriterModelSelection !== undefined
       ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }
       : {}),
+    ...(githubDefaultAccounts !== undefined ? { githubDefaultAccounts } : {}),
+    ...(githubAccountOverrides !== undefined ? { githubAccountOverrides } : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
     ...(providerHealthRefreshInterval !== undefined ? { providerHealthRefreshInterval } : {}),
   };

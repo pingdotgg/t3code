@@ -387,10 +387,10 @@ export type PullRequestListProjectError = typeof PullRequestListProjectError.Typ
 
 export const PullRequestListResult = Schema.Struct({
   /**
-   * The signed-in account per host, which is what involvement filtering compares. Keyed by
-   * host rather than by provider kind: two GitHub hosts are two accounts. A host that could
-   * not be read is absent rather than present-and-undefined, because an open-keyed record
-   * cannot carry an optional value through the JSON codec.
+   * The signed-in account per host, with `host owner/repository` entries where one host uses
+   * several credentials. A target that could not be read is absent rather than
+   * present-and-undefined, because an open-keyed record cannot carry an optional value through
+   * the JSON codec.
    */
   viewers: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString),
   providers: Schema.Array(PullRequestProviderSummary),
