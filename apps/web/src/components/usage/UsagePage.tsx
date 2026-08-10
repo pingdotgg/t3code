@@ -1,4 +1,4 @@
-import type { UsageProviderKind } from "@t3tools/contracts";
+import type { UsagePricingStatus, UsageProviderKind } from "@t3tools/contracts";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -137,6 +137,9 @@ export function UsagePage() {
                   environments={environments}
                   duplicateSources={merged.duplicateSources}
                   staleEnvironments={merged.staleEnvironments}
+                  pricingStatus={merged.pricingStatus}
+                  unpricedShare={merged.costQuality.unpricedShare}
+                  records={merged.records}
                 />
 
                 {/* Cost first: the financial answer, then the provider split. */}
@@ -407,25 +410,52 @@ function Metric({
 }
 
 /**
- * Says plainly when the totals are incomplete: an environment that failed, or
- * one whose transcripts another environment already reported. Environments
- * that are still answering never reach this notice; the page shows the
- * loading skeleton until every one is terminal.
+ * Says plainly when the totals are incomplete: an environment that failed, one
+ * whose transcripts another environment already reported, or a rate table that
+ * never loaded. Environments that are still answering never reach this notice;
+ * the page shows the loading skeleton until every one is terminal.
  */
 function UsageCoverageNotice({
   environments,
   duplicateSources,
   staleEnvironments,
+  pricingStatus,
+  unpricedShare,
+  records,
 }: {
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly duplicateSources: readonly string[];
   readonly staleEnvironments: readonly string[];
+  readonly pricingStatus: UsagePricingStatus;
+  readonly unpricedShare: number;
+  readonly records: number;
 }) {
   const failed = environments.filter((environment) => environment.error !== null);
   const stale = environments.filter((environment) =>
     staleEnvironments.includes(environment.environmentId),
   );
-  if (failed.length === 0 && stale.length === 0 && duplicateSources.length === 0) {
+  // Rate provenance only matters once there is something to price, and only
+  // `unavailable` is worth a line: stale rates move cost by rounding, not by
+  // orders of magnitude. `unpricedShare` carries the magnitude either way, so
+  // the message never has to guess how much cost went missing.
+  //
+  // The failure and the share are stated as separate facts rather than cause
+  // and effect. They are aggregated independently, so across several devices
+  // the environment whose rates failed need not be the one that contributed
+  // the unpriced records.
+  const pricingNotice =
+    records === 0 || unpricedShare === 0
+      ? null
+      : pricingStatus === "unavailable"
+        ? `Model rates could not be loaded. ${formatPercent(unpricedShare)} of responses are excluded from cost. Token counts are unaffected.`
+        : `${formatPercent(unpricedShare)} of responses used a model with no published rate and are excluded from cost.`;
+
+  if (
+    failed.length === 0 &&
+    stale.length === 0 &&
+    duplicateSources.length === 0 &&
+    pricingNotice === null
+  ) {
     return null;
   }
 
@@ -445,6 +475,7 @@ function UsageCoverageNotice({
           {duplicateSources.join(", ")}
         </span>
       ) : null}
+      {pricingNotice === null ? null : <span>{pricingNotice}</span>}
     </div>
   );
 }

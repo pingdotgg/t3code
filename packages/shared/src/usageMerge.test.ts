@@ -3,6 +3,7 @@ import {
   type EnvironmentId,
   type UsageBucket,
   type UsageDay,
+  type UsagePricingStatus,
   type UsageProviderKind,
   type UsageSummary,
 } from "@t3tools/contracts";
@@ -42,6 +43,7 @@ function summary(
     distinctSessions?: number;
   }[],
   contractVersion: number = USAGE_CONTRACT_VERSION,
+  pricingStatus: UsagePricingStatus = "fresh",
 ): UsageSummary {
   return {
     contractVersion,
@@ -64,7 +66,7 @@ function summary(
       distinctSessions: source.distinctSessions ?? 1,
       message: null,
     })),
-    pricing: { status: "fresh", source: "litellm", fetchedAt: null, knownModels: 10 },
+    pricing: { status: pricingStatus, source: "litellm", fetchedAt: null, knownModels: 10 },
     scanDurationMs: 1,
   };
 }
@@ -187,6 +189,49 @@ describe("mergeUsage", () => {
     expect(merged.providers[0]?.costShare).toBeCloseTo(0.75, 5);
     expect(merged.costQuality.unpricedShare).toBeCloseTo(0.5, 5);
     expect(merged.costQuality.cacheSavingsUsd).toBe(4);
+  });
+
+  it("reports the weakest rate table among contributing environments", () => {
+    // #given one device priced against a live rate table and one that never
+    // loaded it
+    const environments = [
+      environment(
+        "env-a",
+        summary([bucket()], [{ provider: "claude", hostId: "mac-a", homePath: "/a/.claude" }]),
+      ),
+      environment(
+        "env-b",
+        summary(
+          [bucket({ costUsd: 0, costSource: "unpriced", unpricedRecords: 5 })],
+          [{ provider: "claude", hostId: "mac-b", homePath: "/b/.claude" }],
+          USAGE_CONTRACT_VERSION,
+          "unavailable",
+        ),
+      ),
+    ];
+
+    // #when the summaries are merged
+    const merged = mergeUsage(environments, USAGE_CONTRACT_VERSION);
+
+    // #then the merged cost is an undercount and says so
+    expect(merged.pricingStatus).toBe("unavailable");
+  });
+
+  it("ignores the rate table of an environment that contributed no buckets", () => {
+    // #given an idle second device whose rate table failed to load
+    const environments = [
+      environment(
+        "env-a",
+        summary([bucket()], [{ provider: "claude", hostId: "mac-a", homePath: "/a/.claude" }]),
+      ),
+      environment("env-b", summary([], [], USAGE_CONTRACT_VERSION, "unavailable")),
+    ];
+
+    // #when the summaries are merged
+    const merged = mergeUsage(environments, USAGE_CONTRACT_VERSION);
+
+    // #then it cannot have skewed a cost it did not contribute to
+    expect(merged.pricingStatus).toBe("fresh");
   });
 
   it("keeps two machines apart when hostname and home path collide", () => {

@@ -9,6 +9,7 @@
 import type {
   EnvironmentId,
   UsageBucket,
+  UsagePricingStatus,
   UsageProviderKind,
   UsageSourceFingerprint,
   UsageSummary,
@@ -54,6 +55,12 @@ export interface CostQuality {
 
 export interface MergedUsage {
   readonly costUsd: number;
+  /**
+   * Weakest rate-table provenance among the environments that contributed. A
+   * single environment without rates makes the merged cost an undercount, so
+   * the pessimistic status is the honest one to report.
+   */
+  readonly pricingStatus: UsagePricingStatus;
   readonly uncachedInputTokens: number;
   readonly cachedInputTokens: number;
   readonly cacheCreationTokens: number;
@@ -155,8 +162,15 @@ function bucketTokens(bucket: UsageBucket): number {
   );
 }
 
+const PRICING_STATUS_RANK: Record<UsagePricingStatus, number> = {
+  unavailable: 0,
+  cached: 1,
+  fresh: 2,
+};
+
 const EMPTY_MERGED: MergedUsage = {
   costUsd: 0,
+  pricingStatus: "unavailable",
   uncachedInputTokens: 0,
   cachedInputTokens: 0,
   cacheCreationTokens: 0,
@@ -233,13 +247,17 @@ export function mergeUsage(
     }
   >();
   const contributingEnvironments: EnvironmentId[] = [];
+  const contributingPricingStatuses: UsagePricingStatus[] = [];
 
   for (const environment of current) {
     const { buckets, sessions: environmentSessions } = ownedContribution(
       environment,
       ownerByFingerprint,
     );
-    if (buckets.length > 0) contributingEnvironments.push(environment.environmentId);
+    if (buckets.length > 0) {
+      contributingEnvironments.push(environment.environmentId);
+      contributingPricingStatuses.push(environment.summary.pricing.status);
+    }
     sessions += environmentSessions;
 
     for (const bucket of buckets) {
@@ -326,8 +344,20 @@ export function mergeUsage(
     }))
     .sort((a, b) => a.day.localeCompare(b.day));
 
+  // An environment that contributed nothing cannot have skewed cost, so its rate
+  // table is not evidence about the numbers on screen.
+  const pricingStatuses =
+    contributingPricingStatuses.length > 0
+      ? contributingPricingStatuses
+      : current.map((environment) => environment.summary.pricing.status);
+
   return {
     costUsd,
+    pricingStatus: pricingStatuses.reduce<UsagePricingStatus>(
+      (weakest, status) =>
+        PRICING_STATUS_RANK[status] < PRICING_STATUS_RANK[weakest] ? status : weakest,
+      "fresh",
+    ),
     uncachedInputTokens,
     cachedInputTokens,
     cacheCreationTokens,
