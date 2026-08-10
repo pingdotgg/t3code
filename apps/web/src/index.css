@@ -975,7 +975,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --warning-foreground: var(--color-amber-400);
     --warning-surface: color-mix(in srgb, var(--warning) 16%, transparent);
     --update: var(--primary);
-    --update-foreground: var(--primary);
+    --update-foreground: var(--color-blue-400);
     --update-surface: color-mix(in srgb, var(--update) 18%, transparent);
     --sidebar: var(--card);
     --sidebar-foreground: var(--foreground);

@@ -42,12 +42,12 @@ import {
   FolderIcon,
   FolderPlusIcon,
   GitBranchIcon,
-  EllipsisIcon,
   MessageSquareIcon,
   PinIcon,
   PlusIcon,
   SearchIcon,
   ServerIcon,
+  SettingsIcon,
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
@@ -137,6 +137,7 @@ import {
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
+  ThreadWorktreeIndicator,
   prStatusIndicator,
   resolveThreadPr,
   settledPrHoverColorClass,
@@ -1412,7 +1413,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   working, but it truncated to a half-sentence and dropped the
                   branch, so the row lost its most stable identifier. */}
               {thread.branch ? (
-                <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
+                <>
+                  <ThreadWorktreeIndicator thread={thread} />
+                  <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
+                </>
               ) : (
                 <span className="flex-1" />
               )}
@@ -1836,7 +1840,7 @@ export default function Sidebar() {
     clearSelection();
   }, [clearSelection, projectScopeKey]);
 
-  const handleProjectActions = useCallback(
+  const handleProjectSettings = useCallback(
     (event: ReactMouseEvent<HTMLButtonElement>, projectGroup: SidebarProjectSnapshot) => {
       event.preventDefault();
       event.stopPropagation();
@@ -1845,7 +1849,7 @@ export default function Sidebar() {
         setOpenMobile(false);
       }
       void router.navigate({
-        to: "/settings/projects/$projectKey",
+        to: "/projects/$projectKey",
         params: { projectKey: projectGroup.projectKey },
       });
     },
@@ -3295,15 +3299,15 @@ export default function Sidebar() {
                             <span className="min-w-0 truncate text-sm">{project.displayName}</span>
                             <button
                               type="button"
-                              aria-label={`Project actions for ${project.displayName}`}
-                              title={`Project actions for ${project.displayName}`}
+                              aria-label={`Project settings for ${project.displayName}`}
+                              title={`Project settings for ${project.displayName}`}
                               className="ml-auto inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-icon-muted outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                               onPointerDown={(event) => event.stopPropagation()}
                               onClick={(event) => {
-                                void handleProjectActions(event, project);
+                                void handleProjectSettings(event, project);
                               }}
                             >
-                              <EllipsisIcon className="size-3.5" />
+                              <SettingsIcon className="size-3.5" />
                             </button>
                           </MenuRadioItem>
                         );
