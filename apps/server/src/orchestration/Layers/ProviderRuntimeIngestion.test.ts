@@ -48,6 +48,7 @@ import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQu
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
+import { DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -2975,7 +2976,7 @@ describe("ProviderRuntimeIngestion", () => {
   });
 
   it("mirrors a provider title only while the thread still has the default title", async () => {
-    const harness = await createHarness({ threadTitle: "New thread" });
+    const harness = await createHarness({ threadTitle: DEFAULT_THREAD_TITLE });
     const now = "2026-01-01T00:00:00.000Z";
 
     harness.emit({

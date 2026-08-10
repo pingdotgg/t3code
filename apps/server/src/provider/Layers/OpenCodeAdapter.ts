@@ -205,8 +205,8 @@ function openCodeEventSessionTitle(event: OpenCodeSubscribedEvent): string | und
   // OpenCode mints a placeholder title at session.create when no title was
   // provided, and re-emits it on every `session.updated`. Mirroring it would
   // overwrite the thread's real title (openCodeEventSessionTitle feeds the
-  // `thread.metadata.updated` mirror). Ignore it: a thread whose title is
-  // still the default is titled by T3 Code instead.
+  // `thread.metadata.updated` mirror). Ignore OpenCode's auto-generated
+  // placeholders so the thread isn't locked onto them.
   if (!title || isOpenCodeDefaultTitle(title)) {
     return undefined;
   }
