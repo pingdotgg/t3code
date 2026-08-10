@@ -189,12 +189,39 @@ const isWslEnvironment = Effect.fn("isWslEnvironment")(function* () {
   const osReleasePath = "/proc/sys/kernel/osrelease";
   
   const content = yield* fileSystem.exists(osReleasePath).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ServerEnvironmentLabelFileError({
+          operation: "inspect",
+          path: osReleasePath,
+          cause,
+        }),
+    ),
     Effect.flatMap((exists) => 
       exists 
-        ? fileSystem.readFileString(osReleasePath) 
+        ? fileSystem.readFileString(osReleasePath).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerEnvironmentLabelFileError({
+                  operation: "read",
+                  path: osReleasePath,
+                  cause,
+                }),
+            ),
+          )
         : Effect.succeed("")
     ),
-    Effect.catchAll(() => Effect.succeed(""))
+    Effect.catchTags({
+      ServerEnvironmentLabelFileError: (error) =>
+        Effect.logDebug(error.message).pipe(
+          Effect.annotateLogs({
+            operation: error.operation,
+            path: error.path,
+            cause: error,
+          }),
+          Effect.as(""),
+        ),
+    }),
   );
 
   const lowerContent = content.toLowerCase();
