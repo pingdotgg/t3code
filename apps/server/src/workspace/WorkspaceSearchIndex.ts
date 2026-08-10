@@ -137,26 +137,39 @@ function parentPathOf(input: string): string | undefined {
   return separatorIndex === -1 ? undefined : input.slice(0, separatorIndex);
 }
 
-function toProjectEntry(item: MixedItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.item.relativePath));
-  if (!normalizedPath) {
+// ProjectEntry.path is trimmed by the wire schema, so a path with leading or
+// trailing whitespace would collapse onto its trimmed twin after encoding
+// (crashing the client's file tree on the duplicate) and cannot be addressed
+// by any path-based request. A path is wire-representable iff every segment
+// survives trimming — checking per segment (not just the whole string) keeps
+// every ancestor prefix of a kept path representable too, so files inside an
+// unrepresentable directory are dropped along with it rather than emitted as
+// orphans of a directory the server refuses to send.
+function isWireRepresentablePath(path: string): boolean {
+  return path.split("/").every((segment) => segment === segment.trim());
+}
+
+function toEntryPath(relativePath: string): string | null {
+  const normalizedPath = trimDirectorySeparator(toPosixPath(relativePath));
+  if (!normalizedPath || !isWireRepresentablePath(normalizedPath)) {
     return null;
   }
+  return normalizedPath;
+}
 
-  return {
-    path: normalizedPath,
-    kind: item.type,
-  };
+function toProjectEntry(item: MixedItem): ProjectEntry | null {
+  const path = toEntryPath(item.item.relativePath);
+  return path ? { path, kind: item.type } : null;
 }
 
 function toFileEntry(item: FileItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath));
-  return normalizedPath ? { path: normalizedPath, kind: "file" } : null;
+  const path = toEntryPath(item.relativePath);
+  return path ? { path, kind: "file" } : null;
 }
 
 function toDirectoryEntry(item: DirItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath));
-  return normalizedPath ? { path: normalizedPath, kind: "directory" } : null;
+  const path = toEntryPath(item.relativePath);
+  return path ? { path, kind: "directory" } : null;
 }
 
 function mapFileSearchResult(

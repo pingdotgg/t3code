@@ -19,6 +19,7 @@ import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 
+import { buildTreePaths } from "./fileBrowserTreePaths";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
 
@@ -44,10 +45,6 @@ const TREE_UNSAFE_CSS = `
   }
   button[data-type='item'] { border-radius: 5px; }
 `;
-
-function treePath(entry: ProjectEntry): string {
-  return entry.kind === "directory" ? `${entry.path}/` : entry.path;
-}
 
 function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
   return (
@@ -115,7 +112,7 @@ export default function FileBrowserPanel({
     [entries],
   );
   const entryKindsRef = useRef<ReadonlyMap<string, ProjectEntry["kind"]>>(entryKinds);
-  const treePaths = useMemo(() => entries.map(treePath), [entries]);
+  const treePaths = useMemo(() => buildTreePaths(entries), [entries]);
   const previousTreePathsRef = useRef<readonly string[]>([]);
   const syncingSelectionRef = useRef(false);
   const treeSelectionPathRef = useRef<string | null>(null);
@@ -302,7 +299,7 @@ export default function FileBrowserPanel({
       model.getItem(path)?.deselect();
     }
 
-    // Directory rows are registered with a trailing slash (see treePath), so
+    // Directory rows are registered with a trailing slash (see buildTreePaths), so
     // ancestor lookups must use the same form to expand them.
     const segments = selectedPath.split("/");
     let ancestorPath = "";
