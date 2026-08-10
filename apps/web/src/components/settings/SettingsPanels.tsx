@@ -93,6 +93,7 @@ import {
 } from "../ui/dialog";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from "../ui/input-group";
 import {
   DEFAULT_CODE_FONT_STACK,
   DEFAULT_SANS_FONT_STACK,
@@ -130,6 +131,7 @@ import {
   readLastEnabledProjectGroupingMode,
   rememberEnabledProjectGroupingMode,
   resolveBackgroundActivityProfileOption,
+  resolveWorktreeBranchPrefixUpdate,
 } from "./SettingsPanels.logic";
 import {
   PolicyTooltip,
@@ -522,6 +524,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin
         ? ["New worktrees start from origin"]
         : []),
+      ...(settings.worktreeBranchPrefix !== DEFAULT_UNIFIED_SETTINGS.worktreeBranchPrefix
+        ? ["Worktree branch prefix"]
+        : []),
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
@@ -541,6 +546,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
+      settings.worktreeBranchPrefix,
       settings.diffIgnoreWhitespace,
       settings.environmentIdentificationMode,
       settings.fontFamilyCode,
@@ -644,6 +650,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
+      worktreeBranchPrefix: DEFAULT_UNIFIED_SETTINGS.worktreeBranchPrefix,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
@@ -1693,6 +1700,10 @@ function LegacyFeaturesSection() {
 export function GeneralSettingsPanel() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
+  const [worktreeBranchPrefixDraft, setWorktreeBranchPrefixDraft] = useState(
+    settings.worktreeBranchPrefix,
+  );
+  const [worktreeBranchPrefixInvalid, setWorktreeBranchPrefixInvalid] = useState(false);
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
@@ -1742,6 +1753,22 @@ export function GeneralSettingsPanel() {
     settings.backgroundActivity,
     DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
   );
+  useEffect(() => {
+    setWorktreeBranchPrefixDraft(settings.worktreeBranchPrefix);
+    setWorktreeBranchPrefixInvalid(false);
+  }, [settings.worktreeBranchPrefix]);
+  const commitWorktreeBranchPrefix = useCallback(() => {
+    const patch = resolveWorktreeBranchPrefixUpdate(worktreeBranchPrefixDraft);
+    if (!patch) {
+      setWorktreeBranchPrefixInvalid(true);
+      return;
+    }
+    setWorktreeBranchPrefixDraft(patch.worktreeBranchPrefix);
+    setWorktreeBranchPrefixInvalid(false);
+    if (patch.worktreeBranchPrefix !== settings.worktreeBranchPrefix) {
+      updateSettings(patch);
+    }
+  }, [settings.worktreeBranchPrefix, updateSettings, worktreeBranchPrefixDraft]);
 
   return (
     <SettingsPageContainer>
@@ -2042,6 +2069,60 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("worktree-branch-prefix")}
+          description="New worktree branches use this prefix. Use up to 64 lowercase letters, digits, hyphens, or underscores."
+          status={
+            worktreeBranchPrefixInvalid ? (
+              <span id="worktree-branch-prefix-error" role="alert">
+                Use one non-empty segment with letters, digits, hyphens, or underscores.
+              </span>
+            ) : undefined
+          }
+          resetAction={
+            settings.worktreeBranchPrefix !== DEFAULT_UNIFIED_SETTINGS.worktreeBranchPrefix ? (
+              <SettingResetButton
+                label="worktree branch prefix"
+                onClick={() => {
+                  const worktreeBranchPrefix = DEFAULT_UNIFIED_SETTINGS.worktreeBranchPrefix;
+                  setWorktreeBranchPrefixDraft(worktreeBranchPrefix);
+                  setWorktreeBranchPrefixInvalid(false);
+                  updateSettings({ worktreeBranchPrefix });
+                }}
+              />
+            ) : null
+          }
+          control={
+            <InputGroup className="w-full sm:w-44">
+              <InputGroupInput
+                aria-describedby={
+                  worktreeBranchPrefixInvalid ? "worktree-branch-prefix-error" : undefined
+                }
+                aria-invalid={worktreeBranchPrefixInvalid || undefined}
+                aria-label="Worktree branch prefix"
+                autoCapitalize="off"
+                autoComplete="off"
+                maxLength={64}
+                spellCheck={false}
+                value={worktreeBranchPrefixDraft}
+                onBlur={commitWorktreeBranchPrefix}
+                onChange={(event) => {
+                  setWorktreeBranchPrefixDraft(event.currentTarget.value);
+                  setWorktreeBranchPrefixInvalid(false);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.currentTarget.blur();
+                  }
+                }}
+              />
+              <InputGroupAddon align="inline-end">
+                <InputGroupText>/</InputGroupText>
+              </InputGroupAddon>
+            </InputGroup>
           }
         />
 

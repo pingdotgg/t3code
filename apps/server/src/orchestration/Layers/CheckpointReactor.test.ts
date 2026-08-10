@@ -57,6 +57,7 @@ import {
 } from "../../provider/Services/ProviderService.ts";
 import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 
@@ -350,6 +351,7 @@ describe("CheckpointReactor", () => {
       Layer.provideMerge(WorkspacePaths.layer),
       Layer.provideMerge(VcsProcess.layer),
       Layer.provideMerge(ServerConfigLayer),
+      Layer.provideMerge(ServerSettingsService.layerTest({ worktreeBranchPrefix: "team" })),
       Layer.provideMerge(NodeServices.layer),
     );
 
@@ -611,7 +613,7 @@ describe("CheckpointReactor", () => {
     const harness = await createHarness({
       seedFilesystemCheckpoints: false,
       threadBranch: "t3code/original-branch",
-      localStatusRefName: "t3code/0a1b2c3d",
+      localStatusRefName: "t3code/12345678-1234-4abc-8def-1234567890ab",
     });
 
     harness.provider.emit({
@@ -629,6 +631,30 @@ describe("CheckpointReactor", () => {
     const snapshot = await harness.readModel();
     const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.branch).toBe("t3code/original-branch");
+  });
+
+  it("does not adopt a configured temporary placeholder checkout as the thread branch", async () => {
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      threadBranch: "team/original-branch",
+      localStatusRefName: "team/0a1b2c3d",
+    });
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-branch-drift-custom-temp"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-branch-drift-custom-temp"),
+      payload: { state: "completed" },
+    });
+
+    await harness.drain();
+
+    const snapshot = await harness.readModel();
+    const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.branch).toBe("team/original-branch");
   });
 
   it("ignores auxiliary thread turn completion while primary turn is active", async () => {

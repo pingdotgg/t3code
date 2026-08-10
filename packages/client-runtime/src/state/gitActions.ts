@@ -412,6 +412,7 @@ export function resolveThreadBranchUpdate(
 export function resolveLiveThreadBranchUpdate(input: {
   threadBranch: string | null;
   gitStatus: VcsStatusResult | null;
+  worktreeBranchPrefix?: string;
 }): { branch: string | null } | null {
   if (!input.gitStatus) {
     return null;
@@ -428,8 +429,8 @@ export function resolveLiveThreadBranchUpdate(input: {
   if (
     input.threadBranch !== null &&
     input.gitStatus.refName !== null &&
-    !isTemporaryWorktreeBranch(input.threadBranch) &&
-    isTemporaryWorktreeBranch(input.gitStatus.refName)
+    !isTemporaryWorktreeBranch(input.threadBranch, input.worktreeBranchPrefix) &&
+    isTemporaryWorktreeBranch(input.gitStatus.refName, input.worktreeBranchPrefix)
   ) {
     return null;
   }

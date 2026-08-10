@@ -172,6 +172,24 @@ describe("ServerSettings worktree defaults", () => {
     expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(true);
   });
 
+  it("defaults and normalizes the worktree branch prefix", () => {
+    expect(decodeServerSettings({}).worktreeBranchPrefix).toBe("t3code");
+    expect(
+      decodeServerSettings({ worktreeBranchPrefix: "  Team_42-Dev  " }).worktreeBranchPrefix,
+    ).toBe("team_42-dev");
+    expect(
+      decodeServerSettingsPatch({ worktreeBranchPrefix: "  Team_42-Dev  " }).worktreeBranchPrefix,
+    ).toBe("team_42-dev");
+  });
+
+  it.each(["", "   ", "team/feature", "team.prefix", "a".repeat(65)])(
+    "rejects invalid worktree branch prefix %j",
+    (worktreeBranchPrefix) => {
+      expect(() => decodeServerSettings({ worktreeBranchPrefix })).toThrow();
+      expect(() => decodeServerSettingsPatch({ worktreeBranchPrefix })).toThrow();
+    },
+  );
+
   it("accepts start-from-origin updates", () => {
     expect(
       decodeServerSettingsPatch({ newWorktreesStartFromOrigin: false }).newWorktreesStartFromOrigin,
