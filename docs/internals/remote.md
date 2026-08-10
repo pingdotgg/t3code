@@ -200,8 +200,8 @@ renderer projects live non-primary environment shells into a compact, versioned,
 credential-free snapshot at `<stateDir>/agent-activity.json`. The main process owns the atomic
 file write; consumers such as local status hardware can observe remote agent state without reading
 the encrypted connection catalog or implementing T3 transports. Disabling the setting removes the
-file. Each activity contains only its phase, display label, timestamp, and an opaque ID that
-is stable for the desktop process lifetime; raw environment and thread IDs are never written. The
+file. Each activity contains only its phase, display label, timestamp, and a deterministic one-way
+opaque ID; raw environment and thread IDs are never written. The
 file is refreshed every 15 seconds, excludes disconnected/cached environments, and retains
 completed or failed work for 15 minutes.
 

@@ -2,6 +2,7 @@ import {
   DesktopAgentActivitySnapshot,
   DesktopAgentActivitySnapshotInput,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -13,15 +14,9 @@ import * as DesktopIpc from "../DesktopIpc.ts";
 
 export const DESKTOP_AGENT_ACTIVITY_SNAPSHOT_FILE = "agent-activity.json";
 const encodeSnapshot = Schema.encodeEffect(Schema.fromJsonString(DesktopAgentActivitySnapshot));
-const opaqueActivityIds = new Map<string, string>();
-let nextOpaqueActivityId = 1;
 
 function opaqueActivityId(sourceId: string): string {
-  const existing = opaqueActivityIds.get(sourceId);
-  if (existing) return existing;
-  const id = `activity-${nextOpaqueActivityId++}`;
-  opaqueActivityIds.set(sourceId, id);
-  return id;
+  return `activity-${NodeCrypto.createHash("sha256").update(sourceId).digest("hex").slice(0, 24)}`;
 }
 
 export const publishAgentActivitySnapshot = DesktopIpc.makeIpcMethod({
@@ -33,7 +28,6 @@ export const publishAgentActivitySnapshot = DesktopIpc.makeIpcMethod({
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const targetPath = path.join(environment.stateDir, DESKTOP_AGENT_ACTIVITY_SNAPSHOT_FILE);
-    const temporaryPath = `${targetPath}.${process.pid}.tmp`;
     const encoded = yield* encodeSnapshot({
       schemaVersion: snapshot.schemaVersion,
       generatedAt: snapshot.generatedAt,
@@ -46,6 +40,11 @@ export const publishAgentActivitySnapshot = DesktopIpc.makeIpcMethod({
     });
 
     yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+    const temporaryPath = yield* fileSystem.makeTempFile({
+      directory: environment.stateDir,
+      prefix: ".agent-activity.",
+      suffix: ".tmp",
+    });
     yield* fileSystem.writeFileString(temporaryPath, `${encoded}\n`);
     yield* fileSystem
       .rename(temporaryPath, targetPath)

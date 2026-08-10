@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type {
+  DesktopBridge,
   DesktopAgentActivitySnapshotInput,
   DesktopAgentActivitySource,
   EnvironmentId,
@@ -7,7 +8,7 @@ import type {
 import { projectThreadAwareness } from "@t3tools/shared/agentAwareness";
 import * as Option from "effect/Option";
 import { Atom } from "effect/unstable/reactivity";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { useClientSettings, useClientSettingsHydrated } from "../hooks/useSettings";
@@ -16,6 +17,58 @@ import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 
 const HEARTBEAT_MS = 15_000;
 const TERMINAL_VISIBILITY_MS = 15 * 60_000;
+
+type SnapshotOperation =
+  | { readonly type: "publish"; readonly snapshot: DesktopAgentActivitySnapshotInput }
+  | { readonly type: "clear" };
+
+type SnapshotBridge = Pick<
+  DesktopBridge,
+  "publishAgentActivitySnapshot" | "clearAgentActivitySnapshot"
+>;
+
+export function createDesktopAgentActivityWriter(
+  bridge: SnapshotBridge | undefined,
+  onError: (operation: SnapshotOperation["type"], error: unknown) => void,
+) {
+  let pending: SnapshotOperation | null = null;
+  let running = false;
+  let idleResolvers: Array<() => void> = [];
+
+  const drain = async () => {
+    running = true;
+    while (pending) {
+      const operation = pending;
+      pending = null;
+      try {
+        if (operation.type === "publish") {
+          await bridge?.publishAgentActivitySnapshot?.(operation.snapshot);
+        } else {
+          await bridge?.clearAgentActivitySnapshot?.();
+        }
+      } catch (error) {
+        onError(operation.type, error);
+      }
+    }
+    running = false;
+    const resolvers = idleResolvers;
+    idleResolvers = [];
+    for (const resolve of resolvers) resolve();
+  };
+
+  const enqueue = (operation: SnapshotOperation): Promise<void> => {
+    pending = operation;
+    const idle = new Promise<void>((resolve) => idleResolvers.push(resolve));
+    if (!running) void drain();
+    return idle;
+  };
+
+  return {
+    publish: (snapshot: DesktopAgentActivitySnapshotInput) =>
+      enqueue({ type: "publish", snapshot }),
+    clear: () => enqueue({ type: "clear" }),
+  };
+}
 
 export function visibleDesktopAgentActivities(
   activities: readonly DesktopAgentActivitySource[],
@@ -65,19 +118,25 @@ export function DesktopAgentActivityBridge() {
   const activities = useAtomValue(desktopAgentActivitiesAtom);
   const settingsHydrated = useClientSettingsHydrated();
   const enabled = useClientSettings((settings) => settings.agentActivitySnapshotEnabled);
+  const writerRef = useRef<ReturnType<typeof createDesktopAgentActivityWriter> | null>(null);
+  writerRef.current ??= createDesktopAgentActivityWriter(
+    window.desktopBridge,
+    (operation, error) => {
+      console.warn(`Could not ${operation} the desktop agent activity snapshot.`, error);
+    },
+  );
+  const writer = writerRef.current;
 
   useEffect(() => {
     if (!settingsHydrated) return;
     if (!enabled) {
-      void window.desktopBridge?.clearAgentActivitySnapshot?.().catch((error: unknown) => {
-        console.warn("Could not clear the desktop agent activity snapshot.", error);
-      });
+      void writer.clear();
       return;
     }
 
+    let active = true;
     const publish = () => {
-      const bridge = window.desktopBridge?.publishAgentActivitySnapshot;
-      if (!bridge) return;
+      if (!active) return;
       const now = Date.now();
       const visibleActivities = visibleDesktopAgentActivities(activities, now);
       const snapshot: DesktopAgentActivitySnapshotInput = {
@@ -85,15 +144,16 @@ export function DesktopAgentActivityBridge() {
         generatedAt: new Date(now).toISOString(),
         activities: visibleActivities,
       };
-      void bridge(snapshot).catch((error: unknown) => {
-        console.warn("Could not publish the desktop agent activity snapshot.", error);
-      });
+      void writer.publish(snapshot);
     };
 
     publish();
     const heartbeat = window.setInterval(publish, HEARTBEAT_MS);
-    return () => window.clearInterval(heartbeat);
-  }, [activities, enabled, settingsHydrated]);
+    return () => {
+      active = false;
+      window.clearInterval(heartbeat);
+    };
+  }, [activities, enabled, settingsHydrated, writer]);
 
   return null;
 }

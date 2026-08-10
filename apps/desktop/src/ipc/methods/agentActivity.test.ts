@@ -65,20 +65,32 @@ describe("desktop agent activity IPC", () => {
       );
       const persisted = yield* fileSystem.readFileString(targetPath);
 
-      assert.deepEqual(yield* decodeSnapshot(persisted), {
+      const firstDecoded = yield* decodeSnapshot(persisted);
+      const firstActivityId = firstDecoded.activities[0]!.id;
+      assert.deepEqual(firstDecoded, {
         schemaVersion: 1,
         generatedAt: snapshot.generatedAt,
         activities: [
           {
-            id: "activity-1",
+            id: firstActivityId,
             label: "Build Mac · Ship the bridge",
             phase: "running",
             updatedAt: "2026-08-10T20:00:00.000Z",
           },
         ],
       });
+      assert.match(firstActivityId, /^activity-[0-9a-f]{24}$/);
       assert.notInclude(persisted, "remote-env");
       assert.notInclude(persisted, "thread-1");
+
+      yield* publishAgentActivitySnapshot
+        .handler({
+          ...snapshot,
+          generatedAt: "2026-08-10T20:00:01.000Z",
+        })
+        .pipe(Effect.provide(environmentLayer));
+      const secondDecoded = yield* decodeSnapshot(yield* fileSystem.readFileString(targetPath));
+      assert.equal(secondDecoded.activities[0]?.id, firstActivityId);
 
       yield* clearAgentActivitySnapshot.handler(undefined).pipe(Effect.provide(environmentLayer));
       assert.isFalse(yield* fileSystem.exists(targetPath));
