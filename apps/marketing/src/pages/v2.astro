@@ -166,7 +166,7 @@ const endorsementRows = [
                         href={IOS_APP_STORE_URL}
                         target="_blank"
                         rel="noreferrer"
-                        aria-label="Open T3 Code in the App Store"
+                        aria-label="Get T3 Code on the App Store"
                       >
                         <img
                           src="/mobile-states/ios-review.png"
@@ -175,7 +175,7 @@ const endorsementRows = [
                         />
                         <span class="v2-device-store-link">
                           <img src="/store-logos/appstore.svg" alt="" width="18" height="18" />
-                          Open in App Store <span aria-hidden="true">↗</span>
+                          Get it on App Store <span aria-hidden="true">↗</span>
                         </span>
                       </a>
                       <a
@@ -183,7 +183,7 @@ const endorsementRows = [
                         href={GOOGLE_PLAY_STORE_URL}
                         target="_blank"
                         rel="noreferrer"
-                        aria-label="Open T3 Code in Google Play"
+                        aria-label="Get T3 Code on Google Play"
                       >
                         <img
                           src="/mobile-states/android-review.png"
@@ -192,7 +192,7 @@ const endorsementRows = [
                         />
                         <span class="v2-device-store-link">
                           <img src="/store-logos/googleplay.svg" alt="" width="18" height="18" />
-                          Open in Google Play <span aria-hidden="true">↗</span>
+                          Get it on Google Play <span aria-hidden="true">↗</span>
                         </span>
                       </a>
                     </div>
@@ -807,14 +807,15 @@ const endorsementRows = [
     height: 100%;
     place-items: center;
     border-radius: 14px;
+    background: #08080a;
     overflow: hidden;
   }
 
   .v2-phone-device > img {
     width: 100%;
     height: 100%;
-    object-fit: cover;
-    object-position: top center;
+    object-fit: contain;
+    object-position: center;
   }
 
   .v2-device-store-link {
