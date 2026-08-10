@@ -234,13 +234,27 @@ struct PlatformRootView: View {
                     destination: .sharedNewTask(shareID: shareID)
                 )
             case .existingThread:
-                guard let threadID = destination.threadID,
-                      await activateEnvironmentIfNeeded(destination.environmentID),
-                      let thread = PlatformRouteResolver.thread(
-                          in: model.snapshot,
-                          environmentID: destination.environmentID,
-                          id: threadID
-                      ) else {
+                guard let threadID = destination.threadID else {
+                    try await incomingShareCoordinator.requestAnotherDestination()
+                    model.errorMessage = "That thread is no longer available. Choose another destination."
+                    return
+                }
+                if let environmentID = destination.environmentID,
+                   !model.snapshot.environments.contains(where: { $0.id == environmentID }) {
+                    try await incomingShareCoordinator.requestAnotherDestination()
+                    model.errorMessage = "That thread's environment is no longer saved. Choose another destination."
+                    return
+                }
+                guard await activateEnvironmentIfNeeded(destination.environmentID) else {
+                    // Keep the saved destination so a temporarily unavailable
+                    // environment can retry when its connection recovers.
+                    return
+                }
+                guard let thread = PlatformRouteResolver.thread(
+                    in: model.snapshot,
+                    environmentID: destination.environmentID,
+                    id: threadID
+                ) else {
                     try await incomingShareCoordinator.requestAnotherDestination()
                     model.errorMessage = "That thread is no longer available. Choose another destination."
                     return
