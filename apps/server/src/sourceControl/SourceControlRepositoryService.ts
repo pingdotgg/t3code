@@ -11,6 +11,8 @@ import {
   type SourceControlCloneRepositoryInput,
   type SourceControlCloneRepositoryResult,
   type SourceControlCloneProtocol,
+  type SourceControlListChangeRequestsInput,
+  type SourceControlListChangeRequestsResult,
   type SourceControlProviderKind,
   type SourceControlPublishRepositoryInput,
   type SourceControlPublishRepositoryResult,
@@ -36,6 +38,9 @@ export class SourceControlRepositoryService extends Context.Service<
     readonly publishRepository: (
       input: SourceControlPublishRepositoryInput,
     ) => Effect.Effect<SourceControlPublishRepositoryResult, SourceControlRepositoryError>;
+    readonly listChangeRequests: (
+      input: SourceControlListChangeRequestsInput,
+    ) => Effect.Effect<SourceControlListChangeRequestsResult, SourceControlRepositoryError>;
   }
 >()("t3/sourceControl/SourceControlRepositoryService") {}
 
@@ -275,6 +280,23 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const listChangeRequests = Effect.fn("SourceControlRepositoryService.listChangeRequests")(
+    function* (input: SourceControlListChangeRequestsInput) {
+      const handle = yield* providers.resolveHandle({ cwd: input.cwd });
+      const providerKind = handle.context?.provider.kind ?? "unknown";
+      yield* ensureConcreteProvider({ operation: "listChangeRequests", provider: providerKind });
+      const changeRequests = yield* handle.provider.listRepositoryChangeRequests({
+        cwd: input.cwd,
+        state: input.state ?? "open",
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      });
+      return {
+        provider: providerKind,
+        changeRequests,
+      } satisfies SourceControlListChangeRequestsResult;
+    },
+  );
+
   return SourceControlRepositoryService.of({
     lookupRepository: (input) =>
       lookupRepository(input).pipe(mapRepositoryError("lookupRepository", input.provider)),
@@ -284,6 +306,8 @@ export const make = Effect.gen(function* () {
       ),
     publishRepository: (input) =>
       publishRepository(input).pipe(mapRepositoryError("publishRepository", input.provider)),
+    listChangeRequests: (input) =>
+      listChangeRequests(input).pipe(mapRepositoryError("listChangeRequests", "unknown")),
   });
 });
 

@@ -14,7 +14,15 @@ export interface NormalizedBitbucketPullRequestRecord {
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
+  readonly author?: string | null;
+  readonly assignees?: ReadonlyArray<string>;
 }
+
+const BitbucketAccountSchema = Schema.Struct({
+  nickname: Schema.optional(Schema.NullOr(Schema.String)),
+  display_name: Schema.optional(Schema.NullOr(Schema.String)),
+  account_id: Schema.optional(Schema.NullOr(Schema.String)),
+});
 
 export const BitbucketRepositoryRefSchema = Schema.Struct({
   full_name: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -46,6 +54,10 @@ export const BitbucketPullRequestSchema = Schema.Struct({
   }),
   source: BitbucketPullRequestBranchSchema,
   destination: BitbucketPullRequestBranchSchema,
+  author: Schema.optional(Schema.NullOr(BitbucketAccountSchema)),
+  // Bitbucket has no assignee concept on pull requests; reviewers are the
+  // closest equivalent and are what the PR panel groups on.
+  reviewers: Schema.optional(Schema.NullOr(Schema.Array(BitbucketAccountSchema))),
 });
 
 export const BitbucketPullRequestListSchema = Schema.Struct({
@@ -78,6 +90,12 @@ function normalizeBitbucketPullRequestState(state: string | null | undefined) {
   }
 }
 
+function accountHandle(
+  account: Schema.Schema.Type<typeof BitbucketAccountSchema> | null | undefined,
+): string | null {
+  return trimOptionalString(account?.nickname) ?? trimOptionalString(account?.display_name);
+}
+
 export function normalizeBitbucketPullRequestRecord(
   raw: Schema.Schema.Type<typeof BitbucketPullRequestSchema>,
 ): NormalizedBitbucketPullRequestRecord {
@@ -90,6 +108,14 @@ export function normalizeBitbucketPullRequestRecord(
     headRepositoryNameWithOwner !== null &&
     baseRepositoryNameWithOwner !== null &&
     headRepositoryNameWithOwner !== baseRepositoryNameWithOwner;
+  const author = accountHandle(raw.author);
+  const assignees = [
+    ...new Set(
+      (raw.reviewers ?? [])
+        .map(accountHandle)
+        .filter((handle): handle is string => handle !== null),
+    ),
+  ];
 
   return {
     number: raw.id,
@@ -102,5 +128,7 @@ export function normalizeBitbucketPullRequestRecord(
     ...(isCrossRepository ? { isCrossRepository: true } : {}),
     ...(headRepositoryNameWithOwner ? { headRepositoryNameWithOwner } : {}),
     ...(headRepositoryOwnerLogin ? { headRepositoryOwnerLogin } : {}),
+    ...(author ? { author } : {}),
+    ...(assignees.length > 0 ? { assignees } : {}),
   };
 }

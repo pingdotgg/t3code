@@ -109,6 +109,7 @@ const BASE_THREAD: OrchestrationThread = {
   proposedPlans: [],
   activities: [],
   checkpoints: [checkpoint("turn-2", 2)],
+  proposedPlanReviews: [],
   session: null,
 };
 
@@ -124,6 +125,7 @@ const OLDER_PAGE: OrchestrationThreadDetailSnapshot = {
     ...BASE_THREAD,
     messages: [OLDER_MESSAGE],
     checkpoints: [checkpoint("turn-1", 1)],
+    proposedPlanReviews: [],
   },
   page: { beforeCursor: null, hasMore: false, snapshotSequence: 10 },
 };

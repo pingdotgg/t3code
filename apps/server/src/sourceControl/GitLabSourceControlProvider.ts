@@ -36,6 +36,8 @@ function toChangeRequest(summary: GitLabCli.GitLabMergeRequestSummary): ChangeRe
     ...(summary.headRepositoryOwnerLogin !== undefined
       ? { headRepositoryOwnerLogin: summary.headRepositoryOwnerLogin }
       : {}),
+    ...(summary.author !== undefined ? { author: summary.author } : {}),
+    ...(summary.assignees !== undefined ? { assignees: summary.assignees } : {}),
   };
 }
 
@@ -133,6 +135,27 @@ export const make = Effect.gen(function* () {
           ),
         );
     },
+    listRepositoryChangeRequests: (input) =>
+      gitlab
+        .listRepositoryMergeRequests({
+          cwd: input.cwd,
+          state: input.state,
+          ...(input.limit !== undefined ? { limit: input.limit } : {}),
+        })
+        .pipe(
+          Effect.map((items) => items.map(toChangeRequest)),
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "gitlab",
+                operation: "listRepositoryChangeRequests",
+                command: error.command,
+                cwd: input.cwd,
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
+        ),
     getChangeRequest: (input) =>
       gitlab.getMergeRequest(input).pipe(
         Effect.map(toChangeRequest),

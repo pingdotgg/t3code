@@ -836,10 +836,9 @@ describe("composerDraftStore project draft thread mapping", () => {
     }
   });
 
-  it("clears orphaned composer drafts when remapping a project to a new draft thread", () => {
+  it("clears empty composer drafts when remapping a project to a new draft thread", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });
-    store.setPrompt(draftId, "orphan me");
 
     store.setProjectDraftThreadId(projectRef, otherDraftId, { threadId: otherThreadId });
 
@@ -847,6 +846,39 @@ describe("composerDraftStore project draft thread mapping", () => {
       otherThreadId,
     );
     expect(useComposerDraftStore.getState().getDraftThread(draftId)).toBeNull();
+    expect(draftByKey(draftId)).toBeUndefined();
+  });
+
+  it("keeps invested composer drafts alive unmapped when remapping a project to a new draft thread", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setPrompt(draftId, "keep me around");
+
+    store.setProjectDraftThreadId(projectRef, otherDraftId, { threadId: otherThreadId });
+
+    // The mapping moved to the fresh draft...
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectRef(projectRef)?.threadId).toBe(
+      otherThreadId,
+    );
+    // ...but the invested draft survives with its content for the sidebar
+    // draft rows to surface.
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)?.threadId).toBe(threadId);
+    expect(draftByKey(draftId)?.prompt).toBe("keep me around");
+  });
+
+  it("clears every session for a project, including unmapped invested drafts", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setPrompt(draftId, "invested");
+    // The remap leaves the invested draft alive unmapped; project removal
+    // must still sweep it, or its sidebar row outlives the project.
+    store.setProjectDraftThreadId(projectRef, otherDraftId, { threadId: otherThreadId });
+
+    store.clearProjectDraftThreadId(projectRef);
+
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectRef(projectRef)).toBeNull();
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)).toBeNull();
+    expect(useComposerDraftStore.getState().getDraftThread(otherDraftId)).toBeNull();
     expect(draftByKey(draftId)).toBeUndefined();
   });
 
@@ -1148,6 +1180,49 @@ describe("composerDraftStore project draft thread mapping", () => {
       worktreePath: null,
       envMode: "worktree",
       startFromOrigin: true,
+    });
+  });
+
+  it("creates a recovery draft without replacing an unrelated project draft or carrying its model", () => {
+    const store = useComposerDraftStore.getState();
+    const recoveryDraftId = DraftId.make("draft-recovery");
+    const recoveryThreadId = ThreadId.make("thread-recovery");
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      branch: "feature/regular-draft",
+    });
+    store.setPrompt(draftId, "Keep this unrelated draft");
+    store.setModelSelection(draftId, modelSelection(CODEX_DRIVER, "gpt-failed"));
+
+    store.createDetachedDraftThread(scopedProjectKey(projectRef), projectRef, recoveryDraftId, {
+      threadId: recoveryThreadId,
+      createdAt: "2026-08-10T00:00:00.000Z",
+      envMode: "worktree",
+      startFromOrigin: true,
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+    });
+    store.setPrompt(recoveryDraftId, "Retry the failed submission");
+
+    const next = useComposerDraftStore.getState();
+    expect(next.getDraftSessionByProjectRef(projectRef)?.draftId).toBe(draftId);
+    expect(next.getComposerDraft(draftId)?.prompt).toBe("Keep this unrelated draft");
+    expect(next.getComposerDraft(draftId)?.modelSelectionByProvider[CODEX_INSTANCE]?.model).toBe(
+      "gpt-failed",
+    );
+    expect(next.getDraftSession(recoveryDraftId)).toMatchObject({
+      threadId: recoveryThreadId,
+      branch: null,
+      worktreePath: null,
+      envMode: "worktree",
+      startFromOrigin: true,
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+    });
+    expect(next.getComposerDraft(recoveryDraftId)).toMatchObject({
+      prompt: "Retry the failed submission",
+      modelSelectionByProvider: {},
+      activeProvider: null,
     });
   });
 });

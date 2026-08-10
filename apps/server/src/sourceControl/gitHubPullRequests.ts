@@ -18,7 +18,14 @@ export interface NormalizedGitHubPullRequestRecord {
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
+  readonly author?: string | null;
+  readonly assignees?: ReadonlyArray<string>;
 }
+
+const GitHubActorSchema = Schema.Struct({
+  login: Schema.optional(Schema.NullOr(Schema.String)),
+  name: Schema.optional(Schema.NullOr(Schema.String)),
+});
 
 const GitHubPullRequestSchema = Schema.Struct({
   number: PositiveInt,
@@ -48,6 +55,8 @@ const GitHubPullRequestSchema = Schema.Struct({
       }),
     ),
   ),
+  author: Schema.optional(Schema.NullOr(GitHubActorSchema)),
+  assignees: Schema.optional(Schema.NullOr(Schema.Array(GitHubActorSchema))),
 });
 
 function trimOptionalString(value: string | null | undefined): string | null {
@@ -72,6 +81,12 @@ function normalizeGitHubPullRequestState(input: {
   return "open";
 }
 
+function actorHandle(
+  actor: Schema.Schema.Type<typeof GitHubActorSchema> | null | undefined,
+): string | null {
+  return trimOptionalString(actor?.login) ?? trimOptionalString(actor?.name);
+}
+
 function normalizeGitHubPullRequestRecord(
   raw: Schema.Schema.Type<typeof GitHubPullRequestSchema>,
 ): NormalizedGitHubPullRequestRecord {
@@ -85,6 +100,10 @@ function normalizeGitHubPullRequestRecord(
     (headRepositoryOwnerLogin && headRepositoryName
       ? `${headRepositoryOwnerLogin}/${headRepositoryName}`
       : null);
+  const author = actorHandle(raw.author);
+  const assignees = (raw.assignees ?? [])
+    .map(actorHandle)
+    .filter((handle): handle is string => handle !== null);
 
   return {
     number: raw.number,
@@ -99,6 +118,8 @@ function normalizeGitHubPullRequestRecord(
       : {}),
     ...(headRepositoryNameWithOwner ? { headRepositoryNameWithOwner } : {}),
     ...(headRepositoryOwnerLogin ? { headRepositoryOwnerLogin } : {}),
+    ...(author ? { author } : {}),
+    ...(assignees.length > 0 ? { assignees } : {}),
   };
 }
 

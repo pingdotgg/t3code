@@ -76,6 +76,7 @@ const BASE_THREAD: OrchestrationThread = {
   proposedPlans: [],
   activities: [],
   checkpoints: [],
+  proposedPlanReviews: [],
   session: null,
 };
 const ACTIVE_THREAD: OrchestrationThread = {

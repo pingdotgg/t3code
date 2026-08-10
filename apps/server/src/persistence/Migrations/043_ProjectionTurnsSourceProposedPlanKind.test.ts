@@ -8,7 +8,7 @@ import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("039_ProjectionTurnsSourceProposedPlanKind", (it) => {
+layer("043_ProjectionTurnsSourceProposedPlanKind", (it) => {
   it.effect("adds and backfills the source plan kind for a v38 database", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -31,7 +31,7 @@ layer("039_ProjectionTurnsSourceProposedPlanKind", (it) => {
         )
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 39 });
+      yield* runMigrations({ toMigrationInclusive: 43 });
 
       const columns = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(projection_turns)

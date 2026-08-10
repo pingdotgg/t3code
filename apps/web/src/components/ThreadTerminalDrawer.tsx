@@ -66,7 +66,11 @@ import { terminalEnvironment } from "../state/terminal";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
-import { resolveTerminalFontPreference, TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../appearanceFonts";
+import {
+  resolveTerminalFontPreference,
+  resolveTerminalFontSizePreference,
+  TYPOGRAPHY_ADVANCED_STORAGE_KEY,
+} from "../appearanceFonts";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -135,6 +139,10 @@ function normalizeComputedColor(value: string | null | undefined, fallback: stri
   return value ?? fallback;
 }
 
+function readThemeColor(styles: CSSStyleDeclaration, variable: string, fallback: string): string {
+  return normalizeComputedColor(styles.getPropertyValue(variable), fallback);
+}
+
 /**
  * `getPropertyValue("--primary")` hands back the *specified* value (an
  * `oklch(...)` or another `var(...)`), which the terminal's color parser
@@ -174,6 +182,7 @@ export function terminalThemeFromApp(mountElement?: HTMLElement | null): Ghostty
     document.body;
   const drawerStyles = getComputedStyle(drawerSurface);
   const bodyStyles = getComputedStyle(document.body);
+  const themeStyles = getComputedStyle(document.documentElement);
   const background = normalizeComputedColor(
     drawerStyles.backgroundColor,
     normalizeComputedColor(bodyStyles.backgroundColor, fallbackBackground),
@@ -182,30 +191,38 @@ export function terminalThemeFromApp(mountElement?: HTMLElement | null): Ghostty
     drawerStyles.color,
     normalizeComputedColor(bodyStyles.color, fallbackForeground),
   );
+  const terminalBackground = readThemeColor(themeStyles, "--terminal-background", background);
+  const terminalForeground = readThemeColor(themeStyles, "--terminal-foreground", foreground);
+  const terminalCursor = readThemeColor(
+    themeStyles,
+    "--terminal-cursor",
+    isDark ? "rgb(180, 203, 255)" : "rgb(38, 56, 78)",
+  );
+  const terminalSelection = readThemeColor(
+    themeStyles,
+    "--terminal-selection-background",
+    isDark ? "rgba(180, 203, 255, 0.25)" : "rgba(37, 63, 99, 0.2)",
+  );
   const accentColor = resolveCssColorVariable(drawerSurface, "--primary");
-
   return {
     background: parseTerminalColor(
-      background,
+      terminalBackground,
       isDark ? { r: 14, g: 18, b: 24 } : { r: 255, g: 255, b: 255 },
     ),
     foreground: parseTerminalColor(
-      foreground,
+      terminalForeground,
       isDark ? { r: 237, g: 241, b: 247 } : { r: 28, g: 33, b: 41 },
     ),
-    // Follow the active theme palette's accent, falling back to the original
-    // blues when the variable cannot be resolved.
+    // Follow the active theme palette's accent, falling back to the
+    // `--terminal-cursor`/`--terminal-selection-background` variables (and
+    // finally the original blues) when the accent cannot be resolved.
     cursor: parseTerminalColor(
-      accentColor ?? "",
+      accentColor ?? terminalCursor,
       isDark ? { r: 180, g: 203, b: 255 } : { r: 38, g: 56, b: 78 },
     ),
-    // Matches the xterm selection overlays this renderer replaced; the text
-    // color underneath is left unchanged for contrast in both themes.
     selectionBackground: accentColor
       ? `color-mix(in srgb, ${accentColor} ${isDark ? 25 : 20}%, transparent)`
-      : isDark
-        ? "rgba(180, 203, 255, 0.25)"
-        : "rgba(37, 63, 99, 0.2)",
+      : terminalSelection,
   };
 }
 
@@ -357,7 +374,13 @@ export function TerminalViewport({
       terminal: settings.fontFamilyTerminal,
     }),
   );
-  const terminalFontSize = useClientSettings((settings) => settings.fontSizeTerminal);
+  const terminalFontSize = useClientSettings((settings) =>
+    resolveTerminalFontSizePreference({
+      advanced: advancedTypography,
+      code: settings.fontSizeCode,
+      terminal: settings.fontSizeTerminal,
+    }),
+  );
   const terminalFontRef = useRef({ family: terminalFontFamily, size: terminalFontSize });
   const terminalSession = useAttachedTerminalSession({
     environmentId,

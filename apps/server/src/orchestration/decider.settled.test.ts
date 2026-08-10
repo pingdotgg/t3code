@@ -519,4 +519,55 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
       expect(routineEvents.map((event) => event.type)).toEqual(["thread.activity-appended"]);
     }),
   );
+
+  it.effect("drops an onlyIfSettled session stop when the thread was re-engaged", () =>
+    Effect.gen(function* () {
+      const stopCommand = (commandId: string) =>
+        ({
+          type: "thread.session.stop",
+          commandId: CommandId.make(commandId),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: NOW,
+          onlyIfSettled: true,
+        }) as const;
+
+      // Still settled with an idle session: the cleanup stop goes through.
+      const stopped = yield* decideOrchestrationCommand({
+        command: stopCommand("cmd-stop-settled-idle"),
+        readModel: makeReadModel("settled", null, makeSession("ready")),
+      });
+      const stoppedEvents = Array.isArray(stopped) ? stopped : [stopped];
+      expect(stoppedEvents.map((event) => event.type)).toEqual(["thread.session-stop-requested"]);
+
+      // Re-engaged before the stop was decided (a turn start unsettles the
+      // thread): the stale cleanup stop must not kill the new session.
+      const unsettledError = yield* decideOrchestrationCommand({
+        command: stopCommand("cmd-stop-unsettled"),
+        readModel: makeReadModel(null, null, makeSession("starting")),
+      }).pipe(Effect.flip);
+      expect(unsettledError._tag).toBe("OrchestrationCommandInvariantError");
+
+      // Still settled but the session is already coming alive: same drop.
+      const aliveError = yield* decideOrchestrationCommand({
+        command: stopCommand("cmd-stop-session-alive"),
+        readModel: makeReadModel("settled", null, makeSession("starting")),
+      }).pipe(Effect.flip);
+      expect(aliveError._tag).toBe("OrchestrationCommandInvariantError");
+
+      // Without the flag the stop stays unconditional (archive, stop button).
+      const unconditional = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.session.stop",
+          commandId: CommandId.make("cmd-stop-unconditional"),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: NOW,
+        },
+        readModel: makeReadModel(null, null, makeSession("starting")),
+      });
+      const unconditionalEvents = Array.isArray(unconditional) ? unconditional : [unconditional];
+      expect(unconditionalEvents.map((event) => event.type)).toEqual([
+        "thread.session-stop-requested",
+      ]);
+    }),
+  );
 });

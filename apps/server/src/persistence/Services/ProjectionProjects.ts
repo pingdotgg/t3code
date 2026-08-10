@@ -12,6 +12,7 @@ import {
   ProjectId,
   ProjectScript,
   ProjectSourceFolder,
+  ThreadEnvMode,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -28,6 +29,8 @@ export const ProjectionProject = Schema.Struct({
   // site; the column itself is NOT NULL DEFAULT '[]'.
   additionalFolders: Schema.Array(ProjectSourceFolder),
   defaultModelSelection: Schema.NullOr(ModelSelection),
+  defaultThreadEnvMode: Schema.NullOr(ThreadEnvMode),
+  faviconPath: Schema.optional(Schema.NullOr(Schema.String)),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

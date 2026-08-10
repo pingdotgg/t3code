@@ -42,6 +42,7 @@ const baseThread: OrchestrationThread = {
   proposedPlans: [],
   activities: [],
   checkpoints: [],
+  proposedPlanReviews: [],
   session: null,
 };
 
@@ -855,6 +856,7 @@ describe("applyThreadDetailEvent", () => {
             completedAt: "2026-04-01T03:00:00.000Z",
           },
         ],
+        proposedPlanReviews: [],
       };
 
       const result = applyThreadDetailEvent(threadWithData, {

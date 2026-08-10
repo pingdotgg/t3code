@@ -21,6 +21,9 @@ export type SourceControlProviderInfo = typeof SourceControlProviderInfo.Type;
 export const ChangeRequestState = Schema.Literals(["open", "closed", "merged"]);
 export type ChangeRequestState = typeof ChangeRequestState.Type;
 
+export const ChangeRequestStateFilter = Schema.Literals(["open", "closed", "merged", "all"]);
+export type ChangeRequestStateFilter = typeof ChangeRequestStateFilter.Type;
+
 export const ChangeRequest = Schema.Struct({
   provider: SourceControlProviderKind,
   number: PositiveInt,
@@ -33,8 +36,28 @@ export const ChangeRequest = Schema.Struct({
   isCrossRepository: Schema.optional(Schema.Boolean),
   headRepositoryNameWithOwner: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   headRepositoryOwnerLogin: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  // Author and assignees are best-effort: not every provider CLI exposes them
+  // on every command, and a version-drifted CLI may omit them entirely. The
+  // PR panel treats a missing assignee list as "nobody is assigned" rather
+  // than failing the decode and dropping the change request.
+  author: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  assignees: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
 });
 export type ChangeRequest = typeof ChangeRequest.Type;
+
+export const SourceControlListChangeRequestsInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  state: Schema.optional(ChangeRequestStateFilter),
+  limit: Schema.optional(PositiveInt),
+});
+export type SourceControlListChangeRequestsInput = typeof SourceControlListChangeRequestsInput.Type;
+
+export const SourceControlListChangeRequestsResult = Schema.Struct({
+  provider: SourceControlProviderKind,
+  changeRequests: Schema.Array(ChangeRequest),
+});
+export type SourceControlListChangeRequestsResult =
+  typeof SourceControlListChangeRequestsResult.Type;
 
 export const SourceControlRepositoryCloneUrls = Schema.Struct({
   nameWithOwner: TrimmedNonEmptyString,
