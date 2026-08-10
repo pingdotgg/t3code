@@ -12,7 +12,7 @@ layer("044_OrchestrationV2EffectCancellation", (it) => {
   it.effect("preserves existing effects and adds the cancelled terminal status", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 43 });
+      yield* runMigrations({ toMigrationInclusive: 46 });
       yield* sql`
         INSERT INTO orchestration_v2_effect_outbox (
           effect_id,
@@ -47,7 +47,7 @@ layer("044_OrchestrationV2EffectCancellation", (it) => {
         )
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 44 });
+      yield* runMigrations({ toMigrationInclusive: 47 });
       yield* sql`
         UPDATE orchestration_v2_effect_outbox
         SET
