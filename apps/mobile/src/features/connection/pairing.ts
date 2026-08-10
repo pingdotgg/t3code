@@ -18,6 +18,14 @@ function isIpLiteral(host: string): boolean {
   }
 }
 
+function normalizePairingUrlInput(value: string): string {
+  if (value.startsWith("//")) return `https:${value}`;
+  if (value.includes("://")) return value;
+
+  const authority = value.split(/[/?#]/, 1)[0] ?? value;
+  return `${isIpLiteral(authority) ? "http" : "https"}://${value}`;
+}
+
 export class PairingQrPayloadEmptyError extends Schema.TaggedErrorClass<PairingQrPayloadEmptyError>()(
   "PairingQrPayloadEmptyError",
   {},
@@ -34,9 +42,7 @@ export function buildPairingUrl(host: string, code: string): string {
   if (!c) return h;
 
   try {
-    const url = new URL(
-      h.includes("://") ? h : `${isIpLiteral(h) ? "http" : "https"}://${h}`,
-    );
+    const url = new URL(normalizePairingUrlInput(h));
     url.hash = new URLSearchParams([["token", c]]).toString();
     return url.toString();
   } catch {
@@ -49,12 +55,7 @@ export function parsePairingUrl(url: string): { host: string; code: string } {
   if (!trimmed) return { host: "", code: "" };
 
   try {
-    const authority = trimmed.split(/[/?#]/, 1)[0] ?? trimmed;
-    const parsed = new URL(
-      trimmed.includes("://")
-        ? trimmed
-        : `${isIpLiteral(authority) ? "http" : "https"}://${trimmed}`,
-    );
+    const parsed = new URL(normalizePairingUrlInput(trimmed));
     const hostedPairingRequest = readHostedPairingRequest(parsed);
     if (hostedPairingRequest) {
       return {
@@ -77,10 +78,7 @@ export function parsePairingUrl(url: string): { host: string; code: string } {
   }
 }
 
-export function parsePairingFields(
-  host: string,
-  code: string,
-): { host: string; code: string } {
+export function parsePairingFields(host: string, code: string): { host: string; code: string } {
   const parsed = parsePairingUrl(host);
   return parsed.code.length > 0 ? parsed : { host, code };
 }
@@ -94,8 +92,7 @@ export function extractPairingUrlFromQrPayload(payload: string): string {
   try {
     const url = new URL(trimmed);
     if (url.protocol === "t3code:") {
-      const pairingUrl =
-        url.searchParams.get(MOBILE_PAIRING_URL_PARAM)?.trim() ?? "";
+      const pairingUrl = url.searchParams.get(MOBILE_PAIRING_URL_PARAM)?.trim() ?? "";
       if (pairingUrl.length > 0) {
         return pairingUrl;
       }
