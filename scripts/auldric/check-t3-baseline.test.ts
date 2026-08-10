@@ -6,7 +6,15 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { inspectBaseline, parseNameStatus } from "./check-t3-baseline.ts";
+import {
+  inspectBaseline,
+  parseNameStatus,
+  runDeclaredBaselineTests,
+  type DeclaredCommandStep,
+} from "./check-t3-baseline.ts";
+
+const generatedLockfileVerification =
+  "pnpm --filter=@auldric/public... --filter=@auldric/marketing-domain... install --frozen-lockfile --offline && pnpm --filter @auldric/public --filter @auldric/marketing-domain test";
 
 function git(root: string, ...args: ReadonlyArray<string>): string {
   return NodeChildProcess.execFileSync("git", ["-C", root, ...args], {
@@ -29,6 +37,13 @@ function commitAll(root: string, message: string): string {
 function baselineConfiguration(
   commit: string,
   permanentGovernanceFiles: ReadonlyArray<{
+    readonly path: string;
+    readonly owner: string;
+    readonly reason: string;
+    readonly contentSha256: string;
+    readonly test: string;
+  }> = [],
+  generatedDistributionFiles: ReadonlyArray<{
     readonly path: string;
     readonly owner: string;
     readonly reason: string;
@@ -58,6 +73,7 @@ function baselineConfiguration(
           ".auldric/shared-core-allowlist.json",
           ".auldric/t3-baseline.json",
         ],
+        generatedDistributionFiles,
         permanentGovernanceFiles,
         sharedCoreAllowlist: ".auldric/shared-core-allowlist.json",
       },
@@ -77,9 +93,24 @@ function createRepository(): { readonly root: string; readonly baseline: string 
   git(root, "config", "user.email", "baseline-test@example.com");
   git(root, "config", "user.name", "Baseline Test");
   write(root, "apps/web/core.txt", "t3 v1\n");
+  write(root, "pnpm-lock.yaml", "baseline lock\n");
   const baseline = commitAll(root, "upstream baseline");
   git(root, "update-ref", "refs/remotes/upstream/main", baseline);
   return { root, baseline };
+}
+
+function generatedDistributionFile(
+  reviewedContent: string,
+  test: string = generatedLockfileVerification,
+  path: string = "pnpm-lock.yaml",
+) {
+  return {
+    path,
+    owner: "#5 and #27",
+    reason: "Fixture generated distribution lockfile",
+    contentSha256: sha256(reviewedContent),
+    test,
+  };
 }
 
 function writeGovernance(root: string, baseline: string): void {
@@ -208,6 +239,228 @@ it("accepts only the reviewed content of a permanent governance file", () => {
     const rejected = inspect(root);
     assert.equal(rejected.ok, false);
     assert.include(rejected.violations, "unexpected shared-core edit: apps/web/core.txt");
+  } finally {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("accepts only the exact reviewed content of a generated distribution file", () => {
+  const { root, baseline } = createRepository();
+  try {
+    const reviewedContent = "reviewed lock\n";
+    writeGovernance(root, baseline);
+    write(
+      root,
+      ".auldric/t3-baseline.json",
+      baselineConfiguration(baseline, [], [generatedDistributionFile(reviewedContent)]),
+    );
+    write(root, "pnpm-lock.yaml", reviewedContent);
+    commitAll(root, "register generated distribution lock");
+
+    const accepted = inspect(root);
+    assert.equal(accepted.ok, true);
+    assert.equal(
+      accepted.fileDrift.find((entry) => entry.paths.includes("pnpm-lock.yaml"))?.category,
+      "generated-distribution",
+    );
+
+    write(root, "pnpm-lock.yaml", "unreviewed lock mutation\n");
+    commitAll(root, "mutate generated distribution lock");
+    const rejected = inspect(root);
+    assert.equal(rejected.ok, false);
+    assert.include(rejected.violations, "unexpected shared-core edit: pnpm-lock.yaml");
+  } finally {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("does not extend an exact generated distribution path to suffixes or other files", () => {
+  const { root, baseline } = createRepository();
+  try {
+    const reviewedContent = "reviewed lock\n";
+    writeGovernance(root, baseline);
+    write(
+      root,
+      ".auldric/t3-baseline.json",
+      baselineConfiguration(baseline, [], [generatedDistributionFile(reviewedContent)]),
+    );
+    write(root, "pnpm-lock.yaml", reviewedContent);
+    write(root, "pnpm-lock.yaml.backup", reviewedContent);
+    write(root, "other-lock.yaml", reviewedContent);
+    commitAll(root, "try generated distribution path lookalikes");
+
+    const report = inspect(root);
+    assert.equal(report.ok, false);
+    assert.equal(
+      report.fileDrift.find((entry) => entry.paths.includes("pnpm-lock.yaml"))?.category,
+      "generated-distribution",
+    );
+    assert.include(report.violations, "unexpected shared-core edit: pnpm-lock.yaml.backup");
+    assert.include(report.violations, "unexpected shared-core edit: other-lock.yaml");
+
+    write(
+      root,
+      ".auldric/t3-baseline.json",
+      baselineConfiguration(
+        baseline,
+        [],
+        [
+          generatedDistributionFile(
+            reviewedContent,
+            generatedLockfileVerification,
+            "pnpm-lock.yaml.backup",
+          ),
+        ],
+      ),
+    );
+    commitAll(root, "try a generated distribution registry suffix");
+    assert.throws(() => inspect(root), /not an approved generated distribution path/);
+
+    write(
+      root,
+      ".auldric/t3-baseline.json",
+      baselineConfiguration(
+        baseline,
+        [],
+        [generatedDistributionFile("t3 v1\n", generatedLockfileVerification, "apps/web/core.txt")],
+      ),
+    );
+    commitAll(root, "try another baseline-owned generated distribution path");
+    assert.throws(() => inspect(root), /not an approved generated distribution path/);
+  } finally {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("rejects duplicate and overlapping generated distribution classifications", () => {
+  const duplicate = createRepository();
+  try {
+    const reviewedContent = "reviewed lock\n";
+    writeGovernance(duplicate.root, duplicate.baseline);
+    const entry = generatedDistributionFile(reviewedContent);
+    write(
+      duplicate.root,
+      ".auldric/t3-baseline.json",
+      baselineConfiguration(duplicate.baseline, [], [entry, entry]),
+    );
+    write(duplicate.root, "pnpm-lock.yaml", reviewedContent);
+    commitAll(duplicate.root, "duplicate generated distribution path");
+
+    assert.throws(() => inspect(duplicate.root), /generated distribution file duplicates/);
+  } finally {
+    NodeFS.rmSync(duplicate.root, { recursive: true, force: true });
+  }
+
+  const overlap = createRepository();
+  try {
+    const reviewedContent = "reviewed lock\n";
+    writeGovernance(overlap.root, overlap.baseline);
+    write(
+      overlap.root,
+      ".auldric/t3-baseline.json",
+      baselineConfiguration(overlap.baseline, [], [generatedDistributionFile(reviewedContent)]),
+    );
+    write(
+      overlap.root,
+      ".auldric/shared-core-allowlist.json",
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          entries: [
+            {
+              path: "pnpm-lock.yaml",
+              owner: "fixture",
+              reason: "Invalid overlapping classification",
+              contentSha256: sha256(reviewedContent),
+              expiresOn: "2026-08-11",
+              upstream: {
+                status: "related",
+                url: "https://github.com/pingdotgg/t3code/issues/123",
+              },
+              test: "pnpm --dir apps/web test src/productDomain.test.ts src/marketingRoute.test.tsx",
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    write(overlap.root, "pnpm-lock.yaml", reviewedContent);
+    commitAll(overlap.root, "overlap generated distribution and shared core");
+
+    assert.throws(() => inspect(overlap.root), /duplicates another classification/);
+  } finally {
+    NodeFS.rmSync(overlap.root, { recursive: true, force: true });
+  }
+});
+
+it("rejects a generated distribution test outside the closed command manifest", () => {
+  const { root, baseline } = createRepository();
+  try {
+    const reviewedContent = "reviewed lock\n";
+    writeGovernance(root, baseline);
+    write(
+      root,
+      ".auldric/t3-baseline.json",
+      baselineConfiguration(
+        baseline,
+        [],
+        [generatedDistributionFile(reviewedContent, "pnpm exec unreviewed-command")],
+      ),
+    );
+    write(root, "pnpm-lock.yaml", reviewedContent);
+    commitAll(root, "declare unreviewed generated distribution test");
+
+    assert.throws(() => inspect(root), /not the closed verification for pnpm-lock.yaml/);
+  } finally {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("executes generated distribution verification as closed pnpm argv without a shell", () => {
+  const { root, baseline } = createRepository();
+  try {
+    const reviewedContent = "reviewed lock\n";
+    writeGovernance(root, baseline);
+    write(
+      root,
+      ".auldric/t3-baseline.json",
+      baselineConfiguration(baseline, [], [generatedDistributionFile(reviewedContent)]),
+    );
+    const invocations: Array<{ readonly step: DeclaredCommandStep; readonly cwd: string }> = [];
+
+    runDeclaredBaselineTests({
+      repoRoot: root,
+      runCommand: (step, cwd) => {
+        invocations.push({ step, cwd });
+        return { status: 0 };
+      },
+    });
+
+    assert.equal(invocations.length, 2);
+    assert.deepEqual(
+      invocations.map(({ step }) => step),
+      [
+        {
+          command: "pnpm",
+          args: [
+            "--filter=@auldric/public...",
+            "--filter=@auldric/marketing-domain...",
+            "install",
+            "--frozen-lockfile",
+            "--offline",
+          ],
+          shell: false,
+        },
+        {
+          command: "pnpm",
+          args: ["--filter", "@auldric/public", "--filter", "@auldric/marketing-domain", "test"],
+          shell: false,
+        },
+      ],
+    );
+    assert.isTrue(invocations.every(({ cwd }) => cwd === root));
+    assert.isTrue(invocations.every(({ step }) => !step.args.includes("&&")));
   } finally {
     NodeFS.rmSync(root, { recursive: true, force: true });
   }

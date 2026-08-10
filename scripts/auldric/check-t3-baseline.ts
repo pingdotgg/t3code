@@ -7,11 +7,55 @@ import * as NodeURL from "node:url";
 
 const canonicalUpstreamRepository = "https://github.com/pingdotgg/t3code.git";
 const defaultConfigPath = ".auldric/t3-baseline.json";
-const declaredSharedCoreTests = new Map<string, ReadonlyArray<string>>([
-  ["pnpm --dir apps/auldric-public test", ["--dir", "apps/auldric-public", "test"]],
+const generatedLockfileVerification =
+  "pnpm --filter=@auldric/public... --filter=@auldric/marketing-domain... install --frozen-lockfile --offline && pnpm --filter @auldric/public --filter @auldric/marketing-domain test";
+const generatedDistributionTests = new Map<string, string>([
+  ["pnpm-lock.yaml", generatedLockfileVerification],
+]);
+
+export interface DeclaredCommandStep {
+  readonly command: "pnpm";
+  readonly args: ReadonlyArray<string>;
+  readonly shell: false;
+}
+
+const declaredBaselineTests = new Map<string, ReadonlyArray<DeclaredCommandStep>>([
+  [
+    generatedLockfileVerification,
+    [
+      {
+        command: "pnpm",
+        args: [
+          "--filter=@auldric/public...",
+          "--filter=@auldric/marketing-domain...",
+          "install",
+          "--frozen-lockfile",
+          "--offline",
+        ],
+        shell: false,
+      },
+      {
+        command: "pnpm",
+        args: ["--filter", "@auldric/public", "--filter", "@auldric/marketing-domain", "test"],
+        shell: false,
+      },
+    ],
+  ],
   [
     "pnpm --dir apps/web test src/productDomain.test.ts src/marketingRoute.test.tsx",
-    ["--dir", "apps/web", "test", "src/productDomain.test.ts", "src/marketingRoute.test.tsx"],
+    [
+      {
+        command: "pnpm",
+        args: [
+          "--dir",
+          "apps/web",
+          "test",
+          "src/productDomain.test.ts",
+          "src/marketingRoute.test.tsx",
+        ],
+        shell: false,
+      },
+    ],
   ],
 ]);
 
@@ -27,9 +71,18 @@ interface BaselineConfig {
   readonly classification: {
     readonly additiveMarketingRoots: ReadonlyArray<string>;
     readonly distributionConfigurationPaths: ReadonlyArray<string>;
+    readonly generatedDistributionFiles: ReadonlyArray<GeneratedDistributionFile>;
     readonly permanentGovernanceFiles: ReadonlyArray<PermanentGovernanceFile>;
     readonly sharedCoreAllowlist: string;
   };
+}
+
+interface GeneratedDistributionFile {
+  readonly path: string;
+  readonly owner: string;
+  readonly reason: string;
+  readonly contentSha256: string;
+  readonly test: string;
 }
 
 interface PermanentGovernanceFile {
@@ -62,6 +115,7 @@ export type DriftCategory =
   | "additive-marketing"
   | "downstream-governance"
   | "distribution-configuration"
+  | "generated-distribution"
   | "temporary-shared-core-seam"
   | "unexpected-shared-core";
 
@@ -190,6 +244,41 @@ function loadBaselineConfig(repoRoot: string, configPath: string): BaselineConfi
       `${configPath}.classification.distributionConfigurationPaths[${index}]`,
     ),
   );
+  if (!Array.isArray(classification.generatedDistributionFiles)) {
+    throw new BaselineConfigurationError(
+      `${configPath}.classification.generatedDistributionFiles must be an array`,
+    );
+  }
+  const generatedDistributionFiles = classification.generatedDistributionFiles.map(
+    (value, index) => {
+      const label = `${configPath}.classification.generatedDistributionFiles[${index}]`;
+      const entry = requireRecord(value, label);
+      const contentSha256 = requireString(entry.contentSha256, `${label}.contentSha256`);
+      if (!/^[0-9a-f]{64}$/u.test(contentSha256)) {
+        throw new BaselineConfigurationError(`${label}.contentSha256 must be a lowercase SHA-256`);
+      }
+      const entryPath = requireRepositoryPath(entry.path, `${label}.path`);
+      const expectedTest = generatedDistributionTests.get(entryPath);
+      if (expectedTest === undefined) {
+        throw new BaselineConfigurationError(
+          `${label}.path is not an approved generated distribution path`,
+        );
+      }
+      const test = requireString(entry.test, `${label}.test`);
+      if (test !== expectedTest || !declaredBaselineTests.has(test)) {
+        throw new BaselineConfigurationError(
+          `${label}.test is not the closed verification for ${entryPath}`,
+        );
+      }
+      return {
+        path: entryPath,
+        owner: requireString(entry.owner, `${label}.owner`),
+        reason: requireString(entry.reason, `${label}.reason`),
+        contentSha256,
+        test,
+      };
+    },
+  );
   if (!Array.isArray(classification.permanentGovernanceFiles)) {
     throw new BaselineConfigurationError(
       `${configPath}.classification.permanentGovernanceFiles must be an array`,
@@ -220,6 +309,7 @@ function loadBaselineConfig(repoRoot: string, configPath: string): BaselineConfi
     classification: {
       additiveMarketingRoots,
       distributionConfigurationPaths,
+      generatedDistributionFiles,
       permanentGovernanceFiles,
       sharedCoreAllowlist,
     },
@@ -277,7 +367,7 @@ function loadAllowlist(
       );
     }
     const test = requireString(entry.test, `${label}.test`);
-    if (!declaredSharedCoreTests.has(test)) {
+    if (!declaredBaselineTests.has(test)) {
       throw new BaselineConfigurationError(
         `${label}.test is not an approved declared shared-core test`,
       );
@@ -374,6 +464,22 @@ function classifyChange(
   const distributionPaths = new Set(config.classification.distributionConfigurationPaths);
   if (change.paths.every((path) => distributionPaths.has(path))) {
     return { ...change, category: "distribution-configuration" };
+  }
+
+  const generatedDistributionFiles = new Map(
+    config.classification.generatedDistributionFiles.map((entry) => [entry.path, entry]),
+  );
+  if (
+    change.paths.every((path) => {
+      const entry = generatedDistributionFiles.get(path);
+      return (
+        baselinePaths.has(path) &&
+        entry !== undefined &&
+        releaseContentSha256.get(path) === entry.contentSha256
+      );
+    })
+  ) {
+    return { ...change, category: "generated-distribution" };
   }
 
   if (
@@ -546,8 +652,33 @@ export function inspectBaseline(options: InspectOptions): BaselineReport {
   const baselinePaths = new Set(
     runGit(repoRoot, ["ls-tree", "-r", "--name-only", "-z", baseline]).split("\0").filter(Boolean),
   );
+  const distributionConfigurationPaths = new Set(
+    config.classification.distributionConfigurationPaths,
+  );
+  const generatedDistributionPaths = new Set<string>();
   const permanentGovernancePaths = new Set<string>();
   const releaseContentSha256 = new Map<string, string>();
+  for (const entry of config.classification.generatedDistributionFiles) {
+    if (!baselinePaths.has(entry.path)) {
+      throw new BaselineConfigurationError(
+        `generated distribution file ${entry.path} is not T3-owned at the baseline`,
+      );
+    }
+    if (distributionConfigurationPaths.has(entry.path)) {
+      throw new BaselineConfigurationError(
+        `generated distribution file duplicates distribution configuration path ${entry.path}`,
+      );
+    }
+    if (generatedDistributionPaths.has(entry.path)) {
+      throw new BaselineConfigurationError(`generated distribution file duplicates ${entry.path}`);
+    }
+    generatedDistributionPaths.add(entry.path);
+    const content = runGit(repoRoot, ["show", `${release}:${entry.path}`]);
+    releaseContentSha256.set(
+      entry.path,
+      NodeCrypto.createHash("sha256").update(content).digest("hex"),
+    );
+  }
   for (const entry of config.classification.permanentGovernanceFiles) {
     if (!baselinePaths.has(entry.path)) {
       throw new BaselineConfigurationError(
@@ -556,6 +687,11 @@ export function inspectBaseline(options: InspectOptions): BaselineReport {
     }
     if (permanentGovernancePaths.has(entry.path)) {
       throw new BaselineConfigurationError(`permanent governance file duplicates ${entry.path}`);
+    }
+    if (generatedDistributionPaths.has(entry.path)) {
+      throw new BaselineConfigurationError(
+        `permanent governance file duplicates generated distribution file ${entry.path}`,
+      );
     }
     permanentGovernancePaths.add(entry.path);
     const content = runGit(repoRoot, ["show", `${release}:${entry.path}`]);
@@ -568,6 +704,15 @@ export function inspectBaseline(options: InspectOptions): BaselineReport {
     if (!baselinePaths.has(entry.path)) {
       throw new BaselineConfigurationError(
         `${config.classification.sharedCoreAllowlist} lists ${entry.path}, but it is not T3-owned at the baseline`,
+      );
+    }
+    if (
+      generatedDistributionPaths.has(entry.path) ||
+      permanentGovernancePaths.has(entry.path) ||
+      distributionConfigurationPaths.has(entry.path)
+    ) {
+      throw new BaselineConfigurationError(
+        `${config.classification.sharedCoreAllowlist} duplicates another classification for ${entry.path}`,
       );
     }
     const content = runGit(repoRoot, ["show", `${release}:${entry.path}`]);
@@ -620,10 +765,14 @@ interface CliOptions {
   readonly runDeclaredTests: boolean;
 }
 
-export function runDeclaredSharedCoreTests(options: {
+export function runDeclaredBaselineTests(options: {
   readonly repoRoot: string;
   readonly configPath?: string;
   readonly now?: Date;
+  readonly runCommand?: (
+    step: DeclaredCommandStep,
+    cwd: string,
+  ) => { readonly status: number | null; readonly error?: Error };
 }): void {
   const repoRoot = NodePath.resolve(options.repoRoot);
   const config = loadBaselineConfig(repoRoot, options.configPath ?? defaultConfigPath);
@@ -632,19 +781,30 @@ export function runDeclaredSharedCoreTests(options: {
     config.classification.sharedCoreAllowlist,
     todayUtc(options.now ?? new Date()),
   );
-  const tests = new Set(Array.from(allowlist.values(), (entry) => entry.test));
+  const tests = new Set([
+    ...Array.from(allowlist.values(), (entry) => entry.test),
+    ...config.classification.generatedDistributionFiles.map((entry) => entry.test),
+  ]);
+  const runCommand =
+    options.runCommand ??
+    ((step: DeclaredCommandStep, cwd: string) =>
+      NodeChildProcess.spawnSync(step.command, [...step.args], {
+        cwd,
+        stdio: "inherit",
+        shell: step.shell,
+      }));
   for (const test of tests) {
-    const args = declaredSharedCoreTests.get(test);
-    if (!args) {
+    const steps = declaredBaselineTests.get(test);
+    if (!steps) {
       throw new BaselineConfigurationError(`No closed command is registered for ${test}`);
     }
-    process.stdout.write(`Running declared shared-core test: ${test}\n`);
-    const result = NodeChildProcess.spawnSync("pnpm", args, {
-      cwd: repoRoot,
-      stdio: "inherit",
-    });
-    if (result.status !== 0) {
-      throw new Error(`Declared shared-core test failed (${String(result.status)}): ${test}`);
+    process.stdout.write(`Running declared baseline test: ${test}\n`);
+    for (const step of steps) {
+      const result = runCommand(step, repoRoot);
+      if (result.status !== 0) {
+        const cause = result.error?.message ?? String(result.status);
+        throw new Error(`Declared baseline test failed (${cause}): ${test}`);
+      }
     }
   }
 }
@@ -692,7 +852,7 @@ function main(): void {
     if (!report.ok) {
       process.exitCode = 1;
     } else if (options.runDeclaredTests) {
-      runDeclaredSharedCoreTests({ repoRoot: options.repoRoot });
+      runDeclaredBaselineTests({ repoRoot: options.repoRoot });
     }
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

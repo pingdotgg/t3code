@@ -818,7 +818,9 @@ interface StateRootCoordinator {
  * Store factories are cheap composition adapters, so one server can create more than one for the
  * same state root. Their handle and deletion lifecycle must still be one process-local critical
  * section. The deployment boundary remains one live server process per state root; SQLite files
- * are not protected from a second process.
+ * are not protected from a second process. Coordinators intentionally live for the process
+ * lifetime: a live server has a bounded set of configured roots, and eviction without a scoped
+ * factory lifetime could split a later factory from an older one that is still in use.
  */
 const stateRootCoordinators = new Map<string, StateRootCoordinator>();
 

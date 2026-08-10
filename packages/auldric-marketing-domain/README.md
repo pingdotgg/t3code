@@ -47,4 +47,6 @@ to another organization; the deleted organization's membership never remains act
 The deployment invariant is one live Auldric/T3 server process per state root. The shared
 coordinator deliberately covers every store factory in that process without coupling different
 roots; it is not an inter-process filesystem lock. Operators must never point two live server
-processes at the same Auldric state root.
+processes at the same Auldric state root. Coordinators remain registered for the process lifetime;
+that set is bounded by the server's configured Auldric state roots. They are not evicted because a
+factory has no scoped shutdown signal that could prove every older adapter and lease is gone.

@@ -49,7 +49,8 @@ For automation or release evidence, request JSON:
 node scripts/auldric/check-t3-baseline.ts --fetch --json
 ```
 
-To execute every focused test declared by the active shared-core entries after the guard passes:
+To execute every closed verification declared by active shared-core and generated-distribution
+entries after the guard passes:
 
 ```bash
 node scripts/auldric/check-t3-baseline.ts --fetch --run-declared-tests
@@ -61,11 +62,17 @@ path changed after the pin. It fails changes outside these categories:
 
 - new files below a machine-declared Auldric Marketing root;
 - the exact distribution and governance files declared in the baseline file;
+- a baseline-owned generated distribution file registered by exact path and exact content hash;
 - an existing T3-owned path with a valid temporary entry in the shared-core allowlist.
 
+Generated distribution entries are permanent records without an expiry or unrelated upstream-issue
+link. Their verification command comes from a closed argv manifest: the current `pnpm-lock.yaml`
+entry performs a filtered frozen offline install, then runs both the Auldric public and Marketing
+domain tests. Commands are spawned directly without a shell.
+
 The focused GitHub workflow [`.github/workflows/auldric-t3-baseline.yml`](../../.github/workflows/auldric-t3-baseline.yml)
-runs the guard tests, fetched ancestry/drift check, and every declared shared-core test on every
-pull request and every push to `main`.
+runs the guard tests, fetched ancestry/drift check, and every declared baseline verification on
+every pull request and every push to `main`.
 
 ## Accepting a later T3 baseline
 
