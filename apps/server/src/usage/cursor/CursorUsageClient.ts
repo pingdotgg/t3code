@@ -36,6 +36,7 @@ import {
   CursorUsageClientEndpointError,
   type CursorUsageClientError,
   CursorUsageClientNotConfiguredError,
+  CursorUsageClientPaginationLimitError,
   CursorUsageClientRateLimitError,
   CursorUsageClientRequestError,
 } from "./CursorUsageErrors.ts";
@@ -83,8 +84,8 @@ export interface CursorUsageEventsPage {
 export interface CursorUsageClientShape {
   /**
    * Fetches every page of usage events in `[startDateMs, endDateMs)`,
-   * stopping once the API reports no further page or `MAX_PAGES_PER_CALL` is
-   * reached.
+   * stopping once the API reports no further page. A pagination limit is
+   * returned as an error rather than silently truncating the result.
    */
   readonly getUsageEvents: (options: {
     readonly startDateMs: number;
@@ -344,6 +345,10 @@ export const layer = Layer.effect(
           cursor = next;
         }
 
+        if (cursor !== null) {
+          return yield* new CursorUsageClientPaginationLimitError();
+        }
+
         if (malformed > 0) {
           yield* Effect.logWarning("cursor_usage_events_malformed", { count: malformed });
         }
@@ -375,6 +380,9 @@ export const layer = Layer.effect(
           // The dashboard endpoint reports no explicit cursor; a short page
           // (or an empty one) is treated as the last page.
           if (result.usageEventsDisplay.length < PAGE_SIZE) break;
+          if (page === MAX_PAGES_PER_CALL) {
+            return yield* new CursorUsageClientPaginationLimitError();
+          }
         }
 
         if (malformed > 0) {

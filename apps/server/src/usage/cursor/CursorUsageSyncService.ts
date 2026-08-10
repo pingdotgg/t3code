@@ -174,15 +174,24 @@ const makeCursorUsageSyncService = (options?: CursorUsageSyncServiceLiveOptions)
         untilMs: nowMs,
       });
 
-      const { inserted, deduplicated } = yield* repository
-        .upsertEvents(events)
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("cursor_usage_events_insert_failed", { cause }).pipe(
-              Effect.as({ inserted: 0, deduplicated: 0 }),
-            ),
-          ),
-        );
+      const persistenceResult = yield* repository.upsertEvents(events).pipe(Effect.result);
+      if (persistenceResult._tag === "Failure") {
+        yield* Effect.logWarning("cursor_usage_events_insert_failed", {
+          cause: persistenceResult.failure,
+        });
+        return {
+          status: "partial",
+          eventsFetched: events.length,
+          eventsInserted: 0,
+          eventsDeduplicated: 0,
+          lastSuccessfulSyncAtMs: Option.match(syncState, {
+            onNone: () => null,
+            onSome: (state) => state.lastSuccessfulSyncAtMs,
+          }),
+          message: "Cursor usage events could not be persisted.",
+        } satisfies CursorUsageSyncResult;
+      }
+      const { inserted, deduplicated } = persistenceResult.success;
       yield* Effect.logInfo("cursor_usage_events_inserted", {
         provider: "cursor",
         count: inserted,

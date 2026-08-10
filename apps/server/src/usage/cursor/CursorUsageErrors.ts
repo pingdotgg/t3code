@@ -65,11 +65,22 @@ export class CursorUsageClientRequestError extends Schema.TaggedErrorClass<Curso
   }
 }
 
+/** The result exceeded the bounded pagination budget and is incomplete. */
+export class CursorUsageClientPaginationLimitError extends Schema.TaggedErrorClass<CursorUsageClientPaginationLimitError>()(
+  "CursorUsageClientPaginationLimitError",
+  {},
+) {
+  override get message(): string {
+    return "Cursor usage result exceeded the pagination limit and was not fully fetched.";
+  }
+}
+
 export const CursorUsageClientError = Schema.Union([
   CursorUsageClientNotConfiguredError,
   CursorUsageClientAuthError,
   CursorUsageClientEndpointError,
   CursorUsageClientRateLimitError,
   CursorUsageClientRequestError,
+  CursorUsageClientPaginationLimitError,
 ]);
 export type CursorUsageClientError = typeof CursorUsageClientError.Type;
