@@ -71,6 +71,39 @@ export const MirrorDirective = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("link-revoked"),
   }),
+  Schema.Struct({
+    type: Schema.Literal("submodule-seed-requested"),
+    syncId: MirrorSyncId,
+    /** Gitlink path, relative to the project root, e.g. "vendor/lib". */
+    path: TrimmedNonEmptyString,
+    /** Relative signed URL the agent PUTs the full `git bundle --all` to. */
+    uploadUrl: TrimmedNonEmptyString,
+    expiresAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("submodule-sync-requested"),
+    syncId: MirrorSyncId,
+    path: TrimmedNonEmptyString,
+    /** Last snapshot the host has; null when the host has none recorded. */
+    baseSnapshotOid: Schema.NullOr(GitObjectId),
+    uploadUrl: TrimmedNonEmptyString,
+    expiresAt: IsoDateTime,
+    reason: MirrorSyncReason,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("submodule-apply-requested"),
+    syncId: MirrorSyncId,
+    path: TrimmedNonEmptyString,
+    /** Relative signed URL the agent GETs the incremental bundle from. */
+    downloadUrl: TrimmedNonEmptyString,
+    expiresAt: IsoDateTime,
+    /** Snapshot both sides shared before the turn ran. */
+    baseSnapshotOid: GitObjectId,
+    /** Post-turn snapshot of the host mirror's nested repository. */
+    targetSnapshotOid: GitObjectId,
+    /** Branch refs the turn created or moved, to recreate on the origin. */
+    refUpdates: Schema.Array(MirrorRefUpdate),
+  }),
 ]);
 export type MirrorDirective = typeof MirrorDirective.Type;
 
@@ -80,6 +113,13 @@ export const MirrorStreamEvent = Schema.Union([
     connectionId: MirrorConnectionId,
     /** True when the host has no mirror contents yet and will ask to seed. */
     needsSeed: Schema.Boolean,
+    /**
+     * True when this origin's MirrorAgent understands submodule-* directives.
+     * Absent/false on older origins; the host must skip all submodule
+     * cascade logic for them rather than sending directives they will fail
+     * to decode.
+     */
+    supportsSubmodules: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("directive"),
@@ -122,6 +162,43 @@ export const MirrorAgentResponse = Schema.Union([
     syncId: MirrorSyncId,
     message: TrimmedNonEmptyString,
   }),
+  Schema.Struct({
+    type: Schema.Literal("submodule-seed-uploaded"),
+    syncId: MirrorSyncId,
+    path: TrimmedNonEmptyString,
+    /** Symbolic HEAD of the nested repo, e.g. refs/heads/main; null when detached. */
+    headRef: Schema.NullOr(TrimmedNonEmptyString),
+    snapshotOid: GitObjectId,
+    /** Nested repo remotes, replicated onto the mirror at seed time. */
+    remotes: Schema.Array(MirrorGitRemote),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("submodule-sync-uploaded"),
+    syncId: MirrorSyncId,
+    path: TrimmedNonEmptyString,
+    snapshotOid: GitObjectId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("submodule-sync-no-change"),
+    syncId: MirrorSyncId,
+    path: TrimmedNonEmptyString,
+    snapshotOid: GitObjectId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("submodule-apply-result"),
+    syncId: MirrorSyncId,
+    path: TrimmedNonEmptyString,
+    outcome: Schema.Literals(["applied", "conflicted"]),
+    /** Repo-relative paths (within the submodule) left untouched due to conflicts. */
+    conflictPaths: Schema.Array(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("submodule-skipped"),
+    syncId: MirrorSyncId,
+    path: TrimmedNonEmptyString,
+    reason: Schema.Literals(["no-nested-repository", "error"]),
+    detail: Schema.String,
+  }),
 ]);
 export type MirrorAgentResponse = typeof MirrorAgentResponse.Type;
 
@@ -143,6 +220,10 @@ export const MirrorProjectStatus = Schema.Struct({
   lastSyncedSnapshotOid: Schema.NullOr(GitObjectId),
   /** Non-empty only in the conflict state. */
   conflictPaths: Schema.Array(TrimmedNonEmptyString),
+  /** Per-submodule-path soft failures (e.g. no local copy on the origin). */
+  submoduleWarnings: Schema.Array(
+    Schema.Struct({ path: TrimmedNonEmptyString, detail: Schema.String }),
+  ),
 });
 export type MirrorProjectStatus = typeof MirrorProjectStatus.Type;
 
@@ -183,6 +264,8 @@ export type MirrorDetachInput = typeof MirrorDetachInput.Type;
 
 export const MirrorConnectInput = Schema.Struct({
   projectId: ProjectId,
+  /** True when this origin's MirrorAgent understands submodule-* directives. */
+  supportsSubmodules: Schema.optional(Schema.Boolean),
 });
 export type MirrorConnectInput = typeof MirrorConnectInput.Type;
 

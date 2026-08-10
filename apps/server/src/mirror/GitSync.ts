@@ -114,6 +114,19 @@ export class GitSync extends Context.Service<
       root: string,
       commitOid: string,
     ) => Effect.Effect<string | null, GitSyncCommandError>;
+    /**
+     * List gitlinks (mode 160000 tree entries — submodules and dangling
+     * gitlinks alike; detection is `.gitmodules`-agnostic) reachable from
+     * `treeOid`, recursing into ordinary subtrees but not into nested
+     * repositories.
+     */
+    readonly listGitlinks: (
+      root: string,
+      treeOid: string,
+    ) => Effect.Effect<
+      ReadonlyArray<{ readonly path: string; readonly oid: string }>,
+      GitSyncCommandError
+    >;
     /** Full-history bundle used for the initial seed, including the snapshot ref. */
     readonly createSeedBundle: (input: {
       readonly root: string;
@@ -507,10 +520,32 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const listGitlinks: GitSync["Service"]["listGitlinks"] = Effect.fn("GitSync.listGitlinks")(
+    function* (root, treeOid) {
+      const result = yield* run({ root, args: ["ls-tree", "-r", treeOid] });
+      const gitlinks: Array<{ path: string; oid: string }> = [];
+      for (const line of result.stdout.split("\n")) {
+        const match = line.match(/^160000 commit ([0-9a-f]+)\t(.+)$/);
+        if (match?.[1] !== undefined && match[2] !== undefined) {
+          gitlinks.push({ path: match[2], oid: match[1] });
+        }
+      }
+      return gitlinks;
+    },
+  );
+
   const isRepository: GitSync["Service"]["isRepository"] = Effect.fn("GitSync.isRepository")(
     function* (root) {
       const stat = yield* fileSystem.stat(root).pipe(Effect.option);
       if (stat._tag === "None" || stat.value.type !== "Directory") return false;
+      // `--is-inside-work-tree` alone is not enough: a directory that sits
+      // inside an *enclosing* repository's work tree (e.g. an unmaterialized
+      // submodule/gitlink path that was never `git init`'d on its own)
+      // already reports "true" there, even though `root` itself is not a
+      // repository. A `.git` entry (a directory for a normal repo, or a file
+      // for a submodule/worktree gitlink) must exist directly at `root`.
+      const gitEntry = yield* fileSystem.stat(path.join(root, ".git")).pipe(Effect.option);
+      if (gitEntry._tag === "None") return false;
       const result = yield* run({
         root,
         args: ["rev-parse", "--is-inside-work-tree"],
@@ -645,7 +680,19 @@ export const make = Effect.gen(function* () {
       });
       yield* run({
         root: input.root,
-        args: ["fetch", "--no-tags", "--force", input.bundlePath, ...input.refspecs],
+        args: [
+          "fetch",
+          "--no-tags",
+          "--force",
+          // Gitlinks are mirrored through this module's own directives, not
+          // git's submodule machinery. Once a gitlink path has a real nested
+          // repository (registered in .gitmodules or not), a plain fetch can
+          // otherwise trigger git's own submodule recursion against remotes
+          // this protocol never configured, which fails the whole fetch.
+          "--recurse-submodules=no",
+          input.bundlePath,
+          ...input.refspecs,
+        ],
       });
     },
   );
@@ -804,6 +851,7 @@ export const make = Effect.gen(function* () {
     updateRef,
     createSnapshot,
     treeOfCommit,
+    listGitlinks,
     createSeedBundle,
     createIncrementalBundle,
     fetchBundle,

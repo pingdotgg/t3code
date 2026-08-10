@@ -457,4 +457,81 @@ it.layer(GitSyncTestLayer)("GitSync", (it) => {
       }),
     );
   });
+
+  describe("listGitlinks", () => {
+    /**
+     * Commits a nested `git init`'d repo into `cwd` at `nestedPath` as a
+     * gitlink (mode 160000 tree entry). `git add -A` records the nested
+     * repo's HEAD commit as the gitlink oid without touching its objects,
+     * exactly like a real submodule checkout would.
+     */
+    function commitNestedRepo(cwd: string, nestedPath: string) {
+      return Effect.gen(function* () {
+        const nestedDir = NodePath.join(cwd, nestedPath);
+        yield* write(NodePath.join(nestedDir, "lib.ts"), "export const nested = true;\n");
+        yield* git(nestedDir, ["init", "--initial-branch=main"]);
+        yield* git(nestedDir, ["config", "user.email", "test@test.com"]);
+        yield* git(nestedDir, ["config", "user.name", "Test"]);
+        yield* git(nestedDir, ["add", "."]);
+        yield* git(nestedDir, ["commit", "-m", "nested initial"]);
+        const nestedOid = yield* git(nestedDir, ["rev-parse", "HEAD"]);
+        yield* git(cwd, ["add", "-A", "--", nestedPath]);
+        return nestedOid;
+      });
+    }
+
+    it.effect("finds a gitlink registered via .gitmodules", () =>
+      Effect.gen(function* () {
+        const gitSync = yield* GitSync.GitSync;
+        const origin = yield* makeTmpDir();
+        yield* git(origin, ["init", "--initial-branch=main"]);
+        yield* git(origin, ["config", "user.email", "test@test.com"]);
+        yield* git(origin, ["config", "user.name", "Test"]);
+        yield* write(NodePath.join(origin, "README.md"), "# hello\n");
+        yield* write(
+          NodePath.join(origin, ".gitmodules"),
+          '[submodule "vendor/lib"]\n\tpath = vendor/lib\n\turl = ../lib.git\n',
+        );
+        const nestedOid = yield* commitNestedRepo(origin, "vendor/lib");
+        yield* git(origin, ["add", "."]);
+        yield* git(origin, ["commit", "-m", "add registered submodule"]);
+        const treeOid = yield* git(origin, ["rev-parse", "HEAD^{tree}"]);
+
+        const gitlinks = yield* gitSync.listGitlinks(origin, treeOid);
+        expect(gitlinks).toEqual([{ path: "vendor/lib", oid: nestedOid }]);
+      }),
+    );
+
+    it.effect("finds a dangling gitlink with no .gitmodules entry, same shape", () =>
+      Effect.gen(function* () {
+        const gitSync = yield* GitSync.GitSync;
+        const origin = yield* makeTmpDir();
+        yield* git(origin, ["init", "--initial-branch=main"]);
+        yield* git(origin, ["config", "user.email", "test@test.com"]);
+        yield* git(origin, ["config", "user.name", "Test"]);
+        yield* write(NodePath.join(origin, "README.md"), "# hello\n");
+        // No .gitmodules at all: detection is purely mode-160000-based.
+        const nestedOid = yield* commitNestedRepo(origin, "vendor/lib");
+        yield* git(origin, ["add", "."]);
+        yield* git(origin, ["commit", "-m", "add dangling gitlink"]);
+        const treeOid = yield* git(origin, ["rev-parse", "HEAD^{tree}"]);
+
+        const gitlinks = yield* gitSync.listGitlinks(origin, treeOid);
+        expect(gitlinks).toEqual([{ path: "vendor/lib", oid: nestedOid }]);
+      }),
+    );
+
+    it.effect("returns an empty array when there are no gitlinks", () =>
+      Effect.gen(function* () {
+        const gitSync = yield* GitSync.GitSync;
+        const origin = yield* makeTmpDir();
+        yield* initOriginRepo(origin);
+        const treeOid = yield* git(origin, ["write-tree"]).pipe(
+          Effect.catch(() => git(origin, ["rev-parse", "HEAD^{tree}"])),
+        );
+        const gitlinks = yield* gitSync.listGitlinks(origin, treeOid);
+        expect(gitlinks).toEqual([]);
+      }),
+    );
+  });
 });

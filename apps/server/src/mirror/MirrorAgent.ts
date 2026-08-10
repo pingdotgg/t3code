@@ -259,120 +259,146 @@ export const make = Effect.gen(function* () {
 
   const agentStagingPath = (syncId: string) => path.join(stagingDir, `${syncId}.bundle`);
 
+  /** Shared body of seed-requested/submodule-seed-requested, parameterized by root. */
+  const seedRoot = Effect.fn("MirrorAgent.seedRoot")(function* (
+    link: MirrorLink,
+    root: string,
+    syncId: string,
+    uploadUrl: string,
+  ): Effect.fn.Return<
+    {
+      readonly headRef: string | null;
+      readonly snapshotOid: string;
+      readonly remotes: ReadonlyArray<{ readonly name: string; readonly url: string }>;
+    },
+    MirrorSyncFailedError
+  > {
+    const gitFailed = (cause: { readonly message: string }) =>
+      new MirrorSyncFailedError({ projectId: link.projectId, syncId, detail: cause.message });
+    const includePaths = yield* includePathsFor(root);
+    const snapshot = yield* gitSync
+      .createSnapshot({ root, syncId, includePaths })
+      .pipe(Effect.mapError(gitFailed));
+    const bundlePath = agentStagingPath(syncId);
+    yield* gitSync
+      .createSeedBundle({ root, bundlePath, snapshotRef: `refs/t3/mirror/snapshots/${syncId}` })
+      .pipe(Effect.mapError(gitFailed));
+    yield* uploadBundle(link, uploadUrl, bundlePath).pipe(
+      Effect.ensuring(fileSystem.remove(bundlePath, { force: true }).pipe(Effect.ignore)),
+    );
+    const headRef = yield* gitSync.symbolicHead(root).pipe(Effect.mapError(gitFailed));
+    const remotes = yield* gitSync.listRemotes(root).pipe(Effect.mapError(gitFailed));
+    yield* gitSync
+      .pruneSnapshotRefs({ root, keepOids: [snapshot.snapshotOid] })
+      .pipe(Effect.ignore);
+    return { headRef, snapshotOid: snapshot.snapshotOid, remotes };
+  });
+
   const handleSeedRequested = Effect.fn("MirrorAgent.handleSeedRequested")(function* (
     link: MirrorLink,
     directive: Extract<MirrorDirective, { type: "seed-requested" }>,
   ): Effect.fn.Return<MirrorAgentResponse, MirrorSyncFailedError> {
+    const result = yield* seedRoot(link, link.localRoot, directive.syncId, directive.uploadUrl);
+    return { type: "seed-uploaded", syncId: directive.syncId, ...result };
+  });
+
+  /** Shared body of sync-requested/submodule-sync-requested, parameterized by root. */
+  const syncRoot = Effect.fn("MirrorAgent.syncRoot")(function* (
+    link: MirrorLink,
+    root: string,
+    syncId: string,
+    baseSnapshotOid: string | null,
+    uploadUrl: string,
+  ): Effect.fn.Return<
+    | { readonly noChange: true; readonly snapshotOid: string }
+    | { readonly noChange: false; readonly snapshotOid: string },
+    MirrorSyncFailedError
+  > {
     const gitFailed = (cause: { readonly message: string }) =>
-      new MirrorSyncFailedError({
+      new MirrorSyncFailedError({ projectId: link.projectId, syncId, detail: cause.message });
+    if (baseSnapshotOid === null) {
+      return yield* new MirrorSyncFailedError({
         projectId: link.projectId,
-        syncId: directive.syncId,
-        detail: cause.message,
+        syncId,
+        detail: "Host requested an incremental sync without a base snapshot; reseed required.",
       });
-    const includePaths = yield* includePathsFor(link.localRoot);
+    }
+    const includePaths = yield* includePathsFor(root);
     const snapshot = yield* gitSync
-      .createSnapshot({ root: link.localRoot, syncId: directive.syncId, includePaths })
+      .createSnapshot({ root, syncId, includePaths })
       .pipe(Effect.mapError(gitFailed));
-    const bundlePath = agentStagingPath(directive.syncId);
+    const baseTree = yield* gitSync
+      .treeOfCommit(root, baseSnapshotOid)
+      .pipe(Effect.mapError(gitFailed));
+    if (baseTree !== null && baseTree === snapshot.treeOid) {
+      yield* gitSync.pruneSnapshotRefs({ root, keepOids: [baseSnapshotOid] }).pipe(Effect.ignore);
+      return { noChange: true, snapshotOid: baseSnapshotOid };
+    }
+    if (baseTree === null) {
+      return yield* new MirrorSyncFailedError({
+        projectId: link.projectId,
+        syncId,
+        detail: `Base snapshot ${baseSnapshotOid} is missing from the origin repository; reseed required.`,
+      });
+    }
+    const bundlePath = agentStagingPath(syncId);
     yield* gitSync
-      .createSeedBundle({
-        root: link.localRoot,
+      .createIncrementalBundle({
+        root,
         bundlePath,
-        snapshotRef: `refs/t3/mirror/snapshots/${directive.syncId}`,
+        baseOid: baseSnapshotOid,
+        snapshotRef: `refs/t3/mirror/snapshots/${syncId}`,
+        includeBranches: true,
       })
       .pipe(Effect.mapError(gitFailed));
-    yield* uploadBundle(link, directive.uploadUrl, bundlePath).pipe(
+    yield* uploadBundle(link, uploadUrl, bundlePath).pipe(
       Effect.ensuring(fileSystem.remove(bundlePath, { force: true }).pipe(Effect.ignore)),
     );
-    const headRef = yield* gitSync.symbolicHead(link.localRoot).pipe(Effect.mapError(gitFailed));
-    const remotes = yield* gitSync.listRemotes(link.localRoot).pipe(Effect.mapError(gitFailed));
     yield* gitSync
-      .pruneSnapshotRefs({ root: link.localRoot, keepOids: [snapshot.snapshotOid] })
+      .pruneSnapshotRefs({ root, keepOids: [baseSnapshotOid, snapshot.snapshotOid] })
       .pipe(Effect.ignore);
-    return {
-      type: "seed-uploaded",
-      syncId: directive.syncId,
-      headRef,
-      snapshotOid: snapshot.snapshotOid,
-      remotes,
-    };
+    return { noChange: false, snapshotOid: snapshot.snapshotOid };
   });
 
   const handleSyncRequested = Effect.fn("MirrorAgent.handleSyncRequested")(function* (
     link: MirrorLink,
     directive: Extract<MirrorDirective, { type: "sync-requested" }>,
   ): Effect.fn.Return<MirrorAgentResponse, MirrorSyncFailedError> {
-    const gitFailed = (cause: { readonly message: string }) =>
-      new MirrorSyncFailedError({
-        projectId: link.projectId,
-        syncId: directive.syncId,
-        detail: cause.message,
-      });
-    if (directive.baseSnapshotOid === null) {
-      return yield* new MirrorSyncFailedError({
-        projectId: link.projectId,
-        syncId: directive.syncId,
-        detail: "Host requested an incremental sync without a base snapshot; reseed required.",
-      });
-    }
-    const baseOid = directive.baseSnapshotOid;
-    const includePaths = yield* includePathsFor(link.localRoot);
-    const snapshot = yield* gitSync
-      .createSnapshot({ root: link.localRoot, syncId: directive.syncId, includePaths })
-      .pipe(Effect.mapError(gitFailed));
-    const baseTree = yield* gitSync
-      .treeOfCommit(link.localRoot, baseOid)
-      .pipe(Effect.mapError(gitFailed));
-    if (baseTree !== null && baseTree === snapshot.treeOid) {
-      yield* gitSync
-        .pruneSnapshotRefs({ root: link.localRoot, keepOids: [baseOid] })
-        .pipe(Effect.ignore);
-      return { type: "sync-no-change", syncId: directive.syncId, snapshotOid: baseOid };
-    }
-    if (baseTree === null) {
-      return yield* new MirrorSyncFailedError({
-        projectId: link.projectId,
-        syncId: directive.syncId,
-        detail: `Base snapshot ${baseOid} is missing from the origin repository; reseed required.`,
-      });
-    }
-    const bundlePath = agentStagingPath(directive.syncId);
-    yield* gitSync
-      .createIncrementalBundle({
-        root: link.localRoot,
-        bundlePath,
-        baseOid,
-        snapshotRef: `refs/t3/mirror/snapshots/${directive.syncId}`,
-        includeBranches: true,
-      })
-      .pipe(Effect.mapError(gitFailed));
-    yield* uploadBundle(link, directive.uploadUrl, bundlePath).pipe(
-      Effect.ensuring(fileSystem.remove(bundlePath, { force: true }).pipe(Effect.ignore)),
+    const result = yield* syncRoot(
+      link,
+      link.localRoot,
+      directive.syncId,
+      directive.baseSnapshotOid,
+      directive.uploadUrl,
     );
-    yield* gitSync
-      .pruneSnapshotRefs({
-        root: link.localRoot,
-        keepOids: [baseOid, snapshot.snapshotOid],
-      })
-      .pipe(Effect.ignore);
-    return { type: "sync-uploaded", syncId: directive.syncId, snapshotOid: snapshot.snapshotOid };
+    return result.noChange
+      ? { type: "sync-no-change", syncId: directive.syncId, snapshotOid: result.snapshotOid }
+      : { type: "sync-uploaded", syncId: directive.syncId, snapshotOid: result.snapshotOid };
   });
 
-  const handleApplyRequested = Effect.fn("MirrorAgent.handleApplyRequested")(function* (
+  /** Shared body of apply-requested/submodule-apply-requested, parameterized by root. */
+  const applyRoot = Effect.fn("MirrorAgent.applyRoot")(function* (
     link: MirrorLink,
-    directive: Extract<MirrorDirective, { type: "apply-requested" }>,
-  ): Effect.fn.Return<MirrorAgentResponse, MirrorSyncFailedError> {
+    root: string,
+    syncId: string,
+    downloadUrl: string,
+    baseSnapshotOid: string,
+    targetSnapshotOid: string,
+    refUpdates: ReadonlyArray<{ readonly ref: string; readonly oid: string }>,
+  ): Effect.fn.Return<
+    {
+      readonly outcome: "applied" | "conflicted";
+      readonly conflictPaths: ReadonlyArray<string>;
+    },
+    MirrorSyncFailedError
+  > {
     const gitFailed = (cause: { readonly message: string }) =>
-      new MirrorSyncFailedError({
-        projectId: link.projectId,
-        syncId: directive.syncId,
-        detail: cause.message,
-      });
-    const bundlePath = agentStagingPath(directive.syncId);
-    yield* downloadBundle(link, directive.downloadUrl, bundlePath);
+      new MirrorSyncFailedError({ projectId: link.projectId, syncId, detail: cause.message });
+    const bundlePath = agentStagingPath(syncId);
+    yield* downloadBundle(link, downloadUrl, bundlePath);
     yield* gitSync
       .fetchBundle({
-        root: link.localRoot,
+        root,
         bundlePath,
         refspecs: [
           "+refs/t3/mirror/snapshots/*:refs/t3/mirror/snapshots/*",
@@ -383,13 +409,13 @@ export const make = Effect.gen(function* () {
         Effect.mapError(gitFailed),
         Effect.ensuring(fileSystem.remove(bundlePath, { force: true }).pipe(Effect.ignore)),
       );
-    const includePaths = yield* includePathsFor(link.localRoot);
+    const includePaths = yield* includePathsFor(root);
     const apply = yield* gitSync
       .applySnapshot({
-        root: link.localRoot,
-        syncId: directive.syncId,
-        baseOid: directive.baseSnapshotOid,
-        targetOid: directive.targetSnapshotOid,
+        root,
+        syncId,
+        baseOid: baseSnapshotOid,
+        targetOid: targetSnapshotOid,
         includePaths,
         // The user's edits always win on their own machine; the agent's
         // version of a conflicted path stays reachable in .git.
@@ -399,46 +425,147 @@ export const make = Effect.gen(function* () {
 
     // Fast-forward the checked-out branch only after a clean apply, so the
     // working tree, index, and HEAD agree; a mixed reset reconciles the index.
-    const currentBranch = yield* gitSync
-      .symbolicHead(link.localRoot)
-      .pipe(Effect.orElseSucceed(() => null));
-    let refUpdates = directive.refUpdates;
+    const currentBranch = yield* gitSync.symbolicHead(root).pipe(Effect.orElseSucceed(() => null));
+    let remainingRefUpdates = refUpdates;
     if (currentBranch !== null && apply.outcome === "applied") {
-      const currentUpdate = directive.refUpdates.find((update) => update.ref === currentBranch);
+      const currentUpdate = refUpdates.find((update) => update.ref === currentBranch);
       if (currentUpdate !== undefined) {
         yield* gitSync
-          .applyBranchUpdatesToCurrent({
-            root: link.localRoot,
-            ref: currentUpdate.ref,
-            oid: currentUpdate.oid,
-          })
+          .applyBranchUpdatesToCurrent({ root, ref: currentUpdate.ref, oid: currentUpdate.oid })
           .pipe(Effect.ignore);
-        refUpdates = directive.refUpdates.filter((update) => update.ref !== currentBranch);
+        remainingRefUpdates = refUpdates.filter((update) => update.ref !== currentBranch);
       }
     }
     yield* gitSync
-      .applyBranchUpdates({ root: link.localRoot, refUpdates })
+      .applyBranchUpdates({ root, refUpdates: remainingRefUpdates })
       .pipe(Effect.mapError(gitFailed));
     // The incoming namespace only existed to fetch the branch objects.
     const incoming = yield* gitSync
-      .listRefs(link.localRoot, "refs/t3/mirror/incoming")
+      .listRefs(root, "refs/t3/mirror/incoming")
       .pipe(Effect.orElseSucceed(() => []));
     for (const entry of incoming) {
-      yield* gitSync.updateRef(link.localRoot, entry.ref, null).pipe(Effect.ignore);
+      yield* gitSync.updateRef(root, entry.ref, null).pipe(Effect.ignore);
     }
-    yield* gitSync
-      .pruneSnapshotRefs({
-        root: link.localRoot,
-        keepOids: [directive.targetSnapshotOid],
-      })
-      .pipe(Effect.ignore);
-    return {
-      type: "apply-result",
-      syncId: directive.syncId,
-      outcome: apply.outcome,
-      conflictPaths: apply.conflictPaths,
-    };
+    yield* gitSync.pruneSnapshotRefs({ root, keepOids: [targetSnapshotOid] }).pipe(Effect.ignore);
+    return { outcome: apply.outcome, conflictPaths: apply.conflictPaths };
   });
+
+  const handleApplyRequested = Effect.fn("MirrorAgent.handleApplyRequested")(function* (
+    link: MirrorLink,
+    directive: Extract<MirrorDirective, { type: "apply-requested" }>,
+  ): Effect.fn.Return<MirrorAgentResponse, MirrorSyncFailedError> {
+    const result = yield* applyRoot(
+      link,
+      link.localRoot,
+      directive.syncId,
+      directive.downloadUrl,
+      directive.baseSnapshotOid,
+      directive.targetSnapshotOid,
+      directive.refUpdates,
+    );
+    return { type: "apply-result", syncId: directive.syncId, ...result };
+  });
+
+  // --- submodule directive handlers -------------------------------------------
+
+  const handleSubmoduleSeedRequested = Effect.fn("MirrorAgent.handleSubmoduleSeedRequested")(
+    function* (
+      link: MirrorLink,
+      directive: Extract<MirrorDirective, { type: "submodule-seed-requested" }>,
+    ): Effect.fn.Return<MirrorAgentResponse, MirrorSyncFailedError> {
+      const root = path.join(link.localRoot, directive.path);
+      const isRepo = yield* gitSync.isRepository(root).pipe(Effect.orElseSucceed(() => false));
+      if (!isRepo) {
+        return {
+          type: "submodule-skipped",
+          syncId: directive.syncId,
+          path: directive.path,
+          reason: "no-nested-repository",
+          detail: "No git repository found at this path on the origin machine.",
+        };
+      }
+      const result = yield* seedRoot(link, root, directive.syncId, directive.uploadUrl);
+      return {
+        type: "submodule-seed-uploaded",
+        syncId: directive.syncId,
+        path: directive.path,
+        ...result,
+      };
+    },
+  );
+
+  const handleSubmoduleSyncRequested = Effect.fn("MirrorAgent.handleSubmoduleSyncRequested")(
+    function* (
+      link: MirrorLink,
+      directive: Extract<MirrorDirective, { type: "submodule-sync-requested" }>,
+    ): Effect.fn.Return<MirrorAgentResponse, MirrorSyncFailedError> {
+      const root = path.join(link.localRoot, directive.path);
+      const isRepo = yield* gitSync.isRepository(root).pipe(Effect.orElseSucceed(() => false));
+      if (!isRepo) {
+        return {
+          type: "submodule-skipped",
+          syncId: directive.syncId,
+          path: directive.path,
+          reason: "no-nested-repository",
+          detail: "No git repository found at this path on the origin machine.",
+        };
+      }
+      const result = yield* syncRoot(
+        link,
+        root,
+        directive.syncId,
+        directive.baseSnapshotOid,
+        directive.uploadUrl,
+      );
+      return result.noChange
+        ? {
+            type: "submodule-sync-no-change",
+            syncId: directive.syncId,
+            path: directive.path,
+            snapshotOid: result.snapshotOid,
+          }
+        : {
+            type: "submodule-sync-uploaded",
+            syncId: directive.syncId,
+            path: directive.path,
+            snapshotOid: result.snapshotOid,
+          };
+    },
+  );
+
+  const handleSubmoduleApplyRequested = Effect.fn("MirrorAgent.handleSubmoduleApplyRequested")(
+    function* (
+      link: MirrorLink,
+      directive: Extract<MirrorDirective, { type: "submodule-apply-requested" }>,
+    ): Effect.fn.Return<MirrorAgentResponse, MirrorSyncFailedError> {
+      const root = path.join(link.localRoot, directive.path);
+      const isRepo = yield* gitSync.isRepository(root).pipe(Effect.orElseSucceed(() => false));
+      if (!isRepo) {
+        return {
+          type: "submodule-skipped",
+          syncId: directive.syncId,
+          path: directive.path,
+          reason: "no-nested-repository",
+          detail: "No git repository found at this path on the origin machine.",
+        };
+      }
+      const result = yield* applyRoot(
+        link,
+        root,
+        directive.syncId,
+        directive.downloadUrl,
+        directive.baseSnapshotOid,
+        directive.targetSnapshotOid,
+        directive.refUpdates,
+      );
+      return {
+        type: "submodule-apply-result",
+        syncId: directive.syncId,
+        path: directive.path,
+        ...result,
+      };
+    },
+  );
 
   const handleDirective = (
     link: MirrorLink,
@@ -451,10 +578,32 @@ export const make = Effect.gen(function* () {
         return handleSyncRequested(link, directive);
       case "apply-requested":
         return handleApplyRequested(link, directive);
+      case "submodule-seed-requested":
+        return handleSubmoduleSeedRequested(link, directive);
+      case "submodule-sync-requested":
+        return handleSubmoduleSyncRequested(link, directive);
+      case "submodule-apply-requested":
+        return handleSubmoduleApplyRequested(link, directive);
       case "link-revoked":
         return Effect.succeed(null);
     }
   };
+
+  /** syncId to fall back to a submodule-skipped response for, when known. */
+  const directiveSyncId = (directive: MirrorDirective): string | null =>
+    directive.type === "link-revoked" ? null : directive.syncId;
+
+  const isSubmoduleDirective = (
+    directive: MirrorDirective,
+  ): directive is Extract<
+    MirrorDirective,
+    {
+      type: "submodule-seed-requested" | "submodule-sync-requested" | "submodule-apply-requested";
+    }
+  > =>
+    directive.type === "submodule-seed-requested" ||
+    directive.type === "submodule-sync-requested" ||
+    directive.type === "submodule-apply-requested";
 
   // --- connection loop -------------------------------------------------------
 
@@ -481,7 +630,10 @@ export const make = Effect.gen(function* () {
       const client = yield* RpcClient.make(WsRpcGroup);
       const connectionIdRef = yield* Ref.make<string | null>(null);
       const revoked = yield* Ref.make(false);
-      yield* client[WS_METHODS.mirrorConnect]({ projectId: link.projectId }).pipe(
+      yield* client[WS_METHODS.mirrorConnect]({
+        projectId: link.projectId,
+        supportsSubmodules: true,
+      }).pipe(
         Stream.runForEach((event: MirrorStreamEvent) =>
           Effect.gen(function* () {
             if (event.type === "connected") {
@@ -501,13 +653,24 @@ export const make = Effect.gen(function* () {
                 detail: "The host revoked this mirror link.",
               });
             }
-            const response = yield* handleDirective(link, event.directive).pipe(
+            const directive = event.directive;
+            const response = yield* handleDirective(link, directive).pipe(
               Effect.catchTag("MirrorSyncFailedError", (error) =>
-                Effect.succeed<MirrorAgentResponse>({
-                  type: "sync-failed",
-                  syncId: event.directive.type === "link-revoked" ? "" : event.directive.syncId,
-                  message: error.detail,
-                }),
+                Effect.succeed<MirrorAgentResponse>(
+                  isSubmoduleDirective(directive)
+                    ? {
+                        type: "submodule-skipped",
+                        syncId: directive.syncId,
+                        path: directive.path,
+                        reason: "error",
+                        detail: error.detail,
+                      }
+                    : {
+                        type: "sync-failed",
+                        syncId: directiveSyncId(directive) ?? "",
+                        message: error.detail,
+                      },
+                ),
               ),
             );
             if (response !== null) {

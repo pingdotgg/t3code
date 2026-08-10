@@ -26,6 +26,7 @@ After seeding, the host has a full clone with your branches, remotes, and uncomm
 ## What syncs (and what doesn't)
 
 - **Synced:** tracked files, uncommitted changes, untracked files that aren't gitignored, your branches, and your remotes.
+- **Synced:** submodules and other nested repositories — whether registered in `.gitmodules` or not — as long as a local copy exists on the machine holding the files. Each one is mirrored with its own full history, just like the top-level project.
 - **Never synced:** gitignored files — including `node_modules`, build output, and, importantly, files like `.env`.
 
 If your agents need a gitignored file (local secrets, certificates), list it in `t3.json` at the repository root:
@@ -65,3 +66,5 @@ Terminals opened on a mirrored project run on the host, inside the mirror. Files
 - One origin per project; the file-owning side must be a T3 Code server (a browser or phone can't hold the files).
 - Non-git folders can't be mirrored.
 - Symbolic-link fidelity is not guaranteed when mirroring between Windows and other systems.
+- A submodule path with no local copy on the machine holding the files is skipped with a warning on the project rather than failing the sync — everything else still syncs normally.
+- Submodule mirroring requires the origin's T3 Code server to support it; older origins fall back to today's behavior (submodule paths stay empty) without failing the rest of the sync.

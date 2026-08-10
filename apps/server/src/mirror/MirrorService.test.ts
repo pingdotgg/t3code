@@ -241,7 +241,7 @@ it.layer(TestLayer)("MirrorService", (it) => {
       "seeds, gates turns on pushes, and applies turn results back to the origin",
       () =>
         Effect.gen(function* () {
-          yield* runMigrations({ toMigrationInclusive: 42 });
+          yield* runMigrations({ toMigrationInclusive: 43 });
           const fileSystem = yield* FileSystem.FileSystem;
           const config = yield* ServerConfig.ServerConfig;
           const service = yield* MirrorServiceModule.MirrorService;

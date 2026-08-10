@@ -47,15 +47,24 @@ import { GitSync, mirrorSnapshotRef } from "./GitSync.ts";
 import { MirrorBundleTransfer } from "./MirrorBundleTransfer.ts";
 import { MirrorHooks } from "./MirrorHooks.ts";
 import { readMirrorIncludePaths } from "./mirrorInclude.ts";
+import { diffGitlinks, discoverAllGitlinks, MIRROR_SUBMODULE_MAX_DEPTH } from "./SubmoduleSync.ts";
 
 const SEED_TIMEOUT = Duration.minutes(30);
 const SYNC_TIMEOUT = Duration.minutes(10);
 const APPLY_TIMEOUT = Duration.minutes(10);
 
+const PendingApplySubmoduleSchema = Schema.Struct({
+  path: Schema.String,
+  syncId: Schema.String,
+  targetOid: Schema.String,
+  baseOid: Schema.NullOr(Schema.String),
+});
+
 const PendingApplySchema = Schema.Struct({
   syncId: Schema.String,
   targetOid: Schema.String,
   refUpdates: Schema.Array(Schema.Struct({ ref: Schema.String, oid: Schema.String })),
+  submodules: Schema.optional(Schema.Array(PendingApplySubmoduleSchema)),
 });
 type PendingApply = typeof PendingApplySchema.Type;
 const PendingApplyJson = Schema.fromJsonString(PendingApplySchema);
@@ -66,6 +75,21 @@ const StringArrayJson = Schema.fromJsonString(Schema.Array(Schema.String));
 const decodeStringArray = Schema.decodeUnknownOption(StringArrayJson);
 const encodeStringArray = Schema.encodeSync(StringArrayJson);
 
+/** path -> last snapshot oid synced onto the mirror-side nested repository. */
+const SubmoduleStateSchema = Schema.Record(
+  Schema.String,
+  Schema.Struct({ lastSyncedSnapshotOid: Schema.String }),
+);
+type SubmoduleState = typeof SubmoduleStateSchema.Type;
+const SubmoduleStateJson = Schema.fromJsonString(SubmoduleStateSchema);
+const decodeSubmoduleState = Schema.decodeUnknownOption(SubmoduleStateJson);
+const encodeSubmoduleState = Schema.encodeSync(SubmoduleStateJson);
+
+const SubmoduleWarningSchema = Schema.Struct({ path: Schema.String, detail: Schema.String });
+const SubmoduleWarningsJson = Schema.fromJsonString(Schema.Array(SubmoduleWarningSchema));
+const decodeSubmoduleWarnings = Schema.decodeUnknownOption(SubmoduleWarningsJson);
+const encodeSubmoduleWarnings = Schema.encodeSync(SubmoduleWarningsJson);
+
 interface MirrorRuntimeRow {
   readonly projectId: string;
   readonly lastSyncedSnapshotOid: string | null;
@@ -73,12 +97,16 @@ interface MirrorRuntimeRow {
   readonly lastBranchesJson: string | null;
   readonly pendingApplyJson: string | null;
   readonly conflictPathsJson: string | null;
+  readonly submoduleStateJson: string | null;
+  readonly submoduleWarningsJson: string | null;
 }
 
 interface AgentConnection {
   readonly projectId: ProjectId;
   readonly connectionId: string;
   readonly queue: Queue.Queue<MirrorStreamEvent>;
+  /** Whether this origin's MirrorAgent understands submodule-* directives. */
+  readonly supportsSubmodules: boolean;
 }
 
 interface PendingRequest {
@@ -172,7 +200,9 @@ export const make = Effect.gen(function* () {
         last_synced_at AS "lastSyncedAt",
         last_branches_json AS "lastBranchesJson",
         pending_apply_json AS "pendingApplyJson",
-        conflict_paths_json AS "conflictPathsJson"
+        conflict_paths_json AS "conflictPathsJson",
+        submodule_state_json AS "submoduleStateJson",
+        submodule_warnings_json AS "submoduleWarningsJson"
       FROM mirror_sync_runtime
       WHERE project_id = ${projectId}
     `.pipe(Effect.orDie);
@@ -186,6 +216,8 @@ export const make = Effect.gen(function* () {
     readonly lastBranchesJson?: string | null;
     readonly pendingApplyJson?: string | null;
     readonly conflictPathsJson?: string | null;
+    readonly submoduleStateJson?: string | null;
+    readonly submoduleWarningsJson?: string | null;
   }) {
     const existing = yield* loadRuntime(input.projectId);
     const next = {
@@ -207,6 +239,14 @@ export const make = Effect.gen(function* () {
         input.conflictPathsJson !== undefined
           ? input.conflictPathsJson
           : (existing?.conflictPathsJson ?? null),
+      submoduleStateJson:
+        input.submoduleStateJson !== undefined
+          ? input.submoduleStateJson
+          : (existing?.submoduleStateJson ?? null),
+      submoduleWarningsJson:
+        input.submoduleWarningsJson !== undefined
+          ? input.submoduleWarningsJson
+          : (existing?.submoduleWarningsJson ?? null),
     };
     yield* sql`
       INSERT INTO mirror_sync_runtime (
@@ -215,7 +255,9 @@ export const make = Effect.gen(function* () {
         last_synced_at,
         last_branches_json,
         pending_apply_json,
-        conflict_paths_json
+        conflict_paths_json,
+        submodule_state_json,
+        submodule_warnings_json
       )
       VALUES (
         ${input.projectId},
@@ -223,7 +265,9 @@ export const make = Effect.gen(function* () {
         ${next.lastSyncedAt},
         ${next.lastBranchesJson},
         ${next.pendingApplyJson},
-        ${next.conflictPathsJson}
+        ${next.conflictPathsJson},
+        ${next.submoduleStateJson},
+        ${next.submoduleWarningsJson}
       )
       ON CONFLICT (project_id)
       DO UPDATE SET
@@ -231,7 +275,9 @@ export const make = Effect.gen(function* () {
         last_synced_at = excluded.last_synced_at,
         last_branches_json = excluded.last_branches_json,
         pending_apply_json = excluded.pending_apply_json,
-        conflict_paths_json = excluded.conflict_paths_json
+        conflict_paths_json = excluded.conflict_paths_json,
+        submodule_state_json = excluded.submodule_state_json,
+        submodule_warnings_json = excluded.submodule_warnings_json
     `.pipe(Effect.orDie);
   });
 
@@ -272,6 +318,10 @@ export const make = Effect.gen(function* () {
       runtime?.conflictPathsJson != null
         ? Option.getOrElse(decodeStringArray(runtime.conflictPathsJson), () => [])
         : [];
+    const submoduleWarnings =
+      runtime?.submoduleWarningsJson != null
+        ? Option.getOrElse(decodeSubmoduleWarnings(runtime.submoduleWarningsJson), () => [])
+        : [];
     const activity = current.activity.get(projectId);
     const seeded = runtime?.lastSyncedSnapshotOid != null;
     const stateValue = activity
@@ -290,6 +340,7 @@ export const make = Effect.gen(function* () {
       lastSyncedAt: runtime?.lastSyncedAt ?? null,
       lastSyncedSnapshotOid: runtime?.lastSyncedSnapshotOid ?? null,
       conflictPaths,
+      submoduleWarnings,
     } satisfies MirrorProjectStatus;
   });
 
@@ -373,6 +424,7 @@ export const make = Effect.gen(function* () {
           projectId: input.projectId,
           connectionId,
           queue,
+          supportsSubmodules: input.supportsSubmodules === true,
         };
         const previous = yield* SynchronizedRef.modify(state, (current) => {
           const connections = new Map(current.connections);
@@ -511,6 +563,321 @@ export const make = Effect.gen(function* () {
     return updates;
   });
 
+  // --- submodule cascade -----------------------------------------------------
+  //
+  // Gitlinks (mode 160000 tree entries) never travel with a superproject
+  // bundle. Once the top-level seed/sync has materialized the superproject
+  // (which creates each gitlink's empty directory), diff gitlinks between the
+  // base and target superproject trees and mirror every changed path through
+  // the same seed/sync primitives, rooted at that path. Skipped entirely for
+  // origins that predate submodule support.
+
+  const submoduleCascadeSupported = (projectId: ProjectId) =>
+    SynchronizedRef.get(state).pipe(
+      Effect.map((current) => current.connections.get(projectId)?.supportsSubmodules === true),
+    );
+
+  /** Materialize a successful submodule-seed-uploaded response at `nestedRoot`. */
+  const materializeSubmoduleSeed = Effect.fn("MirrorService.materializeSubmoduleSeed")(function* (
+    nestedRoot: string,
+    syncId: string,
+    response: Extract<MirrorAgentResponse, { type: "submodule-seed-uploaded" }>,
+  ) {
+    const isRepo = yield* gitSync.isRepository(nestedRoot);
+    if (!isRepo) yield* gitSync.initRepository(nestedRoot);
+    const bundlePath = yield* transfer.stagingPath(syncId);
+    yield* gitSync.fetchBundle({
+      root: nestedRoot,
+      bundlePath,
+      refspecs: [
+        "+refs/heads/*:refs/heads/*",
+        "+refs/t3/mirror/snapshots/*:refs/t3/mirror/snapshots/*",
+      ],
+    });
+    yield* gitSync.checkoutSeedHead(nestedRoot, response.headRef, response.snapshotOid);
+    const headCommit = yield* gitSync.headCommit(nestedRoot);
+    if (headCommit !== null && headCommit !== response.snapshotOid) {
+      yield* gitSync.applySnapshot({
+        root: nestedRoot,
+        syncId,
+        baseOid: headCommit,
+        targetOid: response.snapshotOid,
+        conflictPreference: "target",
+      });
+    }
+    yield* gitSync.setRemotes(nestedRoot, response.remotes);
+    yield* gitSync
+      .pruneSnapshotRefs({ root: nestedRoot, keepOids: [response.snapshotOid] })
+      .pipe(Effect.ignore);
+    yield* transfer.removeStaged(syncId);
+  });
+
+  /** Materialize a successful submodule-sync-uploaded response at `nestedRoot`. */
+  const materializeSubmoduleSync = Effect.fn("MirrorService.materializeSubmoduleSync")(function* (
+    nestedRoot: string,
+    syncId: string,
+    baseOid: string,
+    targetOid: string,
+  ) {
+    const bundlePath = yield* transfer.stagingPath(syncId);
+    yield* gitSync.fetchBundle({
+      root: nestedRoot,
+      bundlePath,
+      refspecs: [
+        "+refs/t3/mirror/snapshots/*:refs/t3/mirror/snapshots/*",
+        "+refs/heads/*:refs/t3/mirror/incoming/*",
+      ],
+    });
+    yield* gitSync.applySnapshot({
+      root: nestedRoot,
+      syncId,
+      baseOid,
+      targetOid,
+      conflictPreference: "target",
+    });
+    yield* ingestBranchUpdates(nestedRoot).pipe(Effect.ignore);
+    yield* gitSync
+      .pruneSnapshotRefs({ root: nestedRoot, keepOids: [targetOid] })
+      .pipe(Effect.ignore);
+    yield* transfer.removeStaged(syncId);
+  });
+
+  interface SubmoduleCascadeContext {
+    readonly projectId: ProjectId;
+    readonly originLabel: string | null;
+    readonly reason: MirrorSyncReason;
+  }
+
+  /** Mirror one changed gitlink path, then recurse into its own gitlinks. */
+  const processGitlink = (params: {
+    readonly ctx: SubmoduleCascadeContext;
+    readonly root: string;
+    readonly gitlinkPath: string;
+    readonly fullPath: string;
+    readonly priorOid: string | null;
+    readonly nextState: Record<string, { lastSyncedSnapshotOid: string }>;
+    readonly warnings: Array<{ path: string; detail: string }>;
+    readonly depth: number;
+  }): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const { ctx, root, gitlinkPath, fullPath, priorOid, nextState, warnings, depth } = params;
+      const syncId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+      const nestedRoot = path.join(root, gitlinkPath);
+      const outcome = yield* Effect.gen(function* () {
+        const upload = yield* transfer.issueUrl({
+          projectId: ctx.projectId,
+          syncId,
+          direction: "upload",
+        });
+        const directive: MirrorDirective =
+          priorOid === null
+            ? {
+                type: "submodule-seed-requested",
+                syncId,
+                path: fullPath,
+                uploadUrl: upload.relativeUrl,
+                expiresAt: upload.expiresAt,
+              }
+            : {
+                type: "submodule-sync-requested",
+                syncId,
+                path: fullPath,
+                baseSnapshotOid: priorOid,
+                uploadUrl: upload.relativeUrl,
+                expiresAt: upload.expiresAt,
+                reason: ctx.reason,
+              };
+        const response = yield* request({
+          projectId: ctx.projectId,
+          originLabel: ctx.originLabel,
+          syncId,
+          directive,
+          timeout: SYNC_TIMEOUT,
+        });
+        if (response.type === "submodule-skipped") {
+          warnings.push({ path: fullPath, detail: response.detail });
+          return null;
+        }
+        if (
+          response.type !== "submodule-seed-uploaded" &&
+          response.type !== "submodule-sync-uploaded" &&
+          response.type !== "submodule-sync-no-change"
+        ) {
+          warnings.push({
+            path: fullPath,
+            detail: `Unexpected agent response '${response.type}' to a submodule sync request.`,
+          });
+          return null;
+        }
+        if (response.type === "submodule-seed-uploaded") {
+          yield* materializeSubmoduleSeed(nestedRoot, syncId, response);
+        } else if (response.type === "submodule-sync-uploaded") {
+          yield* materializeSubmoduleSync(nestedRoot, syncId, priorOid ?? "", response.snapshotOid);
+        }
+        nextState[fullPath] = { lastSyncedSnapshotOid: response.snapshotOid };
+        return {
+          snapshotOid: response.snapshotOid,
+          changed: response.type !== "submodule-sync-no-change",
+        };
+      }).pipe(
+        Effect.catch((cause) => {
+          warnings.push({ path: fullPath, detail: cause.message });
+          return Effect.succeed(null);
+        }),
+      );
+      if (outcome === null || !outcome.changed || depth + 1 >= MIRROR_SUBMODULE_MAX_DEPTH) return;
+      // Recurse into the just-materialized nested repo's own gitlinks.
+      const nestedBaseTree =
+        priorOid === null
+          ? null
+          : yield* gitSync
+              .treeOfCommit(nestedRoot, priorOid)
+              .pipe(Effect.orElseSucceed(() => null));
+      const nestedTargetTree = yield* gitSync
+        .treeOfCommit(nestedRoot, outcome.snapshotOid)
+        .pipe(Effect.orElseSucceed(() => null));
+      if (nestedTargetTree === null) return;
+      yield* walkGitlinks({
+        ctx,
+        root: nestedRoot,
+        baseTreeOid: nestedBaseTree,
+        targetTreeOid: nestedTargetTree,
+        pathPrefix: fullPath,
+        depth: depth + 1,
+        priorState: {},
+        nextState,
+        warnings,
+      });
+    });
+
+  /** Diff gitlinks at one level and mirror every changed path. */
+  const walkGitlinks = (params: {
+    readonly ctx: SubmoduleCascadeContext;
+    readonly root: string;
+    readonly baseTreeOid: string | null;
+    readonly targetTreeOid: string;
+    readonly pathPrefix: string;
+    readonly depth: number;
+    readonly priorState: SubmoduleState;
+    readonly nextState: Record<string, { lastSyncedSnapshotOid: string }>;
+    readonly warnings: Array<{ path: string; detail: string }>;
+  }): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const {
+        ctx,
+        root,
+        baseTreeOid,
+        targetTreeOid,
+        pathPrefix,
+        depth,
+        priorState,
+        nextState,
+        warnings,
+      } = params;
+      if (depth >= MIRROR_SUBMODULE_MAX_DEPTH) return;
+      const diffs = yield* diffGitlinks(gitSync, root, baseTreeOid, targetTreeOid).pipe(
+        Effect.orElseSucceed(() => []),
+      );
+      const diffedPaths = new Set<string>();
+      for (const entry of diffs) {
+        const fullPath = pathPrefix === "" ? entry.path : `${pathPrefix}/${entry.path}`;
+        diffedPaths.add(entry.path);
+        if (entry.status === "removed") {
+          delete nextState[fullPath];
+          continue;
+        }
+        const priorOid = priorState[fullPath]?.lastSyncedSnapshotOid ?? null;
+        yield* processGitlink({
+          ctx,
+          root,
+          gitlinkPath: entry.path,
+          fullPath,
+          priorOid,
+          nextState,
+          warnings,
+          depth,
+        });
+      }
+      // `diffGitlinks` only reports paths whose gitlink oid moved between the
+      // two trees. A gitlink that predates submodule mirroring support (or
+      // was added by an origin that didn't support it yet) can sit unchanged
+      // at the same oid across every sync forever, so it would never appear
+      // in `diffs` and would never get its first seed. Catch those here by
+      // comparing the target tree's gitlinks directly against `priorState`.
+      const targetLinks = yield* gitSync
+        .listGitlinks(root, targetTreeOid)
+        .pipe(Effect.orElseSucceed(() => []));
+      for (const link of targetLinks) {
+        if (diffedPaths.has(link.path)) continue;
+        const fullPath = pathPrefix === "" ? link.path : `${pathPrefix}/${link.path}`;
+        if (priorState[fullPath] !== undefined) continue;
+        yield* processGitlink({
+          ctx,
+          root,
+          gitlinkPath: link.path,
+          fullPath,
+          priorOid: null,
+          nextState,
+          warnings,
+          depth,
+        });
+      }
+    });
+
+  /**
+   * Entry point called by seedCore/ensureFreshCore right after the top-level
+   * superproject checkout/apply has materialized (so gitlink paths already
+   * exist as empty directories). No-ops for origins without submodule
+   * support, or when the target tree cannot be resolved.
+   */
+  const cascadeSubmodules = Effect.fn("MirrorService.cascadeSubmodules")(function* (input: {
+    readonly projectId: ProjectId;
+    readonly originLabel: string | null;
+    readonly reason: MirrorSyncReason;
+    readonly root: string;
+    readonly baseSnapshotOid: string | null;
+    readonly targetSnapshotOid: string;
+  }) {
+    const supported = yield* submoduleCascadeSupported(input.projectId);
+    if (!supported) return;
+    const runtime = yield* loadRuntime(input.projectId);
+    const priorState: SubmoduleState =
+      runtime?.submoduleStateJson != null
+        ? Option.getOrElse(decodeSubmoduleState(runtime.submoduleStateJson), () => ({}))
+        : {};
+    const nextState: Record<string, { lastSyncedSnapshotOid: string }> = { ...priorState };
+    const warnings: Array<{ path: string; detail: string }> = [];
+
+    const baseTree =
+      input.baseSnapshotOid === null
+        ? null
+        : yield* gitSync
+            .treeOfCommit(input.root, input.baseSnapshotOid)
+            .pipe(Effect.orElseSucceed(() => null));
+    const targetTree = yield* gitSync
+      .treeOfCommit(input.root, input.targetSnapshotOid)
+      .pipe(Effect.orElseSucceed(() => null));
+    if (targetTree === null) return;
+
+    yield* walkGitlinks({
+      ctx: { projectId: input.projectId, originLabel: input.originLabel, reason: input.reason },
+      root: input.root,
+      baseTreeOid: baseTree,
+      targetTreeOid: targetTree,
+      pathPrefix: "",
+      depth: 0,
+      priorState,
+      nextState,
+      warnings,
+    });
+
+    yield* saveRuntime({
+      projectId: input.projectId,
+      submoduleStateJson: encodeSubmoduleState(nextState),
+      submoduleWarningsJson: warnings.length > 0 ? encodeSubmoduleWarnings(warnings) : null,
+    });
+  });
+
   const seedCore = Effect.fn("MirrorService.seed")(function* (projectId: ProjectId) {
     const project = yield* resolveMirroredProject(projectId);
     if (project === null) {
@@ -581,6 +948,17 @@ export const make = Effect.gen(function* () {
             .pipe(Effect.mapError(gitFailed));
         }
         yield* gitSync.setRemotes(root, response.remotes).pipe(Effect.mapError(gitFailed));
+        // The superproject checkout above already materialized every
+        // gitlink path as an empty directory; mirror each one's real
+        // content now, for origins that support it.
+        yield* cascadeSubmodules({
+          projectId,
+          originLabel: project.origin?.label ?? null,
+          reason: "seed",
+          root,
+          baseSnapshotOid: null,
+          targetSnapshotOid: response.snapshotOid,
+        }).pipe(Effect.ignore);
         const branches = yield* gitSync.listBranches(root).pipe(Effect.mapError(gitFailed));
         yield* saveRuntime({
           projectId,
@@ -642,6 +1020,18 @@ export const make = Effect.gen(function* () {
         });
         if (response.type === "sync-no-change") {
           yield* saveRuntime({ projectId, lastSyncedAt: yield* nowIso });
+          // The superproject tree didn't move, but a gitlink already present
+          // at `baseOid` may still have no recorded submodule state (e.g. it
+          // predates submodule mirroring support). Re-check it so a plain
+          // resync can pick up submodules that were never cascaded before.
+          yield* cascadeSubmodules({
+            projectId,
+            originLabel: project.origin?.label ?? null,
+            reason: options?.reason ?? "turn-start",
+            root: project.workspaceRoot,
+            baseSnapshotOid: baseOid,
+            targetSnapshotOid: baseOid,
+          }).pipe(Effect.ignore);
           return;
         }
         if (response.type !== "sync-uploaded") {
@@ -685,6 +1075,17 @@ export const make = Effect.gen(function* () {
           });
         }
         yield* ingestBranchUpdates(root).pipe(Effect.mapError(gitFailed));
+        // The superproject apply above already materialized any newly
+        // added gitlink paths as empty directories; mirror each changed
+        // one's real content now, for origins that support it.
+        yield* cascadeSubmodules({
+          projectId,
+          originLabel: project.origin?.label ?? null,
+          reason: options?.reason ?? "turn-start",
+          root,
+          baseSnapshotOid: baseOid,
+          targetSnapshotOid: response.snapshotOid,
+        }).pipe(Effect.ignore);
         yield* saveRuntime({
           projectId,
           lastSyncedSnapshotOid: response.snapshotOid,
@@ -727,7 +1128,60 @@ export const make = Effect.gen(function* () {
     const baseTree = yield* gitSync
       .treeOfCommit(root, runtime.lastSyncedSnapshotOid)
       .pipe(Effect.orElseSucceed(() => null));
-    if (snapshot.treeOid === baseTree && branchesJson === runtime.lastBranchesJson) {
+    // Discover submodules that changed since the last recorded sync — this
+    // catches both a moved gitlink pointer and uncommitted work left inside
+    // an already-materialized nested repository, which the top-level tree
+    // diff alone cannot see.
+    const submodulesForApplyBack: Array<{
+      path: string;
+      syncId: string;
+      targetOid: string;
+      baseOid: string | null;
+    }> = [];
+    if (yield* submoduleCascadeSupported(projectId)) {
+      const priorSubmoduleState: SubmoduleState =
+        runtime.submoduleStateJson != null
+          ? Option.getOrElse(decodeSubmoduleState(runtime.submoduleStateJson), () => ({}))
+          : {};
+      const gitlinks = yield* discoverAllGitlinks(gitSync, root, snapshot.treeOid).pipe(
+        Effect.orElseSucceed(() => []),
+      );
+      for (const link of gitlinks) {
+        const nestedRoot = path.join(root, link.path);
+        const isRepo = yield* gitSync
+          .isRepository(nestedRoot)
+          .pipe(Effect.orElseSucceed(() => false));
+        if (!isRepo) continue;
+        const nestedSyncId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+        const nestedSnapshot = yield* gitSync
+          .createSnapshot({
+            root: nestedRoot,
+            syncId: nestedSyncId,
+            includePaths: yield* includePathsFor(nestedRoot),
+          })
+          .pipe(Effect.option);
+        if (Option.isNone(nestedSnapshot)) continue;
+        const priorOid = priorSubmoduleState[link.path]?.lastSyncedSnapshotOid ?? null;
+        const priorTree =
+          priorOid === null
+            ? null
+            : yield* gitSync
+                .treeOfCommit(nestedRoot, priorOid)
+                .pipe(Effect.orElseSucceed(() => null));
+        if (priorTree === nestedSnapshot.value.treeOid) continue;
+        submodulesForApplyBack.push({
+          path: link.path,
+          syncId: nestedSyncId,
+          targetOid: nestedSnapshot.value.snapshotOid,
+          baseOid: priorOid,
+        });
+      }
+    }
+    if (
+      snapshot.treeOid === baseTree &&
+      branchesJson === runtime.lastBranchesJson &&
+      submodulesForApplyBack.length === 0
+    ) {
       // Nothing the origin does not already have.
       yield* gitSync
         .pruneSnapshotRefs({ root, keepOids: [runtime.lastSyncedSnapshotOid] })
@@ -740,6 +1194,7 @@ export const make = Effect.gen(function* () {
         syncId,
         targetOid: snapshot.snapshotOid,
         refUpdates: branches,
+        submodules: submodulesForApplyBack,
       }),
     });
     yield* processPendingApplyCore(projectId);
@@ -821,6 +1276,98 @@ export const make = Effect.gen(function* () {
           yield* Effect.logWarning("Mirror apply-back hit conflicts on the origin.", {
             projectId,
             conflictPaths: response.conflictPaths,
+          });
+        }
+
+        // The top-level apply-back landed; now push each changed
+        // submodule's own snapshot back the same way. Skipped/failed
+        // entries fold into warnings rather than failing the apply-back.
+        const submoduleWarnings: Array<{ path: string; detail: string }> = [];
+        const submoduleUpdates: Record<string, { lastSyncedSnapshotOid: string }> = {};
+        for (const sub of pending.submodules ?? []) {
+          if (sub.baseOid === null) {
+            submoduleWarnings.push({
+              path: sub.path,
+              detail: "Submodule has not been seeded onto the origin yet; skipped this round.",
+            });
+            continue;
+          }
+          yield* Effect.gen(function* () {
+            const nestedRoot = path.join(root, sub.path);
+            const subBundlePath = yield* transfer.stagingPath(sub.syncId);
+            yield* gitSync.createIncrementalBundle({
+              root: nestedRoot,
+              bundlePath: subBundlePath,
+              baseOid: sub.baseOid ?? "",
+              snapshotRef: mirrorSnapshotRef(sub.syncId),
+              includeBranches: true,
+            });
+            const subDownload = yield* transfer.issueUrl({
+              projectId,
+              syncId: sub.syncId,
+              direction: "download",
+            });
+            const subResponse = yield* request({
+              projectId,
+              originLabel: project.origin?.label ?? null,
+              syncId: sub.syncId,
+              directive: {
+                type: "submodule-apply-requested",
+                syncId: sub.syncId,
+                path: sub.path,
+                downloadUrl: subDownload.relativeUrl,
+                expiresAt: subDownload.expiresAt,
+                baseSnapshotOid: sub.baseOid as string,
+                targetSnapshotOid: sub.targetOid,
+                refUpdates: [],
+              },
+              timeout: APPLY_TIMEOUT,
+            });
+            if (subResponse.type === "submodule-skipped") {
+              submoduleWarnings.push({ path: sub.path, detail: subResponse.detail });
+              return;
+            }
+            if (subResponse.type !== "submodule-apply-result") {
+              submoduleWarnings.push({
+                path: sub.path,
+                detail: `Unexpected agent response '${subResponse.type}' to a submodule apply request.`,
+              });
+              return;
+            }
+            // Applied or conflicted, the origin now has the target snapshot;
+            // it is the new shared base either way.
+            submoduleUpdates[sub.path] = { lastSyncedSnapshotOid: sub.targetOid };
+            yield* gitSync
+              .pruneSnapshotRefs({ root: nestedRoot, keepOids: [sub.targetOid] })
+              .pipe(Effect.ignore);
+            yield* transfer.removeStaged(sub.syncId);
+            if (subResponse.outcome === "conflicted") {
+              yield* Effect.logWarning("Submodule apply-back hit conflicts on the origin.", {
+                projectId,
+                path: sub.path,
+                conflictPaths: subResponse.conflictPaths,
+              });
+            }
+          }).pipe(
+            Effect.catch((cause) => {
+              submoduleWarnings.push({ path: sub.path, detail: cause.message });
+              return Effect.void;
+            }),
+          );
+        }
+        if (Object.keys(submoduleUpdates).length > 0 || submoduleWarnings.length > 0) {
+          const priorSubmoduleState: SubmoduleState =
+            runtime.submoduleStateJson != null
+              ? Option.getOrElse(decodeSubmoduleState(runtime.submoduleStateJson), () => ({}))
+              : {};
+          yield* saveRuntime({
+            projectId,
+            submoduleStateJson: encodeSubmoduleState({
+              ...priorSubmoduleState,
+              ...submoduleUpdates,
+            }),
+            submoduleWarningsJson:
+              submoduleWarnings.length > 0 ? encodeSubmoduleWarnings(submoduleWarnings) : null,
           });
         }
       }),
