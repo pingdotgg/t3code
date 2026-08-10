@@ -1150,7 +1150,15 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               // the child; finalizeRun then schedules a restart when
               // desiredRunning is still set. The close is forked into the
               // parent scope because this fiber lives inside the run scope
-              // being closed.
+              // being closed. Mark the run stopRequested first: this exit is
+              // a deliberate termination, not a crash, so it must not count
+              // toward the never-ready exit cap (readiness timeouts have
+              // their own counter) — and the failure log was already
+              // captured above via persistFailureSnapshot.
+              yield* updateActiveRun(runId, (run) => ({
+                ...run,
+                stopRequested: true,
+              }));
               yield* Effect.forkIn(
                 Scope.close(runScope, Exit.void).pipe(Effect.ignore),
                 parentScope,

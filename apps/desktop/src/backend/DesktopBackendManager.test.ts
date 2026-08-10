@@ -1551,7 +1551,10 @@ describe("DesktopBackendManager", () => {
               return false;
             }),
           backendOutputLog: {
-            persistFailure: ({ details }) => Queue.offer(failures, details).pipe(Effect.asVoid),
+            // Readiness terminations are deliberate (stopRequested), so the
+            // finalize path discards the session (the failure snapshot was
+            // already persisted from onReadinessFailure).
+            discardSession: Queue.offer(failures, "finalized").pipe(Effect.asVoid),
           },
         });
 
@@ -1586,6 +1589,82 @@ describe("DesktopBackendManager", () => {
         const snapshot = yield* instance.snapshot;
         assert.isFalse(snapshot.desiredRunning);
         assert.isFalse(snapshot.restartScheduled);
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("readiness terminations do not count toward the never-ready exit cap", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const starts = yield* Queue.unbounded<number>();
+        const finalized = yield* Queue.unbounded<void>();
+        const preflightFailures: Array<DesktopBackendManager.PreflightFailure> = [];
+        let startCount = 0;
+
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.gen(function* () {
+              const scope = yield* Scope.Scope;
+              startCount += 1;
+              const killed = yield* Deferred.make<void>();
+              yield* Scope.addFinalizer(
+                scope,
+                Deferred.succeed(killed, void 0).pipe(Effect.asVoid),
+              );
+              yield* Queue.offer(starts, startCount);
+              return makeProcess({
+                exitCode: Deferred.await(killed).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              });
+            }),
+          ),
+        );
+
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          config: {
+            ...baseConfig,
+            httpBaseUrl: new URL("http://100.108.0.5:3773"),
+          },
+          httpClientLayer: httpClientLayer((request) =>
+            Effect.succeed(responseForRequest(request, 503)),
+          ),
+          // Always retry, like the primary's Windows-fallback path — so the
+          // instance keeps cycling readiness timeouts past the exit cap's
+          // threshold.
+          onPreflightFailed: (failure) =>
+            Effect.sync(() => {
+              preflightFailures.push(failure);
+              return true;
+            }),
+          backendOutputLog: {
+            discardSession: Queue.offer(finalized, void 0).pipe(Effect.asVoid),
+          },
+        });
+
+        yield* instance.start;
+        assert.equal(yield* Queue.take(starts), 1);
+
+        // Five readiness-timeout cycles: each kill is a deliberate
+        // termination and must NOT feed the never-ready exit streak — with
+        // double counting, cycle 5 would fire a second, misleading
+        // "exited N times" surfacing.
+        for (let cycle = 1; cycle <= 5; cycle += 1) {
+          yield* TestClock.adjust(Duration.minutes(1));
+          yield* Queue.take(finalized);
+          if (cycle < 5) {
+            yield* TestClock.adjust(Duration.seconds(15));
+            assert.equal(yield* Queue.take(starts), cycle + 1);
+          }
+        }
+
+        // Only the readiness cap (cycle 3) surfaced; every reason names the
+        // probed URL, and none claims the backend "exited".
+        assert.lengthOf(preflightFailures, 1);
+        assert.include(preflightFailures[0]!.reason, "readiness");
+        for (const failure of preflightFailures) {
+          assert.notInclude(failure.reason, "exited");
+        }
       }).pipe(Effect.provide(TestClock.layer())),
     ),
   );
