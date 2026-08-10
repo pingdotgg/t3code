@@ -46,6 +46,8 @@ const RequestedEvent = Schema.Struct({
   runId: AgentRunId,
   revision: Schema.Literal(0),
   occurredAt: IsoDateTime,
+  /** Root request time used for the lineage wall-time deadline. */
+  wallTimeOriginAt: Schema.optionalKey(IsoDateTime),
   profile: AgentProfileRef,
   budget: AgentProfileBudgets,
   parentRunId: NullableRunId,
@@ -290,6 +292,8 @@ export interface AgentRun {
   readonly instanceId: ProviderInstanceIdType;
   readonly workspaceMode: AgentWorkspaceModeType;
   readonly requestedAt: string;
+  /** Root request time used for the lineage wall-time deadline. */
+  readonly wallTimeOriginAt: string;
   readonly startedAt: string | null;
   /** Provider turn currently authorized to advance this Agent run. */
   readonly activeTurnId: TurnIdType | null;
@@ -338,7 +342,7 @@ const totalTokens = (runs: ReadonlyArray<AgentRun>) =>
 const totalEstimatedCostUsd = (runs: ReadonlyArray<AgentRun>) =>
   runs.reduce((total, run) => total + run.consumedEstimatedCostUsd, 0);
 const wallTimeExceeded = (run: AgentRun, occurredAt: string) => {
-  const elapsedMs = Date.parse(occurredAt) - Date.parse(run.requestedAt);
+  const elapsedMs = Date.parse(occurredAt) - Date.parse(run.wallTimeOriginAt);
   return Number.isFinite(elapsedMs) && elapsedMs > run.budget.maxWallTimeMinutes * 60_000;
 };
 
@@ -371,6 +375,9 @@ export const evolve = (state: AgentRunState, event: AgentRunEvent): AgentRunStat
         instanceId: event.instanceId,
         workspaceMode: event.workspaceMode,
         requestedAt: event.occurredAt,
+        // Older persisted events omit wallTimeOriginAt, so their own
+        // creation time remains the safe replay fallback.
+        wallTimeOriginAt: event.wallTimeOriginAt ?? event.occurredAt,
         startedAt: null,
         activeTurnId: null,
         finishedAt: null,
@@ -601,6 +608,7 @@ export const decide = Effect.fn("AgentRun.decide")(function* (
             runId: command.runId,
             revision: 0,
             occurredAt: command.occurredAt,
+            wallTimeOriginAt: command.occurredAt,
             profile: command.profile,
             budget: command.budget,
             parentRunId: null,
@@ -669,6 +677,8 @@ export const decide = Effect.fn("AgentRun.decide")(function* (
         runId: command.runId,
         revision: 0,
         occurredAt: command.occurredAt,
+        wallTimeOriginAt:
+          state.runs.get(parent.rootRunId)?.wallTimeOriginAt ?? parent.wallTimeOriginAt,
         profile: command.profile,
         budget: command.budget,
         parentRunId: parent.id,

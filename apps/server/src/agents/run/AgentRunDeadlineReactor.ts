@@ -30,9 +30,9 @@ const DEADLINE_RETRY_SCHEDULE = Schedule.exponential("100 millis").pipe(
 
 export const isDeadlineTracked = (run: AgentRun): boolean => ACTIVE_STATUSES.has(run.status);
 
-/** The wall-time budget starts when a run is requested until it finishes. */
+/** The wall-time budget starts at the root request until the run finishes. */
 export const deadlineAtMillis = (run: AgentRun): number => {
-  const origin = Date.parse(run.requestedAt);
+  const origin = Date.parse(run.wallTimeOriginAt);
   return origin + run.budget.maxWallTimeMinutes * 60_000;
 };
 

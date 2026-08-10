@@ -128,6 +128,42 @@ describe("AgentRun", () => {
       }),
   );
 
+  it.effect("enforces a descendant wall-time budget from the root request", () =>
+    Effect.gen(function* () {
+      const childBudget = { ...budget, maxWallTimeMinutes: 5 };
+      let state = yield* transition(emptyAgentRunState(), request("wall-root"));
+      state = yield* start(state, "wall-root");
+      state = yield* transition(state, {
+        ...request("wall-child", "wall-root"),
+        budget: childBudget,
+        occurredAt: "2026-08-07T12:09:00.000Z",
+      });
+      state = yield* transition(state, {
+        type: "agent-run.assign-child-thread",
+        runId: id("wall-child"),
+        childThreadId: thread("wall-child-thread"),
+        occurredAt: "2026-08-07T12:09:01.000Z",
+      });
+      state = yield* transition(state, {
+        type: "agent-run.start",
+        runId: id("wall-child"),
+        occurredAt: "2026-08-07T12:09:02.000Z",
+      });
+
+      expect(state.runs.get(id("wall-child"))?.requestedAt).toBe("2026-08-07T12:09:00.000Z");
+      expect(state.runs.get(id("wall-child"))?.wallTimeOriginAt).toBe(at);
+      yield* expectInvariantFailure(
+        decide(state, {
+          type: "agent-run.succeed",
+          runId: id("wall-child"),
+          occurredAt: "2026-08-07T12:10:01.000Z",
+        }),
+        /wall-time budget/,
+        "budget-exhausted",
+      );
+    }),
+  );
+
   it.effect("binds only the current provider turn after a follow-up revision", () =>
     Effect.gen(function* () {
       const firstTurn = TurnId.make("provider-turn-first");

@@ -150,7 +150,10 @@ testLayer("AgentRunRepository", (it) => {
         runId: id("lineage-root"),
         occurredAt: later,
       });
-      yield* repository.dispatch(request("lineage-child", "lineage-root", lineageLaunch));
+      yield* repository.dispatch({
+        ...request("lineage-child", "lineage-root", lineageLaunch),
+        occurredAt: "2026-08-07T12:09:00.000Z",
+      });
 
       const byThread = yield* repository.listByParentThread(lineageLaunch.parentThreadId);
       assert.deepEqual(
@@ -166,6 +169,15 @@ testLayer("AgentRunRepository", (it) => {
         ],
       );
       assert.equal(lineage[0]?.status, "waiting-for-input");
+      assert.equal(lineage[1]?.requestedAt, "2026-08-07T12:09:00.000Z");
+      assert.equal(lineage[1]?.wallTimeOriginAt, at);
+
+      const child = yield* repository.get(id("lineage-child"));
+      assert.isTrue(Option.isSome(child));
+      if (Option.isSome(child)) {
+        assert.equal(child.value.requestedAt, "2026-08-07T12:09:00.000Z");
+        assert.equal(child.value.wallTimeOriginAt, at);
+      }
     }),
   );
 

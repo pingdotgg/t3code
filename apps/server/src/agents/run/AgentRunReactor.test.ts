@@ -69,6 +69,7 @@ const run: AgentRun = {
   instanceId: ProviderInstanceId.make("codex"),
   workspaceMode: "shared",
   requestedAt: "2026-08-07T12:00:00.000Z",
+  wallTimeOriginAt: "2026-08-07T12:00:00.000Z",
   startedAt: "2026-08-07T12:00:01.000Z",
   activeTurnId: TurnId.make("completion-turn"),
   finishedAt: null,

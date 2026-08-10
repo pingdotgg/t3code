@@ -63,6 +63,7 @@ const run: AgentRun = {
   instanceId: ProviderInstanceId.make("codex"),
   workspaceMode: "shared",
   requestedAt,
+  wallTimeOriginAt: requestedAt,
   startedAt: requestedAt,
   activeTurnId: TurnId.make("deadline-turn"),
   finishedAt: null,
@@ -107,6 +108,17 @@ it("derives and recognizes a persisted wall-time deadline", () => {
 it("measures wall time from the request even when provider startup is delayed", () => {
   const delayedStart = { ...run, startedAt: "2026-08-07T12:00:30.000Z" };
   assert.equal(deadlineAtMillis(delayedStart), Date.parse(requestedAt) + 60_000);
+});
+
+it("keeps a delayed child on the root wall-time deadline", () => {
+  const delayedChild = {
+    ...run,
+    id: AgentRunId.make("deadline-child-run"),
+    parentRunId: runId,
+    requestedAt: "2026-08-07T12:00:30.000Z",
+  };
+  assert.equal(deadlineAtMillis(delayedChild), Date.parse(requestedAt) + 60_000);
+  assert.isTrue(isDeadlineExpired(delayedChild, Date.parse(requestedAt) + 60_000));
 });
 
 it.effect("cancels and interrupts once when a running run reaches its deadline", () =>
