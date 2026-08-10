@@ -98,6 +98,18 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
     });
   });
 
+  it("classifies a github.com endpoint served from a subdomain as github", () => {
+    // `ssh.github.com:443` is dotcom's own SSH endpoint for networks that block port 22, not an
+    // Enterprise install that happens to have `github` in its name.
+    expect(
+      detectSourceControlProviderFromRemoteUrl("git@ssh.github.com:443/owner/repo.git"),
+    ).toEqual({
+      kind: "github",
+      name: "GitHub",
+      baseUrl: "https://ssh.github.com",
+    });
+  });
+
   it("classifies a ghe.com tenant as github-enterprise", () => {
     expect(detectSourceControlProviderFromRemoteUrl("https://acme.ghe.com/owner/repo.git")).toEqual(
       {

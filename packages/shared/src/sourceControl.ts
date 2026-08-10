@@ -180,12 +180,13 @@ function toBaseUrl(host: string): string {
   return `https://${host}`;
 }
 
+/** Dotcom itself and the endpoints it serves elsewhere, such as `ssh.github.com` on port 443. */
 function isGitHubHost(host: string): boolean {
-  return host === "github.com";
+  return host === "github.com" || host.endsWith(".github.com");
 }
 
 function isGitHubEnterpriseHost(host: string): boolean {
-  return host !== "github.com" && (host.endsWith(".ghe.com") || host.includes("github"));
+  return !isGitHubHost(host) && (host.endsWith(".ghe.com") || host.includes("github"));
 }
 
 function isGitLabHost(host: string): boolean {
