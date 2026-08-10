@@ -5,6 +5,23 @@ name: Mobile EAS Production
 # in the same OS/pnpm as the EAS build; a macOS `eas build` computes a different
 # fingerprint (platform-specific deps + pnpm version) and errors. On this Linux
 # runner, with corepack pinning pnpm 10.24 in eas.json, local == build.
+#
+# Every merge to main that touches the mobile app reconciles, per platform:
+#   1. Store builds: if the latest production build's version differs from
+#      app.config.ts, cut a new build with --auto-submit (TestFlight +
+#      Play internal track). Bumping `version` is therefore all it takes to
+#      start the next release train — the first build of a version enters
+#      external-TestFlight beta review immediately, and later builds of the
+#      same version auto-approve. Releasing to the App Store stays a manual
+#      App Store Connect step.
+#   2. OTA: publish a production-channel update for each platform where at
+#      least one finished production build matches the current native
+#      fingerprint. Old-version binaries with a matching fingerprint receive
+#      it too. When native drift means no binary could install the update,
+#      it is skipped and flagged in the job summary instead of published
+#      into the void.
+# workflow_dispatch remains as a manual override for both modes (e.g. to
+# retry an errored build or force an OTA).
 on:
   workflow_dispatch:
     inputs:
@@ -29,10 +46,30 @@ on:
         description: "OTA update message (mode=update only)"
         required: false
         type: string
+  push:
+    branches: [main]
+    paths:
+      - apps/mobile/**
+      - packages/client-runtime/**
+      - packages/contracts/**
+      - packages/shared/**
+      - assets/**
+      - scripts/**
+      - patches/**
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - .github/workflows/mobile-eas-production.yml
+
+# Serialize runs so OTAs publish in merge order. GitHub keeps at most one
+# queued run per group, so a burst of merges collapses into one run of the
+# newest commit — intermediate commits don't need their own OTA.
+concurrency:
+  group: mobile-eas-production
+  cancel-in-progress: false
 
 jobs:
   production:
-    name: EAS Production ${{ inputs.mode }}
+    name: EAS Production ${{ github.event_name == 'push' && 'auto' || inputs.mode }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     permissions:
       contents: read
@@ -98,15 +135,15 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: eas env:pull production --non-interactive
 
-      - name: Build and submit
-        if: steps.expo-token.outputs.present == 'true' && inputs.mode == 'build'
+      - name: Build and submit (manual)
+        if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'build'
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: eas build --platform ${{ inputs.platform }} --profile production --auto-submit --non-interactive --no-wait
 
-      - name: Publish OTA update
-        if: steps.expo-token.outputs.present == 'true' && inputs.mode == 'update'
+      - name: Publish OTA update (manual)
+        if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'update'
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
@@ -117,3 +154,64 @@ jobs:
             --platform ${{ inputs.platform }} \
             --message "${{ inputs.message || format('Production OTA ({0})', github.sha) }}" \
             --non-interactive
+
+      # No --status filter on build:list: an in-queue/in-progress build must
+      # count as existing, or every merge during the build window would cut a
+      # duplicate. Builds started here stay attached to this serialized run so
+      # the queued run for a later merge cannot overtake them and lose its OTA.
+      # After an errored build, retry via workflow_dispatch mode=build — pushes
+      # won't re-trigger it until the app version changes.
+      - id: store_builds
+        name: Ensure store builds exist for the current app version
+        if: steps.expo-token.outputs.present == 'true' && github.event_name == 'push'
+        continue-on-error: true
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          failed=0
+          version="$(npx expo config --json --type public | jq -r '.version')"
+          for platform in ios android; do
+            latest="$(eas build:list --platform "$platform" --build-profile production --limit 1 --json --non-interactive | jq -r '.[0].appVersion // "none"')"
+            if [ "$latest" = "$version" ]; then
+              echo "$platform: production build for $version already exists (or is in progress)"
+              continue
+            fi
+            echo "$platform: latest production build is $latest, app.config.ts says $version — building"
+            if eas build --platform "$platform" --profile production --auto-submit --non-interactive; then
+              echo ":building_construction: $platform: cut production build for $version (auto-submitted)" >> "$GITHUB_STEP_SUMMARY"
+            else
+              failed=1
+              echo ":x: $platform: production build or submission failed for $version" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+          exit "$failed"
+
+      - name: Publish fingerprint-gated OTA
+        if: steps.expo-token.outputs.present == 'true' && github.event_name == 'push'
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          message="$(git log -1 --pretty=%s | head -c 120) ($(git rev-parse --short=9 HEAD))"
+          for platform in ios android; do
+            # eas-cli prints an environment-loaded notice to stdout before the
+            # JSON even with --json, so discard everything before the document.
+            hash="$(eas fingerprint:generate --platform "$platform" --environment production --json --non-interactive | sed -n '/^{/,$p' | jq -er '.hash | select(type == "string" and length > 0)')"
+            matching="$(eas build:list --platform "$platform" --build-profile production --status finished --fingerprint-hash "$hash" --limit 1 --json --non-interactive | jq 'length')"
+            if [ "$matching" -gt 0 ]; then
+              eas update \
+                --channel production \
+                --environment production \
+                --platform "$platform" \
+                --message "$message" \
+                --non-interactive
+              echo ":white_check_mark: $platform: OTA published to production (fingerprint \`$hash\`)" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo ":warning: $platform: no finished production build matches fingerprint \`$hash\` — OTA skipped; JS changes reach $platform only once a matching build ships" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+
+      - name: Propagate store build failure
+        if: steps.store_builds.outcome == 'failure'
+        run: exit 1

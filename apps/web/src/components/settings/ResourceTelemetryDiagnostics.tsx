@@ -27,7 +27,7 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -38,6 +38,7 @@ import {
   useResourceTelemetryHistory,
 } from "../../lib/resourceTelemetryState";
 import { cn } from "../../lib/utils";
+import { ensureLocalApi } from "../../localApi";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -383,7 +384,7 @@ function HistoryWindowSelector({
           key={option.windowMs}
           type="button"
           className={cn(
-            "h-6 rounded-sm px-2 text-[11px] font-medium text-muted-foreground hover:text-foreground",
+            "cursor-pointer h-6 rounded-sm px-2 text-[11px] font-medium text-muted-foreground hover:text-foreground",
             selectedWindowMs === option.windowMs && "bg-muted text-foreground",
           )}
           onClick={() => onSelect(option.windowMs)}
@@ -487,7 +488,7 @@ function ProcessTreeName({
       {hasChildren ? (
         <button
           type="button"
-          className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="cursor-pointer inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
           onClick={() => onToggle(process)}
           aria-label={collapsed ? `Expand ${name}` : `Collapse ${name}`}
         >
@@ -538,7 +539,7 @@ function ProcessActions({
       <button
         type="button"
         disabled={isSignaling}
-        className="text-[10px] font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
+        className="cursor-pointer text-[10px] font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
         onClick={() => onSignal(process, "SIGINT")}
       >
         INT
@@ -546,7 +547,7 @@ function ProcessActions({
       <button
         type="button"
         disabled={isSignaling}
-        className="text-[10px] font-semibold text-destructive hover:underline disabled:opacity-50"
+        className="cursor-pointer text-[10px] font-semibold text-destructive hover:underline disabled:opacity-50"
         onClick={() => onSignal(process, "SIGKILL")}
       >
         KILL
@@ -845,26 +846,54 @@ export function ResourceTelemetryDiagnostics() {
     reportFailure: false,
   });
   const [signalingKeys, setSignalingKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const signalingKeysRef = useRef<ReadonlySet<string>>(new Set());
+  signalingKeysRef.current = signalingKeys;
+  const primaryEnvironmentIdRef = useRef(primaryEnvironment?.environmentId);
+  primaryEnvironmentIdRef.current = primaryEnvironment?.environmentId;
   const [isRetrying, setIsRetrying] = useState(false);
   const snapshot = telemetry.data;
   const allT3 = snapshot?.groups.allT3;
 
   const signalProcess = useCallback(
-    (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => {
-      if (
-        signal === "SIGKILL" &&
-        !window.confirm(
-          `Send SIGKILL to process ${process.identity.pid}? This cannot be handled by the process.`,
-        )
-      ) {
-        return;
-      }
+    async (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => {
       const identityKey = processIdentityKey(process);
-      const environmentId = primaryEnvironment?.environmentId;
+      if (signalingKeysRef.current.has(identityKey)) return;
+      const nextSignalingKeys = new Set(signalingKeysRef.current).add(identityKey);
+      signalingKeysRef.current = nextSignalingKeys;
+      setSignalingKeys(nextSignalingKeys);
+      const clearSignaling = () => {
+        const next = new Set(signalingKeysRef.current);
+        next.delete(identityKey);
+        signalingKeysRef.current = next;
+        setSignalingKeys(next);
+      };
+
+      if (signal === "SIGKILL") {
+        let confirmed = false;
+        try {
+          confirmed = await ensureLocalApi().dialogs.confirm(
+            `Send SIGKILL to process ${process.identity.pid}? This cannot be handled by the process.`,
+            { variant: "destructive" },
+          );
+        } catch (error) {
+          clearSignaling();
+          toastManager.add({
+            type: "error",
+            title: "Could not confirm signal",
+            description: error instanceof Error ? error.message : `Failed to send ${signal}.`,
+          });
+          return;
+        }
+        if (!confirmed) {
+          clearSignaling();
+          return;
+        }
+      }
+      const environmentId = primaryEnvironmentIdRef.current;
       if (environmentId === undefined) {
+        clearSignaling();
         return;
       }
-      setSignalingKeys((current) => new Set(current).add(identityKey));
       void signalServerProcess({
         environmentId,
         input: {
@@ -896,15 +925,10 @@ export function ResourceTelemetryDiagnostics() {
           });
         })
         .finally(() => {
-          setSignalingKeys((current) => {
-            if (!current.has(identityKey)) return current;
-            const next = new Set(current);
-            next.delete(identityKey);
-            return next;
-          });
+          clearSignaling();
         });
     },
-    [primaryEnvironment?.environmentId, signalServerProcess],
+    [signalServerProcess],
   );
 
   const retryCollector = useCallback(() => {

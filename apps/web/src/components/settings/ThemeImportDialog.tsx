@@ -1,4 +1,4 @@
-import { PlusIcon, UploadIcon } from "lucide-react";
+import { DownloadIcon, PlusIcon } from "lucide-react";
 import type { ChangeEvent, DragEvent, UIEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../../lib/utils";
@@ -456,7 +456,7 @@ export function ThemeImportDialog({
             );
             const chooseButton = (label = "Choose files") => (
               <Button disabled={isReading} size="sm" variant="outline" onClick={openFilePicker}>
-                <UploadIcon />
+                <DownloadIcon />
                 {isReading ? "Reading…" : label}
               </Button>
             );
