@@ -1817,18 +1817,20 @@ export default function Sidebar() {
   // Filtering derives from the same React state that controls the input, so
   // the visible query and the visible list can never desync — the peer wiring
   // in DiffPanel and BranchToolbarBranchSelector. "All projects" is a scope
-  // reset, not a searchable entry: it only shows while the query is empty, so
-  // it can't outrank a project match under autoHighlight and no-hit queries
-  // reach the empty state.
+  // reset, not a searchable entry: it only shows while a project scope is
+  // active (there is something to reset) and the query is empty, so it can't
+  // outrank a project match under autoHighlight and no-hit queries reach the
+  // empty state.
   const filteredProjectScopeItems = useMemo(() => {
     const query = projectScopeQuery.trim();
-    if (query.length === 0) return projectScopeItems;
-    return projectScopeItems.filter(
-      (item) =>
-        item.value !== "all" &&
+    const projectItems = projectScopeItems.filter((item) => item.value !== "all");
+    if (query.length > 0) {
+      return projectItems.filter((item) =>
         projectScopeFilter.contains(item, query, (candidate) => candidate.label),
-    );
-  }, [projectScopeFilter, projectScopeItems, projectScopeQuery]);
+      );
+    }
+    return projectScopeKey === null ? projectItems : projectScopeItems;
+  }, [projectScopeFilter, projectScopeItems, projectScopeKey, projectScopeQuery]);
   const scopedProjectGroup = useMemo(
     () =>
       projectScopeKey === null
