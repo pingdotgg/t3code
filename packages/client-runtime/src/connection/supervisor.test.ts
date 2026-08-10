@@ -569,7 +569,7 @@ describe("EnvironmentSupervisor", () => {
         supervisor.state,
         (state) => state.phase === "backoff" && state.attempt === 1,
       );
-      yield* TestClock.adjust("1 second");
+      yield* TestClock.adjust("3 seconds");
       yield* eventuallyState(
         supervisor.state,
         (state) => state.phase === "backoff" && state.attempt === 2,
