@@ -155,7 +155,11 @@ import {
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
-import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
+import {
+  deriveProviderInstanceEntries,
+  shouldShowInstanceBadge,
+  type ProviderInstanceEntry,
+} from "../providerInstances";
 import { primaryServerProvidersAtom } from "../state/server";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -236,21 +240,6 @@ function WorkingDuration(props: { startedAt: string | null }) {
 
 function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
-}
-
-// Several accounts on the same provider share one glyph, so the account badge
-// is the only thing telling them apart.
-function hasDuplicateDriverInstances(
-  entries: ReadonlyMap<string, ProviderInstanceEntry>,
-  driverKind: ProviderInstanceEntry["driverKind"],
-): boolean {
-  let seen = false;
-  for (const entry of entries.values()) {
-    if (entry.driverKind !== driverKind) continue;
-    if (seen) return true;
-    seen = true;
-  }
-  return false;
 }
 
 function SidebarThreadTooltip({
@@ -336,8 +325,7 @@ function SidebarThreadTooltip({
                   providerEntry?.displayName ?? thread.session?.providerName ?? modelInstanceId
                 }
                 accentColor={providerEntry?.accentColor}
-                // Initials would swallow a size-3 glyph, so the accent reads as
-                // a plain dot here and the account name lands in the label.
+                // Initials would swallow a size-3 glyph: accent dot, name in label.
                 showBadge={showInstanceBadge && providerEntry?.accentColor !== undefined}
                 badgeContent="none"
                 badgeClassName="h-2 min-w-2 px-0"
@@ -890,8 +878,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const driverKind = providerEntry?.driverKind ?? null;
   const showInstanceBadge =
     providerEntry !== null &&
-    (Boolean(providerEntry.accentColor) ||
-      hasDuplicateDriverInstances(props.providerEntryByInstanceId, providerEntry.driverKind));
+    shouldShowInstanceBadge(providerEntry, props.providerEntryByInstanceId.values());
   const selectedModel = providerEntry?.models.find(
     (model) => model.slug === thread.modelSelection.model,
   );
@@ -1498,10 +1485,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       }
                       accentColor={providerEntry?.accentColor}
                       showBadge={showInstanceBadge}
-                      // Only the glyph dims; the accent badge has to stay
-                      // saturated to read as an account color.
+                      // Glyph dims, badge stays saturated; offset matches the composer trigger.
                       iconClassName="size-3.5 opacity-60"
-                      badgeClassName="h-3 min-w-3 px-0.5 text-[7px]"
+                      badgeClassName="right-[-0.1875rem] bottom-[-0.1875rem] h-3 min-w-3 px-0.5 text-[7px]"
                     />
                   </span>
                 ) : null}
@@ -1560,8 +1546,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
   const showInstanceBadge =
     providerEntry !== null &&
-    (Boolean(providerEntry.accentColor) ||
-      hasDuplicateDriverInstances(props.providerEntryByInstanceId, providerEntry.driverKind));
+    shouldShowInstanceBadge(providerEntry, props.providerEntryByInstanceId.values());
   const selectedModel = providerEntry?.models.find(
     (model) => model.slug === thread.modelSelection.model,
   );
