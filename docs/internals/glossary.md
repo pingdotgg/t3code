@@ -116,6 +116,17 @@ Controls how assistant text reaches the thread timeline. In [the contracts][1], 
 
 A point-in-time view of state. The word is used in multiple layers, including orchestration, provider, and checkpointing. See [ProjectionSnapshotQuery.ts][10], [ProviderAdapter.ts][15], and [CheckpointStore.ts][19].
 
+#### MCP server
+
+A Model Context Protocol server: a process or endpoint that advertises tools an agent can call. Two unrelated senses in this codebase, and they are easy to confuse:
+
+1. **T3 Code as an MCP server.** The server hosts one at `/mcp` and injects it into every session under the name `t3-code`, which is how an agent reaches the `preview_*` browser tools. See [McpHttpServer.ts][25].
+2. **The user's MCP servers.** The ones Claude Code and Codex load from their own config. T3 Code neither spawns nor configures these — the harness CLI does. See [MCP inventory](#mcp-inventory).
+
+#### MCP inventory
+
+A read-only listing of the user's MCP servers across every provider instance on one environment, surfaced at Settings → MCP. Claude entries are read from `.claude.json` directly, because the CLI's own `claude mcp list` health-checks every server over the network. Discovery is best effort: an unreadable config marks the read incomplete rather than failing the request. Only Claude is covered today. See [McpServerInventory.ts][26] and [the user guide][27].
+
 ### Checkpointing
 
 Checkpointing captures workspace state over time so the app can diff turns and restore earlier points. The main pieces are [CheckpointStore.ts][19], [CheckpointDiffQuery.ts][20], and [CheckpointReactor.ts][6].
@@ -179,3 +190,6 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [22]: ../../apps/server/src/checkpointing/Utils.ts
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
+[25]: ../../apps/server/src/mcp/McpHttpServer.ts
+[26]: ../../apps/server/src/mcpServers/McpServerInventory.ts
+[27]: ../user/mcp.md
