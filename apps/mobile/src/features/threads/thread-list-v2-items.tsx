@@ -939,7 +939,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             <Text
               className={cn(
                 "text-base",
-                selected ? "text-user-bubble-foreground" : "text-foreground-muted",
+                selected
+                  ? "font-t3-medium text-user-bubble-foreground"
+                  : isUnread
+                    ? "font-t3-medium text-foreground-muted"
+                    : "text-foreground-tertiary",
               )}
               numberOfLines={1}
             >
