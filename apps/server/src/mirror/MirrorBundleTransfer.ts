@@ -94,6 +94,22 @@ export class MirrorBundleTransfer extends Context.Service<
      */
     readonly resolve: (token: string) => Effect.Effect<ResolvedBundleTransfer | null>;
     readonly removeStaged: (syncId: MirrorSyncId) => Effect.Effect<void>;
+    /**
+     * Record the cumulative byte count of an in-flight bundle upload.
+     * Called by the HTTP PUT route as chunks arrive; `totalBytes` is the
+     * request's Content-Length, null when the uploader streamed without one.
+     */
+    readonly trackUpload: (input: {
+      readonly projectId: string;
+      readonly syncId: string;
+      readonly bytes: number;
+      readonly totalBytes: number | null;
+    }) => Effect.Effect<void>;
+    readonly clearUpload: (syncId: string) => Effect.Effect<void>;
+    /** Latest in-flight upload progress for a project, null when idle. */
+    readonly uploadProgressForProject: (
+      projectId: string,
+    ) => Effect.Effect<{ readonly bytes: number; readonly totalBytes: number | null } | null>;
   }
 >()("t3/mirror/MirrorBundleTransfer") {}
 
@@ -171,7 +187,57 @@ export const make = Effect.gen(function* () {
       .remove(path.join(stagingDir, `${syncId}.bundle`), { force: true })
       .pipe(Effect.ignore);
 
-  return MirrorBundleTransfer.of({ stagingPath, issueUrl, resolve, removeStaged });
+  // In-flight upload byte counts, keyed by syncId. Purely in-memory: an
+  // entry lives from the first PUT chunk to clearUpload (request end).
+  const uploads = yield* SynchronizedRef.make<
+    ReadonlyMap<
+      string,
+      { readonly projectId: string; readonly bytes: number; readonly totalBytes: number | null }
+    >
+  >(new Map());
+
+  const trackUpload: MirrorBundleTransfer["Service"]["trackUpload"] = (input) =>
+    SynchronizedRef.update(uploads, (current) => {
+      const next = new Map(current);
+      next.set(input.syncId, {
+        projectId: input.projectId,
+        bytes: input.bytes,
+        totalBytes: input.totalBytes,
+      });
+      return next;
+    });
+
+  const clearUpload: MirrorBundleTransfer["Service"]["clearUpload"] = (syncId) =>
+    SynchronizedRef.update(uploads, (current) => {
+      if (!current.has(syncId)) return current;
+      const next = new Map(current);
+      next.delete(syncId);
+      return next;
+    });
+
+  const uploadProgressForProject: MirrorBundleTransfer["Service"]["uploadProgressForProject"] = (
+    projectId,
+  ) =>
+    SynchronizedRef.get(uploads).pipe(
+      Effect.map((current) => {
+        for (const entry of current.values()) {
+          if (entry.projectId === projectId) {
+            return { bytes: entry.bytes, totalBytes: entry.totalBytes };
+          }
+        }
+        return null;
+      }),
+    );
+
+  return MirrorBundleTransfer.of({
+    stagingPath,
+    issueUrl,
+    resolve,
+    removeStaged,
+    trackUpload,
+    clearUpload,
+    uploadProgressForProject,
+  });
 });
 
 export const layer = Layer.effect(MirrorBundleTransfer, make);
@@ -188,5 +254,8 @@ export const layerTest = Layer.succeed(
       }),
     resolve: () => Effect.succeed(null),
     removeStaged: () => Effect.void,
+    trackUpload: () => Effect.void,
+    clearUpload: () => Effect.void,
+    uploadProgressForProject: () => Effect.succeed(null),
   }),
 );

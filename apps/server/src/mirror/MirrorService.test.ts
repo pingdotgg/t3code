@@ -4,11 +4,13 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { EnvironmentId, ProjectId, type MirrorStreamEvent } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { describe, expect } from "vite-plus/test";
 
 import * as GitSync from "./GitSync.ts";
@@ -314,6 +316,70 @@ it.layer(TestLayer)("MirrorService", (it) => {
           yield* service.ensureFresh(projectId);
         }),
       120_000,
+    );
+  });
+
+  describe("revokeLink", () => {
+    it.effect(
+      "tells a connected origin the link is gone and clears the sync watermark",
+      () =>
+        Effect.gen(function* () {
+          yield* runMigrations({ toMigrationInclusive: 44 });
+          const fileSystem = yield* FileSystem.FileSystem;
+          const config = yield* ServerConfig.ServerConfig;
+          const service = yield* MirrorServiceModule.MirrorService;
+          const sql = yield* SqlClient.SqlClient;
+
+          const mirrorRoot = NodePath.join(config.mirrorsDir, projectId);
+          yield* fileSystem.makeDirectory(mirrorRoot, { recursive: true });
+          yield* git(mirrorRoot, ["init", "--initial-branch=main"]);
+          projectBox.current = {
+            projectId,
+            title: "Mirrored",
+            workspaceRoot: mirrorRoot,
+            origin: {
+              environmentId: originEnvironmentId,
+              rootPath: "/tmp/wherever",
+              label: "Laptop",
+            },
+            defaultModelSelection: null,
+            defaultThreadEnvMode: null,
+            mirrorIncludeIgnoredFiles: null,
+            scripts: [],
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            deletedAt: null,
+          };
+          yield* sql`
+            INSERT INTO mirror_sync_runtime (project_id, last_synced_snapshot_oid)
+            VALUES (${projectId}, ${"0".repeat(40)})
+            ON CONFLICT (project_id)
+            DO UPDATE SET last_synced_snapshot_oid = excluded.last_synced_snapshot_oid
+          `;
+
+          const connectedSeen = yield* Deferred.make<void>();
+          const revokedSeen = yield* Deferred.make<void>();
+          const stream = yield* service.connect({ projectId });
+          yield* Stream.runForEach(stream, (event: MirrorStreamEvent) =>
+            event.type === "connected"
+              ? Deferred.succeed(connectedSeen, undefined)
+              : event.type === "directive" && event.directive.type === "link-revoked"
+                ? Deferred.succeed(revokedSeen, undefined)
+                : Effect.void,
+          ).pipe(Effect.forkScoped);
+          // The stream's acquire registers the connection lazily; revoking
+          // before it lands would find no connection to notify.
+          yield* Deferred.await(connectedSeen);
+
+          yield* service.revokeLink(projectId);
+          yield* Deferred.await(revokedSeen);
+
+          const rows = yield* sql<{ readonly count: number }>`
+            SELECT COUNT(*) AS count FROM mirror_sync_runtime WHERE project_id = ${projectId}
+          `;
+          expect(rows[0]?.count).toBe(0);
+        }),
+      30_000,
     );
   });
 });

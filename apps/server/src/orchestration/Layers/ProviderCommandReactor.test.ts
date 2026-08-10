@@ -535,6 +535,7 @@ describe("ProviderCommandReactor", () => {
         originConnected: () => Effect.succeed(false),
         statusStream: () => Effect.succeed(Stream.empty),
         isMirroredProject: () => Effect.succeed(true),
+        revokeLink: () => Effect.void,
       }),
     );
     const harness = await createHarness({ mirrorServiceLayer: offlineMirrorLayer });

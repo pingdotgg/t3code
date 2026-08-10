@@ -132,6 +132,7 @@ import {
   MirrorCreatePeerCredentialResult,
   MirrorDetachInput,
   MirrorLinkNotFoundError,
+  MirrorListLinksResult,
   MirrorNotARepositoryError,
   MirrorProjectNotMirroredError,
   MirrorProjectStatus,
@@ -246,6 +247,7 @@ export const WS_METHODS = {
   mirrorCreatePeerCredential: "mirror.createPeerCredential",
   mirrorAttach: "mirror.attach",
   mirrorDetach: "mirror.detach",
+  mirrorListLinks: "mirror.listLinks",
   mirrorConnect: "mirror.connect",
   mirrorRespond: "mirror.respond",
   mirrorRequestSync: "mirror.requestSync",
@@ -731,6 +733,12 @@ export const WsMirrorDetachRpc = Rpc.make(WS_METHODS.mirrorDetach, {
   error: Schema.Union([MirrorLinkNotFoundError, EnvironmentAuthorizationError]),
 });
 
+export const WsMirrorListLinksRpc = Rpc.make(WS_METHODS.mirrorListLinks, {
+  payload: Schema.Struct({}),
+  success: MirrorListLinksResult,
+  error: EnvironmentAuthorizationError,
+});
+
 export const WsMirrorConnectRpc = Rpc.make(WS_METHODS.mirrorConnect, {
   payload: MirrorConnectInput,
   success: MirrorStreamEvent,
@@ -962,6 +970,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsMirrorCreatePeerCredentialRpc,
   WsMirrorAttachRpc,
   WsMirrorDetachRpc,
+  WsMirrorListLinksRpc,
   WsMirrorConnectRpc,
   WsMirrorRespondRpc,
   WsMirrorRequestSyncRpc,

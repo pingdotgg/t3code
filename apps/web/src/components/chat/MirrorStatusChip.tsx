@@ -17,20 +17,45 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { MessageCopyButton } from "./MessageCopyButton";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { toastManager } from "../ui/toast";
 
 const MAX_VISIBLE_CONFLICT_PATHS = 10;
 
+function formatTransferBytes(value: number): string {
+  if (value < 1024) return `${value} B`;
+  const units = ["KB", "MB", "GB"] as const;
+  let unitIndex = -1;
+  let next = value;
+  do {
+    next /= 1024;
+    unitIndex += 1;
+  } while (next >= 1024 && unitIndex < units.length - 1);
+  return `${next.toFixed(next >= 10 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+/** "30%" when the upload size is known, "12 MB" otherwise, null when idle. */
+function transferProgressLabel(status: MirrorProjectStatus | null): string | null {
+  const transfer = status?.transfer;
+  if (transfer === undefined || transfer.bytes <= 0) return null;
+  if (transfer.totalBytes !== null && transfer.totalBytes > 0) {
+    return `${Math.min(100, Math.round((transfer.bytes / transfer.totalBytes) * 100))}%`;
+  }
+  return formatTransferBytes(transfer.bytes);
+}
+
 export function mirrorStatusChipLabel(status: MirrorProjectStatus | null): string {
   if (status === null) return "Mirror";
+  const progress = transferProgressLabel(status);
+  const withProgress = (base: string) => (progress === null ? base : `${base} · ${progress}`);
   switch (status.state) {
     case "seeding":
-      return "Seeding";
+      return withProgress("Seeding");
     case "idle":
       return "Synced";
     case "syncing":
-      return "Syncing";
+      return withProgress("Syncing");
     case "applying":
       return "Applying";
     case "offline":
@@ -64,10 +89,13 @@ export function MirrorStatusChip({
   environmentId,
   projectId,
   origin,
+  workspaceRoot,
 }: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly origin: ProjectOrigin;
+  /** Host-side mirror directory, when the caller has it. */
+  readonly workspaceRoot?: string | null;
 }) {
   const statusQuery = useEnvironmentQuery(
     mirrorEnvironment.statusByProject({ environmentId, input: { projectId } }),
@@ -114,10 +142,49 @@ export function MirrorStatusChip({
         <div className="flex flex-col gap-2 text-xs">
           <div className="flex flex-col gap-0.5">
             <span className="text-sm font-medium text-foreground">Mirrored project</span>
-            <span className="text-muted-foreground">
-              Files live on {originLabel} at {origin.rootPath}
-            </span>
+            <span className="text-muted-foreground">Files live on {originLabel}</span>
           </div>
+          <div className="flex flex-col gap-1">
+            <div className="flex min-w-0 items-center gap-1">
+              <span className="shrink-0 text-muted-foreground">{originLabel}:</span>
+              <span className="min-w-0 truncate font-mono text-muted-foreground">
+                {origin.rootPath}
+              </span>
+              <MessageCopyButton text={origin.rootPath} size="icon-xs" variant="ghost" />
+            </div>
+            {workspaceRoot != null && workspaceRoot.length > 0 ? (
+              <div className="flex min-w-0 items-center gap-1">
+                <span className="shrink-0 text-muted-foreground">Mirror:</span>
+                <span className="min-w-0 truncate font-mono text-muted-foreground">
+                  {workspaceRoot}
+                </span>
+                <MessageCopyButton text={workspaceRoot} size="icon-xs" variant="ghost" />
+              </div>
+            ) : null}
+          </div>
+          {syncInProgress && status?.transfer !== undefined && status.transfer.bytes > 0 ? (
+            <div className="flex flex-col gap-1">
+              <span className="text-muted-foreground">
+                {status.transfer.totalBytes !== null && status.transfer.totalBytes > 0
+                  ? `Transferring ${formatTransferBytes(status.transfer.bytes)} of ${formatTransferBytes(status.transfer.totalBytes)}`
+                  : `Transferred ${formatTransferBytes(status.transfer.bytes)}`}
+              </span>
+              {status.transfer.totalBytes !== null && status.transfer.totalBytes > 0 ? (
+                <div
+                  aria-hidden
+                  className="h-1 w-full overflow-hidden rounded-full bg-muted"
+                  data-testid="mirror-transfer-progress"
+                >
+                  <div
+                    className="h-full rounded-full bg-primary transition-[width] duration-500"
+                    style={{
+                      width: `${Math.min(100, Math.round((status.transfer.bytes / status.transfer.totalBytes) * 100))}%`,
+                    }}
+                  />
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <span className="text-muted-foreground">
             {status?.lastSyncedAt
               ? `Last synced ${formatRelativeTimeLabel(status.lastSyncedAt)}`

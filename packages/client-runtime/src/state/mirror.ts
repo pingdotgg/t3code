@@ -12,6 +12,7 @@ import type { Atom } from "effect/unstable/reactivity";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
   createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 
@@ -62,5 +63,13 @@ export function createMirrorEnvironmentAtoms<R, E>(
     tag: WS_METHODS.mirrorDetach,
   });
 
-  return { statusByProject, requestSync, createPeerCredential, attach, detach };
+  /** Origin side: every folder this environment shares to a host. */
+  const listLinks = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:mirror:list-links",
+    tag: WS_METHODS.mirrorListLinks,
+    staleTimeMs: 5_000,
+    idleTtlMs: 60_000,
+  });
+
+  return { statusByProject, requestSync, createPeerCredential, attach, detach, listLinks };
 }

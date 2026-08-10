@@ -242,6 +242,17 @@ export const MirrorProjectStatus = Schema.Struct({
   submoduleWarnings: Schema.Array(
     Schema.Struct({ path: TrimmedNonEmptyString, detail: Schema.String }),
   ),
+  /**
+   * Bytes of the in-flight bundle upload while seeding/syncing, absent when
+   * no transfer is active. `totalBytes` is null when the uploader did not
+   * send a Content-Length.
+   */
+  transfer: Schema.optional(
+    Schema.Struct({
+      bytes: Schema.Number,
+      totalBytes: Schema.NullOr(Schema.Number),
+    }),
+  ),
 });
 export type MirrorProjectStatus = typeof MirrorProjectStatus.Type;
 
@@ -279,6 +290,22 @@ export const MirrorDetachInput = Schema.Struct({
   projectId: ProjectId,
 });
 export type MirrorDetachInput = typeof MirrorDetachInput.Type;
+
+/** Served by the ORIGIN environment: one row per folder shared to a host. */
+export const MirrorLinkInfo = Schema.Struct({
+  projectId: ProjectId,
+  /** Base http(s) URL of the host this folder is mirrored to. */
+  hostUrl: TrimmedNonEmptyString,
+  /** Absolute path of the shared working copy on this machine. */
+  localRootPath: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type MirrorLinkInfo = typeof MirrorLinkInfo.Type;
+
+export const MirrorListLinksResult = Schema.Struct({
+  links: Schema.Array(MirrorLinkInfo),
+});
+export type MirrorListLinksResult = typeof MirrorListLinksResult.Type;
 
 export const MirrorConnectInput = Schema.Struct({
   projectId: ProjectId,

@@ -104,6 +104,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.mirrorCreatePeerCredential]: AuthOrchestrationOperateScope,
   [WS_METHODS.mirrorAttach]: AuthOrchestrationOperateScope,
   [WS_METHODS.mirrorDetach]: AuthOrchestrationOperateScope,
+  // Listing this device's shared folders is read-only introspection.
+  [WS_METHODS.mirrorListLinks]: AuthOrchestrationReadScope,
   [WS_METHODS.mirrorConnect]: AuthMirrorSyncScope,
   [WS_METHODS.mirrorRespond]: AuthMirrorSyncScope,
   [WS_METHODS.mirrorRequestSync]: AuthOrchestrationOperateScope,

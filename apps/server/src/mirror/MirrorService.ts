@@ -30,6 +30,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -152,6 +153,13 @@ export class MirrorService extends Context.Service<
       projectId?: ProjectId,
     ) => Effect.Effect<Stream.Stream<MirrorProjectStatus>>;
     readonly isMirroredProject: (projectId: ProjectId) => Effect.Effect<boolean>;
+    /**
+     * Tell a connected origin its link is gone (host project deleted or
+     * detached) so it deletes its mirror_links row and stored token, and
+     * drop the host-side sync runtime rows. Best-effort: a disconnected
+     * origin simply stops retrying via the stale-link path instead.
+     */
+    readonly revokeLink: (projectId: ProjectId) => Effect.Effect<void>;
   }
 >()("t3/mirror/MirrorService") {}
 
@@ -341,6 +349,8 @@ export const make = Effect.gen(function* () {
           : connected
             ? "idle"
             : "offline";
+    const transferProgress =
+      activity !== undefined ? yield* transfer.uploadProgressForProject(projectId) : null;
     return {
       projectId,
       state: stateValue,
@@ -349,6 +359,7 @@ export const make = Effect.gen(function* () {
       lastSyncedSnapshotOid: runtime?.lastSyncedSnapshotOid ?? null,
       conflictPaths,
       submoduleWarnings,
+      ...(transferProgress !== null ? { transfer: transferProgress } : {}),
     } satisfies MirrorProjectStatus;
   });
 
@@ -362,14 +373,34 @@ export const make = Effect.gen(function* () {
         const next = new Map(current.activity);
         next.set(projectId, activity);
         return { ...current, activity: next };
-      }).pipe(Effect.andThen(publishStatus(projectId))),
+      }).pipe(
+        Effect.andThen(publishStatus(projectId)),
+        // While the activity runs, republish once a second whenever a bundle
+        // upload is in flight so subscribers see transfer progress move.
+        Effect.andThen(
+          Effect.forkDetach(
+            transfer.uploadProgressForProject(projectId).pipe(
+              Effect.flatMap((progress) =>
+                progress === null ? Effect.void : publishStatus(projectId),
+              ),
+              Effect.delay("1 second"),
+              Effect.forever,
+            ),
+          ),
+        ),
+      ),
       () => effect,
-      () =>
-        SynchronizedRef.update(state, (current) => {
-          const next = new Map(current.activity);
-          next.delete(projectId);
-          return { ...current, activity: next };
-        }).pipe(Effect.andThen(publishStatus(projectId))),
+      (progressFiber) =>
+        Fiber.interrupt(progressFiber).pipe(
+          Effect.andThen(
+            SynchronizedRef.update(state, (current) => {
+              const next = new Map(current.activity);
+              next.delete(projectId);
+              return { ...current, activity: next };
+            }),
+          ),
+          Effect.andThen(publishStatus(projectId)),
+        ),
     );
 
   // --- broker --------------------------------------------------------------
@@ -1457,6 +1488,25 @@ export const make = Effect.gen(function* () {
   const isMirroredProject: MirrorService["Service"]["isMirroredProject"] = (projectId) =>
     resolveMirroredProject(projectId).pipe(Effect.map((project) => project !== null));
 
+  const revokeLink: MirrorService["Service"]["revokeLink"] = Effect.fn("MirrorService.revokeLink")(
+    function* (projectId) {
+      const current = yield* SynchronizedRef.get(state);
+      const connection = current.connections.get(projectId);
+      if (connection !== undefined) {
+        yield* Queue.offer(connection.queue, {
+          type: "directive",
+          connectionId: connection.connectionId,
+          directive: { type: "link-revoked" },
+        });
+      }
+      // Drop the host-side watermark so a recreated project reseeds cleanly.
+      yield* sql`
+        DELETE FROM mirror_sync_runtime
+        WHERE project_id = ${projectId}
+      `.pipe(Effect.ignore);
+    },
+  );
+
   return MirrorService.of({
     connect,
     respond,
@@ -1466,6 +1516,7 @@ export const make = Effect.gen(function* () {
     originConnected,
     statusStream,
     isMirroredProject,
+    revokeLink,
   });
 });
 
@@ -1487,5 +1538,6 @@ export const layerTest = Layer.succeed(
     originConnected: () => Effect.succeed(false),
     statusStream: () => Effect.succeed(Stream.empty),
     isMirroredProject: () => Effect.succeed(false),
+    revokeLink: () => Effect.void,
   }),
 );

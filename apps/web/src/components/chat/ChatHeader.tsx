@@ -251,6 +251,7 @@ export const ChatHeader = memo(function ChatHeader({
                 environmentId={activeThreadEnvironmentId}
                 projectId={activeProjectId}
                 origin={activeProjectOrigin}
+                workspaceRoot={activeProjectCwd}
               />
             ) : null}
             <span aria-hidden className="text-icon-muted">

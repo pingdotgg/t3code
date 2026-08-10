@@ -269,8 +269,26 @@ export const mirrorBundleRouteLayer = Layer.mergeAll(
       }
       const request = yield* HttpServerRequest.HttpServerRequest;
       const fileSystem = yield* FileSystem.FileSystem;
-      const written = yield* Stream.run(request.stream, fileSystem.sink(resolved.bundlePath)).pipe(
+      const transfer = yield* MirrorBundleTransfer;
+      // Feed the live status stream: count bytes as they land so seeding
+      // and syncing can show transfer progress.
+      const contentLength = Number.parseInt(request.headers["content-length"] ?? "", 10);
+      const totalBytes = Number.isFinite(contentLength) && contentLength > 0 ? contentLength : null;
+      let receivedBytes = 0;
+      const counted = request.stream.pipe(
+        Stream.tap((chunk) => {
+          receivedBytes += chunk.byteLength;
+          return transfer.trackUpload({
+            projectId: resolved.projectId,
+            syncId: resolved.syncId,
+            bytes: receivedBytes,
+            totalBytes,
+          });
+        }),
+      );
+      const written = yield* Stream.run(counted, fileSystem.sink(resolved.bundlePath)).pipe(
         Effect.result,
+        Effect.ensuring(transfer.clearUpload(resolved.syncId)),
       );
       if (written._tag === "Failure") {
         yield* fileSystem.remove(resolved.bundlePath, { force: true }).pipe(Effect.ignore);
