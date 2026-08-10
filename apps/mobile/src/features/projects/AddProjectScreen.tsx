@@ -873,7 +873,9 @@ export function AddProjectDestinationScreen(props: {
   const repositoryTitle = stringParam(props.repositoryTitle);
   // A lookup derives this from "owner/repo", a pasted clone URL from its own
   // last segment. Older links without the param keep the browsed folder.
-  const repositoryName = stringParam(props.repositoryName) ?? "";
+  // Trim once here: the path input and the folder-list filter must compare the
+  // same value, or a deep link with a padded param empties the folder picker.
+  const repositoryName = stringParam(props.repositoryName)?.trim() ?? "";
   const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } = useBrowsePathInput(
     environment,
     repositoryName,

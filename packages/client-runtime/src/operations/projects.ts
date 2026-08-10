@@ -185,9 +185,22 @@ export function getAddProjectInitialQuery(baseDirectory: string | null | undefin
  * the last segment, minus the `.git` suffix.
  */
 export function getCloneDirectoryName(repositoryOrRemoteUrl: string | null | undefined): string {
-  const withoutQuery = (repositoryOrRemoteUrl ?? "").split(/[?#]/)[0] ?? "";
-  const segments = withoutQuery.split(/[/\\:]+/).filter((segment) => segment.trim().length > 0);
+  const withoutQuery = (repositoryOrRemoteUrl ?? "").split(/[?#]/)[0]?.trim() ?? "";
+  const schemeIndex = withoutQuery.indexOf("://");
+  // A remote URL carries a host before the repository path. The host is never
+  // the repository, so a link that stops at the host, or at a port, names
+  // nothing and the destination falls back to the browsed folder.
+  const hasHost = schemeIndex >= 0 || /^[^/\\:]+@[^/\\:]+:/.test(withoutQuery);
+  const pathPart = schemeIndex >= 0 ? withoutQuery.slice(schemeIndex + "://".length) : withoutQuery;
+  const segments = pathPart.split(/[/\\:]+/).filter((segment) => segment.trim().length > 0);
+  if (hasHost && segments.length < 2) {
+    return "";
+  }
+
   const lastSegment = segments.at(-1)?.trim() ?? "";
+  if (hasHost && /^\d+$/.test(lastSegment)) {
+    return "";
+  }
   return lastSegment.endsWith(".git") ? lastSegment.slice(0, -".git".length) : lastSegment;
 }
 

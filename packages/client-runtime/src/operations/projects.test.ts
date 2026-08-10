@@ -56,7 +56,16 @@ describe("add project shared logic", () => {
     expect(getCloneDirectoryName("https://github.com/owner/repo.git?ref=main#readme")).toBe("repo");
     expect(getCloneDirectoryName("/srv/git/repo.git")).toBe("repo");
     expect(getCloneDirectoryName("C:\\src\\repo.git")).toBe("repo");
-    expect(getCloneDirectoryName("https://github.com/")).toBe("github.com");
+    expect(getCloneDirectoryName("git@github.com:repo.git")).toBe("repo");
+    expect(getCloneDirectoryName("  https://github.com/owner/repo.git  ")).toBe("repo");
+  });
+
+  it("proposes no clone folder for a link that names no repository", () => {
+    expect(getCloneDirectoryName("https://github.com/")).toBe("");
+    expect(getCloneDirectoryName("https://github.com")).toBe("");
+    expect(getCloneDirectoryName("git@github.com:")).toBe("");
+    expect(getCloneDirectoryName("ssh://git@github.com:22")).toBe("");
+    expect(getCloneDirectoryName("https://")).toBe("");
   });
 
   it("proposes the clone destination inside the selected directory", () => {
