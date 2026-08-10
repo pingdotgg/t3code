@@ -39,6 +39,10 @@ rl.on("line", (line) => {
     });
     return;
   }
+  if (method === "config/read") {
+    write({ id, result: { config: {}, origins: {} } });
+    return;
+  }
   if (method === "thread/start" || method === "thread/resume") {
     write({ id, result: fixture.responses.threadStart });
     return;
