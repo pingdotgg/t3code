@@ -34,6 +34,7 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
+import { CursorUsageSyncService } from "./usage/cursor/CursorUsageSyncService.ts";
 import { forkParked } from "./serverActivation.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import {
@@ -302,6 +303,7 @@ export const make = (options?: StartupOptions) =>
     const keybindings = yield* Keybindings.Keybindings;
     const orchestrationReactor = yield* OrchestrationReactor.OrchestrationReactor;
     const providerSessionReaper = yield* ProviderSessionReaper.ProviderSessionReaper;
+    const cursorUsageSync = yield* CursorUsageSyncService;
     const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
@@ -351,6 +353,7 @@ export const make = (options?: StartupOptions) =>
         Effect.gen(function* () {
           yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
           yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
+          yield* cursorUsageSync.start().pipe(Scope.provide(reactorScope));
         }),
       );
 

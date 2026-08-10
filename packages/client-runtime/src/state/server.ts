@@ -714,6 +714,32 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverGetUsageSummary,
       staleTimeMs: 60_000,
     }),
+    cursorUsageStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:cursor-usage-status",
+      tag: WS_METHODS.serverGetCursorUsageStatus,
+      staleTimeMs: 30_000,
+    }),
+    cursorUsageEvents: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:cursor-usage-events",
+      tag: WS_METHODS.serverGetCursorUsageEvents,
+      staleTimeMs: 30_000,
+    }),
+    syncCursorUsage: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:sync-cursor-usage",
+      tag: WS_METHODS.serverSyncCursorUsage,
+    }),
+    exportCursorUsageCsv: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:export-cursor-usage-csv",
+      tag: WS_METHODS.serverExportCursorUsageCsv,
+    }),
+    setCursorUsageAdminApiKey: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:set-cursor-usage-admin-api-key",
+      tag: WS_METHODS.serverSetCursorUsageAdminApiKey,
+    }),
+    setCursorUsageSessionToken: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:set-cursor-usage-session-token",
+      tag: WS_METHODS.serverSetCursorUsageSessionToken,
+    }),
     configProjection,
     welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:welcome",

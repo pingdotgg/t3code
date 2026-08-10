@@ -153,6 +153,19 @@ import {
   ResourceTelemetrySnapshot,
 } from "./resourceTelemetry.ts";
 import { UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
+import {
+  CursorUsageError,
+  CursorUsageEventsInput,
+  CursorUsageEventsPage,
+  CursorUsageExportInput,
+  CursorUsageExportResult,
+  CursorUsageStatus,
+  CursorUsageSyncResult,
+  SetCursorUsageAdminApiKeyInput,
+  SetCursorUsageAdminApiKeyResult,
+  SetCursorUsageSessionTokenInput,
+  SetCursorUsageSessionTokenResult,
+} from "./cursorUsage.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
 import {
   SourceControlCloneRepositoryInput,
@@ -246,6 +259,12 @@ export const WS_METHODS = {
   serverReportHostPowerState: "server.reportHostPowerState",
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
   serverGetUsageSummary: "server.getUsageSummary",
+  serverGetCursorUsageStatus: "server.getCursorUsageStatus",
+  serverSyncCursorUsage: "server.syncCursorUsage",
+  serverGetCursorUsageEvents: "server.getCursorUsageEvents",
+  serverExportCursorUsageCsv: "server.exportCursorUsageCsv",
+  serverSetCursorUsageAdminApiKey: "server.setCursorUsageAdminApiKey",
+  serverSetCursorUsageSessionToken: "server.setCursorUsageSessionToken",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -388,6 +407,48 @@ export const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSumm
   success: UsageSummary,
   error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
 });
+
+export const WsServerGetCursorUsageStatusRpc = Rpc.make(WS_METHODS.serverGetCursorUsageStatus, {
+  payload: Schema.Struct({}),
+  success: CursorUsageStatus,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsServerSyncCursorUsageRpc = Rpc.make(WS_METHODS.serverSyncCursorUsage, {
+  payload: Schema.Struct({}),
+  success: CursorUsageSyncResult,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsServerGetCursorUsageEventsRpc = Rpc.make(WS_METHODS.serverGetCursorUsageEvents, {
+  payload: CursorUsageEventsInput,
+  success: CursorUsageEventsPage,
+  error: Schema.Union([EnvironmentAuthorizationError, CursorUsageError]),
+});
+
+export const WsServerExportCursorUsageCsvRpc = Rpc.make(WS_METHODS.serverExportCursorUsageCsv, {
+  payload: CursorUsageExportInput,
+  success: CursorUsageExportResult,
+  error: Schema.Union([EnvironmentAuthorizationError, CursorUsageError]),
+});
+
+export const WsServerSetCursorUsageAdminApiKeyRpc = Rpc.make(
+  WS_METHODS.serverSetCursorUsageAdminApiKey,
+  {
+    payload: SetCursorUsageAdminApiKeyInput,
+    success: SetCursorUsageAdminApiKeyResult,
+    error: EnvironmentAuthorizationError,
+  },
+);
+
+export const WsServerSetCursorUsageSessionTokenRpc = Rpc.make(
+  WS_METHODS.serverSetCursorUsageSessionToken,
+  {
+    payload: SetCursorUsageSessionTokenInput,
+    success: SetCursorUsageSessionTokenResult,
+    error: EnvironmentAuthorizationError,
+  },
+);
 
 export const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess, {
   payload: ServerSignalProcessInput,
@@ -828,6 +889,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetResourceTelemetryHistoryRpc,
   WsServerRetryResourceTelemetryRpc,
   WsServerGetUsageSummaryRpc,
+  WsServerGetCursorUsageStatusRpc,
+  WsServerSyncCursorUsageRpc,
+  WsServerGetCursorUsageEventsRpc,
+  WsServerExportCursorUsageCsvRpc,
+  WsServerSetCursorUsageAdminApiKeyRpc,
+  WsServerSetCursorUsageSessionTokenRpc,
   WsServerSignalProcessRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
