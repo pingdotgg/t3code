@@ -18,9 +18,11 @@ import {
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveRevertedMessageContent,
   deriveRevertedMessagePrompt,
   dismissBranchMismatchForSession,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
+  fetchRevertedMessageAttachmentBlob,
   getStartedThreadModelChangeBlockReason,
   hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
@@ -63,6 +65,61 @@ describe("reverted message prompt", () => {
     ].join("\n");
 
     expect(deriveRevertedMessagePrompt(prompt)).toBe("Please fix this");
+  });
+
+  it("only excludes screenshots tied to parsed preview annotations", () => {
+    const prompt = [
+      "Please fix this",
+      "",
+      "<preview_annotation>",
+      "Preview annotation:",
+      "Id: preview-1",
+      "Page: Button",
+      "The attached screenshot is the annotated preview crop.",
+      "</preview_annotation>",
+    ].join("\n");
+
+    const content = deriveRevertedMessageContent(prompt);
+
+    expect(content.prompt).toBe("Please fix this");
+    expect([...content.previewAnnotationImageNames]).toEqual(["preview-annotation-preview-1.png"]);
+    expect(content.previewAnnotationImageNames.has("preview-annotation-design.png")).toBe(false);
+  });
+});
+
+describe("reverted message attachment fetch", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("aborts a stalled attachment request after the timeout", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
+      const signal = init?.signal;
+      if (!signal) throw new Error("Expected an abort signal.");
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    });
+
+    const pendingFetch = fetchRevertedMessageAttachmentBlob(
+      "https://example.test/image.png",
+      1_000,
+    );
+    const rejection = expect(pendingFetch).rejects.toMatchObject({ name: "AbortError" });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await rejection;
+  });
+
+  it("clears the timeout after an attachment request completes", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
+
+    await fetchRevertedMessageAttachmentBlob("https://example.test/image.png", 1_000);
+
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 

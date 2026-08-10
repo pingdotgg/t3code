@@ -293,8 +293,9 @@ import {
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
-  deriveRevertedMessagePrompt,
+  deriveRevertedMessageContent,
   dismissBranchMismatchForSession,
+  fetchRevertedMessageAttachmentBlob,
   hasEnvironmentReconnectWarningGraceElapsed,
   scheduleEnvironmentReconnectWarning,
   hasServerAcknowledgedLocalDispatch,
@@ -466,7 +467,7 @@ type EnvironmentUnavailableState = {
 };
 
 interface PendingRevertedMessageRestore {
-  threadId: ThreadId;
+  threadRef: ScopedThreadRef;
   messageId: MessageId;
   turnCount: number;
   knownFailureActivityIds: ReadonlySet<string>;
@@ -480,21 +481,16 @@ interface RevertedMessageDraft {
 }
 
 async function prepareRevertedMessageDraft(message: ChatMessage): Promise<RevertedMessageDraft> {
+  const content = deriveRevertedMessageContent(message.text);
   const prepared = await Promise.all(
     (message.attachments ?? [])
-      .filter((attachment) => !attachment.name.startsWith("preview-annotation-"))
+      .filter((attachment) => !content.previewAnnotationImageNames.has(attachment.name))
       .map(async (attachment) => {
         if (!attachment.previewUrl) {
           return { image: null, unavailableImageName: attachment.name };
         }
         try {
-          // The timeline may have already cached this URL from an <img>
-          // request, which carries no Origin header and therefore no CORS
-          // response header. Reload it so the fetch gets its own CORS-aware
-          // response instead of reusing that incompatible cache entry.
-          const response = await fetch(attachment.previewUrl, { cache: "reload" });
-          if (!response.ok) throw new Error(`Could not load ${attachment.name}.`);
-          const blob = await response.blob();
+          const blob = await fetchRevertedMessageAttachmentBlob(attachment.previewUrl);
           const file = new File([blob], attachment.name, {
             type: blob.type || attachment.mimeType,
           });
@@ -516,7 +512,7 @@ async function prepareRevertedMessageDraft(message: ChatMessage): Promise<Revert
       }),
   );
   return {
-    prompt: deriveRevertedMessagePrompt(message.text),
+    prompt: content.prompt,
     images: prepared.flatMap((entry) => (entry.image ? [entry.image] : [])),
     unavailableImageNames: prepared.flatMap((entry) =>
       entry.unavailableImageName ? [entry.unavailableImageName] : [],
@@ -1261,6 +1257,8 @@ function ChatViewContent(props: ChatViewProps) {
     [environmentId, threadId],
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
+  const routeThreadKeyRef = useRef(routeThreadKey);
+  routeThreadKeyRef.current = routeThreadKey;
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
     reportFailure: false,
@@ -2402,6 +2400,15 @@ function ChatViewContent(props: ChatViewProps) {
       }
     };
   }, [clearAttachmentPreviewHandoffs]);
+  useEffect(() => {
+    const pendingRevert = pendingRevertedMessageRestoreRef.current;
+    if (!pendingRevert || scopedThreadKey(pendingRevert.threadRef) === routeThreadKey) {
+      return;
+    }
+    releaseRevertedMessageDraft(pendingRevert.draft);
+    pendingRevertedMessageRestoreRef.current = null;
+    setPendingRevertedMessageRestore(null);
+  }, [routeThreadKey]);
   const handoffAttachmentPreviews = useCallback((messageId: MessageId, previewUrls: string[]) => {
     if (previewUrls.length === 0) return;
 
@@ -4067,7 +4074,7 @@ function ChatViewContent(props: ChatViewProps) {
     const pending = pendingRevertedMessageRestore;
     if (
       !pending ||
-      revertObservedThreadId !== pending.threadId ||
+      revertObservedThreadId !== pending.threadRef.threadId ||
       !revertObservedActivities ||
       !revertObservedMessages
     ) {
@@ -4987,6 +4994,8 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
       const threadId = activeThread.id;
+      const sourceThreadRef = scopeThreadRef(environmentId, threadId);
+      const sourceThreadKey = scopedThreadKey(sourceThreadRef);
 
       if (activeEnvironmentUnavailable && activeEnvironmentUnavailableLabel) {
         setThreadError(
@@ -5023,8 +5032,13 @@ function ChatViewContent(props: ChatViewProps) {
         releaseRevertedMessageDraft(draft);
         return;
       }
+      if (routeThreadKeyRef.current !== sourceThreadKey) {
+        releaseRevertedMessageDraft(draft);
+        setIsRevertingCheckpoint(false);
+        return;
+      }
       const pendingRestore: PendingRevertedMessageRestore = {
-        threadId,
+        threadRef: sourceThreadRef,
         messageId: message.id,
         turnCount,
         knownFailureActivityIds: new Set(
@@ -5034,6 +5048,7 @@ function ChatViewContent(props: ChatViewProps) {
         ),
         draft,
       };
+      pendingRevertedMessageRestoreRef.current = pendingRestore;
       setPendingRevertedMessageRestore(pendingRestore);
       const result = await revertThreadCheckpoint({
         environmentId,
@@ -5046,6 +5061,7 @@ function ChatViewContent(props: ChatViewProps) {
         setPendingRevertedMessageRestore((current) => {
           if (current !== pendingRestore) return current;
           releaseRevertedMessageDraft(current.draft);
+          pendingRevertedMessageRestoreRef.current = null;
           return null;
         });
         if (!isAtomCommandInterrupted(result)) {

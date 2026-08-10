@@ -522,11 +522,7 @@ export function applyThreadDetailEvent(
       );
 
       const retainedTurnIds = new Set(Arr.map(checkpoints, (entry) => entry.turnId));
-      const messages = retainMessagesAfterRevert(
-        thread.messages,
-        retainedTurnIds,
-        event.payload.turnCount,
-      );
+      const messages = retainMessagesAfterRevert(thread.messages, retainedTurnIds);
       const proposedPlans = pipe(
         thread.proposedPlans,
         Arr.filter((plan) => plan.turnId === null || retainedTurnIds.has(plan.turnId)),
@@ -658,7 +654,6 @@ function rebindCheckpointAssistantMessage(
 function retainMessagesAfterRevert(
   messages: ReadonlyArray<OrchestrationMessage>,
   retainedTurnIds: ReadonlySet<string>,
-  turnCount: number,
 ): OrchestrationMessage[] {
   const retainedMessageIds = new Set<string>();
   for (const message of messages) {
@@ -678,7 +673,7 @@ function retainMessagesAfterRevert(
   const retainedUserCount = messages.filter(
     (message) => message.role === "user" && retainedMessageIds.has(message.id),
   ).length;
-  const missingUserCount = Math.max(0, turnCount - retainedUserCount);
+  const missingUserCount = Math.max(0, retainedTurnIds.size - retainedUserCount);
   if (missingUserCount > 0) {
     const fallbackUserMessages = messages
       .filter(
@@ -700,7 +695,7 @@ function retainMessagesAfterRevert(
   const retainedAssistantCount = messages.filter(
     (message) => message.role === "assistant" && retainedMessageIds.has(message.id),
   ).length;
-  const missingAssistantCount = Math.max(0, turnCount - retainedAssistantCount);
+  const missingAssistantCount = Math.max(0, retainedTurnIds.size - retainedAssistantCount);
   if (missingAssistantCount > 0) {
     const fallbackAssistantMessages = messages
       .filter(

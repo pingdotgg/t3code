@@ -890,6 +890,71 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.latestTurn?.turnId).toBe("turn-1");
       }
     });
+
+    it("uses retained turns from the loaded pagination window", () => {
+      const loadedTurns = [90, 91, 92].map((turnCount) => ({
+        turnCount,
+        turnId: TurnId.make(`turn-${turnCount}`),
+      }));
+      const messages: OrchestrationThread["messages"] = loadedTurns.flatMap(
+        ({ turnCount }, index) => [
+          {
+            id: MessageId.make(`user-${turnCount}`),
+            role: "user" as const,
+            text: `Prompt ${turnCount}`,
+            turnId: null,
+            streaming: false,
+            createdAt: `2026-04-01T00:00:0${index * 2}.000Z`,
+            updatedAt: `2026-04-01T00:00:0${index * 2}.000Z`,
+          },
+          {
+            id: MessageId.make(`assistant-${turnCount}`),
+            role: "assistant" as const,
+            text: `Response ${turnCount}`,
+            turnId: null,
+            streaming: false,
+            createdAt: `2026-04-01T00:00:0${index * 2 + 1}.000Z`,
+            updatedAt: `2026-04-01T00:00:0${index * 2 + 1}.000Z`,
+          },
+        ],
+      );
+      const threadWithWindow: OrchestrationThread = {
+        ...baseThread,
+        messages,
+        checkpoints: loadedTurns.map(({ turnCount, turnId }, index) => ({
+          turnId,
+          checkpointTurnCount: turnCount,
+          checkpointRef: CheckpointRef.make(`ref-${turnCount}`),
+          status: "ready",
+          files: [],
+          assistantMessageId: null,
+          completedAt: `2026-04-01T00:01:0${index}.000Z`,
+        })),
+      };
+
+      const result = applyThreadDetailEvent(threadWithWindow, {
+        ...baseEventFields,
+        sequence: 15,
+        occurredAt: "2026-04-01T04:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.reverted",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          turnCount: 91,
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.messages.map((message) => message.id)).toEqual([
+          "user-90",
+          "assistant-90",
+          "user-91",
+          "assistant-91",
+        ]);
+      }
+    });
   });
 
   describe("no-op events", () => {

@@ -29,23 +29,55 @@ export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
+export const REVERTED_MESSAGE_ATTACHMENT_TIMEOUT_MS = 10_000;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
-export function deriveRevertedMessagePrompt(prompt: string): string {
+export function deriveRevertedMessageContent(prompt: string): {
+  prompt: string;
+  previewAnnotationImageNames: ReadonlySet<string>;
+} {
   const withoutReviewComments = parseReviewCommentMessageSegments(prompt)
     .filter((segment) => segment.kind === "text")
     .map((segment) => segment.text)
     .join("");
 
   let withoutPreviewAnnotations = withoutReviewComments;
+  const previewAnnotationImageNames = new Set<string>();
   while (true) {
     const extracted = extractTrailingPreviewAnnotation(withoutPreviewAnnotations);
     if (!extracted.annotation) break;
+    if (extracted.annotation.hasScreenshot) {
+      previewAnnotationImageNames.add(`preview-annotation-${extracted.annotation.id}.png`);
+    }
     withoutPreviewAnnotations = extracted.promptText;
   }
 
-  return deriveDisplayedUserMessageState(withoutPreviewAnnotations).visibleText;
+  return {
+    prompt: deriveDisplayedUserMessageState(withoutPreviewAnnotations).visibleText,
+    previewAnnotationImageNames,
+  };
+}
+
+export function deriveRevertedMessagePrompt(prompt: string): string {
+  return deriveRevertedMessageContent(prompt).prompt;
+}
+
+export async function fetchRevertedMessageAttachmentBlob(
+  previewUrl: string,
+  timeoutMs = REVERTED_MESSAGE_ATTACHMENT_TIMEOUT_MS,
+): Promise<Blob> {
+  const controller = new AbortController();
+  const timeoutId = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    // The timeline may have already cached this URL from an <img> request,
+    // which carries no Origin header and therefore no CORS response header.
+    const response = await fetch(previewUrl, { cache: "reload", signal: controller.signal });
+    if (!response.ok) throw new Error("Could not load reverted message attachment.");
+    return await response.blob();
+  } finally {
+    globalThis.clearTimeout(timeoutId);
+  }
 }
 
 export function scheduleEnvironmentReconnectWarning(showWarning: () => void): () => void {
