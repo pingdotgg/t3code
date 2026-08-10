@@ -441,8 +441,16 @@ function githubAccountKey(account: GitHubAccountSelection): string {
   return `${account.host}\n${account.login}\n${account.tokenSource}`;
 }
 
-function githubAccountLabel(account: GitHubAccountSelection): string {
-  return `${account.login} · ${account.host} · ${account.tokenSource}`;
+function githubTokenSourceLabel(tokenSource: string): string {
+  return tokenSource === "keyring" ? "GitHub CLI" : tokenSource;
+}
+
+function githubAccountLabel(account: GitHubAccountSelection, includeHost: boolean): string {
+  return [
+    account.login,
+    ...(includeHost ? [account.host] : []),
+    githubTokenSourceLabel(account.tokenSource),
+  ].join(" · ");
 }
 
 function githubAccountSelection(account: GitHubAuthAccount): GitHubAccountSelection {
@@ -466,11 +474,13 @@ function GitHubAccountSelect({
   accounts,
   value,
   label,
+  includeHost = false,
   onChange,
 }: {
   readonly accounts: ReadonlyArray<GitHubAuthAccount>;
   readonly value: GitHubAccountSelection;
   readonly label: string;
+  readonly includeHost?: boolean;
   readonly onChange: (account: GitHubAccountSelection) => void;
 }) {
   const selections = accounts.map(githubAccountSelection);
@@ -485,7 +495,7 @@ function GitHubAccountSelect({
       }}
     >
       <SelectTrigger size="sm" className="w-full sm:w-64" aria-label={label}>
-        <SelectValue>{githubAccountLabel(selected)}</SelectValue>
+        <SelectValue>{githubAccountLabel(selected, includeHost)}</SelectValue>
       </SelectTrigger>
       <SelectPopup align="end" alignItemWithTrigger={false}>
         {selections.map((account) => (
@@ -494,7 +504,7 @@ function GitHubAccountSelect({
             hideIndicator
             value={githubAccountKey(account)}
           >
-            {githubAccountLabel(account)}
+            {githubAccountLabel(account, includeHost)}
           </SelectItem>
         ))}
       </SelectPopup>
@@ -578,6 +588,13 @@ function GitHubAccountSettings({
 
   return (
     <div className="grid gap-4 border-t border-border/60 pt-4">
+      <div>
+        <div className="text-sm font-medium text-foreground">GitHub accounts</div>
+        <div className="text-xs text-muted-foreground">
+          Choose the signed-in account T3 Code uses. Defaults apply to every repository on a host;
+          owner overrides take precedence.
+        </div>
+      </div>
       {selectableHosts.map(([host, hostAccounts]) => {
         const active = hostAccounts.find((account) => account.active) ?? hostAccounts[0]!;
         const selected = settings.githubDefaultAccounts[host] ?? githubAccountSelection(active);
@@ -587,8 +604,10 @@ function GitHubAccountSettings({
             className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
           >
             <div>
-              <div className="text-xs font-medium text-foreground">Default account</div>
-              <div className="text-xs text-muted-foreground">{host}</div>
+              <div className="text-xs font-medium text-foreground">Default for {host}</div>
+              <div className="text-xs text-muted-foreground">
+                Used unless a repository owner override matches.
+              </div>
             </div>
             <GitHubAccountSelect
               accounts={hostAccounts}
@@ -609,9 +628,9 @@ function GitHubAccountSettings({
 
       <div className="grid gap-2">
         <div>
-          <div className="text-xs font-medium text-foreground">Organization or user overrides</div>
+          <div className="text-xs font-medium text-foreground">Repository owner overrides</div>
           <div className="text-xs text-muted-foreground">
-            Use a different signed-in account for repositories owned by this organization or user.
+            Use another account for every repository owned by an organization or user.
           </div>
         </div>
         {Object.entries(settings.githubAccountOverrides).map(([ownerKey, account]) => {
@@ -658,7 +677,7 @@ function GitHubAccountSettings({
             size="sm"
             value={owner}
             onValueChange={setOwner}
-            placeholder="Organization or user"
+            placeholder="Organization or user, e.g. acme-corp"
             aria-label="GitHub organization or user"
             className="flex-1"
           />
@@ -666,6 +685,7 @@ function GitHubAccountSettings({
             accounts={selectableAccounts}
             value={githubAccountSelection(overrideAccount)}
             label="GitHub account for new override"
+            includeHost={selectableHosts.length > 1}
             onChange={(account) => setAccountKey(githubAccountKey(account))}
           />
           <Button size="sm" type="submit" disabled={!canAddOverride}>
