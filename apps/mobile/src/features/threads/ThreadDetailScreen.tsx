@@ -41,11 +41,6 @@ import {
   ThreadComposer,
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
-import {
-  initialThreadEndFollowState,
-  reduceThreadEndFollowState,
-  threadEndFollowEnabled,
-} from "./thread-end-follow-state";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 
 export interface ThreadDetailScreenProps {
@@ -189,10 +184,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const lastScrolledAnchorMessageIdRef = useRef<MessageId | null>(null);
   const [composerExpanded, setComposerExpanded] = useState(false);
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
-  const [endFollowState, setEndFollowState] = useState(() =>
-    initialThreadEndFollowState(selectedThreadKey),
-  );
-  const endFollowEnabled = threadEndFollowEnabled(endFollowState, selectedThreadKey);
+  const [endFollowEnabled, setEndFollowEnabled] = useState(true);
   const composerBottomInset = composerExpanded ? 0 : Math.max(insets.bottom, 12);
   const contentPresentationKind = props.contentPresentation.kind;
   // The raw sync status enters "synchronizing" on every full fetch, cached or
@@ -251,6 +243,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   useEffect(() => {
     setAnchorMessageId(null);
     lastScrolledAnchorMessageIdRef.current = null;
+    setEndFollowEnabled(true);
     freeze.set(false);
   }, [freeze, selectedThreadKey]);
 
@@ -322,31 +315,12 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     composerEditorRef.current?.blur();
   }, []);
 
-  const handleEndFollowEnabledChange = useCallback(
-    (enabled: boolean) => {
-      setEndFollowState((current) =>
-        reduceThreadEndFollowState(current, {
-          type: "observed",
-          threadKey: selectedThreadKey,
-          enabled,
-        }),
-      );
-    },
-    [selectedThreadKey],
-  );
-
   const handleScrollToEnd = useCallback(() => {
-    setEndFollowState((current) =>
-      reduceThreadEndFollowState(current, {
-        type: "scrollToEnd",
-        threadKey: selectedThreadKey,
-      }),
-    );
     void Haptics.selectionAsync();
     void scrollMessageToEnd({ animated: true, closeKeyboard: false }).catch(() => {
       freeze.set(false);
     });
-  }, [freeze, scrollMessageToEnd, selectedThreadKey]);
+  }, [freeze, scrollMessageToEnd]);
 
   const showScrollToEndButton = contentPresentationKind === "ready" && !endFollowEnabled;
 
@@ -410,8 +384,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             layoutVariant={layoutVariant}
             usesAutomaticContentInsets={props.usesAutomaticContentInsets}
             onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
-            endFollowEnabled={endFollowEnabled}
-            onEndFollowEnabledChange={handleEndFollowEnabledChange}
+            onEndFollowEnabledChange={setEndFollowEnabled}
             skills={selectedProviderSkills}
             loadEarlier={props.loadEarlier ?? null}
           />

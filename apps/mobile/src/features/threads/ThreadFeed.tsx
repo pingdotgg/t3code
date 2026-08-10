@@ -148,8 +148,7 @@ export interface ThreadFeedProps {
   readonly layoutVariant?: LayoutVariant;
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
-  readonly endFollowEnabled: boolean;
-  readonly onEndFollowEnabledChange: (enabled: boolean) => void;
+  readonly onEndFollowEnabledChange?: (enabled: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   /** Non-null when older turns exist beyond the loaded window. */
   readonly loadEarlier?: {
@@ -1327,9 +1326,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // yanked users off history they were reading every time a stream chunk grew
   // a row. Follow breaks when the user scrolls up and away, and re-arms only
   // when the list actually returns to the end (or on send / thread switch).
-  const endFollowEnabled = props.endFollowEnabled;
-  const endFollowEnabledRef = useRef(endFollowEnabled);
-  endFollowEnabledRef.current = endFollowEnabled;
+  const [endFollowEnabled, setEndFollowEnabled] = useState(true);
+  const endFollowEnabledRef = useRef(true);
   // A "user scroll session" spans from drag start through the end of its
   // momentum; only motion inside a session can break follow, so MVCP
   // compensations and programmatic scrolls never strand a follower.
@@ -1340,7 +1338,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         return;
       }
       endFollowEnabledRef.current = enabled;
-      props.onEndFollowEnabledChange(enabled);
+      setEndFollowEnabled(enabled);
+      props.onEndFollowEnabledChange?.(enabled);
     },
     [props.onEndFollowEnabledChange],
   );
