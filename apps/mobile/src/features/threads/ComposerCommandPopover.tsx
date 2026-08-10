@@ -7,6 +7,7 @@ import { Pressable, ScrollView, useColorScheme, View, type ViewStyle } from "rea
 
 import { AppText as Text } from "../../components/AppText";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
+import { composerCommandEmptyText } from "./composerCommandPopoverText";
 export type ComposerCommandItem =
   | {
       readonly id: string;
@@ -111,22 +112,6 @@ function groupLabel(triggerKind: ComposerTriggerKind | null): string | null {
   }
 }
 
-function emptyText(triggerKind: ComposerTriggerKind | null, isLoading: boolean): string {
-  if (isLoading) {
-    return triggerKind === "path" ? "Searching filesÔÇª" : "LoadingÔÇª";
-  }
-  switch (triggerKind) {
-    case "path":
-      return "No matching files or folders.";
-    case "skill":
-      return "No skills found.";
-    case "slash-command":
-      return "No matching commands.";
-    default:
-      return "No results.";
-  }
-}
-
 const CommandRow = memo(function CommandRow(props: {
   readonly item: ComposerCommandItem;
   readonly onPress: () => void;
@@ -201,7 +186,7 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
       ) : (
         <View className="px-3.5 py-2.5">
           <Text className="text-xs text-foreground-tertiary">
-            {emptyText(props.triggerKind, props.isLoading)}
+            {composerCommandEmptyText(props.triggerKind, props.isLoading)}
           </Text>
         </View>
       )}
