@@ -18,8 +18,6 @@ import { checkOpenCodeProviderStatus } from "./OpenCodeProvider.ts";
 import type { OpenCodeInventory } from "../opencodeRuntime.ts";
 const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
-const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
-
 /**
  * The legacy `OpenCodeProviderLive` Layer + `OpenCodeProvider` service tag
  * are deleted. The snapshot-producing logic they wrapped now lives in the
@@ -31,8 +29,6 @@ const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
 
 const runtimeMock = {
   state: {
-    runVersionError: null as Error | null,
-    versionStdout: DEFAULT_VERSION_STDOUT,
     inventoryError: null as Error | null,
     closeCalls: 0,
     sdkInventoryCalls: 0,
@@ -42,8 +38,6 @@ const runtimeMock = {
     } as unknown,
   },
   reset() {
-    this.state.runVersionError = null;
-    this.state.versionStdout = DEFAULT_VERSION_STDOUT;
     this.state.inventoryError = null;
     this.state.closeCalls = 0;
     this.state.sdkInventoryCalls = 0;
@@ -75,16 +69,6 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         external: Boolean(serverUrl),
       };
     }),
-  runOpenCodeCommand: () =>
-    runtimeMock.state.runVersionError
-      ? Effect.fail(
-          new OpenCodeRuntimeError({
-            operation: "runOpenCodeCommand",
-            detail: runtimeMock.state.runVersionError.message,
-            cause: runtimeMock.state.runVersionError,
-          }),
-        )
-      : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
   createOpenCodeSdkClient: () =>
     ({}) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
   loadOpenCodeInventory: () => {
@@ -121,9 +105,9 @@ const makeOpenCodeSettings = (overrides?: Partial<OpenCodeSettings>): OpenCodeSe
   });
 
 it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
-  it.effect("shows a codex-style missing binary message", () =>
+  it.effect("shows a missing binary message when the local server cannot start", () =>
     Effect.gen(function* () {
-      runtimeMock.state.runVersionError = new Error("spawn opencode ENOENT");
+      runtimeMock.state.inventoryError = new Error("spawn opencode ENOENT");
       const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
 
       NodeAssert.equal(snapshot.status, "error");
@@ -135,9 +119,9 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
-  it.effect("hides generic Effect.tryPromise text for local CLI probe failures", () =>
+  it.effect("hides generic Effect.tryPromise text for local inventory failures", () =>
     Effect.gen(function* () {
-      runtimeMock.state.runVersionError = new Error("An error occurred in Effect.tryPromise");
+      runtimeMock.state.inventoryError = new Error("An error occurred in Effect.tryPromise");
       const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
 
       NodeAssert.equal(snapshot.status, "error");

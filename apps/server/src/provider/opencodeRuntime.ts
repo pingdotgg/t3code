@@ -28,10 +28,11 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import { isWindowsCommandNotFound } from "../processRunner.ts";
 import { collectStreamAsString } from "./providerSnapshot.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const OPENCODE_EMPTY_CONFIG_CONTENT = "{}";
 
@@ -279,10 +280,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
   const netService = yield* NetService.NetService;
   const hostPlatform = yield* HostProcessPlatform;
   const resolveCommand = (command: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
-    Effect.gen(function* () {
-      const resolvedCommand = yield* resolveCommandPath(command, env ? { env } : {});
-      return yield* resolveSpawnCommand(resolvedCommand, args, env ? { env } : {});
-    });
+    resolveSpawnCommand(command, args, env ? { env } : {});
 
   const runOpenCodeCommand: OpenCodeRuntimeShape["runOpenCodeCommand"] = (input) =>
     Effect.gen(function* () {
@@ -290,9 +288,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       const child = yield* spawner.spawn(
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           shell: spawnCommand.shell,
-          ...(input.environment
-            ? { env: input.environment, extendEnv: true }
-            : { extendEnv: true }),
+          ...(input.environment ? { env: input.environment } : { extendEnv: true }),
         }),
       );
       const [stdout, stderr, code] = yield* Effect.all(
@@ -355,7 +351,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
               ...input.environment,
               OPENCODE_CONFIG_CONTENT: OPENCODE_EMPTY_CONFIG_CONTENT,
             },
-            extendEnv: true,
+            extendEnv: input.environment === undefined,
           }),
         )
         .pipe(
