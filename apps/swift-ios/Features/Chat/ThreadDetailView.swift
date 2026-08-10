@@ -192,6 +192,9 @@ public struct ThreadDetailView: View {
         .frame(maxWidth: horizontalSizeClass == .compact ? 260 : 460, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
+        .accessibilityAddTraits(
+            currentThread.hasLiveWorkingDuration ? .updatesFrequently : []
+        )
     }
 
     @ViewBuilder
@@ -212,6 +215,7 @@ public struct ThreadDetailView: View {
         .foregroundStyle(headerStatusColor)
         .lineLimit(1)
         .accessibilityElement(children: .combine)
+        .accessibilityLabel(currentThread.homeStatusAccessibilityLabel(at: now))
     }
 
     private var threadActionsMenu: some View {

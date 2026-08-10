@@ -584,6 +584,22 @@ enum HomeWorkingDuration {
         guard minutes >= 60 else { return "\(minutes)m" }
         return "\(minutes / 60)h \(minutes % 60)m"
     }
+
+    static func accessibility(since date: Date, now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(date)))
+        guard seconds >= 60 else { return unit(seconds, singular: "second") }
+        let minutes = seconds / 60
+        guard minutes >= 60 else { return unit(minutes, singular: "minute") }
+
+        let hours = minutes / 60
+        let remainingMinutes = minutes % 60
+        guard remainingMinutes > 0 else { return unit(hours, singular: "hour") }
+        return "\(unit(hours, singular: "hour")), \(unit(remainingMinutes, singular: "minute"))"
+    }
+
+    private static func unit(_ value: Int, singular: String) -> String {
+        "\(value) \(singular)\(value == 1 ? "" : "s")"
+    }
 }
 
 extension FeatureThread {
@@ -621,6 +637,20 @@ extension FeatureThread {
     func homeWorkingDuration(at now: Date) -> String? {
         guard homeStatus == .working, let workingStartedAt else { return nil }
         return HomeWorkingDuration.compact(since: workingStartedAt, now: now)
+    }
+
+    var hasLiveWorkingDuration: Bool {
+        homeStatus == .working && workingStartedAt != nil
+    }
+
+    func homeStatusAccessibilityLabel(at now: Date) -> String {
+        guard homeStatus == .working else {
+            return homeStatusLabel ?? "Ready"
+        }
+        guard let workingStartedAt else {
+            return "Agent is working"
+        }
+        return "Agent is working for \(HomeWorkingDuration.accessibility(since: workingStartedAt, now: now))"
     }
 
     func homeEnvironmentLabel(in snapshot: FeatureSnapshot) -> String? {

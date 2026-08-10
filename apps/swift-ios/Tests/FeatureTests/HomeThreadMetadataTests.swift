@@ -69,6 +69,55 @@ struct HomeThreadMetadataTests {
     }
 
     @Test
+    func accessibilityDurationSpellsOutUnitsAndClampsFutureDates() {
+        #expect(accessibilityDuration(startedAtOffset: 5) == "0 seconds")
+        #expect(accessibilityDuration(startedAtOffset: -1) == "1 second")
+        #expect(accessibilityDuration(startedAtOffset: -42) == "42 seconds")
+        #expect(accessibilityDuration(startedAtOffset: -60) == "1 minute")
+        #expect(accessibilityDuration(startedAtOffset: -120) == "2 minutes")
+        #expect(accessibilityDuration(startedAtOffset: -3_600) == "1 hour")
+        #expect(accessibilityDuration(startedAtOffset: -7_200) == "2 hours")
+        #expect(accessibilityDuration(startedAtOffset: -5_465) == "1 hour, 31 minutes")
+    }
+
+    @Test
+    func accessibilityStatusDescribesOnlyLiveWorkingDurations() {
+        let working = thread(state: .working, startedAtOffset: -90)
+        let queuedWithoutStart = thread(state: .queued)
+        let monitoring = thread(state: .monitoring, startedAtOffset: -90)
+        let idle = thread(state: .idle)
+
+        #expect(working.hasLiveWorkingDuration)
+        #expect(working.homeStatusAccessibilityLabel(at: now) == "Agent is working for 1 minute")
+        #expect(!queuedWithoutStart.hasLiveWorkingDuration)
+        #expect(queuedWithoutStart.homeStatusAccessibilityLabel(at: now) == "Agent is working")
+        #expect(!monitoring.hasLiveWorkingDuration)
+        #expect(monitoring.homeStatusAccessibilityLabel(at: now) == "Monitoring")
+        #expect(!idle.hasLiveWorkingDuration)
+        #expect(idle.homeStatusAccessibilityLabel(at: now) == "Ready")
+    }
+
+    private func accessibilityDuration(startedAtOffset: TimeInterval) -> String {
+        HomeWorkingDuration.accessibility(
+            since: now.addingTimeInterval(startedAtOffset),
+            now: now
+        )
+    }
+
+    private func thread(
+        state: FeatureThreadState,
+        startedAtOffset: TimeInterval? = nil
+    ) -> FeatureThread {
+        FeatureThread(
+            id: state.rawValue,
+            projectID: "project",
+            title: "Task",
+            state: state,
+            workingStartedAt: startedAtOffset.map(now.addingTimeInterval)
+        )
+    }
+
+    @Test
     func rowAttributionPrefersCurrentEnvironmentNameAndWireProviderName() {
         let thread = FeatureThread(
             id: "thread",
