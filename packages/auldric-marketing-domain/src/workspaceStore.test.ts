@@ -552,6 +552,71 @@ describe("organization Marketing workspace store", () => {
       ),
   );
 
+  it.effect(
+    "shares an active-handle deletion drain across store factories for one resolved state root",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(now.epochMilliseconds);
+          const root = makeRoot();
+          const storeA = makeStore(root);
+          const storeB = makeStore(`${root}${NodePath.sep}factory-alias${NodePath.sep}..`);
+          const owner = bootstrapInput(116);
+          yield* storeA.bootstrap(owner);
+          const databasePath = organizationWorkspaceDatabasePath(
+            root,
+            owner.selection.organizationId,
+          );
+          const openHandle = yield* Deferred.make<NodeSqlite.DatabaseSync>();
+          const releaseHandle = yield* Deferred.make<void>();
+          const deletionFinished = yield* Deferred.make<boolean>();
+
+          const resolveFiber = yield* Effect.forkChild(
+            storeA.resolve(
+              { requestAuthority: owner.requestAuthority, selection: owner.selection },
+              ({ database }) =>
+                Effect.gen(function* () {
+                  yield* Deferred.succeed(openHandle, database);
+                  yield* Deferred.await(releaseHandle);
+                  database.exec("CREATE TABLE shared_factory_lease_probe(value TEXT NOT NULL);");
+                }),
+            ),
+          );
+          const database = yield* Deferred.await(openHandle);
+          assert.isTrue(database.isOpen);
+
+          const deletionFiber = yield* Effect.forkChild(
+            storeB
+              .deleteOrganizationWorkspace({
+                requestAuthority: owner.requestAuthority,
+                selection: owner.selection,
+              })
+              .pipe(Effect.tap((deleted) => Deferred.succeed(deletionFinished, deleted))),
+          );
+          yield* Effect.yieldNow;
+
+          const control = new NodeSqlite.DatabaseSync(NodePath.join(root, "control.sqlite"), {
+            readOnly: true,
+          });
+          const deletionState = control
+            .prepare("SELECT state FROM marketing_workspaces WHERE id = ?")
+            .get(owner.selection.workspaceId) as unknown as { readonly state: string };
+          control.close();
+          assert.equal(deletionState.state, "deleting");
+          assert.isTrue(NodeFS.existsSync(databasePath));
+          assert.isTrue(Option.isNone(yield* Deferred.poll(deletionFinished)));
+          assert.isTrue(database.isOpen);
+
+          yield* Deferred.succeed(releaseHandle, undefined);
+          yield* Fiber.join(resolveFiber);
+          assert.isFalse(database.isOpen);
+          assert.isTrue(yield* Deferred.await(deletionFinished));
+          assert.isTrue(yield* Fiber.join(deletionFiber));
+          assert.isFalse(NodeFS.existsSync(databasePath));
+        }),
+      ),
+  );
+
   it.effect("aborts a failed pre-transition deletion gate without wedging active resolution", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(now.epochMilliseconds);

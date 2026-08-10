@@ -32,12 +32,19 @@ server to authorize an invitation or equivalent role capability.
 Each organization database has a hashed physical path and self-identifying schema. Migration is
 strict: an empty database is v0, v0 advances once to v1, exact v1 is repeatable, and forward,
 partial, or unidentified schemas fail closed. Resolution holds a scoped lease around the open
-SQLite handle. Deletion first records `deleting`, blocks new leases, drains existing leases without
-polling, erases the database/WAL/SHM files, revokes memberships, and nulls every retained T3
-reference value. Failed-provision rollback uses the same exclusive drain: it records a durable
-`rolled_back` intent, cannot be overwritten by the provisioning fiber, and can resume after
+SQLite handle. All store factories for the same resolved state root share one process-local
+coordinator, so initialization, leases, and deletion locks cannot diverge when the composition root
+creates multiple adapters. Deletion first records `deleting`, blocks new leases, drains existing
+leases without polling, erases the database/WAL/SHM files, revokes memberships, and nulls every
+retained T3 reference value. Failed-provision rollback uses the same exclusive drain: it records a
+durable `rolled_back` intent, cannot be overwritten by the provisioning fiber, and can resume after
 interruption. Completion atomically marks the organization and project deleted, revokes every
-membership, fails the provisioning operation, and erases retained T3 reference values. The
-control database retains those non-sensitive lifecycle and idempotency records to prevent either
-path from reviving an old organization. A global actor mapping may remain because the same actor
-can belong to another organization; the deleted organization's membership never remains active.
+membership, fails the provisioning operation, and erases retained T3 reference values. The control
+database retains those non-sensitive lifecycle and idempotency records to prevent either path from
+reviving an old organization. A global actor mapping may remain because the same actor can belong
+to another organization; the deleted organization's membership never remains active.
+
+The deployment invariant is one live Auldric/T3 server process per state root. The shared
+coordinator deliberately covers every store factory in that process without coupling different
+roots; it is not an inter-process filesystem lock. Operators must never point two live server
+processes at the same Auldric state root.

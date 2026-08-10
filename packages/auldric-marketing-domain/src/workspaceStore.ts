@@ -808,14 +808,38 @@ interface WorkspaceLeaseEntry {
   drain: Deferred.Deferred<void> | undefined;
 }
 
+interface StateRootCoordinator {
+  readonly workspaceLeases: Map<string, WorkspaceLeaseEntry>;
+  readonly deletionLocks: Map<string, Semaphore.Semaphore>;
+  readonly initializationLock: Semaphore.Semaphore;
+}
+
+/**
+ * Store factories are cheap composition adapters, so one server can create more than one for the
+ * same state root. Their handle and deletion lifecycle must still be one process-local critical
+ * section. The deployment boundary remains one live server process per state root; SQLite files
+ * are not protected from a second process.
+ */
+const stateRootCoordinators = new Map<string, StateRootCoordinator>();
+
+function stateRootCoordinator(stateRoot: string): StateRootCoordinator {
+  const existing = stateRootCoordinators.get(stateRoot);
+  if (existing !== undefined) return existing;
+  const coordinator: StateRootCoordinator = {
+    workspaceLeases: new Map(),
+    deletionLocks: new Map(),
+    initializationLock: Semaphore.makeUnsafe(1),
+  };
+  stateRootCoordinators.set(stateRoot, coordinator);
+  return coordinator;
+}
+
 export function makeOrganizationWorkspaceStore<RequestAuthority>(
   config: OrganizationWorkspaceStoreConfig<RequestAuthority>,
 ): OrganizationWorkspaceStore<RequestAuthority> {
   const stateRoot = NodePath.resolve(config.stateRoot);
   const controlDatabasePath = NodePath.join(stateRoot, CONTROL_DATABASE_FILENAME);
-  const workspaceLeases = new Map<string, WorkspaceLeaseEntry>();
-  const deletionLocks = new Map<string, Semaphore.Semaphore>();
-  const initializationLock = Semaphore.makeUnsafe(1);
+  const { workspaceLeases, deletionLocks, initializationLock } = stateRootCoordinator(stateRoot);
 
   const authorize = (
     requestAuthority: RequestAuthority,
