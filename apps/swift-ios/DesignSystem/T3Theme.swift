@@ -98,8 +98,8 @@ enum T3Metrics {
 }
 
 extension View {
-    func t3NavigationChrome() -> some View {
-        toolbarBackground(T3Colors.sheet, for: .navigationBar)
+    func t3NavigationChrome(background: Color = T3Colors.sheet) -> some View {
+        toolbarBackground(background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
     }
 }
