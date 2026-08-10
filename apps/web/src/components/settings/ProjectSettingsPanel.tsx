@@ -187,7 +187,7 @@ export function ProjectSettingsPage({ projectKey }: { projectKey: string }) {
         {isElectron && (
           <div
             className={cn(
-              "drag-region flex h-[52px] shrink-0 items-center px-5 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]",
+              "workspace-topbar drag-region px-5 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none wco:pr-[var(--workspace-native-controls-inset)]",
               COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
             )}
           >

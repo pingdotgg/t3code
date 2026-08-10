@@ -553,7 +553,7 @@ export const make = Effect.gen(function* () {
       runFork(flushBoundsPersist);
     });
 
-    if (environment.platform === "darwin") {
+    if (environment.platform === "darwin" || environment.platform === "win32") {
       window.on("enter-full-screen", () => {
         window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, true);
       });
