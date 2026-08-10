@@ -26,13 +26,20 @@ import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr } from "../../state/use-thread-pr";
-import { ThreadSwipeable } from "../home/thread-swipe-actions";
+import {
+  SWIPE_ACTION_LIFECYCLE_COLOR,
+  SWIPE_ACTION_PIN_COLOR,
+  SWIPE_ACTION_SNOOZE_COLOR,
+  ThreadSwipeable,
+  type ThreadSwipeAction,
+} from "../home/thread-swipe-actions";
 import {
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2Status,
   resolveThreadListV2SwipeActions,
   type ThreadListV2Status,
+  type ThreadListV2SwipeAction,
 } from "./threadListV2";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 
@@ -456,6 +463,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     snoozeSupported: props.snoozeSupported,
     snoozable: canSnooze(thread, { now: new Date().toISOString() }),
     snoozed: snoozedRow,
+    pinningSupported: props.pinningSupported === true,
+    pinned: pinnedRow,
   });
   const snoozePresets = useMemo(
     () => (swipeActions.secondary === "snooze" ? resolveSnoozePresets(new Date()) : ([] as const)),
@@ -560,68 +569,81 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       snoozePresets,
     ],
   );
-  const primaryAction = useMemo(() => {
-    // Pre-settlement server: archive is the swipe action, as in v1. (Slim
-    // rows cannot occur here — unsupported environments never classify as
-    // settled.)
-    if (swipeActions.primary === "archive") {
-      return {
+  // One id-to-button map for the whole tray. Pre-settlement servers land on
+  // "archive", as in v1. (Slim rows cannot occur there: unsupported
+  // environments never classify as settled.)
+  const swipeActionById = useMemo(
+    (): Record<ThreadListV2SwipeAction, ThreadSwipeAction> => ({
+      archive: {
         accessibilityLabel: `Archive ${thread.title}`,
-        icon: "archivebox" as const,
+        backgroundColor: SWIPE_ACTION_LIFECYCLE_COLOR,
+        icon: "archivebox",
         label: "Archive",
         onPress: handleArchive,
-      };
-    }
-    if (swipeActions.primary === "unsnooze") {
-      return {
+      },
+      settle: {
+        accessibilityLabel: `Settle ${thread.title}`,
+        backgroundColor: SWIPE_ACTION_LIFECYCLE_COLOR,
+        icon: "checkmark",
+        label: "Settle",
+        onPress: handleSettle,
+      },
+      unsettle: {
+        accessibilityLabel: `Un-settle ${thread.title}`,
+        backgroundColor: SWIPE_ACTION_LIFECYCLE_COLOR,
+        icon: "arrow.uturn.backward",
+        label: "Un-settle",
+        onPress: handleUnsettle,
+      },
+      unsnooze: {
         accessibilityLabel: `Wake ${thread.title} now`,
-        icon: "clock" as const,
+        backgroundColor: SWIPE_ACTION_LIFECYCLE_COLOR,
+        icon: "clock",
         label: "Wake",
         onPress: handleUnsnooze,
-      };
-    }
-    return swipeActions.primary === "unsettle"
-      ? {
-          accessibilityLabel: `Un-settle ${thread.title}`,
-          icon: "arrow.uturn.backward" as const,
-          label: "Un-settle",
-          onPress: handleUnsettle,
-        }
-      : {
-          accessibilityLabel: `Settle ${thread.title}`,
-          icon: "checkmark" as const,
-          label: "Settle",
-          onPress: handleSettle,
-        };
-  }, [
-    handleArchive,
-    handleSettle,
-    handleUnsettle,
-    handleUnsnooze,
-    swipeActions.primary,
-    thread.title,
-  ]);
-  const secondaryAction = useMemo(
-    () =>
-      swipeActions.secondary === "snooze"
-        ? {
-            accessibilityLabel: `Choose when to snooze ${thread.title}`,
-            icon: "clock" as const,
-            label: "Snooze",
-            menu: {
-              actions: snoozePresetActions,
-              onPressAction: handleMenuAction,
-              title: "Snooze until",
-            },
-            onPress: () => undefined,
-          }
-        : null,
-    [handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title],
+      },
+      snooze: {
+        accessibilityLabel: `Choose when to snooze ${thread.title}`,
+        backgroundColor: SWIPE_ACTION_SNOOZE_COLOR,
+        icon: "clock",
+        label: "Snooze",
+        // The button opens the preset menu, so pressing it directly does
+        // nothing: the menu's own handler carries every outcome.
+        menu: {
+          actions: snoozePresetActions,
+          onPressAction: handleMenuAction,
+          title: "Snooze until",
+        },
+        onPress: () => undefined,
+      },
+      pin: {
+        accessibilityLabel: `Pin ${thread.title}`,
+        backgroundColor: SWIPE_ACTION_PIN_COLOR,
+        icon: "pin",
+        label: "Pin",
+        onPress: handlePin,
+      },
+    }),
+    [
+      handleArchive,
+      handleMenuAction,
+      handlePin,
+      handleSettle,
+      handleUnsettle,
+      handleUnsnooze,
+      snoozePresetActions,
+      thread.title,
+    ],
   );
+  const swipeActionList = useMemo(
+    () => swipeActions.actions.map((id) => swipeActionById[id]),
+    [swipeActionById, swipeActions.actions],
+  );
+  const swipeActionLabels = swipeActionList.map((action) => action.label.toLowerCase());
   const swipeAccessibilityHint =
-    secondaryAction === null
-      ? `Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`
-      : `Opens the thread. Swipe left for ${primaryAction.label.toLowerCase()} and snooze actions.`;
+    swipeActionLabels.length === 1
+      ? `Opens the thread. Swipe left to ${swipeActionLabels[0]}.`
+      : `Opens the thread. Swipe left for ${swipeActionLabels.slice(0, -1).join(", ")} and ${swipeActionLabels.at(-1)} actions.`;
 
   // The sidebar pane fills selected rows with the accent color (matching the
   // v1 sidebar), so every piece of row text needs a white-on-accent variant.
@@ -872,19 +894,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         containerStyle={
           sidebarPane ? { borderRadius: SIDEBAR_V2_ROW_RADIUS, overflow: "hidden" } : undefined
         }
+        actions={swipeActionList}
         enableTrackpadSwipe
         // Full swipe commits the advertised lifecycle action (Settle /
-        // Un-settle), never the secondary snooze action.
-        fullSwipeAction="primary"
+        // Un-settle), never the pin or snooze action beside it.
+        fullSwipeIndex={swipeActions.fullSwipeIndex}
         fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
-        onDelete={handleDelete}
         onSwipeableClose={props.onSwipeableClose}
         onSwipeableWillOpen={props.onSwipeableWillOpen}
-        primaryAction={primaryAction}
-        secondaryAction={secondaryAction}
         resetKey={`${thread.environmentId}:${thread.id}`}
         simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
-        threadTitle={thread.title}
       >
         {(close) => (
           <ControlPillMenu
