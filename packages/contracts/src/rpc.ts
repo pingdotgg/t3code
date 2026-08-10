@@ -66,6 +66,13 @@ import {
   OrchestrationRpcSchemas,
   OrchestrationGetWorkflowScriptError,
 } from "./orchestration.ts";
+import {
+  ThreadImportCommitInput,
+  ThreadImportCommitResult,
+  ThreadImportError,
+  ThreadImportScanInput,
+  ThreadImportScanResult,
+} from "./threadImports.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   RelayClientInstallFailedError,
@@ -735,6 +742,24 @@ export const WsOrchestrationSearchThreadsRpc = Rpc.make(ORCHESTRATION_WS_METHODS
   error: Schema.Union([OrchestrationSearchThreadsError, EnvironmentAuthorizationError]),
 });
 
+export const WsOrchestrationScanThreadImportsRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.scanThreadImports,
+  {
+    payload: ThreadImportScanInput,
+    success: ThreadImportScanResult,
+    error: Schema.Union([ThreadImportError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsOrchestrationCommitThreadImportsRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.commitThreadImports,
+  {
+    payload: ThreadImportCommitInput,
+    success: ThreadImportCommitResult,
+    error: Schema.Union([ThreadImportError, EnvironmentAuthorizationError]),
+  },
+);
+
 export const WsOrchestrationGetArchivedShellSnapshotRpc = Rpc.make(
   ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot,
   {
@@ -890,6 +915,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,
   WsOrchestrationSearchThreadsRpc,
+  WsOrchestrationScanThreadImportsRpc,
+  WsOrchestrationCommitThreadImportsRpc,
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,

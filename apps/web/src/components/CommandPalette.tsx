@@ -30,6 +30,7 @@ import * as Option from "effect/Option";
 import {
   ArrowLeftIcon,
   CornerLeftUpIcon,
+  DownloadIcon,
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
@@ -83,6 +84,7 @@ import {
   resolveProjectPathForDispatch,
 } from "../lib/projectPaths";
 import { onOpenCommandPalette } from "../commandPaletteBus";
+import { openThreadImportDialog } from "../threadImportDialog";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
@@ -1431,6 +1433,25 @@ function OpenCommandPaletteDialog(props: {
     shortcutCommand: "projectSearch.toggle",
     run: async () => {
       openOverlayMode("content");
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:import-conversations",
+    searchTerms: [
+      "import conversations",
+      "import threads",
+      "cursor",
+      "claude code",
+      "codex",
+      "grok",
+    ],
+    title: "Import conversations…",
+    description: "Cursor, Claude Code, Codex, or Grok",
+    icon: <DownloadIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      openThreadImportDialog();
     },
   });
 

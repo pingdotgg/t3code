@@ -29,6 +29,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -401,17 +402,38 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
 
       yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
-      const resumed = yield* adapter
-        .startSession({
-          threadId: input.binding.threadId,
-          provider: input.binding.provider,
-          providerInstanceId: bindingInstanceId,
-          ...(persistedCwd ? { cwd: persistedCwd } : {}),
-          ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
-          ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
-          runtimeMode: input.binding.runtimeMode ?? "full-access",
-        })
-        .pipe(Effect.onError(() => clearMcpSession(input.binding.threadId)));
+      const resumeInput = {
+        threadId: input.binding.threadId,
+        provider: input.binding.provider,
+        providerInstanceId: bindingInstanceId,
+        ...(persistedCwd ? { cwd: persistedCwd } : {}),
+        ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
+        ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
+        runtimeMode: input.binding.runtimeMode ?? "full-access",
+      };
+      const resumeAttempt = yield* Effect.result(
+        adapter
+          .startSession(resumeInput)
+          .pipe(Effect.onError(() => clearMcpSession(input.binding.threadId))),
+      );
+      const resumed = Result.isSuccess(resumeAttempt)
+        ? resumeAttempt.success
+        : yield* Effect.gen(function* () {
+            // A provider may retain a transcript while invalidating its native
+            // continuation cursor. Clear only that cursor, then let the
+            // adapter start a fresh session so the imported thread remains
+            // writable instead of becoming a dead-end transcript.
+            yield* directory
+              .upsert({
+                ...input.binding,
+                status: "stopped",
+                resumeCursor: null,
+              })
+              .pipe(Effect.catch(() => Effect.void));
+            const { resumeCursor: _resumeCursor, ...freshInput } = resumeInput;
+            yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
+            return yield* adapter.startSession(freshInput);
+          });
       if (resumed.provider !== adapter.provider) {
         yield* clearMcpSession(input.binding.threadId);
         return yield* toValidationError(
