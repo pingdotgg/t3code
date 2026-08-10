@@ -451,17 +451,55 @@ export const make = Effect.gen(function* () {
     listOpenPullRequests: (input) => {
       const qualifiedHead = /^([^:/\s]+):(.+)$/u.exec(input.headSelector);
       const requestedLimit = input.limit ?? 1;
+      if (qualifiedHead) {
+        return execute({
+          cwd: input.cwd,
+          args: [
+            "pr",
+            "view",
+            input.headSelector,
+            ...(input.repository ? ["--repo", input.repository] : []),
+            "--json",
+            "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          ],
+        }).pipe(
+          Effect.map((result) => result.stdout.trim()),
+          Effect.flatMap((raw) =>
+            Effect.sync(() => decodeGitHubPullRequestJson(raw)).pipe(
+              Effect.flatMap((decoded) =>
+                Result.isSuccess(decoded)
+                  ? Effect.succeed(decoded.success)
+                  : Effect.fail(
+                      new GitHubPullRequestDecodeError({
+                        command: "gh",
+                        cwd: input.cwd,
+                        cause: decoded.failure,
+                      }),
+                    ),
+              ),
+            ),
+          ),
+          Effect.map((pullRequest) =>
+            pullRequest.state === "open" &&
+            pullRequest.headRefName === qualifiedHead[2] &&
+            pullRequest.headRepositoryOwnerLogin?.toLowerCase() === qualifiedHead[1]?.toLowerCase()
+              ? [pullRequest].map(({ updatedAt: _updatedAt, ...summary }) => summary)
+              : [],
+          ),
+          Effect.catchTag("GitHubPullRequestNotFoundError", () => Effect.succeed([])),
+        );
+      }
       return execute({
         cwd: input.cwd,
         args: [
           "pr",
           "list",
           "--head",
-          qualifiedHead?.[2] ?? input.headSelector,
+          input.headSelector,
           "--state",
           "open",
           "--limit",
-          String(qualifiedHead ? Math.max(requestedLimit, 100) : requestedLimit),
+          String(requestedLimit),
           ...(input.repository ? ["--repo", input.repository] : []),
           "--json",
           "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
@@ -483,16 +521,8 @@ export const make = Effect.gen(function* () {
                     );
                   }
 
-                  const matches = qualifiedHead
-                    ? decoded.success.filter(
-                        (pullRequest) =>
-                          pullRequest.headRefName === qualifiedHead[2] &&
-                          pullRequest.headRepositoryOwnerLogin?.toLowerCase() ===
-                            qualifiedHead[1]?.toLowerCase(),
-                      )
-                    : decoded.success;
                   return Effect.succeed(
-                    matches
+                    decoded.success
                       .slice(0, requestedLimit)
                       .map(({ updatedAt: _updatedAt, ...summary }) => summary),
                   );

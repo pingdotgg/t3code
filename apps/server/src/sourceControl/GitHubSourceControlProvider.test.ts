@@ -239,7 +239,7 @@ it.effect("treats empty non-open change request listing output as no results", (
   }),
 );
 
-it.effect("filters qualified fork heads for non-open listings without gh head syntax", () =>
+it.effect("looks up qualified fork heads directly for non-open listings", () =>
   Effect.gen(function* () {
     let args: ReadonlyArray<string> = [];
     const provider = yield* makeProvider({
@@ -247,26 +247,16 @@ it.effect("filters qualified fork heads for non-open listings without gh head sy
         args = input.args;
         return Effect.succeed(
           processResult(
-            JSON.stringify([
-              {
-                number: 51,
-                title: "Other owner",
-                url: "https://github.com/pingdotgg/t3code/pull/51",
-                baseRefName: "main",
-                headRefName: "feature/shared",
-                state: "CLOSED",
-                headRepositoryOwner: { login: "other" },
-              },
-              {
-                number: 52,
-                title: "Requested owner",
-                url: "https://github.com/pingdotgg/t3code/pull/52",
-                baseRefName: "main",
-                headRefName: "feature/shared",
-                state: "CLOSED",
-                headRepositoryOwner: { login: "octocat" },
-              },
-            ]),
+            JSON.stringify({
+              number: 52,
+              title: "Requested owner",
+              url: "https://github.com/pingdotgg/t3code/pull/52",
+              baseRefName: "main",
+              headRefName: "feature/shared",
+              state: "CLOSED",
+              updatedAt: "2026-01-02T00:00:00.000Z",
+              headRepositoryOwner: { login: "octocat" },
+            }),
           ),
         );
       },
@@ -283,8 +273,8 @@ it.effect("filters qualified fork heads for non-open listings without gh head sy
       changeRequests.map((changeRequest) => changeRequest.number),
       [52],
     );
-    assert.include(args.join(" "), "--head feature/shared");
-    assert.include(args.join(" "), "--limit 100");
+    assert.include(args.join(" "), "pr view octocat:feature/shared");
+    assert.notInclude(args.join(" "), "--limit");
   }),
 );
 

@@ -1199,19 +1199,21 @@ export const make = Effect.gen(function* () {
       upstreamRepository.repositoryNameWithOwner,
     );
     const targetRepository = upstreamIsRelated ? upstreamRepository : originRepository;
-    const targetRemoteName = upstreamIsRelated ? "upstream" : "origin";
+    const targetRemoteName = upstreamIsRelated ? "upstream" : null;
+    const headRepository =
+      remoteRepository.repositoryNameWithOwner ??
+      (remoteName === null ? originRepository.repositoryNameWithOwner : null);
+    const headRepositoryOwnerLogin = parseRepositoryOwnerLogin(headRepository);
     const isCrossRepository =
-      remoteRepository.repositoryNameWithOwner !== null &&
-      targetRepository.repositoryNameWithOwner !== null
-        ? remoteRepository.repositoryNameWithOwner.toLowerCase() !==
-          targetRepository.repositoryNameWithOwner.toLowerCase()
+      headRepository !== null && targetRepository.repositoryNameWithOwner !== null
+        ? headRepository.toLowerCase() !== targetRepository.repositoryNameWithOwner.toLowerCase()
         : remoteName !== null &&
           remoteName !== "origin" &&
           remoteRepository.repositoryNameWithOwner !== null;
 
     const ownerHeadSelector =
-      remoteRepository.ownerLogin && headBranch.length > 0
-        ? `${remoteRepository.ownerLogin}:${headBranch}`
+      headRepositoryOwnerLogin && headBranch.length > 0
+        ? `${headRepositoryOwnerLogin}:${headBranch}`
         : null;
     const remoteAliasHeadSelector =
       remoteName && headBranch.length > 0 ? `${remoteName}:${headBranch}` : null;
@@ -1249,8 +1251,8 @@ export const make = Effect.gen(function* () {
       headRemoteUrlKey:
         remoteRepository.remoteUrlKey ??
         (remoteName === null ? originRepository.remoteUrlKey : null),
-      headRepositoryNameWithOwner: remoteRepository.repositoryNameWithOwner,
-      headRepositoryOwnerLogin: remoteRepository.ownerLogin,
+      headRepositoryNameWithOwner: headRepository,
+      headRepositoryOwnerLogin,
       isCrossRepository,
     } satisfies BranchHeadContext;
   });
