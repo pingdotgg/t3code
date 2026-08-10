@@ -51,6 +51,30 @@ export function startNewThreadForProject(
   return true;
 }
 
+/**
+ * A recovery draft is only useful for the exact failed user submission that
+ * is still the newest message in a terminal, provider-classified session.
+ * This keeps a stale browser snapshot from being offered after the thread has
+ * moved on.
+ */
+export function canContinueFailedSubmissionInNewThread(input: {
+  session: Pick<NonNullable<Thread["session"]>, "status" | "lastFailureKind"> | null;
+  snapshotMessageId: string | null;
+  messages: ReadonlyArray<Pick<ChatMessage, "id" | "role">>;
+}): boolean {
+  if (
+    input.session?.status !== "error" ||
+    (input.session.lastFailureKind !== "authentication" &&
+      input.session.lastFailureKind !== "model_unavailable") ||
+    input.snapshotMessageId === null
+  ) {
+    return false;
+  }
+  return (
+    input.messages.findLast((message) => message.role === "user")?.id === input.snapshotMessageId
+  );
+}
+
 export function resolveThreadMetadataUpdateForNextTurn(input: {
   currentModelSelection: ModelSelection;
   nextModelSelection?: ModelSelection;

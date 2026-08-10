@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { type RecoverableThreadFailureKind } from "@t3tools/contracts";
 
 import type { CheckpointServiceError } from "../checkpointing/Errors.ts";
 
@@ -60,12 +61,49 @@ export class ProviderAdapterRequestError extends Schema.TaggedErrorClass<Provide
     provider: Schema.String,
     method: Schema.String,
     detail: Schema.String,
+    failureKind: Schema.optional(Schema.Literals(["authentication", "model_unavailable"])),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
     return `Provider adapter request failed (${this.provider}) for ${this.method}: ${this.detail}`;
   }
+}
+
+/**
+ * Classifies only provider errors where moving the same input to a fresh
+ * thread is a useful recovery path. Keep this deliberately conservative:
+ * every other provider failure should retain its normal error treatment.
+ */
+export function classifyRecoverableThreadFailure(
+  detail: string | null | undefined,
+): RecoverableThreadFailureKind | undefined {
+  const normalized = detail?.trim().toLowerCase() ?? "";
+  if (normalized.length === 0) {
+    return undefined;
+  }
+
+  if (
+    /\b(?:401|403)\b/u.test(normalized) ||
+    /\b(?:unauthenticated|unauthorized)\b/u.test(normalized) ||
+    /\bauthentication (?:failed|required)\b/u.test(normalized) ||
+    /\b(?:login|sign[ -]?in) required\b/u.test(normalized) ||
+    /\b(?:api[ -]?key|token) (?:is )?(?:invalid|expired|missing)\b/u.test(normalized)
+  ) {
+    return "authentication";
+  }
+
+  if (
+    /\b(?:unknown|invalid|unsupported) model\b/u.test(normalized) ||
+    /\bmodel (?:not found|not available|unavailable|unsupported|does not exist)\b/u.test(
+      normalized,
+    ) ||
+    /\bno such model\b/u.test(normalized)
+  ) {
+    return "model_unavailable";
+  }
+
+  return undefined;
 }
 
 /**

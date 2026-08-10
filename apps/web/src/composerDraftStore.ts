@@ -401,6 +401,24 @@ interface ComposerDraftStoreState {
       interactionMode?: ProviderInteractionMode;
     },
   ) => void;
+  /**
+   * Creates an independent draft session without replacing the logical
+   * project's normal saved draft. Used for recovery flows that must not
+   * disturb unrelated unsent work.
+   */
+  createDetachedDraftThread: (
+    logicalProjectKey: string,
+    projectRef: ScopedProjectRef,
+    draftId: DraftId,
+    options: {
+      threadId: ThreadId;
+      createdAt: string;
+      envMode: DraftThreadEnvMode;
+      startFromOrigin: boolean;
+      runtimeMode: RuntimeMode;
+      interactionMode: ProviderInteractionMode;
+    },
+  ) => void;
   /** Updates mutable draft-session metadata without touching composer content. */
   setDraftThreadContext: (
     threadRef: ComposerThreadTarget,
@@ -2402,6 +2420,37 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             draftId,
             options,
           );
+        },
+        createDetachedDraftThread: (logicalProjectKey, projectRef, draftId, options) => {
+          const normalizedLogicalProjectKey = logicalProjectDraftKey(logicalProjectKey);
+          if (normalizedLogicalProjectKey.length === 0 || draftId.length === 0) {
+            return;
+          }
+          set((state) => {
+            if (state.draftThreadsByThreadKey[draftId]) {
+              return state;
+            }
+            const draftThread = createDraftThreadState(
+              projectRef,
+              options.threadId,
+              normalizedLogicalProjectKey,
+              undefined,
+              options,
+            );
+            return {
+              draftThreadsByThreadKey: {
+                ...state.draftThreadsByThreadKey,
+                [draftId]: draftThread,
+              },
+              // Keep recovery drafts deliberately model-free. The normal
+              // draft path may apply sticky state, but a failed provider/model
+              // selection must never silently follow the recovered prompt.
+              draftsByThreadKey: {
+                ...state.draftsByThreadKey,
+                [draftId]: createEmptyThreadDraft(),
+              },
+            };
+          });
         },
         setDraftThreadContext: (threadRef, options) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";

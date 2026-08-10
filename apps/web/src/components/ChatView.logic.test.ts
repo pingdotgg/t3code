@@ -16,6 +16,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
+  canContinueFailedSubmissionInNewThread,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   dismissBranchMismatchForSession,
@@ -167,6 +168,55 @@ describe("buildLoadingThreadFromShell", () => {
       activities: [],
       checkpoints: [],
     });
+  });
+});
+
+describe("canContinueFailedSubmissionInNewThread", () => {
+  const failedSession = {
+    ...readySession,
+    status: "error" as const,
+    lastError: "Authentication failed",
+  };
+  const messages = [
+    { id: MessageId.make("message-older"), role: "user" as const },
+    { id: MessageId.make("message-failed"), role: "user" as const },
+  ];
+
+  it.each(["authentication", "model_unavailable"] as const)(
+    "allows the recoverable %s terminal error",
+    (lastFailureKind) => {
+      expect(
+        canContinueFailedSubmissionInNewThread({
+          session: { ...failedSession, lastFailureKind },
+          snapshotMessageId: "message-failed",
+          messages,
+        }),
+      ).toBe(true);
+    },
+  );
+
+  it("rejects generic, stale, and non-terminal errors", () => {
+    expect(
+      canContinueFailedSubmissionInNewThread({
+        session: { ...failedSession, lastFailureKind: null },
+        snapshotMessageId: "message-failed",
+        messages,
+      }),
+    ).toBe(false);
+    expect(
+      canContinueFailedSubmissionInNewThread({
+        session: { ...failedSession, lastFailureKind: "authentication" },
+        snapshotMessageId: "message-older",
+        messages,
+      }),
+    ).toBe(false);
+    expect(
+      canContinueFailedSubmissionInNewThread({
+        session: { ...failedSession, status: "ready", lastFailureKind: "authentication" },
+        snapshotMessageId: "message-failed",
+        messages,
+      }),
+    ).toBe(false);
   });
 });
 
