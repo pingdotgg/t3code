@@ -145,6 +145,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     ...defaultSchema.attributes,
     "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
     code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
+    span: [...(defaultSchema.attributes?.span ?? [])],
   },
   protocols: {
     ...defaultSchema.protocols,
@@ -263,6 +264,8 @@ function remarkTagInlineCode() {
     visit(tree, false);
   };
 }
+
+const COLOR_LITERAL_REGEX = /^(#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b|(?:rgb|rgba|hsl|hsla)\([^)]+\))$/i;
 
 function nodeToPlainText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") {
@@ -1535,12 +1538,27 @@ function ChatMarkdown({
       },
       code({ node, children, className, ...props }) {
         if (node?.properties?.dataInlineCode != null) {
-          const codeText = nodeToPlainText(children);
+          const codeText = nodeToPlainText(children).trim();
           const fileLinkMeta =
-            inlineCodeFileLinkMetaByText.get(codeText.trim()) ??
+            inlineCodeFileLinkMetaByText.get(codeText) ??
             resolveInlineCodeFileLinkMeta(codeText, cwd);
           if (fileLinkMeta) {
             return fileLinkChip(fileLinkMeta, `\`${codeText}\``);
+          }
+          
+          const colorMatch = codeText.match(COLOR_LITERAL_REGEX);
+          if (colorMatch) {
+            return (
+              <span className="inline-flex items-center gap-1">
+                <span
+                  className="inline-block size-3 shrink-0 rounded-[3px] border border-border"
+                  style={{ backgroundColor: colorMatch[0] }}
+                />
+                <code {...props} className={className}>
+                  {children}
+                </code>
+              </span>
+            );
           }
         }
         return (
