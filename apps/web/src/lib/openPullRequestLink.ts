@@ -62,7 +62,7 @@ export function useOpenPrLink() {
     }
 
     void openPullRequestLink(api.shell, prUrl).catch((error) => {
-      console.error(error);
+      console.error("Failed to open pull request link", error);
       toastManager.add(
         stackedThreadToast({
           type: "error",
