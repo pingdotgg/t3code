@@ -7,6 +7,36 @@ import UniformTypeIdentifiers
 @Suite("Composer power features")
 struct FeatureComposerPowerTests {
     @Test
+    func composerTextInputGrowsPastThreeLinesBeforeReachingItsViewportBound() {
+        let threeLines = FeatureComposerTextInputSizing.height(
+            fittingHeight: 66,
+            proposedHeight: 800,
+            lineHeight: 22
+        )
+        let tenLines = FeatureComposerTextInputSizing.height(
+            fittingHeight: 220,
+            proposedHeight: 800,
+            lineHeight: 22
+        )
+
+        #expect(threeLines == 66)
+        #expect(tenLines == 220)
+        #expect(tenLines > threeLines)
+    }
+
+    @Test
+    func composerTextInputKeepsContentUnlimitedWhenItsVisibleHeightIsBounded() {
+        let viewportHeight = FeatureComposerTextInputSizing.height(
+            fittingHeight: 2_200,
+            proposedHeight: 600,
+            lineHeight: 22
+        )
+
+        #expect(viewportHeight == 300)
+        #expect(viewportHeight < 2_200)
+    }
+
+    @Test
     func composerTextInputUsesAFallbackBoundWithoutAViewport() {
         #expect(
             FeatureComposerTextInputSizing.height(
