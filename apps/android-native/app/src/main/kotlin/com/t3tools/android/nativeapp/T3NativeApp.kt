@@ -18,6 +18,12 @@ import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.BlurEffect
@@ -173,6 +179,7 @@ import com.t3tools.android.protocol.Project
 import com.t3tools.android.protocol.ProviderModel
 import com.t3tools.android.protocol.ProviderOptionDescriptor
 import com.t3tools.android.protocol.ThreadDetail
+import com.t3tools.android.protocol.ThreadPage
 import com.t3tools.android.protocol.ThreadSummary
 import com.t3tools.android.protocol.ChatImageAttachment
 import com.t3tools.android.protocol.ChatMessage
@@ -2378,7 +2385,19 @@ private fun ThreadScreen(
   onGit: () -> Unit,
   onTerminal: () -> Unit,
 ) {
-  val detail = runtime.thread.detail
+  val liveDetail = runtime.thread.detail
+  var leaving by remember(threadId) { mutableStateOf(false) }
+  var retainedDetail by remember(threadId) { mutableStateOf(liveDetail) }
+  LaunchedEffect(liveDetail) {
+    if (liveDetail != null) retainedDetail = liveDetail
+  }
+  val detail = liveDetail ?: retainedDetail.takeIf { leaving }
+  val leaveThread = {
+    if (!leaving) {
+      leaving = true
+      onBack()
+    }
+  }
   val focusManager = LocalFocusManager.current
   LaunchedEffect(threadId) {
     focusManager.clearFocus(force = true)
@@ -2388,7 +2407,7 @@ private fun ThreadScreen(
   LaunchedEffect(threadId, detail != null) {
     if (detail != null) focusManager.clearFocus(force = true)
   }
-  BackHandler(onBack = onBack)
+  BackHandler(onBack = leaveThread)
   val environmentId = runtime.environment?.environmentId ?: return
   val draftRevision by viewModel.draftRevision.collectAsState()
   val draftKey = remember(environmentId, threadId) { DraftStore.threadKey(environmentId, threadId) }
@@ -2425,7 +2444,7 @@ private fun ThreadScreen(
           }
         },
         navigationIcon = {
-          IconButton(onClick = onBack) {
+          IconButton(onClick = leaveThread) {
             Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
           }
         },
@@ -2504,6 +2523,7 @@ private fun ThreadScreen(
           val feed = subcompose("feed") {
             ThreadFeed(
               detail = detail,
+              page = runtime.thread.page,
               environmentId = environmentId,
               viewModel = viewModel,
               modifier = Modifier.fillMaxSize(),
@@ -2529,6 +2549,7 @@ private fun ThreadScreen(
 @Composable
 private fun ThreadFeed(
   detail: ThreadDetail,
+  page: ThreadPage?,
   environmentId: String,
   viewModel: AppViewModel,
   modifier: Modifier = Modifier,
@@ -2558,9 +2579,8 @@ private fun ThreadFeed(
   LaunchedEffect(latestTurn?.id, latestTurn?.state) {
     if (latestTurn?.state == "interrupted") expandedTurnIds += latestTurn.id
   }
-  val activeWorkStartedAt = detail.summary.session?.takeIf {
-    it.status == "starting" || it.status == "running"
-  }?.let { latestTurn?.startedAt ?: it.updatedAt }
+  val activeWork = deriveActiveWorkPresentation(latestTurn, detail.summary.session)
+  val activeWorkStartedAt = activeWork?.startedAt
   val entries = remember(
     rawFeed,
     latestTurn,
@@ -2574,6 +2594,7 @@ private fun ThreadFeed(
       expandedTurnIds = expandedTurnIds,
       expandedWorkGroupIds = expandedWorkGroupIds,
       activeWorkStartedAt = activeWorkStartedAt,
+      activeWorkTurn = activeWork?.turn,
     )
   }
   val bottomFirstEntries = remember(entries) { entries.asReversed() }
@@ -2747,12 +2768,53 @@ private fun ThreadFeed(
               modifier = Modifier
                 .padding(vertical = 7.dp),
             ) {
-              LinearProgressIndicator(Modifier.width(28.dp).height(2.dp))
+              WorkingSweepIndicator()
               WorkingStatusText(entry.createdAt, entry.stepLabel)
             }
         }
       }
     }
+      if (page?.hasMore == true || page?.loadingOlder == true) {
+        item(key = "load-earlier-turns") {
+          TextButton(
+            onClick = viewModel::loadOlderTurns,
+            enabled = !page.loadingOlder,
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Text(if (page.loadingOlder) "Loading earlier turns…" else "Load earlier turns")
+          }
+        }
+      }
+    }
+  }
+
+@Composable
+private fun WorkingSweepIndicator() {
+  val transition = rememberInfiniteTransition(label = "working-indicator")
+  val position by transition.animateFloat(
+    initialValue = 0f,
+    targetValue = 1f,
+    animationSpec = infiniteRepeatable(
+      animation = tween(durationMillis = 650, easing = LinearEasing),
+      repeatMode = RepeatMode.Reverse,
+    ),
+    label = "working-indicator-position",
+  )
+  val travel = with(LocalDensity.current) { 18.dp.toPx() }
+  Box(
+    Modifier
+      .width(28.dp)
+      .height(2.dp)
+      .clip(RoundedCornerShape(1.dp))
+      .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)),
+  ) {
+    Box(
+      Modifier
+        .width(10.dp)
+        .fillMaxHeight()
+        .graphicsLayer { translationX = travel * position }
+        .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(1.dp)),
+    )
   }
 }
 
@@ -2792,18 +2854,29 @@ private fun FreshFeedEntry(
     shownEntryIds += entry.id
     visible = true
   }
-  AnimatedVisibility(
-    visible = visible,
-    enter = if (entry is ThreadFeedItem.Message && entry.message.role == "assistant") {
-      fadeIn(tween(MESSAGE_ENTRY_MILLIS))
-    } else {
-      fadeIn(tween(MESSAGE_ENTRY_MILLIS)) + slideInVertically(
-        animationSpec = tween(MESSAGE_ENTRY_MILLIS),
-        initialOffsetY = { rise },
-      )
-    },
-  ) {
-    content()
+  if (entry is ThreadFeedItem.ActivityGroup) {
+    val alpha by animateFloatAsState(
+      targetValue = if (visible) 1f else 0f,
+      animationSpec = tween(MESSAGE_ENTRY_MILLIS),
+      label = "tool-call-entry",
+    )
+    Column(Modifier.graphicsLayer { this.alpha = alpha }) {
+      content()
+    }
+  } else {
+    AnimatedVisibility(
+      visible = visible,
+      enter = if (entry is ThreadFeedItem.Message && entry.message.role == "assistant") {
+        fadeIn(tween(MESSAGE_ENTRY_MILLIS))
+      } else {
+        fadeIn(tween(MESSAGE_ENTRY_MILLIS)) + slideInVertically(
+          animationSpec = tween(MESSAGE_ENTRY_MILLIS),
+          initialOffsetY = { rise },
+        )
+      },
+    ) {
+      content()
+    }
   }
 }
 
@@ -3813,33 +3886,20 @@ private fun ChatComposerArea(
               }
             }
 
-            // Right side: Stop button slides to the left side of Send/Queue button
+            // Right side: Stop button overlays Send button when active with no text, slides left when typing
             val canSend = enabled && (draft.text.isNotBlank() || draft.attachments.isNotEmpty()) && !sending
+            val stopOffsetX by animateDpAsState(
+              targetValue = if (active && canSend) (-44).dp else 0.dp,
+              animationSpec = tween(220),
+              label = "stopButtonOffset",
+            )
 
-            Row(
-              horizontalArrangement = Arrangement.spacedBy(6.dp),
-              verticalAlignment = Alignment.CenterVertically,
+            Box(
+              modifier = Modifier
+                .height(38.dp)
+                .width(if (active && canSend) 82.dp else 38.dp),
+              contentAlignment = Alignment.CenterEnd,
             ) {
-              AnimatedVisibility(
-                visible = active,
-                enter = fadeIn(tween(220)) + slideInHorizontally(tween(220)) { -it },
-                exit = fadeOut(tween(220)) + slideOutHorizontally(tween(220)) { -it },
-              ) {
-                IconButton(
-                  onClick = { onInterrupt?.invoke() },
-                  modifier = Modifier
-                    .size(38.dp)
-                    .background(Color(0xFFEF4444), CircleShape),
-                ) {
-                  Icon(
-                    imageVector = Icons.Rounded.Stop,
-                    contentDescription = "Interrupt",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp),
-                  )
-                }
-              }
-
               IconButton(
                 onClick = onSend,
                 enabled = canSend,
@@ -3856,6 +3916,27 @@ private fun ChatComposerArea(
                   tint = if (canSend) Color.White else Color(0xFF71717A),
                   modifier = Modifier.size(18.dp),
                 )
+              }
+
+              androidx.compose.animation.AnimatedVisibility(
+                visible = active,
+                enter = fadeIn(tween(220)),
+                exit = fadeOut(tween(220)),
+              ) {
+                IconButton(
+                  onClick = { onInterrupt?.invoke() },
+                  modifier = Modifier
+                    .offset(x = stopOffsetX)
+                    .size(38.dp)
+                    .background(Color(0xFFEF4444), CircleShape),
+                ) {
+                  Icon(
+                    imageVector = Icons.Rounded.Stop,
+                    contentDescription = "Interrupt",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp),
+                  )
+                }
               }
             }
           }
