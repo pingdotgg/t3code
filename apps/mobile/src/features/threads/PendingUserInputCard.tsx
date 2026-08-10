@@ -3,7 +3,11 @@ import { Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { cn } from "../../lib/cn";
-import type { PendingUserInput, PendingUserInputDraftAnswer } from "../../lib/threadActivity";
+import {
+  isPendingUserInputOptionSelected,
+  type PendingUserInput,
+  type PendingUserInputDraftAnswer,
+} from "../../lib/threadActivity";
 
 export interface PendingUserInputCardProps {
   readonly pendingUserInput: PendingUserInput;
@@ -60,9 +64,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
               </Text>
               <View className="flex-row flex-wrap gap-2.5">
                 {question.options.map((option) => {
-                  const selected =
-                    draft?.selectedOptionLabels?.includes(option.label) === true &&
-                    !draft.customAnswer?.trim().length;
+                  const selected = isPendingUserInputOptionSelected(draft, option.label);
                   return (
                     <Pressable
                       key={option.label}

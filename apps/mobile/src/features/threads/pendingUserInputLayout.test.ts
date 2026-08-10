@@ -25,7 +25,7 @@ describe("derivePendingUserInputMaxHeight", () => {
     ).toBe(387);
   });
 
-  it("never forces the card beyond a short landscape viewport", () => {
+  it("keeps the fixed action area usable in a short keyboard-open viewport", () => {
     expect(
       derivePendingUserInputMaxHeight({
         windowHeight: 375,
@@ -33,6 +33,6 @@ describe("derivePendingUserInputMaxHeight", () => {
         navigationHeaderHeight: 44,
         composerOverlapHeight: 94,
       }),
-    ).toBe(0);
+    ).toBe(160);
   });
 });

@@ -15,6 +15,7 @@ import {
   buildPendingUserInputAnswers,
   buildThreadFeed,
   deriveThreadFeedPresentation,
+  isPendingUserInputOptionSelected,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
   type ThreadFeedActivity,
@@ -97,6 +98,18 @@ describe("pending user input answers", () => {
         "Orders first",
       ),
     ).toEqual({ customAnswer: "Orders first" });
+  });
+
+  it("matches selected chips against normalized option labels", () => {
+    expect(
+      isPendingUserInputOptionSelected({ selectedOptionLabels: ["Orders"] }, "  Orders  "),
+    ).toBe(true);
+    expect(
+      isPendingUserInputOptionSelected(
+        { selectedOptionLabels: ["Orders"], customAnswer: "Orders first" },
+        "  Orders  ",
+      ),
+    ).toBe(false);
   });
 });
 

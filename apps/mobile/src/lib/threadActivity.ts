@@ -1456,6 +1456,17 @@ export function setPendingUserInputCustomAnswer(
   };
 }
 
+export function isPendingUserInputOptionSelected(
+  draft: PendingUserInputDraftAnswer | undefined,
+  optionLabel: string,
+): boolean {
+  if (normalizeDraftAnswer(draft?.customAnswer)) {
+    return false;
+  }
+
+  return normalizeSelectedOptionLabels(draft?.selectedOptionLabels).includes(optionLabel.trim());
+}
+
 export function togglePendingUserInputOptionSelection(
   question: UserInputQuestion,
   draft: PendingUserInputDraftAnswer | undefined,
