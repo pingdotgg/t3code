@@ -222,7 +222,7 @@ export const ChatHeader = memo(function ChatHeader({
             doesn't answer it. */}
         {activeProjectName ? (
           <>
-            <WorkspaceBreadcrumbItem className="inline-flex items-center">
+            <WorkspaceBreadcrumbItem>
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -248,7 +248,7 @@ export const ChatHeader = memo(function ChatHeader({
             <WorkspaceBreadcrumbSeparator />
           </>
         ) : null}
-        <WorkspaceBreadcrumbItem current className="flex flex-1">
+        <WorkspaceBreadcrumbItem current className="flex-1">
           {renamingTitle !== null ? (
             <input
               autoFocus
