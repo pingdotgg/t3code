@@ -348,6 +348,7 @@ public struct UsageView: View {
         } catch is CancellationError {
             return
         } catch {
+            guard activeLoadID == loadID else { return }
             errorMessage = error.localizedDescription
         }
     }

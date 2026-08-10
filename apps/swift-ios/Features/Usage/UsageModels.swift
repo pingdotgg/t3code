@@ -248,19 +248,31 @@ enum UsageMerger {
     private static func claimSources(
         _ environments: [(FeatureEnvironmentUsage, UsageSummary)]
     ) -> (ownerByFingerprint: [UsageSourceFingerprint: String], duplicates: [String]) {
-        var owners: [UsageSourceFingerprint: String] = [:]
+        var selected: [
+            UsageSourceFingerprint: (environmentID: String, status: UsageSourceStatus)
+        ] = [:]
         var duplicates: [String] = []
+        let ordered = environments.sorted { $0.0.environmentID < $1.0.environmentID }
 
-        for (environment, summary) in environments.sorted(by: {
-            $0.0.environmentID < $1.0.environmentID
-        }) {
+        for (environment, summary) in ordered {
             for source in summary.sources where source.status != .missing {
-                if owners[source.fingerprint] != nil {
+                if let current = selected[source.fingerprint] {
+                    if source.status.ownershipPriority > current.status.ownershipPriority {
+                        selected[source.fingerprint] = (environment.environmentID, source.status)
+                    }
+                } else {
+                    selected[source.fingerprint] = (environment.environmentID, source.status)
+                }
+            }
+        }
+
+        let owners = selected.mapValues(\.environmentID)
+        for (environment, summary) in ordered {
+            for source in summary.sources where source.status != .missing {
+                if owners[source.fingerprint] != environment.environmentID {
                     duplicates.append(
                         "\(environment.label): \(source.fingerprint.resolvedHomePath)"
                     )
-                } else {
-                    owners[source.fingerprint] = environment.environmentID
                 }
             }
         }
@@ -291,6 +303,17 @@ enum UsageMerger {
             + bucket.totals.cachedInputTokens
             + bucket.totals.cacheCreationTokens
             + bucket.totals.outputTokens
+    }
+}
+
+private extension UsageSourceStatus {
+    var ownershipPriority: Int {
+        switch self {
+        case .missing: 0
+        case .failed: 1
+        case .partial: 2
+        case .ok: 3
+        }
     }
 }
 

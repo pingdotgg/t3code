@@ -52,6 +52,28 @@ struct UsageModelsTests {
     }
 
     @Test
+    func healthySourceOwnsFingerprintInsteadOfEarlierFailedSource() {
+        let failed = FeatureEnvironmentUsage(
+            environmentID: "a",
+            label: "Failed",
+            summary: summary(provider: .codex, costUsd: 50, sourceStatus: .failed),
+            errorMessage: nil
+        )
+        let healthy = FeatureEnvironmentUsage(
+            environmentID: "b",
+            label: "Healthy",
+            summary: summary(provider: .codex, costUsd: 10),
+            errorMessage: nil
+        )
+
+        let merged = UsageMerger.merge([failed, healthy])
+
+        #expect(merged.costUsd == 10)
+        #expect(merged.contributingEnvironments == ["b"])
+        #expect(merged.duplicateSources == ["Failed: /Users/theo/.codex"])
+    }
+
+    @Test
     func staleContractsDoNotChangeTotals() {
         let current = FeatureEnvironmentUsage(
             environmentID: "current",
@@ -94,7 +116,8 @@ struct UsageModelsTests {
         cachedInput: Int = 0,
         cacheCreation: Int = 0,
         output: Int = 20,
-        reasoning: Int = 0
+        reasoning: Int = 0,
+        sourceStatus: UsageSourceStatus = .ok
     ) -> UsageSummary {
         let path = provider == .codex ? "/Users/theo/.codex" : "/Users/theo/.claude"
         return UsageSummary(
@@ -131,7 +154,7 @@ struct UsageModelsTests {
                         resolvedHomePath: path,
                         volumeId: "1:2"
                     ),
-                    status: .ok,
+                    status: sourceStatus,
                     scannedFiles: 1,
                     skippedFiles: 0,
                     malformedRecords: 0,
