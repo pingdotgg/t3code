@@ -2,6 +2,7 @@ import { it as effectIt } from "@effect/vitest";
 import type { DesktopPreviewRecordingFrame } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -220,6 +221,273 @@ describe("PreviewManager", () => {
         expect(browserWindowConstructor).toHaveBeenCalledOnce();
         expect(capturePage).toHaveBeenCalledOnce();
         expect(closed).toHaveBeenCalledOnce();
+      }),
+    ),
+  );
+
+  effectIt.effect("releases an initializing picture-in-picture when its webview is replaced", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const initialCapture = vi.fn(async () =>
+          makeTestCapturedPreviewImage(Buffer.from("initial"), 1280, 720),
+        );
+        const replacementCapture = vi.fn(async () =>
+          makeTestCapturedPreviewImage(Buffer.from("replacement"), 1280, 720),
+        );
+        const initial = makeTestPreviewWebContents(initialCapture, 42);
+        const replacement = makeTestPreviewWebContents(replacementCapture, 43);
+        fromId.mockImplementation((id) => (id === 42 ? initial : id === 43 ? replacement : null));
+
+        let closedListener: (() => void) | undefined;
+        let destroyed = false;
+        const window = {
+          isDestroyed: () => destroyed,
+          once: vi.fn((_event: string, listener: () => void) => {
+            closedListener = listener;
+          }),
+          setVisibleOnAllWorkspaces: vi.fn(),
+          loadURL: vi.fn(() => new Promise<void>(() => undefined)),
+          showInactive: vi.fn(),
+          close: vi.fn(() => {
+            destroyed = true;
+            closedListener?.();
+          }),
+          webContents: { send: vi.fn() },
+        };
+        browserWindowConstructor.mockImplementation(function () {
+          return window;
+        });
+
+        yield* manager.createTab("tab-replaced");
+        yield* manager.registerWebview("tab-replaced", 42);
+        const opening = yield* manager
+          .openPictureInPicture("tab-replaced")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+
+        yield* manager.registerWebview("tab-replaced", 43);
+        const exit = yield* Fiber.await(opening);
+
+        expect(Exit.hasInterrupts(exit)).toBe(true);
+        expect(window.close).toHaveBeenCalledOnce();
+        expect(window.showInactive).not.toHaveBeenCalled();
+        expect(initialCapture).not.toHaveBeenCalled();
+        expect(replacementCapture).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("rejects late webview registration and capture starts while closing a tab", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const capture = vi.fn(async () =>
+          makeTestCapturedPreviewImage(Buffer.from("frame"), 1280, 720),
+        );
+        const first = makeTestPreviewWebContents(capture, 42);
+        const replacement = makeTestPreviewWebContents(capture, 43);
+        const replacementListeners = replacement as unknown as {
+          readonly on: ReturnType<typeof vi.fn>;
+          readonly off: ReturnType<typeof vi.fn>;
+          readonly ipc: { readonly off: ReturnType<typeof vi.fn> };
+        };
+        fromId.mockImplementation((id) => (id === 42 ? first : id === 43 ? replacement : null));
+        let closedListener: (() => void) | undefined;
+        let destroyed = false;
+        browserWindowConstructor.mockImplementation(function () {
+          return {
+            isDestroyed: () => destroyed,
+            once: vi.fn((_event: string, listener: () => void) => {
+              closedListener = listener;
+            }),
+            setVisibleOnAllWorkspaces: vi.fn(),
+            loadURL: vi.fn(async () => undefined),
+            showInactive: vi.fn(),
+            close: vi.fn(() => {
+              destroyed = true;
+              closedListener?.();
+            }),
+            webContents: { send: vi.fn() },
+          };
+        });
+
+        yield* manager.createTab("tab-closing");
+        yield* manager.registerWebview("tab-closing", 42);
+        yield* manager.openPictureInPicture("tab-closing");
+
+        const closeCleanupPaused = yield* Deferred.make<void>();
+        const continueCloseCleanup = yield* Deferred.make<void>();
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          !state.pictureInPicture && state.webContentsId === 42
+            ? Deferred.succeed(closeCleanupPaused, undefined).pipe(
+                Effect.andThen(Deferred.await(continueCloseCleanup)),
+              )
+            : Effect.void,
+        );
+        const closing = yield* manager
+          .closeTab("tab-closing")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(closeCleanupPaused);
+        const lateRegistration = yield* manager
+          .registerWebview("tab-closing", 43)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        const recreate = yield* manager
+          .createTab("tab-closing")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        const secondClose = yield* manager
+          .closeTab("tab-closing")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        expect(replacementListeners.on).not.toHaveBeenCalled();
+        const lateCapture = yield* Effect.exit(manager.startRecording("tab-closing"));
+
+        yield* Deferred.succeed(continueCloseCleanup, undefined);
+        yield* Fiber.join(closing);
+        const recreated = yield* Fiber.join(recreate);
+        yield* Fiber.join(secondClose);
+        const registrationExit = yield* Fiber.await(lateRegistration);
+        for (const exit of [registrationExit, lateCapture]) {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isSuccess(exit)) continue;
+          expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+            _tag: "PreviewTabNotFoundError",
+            tabId: "tab-closing",
+          });
+        }
+        expect(replacementListeners.on).not.toHaveBeenCalled();
+        expect(replacementListeners.off).not.toHaveBeenCalled();
+        expect(replacementListeners.ipc.off).not.toHaveBeenCalled();
+        expect(recreated.webContentsId).toBeNull();
+        expect(Exit.isFailure(yield* Effect.exit(manager.startRecording("tab-closing")))).toBe(
+          true,
+        );
+      }),
+    ),
+  );
+
+  effectIt.effect("reopens after close tears down an initializing picture-in-picture", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const capture = vi.fn(async () =>
+          makeTestCapturedPreviewImage(Buffer.from("frame"), 1280, 720),
+        );
+        fromId.mockReturnValue(makeTestPreviewWebContents(capture, 42));
+        let firstClosed: (() => void) | undefined;
+        let firstDestroyed = false;
+        const initializingWindow = {
+          isDestroyed: () => firstDestroyed,
+          once: vi.fn((_event: string, listener: () => void) => {
+            firstClosed = listener;
+          }),
+          setVisibleOnAllWorkspaces: vi.fn(),
+          loadURL: vi.fn(() => new Promise<void>(() => undefined)),
+          showInactive: vi.fn(),
+          close: vi.fn(() => {
+            firstDestroyed = true;
+            firstClosed?.();
+          }),
+          webContents: { send: vi.fn() },
+        };
+        let secondClosed: (() => void) | undefined;
+        let secondDestroyed = false;
+        const reopenedWindow = {
+          isDestroyed: () => secondDestroyed,
+          once: vi.fn((_event: string, listener: () => void) => {
+            secondClosed = listener;
+          }),
+          setVisibleOnAllWorkspaces: vi.fn(),
+          loadURL: vi.fn(async () => undefined),
+          showInactive: vi.fn(),
+          close: vi.fn(() => {
+            secondDestroyed = true;
+            secondClosed?.();
+          }),
+          webContents: { send: vi.fn() },
+        };
+        browserWindowConstructor
+          .mockImplementationOnce(function () {
+            return initializingWindow;
+          })
+          .mockImplementationOnce(function () {
+            return reopenedWindow;
+          });
+
+        yield* manager.createTab("tab-reopen");
+        yield* manager.registerWebview("tab-reopen", 42);
+        const opening = yield* manager
+          .openPictureInPicture("tab-reopen")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        yield* manager.closePictureInPicture("tab-reopen");
+
+        expect(Exit.hasInterrupts(yield* Fiber.await(opening))).toBe(true);
+        expect(initializingWindow.close).toHaveBeenCalledOnce();
+
+        yield* manager.openPictureInPicture("tab-reopen");
+        yield* manager.closePictureInPicture("tab-reopen");
+        yield* manager.closePictureInPicture("tab-reopen");
+
+        expect(reopenedWindow.showInactive).toHaveBeenCalledOnce();
+        expect(reopenedWindow.close).toHaveBeenCalledOnce();
+      }),
+    ),
+  );
+
+  effectIt.effect("cleans up a failed picture-in-picture initialization before a later open", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const capture = vi.fn(async () =>
+          makeTestCapturedPreviewImage(Buffer.from("frame"), 1280, 720),
+        );
+        fromId.mockReturnValue(makeTestPreviewWebContents(capture, 42));
+        let failedClosed: (() => void) | undefined;
+        let failedDestroyed = false;
+        const failedWindow = {
+          isDestroyed: () => failedDestroyed,
+          once: vi.fn((_event: string, listener: () => void) => {
+            failedClosed = listener;
+          }),
+          setVisibleOnAllWorkspaces: vi.fn(),
+          loadURL: vi.fn(async () => Promise.reject(new Error("load failed"))),
+          showInactive: vi.fn(),
+          close: vi.fn(() => {
+            failedDestroyed = true;
+            failedClosed?.();
+          }),
+          webContents: { send: vi.fn() },
+        };
+        let recoveredClosed: (() => void) | undefined;
+        let recoveredDestroyed = false;
+        const recoveredWindow = {
+          isDestroyed: () => recoveredDestroyed,
+          once: vi.fn((_event: string, listener: () => void) => {
+            recoveredClosed = listener;
+          }),
+          setVisibleOnAllWorkspaces: vi.fn(),
+          loadURL: vi.fn(async () => undefined),
+          showInactive: vi.fn(),
+          close: vi.fn(() => {
+            recoveredDestroyed = true;
+            recoveredClosed?.();
+          }),
+          webContents: { send: vi.fn() },
+        };
+        browserWindowConstructor
+          .mockImplementationOnce(function () {
+            return failedWindow;
+          })
+          .mockImplementationOnce(function () {
+            return recoveredWindow;
+          });
+
+        yield* manager.createTab("tab-failed-pip");
+        yield* manager.registerWebview("tab-failed-pip", 42);
+        const failed = yield* Effect.exit(manager.openPictureInPicture("tab-failed-pip"));
+
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect(failedWindow.close).toHaveBeenCalledOnce();
+
+        yield* manager.openPictureInPicture("tab-failed-pip");
+        expect(recoveredWindow.showInactive).toHaveBeenCalledOnce();
       }),
     ),
   );
