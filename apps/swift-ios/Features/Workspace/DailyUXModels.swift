@@ -112,6 +112,54 @@ enum DailyUXCreationContext {
         )
     }
 
+    static func recentProjects(in snapshot: FeatureSnapshot) -> [DailyUXRecentProject] {
+        let groups = projectGroups(in: snapshot)
+        let groupByProjectID = groups.reduce(into: [String: DailyUXProjectGroup]()) {
+            result, group in
+            for projectID in group.memberProjectIDs {
+                result[projectID] = group
+            }
+        }
+        let projectEnvironmentByID = snapshot.projects.reduce(into: [String: String]()) {
+            $0[$1.id] = $1.environmentID
+        }
+        var seenGroupIDs = Set<String>()
+
+        return snapshot.threads
+            .sorted(by: recentUseOrder)
+            .compactMap { thread in
+                guard let group = groupByProjectID[thread.projectID],
+                      seenGroupIDs.insert(group.id).inserted,
+                      let project = group.preferredProject(
+                          environmentID: thread.environmentID
+                              ?? projectEnvironmentByID[thread.projectID]
+                      ) else {
+                    return nil
+                }
+                return DailyUXRecentProject(group: group, project: project)
+            }
+    }
+
+    static func initialProject(
+        in snapshot: FeatureSnapshot,
+        requestedProjectID: String?
+    ) -> FeatureProject? {
+        let groups = projectGroups(in: snapshot)
+
+        if let requestedProjectID,
+           let requestedGroup = DailyUXProjectGrouping.group(
+               containing: requestedProjectID,
+               in: groups
+           ) {
+            let requestedEnvironmentID = snapshot.projects
+                .first(where: { $0.id == requestedProjectID })?
+                .environmentID
+            return requestedGroup.preferredProject(environmentID: requestedEnvironmentID)
+        }
+
+        return recentProjects(in: snapshot).first?.project ?? groups.first?.projects.first
+    }
+
     static func logicalProjectID(
         for project: FeatureProject,
         in snapshot: FeatureSnapshot
@@ -130,6 +178,12 @@ enum DailyUXCreationContext {
             )
     }
 
+    private static func recentUseOrder(_ lhs: FeatureThread, _ rhs: FeatureThread) -> Bool {
+        let lhsDate = lhs.lastActivityAt ?? lhs.updatedAt
+        let rhsDate = rhs.lastActivityAt ?? rhs.updatedAt
+        if lhsDate != rhsDate { return lhsDate > rhsDate }
+        return lhs.id < rhs.id
+    }
     static func providers(
         for project: FeatureProject?,
         in snapshot: FeatureSnapshot
@@ -185,6 +239,11 @@ enum DailyUXCreationContext {
         return snapshot.preferencesByEnvironment?[environmentID]
             ?? FeatureEnvironmentPreferences()
     }
+}
+
+struct DailyUXRecentProject: Equatable {
+    let group: DailyUXProjectGroup
+    let project: FeatureProject
 }
 
 struct DailyUXProjectGroup: Identifiable, Equatable {

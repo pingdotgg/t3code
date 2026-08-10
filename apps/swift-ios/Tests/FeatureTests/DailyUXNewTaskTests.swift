@@ -6,6 +6,123 @@ import UIKit
 @Suite("Message-first task creation")
 struct DailyUXNewTaskTests {
     @Test
+    func recentProjectRankingDrivesTheDefaultAndKeepsUnusedProjectsOut() {
+        let alpha = rankedProject("alpha", name: "Alpha")
+        let beta = rankedProject("beta", name: "Beta")
+        let unused = rankedProject("unused", name: "Unused")
+        let value = rankedSnapshot(
+            projects: [unused, beta, alpha],
+            threads: [
+                rankedThread("older", projectID: alpha.id, activity: 10),
+                rankedThread("newer", projectID: beta.id, activity: 20),
+            ]
+        )
+
+        let ranking = DailyUXCreationContext.recentProjects(in: value)
+
+        #expect(ranking.map(\.project.id) == [beta.id, alpha.id])
+        #expect(
+            DailyUXCreationContext.initialProject(in: value, requestedProjectID: nil)?.id
+                == ranking.first?.project.id
+        )
+    }
+
+    @Test
+    func recentProjectRankingIsStableForTiesAndIgnoresMissingProjects() {
+        let alpha = rankedProject("alpha", name: "Alpha")
+        let beta = rankedProject("beta", name: "Beta")
+        let value = rankedSnapshot(
+            projects: [alpha, beta],
+            threads: [
+                rankedThread("z-thread", projectID: alpha.id, activity: 20),
+                rankedThread("missing", projectID: "missing", activity: 30),
+                rankedThread("a-thread", projectID: beta.id, activity: 20),
+            ]
+        )
+
+        #expect(
+            DailyUXCreationContext.recentProjects(in: value)
+                .map(\.project.id) == [beta.id, alpha.id]
+        )
+    }
+
+    @Test
+    func recentProjectRankingUsesActivityInsteadOfMetadataChanges() {
+        let alpha = rankedProject("alpha", name: "Alpha")
+        let beta = rankedProject("beta", name: "Beta")
+        let value = rankedSnapshot(
+            projects: [alpha, beta],
+            threads: [
+                rankedThread(
+                    "metadata-change",
+                    projectID: alpha.id,
+                    updatedAt: 100,
+                    lastActivityAt: 10
+                ),
+                rankedThread("actual-use", projectID: beta.id, activity: 20),
+            ]
+        )
+
+        #expect(
+            DailyUXCreationContext.recentProjects(in: value)
+                .map(\.project.id) == [beta.id, alpha.id]
+        )
+    }
+
+    @Test
+    func archivedAndSettledThreadsStillRepresentProjectUse() {
+        let archived = rankedProject("archived", name: "Archived")
+        let settled = rankedProject("settled", name: "Settled")
+        let value = rankedSnapshot(
+            projects: [archived, settled],
+            threads: [
+                rankedThread(
+                    "archived-thread",
+                    projectID: archived.id,
+                    activity: 30,
+                    isArchived: true
+                ),
+                rankedThread(
+                    "settled-thread",
+                    projectID: settled.id,
+                    activity: 20,
+                    isSettled: true
+                ),
+            ]
+        )
+
+        #expect(
+            DailyUXCreationContext.recentProjects(in: value)
+                .map(\.project.id) == [archived.id, settled.id]
+        )
+    }
+
+    @Test
+    func explicitProjectWinsAndNoActivityFallsBackAlphabetically() {
+        let zulu = rankedProject("zulu", name: "Zulu")
+        let alpha = rankedProject("alpha", name: "Alpha")
+        let withActivity = rankedSnapshot(
+            projects: [zulu, alpha],
+            threads: [rankedThread("recent", projectID: zulu.id, activity: 20)]
+        )
+        let withoutActivity = rankedSnapshot(projects: [zulu, alpha], threads: [])
+
+        #expect(
+            DailyUXCreationContext.initialProject(
+                in: withActivity,
+                requestedProjectID: alpha.id
+            )?.id == alpha.id
+        )
+        #expect(DailyUXCreationContext.recentProjects(in: withoutActivity).isEmpty)
+        #expect(
+            DailyUXCreationContext.initialProject(
+                in: withoutActivity,
+                requestedProjectID: nil
+            )?.id == alpha.id
+        )
+    }
+
+    @Test
     func requestNormalizesLegacyModesAndKeepsImageBytes() {
         let image = FeatureDraftAttachment(
             data: Data([1, 2, 3]),
@@ -520,5 +637,37 @@ struct DailyUXNewTaskTests {
         #expect(max(prepared.size.width, prepared.size.height) <= 2_048)
         #expect(max(thumbnail.size.width, thumbnail.size.height) <= 160)
         #expect(attachment.mimeType == "image/jpeg")
+    }
+
+    private func rankedProject(_ id: String, name: String) -> FeatureProject {
+        FeatureProject(id: id, environmentID: "environment", name: name, path: "/\(id)")
+    }
+
+    private func rankedThread(
+        _ id: String,
+        projectID: String,
+        activity: TimeInterval? = nil,
+        updatedAt: TimeInterval? = nil,
+        lastActivityAt: TimeInterval? = nil,
+        isArchived: Bool = false,
+        isSettled: Bool = false
+    ) -> FeatureThread {
+        let updatedAt = updatedAt ?? activity ?? 0
+        return FeatureThread(
+            id: id,
+            projectID: projectID,
+            title: id,
+            updatedAt: Date(timeIntervalSince1970: updatedAt),
+            isArchived: isArchived,
+            isSettled: isSettled,
+            lastActivityAt: lastActivityAt.map(Date.init(timeIntervalSince1970:))
+        )
+    }
+
+    private func rankedSnapshot(
+        projects: [FeatureProject],
+        threads: [FeatureThread]
+    ) -> FeatureSnapshot {
+        FeatureSnapshot(projects: projects, threads: threads)
     }
 }
