@@ -52,6 +52,9 @@ function isPrivateIpv4(host: string): boolean {
   if (octets.some((octet) => Number.isNaN(octet) || octet > 255)) {
     return false;
   }
+  if (octets.every((octet) => octet === 0)) {
+    return true;
+  }
   const [first = Number.NaN, second = Number.NaN] = octets;
   if (first === 10 || first === 127) {
     return true;
