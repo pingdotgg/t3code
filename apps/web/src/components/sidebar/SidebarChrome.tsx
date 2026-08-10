@@ -118,7 +118,14 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
   const canGoBack = useCanGoBack();
-  const isOnUsage = useLocation({ select: (location) => location.pathname === "/usage" });
+  const currentFooterPage = useLocation({
+    select: (location) =>
+      location.pathname === "/usage"
+        ? "usage"
+        : location.pathname === "/pull-requests"
+          ? "pull-requests"
+          : null,
+  });
   const primaryEnvironment = usePrimaryEnvironment();
   const pullRequestsSupported =
     primaryEnvironment?.serverConfig?.environment.capabilities.pullRequests === true;
@@ -159,13 +166,20 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
       <SidebarMenu>
         {pullRequestsSupported ? (
           <SidebarMenuItem>
-            <SidebarMenuButton onClick={handlePullRequestsClick}>
-              <GitPullRequestIcon />
-              <span>Pull Requests</span>
-            </SidebarMenuButton>
+            {currentFooterPage === "pull-requests" ? (
+              <SidebarMenuButton onClick={handleBackClick}>
+                <ArrowLeftIcon />
+                <span>Back</span>
+              </SidebarMenuButton>
+            ) : (
+              <SidebarMenuButton onClick={handlePullRequestsClick}>
+                <GitPullRequestIcon />
+                <span>Pull Requests</span>
+              </SidebarMenuButton>
+            )}
           </SidebarMenuItem>
         ) : null}
-        {isOnUsage ? (
+        {currentFooterPage === "usage" ? (
           <SidebarMenuItem>
             <SidebarMenuButton onClick={handleBackClick}>
               <ArrowLeftIcon />
