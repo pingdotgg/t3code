@@ -66,27 +66,32 @@ const TEXT_GENERATION_FALLBACK_DRIVERS = [
   "antigravity",
 ].map((driver) => ProviderDriverKind.make(driver));
 
-/** Only project-scoped callers may include configured instances when falling back; machine-level callers leave it unset. */
+/** Chooses an enabled writer, preserving custom models; configured instances can take priority. */
 export function fallbackTextGenerationModelSelection(
   providerInstances: ServerSettings["providerInstances"],
   isEnabled: (instanceId: ProviderInstanceId, driver: ProviderDriverKind) => boolean,
   options?: {
     readonly includeConfiguredInstances?: boolean;
+    readonly configuredInstancesFirst?: boolean;
     readonly defaultModelSelection?: ModelSelection | null;
   },
 ): ModelSelection | null {
-  const candidates = [
-    ...TEXT_GENERATION_FALLBACK_DRIVERS.map(
-      (driver) => [defaultInstanceIdForDriver(driver), driver] as const,
-    ),
-    ...(options?.includeConfiguredInstances === true
+  const defaults = TEXT_GENERATION_FALLBACK_DRIVERS.map(
+    (driver) => [defaultInstanceIdForDriver(driver), driver] as const,
+  );
+  const configured =
+    options?.includeConfiguredInstances === true
       ? Object.entries(providerInstances).flatMap(([instanceId, instance]) =>
+          options.configuredInstancesFirst === true ||
           TEXT_GENERATION_FALLBACK_DRIVERS.includes(instance.driver)
             ? [[ProviderInstanceId.make(instanceId), instance.driver] as const]
             : [],
         )
-      : []),
-  ];
+      : [];
+  const candidates =
+    options?.configuredInstancesFirst === true
+      ? [...configured, ...defaults]
+      : [...defaults, ...configured];
   const match = candidates.find(([instanceId, driver]) => isEnabled(instanceId, driver));
   if (match === undefined) return null;
   const [instanceId, driver] = match;

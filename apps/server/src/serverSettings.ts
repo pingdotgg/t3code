@@ -534,7 +534,11 @@ function fallbackTextGenerationProvider(
       resolveProviderInstanceEnabled(
         settings.providerInstances[instanceId] ?? { driver, config: {} },
       ),
-    { defaultModelSelection: settings.defaultModelSelection },
+    {
+      includeConfiguredInstances: true,
+      configuredInstancesFirst: true,
+      defaultModelSelection: settings.defaultModelSelection,
+    },
   );
   return fallback === null ? settings : { ...settings, textGenerationModelSelection: fallback };
 }
