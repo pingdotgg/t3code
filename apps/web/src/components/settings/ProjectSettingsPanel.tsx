@@ -204,30 +204,27 @@ function ProjectSettingsBreadcrumb({ projectKey }: { projectKey: string }) {
   const groups = useSettingsProjectGroups();
   const navigate = useNavigate();
   const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
-  const openProjectMenu = useCallback(
-    (event: ReactMouseEvent<HTMLButtonElement>) => {
-      const api = readLocalApi();
-      if (!api) return;
+  const openProjectMenu = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    const api = readLocalApi();
+    if (!api) return;
 
-      const rect = event.currentTarget.getBoundingClientRect();
-      const items: ContextMenuItem<string>[] = groups.map((group) => ({
-        id: group.projectKey,
-        label: group.displayName,
-      }));
-      void settlePromise(() =>
-        api.contextMenu.show(items, { x: rect.left, y: rect.bottom + 4 }),
-      ).then((clicked) => {
-        if (clicked._tag === "Failure" || clicked.value === null) return;
-        void navigate({
-          to: "/projects/$projectKey",
-          params: { projectKey: clicked.value },
-          replace: true,
-          hashScrollIntoView: false,
-        });
+    const rect = event.currentTarget.getBoundingClientRect();
+    const items: ContextMenuItem<string>[] = groups.map((group) => ({
+      id: group.projectKey,
+      label: group.displayName,
+    }));
+    void settlePromise(() =>
+      api.contextMenu.show(items, { x: rect.left, y: rect.bottom + 4 }),
+    ).then((clicked) => {
+      if (clicked._tag === "Failure" || clicked.value === null) return;
+      void navigate({
+        to: "/projects/$projectKey",
+        params: { projectKey: clicked.value },
+        replace: true,
+        hashScrollIntoView: false,
       });
-    },
-    [groups, navigate],
-  );
+    });
+  };
 
   return (
     <WorkspaceBreadcrumb ariaLabel="Project settings breadcrumb">
