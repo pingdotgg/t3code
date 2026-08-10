@@ -1,0 +1,141 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+import { publicCapabilities } from "../lib/configuredCapabilities";
+
+const { waitlist } = publicCapabilities;
+---
+
+<SiteLayout
+  title="Waitlist — Auldric"
+  description="The current Auldric waitlist state and, when open, an explicit-consent signup form."
+  path="/waitlist"
+>
+  <div class="page-shell">
+    <header class="page-intro">
+      <div>
+        <p class="eyebrow">Waitlist</p>
+        <h1>Your email is not a placeholder.</h1>
+        <p class="page-intro__lead">
+          Auldric asks for contact details only when a real submission endpoint, a named data
+          controller, retention terms, and explicit consent are all in place.
+        </p>
+      </div>
+      <div class="state-box">
+        <span class:list={["status-pill", { "status-pill--live": waitlist.kind === "open" }]}>
+          {waitlist.kind === "open" ? "Open" : "Closed"}
+        </span>
+        <h2>{waitlist.kind === "open" ? "Submissions open" : "No data collection"}</h2>
+        <p>
+          {
+            waitlist.kind === "open"
+              ? "A submission is sent only after the consent box is checked."
+              : "There is no waitlist form because this site has no complete collection route."
+          }
+        </p>
+      </div>
+    </header>
+
+    {
+      waitlist.kind === "open" ? (
+        <section class="page-section" aria-labelledby="join-title">
+          <p class="eyebrow">Request an update</p>
+          <h2 id="join-title">Join the active waitlist.</h2>
+          <p>
+            {waitlist.controller} will use your email only to contact you about Auldric access. The
+            request will be retained for at most {waitlist.retentionDays} days unless you enter a
+            separate access relationship.
+          </p>
+          <form
+            class="waitlist-form"
+            method="post"
+            action={waitlist.endpoint}
+            data-waitlist-form
+          >
+            <input type="hidden" name="consentVersion" value="2026-08-10" />
+            <div class="field">
+              <label for="waitlist-email">Work email</label>
+              <input
+                id="waitlist-email"
+                name="email"
+                type="email"
+                inputmode="email"
+                autocomplete="email"
+                required
+              />
+            </div>
+            <label class="consent-field" for="waitlist-consent">
+              <input
+                id="waitlist-consent"
+                name="consent"
+                type="checkbox"
+                value="auldric-access-updates"
+                required
+              />
+              <span>
+                I consent to {waitlist.controller} using my email to contact me about Auldric access.
+                I can withdraw consent at any time by emailing
+                <a href={`mailto:${waitlist.privacyContact}`}>{waitlist.privacyContact}</a>.
+              </span>
+            </label>
+            <button class="button button--primary" type="submit">
+              Join the waitlist <span aria-hidden="true">→</span>
+            </button>
+            <p class="form-status" role="status" aria-live="polite" data-form-status></p>
+          </form>
+          <p>
+            Read the <a href="/privacy">privacy notice</a> before submitting.
+          </p>
+        </section>
+      ) : (
+        <section class="page-section" aria-labelledby="closed-title">
+          <p class="eyebrow">Safe stop</p>
+          <h2 id="closed-title">The waitlist is not accepting submissions.</h2>
+          <p>
+            This page deliberately has no email field. Check the access page for any future verified
+            route; no details have been saved here.
+          </p>
+          <div class="page-actions">
+            <a class="button button--primary" href="/access">
+              Check availability <span aria-hidden="true">→</span>
+            </a>
+          </div>
+        </section>
+      )
+    }
+  </div>
+
+  {
+    waitlist.kind === "open" && (
+      <script>
+        const form = document.querySelector<HTMLFormElement>("[data-waitlist-form]");
+        const status = form?.querySelector<HTMLElement>("[data-form-status]");
+        const submit = form?.querySelector<HTMLButtonElement>('button[type="submit"]');
+
+        form?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          if (!form.reportValidity() || !status || !submit) return;
+
+          submit.disabled = true;
+          status.textContent = "Submitting…";
+          try {
+            const response = await fetch(form.action, {
+              method: "POST",
+              body: new FormData(form),
+              credentials: "omit",
+              redirect: "error",
+            });
+            if (!response.ok) throw new Error(`Waitlist endpoint returned ${response.status}`);
+
+            form.reset();
+            status.textContent = "Your request was received.";
+          } catch {
+            status.textContent =
+              "Your request was not submitted. Check your connection and try again; your details remain in this form.";
+          } finally {
+            submit.disabled = false;
+          }
+        });
+      </script>
+    )
+  }
+</SiteLayout>

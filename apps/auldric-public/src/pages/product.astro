@@ -1,0 +1,75 @@
+---
+import PrimaryAction from "../components/PrimaryAction.astro";
+import SiteLayout from "../layouts/SiteLayout.astro";
+---
+
+<SiteLayout
+  title="Product model — Auldric"
+  description="How Auldric connects business sources, evidence, Marketing Strategy, go-to-market decisions, and reviewable next work."
+  path="/product"
+>
+  <div class="page-shell">
+    <header class="page-intro">
+      <div>
+        <p class="eyebrow">Product model</p>
+        <h1>Strategy that keeps its receipts.</h1>
+        <p class="page-intro__lead">
+          Auldric gives Marketing and Strategy work a visible chain from source material to evidence,
+          decisions, outputs, and review.
+        </p>
+      </div>
+      <div class="state-box">
+        <span class="status-pill">Scope</span>
+        <p>
+          Auldric is focused on Marketing Strategy and go-to-market work. It is not a general coding
+          or execution environment.
+        </p>
+      </div>
+    </header>
+
+    <section class="page-section" aria-labelledby="source-title">
+      <p class="eyebrow">01 / Source</p>
+      <h2 id="source-title">Begin with what the business actually knows.</h2>
+      <p>
+        The workspace is designed around business sources: research, customer material, positioning,
+        prior decisions, and other approved context. A source can support a claim; it does not become
+        an instruction simply because it was imported.
+      </p>
+    </section>
+
+    <section class="page-section" aria-labelledby="evidence-title">
+      <p class="eyebrow">02 / Evidence</p>
+      <h2 id="evidence-title">Make confidence inspectable.</h2>
+      <div class="principle-grid">
+        <article class="principle-card">
+          <h3>Traceable</h3>
+          <p>Material claims point back to their supporting source.</p>
+        </article>
+        <article class="principle-card">
+          <h3>Qualified</h3>
+          <p>Assumptions, gaps, and conflicts remain explicit rather than becoming false certainty.</p>
+        </article>
+        <article class="principle-card">
+          <h3>Reviewable</h3>
+          <p>People can inspect a decision and its basis before approving what happens next.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="page-section" aria-labelledby="decision-title">
+      <p class="eyebrow">03 / Decide</p>
+      <h2 id="decision-title">Carry context into the output.</h2>
+      <p>
+        Auldric's Marketing Strategy and go-to-market workflows are designed to produce bounded,
+        reviewable outputs. Decisions, unresolved questions, and the next work stay together so a
+        handoff does not erase why a choice was made.
+      </p>
+      <div class="page-actions">
+        <PrimaryAction />
+        <a class="button button--secondary" href="/access">
+          Read current availability <span aria-hidden="true">→</span>
+        </a>
+      </div>
+    </section>
+  </div>
+</SiteLayout>

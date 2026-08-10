@@ -1,0 +1,20 @@
+{
+  "name": "@auldric/public",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/verify-release-artifacts.ts && astro build && node scripts/verify-built-site.ts",
+    "dev": "astro dev",
+    "preview": "astro preview",
+    "test": "vp test run --passWithNoTests",
+    "typecheck": "astro check"
+  },
+  "dependencies": {
+    "astro": "^7.0.3"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.7",
+    "typescript": "catalog:"
+  }
+}

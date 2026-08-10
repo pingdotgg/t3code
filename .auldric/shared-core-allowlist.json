@@ -36,6 +36,18 @@
         "url": "https://github.com/pingdotgg/t3code/issues/5020"
       },
       "test": "pnpm --dir apps/web test src/productDomain.test.ts src/marketingRoute.test.tsx"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "owner": "#27",
+      "reason": "Register only the existing Astro and TypeScript dependencies for the additive Auldric public-site workspace.",
+      "contentSha256": "575ce5a817f14ae688eb3e50b7b7355275f98b9300642572ef48f68a95c51511",
+      "expiresOn": "2026-09-10",
+      "upstream": {
+        "status": "related",
+        "url": "https://github.com/pingdotgg/t3code/issues/5020"
+      },
+      "test": "pnpm --dir apps/auldric-public test"
     }
   ]
 }

@@ -14,10 +14,12 @@
     "docs/auldric-system/09-agent-operating-contract.md",
     "docs/auldric-system/10-legacy-donor-inventory.md",
     "docs/auldric-system/11-marketing-shell-design-proposal.md",
+    "docs/auldric-system/12-public-surface.md",
     "docs/auldric-architecture.md",
     "docs/auldric-launch-readiness.md",
     "docs/auldric-upstream-overlays.md",
-    "docs/auldric-migration-matrix.md"
+    "docs/auldric-migration-matrix.md",
+    "docs/operations/auldric-public-site.md"
   ],
   "supersededDocuments": ["docs/auldric-hard-fork-launch-plan.md"],
   "historicalDocuments": ["docs/_archive/auldric-runtime/README.md"]

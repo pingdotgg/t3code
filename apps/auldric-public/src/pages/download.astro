@@ -1,0 +1,86 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+import { publicCapabilities } from "../lib/configuredCapabilities";
+
+const { download } = publicCapabilities;
+---
+
+<SiteLayout
+  title="Download — Auldric"
+  description="Verified Auldric desktop release availability and checksum information."
+  path="/download"
+>
+  <div class="page-shell">
+    <header class="page-intro">
+      <div>
+        <p class="eyebrow">Download</p>
+        <h1>Verify first. Download second.</h1>
+        <p class="page-intro__lead">
+          This page exposes a download only when an Auldric release has a reviewed release record and
+          the published file passes its SHA-256 checksum check.
+        </p>
+      </div>
+      <div class="state-box">
+        <span class:list={["status-pill", { "status-pill--live": download.kind === "available" }]}>
+          {download.kind === "available" ? "Verified" : "Unavailable"}
+        </span>
+        <h2>{download.kind === "available" ? "Artifact available" : "No artifact published"}</h2>
+        <p>
+          {
+            download.kind === "available"
+              ? `${download.platform}, ${download.version}`
+              : "There is no verified Auldric release recorded for this site."
+          }
+        </p>
+      </div>
+    </header>
+
+    {
+      download.kind === "available" ? (
+        <section class="page-section" aria-labelledby="artifact-title">
+          <p class="eyebrow">Verified artifact</p>
+          <h2 id="artifact-title">{download.fileName}</h2>
+          <dl class="legal-grid">
+            <div class="legal-card">
+              <dt>Platform</dt>
+              <dd>{download.platform}</dd>
+            </div>
+            <div class="legal-card">
+              <dt>Version</dt>
+              <dd>{download.version}</dd>
+            </div>
+            <div class="legal-card">
+              <dt>Source</dt>
+              <dd>Auldric GitHub release</dd>
+            </div>
+          </dl>
+          <h3>SHA-256</h3>
+          <code class="checksum">{download.sha256}</code>
+          <div class="page-actions">
+            <a class="button button--primary" href={download.url} rel="noreferrer">
+              Download verified artifact <span aria-hidden="true">↗</span>
+            </a>
+          </div>
+          <p class="notice">
+            Check the downloaded file against the SHA-256 value above before opening it. If the
+            values differ, delete the file and do not run it.
+          </p>
+        </section>
+      ) : (
+        <section class="page-section" aria-labelledby="unavailable-title">
+          <p class="eyebrow">Safe stop</p>
+          <h2 id="unavailable-title">There is nothing to download here today.</h2>
+          <p>
+            Auldric does not redirect to another product's installer, infer a release from a
+            repository tag, or publish an operator-entered checksum without checking the asset.
+          </p>
+          <div class="page-actions">
+            <a class="button button--primary" href="/access">
+              Check availability <span aria-hidden="true">→</span>
+            </a>
+          </div>
+        </section>
+      )
+    }
+  </div>
+</SiteLayout>

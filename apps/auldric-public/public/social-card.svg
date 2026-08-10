@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-labelledby="title description">
+  <title id="title">Auldric</title>
+  <desc id="description">The proof is in the planning. Source-backed Marketing and Strategy.</desc>
+  <rect width="1200" height="630" fill="#172033"/>
+  <circle cx="1080" cy="610" r="330" fill="none" stroke="#22344d" stroke-width="110"/>
+  <path d="M154 98 103 237H75L126 98z" fill="#d7f06f"/>
+  <text x="170" y="160" fill="#fffdfa" font-family="system-ui, sans-serif" font-size="72" font-weight="700">Auldric</text>
+  <text x="76" y="365" fill="#fffdfa" font-family="system-ui, sans-serif" font-size="82" font-weight="560">The proof is in</text>
+  <text x="76" y="455" fill="#fffdfa" font-family="system-ui, sans-serif" font-size="82" font-weight="560">the planning.</text>
+  <text x="80" y="550" fill="#cfd3d6" font-family="system-ui, sans-serif" font-size="30">Source-backed Marketing and Strategy</text>
+</svg>

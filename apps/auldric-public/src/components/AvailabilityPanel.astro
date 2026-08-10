@@ -1,0 +1,59 @@
+---
+import { publicCapabilities } from "../lib/configuredCapabilities";
+
+const { access, waitlist, download } = publicCapabilities;
+---
+
+<section class="availability" aria-labelledby="availability-title">
+  <div class="section-heading">
+    <p class="eyebrow">Current availability</p>
+    <h2 id="availability-title">Nothing implied. Every route says what is actually open.</h2>
+  </div>
+
+  <div class="status-grid">
+    <article class="status-card">
+      <span class:list={["status-pill", { "status-pill--live": access.kind === "available" }]}>
+        {access.kind === "available" ? "Available" : "Unavailable"}
+      </span>
+      <h3>Product access</h3>
+      <p>
+        {
+          access.kind === "available"
+            ? "This site has a verified Auldric access destination."
+            : "There is no public signup, access right, or product destination available here."
+        }
+      </p>
+      <a href="/access">Access details <span aria-hidden="true">→</span></a>
+    </article>
+
+    <article class="status-card">
+      <span class:list={["status-pill", { "status-pill--live": waitlist.kind === "open" }]}>
+        {waitlist.kind === "open" ? "Open" : "Closed"}
+      </span>
+      <h3>Waitlist</h3>
+      <p>
+        {
+          waitlist.kind === "open"
+            ? "The active waitlist accepts an email only after explicit consent."
+            : "This site has no data-collection endpoint, so it does not ask for an email."
+        }
+      </p>
+      <a href="/waitlist">Waitlist details <span aria-hidden="true">→</span></a>
+    </article>
+
+    <article class="status-card">
+      <span class:list={["status-pill", { "status-pill--live": download.kind === "available" }]}>
+        {download.kind === "available" ? "Verified" : "Unavailable"}
+      </span>
+      <h3>Download</h3>
+      <p>
+        {
+          download.kind === "available"
+            ? `A checksum-verified Auldric ${download.platform} artifact is available.`
+            : "No verified Auldric release artifact is published from this site."
+        }
+      </p>
+      <a href="/download">Download details <span aria-hidden="true">→</span></a>
+    </article>
+  </div>
+</section>

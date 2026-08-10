@@ -1,0 +1,90 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+import { publicCapabilities } from "../lib/configuredCapabilities";
+
+const { legal } = publicCapabilities;
+---
+
+<SiteLayout
+  title="Website terms — Auldric"
+  description="Terms for the Auldric public information site, including access, pricing, and download boundaries."
+  path="/terms"
+>
+  <div class="page-shell">
+    <header class="page-intro">
+      <div>
+        <p class="eyebrow">Website terms</p>
+        <p>Last reviewed: 10 August 2026</p>
+        <h1>Information is not entitlement.</h1>
+        <p class="page-intro__lead">
+          These terms apply to this public information site. A separately published product or
+          commercial relationship requires its own applicable terms before use.
+        </p>
+      </div>
+      <div class="state-box">
+        <span class:list={["status-pill", { "status-pill--live": legal.publicationReady }]}>
+          {legal.publicationReady ? "Published" : "Incomplete"}
+        </span>
+        <h2>Site operator</h2>
+        <p>
+          {
+            legal.name && legal.postalAddress && legal.jurisdiction
+              ? `${legal.name}, ${legal.postalAddress}. Governing jurisdiction: ${legal.jurisdiction}.`
+              : "No complete legal operator is published for this preview."
+          }
+        </p>
+      </div>
+    </header>
+
+    <section class="page-section" aria-labelledby="scope-title">
+      <p class="eyebrow">Scope</p>
+      <h2 id="scope-title">What a public page does not grant.</h2>
+      <ul class="check-list">
+        <li>A product description does not create an account or access right.</li>
+        <li>A waitlist request is not acceptance, purchase, or guaranteed future access.</li>
+        <li>An unpublished price is not an offer or promise of commercial terms.</li>
+        <li>A download appears only after its release record passes the file checksum check.</li>
+      </ul>
+    </section>
+
+    <section class="page-section" aria-labelledby="accuracy-title">
+      <p class="eyebrow">Accuracy and recovery</p>
+      <h2 id="accuracy-title">Capability state controls the call to action.</h2>
+      <p>
+        The site is designed to fail closed when required access, collection, release, or legal
+        details are missing or malformed. If a route reports that a capability is unavailable, do not rely on
+        an old link or third-party copy as evidence that it is open.
+      </p>
+    </section>
+
+    <section class="page-section" aria-labelledby="content-title">
+      <p class="eyebrow">Content and responsibility</p>
+      <h2 id="content-title">A right to read is not a licence to reuse.</h2>
+      <p>
+        The Auldric name, original site copy, and original visual assets belong to the site operator
+        or its licensors. You may view this public information for its intended purpose. No product
+        access, trademark right, or commercial licence is granted by visiting the site.
+      </p>
+      <p>
+        To the extent permitted by applicable law, the operator is not responsible for a decision
+        based on an unavailable, superseded, or third-party route. Nothing here excludes a right or
+        liability that applicable law does not allow the operator to exclude.
+      </p>
+    </section>
+
+    <section class="page-section" aria-labelledby="contact-title">
+      <p class="eyebrow">Questions</p>
+      <h2 id="contact-title">Contact the operator.</h2>
+      {
+        legal.privacyContact ? (
+          <p><a href={`mailto:${legal.privacyContact}`}>{legal.privacyContact}</a></p>
+        ) : (
+          <p>
+            No legal contact is published. This site is marked noindex and is not ready for public
+            publication.
+          </p>
+        )
+      }
+    </section>
+  </div>
+</SiteLayout>

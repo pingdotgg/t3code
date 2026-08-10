@@ -1,0 +1,104 @@
+---
+import PrimaryAction from "../components/PrimaryAction.astro";
+import Wordmark from "../components/Wordmark.astro";
+import { publicCapabilities } from "../lib/configuredCapabilities";
+import { navigation, site } from "../lib/site";
+import "../styles/global.css";
+
+interface Props {
+  readonly title?: string;
+  readonly description?: string;
+  readonly path?: string;
+}
+
+const {
+  title = site.title,
+  description = site.description,
+  path = Astro.url.pathname,
+} = Astro.props;
+const canonical = new URL(path, `${publicCapabilities.canonicalUrl}/`).toString();
+const robots = publicCapabilities.legal.publicationReady
+  ? "index,follow,max-image-preview:large"
+  : "noindex,nofollow";
+const schema = JSON.stringify({
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  name: site.name,
+  url: publicCapabilities.canonicalUrl,
+  description: site.description,
+}).replace(/</gu, "\\u003c");
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="theme-color" content="#172033" />
+    <meta name="description" content={description} />
+    <meta name="robots" content={robots} />
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content={site.name} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={`${publicCapabilities.canonicalUrl}/social-card.svg`} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <script type="application/ld+json" set:html={schema} is:inline></script>
+    <title>{title}</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    {
+      !publicCapabilities.legal.publicationReady && (
+        <div class="publication-notice" role="status">
+          Preview publication · legal details are incomplete · search indexing is disabled
+        </div>
+      )
+    }
+    <header class:list={["site-header", { "site-header--overlay": path === "/" }]}>
+      <a class="brand-link" href="/" aria-label="Auldric home">
+        <Wordmark />
+      </a>
+      <nav aria-label="Primary navigation">
+        <ul class="nav-list">
+          {
+            navigation.map((item) => (
+              <li>
+                <a href={item.href} aria-current={path === item.href ? "page" : undefined}>
+                  {item.label}
+                </a>
+              </li>
+            ))
+          }
+        </ul>
+      </nav>
+      <PrimaryAction class="button button--small" />
+    </header>
+
+    <main id="main-content">
+      <slot />
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-brand">
+        <Wordmark compact />
+        <p>Source-backed Marketing and Strategy. Product access is stated, never implied.</p>
+      </div>
+      <nav aria-label="Footer navigation">
+        <ul>
+          <li><a href="/access">Access</a></li>
+          <li><a href="/waitlist">Waitlist</a></li>
+          <li><a href="/download">Download</a></li>
+          <li><a href="/privacy">Privacy</a></li>
+          <li><a href="/terms">Terms</a></li>
+        </ul>
+      </nav>
+      <p class="footer-meta">© {new Date().getFullYear()} {publicCapabilities.legal.name ?? "Auldric"}</p>
+    </footer>
+  </body>
+</html>

@@ -43,6 +43,7 @@
   "classification": {
     "additiveMarketingRoots": [
       "apps/auldric-marketing/",
+      "apps/auldric-public/",
       "apps/auldric-site/",
       "apps/web/src/marketingRoute.test.tsx",
       "apps/web/src/productDomain.test.ts",
@@ -53,6 +54,7 @@
       "docs/auldric",
       "docs/_archive/auldric-runtime/",
       "docs/internals/identifier-ownership.md",
+      "docs/operations/auldric-public-site.md",
       "docs/user/product-identity.md",
       "scripts/auldric/check-legacy-donor-inventory.",
       "scripts/complete-feature-docs.",

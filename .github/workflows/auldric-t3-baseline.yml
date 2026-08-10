@@ -31,10 +31,17 @@ jobs:
           cache: true
           run-install: |
             args:
+              - --filter=@auldric/public...
               - --filter=@t3tools/scripts...
+              - --filter=@t3tools/web...
 
       - name: Test the baseline guard
         run: pnpm --dir scripts test auldric/check-t3-baseline.test.ts
 
       - name: Verify ancestry and classify downstream drift
         run: node scripts/auldric/check-t3-baseline.ts --fetch --run-declared-tests
+
+      - name: Verify the fail-closed Auldric public output
+        run: |
+          pnpm --dir apps/auldric-public typecheck
+          pnpm --dir apps/auldric-public build

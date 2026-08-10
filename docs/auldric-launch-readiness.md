@@ -2,9 +2,10 @@
 
 ## Honest status
 
-Auldric Marketing is not currently ready for a random user. This repository begins from native T3
-and the Marketing requirements spine; the Marketing domain, data stores, workflows, UI, public
-surface, and end-to-end proof remain implementation work.
+Auldric Marketing is not currently ready for a random user. The explicit Marketing route and a
+separate fail-closed public information surface now exist, but a usable authorized product service,
+data stores, workflows, in-product UI, operational access, and end-to-end proof remain implementation
+work.
 
 ## Production definition
 
@@ -37,8 +38,8 @@ failure recovery, and exact Dev payload/import invariance.
 | Final release proof       | #15                   | Complete two-user journey and unchanged native Dev proof                   |
 
 No gate is satisfied by legacy status, copied code, a static mock, or a generated preview. The
-current public app and native T3 functionality must not be presented as completed Auldric Marketing
-work.
+static Auldric information site and native T3 functionality must not be presented as completed
+Auldric Marketing product work.
 
 ## Verification rhythm
 

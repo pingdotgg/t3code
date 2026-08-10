@@ -1,0 +1,118 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+import { publicCapabilities } from "../lib/configuredCapabilities";
+
+const { access, waitlist, download, legal } = publicCapabilities;
+---
+
+<SiteLayout
+  title="Access and onboarding — Auldric"
+  description="The current verified state of Auldric product access, onboarding, waitlist, pricing, and downloads."
+  path="/access"
+>
+  <div class="page-shell">
+    <header class="page-intro">
+      <div>
+        <p class="eyebrow">Access</p>
+        <h1>Access, without guesswork.</h1>
+        <p class="page-intro__lead">
+          This page is the source of truth for what this site can actually offer. A page or button is
+          never treated as a product access right.
+        </p>
+      </div>
+      <div class="state-box">
+        <span class:list={["status-pill", { "status-pill--live": access.kind === "available" }]}>
+          {access.kind === "available" ? "Available" : "Unavailable"}
+        </span>
+        <h2>Product access</h2>
+        <p>
+          {
+            access.kind === "available"
+              ? "This site has a verified Auldric product destination. That destination remains responsible for sign-in and access checks."
+              : "No usable Auldric product service or public signup is available here."
+          }
+        </p>
+        {
+          access.kind === "available" && (
+            <a class="button button--primary" href={access.url} rel="noreferrer">
+              Open Auldric <span aria-hidden="true">↗</span>
+            </a>
+          )
+        }
+      </div>
+    </header>
+
+    <section class="page-section" aria-labelledby="routes-title">
+      <p class="eyebrow">Current routes</p>
+      <h2 id="routes-title">Every next step is explicit.</h2>
+      <div class="status-grid">
+        <article class="status-card">
+          <span class:list={["status-pill", { "status-pill--live": waitlist.kind === "open" }]}>
+            {waitlist.kind === "open" ? "Open" : "Closed"}
+          </span>
+          <h3>Waitlist</h3>
+          <p>
+            {
+              waitlist.kind === "open"
+                ? "A real endpoint and privacy terms are active. Submission still requires explicit consent."
+                : "No waitlist endpoint is active, so this site does not collect contact details."
+            }
+          </p>
+          <a href="/waitlist">See waitlist state</a>
+        </article>
+        <article class="status-card">
+          <span class:list={["status-pill", { "status-pill--live": download.kind === "available" }]}>
+            {download.kind === "available" ? "Verified" : "Unavailable"}
+          </span>
+          <h3>Desktop download</h3>
+          <p>
+            {
+              download.kind === "available"
+                ? "The published release record passed its file checksum check."
+                : "There is no verified Auldric desktop artifact in the release record."
+            }
+          </p>
+          <a href="/download">See download state</a>
+        </article>
+        <article class="status-card">
+          <span class="status-pill">Unpublished</span>
+          <h3>Commercial terms</h3>
+          <p>No public price, purchase flow, or eligibility threshold is published.</p>
+          <a href="/pricing">See pricing state</a>
+        </article>
+      </div>
+    </section>
+
+    <section class="page-section" aria-labelledby="onboarding-title">
+      <p class="eyebrow">Onboarding</p>
+      <h2 id="onboarding-title">What onboarding is designed to establish.</h2>
+      <p class="notice">
+        This is the target onboarding model, not a promise that onboarding is available in this
+        product service.
+      </p>
+      <ul class="check-list">
+        <li>Which business and Marketing workspace the work belongs to.</li>
+        <li>Which source material is approved, missing, or still under review.</li>
+        <li>Which decisions need an owner before strategy work continues.</li>
+        <li>Which Marketing Strategy or go-to-market output should be reviewed first.</li>
+      </ul>
+    </section>
+
+    <section class="page-section" aria-labelledby="help-title">
+      <p class="eyebrow">Recovery</p>
+      <h2 id="help-title">If a route is unavailable, stop there.</h2>
+      <p>
+        Auldric does not substitute a different product, infer an entitlement, or accept personal
+        details without a verified destination. Check this page again after the site operator
+        announces a change.
+      </p>
+      {
+        legal.privacyContact && (
+          <p>
+            Publication contact: <a href={`mailto:${legal.privacyContact}`}>{legal.privacyContact}</a>
+          </p>
+        )
+      }
+    </section>
+  </div>
+</SiteLayout>

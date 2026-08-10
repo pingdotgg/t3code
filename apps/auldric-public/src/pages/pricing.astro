@@ -1,0 +1,44 @@
+---
+import PrimaryAction from "../components/PrimaryAction.astro";
+import SiteLayout from "../layouts/SiteLayout.astro";
+---
+
+<SiteLayout
+  title="Pricing — Auldric"
+  description="The current publication state of Auldric pricing, payment, and access thresholds."
+  path="/pricing"
+>
+  <div class="page-shell">
+    <header class="page-intro">
+      <div>
+        <p class="eyebrow">Pricing</p>
+        <h1>No invented number.</h1>
+        <p class="page-intro__lead">
+          Auldric has no public price, checkout, or purchase offer on this site. Commercial
+          terms will appear here only after they are approved and operational.
+        </p>
+      </div>
+      <div class="state-box">
+        <span class="status-pill">Not published</span>
+        <h2>Commercial access</h2>
+        <p>No payment is being collected, and no plan or entitlement can be purchased here.</p>
+      </div>
+    </header>
+
+    <section class="page-section" aria-labelledby="threshold-title">
+      <p class="eyebrow">Access threshold</p>
+      <h2 id="threshold-title">There is no published eligibility threshold.</h2>
+      <p>
+        Company size, team size, usage limits, contract length, and support level are not defined as
+        a public offer. Until that changes, this site will not guess at a tier or route a visitor to
+        a payment flow.
+      </p>
+      <div class="page-actions">
+        <PrimaryAction />
+        <a class="button button--secondary" href="/access">
+          Read access status <span aria-hidden="true">→</span>
+        </a>
+      </div>
+    </section>
+  </div>
+</SiteLayout>

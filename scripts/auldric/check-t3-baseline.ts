@@ -8,6 +8,7 @@ import * as NodeURL from "node:url";
 const canonicalUpstreamRepository = "https://github.com/pingdotgg/t3code.git";
 const defaultConfigPath = ".auldric/t3-baseline.json";
 const declaredSharedCoreTests = new Map<string, ReadonlyArray<string>>([
+  ["pnpm --dir apps/auldric-public test", ["--dir", "apps/auldric-public", "test"]],
   [
     "pnpm --dir apps/web test src/productDomain.test.ts src/marketingRoute.test.tsx",
     ["--dir", "apps/web", "test", "src/productDomain.test.ts", "src/marketingRoute.test.tsx"],

@@ -1,0 +1,34 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+---
+
+<SiteLayout
+  title="Page not found — Auldric"
+  description="The requested Auldric public page could not be found."
+  path="/404"
+>
+  <div class="page-shell">
+    <header class="page-intro">
+      <div>
+        <p class="eyebrow">404 / Not found</p>
+        <h1>This route has no evidence.</h1>
+        <p class="page-intro__lead">
+          The address may be old or mistyped. No access, download, or signup state should be inferred
+          from a missing page.
+        </p>
+        <div class="page-actions">
+          <a class="button button--primary" href="/">
+            Return home <span aria-hidden="true">→</span>
+          </a>
+          <a class="button button--secondary" href="/access">
+            Check availability <span aria-hidden="true">→</span>
+          </a>
+        </div>
+      </div>
+      <div class="state-box">
+        <span class="status-pill">Safe recovery</span>
+        <p>Use the main navigation to return to a known public route.</p>
+      </div>
+    </header>
+  </div>
+</SiteLayout>

@@ -1,0 +1,111 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+import { publicCapabilities } from "../lib/configuredCapabilities";
+
+const { legal, waitlist } = publicCapabilities;
+---
+
+<SiteLayout
+  title="Privacy notice — Auldric"
+  description="Privacy information for the Auldric public website and its capability-gated waitlist."
+  path="/privacy"
+>
+  <div class="page-shell">
+    <header class="page-intro">
+      <div>
+        <p class="eyebrow">Privacy</p>
+        <p>Last reviewed: 10 August 2026</p>
+        <h1>Collect less. Explain more.</h1>
+        <p class="page-intro__lead">
+          This notice covers the public Auldric information site. Product data and account terms must
+          be provided by any separately published product service before access opens.
+        </p>
+      </div>
+      <div class="state-box">
+        <span class:list={["status-pill", { "status-pill--live": legal.publicationReady }]}>
+          {legal.publicationReady ? "Published" : "Incomplete"}
+        </span>
+        <h2>Publication details</h2>
+        <p>
+          {
+            legal.publicationReady
+              ? `${legal.name} is the named operator for this public site.`
+              : "The legal operator and contact are incomplete. This preview is marked noindex and cannot open its waitlist."
+          }
+        </p>
+      </div>
+    </header>
+
+    <section class="page-section" aria-labelledby="site-data-title">
+      <p class="eyebrow">Public site</p>
+      <h2 id="site-data-title">What this site does by default.</h2>
+      <ul class="check-list">
+        <li>No analytics or advertising pixels are included.</li>
+        <li>No account, authentication, or product-session cookie is created by this site.</li>
+        <li>No contact field is rendered while the waitlist capability is incomplete.</li>
+        <li>Ordinary hosting logs may still record requests under the website host's terms.</li>
+      </ul>
+    </section>
+
+    <section class="page-section" aria-labelledby="waitlist-data-title">
+      <p class="eyebrow">Waitlist</p>
+      <h2 id="waitlist-data-title">What happens when submissions are open.</h2>
+      {
+        waitlist.kind === "open" ? (
+          <div>
+            <p>
+              The form sends your email and recorded consent directly to the approved endpoint so
+              {waitlist.controller} can contact you about Auldric access. The request is retained for
+              at most {waitlist.retentionDays} days unless a separate access relationship begins.
+            </p>
+            <p>
+              To withdraw consent, request access, correction, or deletion, email
+              <a href={`mailto:${waitlist.privacyContact}`}>{waitlist.privacyContact}</a>.
+            </p>
+          </div>
+        ) : (
+          <p class="notice">
+            Waitlist submission is closed on this site. It does not ask for or save an email
+            address.
+          </p>
+        )
+      }
+    </section>
+
+    <section class="page-section" aria-labelledby="rights-title">
+      <p class="eyebrow">Purpose and rights</p>
+      <h2 id="rights-title">Consent stays under your control.</h2>
+      <p>
+        When the waitlist is open, consent is the basis for using the submitted email for Auldric
+        access updates. The operator may use contracted website and form-service providers only to
+        deliver this site and process that request. The email is not sold or used for advertising.
+      </p>
+      <p>
+        You may withdraw consent and request access, correction, restriction, portability, or
+        deletion through the published privacy contact. You may also complain to the data-protection
+        authority that applies in the published jurisdiction. Withdrawing consent does not affect
+        processing already completed lawfully.
+      </p>
+    </section>
+
+    <section class="page-section" aria-labelledby="contact-title">
+      <p class="eyebrow">Contact</p>
+      <h2 id="contact-title">Privacy contact</h2>
+      {
+        legal.name && legal.privacyContact && legal.postalAddress && legal.jurisdiction ? (
+          <p>
+            Controller: {legal.name}<br />
+            Address: {legal.postalAddress}<br />
+            Jurisdiction: {legal.jurisdiction}<br />
+            Email: <a href={`mailto:${legal.privacyContact}`}>{legal.privacyContact}</a>
+          </p>
+        ) : (
+          <p>
+            No legal operator or privacy contact is published. This site must remain a noindex
+            preview and cannot collect personal information.
+          </p>
+        )
+      }
+    </section>
+  </div>
+</SiteLayout>

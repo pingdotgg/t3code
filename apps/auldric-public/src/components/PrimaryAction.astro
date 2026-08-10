@@ -1,0 +1,16 @@
+---
+import { publicCapabilities } from "../lib/configuredCapabilities";
+
+interface Props {
+  readonly class?: string;
+}
+
+const { class: className = "button button--primary" } = Astro.props;
+const action = publicCapabilities.primaryAction;
+const external = action.href.startsWith("https://");
+---
+
+<a class={className} href={action.href} rel={external ? "noreferrer" : undefined}>
+  {action.label}
+  <span aria-hidden="true">↗</span>
+</a>

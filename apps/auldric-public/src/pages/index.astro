@@ -1,0 +1,83 @@
+---
+import AvailabilityPanel from "../components/AvailabilityPanel.astro";
+import PrimaryAction from "../components/PrimaryAction.astro";
+import SiteLayout from "../layouts/SiteLayout.astro";
+import { publicCapabilities } from "../lib/configuredCapabilities";
+import { site } from "../lib/site";
+
+const currentState =
+  publicCapabilities.access.kind === "available"
+    ? "A verified product destination is available from this site."
+    : publicCapabilities.waitlist.kind === "open"
+      ? "Product access is not open. The active waitlist is accepting consented requests."
+      : "Product access is not open, and this site is not collecting waitlist details.";
+---
+
+<SiteLayout path="/">
+  <section class="hero">
+    <div class="hero__grid">
+      <div>
+        <p class="eyebrow">Source-backed Marketing and Strategy</p>
+        <h1>{site.line}</h1>
+        <p class="hero__lead">
+          Auldric is a Marketing and Strategy workspace where business sources become evidence,
+          evidence becomes decisions, and decisions become reviewable next work.
+        </p>
+        <div class="hero__actions">
+          <PrimaryAction />
+          <a class="button button--secondary" href="/product">
+            See the product model <span aria-hidden="true">→</span>
+          </a>
+        </div>
+      </div>
+      <aside class="hero__aside" aria-label="Current product status">
+        <strong>Current state</strong>
+        <p>{currentState}</p>
+        <a href="/access">Read the full access status</a>
+      </aside>
+    </div>
+  </section>
+
+  <section class="content-section" aria-labelledby="workflow-title">
+    <div class="section-heading">
+      <p class="eyebrow">The product model</p>
+      <h2 id="workflow-title">Keep the reasoning attached to the work.</h2>
+    </div>
+    <div class="workflow-grid">
+      <article class="workflow-card">
+        <span class="workflow-card__number">01 / Sources</span>
+        <h3>Start with business context</h3>
+        <p>
+          Bring the material that should shape the work into one bounded Marketing and Strategy
+          context. Missing context stays visible.
+        </p>
+      </article>
+      <article class="workflow-card">
+        <span class="workflow-card__number">02 / Evidence</span>
+        <h3>Separate proof from assumption</h3>
+        <p>
+          Trace important claims to evidence, mark uncertainty plainly, and keep conflicts open for
+          review instead of smoothing them away.
+        </p>
+      </article>
+      <article class="workflow-card">
+        <span class="workflow-card__number">03 / Decisions</span>
+        <h3>Turn judgment into next work</h3>
+        <p>
+          Shape Marketing Strategy and go-to-market decisions into reviewable outputs, with gaps and
+          pending decisions still attached.
+        </p>
+      </article>
+    </div>
+  </section>
+
+  <section class="statement" aria-label="Auldric product boundary">
+    <blockquote>Good strategy should show its working.</blockquote>
+    <p>
+      Auldric is for Marketing and Strategy work. It is not a coding workbench, and it does not turn
+      weak evidence into confident claims.
+    </p>
+  </section>
+
+  <AvailabilityPanel />
+</SiteLayout>

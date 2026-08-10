@@ -15,6 +15,11 @@ Inside Marketing, Auldric owns the source library, Day 0 consultation, Marketing
 workflows, saved artifacts, revisions, evidence, decisions, reviews, and approved briefs handed to
 Dev. Auldric branding appears only in those Marketing surfaces and in Auldric's own public pages.
 
+The separate Auldric public site explains the Marketing and Strategy product and reports its
+current access state. It is not an account or product entitlement. A missing access, waitlist,
+price, legal, or verified-download capability is shown as unavailable rather than redirected to a
+T3 page or installer.
+
 An approved brief does not rename or take control of Dev. It gives the T3 coding agent a bounded,
 reviewed input, and the user still decides whether to execute it.
 

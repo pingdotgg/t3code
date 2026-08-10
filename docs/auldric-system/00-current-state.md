@@ -17,8 +17,9 @@ machine-verifiable baseline.
 - The explicit route-owned `dev | marketing` product-domain boundary selected by issue #4. Its
   lazy payload currently contains only the boundary proof; issue #21 owns the usable Marketing
   shell. Hosted static remains fail-closed until issue #6 supplies a verified environment actor.
-- The public app currently present at `apps/marketing`, which is T3 material and is not proof of an
-  approved Auldric public surface.
+- The T3 public app at `apps/marketing`, retained unchanged, and the separate fail-closed Auldric
+  information site at `apps/auldric-public`. The Auldric site defaults to noindex and exposes no
+  access, collection, price, or download without verified publication inputs.
 - This reviewed Marketing-domain authority and requirements spine.
 
 ## Capability status
@@ -32,7 +33,8 @@ machine-verifiable baseline.
 | Marketing continuity and immutable provenance       | #7, #11  | Not implemented                      |
 | Day 0, Marketing Strategy, GTM, and typed artifacts | #18, #19 | Not implemented                      |
 | Approved Marketing-to-Dev brief handoff             | #20      | Not implemented                      |
-| In-product Marketing UI and public Auldric surface  | #13, #27 | Not implemented or approved          |
+| In-product Marketing UI                             | #13      | Not implemented                      |
+| Public Auldric information/access-state surface     | #27      | Static site; capabilities gated      |
 
 Do not turn a target contract, donor document, mock, generated view, or completed legacy PR into a
 current-state claim. Capability becomes current only after its owning issue supplies implementation,
