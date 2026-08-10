@@ -1,5 +1,5 @@
 import type { ApprovalRequestId, UserInputQuestion } from "@t3tools/contracts";
-import { Pressable, ScrollView, useWindowDimensions, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { cn } from "../../lib/cn";
@@ -7,6 +7,7 @@ import type { PendingUserInput, PendingUserInputDraftAnswer } from "../../lib/th
 
 export interface PendingUserInputCardProps {
   readonly pendingUserInput: PendingUserInput;
+  readonly maxHeight: number;
   readonly drafts: Record<string, PendingUserInputDraftAnswer>;
   readonly answers: Record<string, string | ReadonlyArray<string>> | null;
   readonly respondingUserInputId: ApprovalRequestId | null;
@@ -24,16 +25,13 @@ export interface PendingUserInputCardProps {
 }
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
-  const { height: windowHeight } = useWindowDimensions();
-  const maxHeight = Math.max(180, Math.min(560, Math.floor(windowHeight * 0.62)));
-
   // The surface is opaque on purpose: the card floats over the thread feed
   // with no blur behind it, so a translucent background renders the questions
   // on top of whatever message happens to sit underneath.
   return (
     <View
-      className="gap-2.5 rounded-[20px] border border-neutral-200 bg-neutral-100 p-4 dark:border-white/6 dark:bg-neutral-900"
-      style={{ maxHeight }}
+      className="overflow-hidden gap-2.5 rounded-[20px] border border-neutral-200 bg-neutral-100 p-4 dark:border-white/6 dark:bg-neutral-900"
+      style={{ maxHeight: props.maxHeight }}
     >
       <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-sky-700 dark:text-sky-300">
         User input needed
