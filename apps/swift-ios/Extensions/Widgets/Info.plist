@@ -4,6 +4,8 @@
 <dict>
 	<key>CFBundleDisplayName</key>
 	<string>$(T3CODE_WIDGET_DISPLAY_NAME)</string>
+	<key>T3CodeAppGroupIdentifier</key>
+	<string>$(T3CODE_APP_GROUP_IDENTIFIER)</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionPointIdentifier</key>

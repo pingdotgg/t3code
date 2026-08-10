@@ -40,6 +40,8 @@
     <string>$(T3CODE_CLERK_PUBLISHABLE_KEY)</string>
     <key>T3ConnectRelayHTTPURL</key>
     <string>$(T3CODE_RELAY_URL)</string>
+    <key>T3CodeAppGroupIdentifier</key>
+    <string>$(T3CODE_APP_GROUP_IDENTIFIER)</string>
     <key>UIBackgroundModes</key>
     <array>
         <string>fetch</string>
