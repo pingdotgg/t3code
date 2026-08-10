@@ -47,6 +47,11 @@ Use **Inspect** to pick an element in the app and reveal its color token. Inspec
 successful pick; its hover glow and badge preview the element and token that click will select.
 **Cancel** or `Escape` exits Inspect and clears its selection and spotlight.
 
+`chat.interrupt` stops the active thread's running turn, same as the composer's stop button. It
+ships without a default shortcut; bind one in **Settings** → **Keybindings**. The shortcut only
+takes effect while a turn is running, so a key you bind keeps its normal behavior the rest of the
+time.
+
 The command palette searches active thread titles, projects, branches, user messages, and final
 agent responses across connected environments. Message matches show one labeled excerpt while
 keeping the thread's project, branch, and machine context visible. Message search begins after two
