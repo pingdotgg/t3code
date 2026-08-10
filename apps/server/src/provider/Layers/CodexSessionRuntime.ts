@@ -610,12 +610,12 @@ function readRouteFields(notification: CodexServerNotification): {
  * synthetic `collabAgent/*` provider events the adapter turns into task.*
  * runtime events (timelineBypass keeps them out of the parent chat).
  *
- * WIP, probe-gated: registration is deliberately explicit-signals-only. The
- * spec's "provisionally treat unknown foreign thread ids as v2 children" rule
- * needs a live wire capture of the packaged binary before it lands — blind
- * capture risks eating unrelated traffic. Until then a child whose first
- * notification precedes registration passes through as today (no regression
- * vs main, which passes everything through).
+ * Child identity is normally explicit, but some Codex builds emit a
+ * `collabAgentToolCall` with receiver thread ids and then immediately stream
+ * child notifications without a `thread/started` or `subAgentActivity` row.
+ * Unknown foreign thread ids are therefore provisionally registered once the
+ * root thread is known. Parent-owned methods still use the routing table and
+ * are allowed through; child chatter never reaches parent-timeline mapping.
  */
 interface CollabChildAgentState {
   readonly agentThreadId: string;
@@ -631,6 +631,16 @@ interface CollabChildAgentState {
    * "direct:no-turn" CTA (review finding).
    */
   readonly spawnTurnId: TurnId | undefined;
+}
+
+interface CollabChildRegistrationInput {
+  readonly agentThreadId: string;
+  readonly nickname?: string | undefined;
+  readonly role?: string | undefined;
+  readonly agentPath?: string | undefined;
+  readonly depth?: number | undefined;
+  readonly parentThreadId?: string | undefined;
+  readonly spawnTurnId?: TurnId | undefined;
 }
 
 function readThreadSpawnSource(thread: { readonly source: unknown }):
@@ -663,6 +673,75 @@ function readThreadSpawnSource(thread: { readonly source: unknown }):
     parentThreadId:
       typeof record.parent_thread_id === "string" ? record.parent_thread_id : undefined,
   };
+}
+
+function readCollabPromptNickname(prompt: string | null | undefined): string | undefined {
+  if (!prompt) {
+    return undefined;
+  }
+  const firstLine = prompt.trim().split(/\r?\n/, 1)[0]?.trim();
+  if (!firstLine) {
+    return undefined;
+  }
+  const match = firstLine.match(/^You are (?:the )?(.+?)(?:\s+for\s+|[.!?](?:\s|$))/i);
+  const nickname = match?.[1]?.trim();
+  return nickname && nickname.length <= 120 ? nickname : undefined;
+}
+
+function coordinatorNameCandidate(value: string): string | undefined {
+  const name = value.replaceAll(/[*`_]/g, "").trim();
+  return /^(?:[A-Z][A-Za-z0-9_-]{1,40})(?:\s+[A-Z][A-Za-z0-9_-]{1,40}){0,4}$/.test(name)
+    ? name
+    : undefined;
+}
+
+/**
+ * Reads explicit agent names from a coordinator-authored status or summary.
+ * Codex's direct collab wire sometimes carries only receiver UUIDs; when the
+ * coordinator later says "Halley, Banach, and Parfit" or writes
+ * "- Halley: ...", the names can still be joined to the current spawn batch.
+ */
+export function readCoordinatorAgentNames(text: string): ReadonlyArray<string> {
+  const names: string[] = [];
+  const add = (value: string) => {
+    const name = coordinatorNameCandidate(value);
+    if (name && !names.includes(name)) {
+      names.push(name);
+    }
+  };
+  let readingAgentBulletList = false;
+
+  for (const line of text.split(/\r?\n/)) {
+    const agentHeader = /\b(?:agents?|sub[- ]?agents?)\b[^:]{0,100}:/i.test(line);
+    if (agentHeader) {
+      readingAgentBulletList = true;
+    }
+
+    const agentList = line.match(/\b(?:agents?|sub[- ]?agents?)\b[^:]{0,100}:\s*(.+)$/i)?.[1];
+    if (agentList) {
+      const sentence = agentList.split(/[.!?](?:\s|$)/, 1)[0] ?? agentList;
+      for (const candidate of sentence.split(/\s*(?:,|\band\b)\s*/i)) {
+        add(candidate);
+      }
+    }
+
+    const bullet = line.match(/^\s*(?:[-*]|\d+[.)])\s+(?:\*\*)?([^\n]+?)(?:\*\*)?\s*$/)?.[1];
+    if (readingAgentBulletList && bullet) {
+      add(bullet.replace(/\s*:.*/, ""));
+      continue;
+    }
+
+    if (readingAgentBulletList && !agentHeader && line.trim().length > 0) {
+      readingAgentBulletList = false;
+    }
+
+    const bulletName = line.match(/^\s*(?:[-*]|\d+[.)])\s+(?:\*\*)?([^:*\n]+?)(?:\*\*)?\s*:/)?.[1];
+    if (bulletName) {
+      add(bulletName);
+    }
+  }
+
+  return names;
 }
 
 function rememberCollabReceiverTurns(
@@ -741,8 +820,10 @@ const CHILD_CHATTER_METHODS: ReadonlySet<string> = new Set([
   "item/reasoning/summaryTextDelta",
   "item/reasoning/summaryPartAdded",
   "item/commandExecution/outputDelta",
+  "item/commandExecution/terminalInteraction",
   "item/fileChange/outputDelta",
   "item/fileChange/patchUpdated",
+  "item/mcpToolCall/progress",
   "item/plan/delta",
   "turn/plan/updated",
   "turn/diff/updated",
@@ -973,6 +1054,112 @@ export const makeCodexSessionRuntime = (
         ),
       );
 
+    const emitCollabAgentStarted = (state: CollabChildAgentState) =>
+      emitEvent({
+        kind: "notification",
+        threadId: options.threadId,
+        ...(state.spawnTurnId ? { turnId: state.spawnTurnId } : {}),
+        method: "collabAgent/started",
+        payload: {
+          agentThreadId: state.agentThreadId,
+          ...(state.nickname ? { nickname: state.nickname } : {}),
+          ...(state.role ? { role: state.role } : {}),
+          ...(state.agentPath ? { agentPath: state.agentPath } : {}),
+          ...(state.depth !== undefined ? { depth: state.depth } : {}),
+          ...(state.parentThreadId ? { parentThreadId: state.parentThreadId } : {}),
+        },
+      });
+
+    const emitCollabAgentStatusChanged = (
+      state: CollabChildAgentState,
+      status:
+        | { readonly type: "active"; readonly activeFlags: ReadonlyArray<string> }
+        | { readonly type: "idle" }
+        | { readonly type: "systemError" },
+    ) =>
+      emitEvent({
+        kind: "notification",
+        threadId: options.threadId,
+        ...(state.spawnTurnId ? { turnId: state.spawnTurnId } : {}),
+        method: "collabAgent/statusChanged",
+        payload: {
+          agentThreadId: state.agentThreadId,
+          ...(state.nickname ? { nickname: state.nickname } : {}),
+          ...(state.role ? { role: state.role } : {}),
+          ...(state.agentPath ? { agentPath: state.agentPath } : {}),
+          status,
+        },
+      });
+
+    const emitCollabAgentRenamed = (state: CollabChildAgentState) =>
+      emitEvent({
+        kind: "notification",
+        threadId: options.threadId,
+        ...(state.spawnTurnId ? { turnId: state.spawnTurnId } : {}),
+        method: "collabAgent/renamed",
+        payload: {
+          agentThreadId: state.agentThreadId,
+          ...(state.nickname ? { nickname: state.nickname } : {}),
+        },
+      });
+
+    const registerCollabChild = (input: CollabChildRegistrationInput) =>
+      Effect.gen(function* () {
+        const existing = (yield* Ref.get(collabChildAgentsRef)).get(input.agentThreadId);
+        const session = yield* Ref.get(sessionRef);
+        const state: CollabChildAgentState = {
+          agentThreadId: input.agentThreadId,
+          nickname: input.nickname ?? existing?.nickname,
+          role: input.role ?? existing?.role,
+          agentPath: input.agentPath ?? existing?.agentPath,
+          depth: input.depth ?? existing?.depth,
+          parentThreadId: input.parentThreadId ?? existing?.parentThreadId,
+          // Registration-time-only: a late metadata signal must not attach
+          // an old child to an unrelated parent turn.
+          spawnTurnId: existing
+            ? (existing.spawnTurnId ?? input.spawnTurnId)
+            : (input.spawnTurnId ?? session.activeTurnId ?? undefined),
+        };
+        yield* Ref.update(collabChildAgentsRef, (current) => {
+          const next = new Map(current);
+          next.set(state.agentThreadId, state);
+          return next;
+        });
+        if (!existing) {
+          yield* emitCollabAgentStarted(state);
+        }
+        return state;
+      });
+
+    const applyCoordinatorAgentNames = (
+      names: ReadonlyArray<string>,
+      parentTurnId: TurnId | undefined,
+    ) =>
+      Effect.gen(function* () {
+        if (!parentTurnId || names.length === 0) {
+          return;
+        }
+        const renamed = yield* Ref.modify(collabChildAgentsRef, (current) => {
+          const candidates = Array.from(current.values()).filter(
+            (state) => state.spawnTurnId === parentTurnId,
+          );
+          if (candidates.length !== names.length) {
+            const noUpdates: CollabChildAgentState[] = [];
+            return [noUpdates, current] as const;
+          }
+          const next = new Map(current);
+          const updates: CollabChildAgentState[] = candidates.map((state, index) => {
+            const updated = { ...state, nickname: names[index] };
+            next.set(updated.agentThreadId, updated);
+            return updated;
+          });
+          return [updates, next] as const;
+        });
+        for (const state of renamed) {
+          yield* emitCollabAgentRenamed(state);
+        }
+      });
+
     /**
      * Registers v2 collab children and re-emits their notifications as
      * synthetic `collabAgent/*` events for the adapter's task.* synthesis.
@@ -989,47 +1176,92 @@ export const makeCodexSessionRuntime = (
           if (!spawn) {
             return false;
           }
-          // Merge with any subAgentActivity registration that got here
-          // first. spawnTurnId is REGISTRATION-time-only on both paths: for
-          // an already-known child we keep its value (set or unset) — a
-          // later thread/started during an unrelated parent turn must not
-          // backfill that turn as the spawn batch, which would stamp an old
-          // child onto a new fleet's CTA (review finding). Only a genuinely
-          // new registration captures the current turn.
-          const existingChild = (yield* Ref.get(collabChildAgentsRef)).get(thread.id);
-          const spawnTurnId = existingChild
-            ? existingChild.spawnTurnId
-            : ((yield* Ref.get(sessionRef)).activeTurnId ?? undefined);
-          const state: CollabChildAgentState = {
+          // Merge with any provisional/subAgentActivity registration that got
+          // here first. The helper keeps spawnTurnId registration-scoped and
+          // emits a start row only for a genuinely new child.
+          yield* registerCollabChild({
             agentThreadId: thread.id,
-            nickname: spawn.nickname ?? thread.agentNickname ?? existingChild?.nickname,
-            role: spawn.role ?? thread.agentRole ?? existingChild?.role,
-            agentPath: spawn.agentPath ?? existingChild?.agentPath,
-            depth: spawn.depth ?? existingChild?.depth,
-            parentThreadId:
-              spawn.parentThreadId ?? thread.parentThreadId ?? existingChild?.parentThreadId,
-            spawnTurnId,
-          };
-          yield* Ref.update(collabChildAgentsRef, (current) => {
-            const next = new Map(current);
-            next.set(thread.id, state);
-            return next;
-          });
-          yield* emitEvent({
-            kind: "notification",
-            threadId: options.threadId,
-            method: "collabAgent/started",
-            ...(state.spawnTurnId ? { turnId: state.spawnTurnId } : {}),
-            payload: {
-              agentThreadId: state.agentThreadId,
-              ...(state.nickname ? { nickname: state.nickname } : {}),
-              ...(state.role ? { role: state.role } : {}),
-              ...(state.agentPath ? { agentPath: state.agentPath } : {}),
-              ...(state.depth !== undefined ? { depth: state.depth } : {}),
-              ...(state.parentThreadId ? { parentThreadId: state.parentThreadId } : {}),
-            },
+            nickname: spawn.nickname ?? thread.agentNickname ?? undefined,
+            role: spawn.role ?? thread.agentRole ?? undefined,
+            agentPath: spawn.agentPath,
+            depth: spawn.depth,
+            parentThreadId: spawn.parentThreadId ?? thread.parentThreadId ?? undefined,
           });
           return true;
+        }
+
+        // Registration path 2b: newer Codex builds expose the child ids on
+        // the parent-side collabAgentToolCall, then stream the child thread
+        // directly without a thread/started or subAgentActivity row. Keep
+        // the parent tool item visible, but make every receiver a known
+        // child before its conversation can be mapped.
+        if (
+          (notification.method === "item/started" || notification.method === "item/completed") &&
+          notification.params.item.type === "collabAgentToolCall"
+        ) {
+          const item = notification.params.item;
+          const rootProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
+          const senderIsChild =
+            rootProviderThreadId !== undefined && item.senderThreadId !== rootProviderThreadId;
+          for (const receiverThreadId of item.receiverThreadIds) {
+            if (!receiverThreadId || receiverThreadId === rootProviderThreadId) {
+              continue;
+            }
+            const child = yield* registerCollabChild({
+              agentThreadId: receiverThreadId,
+              nickname:
+                item.tool === "spawnAgent" ? readCollabPromptNickname(item.prompt) : undefined,
+              parentThreadId: senderIsChild ? item.senderThreadId : undefined,
+              spawnTurnId: TurnId.make(notification.params.turnId),
+            });
+
+            // `agentsStates` is the only terminal signal emitted by some
+            // Codex builds: the child may finish with a final agentMessage
+            // but never send its own turn/completed/status notification.
+            // Fold that state into the same synthetic lifecycle used by the
+            // explicit child-thread path so the Agents panel does not stay
+            // permanently in "working".
+            const agentStatus = item.agentsStates[receiverThreadId]?.status;
+            if (agentStatus === "pendingInit" || agentStatus === "running") {
+              yield* emitCollabAgentStatusChanged(child, {
+                type: "active",
+                activeFlags: [],
+              });
+            } else if (
+              agentStatus === "completed" ||
+              agentStatus === "interrupted" ||
+              agentStatus === "shutdown"
+            ) {
+              yield* emitCollabAgentStatusChanged(child, { type: "idle" });
+            } else if (agentStatus === "errored" || agentStatus === "notFound") {
+              yield* emitCollabAgentStatusChanged(child, { type: "systemError" });
+            }
+          }
+          // A collab tool call owned by a child is itself child chatter. A
+          // root-owned call remains on the parent timeline for context.
+          return senderIsChild;
+        }
+
+        // Some direct-collab Codex builds expose only receiver UUIDs at spawn
+        // time. If the parent later explicitly names the fleet in a completed
+        // assistant message, attach those names to the children from the same
+        // parent turn before the message reaches the normal parent mapper.
+        if (
+          notification.method === "item/completed" &&
+          notification.params.item.type === "agentMessage"
+        ) {
+          const text = notification.params.item.text;
+          if (typeof text === "string") {
+            // The name summary is parent-authored in normal Codex traffic,
+            // but some app-server fixtures/builds use a logical root id that
+            // differs from the thread id returned by thread/start. Matching
+            // only the exact spawn-turn batch keeps this safe for child final
+            // answers while avoiding a brittle root-id comparison.
+            yield* applyCoordinatorAgentNames(
+              readCoordinatorAgentNames(text),
+              TurnId.make(notification.params.turnId),
+            );
+          }
         }
 
         // Registration path 2: parent-side subAgentActivity item names the
@@ -1104,10 +1336,24 @@ export const makeCodexSessionRuntime = (
         if (providerConversationId === interceptRootId) {
           return false;
         }
-        const children = yield* Ref.get(collabChildAgentsRef);
-        const child = children.get(providerConversationId);
+        const foreignConversation =
+          interceptRootId !== undefined && providerConversationId !== interceptRootId;
+        let child = (yield* Ref.get(collabChildAgentsRef)).get(providerConversationId);
         if (!child) {
-          return false;
+          // A few Codex versions omit both child registration signals and
+          // only expose the foreign thread id on its first notification. The
+          // root/foreign distinction is strong enough here: a provider
+          // session's non-root conversation is a collab child. Register it
+          // provisionally so chatter can be dropped and lifecycle can still
+          // populate the Agents surface. Parent-owned methods deliberately
+          // remain on the parent path.
+          if (
+            !foreignConversation ||
+            routeCodexChildNotification(notification.method) === "parent"
+          ) {
+            return false;
+          }
+          child = yield* registerCollabChild({ agentThreadId: providerConversationId });
         }
         const childIdentity = {
           agentThreadId: child.agentThreadId,
@@ -1190,6 +1436,17 @@ export const makeCodexSessionRuntime = (
                 item: notification.params.item,
               },
             });
+            if (
+              notification.method === "item/completed" &&
+              notification.params.item.type === "agentMessage" &&
+              notification.params.item.phase === "final_answer"
+            ) {
+              // The child final answer is consumed by Codex's parent model;
+              // it is not parent-chat content. Some versions omit the child
+              // turn/status lifecycle, so this terminal item must also mark
+              // the corresponding Agents row idle.
+              yield* emitCollabAgentStatusChanged(child, { type: "idle" });
+            }
             return true;
           case "thread/closed":
             // The child is gone: drop its live-turn entry so a later Stop

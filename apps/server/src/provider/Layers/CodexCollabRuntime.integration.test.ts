@@ -70,10 +70,150 @@ function buildScript() {
   };
 }
 
+function buildDirectChildScript() {
+  const rootTurnId = "019fcfd6-1806-7de1-8564-de69fd55bffb";
+  const childTurnId = `${CHILD_A}-direct-turn`;
+  const childItemId = `${CHILD_A}-direct-message`;
+  return {
+    rootThreadId: ROOT,
+    notifications: [
+      {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: rootTurnId,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_direct_spawn",
+            tool: "spawnAgent",
+            status: "completed",
+            senderThreadId: ROOT,
+            receiverThreadIds: [CHILD_A],
+            prompt: "Return one concise result.",
+            agentsStates: {
+              [CHILD_A]: { status: "pendingInit", message: null },
+            },
+          },
+          completedAtMs: 1785898350000,
+        },
+      },
+      {
+        method: "item/started",
+        params: {
+          threadId: CHILD_A,
+          turnId: childTurnId,
+          item: { type: "agentMessage", id: childItemId, text: "" },
+        },
+      },
+      {
+        method: "item/agentMessage/delta",
+        params: {
+          threadId: CHILD_A,
+          turnId: childTurnId,
+          itemId: childItemId,
+          delta: "child narration must not enter the parent transcript",
+        },
+      },
+      {
+        method: "item/completed",
+        params: {
+          threadId: CHILD_A,
+          turnId: childTurnId,
+          completedAtMs: 1785898350000,
+          item: {
+            type: "agentMessage",
+            id: childItemId,
+            phase: "final_answer",
+            text: "child result is consumed by the parent model",
+          },
+        },
+      },
+      {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: rootTurnId,
+          item: {
+            type: "agentMessage",
+            id: "root-summary",
+            phase: "final_answer",
+            text: "The agent completed:\n- Direct Child Researcher: returned one concise result.",
+          },
+          completedAtMs: 1785898350000,
+        },
+      },
+    ],
+  };
+}
+
 const scriptPath = NodePath.join(import.meta.dirname, "../testFixtures/.collab-script.json");
 const peerPath = NodePath.join(import.meta.dirname, "../testFixtures/codexCollabMockPeer.sh");
 
 describe("CodexSessionRuntime collab integration", () => {
+  it.effect("registers receiver ids and keeps child narration out of the parent stream", () =>
+    Effect.gen(function* () {
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(buildDirectChildScript()), "utf8");
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-direct-child"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      const eventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.method === "turn/completed"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "direct child" });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const methods = events.map((event) => event.method);
+      assert.include(methods, "collabAgent/started");
+      assert.include(methods, "collabAgent/item");
+      assert.include(methods, "collabAgent/statusChanged");
+      assert.include(methods, "collabAgent/renamed");
+      assert.include(methods, "turn/completed");
+      assert.notInclude(methods, "item/agentMessage/delta");
+      const started = events.find((event) => event.method === "collabAgent/started");
+      assert.isUndefined((started?.payload as { nickname?: string } | undefined)?.nickname);
+      const renamed = events.find((event) => event.method === "collabAgent/renamed");
+      assert.equal(
+        (renamed?.payload as { nickname?: string } | undefined)?.nickname,
+        "Direct Child Researcher",
+      );
+      const statusChanged = events.find(
+        (event) =>
+          event.method === "collabAgent/statusChanged" &&
+          (event.payload as { status?: { type?: string } } | undefined)?.status?.type === "idle",
+      );
+      assert.deepEqual((statusChanged?.payload as { status?: unknown } | undefined)?.status, {
+        type: "idle",
+      });
+
+      const leakedChildEvents = events.filter((event) => {
+        if (event.method === "item/agentMessage/delta") return true;
+        const payload = event.payload as { threadId?: string } | undefined;
+        return payload?.threadId === CHILD_A;
+      });
+      assert.deepEqual(
+        leakedChildEvents.map((event) => event.method),
+        [],
+        "child notifications must not be emitted as parent-timeline events",
+      );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("replays the captured fan-out into synthetic agent events without child leaks", () =>
     Effect.gen(function* () {
       // @effect-diagnostics-next-line preferSchemaOverJson:off
