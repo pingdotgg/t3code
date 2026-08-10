@@ -31,7 +31,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { collectStreamAsString } from "./providerSnapshot.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const OPENCODE_EMPTY_CONFIG_CONTENT = "{}";
 
@@ -279,7 +279,10 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
   const netService = yield* NetService.NetService;
   const hostPlatform = yield* HostProcessPlatform;
   const resolveCommand = (command: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
-    resolveSpawnCommand(command, args, env ? { env } : {});
+    Effect.gen(function* () {
+      const resolvedCommand = yield* resolveCommandPath(command, env ? { env } : {});
+      return yield* resolveSpawnCommand(resolvedCommand, args, env ? { env } : {});
+    });
 
   const runOpenCodeCommand: OpenCodeRuntimeShape["runOpenCodeCommand"] = (input) =>
     Effect.gen(function* () {
