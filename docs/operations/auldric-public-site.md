@@ -66,8 +66,10 @@ Before enabling it, verify that the endpoint:
 - supports access, correction, withdrawal, and deletion through the published privacy contact;
 - never imports donor waitlist rows or treats a submission as product access.
 
-The public form sends no cookies or credentials. A failed request stays failed and shows a retry
-message; the page never presents a synthetic success state.
+The controls remain disabled until the page enhancement has registered its submit handler. Without
+JavaScript, no email can be entered or sent and the form cannot make a native cross-origin request.
+The enhanced request sends no cookies or credentials. A failed request stays failed and shows a
+retry message; the page never presents a synthetic success state.
 
 ## Optional verified download
 
@@ -89,11 +91,13 @@ Downloads require complete publication inputs and are controlled by the checked-
 An environment variable cannot add a URL, filename, version, platform, or checksum. A missing,
 unselected, unreachable, redirected-to-error, or hash-mismatched record fails closed. Never use a
 T3 installer, donor binary, unreviewed repository tag, or a generic “latest release” lookup.
+The release tag must exactly match the recorded semantic version. Redirects are bounded to five and
+each destination is validated as default-port HTTPS GitHub release storage before it is requested.
 
 ## Deploy and roll back
 
 Publish only `apps/auldric-public/dist` to the Auldric public origin. Preserve `404.html`,
-`robots.txt`, `sitemap.xml`, the `_astro` asset directory, and the root SVG assets. Configure the
+`robots.txt`, `sitemap.xml`, the `_astro` asset directory, and the root image assets. Configure the
 host to use `404.html` for unknown paths; do not rewrite unknown paths to a product or T3 route.
 
 Rollback is the prior static output plus its prior build-time inputs. It must not modify

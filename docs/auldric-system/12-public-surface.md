@@ -43,7 +43,8 @@ The static application implements:
 - an unpublished pricing and eligibility state with no checkout or payment collection;
 - a consent-gated waitlist route;
 - a verified-release-gated download route;
-- privacy, terms, canonical metadata, social metadata, crawler policy, sitemap, and 404 recovery;
+- privacy, terms, canonical metadata, raster social metadata, crawler policy, sitemap, and 404
+  recovery;
 - keyboard focus, skip navigation, semantic landmarks and headings, labelled form controls,
   responsive layout, and reduced-motion treatment.
 
@@ -52,25 +53,27 @@ cookies, contact form, price, checkout, access destination, or download.
 
 ## Capability gates
 
-| Capability          | Opens only when                                                                                        | Missing or invalid state                              |
-| ------------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
-| Public publication  | Exact HTTPS Auldric site URL, legal name, address, jurisdiction, and privacy contact are supplied      | `noindex,nofollow`; crawler-wide `Disallow: /`        |
-| Product access      | Publication is ready, status is `available`, and HTTPS uses a separate `auldric.com` origin            | Access unavailable; `/access` remains the primary CTA |
-| Waitlist            | Publication is ready, status is `open`, retention is 1–730 days, and a real HTTPS endpoint is supplied | No form or email field is rendered                    |
-| Desktop download    | Publication is ready, status selects a reviewed release, and the build fetches and hashes its bytes    | No release link is rendered                           |
-| Pricing and payment | A separately approved commercial offer is implemented                                                  | Terms unpublished; no checkout or payment             |
+| Capability          | Opens only when                                                                                            | Missing or invalid state                              |
+| ------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Public publication  | Exact HTTPS Auldric site URL, legal name, address, jurisdiction, and privacy contact are supplied          | `noindex,nofollow`; crawler-wide `Disallow: /`        |
+| Product access      | Publication is ready, status is `available`, and HTTPS uses a separate `auldric.com` origin                | Access unavailable; `/access` remains the primary CTA |
+| Waitlist            | Publication is ready, status is `open`, retention is 1–730 days, and a reviewed HTTPS endpoint is supplied | No form or email field is rendered                    |
+| Desktop download    | Publication is ready, status selects a reviewed release, and the build fetches and hashes its bytes        | No release link is rendered                           |
+| Pricing and payment | A separately approved commercial offer is implemented                                                      | Terms unpublished; no checkout or payment             |
 
 Waitlist submission requires the visible consent checkbox and sends the reviewed consent version.
-The enhanced request omits credentials, rejects redirects, treats only a successful HTTP response
-as receipt, and preserves the entered value for recovery after failure. Enabling the route does not
-provide persistence: the deployment owner must configure and operate the named endpoint under the
-published privacy terms.
+The controls remain disabled until the enhancement has registered its handler, so a missing or
+blocked script cannot make a native cross-origin submission. The enhanced request omits credentials,
+rejects redirects, treats only a successful HTTP response as receipt, and preserves the entered
+value for recovery after failure. Enabling the route does not provide persistence: the deployment
+owner must configure and operate the named endpoint under the published privacy terms.
 
 Download configuration cannot supply an arbitrary URL or checksum. A release must first be entered
 in `src/content/verified-releases.json` with an exact `AuldricAI/auldrics` GitHub release URL,
 filename, version, platform, and SHA-256. Every public build fetches each recorded file and fails if
-the response or digest does not match. The record is empty at issue #27 completion, so downloads are
-unavailable.
+the response or digest does not match. Redirects are followed manually: every destination must be
+validated as default-port HTTPS GitHub release storage before the next request, and more than five
+hops fails the build. The record is empty at issue #27 completion, so downloads are unavailable.
 
 ## Claim boundary
 

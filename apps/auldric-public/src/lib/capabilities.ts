@@ -100,8 +100,37 @@ function isSafeAccessPath(url: URL): boolean {
 }
 
 function parseEmail(value: string | undefined): string | undefined {
-  const candidate = clean(value)?.toLowerCase();
-  return candidate && /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(candidate) ? candidate : undefined;
+  const candidate = clean(value);
+  if (!candidate || candidate.length > 254 || !/^[\x21-\x7e]+$/u.test(candidate)) return undefined;
+
+  const parts = candidate.split("@");
+  if (parts.length !== 2) return undefined;
+  const [local = "", domain = ""] = parts;
+  if (
+    local.length === 0 ||
+    local.length > 64 ||
+    local.startsWith(".") ||
+    local.endsWith(".") ||
+    local.includes("..") ||
+    !/^[A-Za-z0-9._+-]+$/u.test(local)
+  ) {
+    return undefined;
+  }
+
+  const labels = domain.toLowerCase().split(".");
+  const validLabel = (label: string): boolean =>
+    label.length >= 1 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(label);
+  const topLevelDomain = labels.at(-1) ?? "";
+  if (
+    domain.length > 253 ||
+    labels.length < 2 ||
+    !labels.every(validLabel) ||
+    !/^(?:[a-z]{2,63}|xn--[a-z0-9-]{2,59})$/u.test(topLevelDomain)
+  ) {
+    return undefined;
+  }
+
+  return `${local}@${labels.join(".")}`;
 }
 
 function parseLegalText(value: string | undefined): string | undefined {
@@ -236,7 +265,14 @@ function resolveDownload(
   const sha256 = clean(artifact?.sha256)?.toLowerCase();
   const expectedPrefix = "/AuldricAI/auldrics/releases/download/";
   const releasePathParts = url?.pathname.slice(expectedPrefix.length).split("/") ?? [];
-  const pathFileName = url ? decodeURIComponent(url.pathname.split("/").at(-1) ?? "") : "";
+  let pathFileName = "";
+  try {
+    pathFileName = url ? decodeURIComponent(url.pathname.split("/").at(-1) ?? "") : "";
+  } catch {
+    return { kind: "unavailable" };
+  }
+  const normalizedVersion = version?.startsWith("v") ? version.slice(1) : version;
+  const releaseTag = releasePathParts[0];
 
   if (
     !url ||
@@ -253,6 +289,7 @@ function resolveDownload(
     !(platformKey in downloadPlatforms) ||
     !version ||
     !/^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(version) ||
+    (releaseTag !== normalizedVersion && releaseTag !== `v${normalizedVersion}`) ||
     !sha256 ||
     !/^[a-f0-9]{64}$/u.test(sha256)
   ) {

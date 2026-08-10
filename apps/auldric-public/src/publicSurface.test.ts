@@ -22,6 +22,30 @@ function walk(root: string): ReadonlyArray<string> {
   });
 }
 
+function relativeLuminance(hex: string): number {
+  const channels = hex
+    .match(/[0-9a-f]{2}/giu)
+    ?.map((channel) => Number.parseInt(channel, 16) / 255)
+    .map((channel) => (channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4));
+  if (!channels || channels.length !== 3) throw new Error(`Invalid hex color ${hex}`);
+  return 0.2126 * channels[0]! + 0.7152 * channels[1]! + 0.0722 * channels[2]!;
+}
+
+function contrastRatio(first: string, second: string): number {
+  const firstLuminance = relativeLuminance(first);
+  const secondLuminance = relativeLuminance(second);
+  return (
+    (Math.max(firstLuminance, secondLuminance) + 0.05) /
+    (Math.min(firstLuminance, secondLuminance) + 0.05)
+  );
+}
+
+function cssColor(styles: string, name: string): string {
+  const match = styles.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`, "iu"));
+  if (!match?.[1]) throw new Error(`Missing CSS color --${name}`);
+  return match[1];
+}
+
 const publicSourceFiles = [...walk(sourceRoot), ...walk(NodePath.join(appRoot, "public"))].filter(
   (path) =>
     !path.endsWith(".test.ts") &&
@@ -110,6 +134,7 @@ describe("Auldric public surface", () => {
       "src/pages/sitemap.xml.ts",
       "public/favicon.svg",
       "public/social-card.svg",
+      "public/social-card.png",
     ]) {
       expect(NodeFS.existsSync(NodePath.join(appRoot, relativePath)), relativePath).toBe(true);
     }
@@ -121,11 +146,21 @@ describe("Auldric public surface", () => {
       'rel="canonical"',
       'property="og:title"',
       'property="og:description"',
+      'property="og:image:type"',
+      'property="og:image:alt"',
       'name="twitter:card"',
+      'name="twitter:image"',
+      'name="twitter:image:alt"',
       'type="application/ld+json"',
     ]) {
       expect(layout).toContain(metadata);
     }
+
+    const socialCard = NodeFS.readFileSync(NodePath.join(appRoot, "public/social-card.png"));
+    expect(socialCard.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+    expect(socialCard.readUInt32BE(16)).toBe(1200);
+    expect(socialCard.readUInt32BE(20)).toBe(630);
+    expect(layout).toContain("/social-card.png");
   });
 
   it("keeps literal internal links attached to a real route or asset", () => {
@@ -141,6 +176,7 @@ describe("Auldric public surface", () => {
       "/404",
       "/favicon.svg",
       "/social-card.svg",
+      "/social-card.png",
     ]);
     const literalLinks = [...publicSource.matchAll(/href="(\/[^"#?]*)"/gu)].map(
       (match) => match[1],
@@ -169,6 +205,32 @@ describe("Auldric public surface", () => {
     expect(waitlist).toContain('name="consentVersion"');
     expect(waitlist).toContain("required");
     expect(waitlist).toContain('aria-live="polite"');
+    expect(waitlist).toContain('action="/waitlist"');
+    expect(waitlist).toContain("data-waitlist-endpoint={waitlist.endpoint}");
+    expect(waitlist).not.toContain("action={waitlist.endpoint}");
+    expect(waitlist).toContain("disabled\n              data-waitlist-control");
+    expect(waitlist).toContain("<noscript>");
+    expect(waitlist).toContain("fetch(endpoint");
+    expect(waitlist.indexOf('form.addEventListener("submit"')).toBeLessThan(
+      waitlist.indexOf("control.disabled = false"),
+    );
+
+    const focusRule = styles.match(
+      /a:focus-visible,[\s\S]*?input:focus-visible\s*\{([\s\S]*?)\}/u,
+    )?.[1];
+    expect(focusRule).toContain("outline: 0.2rem solid var(--ink)");
+    expect(focusRule).toContain("box-shadow: 0 0 0 0.4rem var(--accent)");
+    const ink = cssColor(styles, "ink");
+    const navy = cssColor(styles, "navy");
+    const paper = cssColor(styles, "paper");
+    const white = cssColor(styles, "white");
+    const accent = cssColor(styles, "accent");
+    expect(Math.min(contrastRatio(ink, paper), contrastRatio(ink, white))).toBeGreaterThanOrEqual(
+      3,
+    );
+    expect(
+      Math.min(contrastRatio(accent, ink), contrastRatio(accent, navy)),
+    ).toBeGreaterThanOrEqual(3);
 
     for (const pagePath of walk(pageRoot).filter((path) => path.endsWith(".astro"))) {
       const page = NodeFS.readFileSync(pagePath, "utf8");

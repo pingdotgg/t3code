@@ -48,6 +48,14 @@ for (const routeFile of routeFiles) {
   if (!/<link\s+rel="canonical"\s+href="https:\/\/[^\x22]+"/u.test(html)) {
     fail(`${routeFile} is missing an HTTPS canonical URL`);
   }
+  const socialCardUrl = `${capabilities.canonicalUrl}/social-card.png`;
+  if (
+    !html.includes(`property="og:image" content="${socialCardUrl}"`) ||
+    !html.includes('property="og:image:type" content="image/png"') ||
+    !html.includes(`name="twitter:image" content="${socialCardUrl}"`)
+  ) {
+    fail(`${routeFile} is missing its crawler-compatible social image metadata`);
+  }
   const expectedRobots = capabilities.legal.publicationReady
     ? "index,follow,max-image-preview:large"
     : "noindex,nofollow";
@@ -62,7 +70,7 @@ for (const routeFile of routeFiles) {
     fail(`${routeFile} leaks a T3-owned host`);
   }
 
-  for (const match of html.matchAll(/(?:href|src)="(\/[^"]*)"/gu)) {
+  for (const match of html.matchAll(/(?:href|src|action)="(\/[^"]*)"/gu)) {
     const rawPath = match[1];
     if (!rawPath || rawPath.startsWith("//") || rawPath.startsWith("/#")) continue;
     const pathname = decodeURIComponent(rawPath.split(/[?#]/u, 1)[0] ?? "/");
@@ -84,9 +92,22 @@ if ((capabilities.waitlist.kind === "open") !== hasWaitlistForm) {
 }
 if (
   capabilities.waitlist.kind === "open" &&
-  !defaultWaitlist.includes(`action="${capabilities.waitlist.endpoint}"`)
+  (!defaultWaitlist.includes('action="/waitlist"') ||
+    !defaultWaitlist.includes(`data-waitlist-endpoint="${capabilities.waitlist.endpoint}"`) ||
+    !/<input[^>]+disabled[^>]+data-waitlist-control/u.test(defaultWaitlist) ||
+    !/<button[^>]+disabled[^>]+data-waitlist-submit/u.test(defaultWaitlist) ||
+    !defaultWaitlist.includes("<noscript>"))
 ) {
-  fail("open waitlist output does not use the resolved collection endpoint");
+  fail("open waitlist output is not fail-closed before its enhancement loads");
+}
+if (
+  capabilities.waitlist.kind === "open" &&
+  defaultWaitlist.includes(`action="${capabilities.waitlist.endpoint}"`)
+) {
+  fail("open waitlist output exposes a native cross-origin form action");
+}
+if (/emailing<a\b/u.test(defaultWaitlist)) {
+  fail("waitlist output joins its privacy contact to the preceding copy");
 }
 
 const accessPage = NodeFS.readFileSync(NodePath.join(distRoot, "access/index.html"), "utf8");
@@ -121,5 +142,23 @@ if (
   fail("crawler policy does not match the resolved publication state");
 }
 if (!NodeFS.existsSync(NodePath.join(distRoot, "sitemap.xml"))) fail("missing sitemap.xml");
+
+const socialCard = NodeFS.readFileSync(NodePath.join(distRoot, "social-card.png"));
+if (
+  socialCard.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a" ||
+  socialCard.readUInt32BE(16) !== 1200 ||
+  socialCard.readUInt32BE(20) !== 630
+) {
+  fail("social-card.png is not a 1200×630 PNG");
+}
+
+const privacy = NodeFS.readFileSync(NodePath.join(distRoot, "privacy/index.html"), "utf8");
+if (
+  (capabilities.waitlist.kind === "open" && !privacy.includes("approved endpoint so ")) ||
+  /email<a\b/u.test(privacy) ||
+  privacy.includes("cannot collect personal information")
+) {
+  fail("privacy output contains joined copy or overstates its collection boundary");
+}
 
 console.log(`Verified ${routeFiles.length} Auldric public route outputs and their internal links.`);

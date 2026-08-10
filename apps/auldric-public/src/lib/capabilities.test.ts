@@ -86,6 +86,42 @@ describe("Auldric public capabilities", () => {
         }).legal.publicationReady,
       ).toBe(false);
     }
+
+    for (const privacyContact of [
+      "a<b>@example.com",
+      "foo@example.com?subject=Injected",
+      "foo@example.com#fragment",
+      ".privacy@example.com",
+      "privacy..team@example.com",
+      "privacy@example",
+      "privacy@-example.com",
+      "privacy@example.c",
+      "privacy@exam_ple.com",
+      "prïvacy@example.com",
+    ]) {
+      expect(
+        resolvePublicCapabilities({
+          ...publicationEnvironment,
+          PUBLIC_AULDRIC_PRIVACY_CONTACT: privacyContact,
+          PUBLIC_AULDRIC_WAITLIST_STATUS: "open",
+          PUBLIC_AULDRIC_WAITLIST_ENDPOINT: "https://forms.example.com/auldric/waitlist",
+        }),
+        privacyContact,
+      ).toMatchObject({
+        legal: { publicationReady: false },
+        waitlist: { kind: "closed" },
+      });
+    }
+
+    expect(
+      resolvePublicCapabilities({
+        ...publicationEnvironment,
+        PUBLIC_AULDRIC_PRIVACY_CONTACT: "Privacy.Team+UK@EXAMPLE.COM",
+      }).legal,
+    ).toMatchObject({
+      privacyContact: "Privacy.Team+UK@example.com",
+      publicationReady: true,
+    });
   });
 
   it("enables access only at a separate Auldric origin", () => {
@@ -245,6 +281,10 @@ describe("Auldric public capabilities", () => {
       },
       { ...releaseArtifact, fileName: "another-file.dmg" },
       { ...releaseArtifact, version: "latest" },
+      {
+        ...releaseArtifact,
+        url: releaseArtifact.url.replace("/v1.2.3/", "/v9.9.9/"),
+      },
       { ...releaseArtifact, platform: "ios" as ReleaseArtifact["platform"] },
       { ...releaseArtifact, sha256: "not-a-digest" },
     ];

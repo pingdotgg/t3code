@@ -7,7 +7,7 @@ const { access, waitlist, download, legal } = publicCapabilities;
 
 <SiteLayout
   title="Access and onboarding — Auldric"
-  description="The current verified state of Auldric product access, onboarding, waitlist, pricing, and downloads."
+  description="The current declared state of Auldric product access, onboarding, waitlist, pricing, and downloads."
   path="/access"
 >
   <div class="page-shell">
@@ -28,7 +28,7 @@ const { access, waitlist, download, legal } = publicCapabilities;
         <p>
           {
             access.kind === "available"
-              ? "This site has a verified Auldric product destination. That destination remains responsible for sign-in and access checks."
+              ? "This site has a configured Auldric product destination. That destination remains responsible for sign-in and access checks."
               : "No usable Auldric product service or public signup is available here."
           }
         </p>
@@ -54,7 +54,7 @@ const { access, waitlist, download, legal } = publicCapabilities;
           <p>
             {
               waitlist.kind === "open"
-                ? "A real endpoint and privacy terms are active. Submission still requires explicit consent."
+                ? "A configured endpoint and privacy terms are active. Submission still requires explicit consent."
                 : "No waitlist endpoint is active, so this site does not collect contact details."
             }
           </p>
@@ -103,7 +103,7 @@ const { access, waitlist, download, legal } = publicCapabilities;
       <h2 id="help-title">If a route is unavailable, stop there.</h2>
       <p>
         Auldric does not substitute a different product, infer an entitlement, or accept personal
-        details without a verified destination. Check this page again after the site operator
+        details without a configured destination. Check this page again after the site operator
         announces a change.
       </p>
       {

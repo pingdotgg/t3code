@@ -43,8 +43,9 @@ a:hover {
 a:focus-visible,
 button:focus-visible,
 input:focus-visible {
-  outline: 0.2rem solid var(--accent);
+  outline: 0.2rem solid var(--ink);
   outline-offset: 0.2rem;
+  box-shadow: 0 0 0 0.4rem var(--accent);
 }
 
 img,
@@ -208,8 +209,12 @@ h3 {
 }
 
 .button:disabled {
-  cursor: wait;
+  cursor: not-allowed;
   opacity: 0.65;
+}
+
+.waitlist-form[aria-busy="true"] .button:disabled {
+  cursor: wait;
 }
 
 .eyebrow {

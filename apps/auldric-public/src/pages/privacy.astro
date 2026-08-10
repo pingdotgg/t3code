@@ -54,12 +54,12 @@ const { legal, waitlist } = publicCapabilities;
         waitlist.kind === "open" ? (
           <div>
             <p>
-              The form sends your email and recorded consent directly to the approved endpoint so
+              The form sends your email and recorded consent directly to the approved endpoint so{" "}
               {waitlist.controller} can contact you about Auldric access. The request is retained for
               at most {waitlist.retentionDays} days unless a separate access relationship begins.
             </p>
             <p>
-              To withdraw consent, request access, correction, or deletion, email
+              To withdraw consent, request access, correction, or deletion, email{" "}
               <a href={`mailto:${waitlist.privacyContact}`}>{waitlist.privacyContact}</a>.
             </p>
           </div>
@@ -102,7 +102,8 @@ const { legal, waitlist } = publicCapabilities;
         ) : (
           <p>
             No legal operator or privacy contact is published. This site must remain a noindex
-            preview and cannot collect personal information.
+            preview, and its waitlist cannot collect contact details. Ordinary hosting logs may still
+            record visits under the website host's terms.
           </p>
         )
       }

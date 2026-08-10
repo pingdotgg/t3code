@@ -30,10 +30,10 @@ describe("verified release manifest", () => {
       verifyReleaseArtifacts({ schemaVersion: 1, artifacts: [artifact] }, fetcher),
     ).resolves.toBe(1);
     expect(fetcher).toHaveBeenCalledWith(
-      artifact.url,
+      new URL(artifact.url),
       expect.objectContaining({
         headers: { "user-agent": "auldric-public-release-verifier" },
-        redirect: "follow",
+        redirect: "manual",
         signal: expect.any(AbortSignal),
       }),
     );
@@ -48,13 +48,66 @@ describe("verified release manifest", () => {
     ).rejects.toThrow("SHA-256 mismatch");
   });
 
-  it("rejects a redirect outside GitHub release storage even when bytes match", async () => {
-    const response = new Response(bytes, { status: 200 });
-    Object.defineProperty(response, "url", { value: "https://evil.example/Auldric.dmg" });
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response);
+  it("validates every redirect before making the next request", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: { location: "https://evil.example/Auldric.dmg" },
+      }),
+    );
     await expect(
       verifyReleaseArtifacts({ schemaVersion: 1, artifacts: [artifact] }, fetcher),
-    ).rejects.toThrow("redirected outside GitHub release storage");
+    ).rejects.toThrow("redirected outside HTTPS GitHub release storage");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("follows a bounded HTTPS redirect through GitHub release storage", async () => {
+    const redirectedUrl = "https://release-assets.githubusercontent.com/auldric/verified";
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(null, { status: 302, headers: { location: redirectedUrl } }),
+      )
+      .mockResolvedValueOnce(new Response(bytes, { status: 200 }));
+
+    await expect(
+      verifyReleaseArtifacts({ schemaVersion: 1, artifacts: [artifact] }, fetcher),
+    ).resolves.toBe(1);
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      new URL(redirectedUrl),
+      expect.objectContaining({ redirect: "manual" }),
+    );
+  });
+
+  it("rejects downgrade, credential, port, and unbounded redirect chains before fetching them", async () => {
+    for (const location of [
+      "http://release-assets.githubusercontent.com/auldric/verified",
+      "https://user:secret@release-assets.githubusercontent.com/auldric/verified",
+      "https://release-assets.githubusercontent.com:444/auldric/verified",
+      "https://githubusercontent.com.evil.example/auldric/verified",
+    ]) {
+      const fetcher = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(new Response(null, { status: 302, headers: { location } }));
+      await expect(
+        verifyReleaseArtifacts({ schemaVersion: 1, artifacts: [artifact] }, fetcher),
+        location,
+      ).rejects.toThrow("redirected outside HTTPS GitHub release storage");
+      expect(fetcher, location).toHaveBeenCalledTimes(1);
+    }
+
+    const loopingFetcher = vi.fn<typeof fetch>().mockImplementation(
+      async (input) =>
+        new Response(null, {
+          status: 302,
+          headers: { location: String(input) },
+        }),
+    );
+    await expect(
+      verifyReleaseArtifacts({ schemaVersion: 1, artifacts: [artifact] }, loopingFetcher),
+    ).rejects.toThrow("exceeded 5 redirects");
+    expect(loopingFetcher).toHaveBeenCalledTimes(6);
   });
 
   it("rejects failures and deceptive release locations", async () => {
@@ -68,6 +121,7 @@ describe("verified release manifest", () => {
       artifact.url.replace("AuldricAI/auldrics", "AuldricAI/Auldric"),
       `${artifact.url}?redirect=https://evil.example`,
       `${artifact.url}#asset`,
+      artifact.url.replace("github.com", "github.com:444"),
       `https://github.com@evil.example${new URL(artifact.url).pathname}`,
     ]) {
       expect(() =>
@@ -93,5 +147,17 @@ describe("verified release manifest", () => {
         artifacts: [{ ...artifact, fileName: "wrong.dmg" }],
       }),
     ).toThrow("filename does not match");
+
+    expect(() =>
+      decodeReleaseManifest({
+        schemaVersion: 1,
+        artifacts: [
+          {
+            ...artifact,
+            url: artifact.url.replace("/v1.2.3/", "/v9.9.9/"),
+          },
+        ],
+      }),
+    ).toThrow("release tag does not match its version");
   });
 });

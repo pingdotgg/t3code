@@ -4,6 +4,8 @@ import * as NodeURL from "node:url";
 
 const manifestUrl = new URL("../src/content/verified-releases.json", import.meta.url);
 const releasePrefix = "/AuldricAI/auldrics/releases/download/";
+const redirectStatuses = new Set([301, 302, 303, 307, 308]);
+const maxRedirects = 5;
 const platforms = new Set([
   "macos-apple-silicon",
   "macos-intel",
@@ -16,6 +18,29 @@ interface ReleaseArtifactInput {
   readonly id: string;
   readonly url: string;
   readonly sha256: string;
+}
+
+function isGitHubReleaseStorageUrl(url: URL): boolean {
+  return (
+    url.protocol === "https:" &&
+    !url.username &&
+    !url.password &&
+    !url.port &&
+    (url.hostname === "github.com" || url.hostname.endsWith(".githubusercontent.com"))
+  );
+}
+
+function parseAllowedRedirect(value: string, base: URL, artifactId: string): URL {
+  let target: URL;
+  try {
+    target = new URL(value, base);
+  } catch {
+    fail(`artifact ${artifactId} returned an invalid redirect location`);
+  }
+  if (!isGitHubReleaseStorageUrl(target)) {
+    fail(`artifact ${artifactId} redirected outside HTTPS GitHub release storage`);
+  }
+  return target;
 }
 
 function fail(message: string): never {
@@ -65,10 +90,8 @@ export function decodeReleaseManifest(value: unknown): ReadonlyArray<ReleaseArti
     }
 
     if (
-      parsedUrl.protocol !== "https:" ||
+      !isGitHubReleaseStorageUrl(parsedUrl) ||
       parsedUrl.hostname !== "github.com" ||
-      parsedUrl.username ||
-      parsedUrl.password ||
       !parsedUrl.pathname.startsWith(releasePrefix) ||
       parsedUrl.search ||
       parsedUrl.hash
@@ -91,6 +114,11 @@ export function decodeReleaseManifest(value: unknown): ReadonlyArray<ReleaseArti
     if (typeof version !== "string" || !/^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(version)) {
       fail(`artifact ${id} has an invalid version`);
     }
+    const normalizedVersion = version.startsWith("v") ? version.slice(1) : version;
+    const releaseTag = releasePathParts[0];
+    if (releaseTag !== normalizedVersion && releaseTag !== `v${normalizedVersion}`) {
+      fail(`artifact ${id} release tag does not match its version`);
+    }
     if (typeof sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(sha256)) {
       fail(`artifact ${id} has an invalid SHA-256`);
     }
@@ -105,16 +133,37 @@ export async function verifyReleaseArtifacts(
 ): Promise<number> {
   const artifacts = decodeReleaseManifest(manifest);
   for (const artifact of artifacts) {
-    const response = await fetcher(artifact.url, {
-      headers: { "user-agent": "auldric-public-release-verifier" },
-      redirect: "follow",
-      signal: AbortSignal.timeout(60_000),
-    });
+    const signal = AbortSignal.timeout(60_000);
+    let currentUrl = new URL(artifact.url);
+    let response: Response;
+    let redirects = 0;
+
+    while (true) {
+      if (!isGitHubReleaseStorageUrl(currentUrl)) {
+        fail(`artifact ${artifact.id} attempted a request outside HTTPS GitHub release storage`);
+      }
+      response = await fetcher(currentUrl, {
+        headers: { "user-agent": "auldric-public-release-verifier" },
+        redirect: "manual",
+        signal,
+      });
+      if (!redirectStatuses.has(response.status)) break;
+
+      if (redirects >= maxRedirects) {
+        fail(`artifact ${artifact.id} exceeded ${maxRedirects} redirects`);
+      }
+      const location = response.headers.get("location");
+      await response.body?.cancel();
+      if (!location) fail(`artifact ${artifact.id} returned a redirect without a location`);
+      currentUrl = parseAllowedRedirect(location, currentUrl, artifact.id);
+      redirects += 1;
+    }
+
     if (!response.ok) fail(`artifact ${artifact.id} returned HTTP ${response.status}`);
     if (response.url) {
-      const responseHost = new URL(response.url).hostname;
-      if (responseHost !== "github.com" && !responseHost.endsWith(".githubusercontent.com")) {
-        fail(`artifact ${artifact.id} redirected outside GitHub release storage`);
+      const responseUrl = new URL(response.url);
+      if (!isGitHubReleaseStorageUrl(responseUrl)) {
+        fail(`artifact ${artifact.id} returned bytes outside HTTPS GitHub release storage`);
       }
     }
 
