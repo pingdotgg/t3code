@@ -22,6 +22,7 @@ import {
 } from "../ui/sidebar";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
+import { DEFAULT_SETTINGS_PATH } from "../settings/settingsSearch";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
@@ -115,7 +116,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
     if (isMobile) {
       setOpenMobile(false);
     }
-    void navigate({ to: "/settings" });
+    void navigate({ to: DEFAULT_SETTINGS_PATH });
   }, [isMobile, navigate, setOpenMobile]);
 
   const handleUsageClick = useCallback(() => {

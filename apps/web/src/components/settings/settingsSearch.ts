@@ -7,6 +7,11 @@ export type SettingsPath =
   | "/settings/connections"
   | "/settings/archived";
 
+// In-app entry points target the concrete section so the originating thread
+// stays the immediate Back target. Bare `/settings` URLs still replace-redirect
+// via the settings route.
+export const DEFAULT_SETTINGS_PATH = "/settings/general" satisfies SettingsPath;
+
 export interface SettingsSearchItem {
   readonly id: string;
   readonly title: string;
