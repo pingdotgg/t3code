@@ -263,4 +263,19 @@ struct MarkdownDocumentTests {
         #expect(runs.contains { $0.inlinePresentationIntent?.contains(.code) == true })
         #expect(runs.contains { $0.link == URL(string: "https://example.com") })
     }
+
+    @Test @MainActor
+    func recycledMarkdownLinkRelayUsesItsLatestHandler() throws {
+        let relay = MarkdownLinkActionRelay()
+        let url = try #require(URL(string: "Sources/App.swift"))
+        var firstHandlerCount = 0
+        var currentHandlerCount = 0
+
+        relay.handler = { _ in firstHandlerCount += 1 }
+        relay.handler = { _ in currentHandlerCount += 1 }
+        relay.open(url)
+
+        #expect(firstHandlerCount == 0)
+        #expect(currentHandlerCount == 1)
+    }
 }

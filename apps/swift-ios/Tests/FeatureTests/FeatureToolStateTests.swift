@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import T3Code
 
@@ -25,6 +26,64 @@ struct FeatureToolStateTests {
         #expect(FeatureFilePreviewKind.infer(path: "Package.swift") == .source)
         #expect(FeatureFilePreviewKind.infer(path: "LICENSE") == .plainText)
         #expect(FeatureFilePreviewKind.infer(path: "template", language: "html") == .source)
+    }
+
+    @Test
+    func workspaceFileLinksResolveRelativeAndContainedAbsolutePaths() throws {
+        let relative = try #require(URL(string: "docs/My%20Notes.txt#L12"))
+        #expect(
+            FeatureWorkspaceFileLink(url: relative, workspaceRoot: "/repo")?.path
+                == "docs/My Notes.txt"
+        )
+
+        let absolute = URL(fileURLWithPath: "/repo/Sources/App.swift")
+        #expect(
+            FeatureWorkspaceFileLink(url: absolute, workspaceRoot: "/repo")?.path
+                == "Sources/App.swift"
+        )
+    }
+
+    @Test
+    func workspaceFileLinksStripLineAndColumnPositions() throws {
+        let relative = try #require(URL(string: "Sources/App.swift:42:7"))
+        let link = try #require(FeatureWorkspaceFileLink(url: relative, workspaceRoot: "/repo"))
+        #expect(link.path == "Sources/App.swift")
+
+        let readme = try #require(URL(string: "README.md:12"))
+        #expect(FeatureWorkspaceFileLink(url: readme, workspaceRoot: "/repo")?.path == "README.md")
+    }
+
+    @Test
+    func workspaceFileLinksRejectEscapesAuthoritiesSchemesAndOutsidePaths() throws {
+        let rejected = [
+            try #require(URL(string: "../../secret.txt")),
+            try #require(URL(string: "sub/../../secret.txt")),
+            try #require(URL(string: "%2E%2E/secret.txt")),
+            try #require(URL(string: "//example.com/repo/README.md")),
+            try #require(URL(string: "tel:123")),
+            try #require(URL(string: "org.example:123")),
+            URL(fileURLWithPath: "/other/secret.txt"),
+        ]
+        for url in rejected {
+            #expect(FeatureWorkspaceFileLink(url: url, workspaceRoot: "/repo") == nil)
+        }
+
+        let trailingRoot = URL(fileURLWithPath: "/repo/Sources/App.swift")
+        #expect(
+            FeatureWorkspaceFileLink(url: trailingRoot, workspaceRoot: "/repo/")?.path
+                == "Sources/App.swift"
+        )
+
+        let rootFile = URL(fileURLWithPath: "/README.md")
+        #expect(FeatureWorkspaceFileLink(url: rootFile, workspaceRoot: "/")?.path == "README.md")
+    }
+
+    @Test
+    func remoteLinksRemainOutsideWorkspaceRouting() throws {
+        let remote = try #require(URL(string: "https://example.com/readme.txt"))
+        #expect(FeatureWorkspaceFileLink(url: remote, workspaceRoot: "/repo") == nil)
+        let bareDomain = try #require(URL(string: "www.example.com"))
+        #expect(FeatureWorkspaceFileLink(url: bareDomain, workspaceRoot: "/repo") == nil)
     }
 
     @Test

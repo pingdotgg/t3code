@@ -149,7 +149,7 @@ private struct FeatureFileRow: View {
     }
 }
 
-private struct FeatureFilePreviewView: View {
+struct FeatureFilePreviewView: View {
     let client: any FeatureClient
     let threadID: String
     let entry: FeatureFileEntry
@@ -211,6 +211,7 @@ private struct FeatureFilePreviewView: View {
         .background(T3Colors.background)
         .navigationTitle(entry.name)
         .navigationBarTitleDisplayMode(.inline)
+        .accessibilityIdentifier("workspace-file-preview")
         .toolbar {
             if let assetURL {
                 ToolbarItem(placement: .topBarTrailing) {
