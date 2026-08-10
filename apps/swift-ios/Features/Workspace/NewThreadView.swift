@@ -167,12 +167,16 @@ public struct NewThreadView: View {
         HStack {
             Button("Cancel") { dismiss() }
                 .font(.body)
-                .foregroundStyle(T3Colors.textSecondary)
+                .foregroundStyle(
+                    T3BuildChrome.foreground(for: .newTask, standard: T3Colors.textSecondary)
+                )
                 .disabled(isSubmitting)
+                .t3BuildChromeMarker(.newTask)
             Spacer()
         }
         .padding(.horizontal, 16)
         .frame(height: 48)
+        .t3BuildChromeBackground(.newTask, standard: T3Colors.background)
     }
 
     private var hero: some View {

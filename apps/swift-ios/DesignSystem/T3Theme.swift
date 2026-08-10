@@ -7,6 +7,8 @@ enum T3Colors {
     // system appearance changes as SwiftUI views.
     static let uiBackground = adaptive(light: rgb(0xF2F2F7), dark: rgb(0x0A0A0A))
     static let uiTextPrimary = adaptive(light: rgb(0x262626), dark: rgb(0xF5F5F5))
+    static let uiWarning = adaptive(light: rgb(0xD97706), dark: rgb(0xFF9F0A))
+    static let uiWarningForeground = adaptive(light: rgb(0x000000), dark: rgb(0x000000))
 
     static let background = Color(uiColor: uiBackground)
     static let sheet = color(light: rgb(0xF2F2F7, alpha: 0.98), dark: rgb(0x0E0E0E, alpha: 0.98))
@@ -36,8 +38,16 @@ enum T3Colors {
     static let statusRunning = color(light: rgb(0x0284C7), dark: rgb(0x22D3EE))
     static let statusInput = color(light: rgb(0x4F46E5), dark: rgb(0xA5B4FC))
     static let success = color(light: rgb(0x16A34A), dark: rgb(0x30D158))
-    static let warning = color(light: rgb(0xD97706), dark: rgb(0xFF9F0A))
+    static let warning = Color(uiColor: uiWarning)
+    static let warningForeground = Color(uiColor: uiWarningForeground)
     static let danger = color(light: rgb(0xDC2626), dark: rgb(0xFF453A))
+
+    static func warning(for colorScheme: ColorScheme) -> Color {
+        let traits = UITraitCollection(
+            userInterfaceStyle: colorScheme == .dark ? .dark : .light
+        )
+        return Color(uiColor: uiWarning.resolvedColor(with: traits))
+    }
 
     static let syntaxKeyword = color(light: rgb(0x7C3AED), dark: rgb(0xC78EFF))
     static let syntaxLiteral = color(light: rgb(0x2563EB), dark: rgb(0x8CC7FF))
@@ -61,6 +71,84 @@ enum T3Colors {
             blue: CGFloat(hex & 0xFF) / 255,
             alpha: alpha
         )
+    }
+}
+
+enum T3BuildChrome {
+    enum Surface: String, CaseIterable, Sendable {
+        case home
+        case newTask
+        case thread
+
+        var accessibilityName: String {
+            switch self {
+            case .home: String(localized: "Home")
+            case .newTask: String(localized: "New task")
+            case .thread: String(localized: "Thread")
+            }
+        }
+    }
+
+    enum Presentation: Equatable, Sendable {
+        case standard
+        case warning
+    }
+
+#if DEBUG
+    static let isDebugBuild = true
+#else
+    static let isDebugBuild = false
+#endif
+
+    static func presentation(
+        for _: Surface,
+        isDebugBuild: Bool = isDebugBuild
+    ) -> Presentation {
+        isDebugBuild ? .warning : .standard
+    }
+
+    static func accessibilityValue(
+        for surface: Surface,
+        isDebugBuild: Bool = isDebugBuild
+    ) -> String? {
+        guard presentation(for: surface, isDebugBuild: isDebugBuild) == .warning else {
+            return nil
+        }
+        return "\(surface.accessibilityName), \(String(localized: "Development build"))"
+    }
+
+    static func background(
+        for surface: Surface,
+        standard: Color,
+        warning: Color = T3Colors.warning,
+        isDebugBuild: Bool = isDebugBuild
+    ) -> Color {
+        presentation(for: surface, isDebugBuild: isDebugBuild) == .warning ? warning : standard
+    }
+
+    static func foreground(
+        for surface: Surface,
+        standard: Color,
+        isDebugBuild: Bool = isDebugBuild
+    ) -> Color {
+        presentation(for: surface, isDebugBuild: isDebugBuild) == .warning
+            ? T3Colors.warningForeground
+            : standard
+    }
+
+    static func toolbarColorScheme(
+        for surface: Surface,
+        isDebugBuild: Bool = isDebugBuild
+    ) -> ColorScheme? {
+        presentation(for: surface, isDebugBuild: isDebugBuild) == .warning ? .light : nil
+    }
+
+    static func contentOpacity(
+        for surface: Surface,
+        standard: Double,
+        isDebugBuild: Bool = isDebugBuild
+    ) -> Double {
+        presentation(for: surface, isDebugBuild: isDebugBuild) == .warning ? 1 : standard
     }
 }
 
@@ -101,5 +189,48 @@ extension View {
     func t3NavigationChrome(background: Color = T3Colors.sheet) -> some View {
         toolbarBackground(background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+    }
+
+    func t3BuildNavigationChrome(_ surface: T3BuildChrome.Surface) -> some View {
+        modifier(T3BuildNavigationChromeModifier(surface: surface))
+    }
+
+    func t3BuildChromeBackground(
+        _ surface: T3BuildChrome.Surface,
+        standard: Color
+    ) -> some View {
+        background(
+            T3BuildChrome.background(for: surface, standard: standard),
+            ignoresSafeAreaEdges: []
+        )
+    }
+
+    @ViewBuilder
+    func t3BuildChromeMarker(_ surface: T3BuildChrome.Surface) -> some View {
+        if let value = T3BuildChrome.accessibilityValue(for: surface) {
+            accessibilityValue(value)
+        } else {
+            self
+        }
+    }
+}
+
+private struct T3BuildNavigationChromeModifier: ViewModifier {
+    @SwiftUI.Environment(\.colorScheme) private var colorScheme
+    let surface: T3BuildChrome.Surface
+
+    func body(content: Content) -> some View {
+        content
+            .t3NavigationChrome(
+                background: T3BuildChrome.background(
+                    for: surface,
+                    standard: T3Colors.sheet,
+                    warning: T3Colors.warning(for: colorScheme)
+                )
+            )
+            .toolbarColorScheme(
+                T3BuildChrome.toolbarColorScheme(for: surface),
+                for: .navigationBar
+            )
     }
 }

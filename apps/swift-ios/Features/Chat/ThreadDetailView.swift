@@ -54,13 +54,7 @@ public struct ThreadDetailView: View {
         .background(T3Colors.background)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(false)
-#if DEBUG
-        // Dev-build marker inside a thread: the whole title bar goes orange.
-        .t3NavigationChrome(background: T3Colors.warning)
-        .toolbarColorScheme(.light, for: .navigationBar)
-#else
-        .t3NavigationChrome()
-#endif
+        .t3BuildNavigationChrome(.thread)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 threadHeaderTitle
@@ -159,6 +153,7 @@ public struct ThreadDetailView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .layoutPriority(1)
+                .t3BuildChromeMarker(.thread)
 
             HStack(spacing: 5) {
                 HStack(spacing: 5) {
@@ -276,7 +271,9 @@ public struct ThreadDetailView: View {
                 .frame(width: T3Metrics.minimumTapTarget, height: T3Metrics.minimumTapTarget)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(T3Colors.textSecondary)
+        .foregroundStyle(
+            T3BuildChrome.foreground(for: .thread, standard: T3Colors.textSecondary)
+        )
         .accessibilityLabel("Thread actions")
     }
 
@@ -302,12 +299,7 @@ public struct ThreadDetailView: View {
     }
 
     private var headerStatusColor: Color {
-#if DEBUG
-        // The debug navigation bar uses the warning orange for the current
-        // appearance. Keep every semantic status legible on both variants.
-        return .black
-#else
-        switch currentThread.homeStatus {
+        let standard: Color = switch currentThread.homeStatus {
         case .working: T3Colors.statusRunning
         case .monitoring: T3Colors.statusRunning
         case .approval: T3Colors.warning
@@ -316,23 +308,15 @@ public struct ThreadDetailView: View {
         case .done: T3Colors.success
         case .ready: T3Colors.textTertiary
         }
-#endif
+        return T3BuildChrome.foreground(for: .thread, standard: standard)
     }
 
     private var headerTitleColor: Color {
-#if DEBUG
-        .black
-#else
-        T3Colors.textPrimary
-#endif
+        T3BuildChrome.foreground(for: .thread, standard: T3Colors.textPrimary)
     }
 
     private var headerMetadataColor: Color {
-#if DEBUG
-        .black.opacity(0.8)
-#else
-        T3Colors.textTertiary
-#endif
+        T3BuildChrome.foreground(for: .thread, standard: T3Colors.textTertiary)
     }
 
     private func timeline(_ detail: FeatureThreadDetail) -> some View {

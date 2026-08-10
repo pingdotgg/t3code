@@ -53,6 +53,8 @@ the active selection are stored separately in Application Support.
   and software keyboard controls, and per-thread session switching.
 - Native settings with persisted appearance and behavior preferences, platform
   deep links, shortcuts, background refresh, and notification routing.
+- Adaptive warning chrome identifies Debug builds on Home, New Task, and thread
+  title bars without changing Release builds.
 - A Share extension that imports text, URLs, and images into persistent project
   drafts, plus Home Screen widgets and aggregate Live Activities for active work.
 - DPoP-bound T3 Connect sessions with account-scoped relay credentials, APNs

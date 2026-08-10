@@ -295,6 +295,7 @@ public struct WorkspaceView: View {
         HStack(spacing: 2) {
             connectionBrand
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .t3BuildChromeMarker(.home)
 
             Button {
                 withAnimation(.easeOut(duration: 0.16)) {
@@ -315,7 +316,9 @@ public struct WorkspaceView: View {
                     .frame(width: 40, height: T3Metrics.minimumTapTarget)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(T3Colors.textSecondary)
+            .foregroundStyle(
+                T3BuildChrome.foreground(for: .home, standard: T3Colors.textSecondary)
+            )
             .accessibilityLabel(isSearching ? "Close search" : "Search tasks")
             .accessibilityIdentifier("sidebar-search-button")
 
@@ -325,14 +328,16 @@ public struct WorkspaceView: View {
                     .frame(width: 40, height: T3Metrics.minimumTapTarget)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(T3Colors.textSecondary)
+            .foregroundStyle(
+                T3BuildChrome.foreground(for: .home, standard: T3Colors.textSecondary)
+            )
             .accessibilityLabel("Settings")
             .accessibilityIdentifier("sidebar-settings-button")
         }
         .padding(.leading, 15)
         .padding(.trailing, 8)
         .frame(height: 49)
-        .background(T3Colors.background)
+        .t3BuildChromeBackground(.home, standard: T3Colors.background)
     }
 
     @ViewBuilder
@@ -352,10 +357,16 @@ public struct WorkspaceView: View {
                 .padding(.horizontal, 9)
                 .frame(height: 26)
                 .overlay {
-                    Capsule().stroke(T3Colors.danger.opacity(0.42), lineWidth: 1)
+                    Capsule().stroke(
+                        T3BuildChrome.foreground(for: .home, standard: T3Colors.danger)
+                            .opacity(
+                                T3BuildChrome.contentOpacity(for: .home, standard: 0.42)
+                            ),
+                        lineWidth: 1
+                    )
                 }
             }
-            .foregroundStyle(T3Colors.danger)
+            .foregroundStyle(T3BuildChrome.foreground(for: .home, standard: T3Colors.danger))
             .accessibilityElement(children: .contain)
         } else if let reconnecting = reconnectingEnvironments.first {
             Button { showingSettings = true } label: {
@@ -366,10 +377,12 @@ public struct WorkspaceView: View {
                         .lineLimit(1)
                     Text("reconnecting")
                         .fontWeight(.medium)
-                        .opacity(0.76)
+                        .opacity(
+                            T3BuildChrome.contentOpacity(for: .home, standard: 0.76)
+                        )
                 }
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(T3Colors.warning)
+                .foregroundStyle(T3BuildChrome.foreground(for: .home, standard: T3Colors.warning))
             }
             .buttonStyle(.plain)
             .accessibilityLabel("\(reconnecting.name) reconnecting")
@@ -377,10 +390,14 @@ public struct WorkspaceView: View {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text("T3")
                     .fontWeight(.bold)
-                    .foregroundStyle(T3Colors.textPrimary)
+                    .foregroundStyle(
+                        T3BuildChrome.foreground(for: .home, standard: T3Colors.textPrimary)
+                    )
                 Text("Code")
                     .fontWeight(.medium)
-                    .foregroundStyle(T3Colors.textSecondary)
+                    .foregroundStyle(
+                        T3BuildChrome.foreground(for: .home, standard: T3Colors.textSecondary)
+                    )
             }
             .font(.system(size: 16))
             .accessibilityElement(children: .combine)
