@@ -1415,6 +1415,9 @@ const make = Effect.gen(function* () {
     return {
       sourceThreadId,
       sourcePlanId,
+      // Rows written before the review kind column was added retain the
+      // historical implementation behavior.
+      kind: pendingTurnStart.value.sourceProposedPlanKind ?? "implementation",
     } as const;
   });
 
@@ -1594,7 +1597,10 @@ const make = Effect.gen(function* () {
                 : (thread.session?.lastError ?? null);
 
         if (shouldApplyThreadLifecycle) {
-          if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
+          if (
+            event.type === "turn.started" &&
+            acceptedTurnStartedSourcePlan?.kind === "implementation"
+          ) {
             yield* markSourceProposedPlanImplemented(
               acceptedTurnStartedSourcePlan.sourceThreadId,
               acceptedTurnStartedSourcePlan.sourcePlanId,

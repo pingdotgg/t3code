@@ -52,6 +52,7 @@ function makeReadModel(input: {
         deletedAt: null,
         messages: input.messages ?? [],
         proposedPlans: [],
+        proposedPlanReviews: [],
         activities: input.activities ?? [],
         checkpoints: [],
         session: null,

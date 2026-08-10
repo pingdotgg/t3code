@@ -147,6 +147,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "plan-review-agent",
+    title: "Default plan review agent",
+    to: "/settings/general",
+  },
+  {
+    id: "plan-review-instructions",
+    title: "Plan review instructions",
+    to: "/settings/general",
+  },
+  {
     id: "diagnostics",
     title: "Diagnostics",
     to: "/settings/general",

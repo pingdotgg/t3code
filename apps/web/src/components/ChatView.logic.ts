@@ -92,6 +92,7 @@ export function buildLocalDraftThread(
     checkpoints: [],
     activities: [],
     proposedPlans: [],
+    proposedPlanReviews: [],
   };
 }
 
@@ -100,6 +101,7 @@ export function buildLoadingThreadFromShell(shell: ThreadShell): Thread {
     ...shell,
     messages: [],
     proposedPlans: [],
+    proposedPlanReviews: [],
     activities: [],
     checkpoints: [],
     deletedAt: null,

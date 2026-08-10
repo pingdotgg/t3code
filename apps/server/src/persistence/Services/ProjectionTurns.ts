@@ -12,6 +12,7 @@ import {
   MessageId,
   NonNegativeInt,
   OrchestrationProposedPlanId,
+  SourceProposedPlanKind,
   OrchestrationCheckpointFile,
   OrchestrationCheckpointStatus,
   ThreadId,
@@ -39,6 +40,7 @@ export const ProjectionTurn = Schema.Struct({
   pendingMessageId: Schema.NullOr(MessageId),
   sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
+  sourceProposedPlanKind: Schema.NullOr(SourceProposedPlanKind),
   assistantMessageId: Schema.NullOr(MessageId),
   state: ProjectionTurnState,
   requestedAt: IsoDateTime,
@@ -57,6 +59,7 @@ export const ProjectionTurnById = Schema.Struct({
   pendingMessageId: Schema.NullOr(MessageId),
   sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
+  sourceProposedPlanKind: Schema.NullOr(SourceProposedPlanKind),
   assistantMessageId: Schema.NullOr(MessageId),
   state: ProjectionTurnState,
   requestedAt: IsoDateTime,
@@ -74,6 +77,7 @@ export const ProjectionPendingTurnStart = Schema.Struct({
   messageId: MessageId,
   sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
+  sourceProposedPlanKind: Schema.NullOr(SourceProposedPlanKind),
   requestedAt: IsoDateTime,
 });
 export type ProjectionPendingTurnStart = typeof ProjectionPendingTurnStart.Type;

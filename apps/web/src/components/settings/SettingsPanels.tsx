@@ -65,6 +65,7 @@ import { DEFAULT_THEME_PALETTE, themePaletteLabel } from "../../lib/themePalette
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
+import { PlanReviewSettingsSection } from "./PlanReviewSettings";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
   getCustomModelOptionsByInstance,
@@ -2006,6 +2007,8 @@ export function GeneralSettingsPanel() {
           }
         />
       </SettingsSection>
+
+      <PlanReviewSettingsSection />
 
       <SettingsSection title="About">
         {isElectron || HOSTED_APP_CHANNEL ? (

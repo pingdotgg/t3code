@@ -47,6 +47,7 @@ function makeReadModel(
         deletedAt: null,
         messages,
         proposedPlans: [],
+        proposedPlanReviews: [],
         activities,
         checkpoints: [],
         session,

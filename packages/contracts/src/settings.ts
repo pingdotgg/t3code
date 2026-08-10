@@ -498,6 +498,12 @@ export const SourceControlWritingStyleSettings = Schema.Struct({
 });
 export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyleSettings.Type;
 
+export const DEFAULT_PLAN_REVIEW_INSTRUCTIONS = `Review the proposed implementation plan, not the implementation. Do not edit files, make changes, or begin executing the plan.
+
+Check the plan for missing requirements, incorrect assumptions, architecture and compatibility risks, migration or rollout concerns, failure modes, and gaps in test coverage. Inspect repository context when it would verify a concern.
+
+Separate blockers from suggestions. Be specific and evidence-based; do not invent issues. End with a concise "Revision brief" describing exactly what the original planner should change.`;
+
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
 
@@ -585,6 +591,13 @@ export const ServerSettings = Schema.Struct({
   ),
   sourceControlWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  // Null uses the model already selected on the source plan's thread.
+  planReviewModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  planReviewInstructions: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PLAN_REVIEW_INSTRUCTIONS)),
   ),
 
   // Legacy single-instance-per-driver settings. Continues to be the source
@@ -729,6 +742,8 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  planReviewModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  planReviewInstructions: Schema.optionalKey(TrimmedString),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),

@@ -706,6 +706,34 @@ it.effect("accepts a source proposed plan reference in thread.turn.start", () =>
     assert.deepStrictEqual(parsed.sourceProposedPlan, {
       threadId: "thread-1",
       planId: "plan-1",
+      kind: "implementation",
+    });
+  }),
+);
+
+it.effect("round-trips a review source proposed plan reference", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-review-plan",
+      threadId: "thread-review",
+      message: {
+        messageId: "msg-review-plan",
+        role: "user",
+        text: "review this plan",
+        attachments: [],
+      },
+      sourceProposedPlan: {
+        threadId: "thread-source",
+        planId: "plan-source",
+        kind: "review",
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(parsed.sourceProposedPlan, {
+      threadId: "thread-source",
+      planId: "plan-source",
+      kind: "review",
     });
   }),
 );
@@ -740,6 +768,7 @@ it.effect("decodes thread.turn-start-requested source proposed plan metadata whe
     assert.deepStrictEqual(parsed.sourceProposedPlan, {
       threadId: "thread-1",
       planId: "plan-1",
+      kind: "implementation",
     });
   }),
 );
@@ -773,6 +802,7 @@ it.effect("decodes latest turn source proposed plan metadata when present", () =
     assert.deepStrictEqual(parsed.sourceProposedPlan, {
       threadId: "thread-1",
       planId: "plan-1",
+      kind: "implementation",
     });
   }),
 );

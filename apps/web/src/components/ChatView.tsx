@@ -106,6 +106,7 @@ import {
   buildPlanImplementationPrompt,
   resolvePlanFollowUpSubmission,
 } from "../proposedPlan";
+import { buildPlanRevisionPrompt } from "../planReview";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -177,11 +178,20 @@ import {
 } from "~/projectScripts";
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
-import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  NO_PROVIDER_MODEL_SELECTION,
+  sortProviderInstanceEntries,
+} from "../providerInstances";
 import { useClientSettings, useEnvironmentSettings } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
-import { resolveAppModelSelectionForInstance } from "../modelSelection";
+import { useStartPlanReview } from "../hooks/useStartPlanReview";
+import {
+  getCustomModelOptionsByInstance,
+  resolveAppModelSelectionForInstance,
+} from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { preventRepeatedTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
@@ -240,6 +250,7 @@ import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
+import { ProviderModelPicker } from "./chat/ProviderModelPicker";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
@@ -308,6 +319,15 @@ import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { Button } from "./ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "./ui/dialog";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -1339,6 +1359,11 @@ function ChatViewContent(props: ChatViewProps) {
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
+  const [planReviewDialogPlanId, setPlanReviewDialogPlanId] = useState<string | null>(null);
+  const [planReviewModelOverride, setPlanReviewModelOverride] = useState<ModelSelection | null>(
+    null,
+  );
+  const { start: startPlanReview, startingPlanId } = useStartPlanReview();
   const [terminalUiLaunchContext, setTerminalUiLaunchContext] =
     useState<TerminalLaunchContext | null>(null);
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
@@ -5513,6 +5538,7 @@ function ChatViewContent(props: ChatViewProps) {
                   sourceProposedPlan: {
                     threadId: activeThread.id,
                     planId: activeProposedPlan.id,
+                    kind: "implementation",
                   },
                 }
               : {}),
@@ -5643,6 +5669,7 @@ function ChatViewContent(props: ChatViewProps) {
           sourceProposedPlan: {
             threadId: activeThread.id,
             planId: activeProposedPlan.id,
+            kind: "implementation",
           },
           createdAt,
         },
@@ -5717,6 +5744,212 @@ function ChatViewContent(props: ChatViewProps) {
     environmentId,
     composerRef,
   ]);
+
+  const planReviewPlan = useMemo(
+    () =>
+      planReviewDialogPlanId === null
+        ? null
+        : (activeThread?.proposedPlans.find((plan) => plan.id === planReviewDialogPlanId) ?? null),
+    [activeThread?.proposedPlans, planReviewDialogPlanId],
+  );
+  const planReviewInstanceEntries = useMemo(
+    () =>
+      sortProviderInstanceEntries(
+        applyProviderInstanceSettings(deriveProviderInstanceEntries(providerStatuses), settings),
+      ),
+    [providerStatuses, settings],
+  );
+  const effectivePlanReviewModelSelection = useMemo(() => {
+    const preferredSelection =
+      planReviewModelOverride ?? settings.planReviewModelSelection ?? activeThread?.modelSelection;
+    if (!preferredSelection) {
+      return null;
+    }
+    const matchingEntry = planReviewInstanceEntries.find(
+      (entry) =>
+        entry.instanceId === preferredSelection.instanceId && entry.enabled && entry.isAvailable,
+    );
+    const selectedEntry =
+      matchingEntry ??
+      planReviewInstanceEntries.find((entry) => entry.enabled && entry.isAvailable) ??
+      null;
+    if (!selectedEntry) {
+      return null;
+    }
+    const model = resolveAppModelSelectionForInstance(
+      selectedEntry.instanceId,
+      settings,
+      providerStatuses,
+      matchingEntry ? preferredSelection.model : null,
+    );
+    return model === null
+      ? null
+      : createModelSelection(
+          selectedEntry.instanceId,
+          model,
+          matchingEntry ? preferredSelection.options : undefined,
+        );
+  }, [
+    activeThread?.modelSelection,
+    planReviewInstanceEntries,
+    planReviewModelOverride,
+    providerStatuses,
+    settings,
+  ]);
+  const planReviewModelOptionsByInstance = useMemo(
+    () =>
+      getCustomModelOptionsByInstance(
+        settings,
+        providerStatuses,
+        effectivePlanReviewModelSelection?.instanceId,
+        effectivePlanReviewModelSelection?.model,
+      ),
+    [effectivePlanReviewModelSelection, providerStatuses, settings],
+  );
+  const openPlanReviewDialog = useCallback(
+    (planId: string) => {
+      if (
+        !activeThread ||
+        !isServerThread ||
+        !activeThread.proposedPlans.some((plan) => plan.id === planId)
+      ) {
+        return;
+      }
+      if (activeEnvironmentUnavailable) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Reconnect before starting a plan review",
+            description:
+              activeEnvironmentUnavailableLabel ?? "The source environment is unavailable.",
+          }),
+        );
+        return;
+      }
+      setPlanReviewModelOverride(null);
+      setPlanReviewDialogPlanId(planId);
+    },
+    [activeEnvironmentUnavailable, activeEnvironmentUnavailableLabel, activeThread, isServerThread],
+  );
+  const closePlanReviewDialog = useCallback(() => {
+    if (startingPlanId !== null) {
+      return;
+    }
+    setPlanReviewDialogPlanId(null);
+    setPlanReviewModelOverride(null);
+  }, [startingPlanId]);
+  const confirmPlanReview = useCallback(async () => {
+    if (
+      !activeThread ||
+      !isServerThread ||
+      !planReviewPlan ||
+      !effectivePlanReviewModelSelection ||
+      activeEnvironmentUnavailable
+    ) {
+      return;
+    }
+    const reviewThreadId = await startPlanReview({
+      environmentId: activeThread.environmentId,
+      sourceThread: activeThread,
+      plan: planReviewPlan,
+      modelSelection: effectivePlanReviewModelSelection,
+      instructions: settings.planReviewInstructions,
+    });
+    if (reviewThreadId !== null) {
+      setPlanReviewDialogPlanId(null);
+      setPlanReviewModelOverride(null);
+    }
+  }, [
+    activeEnvironmentUnavailable,
+    activeThread,
+    effectivePlanReviewModelSelection,
+    isServerThread,
+    planReviewPlan,
+    settings.planReviewInstructions,
+    startPlanReview,
+  ]);
+  const openPlanReviewThread = useCallback(
+    (reviewThreadId: ThreadId) => {
+      if (!activeProject) return;
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: { environmentId: activeProject.environmentId, threadId: reviewThreadId },
+      });
+    },
+    [activeProject, navigate],
+  );
+
+  const revisePlanFromReview = useCallback(
+    async ({ planId, feedback }: { planId: string; feedback: string }) => {
+      if (
+        !activeThread ||
+        !isServerThread ||
+        isWorking ||
+        activeEnvironmentUnavailable ||
+        sendInFlightRef.current
+      ) {
+        return;
+      }
+      const sourcePlan = activeThread.proposedPlans.find((plan) => plan.id === planId);
+      if (!sourcePlan) {
+        return;
+      }
+
+      const createdAt = new Date().toISOString();
+      const messageId = newMessageId();
+      sendInFlightRef.current = true;
+      beginLocalDispatch({ preparingWorktree: false });
+      setThreadError(activeThread.id, null);
+      const result = await startThreadTurn({
+        environmentId: activeThread.environmentId,
+        input: {
+          threadId: activeThread.id,
+          message: {
+            messageId,
+            role: "user",
+            text: buildPlanRevisionPrompt({
+              planMarkdown: sourcePlan.planMarkdown,
+              reviewFeedback: feedback,
+            }),
+            attachments: [],
+          },
+          modelSelection: activeThread.modelSelection,
+          titleSeed: activeThread.title,
+          runtimeMode: activeThread.runtimeMode,
+          interactionMode: activeThread.interactionMode,
+          createdAt,
+        },
+      });
+      if (result._tag === "Success") {
+        acknowledgeActiveThreadWoke();
+        sendInFlightRef.current = false;
+        return;
+      }
+
+      sendInFlightRef.current = false;
+      resetLocalDispatch();
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setThreadError(
+          activeThread.id,
+          error instanceof Error
+            ? error.message
+            : "Could not revise the plan from review feedback.",
+        );
+      }
+    },
+    [
+      acknowledgeActiveThreadWoke,
+      activeEnvironmentUnavailable,
+      activeThread,
+      beginLocalDispatch,
+      isServerThread,
+      isWorking,
+      resetLocalDispatch,
+      setThreadError,
+      startThreadTurn,
+    ],
+  );
 
   const getModelDisabledReason = useCallback(
     (instanceId: ProviderInstanceId, model: string): string | null => {
@@ -6109,6 +6342,12 @@ function ChatViewContent(props: ChatViewProps) {
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
                 topFadeEnabled={!hasTimelineTopBanner}
                 loadEarlier={loadEarlierTurns}
+                planReviews={activeThread.proposedPlanReviews ?? []}
+                reviewStartingPlanId={startingPlanId}
+                sourceBusy={isWorking}
+                onReviewPlan={openPlanReviewDialog}
+                onOpenPlanReview={openPlanReviewThread}
+                onRevisePlan={revisePlanFromReview}
               />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}
@@ -6364,6 +6603,82 @@ function ChatViewContent(props: ChatViewProps) {
                 onPrepared={handlePreparedPullRequestThread}
               />
             ) : null}
+
+            <Dialog
+              open={planReviewDialogPlanId !== null}
+              onOpenChange={(open) => {
+                if (!open) {
+                  closePlanReviewDialog();
+                }
+              }}
+            >
+              <DialogPopup className="max-w-xl">
+                <DialogHeader>
+                  <DialogTitle>Review plan</DialogTitle>
+                  <DialogDescription>
+                    A separate background thread will critique this plan. It will not implement
+                    changes or modify files.
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogPanel className="space-y-4">
+                  <div className="rounded-xl border border-border/70 bg-muted/24 p-3 text-sm">
+                    <p className="font-medium text-foreground">
+                      {planReviewPlan ? "Reviewing the selected proposed plan" : "Plan unavailable"}
+                    </p>
+                    <p className="mt-1 text-muted-foreground text-xs">
+                      The review stays linked to this plan and can be opened or used to request a
+                      revised plan when it finishes.
+                    </p>
+                  </div>
+                  <label className="grid gap-1.5">
+                    <span className="text-xs font-medium text-foreground">Reviewing agent</span>
+                    {effectivePlanReviewModelSelection ? (
+                      <ProviderModelPicker
+                        activeInstanceId={effectivePlanReviewModelSelection.instanceId}
+                        model={effectivePlanReviewModelSelection.model}
+                        lockedProvider={null}
+                        instanceEntries={planReviewInstanceEntries}
+                        modelOptionsByInstance={planReviewModelOptionsByInstance}
+                        triggerVariant="outline"
+                        triggerClassName="w-full max-w-none text-foreground/90 hover:text-foreground"
+                        triggerAriaLabel="Plan review agent"
+                        disabled={startingPlanId !== null}
+                        onInstanceModelChange={(instanceId, model) => {
+                          setPlanReviewModelOverride(createModelSelection(instanceId, model));
+                        }}
+                      />
+                    ) : (
+                      <p className="text-destructive text-xs">
+                        No configured reviewing agent is currently available.
+                      </p>
+                    )}
+                  </label>
+                </DialogPanel>
+                <DialogFooter>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={closePlanReviewDialog}
+                    disabled={startingPlanId !== null}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => void confirmPlanReview()}
+                    disabled={
+                      planReviewPlan === null ||
+                      effectivePlanReviewModelSelection === null ||
+                      startingPlanId !== null
+                    }
+                  >
+                    {startingPlanId !== null ? "Starting review…" : "Start review"}
+                  </Button>
+                </DialogFooter>
+              </DialogPopup>
+            </Dialog>
           </div>
           {/* end chat column */}
         </div>

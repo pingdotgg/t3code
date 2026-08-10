@@ -1,8 +1,10 @@
 import {
   type EnvironmentId,
   type MessageId,
+  type OrchestrationProposedPlanReview,
   type ScopedThreadRef,
   type ServerProviderSkill,
+  type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -14,6 +16,7 @@ import {
 
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
 const NOOP_OPEN_AGENTS = () => {};
+const EMPTY_PLAN_REVIEWS: ReadonlyArray<OrchestrationProposedPlanReview> = [];
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import {
   createContext,
@@ -147,6 +150,12 @@ interface TimelineRowSharedState {
   onToggleWorkGroup: (groupId: string, anchorElement?: HTMLElement) => void;
   agentPanelModel: AgentPanelModel;
   onOpenAgents: () => void;
+  planReviews: ReadonlyArray<OrchestrationProposedPlanReview>;
+  reviewStartingPlanId: string | null;
+  sourceBusy: boolean;
+  onReviewPlan: ((planId: string) => void) | undefined;
+  onOpenPlanReview: ((reviewThreadId: ThreadId) => void) | undefined;
+  onRevisePlan: ((input: { planId: string; feedback: string }) => void) | undefined;
 }
 
 interface TimelineRowActivityState {
@@ -238,6 +247,12 @@ interface MessagesTimelineProps {
   topFadeEnabled?: boolean;
   /** Non-null when older turns exist beyond the loaded window. */
   loadEarlier?: { readonly loading: boolean; readonly onLoadEarlier: () => void } | null;
+  planReviews?: ReadonlyArray<OrchestrationProposedPlanReview>;
+  reviewStartingPlanId?: string | null;
+  sourceBusy?: boolean;
+  onReviewPlan?: ((planId: string) => void) | undefined;
+  onOpenPlanReview?: ((reviewThreadId: ThreadId) => void) | undefined;
+  onRevisePlan?: ((input: { planId: string; feedback: string }) => void) | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -279,6 +294,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
   loadEarlier = null,
+  planReviews = EMPTY_PLAN_REVIEWS,
+  reviewStartingPlanId = null,
+  sourceBusy = false,
+  onReviewPlan,
+  onOpenPlanReview,
+  onRevisePlan,
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
@@ -493,6 +514,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       agentPanelModel,
       onOpenAgents,
+      planReviews,
+      reviewStartingPlanId,
+      sourceBusy,
+      onReviewPlan,
+      onOpenPlanReview,
+      onRevisePlan,
     }),
     [
       timestampFormat,
@@ -510,6 +537,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       agentPanelModel,
       onOpenAgents,
+      planReviews,
+      reviewStartingPlanId,
+      sourceBusy,
+      onReviewPlan,
+      onOpenPlanReview,
+      onRevisePlan,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -1162,11 +1195,20 @@ function ProposedPlanTimelineRow({
   return (
     <div className="min-w-0 px-1 py-0.5">
       <ProposedPlanCard
+        planId={row.proposedPlan.id}
         planMarkdown={row.proposedPlan.planMarkdown}
         environmentId={ctx.activeThreadEnvironmentId}
         threadRef={ctx.threadRef ?? undefined}
         cwd={ctx.markdownCwd}
         workspaceRoot={ctx.workspaceRoot}
+        review={
+          ctx.planReviews.find((review) => review.sourcePlanId === row.proposedPlan.id) ?? null
+        }
+        reviewStarting={ctx.reviewStartingPlanId === row.proposedPlan.id}
+        sourceBusy={ctx.sourceBusy}
+        onReviewPlan={ctx.onReviewPlan}
+        onOpenReview={ctx.onOpenPlanReview}
+        onRevisePlan={ctx.onRevisePlan}
       />
     </div>
   );

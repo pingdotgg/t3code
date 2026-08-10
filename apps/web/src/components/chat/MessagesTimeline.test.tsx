@@ -243,6 +243,33 @@ describe("MessagesTimeline", () => {
     expect(fadedMarkup).toContain("chat-timeline-scroll-fade");
   });
 
+  it("renders a review action for proposed plans", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        onReviewPlan={() => {}}
+        timelineEntries={[
+          {
+            id: "proposed-plan-1",
+            kind: "proposed-plan",
+            createdAt: MESSAGE_CREATED_AT,
+            proposedPlan: {
+              id: "plan:thread-1:turn:turn-1",
+              turnId: TurnId.make("turn-1"),
+              planMarkdown: "# Review this plan\n\n- Verify the flow",
+              implementedAt: null,
+              implementationThreadId: null,
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Review plan");
+  });
+
   it("keeps assistant changed-files headers sticky below the thread header", () => {
     const assistantMessageId = MessageId.make("message-assistant-with-files");
     const turnId = TurnId.make("turn-with-files");

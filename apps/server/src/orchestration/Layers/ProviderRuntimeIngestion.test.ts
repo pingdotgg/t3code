@@ -1288,6 +1288,7 @@ describe("ProviderRuntimeIngestion", () => {
         sourceProposedPlan: {
           threadId: sourceThreadId,
           planId: sourcePlan.id,
+          kind: "implementation",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
@@ -1457,6 +1458,7 @@ describe("ProviderRuntimeIngestion", () => {
         sourceProposedPlan: {
           threadId: sourceThreadId,
           planId: sourcePlan.id,
+          kind: "implementation",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
@@ -1579,13 +1581,12 @@ describe("ProviderRuntimeIngestion", () => {
     expect(threadAfterSteer.latestTurn?.state).toBe("running");
   });
 
-  it("does not mark the source proposed plan implemented for an unrelated turn.started when no thread active turn is tracked", async () => {
+  it("does not mark the source proposed plan implemented when a review turn starts", async () => {
     const harness = await createHarness();
     const sourceThreadId = asThreadId("thread-plan");
     const targetThreadId = asThreadId("thread-implement");
     const sourceTurnId = asTurnId("turn-plan-source");
     const expectedTurnId = asTurnId("turn-plan-implement");
-    const replayedTurnId = asTurnId("turn-replayed");
     const createdAt = "2026-01-01T00:00:00.000Z";
 
     await Effect.runPromise(
@@ -1705,6 +1706,7 @@ describe("ProviderRuntimeIngestion", () => {
         sourceProposedPlan: {
           threadId: sourceThreadId,
           planId: sourcePlan.id,
+          kind: "review",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
@@ -1724,11 +1726,11 @@ describe("ProviderRuntimeIngestion", () => {
 
     harness.emit({
       type: "turn.started",
-      eventId: asEventId("evt-turn-started-unrelated-plan-implementation"),
+      eventId: asEventId("evt-turn-started-plan-review"),
       provider: ProviderDriverKind.make("codex"),
       createdAt: "2026-01-01T00:00:00.000Z",
       threadId: targetThreadId,
-      turnId: replayedTurnId,
+      turnId: expectedTurnId,
     });
 
     await harness.drain();
