@@ -437,6 +437,7 @@ export interface ChatComposerProps {
 
   // Callbacks
   onSend: (e?: { preventDefault: () => void }) => void;
+  onComposerIntent: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
@@ -519,6 +520,7 @@ export const ChatComposer = memo(
       shouldAutoScrollRef,
       scheduleStickToBottom,
       onSend,
+      onComposerIntent,
       onInterrupt,
       onImplementPlanInNewThread,
       onRespondToApproval,
@@ -1987,6 +1989,7 @@ export const ChatComposer = memo(
               composerProviderState.composerSurfaceClassName,
             )}
             onFocusCapture={(event) => {
+              onComposerIntent();
               const activeElement = event.target;
               if (
                 isComposerCollapsedMobile &&
@@ -2001,6 +2004,7 @@ export const ChatComposer = memo(
               }
               setIsComposerFocused(true);
             }}
+            onPointerEnter={onComposerIntent}
             onBlurCapture={scheduleComposerCollapseCheck}
           >
             {activePendingApproval || pendingUserInputs.length > 0 ? null : (

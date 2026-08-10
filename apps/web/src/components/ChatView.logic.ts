@@ -9,7 +9,8 @@ import {
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
-import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } from "../types";
+import { scopeThreadRef } from "@t3tools/client-runtime";
+import { type SessionPhase, type Thread } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import { isInsightActivity } from "../insights";
 import { Schema } from "effect";
@@ -291,38 +292,6 @@ export function reconcileMountedTerminalThreadIds(input: {
   return nextThreadIds;
 }
 
-export function revokeBlobPreviewUrl(previewUrl: string | undefined): void {
-  if (!previewUrl || typeof URL === "undefined" || !previewUrl.startsWith("blob:")) {
-    return;
-  }
-  URL.revokeObjectURL(previewUrl);
-}
-
-export function revokeUserMessagePreviewUrls(message: ChatMessage): void {
-  if (message.role !== "user" || !message.attachments) {
-    return;
-  }
-  for (const attachment of message.attachments) {
-    if (attachment.type !== "image") {
-      continue;
-    }
-    revokeBlobPreviewUrl(attachment.previewUrl);
-  }
-}
-
-export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[] {
-  if (message.role !== "user" || !message.attachments) {
-    return [];
-  }
-  const previewUrls: string[] = [];
-  for (const attachment of message.attachments) {
-    if (attachment.type !== "image") continue;
-    if (!attachment.previewUrl || !attachment.previewUrl.startsWith("blob:")) continue;
-    previewUrls.push(attachment.previewUrl);
-  }
-  return previewUrls;
-}
-
 export interface PullRequestDialogState {
   initialReference: string | null;
   key: number;
@@ -426,6 +395,21 @@ export function threadHasStarted(thread: Thread | null | undefined): boolean {
   );
 }
 
+export function resolveDraftCanonicalThreadRef(
+  draftSession:
+    | {
+        promotedTo?: ScopedThreadRef | null;
+      }
+    | null
+    | undefined,
+  serverThread: Pick<Thread, "environmentId" | "id"> | null | undefined,
+): ScopedThreadRef | null {
+  return (
+    draftSession?.promotedTo ??
+    (serverThread ? scopeThreadRef(serverThread.environmentId, serverThread.id) : null)
+  );
+}
+
 // `threadProvider` is the open branded driver kind carried by the session.
 // Unknown driver kinds degrade to `null` (i.e. "unlocked"), which is the safe
 // rollback / fork behavior — the routing layer is the right place to surface
@@ -511,34 +495,14 @@ export async function waitForRoutableServerThread(
   });
 }
 
-export interface LocalDispatchSnapshot {
-  startedAt: string;
-  preparingWorktree: boolean;
-  latestTurnTurnId: TurnId | null;
-  latestTurnRequestedAt: string | null;
-  latestTurnStartedAt: string | null;
-  latestTurnCompletedAt: string | null;
-  sessionOrchestrationStatus: ThreadSession["orchestrationStatus"] | null;
-  sessionUpdatedAt: string | null;
-}
+import {
+  createPendingTurnSnapshot,
+  hasServerAcknowledgedPendingTurn,
+  type PendingTurnSnapshot,
+} from "../pendingTurnStore";
 
-export function createLocalDispatchSnapshot(
-  activeThread: Thread | undefined,
-  options?: { preparingWorktree?: boolean },
-): LocalDispatchSnapshot {
-  const latestTurn = activeThread?.latestTurn ?? null;
-  const session = activeThread?.session ?? null;
-  return {
-    startedAt: new Date().toISOString(),
-    preparingWorktree: Boolean(options?.preparingWorktree),
-    latestTurnTurnId: latestTurn?.turnId ?? null,
-    latestTurnRequestedAt: latestTurn?.requestedAt ?? null,
-    latestTurnStartedAt: latestTurn?.startedAt ?? null,
-    latestTurnCompletedAt: latestTurn?.completedAt ?? null,
-    sessionOrchestrationStatus: session?.orchestrationStatus ?? null,
-    sessionUpdatedAt: session?.updatedAt ?? null,
-  };
-}
+export const createLocalDispatchSnapshot = createPendingTurnSnapshot;
+export type LocalDispatchSnapshot = PendingTurnSnapshot;
 
 export function hasServerAcknowledgedLocalDispatch(input: {
   localDispatch: LocalDispatchSnapshot | null;
@@ -549,41 +513,13 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   hasPendingUserInput: boolean;
   threadError: string | null | undefined;
 }): boolean {
-  if (!input.localDispatch) {
-    return false;
-  }
-  if (input.hasPendingApproval || input.hasPendingUserInput || Boolean(input.threadError)) {
-    return true;
-  }
-
-  const latestTurn = input.latestTurn ?? null;
-  const session = input.session ?? null;
-  const latestTurnChanged =
-    input.localDispatch.latestTurnTurnId !== (latestTurn?.turnId ?? null) ||
-    input.localDispatch.latestTurnRequestedAt !== (latestTurn?.requestedAt ?? null) ||
-    input.localDispatch.latestTurnStartedAt !== (latestTurn?.startedAt ?? null) ||
-    input.localDispatch.latestTurnCompletedAt !== (latestTurn?.completedAt ?? null);
-
-  if (input.phase === "running") {
-    if (!latestTurnChanged) {
-      return false;
-    }
-    if (latestTurn?.startedAt === null || latestTurn === null) {
-      return false;
-    }
-    if (
-      session?.activeTurnId !== undefined &&
-      session.activeTurnId !== null &&
-      latestTurn?.turnId !== session.activeTurnId
-    ) {
-      return false;
-    }
-    return true;
-  }
-
-  return (
-    latestTurnChanged ||
-    input.localDispatch.sessionOrchestrationStatus !== (session?.orchestrationStatus ?? null) ||
-    input.localDispatch.sessionUpdatedAt !== (session?.updatedAt ?? null)
-  );
+  return hasServerAcknowledgedPendingTurn({
+    pendingTurn: input.localDispatch,
+    phase: input.phase,
+    latestTurn: input.latestTurn,
+    session: input.session,
+    hasPendingApproval: input.hasPendingApproval,
+    hasPendingUserInput: input.hasPendingUserInput,
+    threadError: input.threadError,
+  });
 }

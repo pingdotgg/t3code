@@ -162,7 +162,10 @@ export function isSidebarV2ActiveStatus(status: SidebarV2Status): boolean {
   return status !== "ready";
 }
 
-function buildThreadNodes(threads: readonly SidebarThreadSummary[]): SidebarV2ThreadNode[] {
+function buildThreadNodes(
+  threads: readonly SidebarThreadSummary[],
+  pendingThreadKeys: ReadonlySet<string>,
+): SidebarV2ThreadNode[] {
   const parentByKey = normalizeParentThreadKeys(threads);
   // Sorted once up front so roots and children land in order as they are
   // appended, avoiding a recursive sort pass per subtree.
@@ -176,7 +179,10 @@ function buildThreadNodes(threads: readonly SidebarThreadSummary[]): SidebarV2Th
           thread,
           threadKey,
           children: [],
-          status: resolveSidebarV2Status(thread),
+          status: resolveSidebarV2Status({
+            ...thread,
+            hasPendingTurn: pendingThreadKeys.has(threadKey),
+          }),
           rolledUpStatus: "ready",
           descendantCount: 0,
           archiveBlocked: false,
@@ -305,13 +311,14 @@ export function classifySidebarV2Shelves(input: {
   readonly pinnedThreadKeysByProjectKey?: PinnedThreadKeysByProjectKey;
   readonly expandedOverrideByThreadKey?: ReadonlyMap<string, boolean>;
   readonly activeThreadKey?: string | undefined;
+  readonly pendingThreadKeys?: ReadonlySet<string>;
 }): SidebarV2Shelves {
   const visibleThreads = selectVisibleSidebarThreads(input.threads);
   const flattenInput = {
     activeThreadKey: input.activeThreadKey,
     expandedOverrideByThreadKey: input.expandedOverrideByThreadKey ?? NO_EXPANDED_OVERRIDES,
   };
-  const rootNodes = buildThreadNodes(visibleThreads);
+  const rootNodes = buildThreadNodes(visibleThreads, input.pendingThreadKeys ?? new Set());
   // Only roots are pinnable: a nested chat rides along with its parent, so a
   // stale pin on a thread that has since become a child is ignored.
   const groupByRootKey = new Map(
@@ -400,7 +407,9 @@ export type SidebarV2Status = "approval" | "input" | "working" | "failed" | "rea
 type SidebarV2StatusInput = Pick<
   SidebarThreadSummary,
   "hasPendingApprovals" | "hasPendingUserInput" | "latestTurn" | "session" | "virtualAgentRun"
->;
+> & {
+  readonly hasPendingTurn?: boolean;
+};
 
 export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2Status {
   if (thread.hasPendingApprovals) return "approval";
@@ -409,6 +418,7 @@ export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2S
   // "working" reuses the same predicate v1's status pill does — including the
   // pre-adoption `connecting` phase, which is work the user is waiting on.
   if (
+    thread.hasPendingTurn ||
     thread.virtualAgentRun?.status === "running" ||
     isThreadActivelyWorking(thread.latestTurn, thread.session) ||
     thread.session?.status === "connecting"

@@ -23,6 +23,7 @@ import {
   deriveComposerSendState,
   getActivityHistoryKey,
   hasServerAcknowledgedLocalDispatch,
+  resolveDraftCanonicalThreadRef,
   mergeActivityWindows,
   mergeInsightActivityWindows,
   reconcileMountedTerminalThreadIds,
@@ -33,6 +34,22 @@ import {
 } from "./ChatView.logic";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("resolveDraftCanonicalThreadRef", () => {
+  it("routes as soon as the server thread exists, before its first turn starts", () => {
+    const threadId = ThreadId.make("thread-new");
+
+    expect(
+      resolveDraftCanonicalThreadRef(
+        { promotedTo: null },
+        {
+          environmentId: localEnvironmentId,
+          id: threadId,
+        },
+      ),
+    ).toEqual(scopeThreadRef(localEnvironmentId, threadId));
+  });
+});
 
 function makeActivity(id: string, sequence: number): OrchestrationThreadActivity {
   return {

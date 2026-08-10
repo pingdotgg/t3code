@@ -62,6 +62,7 @@ import {
   sidebarThreadKey,
 } from "../sidebarThreadTree";
 import { createThreadExpandedOverridesSelector, useUiStateStore } from "../uiStateStore";
+import { usePendingTurnStore } from "../pendingTurnStore";
 import {
   classifySidebarV2Shelves,
   resolveThreadLifecycleSupport,
@@ -288,6 +289,10 @@ export default function SidebarV2() {
     ),
   );
   const dismissedAgentRunKeys = useUiStateStore((state) => state.dismissedAgentRunKeys);
+  const pendingThreadKeys = usePendingTurnStore(
+    useShallow((state) => Object.keys(state.pendingByThreadKey)),
+  );
+  const pendingThreadKeySet = useMemo(() => new Set(pendingThreadKeys), [pendingThreadKeys]);
   const setAgentRunDismissed = useUiStateStore((state) => state.setAgentRunDismissed);
   const pinnedThreadKeysByProjectKey = useUiStateStore(
     (state) => state.pinnedThreadKeysByProjectId,
@@ -396,12 +401,14 @@ export default function SidebarV2() {
       now,
       pinnedThreadKeysByProjectKey,
       expandedOverrideByThreadKey,
+      pendingThreadKeys: pendingThreadKeySet,
       ...(activeClassificationThreadKey === null
         ? {}
         : { activeThreadKey: activeClassificationThreadKey }),
     });
   }, [
     activeClassificationThreadKey,
+    pendingThreadKeySet,
     expandedOverrideByThreadKey,
     now,
     pinnedThreadKeysByProjectKey,

@@ -89,6 +89,7 @@ import {
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useThreadDiscoveredPorts } from "../portDiscoveryState";
 import { createThreadExpandedOverridesSelector, useUiStateStore } from "../uiStateStore";
+import { isPendingTurnActive, usePendingTurnStore } from "../pendingTurnStore";
 import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
@@ -437,6 +438,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     virtualAgentRun?.parentThreadId ?? thread.id,
   );
   const threadKey = scopedThreadKey(threadRef);
+  const pendingTurnKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+  const pendingTurn = usePendingTurnStore(
+    (state) => state.pendingByThreadKey[pendingTurnKey] ?? null,
+  );
+  const effectiveThreadStatus = resolveThreadStatusPill({
+    thread,
+    hasPendingTurn: isPendingTurnActive(pendingTurn, thread),
+  });
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const discoveredPorts = useThreadDiscoveredPorts({
     environmentId: thread.environmentId,
@@ -475,6 +484,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     [discoveredPorts, navigateToThread, openPreview, threadRef],
   );
   const isThreadRunning =
+    effectiveThreadStatus?.label === "Working" ||
     virtualAgentRun?.status === "running" ||
     isThreadActivelyWorking(thread.latestTurn, thread.session);
   const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isThreadRunning;
@@ -784,8 +794,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         >
           {/* Every row reserves the same leading slot so titles share one left
               edge whether or not the thread currently has a status. */}
-          {threadStatus ? (
-            <ThreadStatusLabel status={threadStatus} compact />
+          {(effectiveThreadStatus ?? threadStatus) ? (
+            <ThreadStatusLabel status={effectiveThreadStatus ?? threadStatus!} compact />
           ) : (
             <span aria-hidden="true" className="size-3.5 shrink-0" />
           )}
@@ -3021,6 +3031,14 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   onDiscard: (draftId: DraftId) => void;
 }) {
   const { composer, draftId } = props.row;
+  const draftThreadRef = scopeThreadRef(
+    props.row.session.environmentId,
+    props.row.session.threadId,
+  );
+  const draftThreadKey = scopedThreadKey(draftThreadRef);
+  const hasPendingTurn = usePendingTurnStore((state) =>
+    Boolean(state.pendingByThreadKey[draftThreadKey]),
+  );
   const promptPreview = composer.prompt.trim().split("\n", 1)[0] ?? "";
   const attachmentIds = new Set([
     ...composer.images.map((attachment) => attachment.id),
@@ -3053,6 +3071,11 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
             <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
               {props.project.displayName}
             </span>
+            {hasPendingTurn ? (
+              <span className="shrink-0 text-xs font-medium text-sky-600 dark:text-sky-400">
+                Working
+              </span>
+            ) : null}
           </span>
           <span className="mt-0.5 block truncate text-[length:var(--app-sidebar-font-size)] text-foreground/90">
             {preview}

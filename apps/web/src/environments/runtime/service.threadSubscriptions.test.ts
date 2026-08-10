@@ -1,6 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import {
   EnvironmentId,
+  MessageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -249,6 +250,125 @@ describe("retainThreadDetailSubscription", () => {
 
     await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
     expect(mockThreadUnsubscribe).toHaveBeenCalledTimes(1);
+
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("clears pending send status from shell turn acknowledgement", async () => {
+    const { startEnvironmentConnectionService, resetEnvironmentServiceForTests } =
+      await import("./service");
+    const { usePendingTurnStore } = await import("~/pendingTurnStore");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-pending-shell");
+    const threadRef = { environmentId, threadId };
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+
+    connectionInput.syncShellSnapshot(
+      makeThreadShellSnapshot({
+        threadId,
+        sessionStatus: "idle",
+      }),
+      environmentId,
+    );
+    usePendingTurnStore.getState().beginPendingTurn(threadRef, undefined);
+
+    connectionInput.applyShellEvent(
+      {
+        kind: "thread-upserted",
+        sequence: 2,
+        thread: makeThreadShellSnapshot({
+          threadId,
+          sessionStatus: "running",
+        }).threads[0]!,
+      },
+      environmentId,
+    );
+
+    expect(usePendingTurnStore.getState().pendingByThreadKey).toEqual({});
+
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("clears shared pending state for threads removed by shell snapshot sync", async () => {
+    const { startEnvironmentConnectionService, resetEnvironmentServiceForTests } =
+      await import("./service");
+    const { usePendingTurnStore } = await import("~/pendingTurnStore");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-removed-by-snapshot");
+    const threadRef = { environmentId, threadId };
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+
+    const initialSnapshot = makeThreadShellSnapshot({ threadId, sessionStatus: "idle" });
+    connectionInput.syncShellSnapshot(initialSnapshot, environmentId);
+    usePendingTurnStore.getState().beginPendingTurn(threadRef, undefined);
+    usePendingTurnStore.getState().addOptimisticMessage(threadRef, {
+      id: MessageId.make("message-1"),
+      role: "user",
+      text: "Ship it",
+      createdAt: "2026-04-13T00:00:00.000Z",
+      streaming: false,
+    });
+
+    connectionInput.syncShellSnapshot(
+      {
+        ...initialSnapshot,
+        snapshotSequence: 2,
+        threads: [],
+      },
+      environmentId,
+    );
+
+    expect(usePendingTurnStore.getState().pendingByThreadKey).toEqual({});
+    expect(usePendingTurnStore.getState().optimisticMessagesByThreadKey).toEqual({});
+
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("clears shared pending state when a shell event removes the thread", async () => {
+    const { startEnvironmentConnectionService, resetEnvironmentServiceForTests } =
+      await import("./service");
+    const { usePendingTurnStore } = await import("~/pendingTurnStore");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-removed-by-event");
+    const threadRef = { environmentId, threadId };
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+
+    connectionInput.syncShellSnapshot(
+      makeThreadShellSnapshot({ threadId, sessionStatus: "idle" }),
+      environmentId,
+    );
+    usePendingTurnStore.getState().beginPendingTurn(threadRef, undefined);
+    usePendingTurnStore.getState().addOptimisticMessage(threadRef, {
+      id: MessageId.make("message-1"),
+      role: "user",
+      text: "Ship it",
+      createdAt: "2026-04-13T00:00:00.000Z",
+      streaming: false,
+    });
+
+    connectionInput.applyShellEvent(
+      {
+        kind: "thread-removed",
+        sequence: 2,
+        threadId,
+      },
+      environmentId,
+    );
+
+    expect(usePendingTurnStore.getState().pendingByThreadKey).toEqual({});
+    expect(usePendingTurnStore.getState().optimisticMessagesByThreadKey).toEqual({});
 
     stop();
     await resetEnvironmentServiceForTests();

@@ -161,7 +161,10 @@ export const SidebarV2Row = memo(function SidebarV2Row({
     status: displayStatus,
     unseenCompletion: hasUnseenCompletion({ ...thread, lastVisitedAt }),
   });
-  const pill = resolveThreadStatusPill({ thread });
+  const pill = resolveThreadStatusPill({
+    thread,
+    hasPendingTurn: displayStatus === "working",
+  });
 
   const handleOpen = useCallback(() => onOpen(thread), [onOpen, thread]);
   const handleToggleExpanded = useCallback(

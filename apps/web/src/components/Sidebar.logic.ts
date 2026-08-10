@@ -370,6 +370,7 @@ export function resolveThreadRowClassName(input: {
 
 export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
+  hasPendingTurn?: boolean;
 }): ThreadStatusPill | null {
   const { thread } = input;
 
@@ -394,6 +395,7 @@ export function resolveThreadStatusPill(input: {
   }
 
   if (
+    input.hasPendingTurn ||
     thread.virtualAgentRun?.status === "running" ||
     isThreadActivelyWorking(thread.latestTurn, thread.session)
   ) {

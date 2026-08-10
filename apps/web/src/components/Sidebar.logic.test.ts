@@ -653,6 +653,19 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Working", pulse: true });
   });
 
+  it("shows working immediately while a turn dispatch is pending locally", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          latestTurn: null,
+          session: null,
+        },
+        hasPendingTurn: true,
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
+  });
+
   it("does not show working for a running session that has no active turn", () => {
     expect(
       resolveThreadStatusPill({
