@@ -204,6 +204,75 @@ it.effect("refines unknown self-hosted GitLab projects before listing merge requ
   }),
 );
 
+it.effect("derives a legacy repository host after refining its provider", () =>
+  Effect.gen(function* () {
+    const current = project({
+      id: "p1",
+      title: "legacy self-hosted",
+      workspaceRoot: "/gitlab",
+      repository: "group/project",
+      provider: "unknown",
+      host: "code.example.test",
+    });
+    const identity = current.repositoryIdentity!;
+    // Persisted identities from before canonicalKey existed are still accepted at runtime.
+    const legacy = {
+      ...current,
+      repositoryIdentity: {
+        locator: identity.locator,
+        provider: identity.provider,
+        displayName: identity.displayName,
+      },
+    } as unknown as OrchestrationProjectShell;
+    const service = yield* makeService({
+      projects: [legacy],
+      providers: [fakeProvider("gitlab")],
+      resolveHandle: ({ context }) =>
+        Effect.succeed({
+          context: { ...context!, provider: { ...context!.provider, kind: "gitlab" } },
+          provider: undefined as never,
+        }),
+    });
+
+    const result = yield* service.list({ state: "open", host: "gitlab" });
+
+    assert.strictEqual(result.providers[0]?.host, "gitlab");
+    assert.strictEqual(result.providers[0]?.kind, "gitlab");
+  }),
+);
+
+it.effect("tries another checkout when provider refinement remains unknown", () =>
+  Effect.gen(function* () {
+    const asked: string[] = [];
+    const selfHosted = project({
+      id: "p1",
+      title: "self-hosted",
+      workspaceRoot: "/gone",
+      repository: "group/project",
+      provider: "unknown",
+      host: "code.example.test",
+    });
+    const service = yield* makeService({
+      projects: [selfHosted, { ...selfHosted, id: "p2" as ProjectId, workspaceRoot: "/healthy" }],
+      providers: [fakeProvider("gitlab")],
+      resolveHandle: ({ cwd, context }) => {
+        asked.push(cwd);
+        return cwd === "/gone"
+          ? Effect.succeed({ context: context!, provider: undefined as never })
+          : Effect.succeed({
+              context: { ...context!, provider: { ...context!.provider, kind: "gitlab" } },
+              provider: undefined as never,
+            });
+      },
+    });
+
+    const result = yield* service.list({ state: "open" });
+
+    assert.deepStrictEqual(asked, ["/gone", "/healthy"]);
+    assert.strictEqual(result.providers[0]?.kind, "gitlab");
+  }),
+);
+
 /** A row as a host that reads several repositories at once hands it over. */
 function batchedChangeRequest(number: number, repository: string, updatedAt: string) {
   return { ...changeRequest(number, updatedAt), repository };
