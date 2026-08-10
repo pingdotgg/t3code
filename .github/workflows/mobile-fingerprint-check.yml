@@ -1,0 +1,205 @@
+name: Mobile Fingerprint Check
+
+# Detects whether a PR changes the native fingerprint — i.e. whether merging
+# it would leave main un-OTA-able until a new store build ships. Native-change
+# PRs get the "📱 Native Change" label so they can be held and merged as a
+# batch right before the next store submission, keeping main OTA-able for
+# everything else in between. (Once one native PR merges, every later merge
+# inherits the drifted fingerprint and loses OTA reach too — that is why the
+# signal has to fire before merge, not after.)
+#
+# The check is advisory: it always passes, the label is the signal. Both
+# fingerprints are computed in this one job (same OS, same corepack-pinned
+# pnpm), so the comparison is self-consistent; no EXPO_TOKEN needed.
+on:
+  pull_request:
+    paths:
+      - apps/mobile/**
+      - packages/client-runtime/**
+      - packages/contracts/**
+      - packages/shared/**
+      - assets/**
+      - scripts/**
+      - patches/**
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - .github/workflows/mobile-fingerprint-check.yml
+
+concurrency:
+  group: mobile-fingerprint-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  fingerprint:
+    name: Native fingerprint diff
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    env:
+      APP_VARIANT: production
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # Default pull_request checkout is the merge commit (PR applied on
+          # top of base), so the "head" fingerprint is the state main would
+          # actually be in after merging — stale branches compare cleanly.
+          fetch-depth: 0
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/mobile...
+
+      - name: Expose pnpm
+        run: |
+          pnpm_version="$(node --print "require('./package.json').packageManager.split('@').pop()")"
+          vp_pnpm_bin="$HOME/.vite-plus/package_manager/pnpm/$pnpm_version/pnpm/bin"
+          echo "$vp_pnpm_bin" >> "$GITHUB_PATH"
+          "$vp_pnpm_bin/pnpm" --version
+
+      - name: Fingerprint merge result
+        working-directory: apps/mobile
+        run: |
+          mkdir -p "$RUNNER_TEMP/fp/head" "$RUNNER_TEMP/fp/base"
+          for platform in ios android; do
+            npx expo-updates fingerprint:generate --platform "$platform" > "$RUNNER_TEMP/fp/head/$platform.json"
+          done
+
+      - name: Fingerprint base
+        run: |
+          git checkout --quiet "${{ github.event.pull_request.base.sha }}"
+          # Re-sync node_modules to the base commit's lockfile before
+          # fingerprinting — a dep-changing PR must not fingerprint the base
+          # against head's installed packages.
+          pnpm install --filter=@t3tools/mobile...
+          cd apps/mobile
+          for platform in ios android; do
+            npx expo-updates fingerprint:generate --platform "$platform" > "$RUNNER_TEMP/fp/base/$platform.json"
+          done
+
+      - id: compare
+        name: Compare fingerprints
+        run: |
+          changed=""
+          {
+            echo "## Native fingerprint diff"
+            echo
+            for platform in ios android; do
+              head_hash="$(jq -r .hash "$RUNNER_TEMP/fp/head/$platform.json")"
+              base_hash="$(jq -r .hash "$RUNNER_TEMP/fp/base/$platform.json")"
+              if [ "$head_hash" = "$base_hash" ]; then
+                echo "- ✅ **$platform**: unchanged (\`$head_hash\`) — OTA-compatible"
+                continue
+              fi
+              changed="$changed $platform"
+              echo "- 📱 **$platform**: \`$base_hash\` → \`$head_hash\` — merging requires a new native build before OTAs work again"
+              jq -r -n \
+                --slurpfile h "$RUNNER_TEMP/fp/head/$platform.json" \
+                --slurpfile b "$RUNNER_TEMP/fp/base/$platform.json" '
+                  ($b[0].sources | map({ (.filePath // .id): .hash }) | add // {}) as $bm
+                  | $h[0].sources[]
+                  | select($bm[(.filePath // .id)] != .hash)
+                  | "  - \(.type): `\(.filePath // .id)`"'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "changed_platforms=${changed# }" >> "$GITHUB_OUTPUT"
+
+      - name: Sync native change label
+        # Fork PRs get a read-only token under pull_request; the check stays
+        # advisory there (summary only). This workflow must not move to
+        # pull_request_target — it installs and runs PR code.
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@v8
+        env:
+          CHANGED_PLATFORMS: ${{ steps.compare.outputs.changed_platforms }}
+        with:
+          script: |
+            const managedLabel = {
+              name: "📱 Native Change",
+              color: "d93f0b",
+              description:
+                "Changes the native fingerprint; merging blocks production OTAs until a new store build ships.",
+            };
+            const nativeChanged = (process.env.CHANGED_PLATFORMS ?? "").trim() !== "";
+            const issueNumber = context.payload.pull_request.number;
+
+            try {
+              const { data: existing } = await github.rest.issues.getLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: managedLabel.name,
+              });
+
+              if (
+                existing.color !== managedLabel.color ||
+                (existing.description ?? "") !== managedLabel.description
+              ) {
+                await github.rest.issues.updateLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: managedLabel.name,
+                  color: managedLabel.color,
+                  description: managedLabel.description,
+                });
+              }
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+
+              try {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: managedLabel.name,
+                  color: managedLabel.color,
+                  description: managedLabel.description,
+                });
+              } catch (createError) {
+                if (createError.status !== 422) {
+                  throw createError;
+                }
+              }
+            }
+
+            const { data: currentLabels } = await github.rest.issues.listLabelsOnIssue({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            const hasLabel = currentLabels.some((label) => label.name === managedLabel.name);
+
+            if (nativeChanged && !hasLabel) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                labels: [managedLabel.name],
+              });
+            } else if (!nativeChanged && hasLabel) {
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  name: managedLabel.name,
+                });
+              } catch (removeError) {
+                if (removeError.status !== 404) {
+                  throw removeError;
+                }
+              }
+            }
+
+            core.info(
+              `PR #${issueNumber}: native fingerprint ${nativeChanged ? `changed (${process.env.CHANGED_PLATFORMS})` : "unchanged"}`,
+            );
