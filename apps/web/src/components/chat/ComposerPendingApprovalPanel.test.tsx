@@ -25,4 +25,39 @@ describe("ComposerPendingApprovalPanel", () => {
     expect(markup).not.toContain("truncate");
     expect(markup).not.toContain("line-clamp");
   });
+
+  it("labels permission requests clearly", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerPendingApprovalPanel
+        approval={{
+          requestId: ApprovalRequestId.make("approval-permissions"),
+          requestKind: "permissions",
+          createdAt: "2026-08-10T00:00:00.000Z",
+          detail: "Allow Computer Use to view and control the desktop",
+        }}
+        pendingCount={1}
+      />,
+    );
+
+    expect(markup).toContain("Permission requested");
+    expect(markup).toContain('aria-label="Requested permissions"');
+  });
+
+  it("distinguishes generic tool approvals from permission requests", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerPendingApprovalPanel
+        approval={{
+          requestId: ApprovalRequestId.make("approval-tool"),
+          requestKind: "tool",
+          createdAt: "2026-08-10T00:00:00.000Z",
+          detail: "Allow node_repl to run?",
+        }}
+        pendingCount={1}
+      />,
+    );
+
+    expect(markup).toContain("Tool approval requested");
+    expect(markup).toContain('aria-label="Tool request"');
+    expect(markup).not.toContain("Permission requested");
+  });
 });

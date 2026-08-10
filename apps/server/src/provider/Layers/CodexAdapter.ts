@@ -302,6 +302,8 @@ function toRequestTypeFromMethod(method: string): CanonicalRequestType {
       return "file_read_approval";
     case "item/fileChange/requestApproval":
       return "file_change_approval";
+    case "item/permissions/requestApproval":
+      return "permissions_approval";
     case "applyPatchApproval":
       return "apply_patch_approval";
     case "execCommandApproval":
@@ -325,6 +327,10 @@ function toRequestTypeFromKind(kind: ProviderRequestKind | undefined): Canonical
       return "file_read_approval";
     case "file-change":
       return "file_change_approval";
+    case "permissions":
+      return "permissions_approval";
+    case "tool":
+      return "tool_approval";
     default:
       return "unknown";
   }
@@ -819,6 +825,20 @@ function mapToRuntimeEvents(
           );
           return payload?.reason ?? undefined;
         }
+        case "item/permissions/requestApproval": {
+          const payload = readPayload(
+            EffectCodexSchema.ServerRequest__PermissionsRequestApprovalParams,
+            event.payload,
+          );
+          return payload?.reason ?? undefined;
+        }
+        case "mcpServer/elicitation/request": {
+          const payload = readPayload(
+            EffectCodexSchema.ServerRequest__McpServerElicitationRequestParams,
+            event.payload,
+          );
+          return payload?.message ?? undefined;
+        }
         case "applyPatchApproval": {
           const payload = readPayload(
             EffectCodexSchema.ServerRequest__ApplyPatchApprovalParams,
@@ -850,7 +870,9 @@ function mapToRuntimeEvents(
         ...runtimeEventBase(event, canonicalThreadId),
         type: "request.opened",
         payload: {
-          requestType: toRequestTypeFromMethod(event.method),
+          requestType: event.requestKind
+            ? toRequestTypeFromKind(event.requestKind)
+            : toRequestTypeFromMethod(event.method),
           ...(detail ? { detail } : {}),
           ...(event.payload !== undefined ? { args: event.payload } : {}),
         },

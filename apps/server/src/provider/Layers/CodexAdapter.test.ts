@@ -935,6 +935,129 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("maps Computer Use permission requests and resolutions to canonical approvals", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit({
+        id: asEventId("evt-permissions-requested"),
+        kind: "request",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("permissions-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "mcpServer/elicitation/request",
+        requestKind: "permissions",
+        requestId: ApprovalRequestId.make("req-permissions-1"),
+        payload: {
+          _meta: {
+            codex_approval_kind: "mcp_tool_call",
+            connector_id: "computer-use",
+          },
+          message: "Control the desktop",
+          mode: "form",
+          requestedSchema: { type: "object", properties: {} },
+          serverName: "computer-use",
+          threadId: "provider-thread-1",
+          turnId: "turn-1",
+        },
+      } satisfies ProviderEvent);
+      yield* runtime.emit({
+        id: asEventId("evt-permissions-resolved"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("permissions-1"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        method: "item/requestApproval/decision",
+        requestKind: "permissions",
+        requestId: ApprovalRequestId.make("req-permissions-1"),
+        payload: {
+          requestId: "req-permissions-1",
+          requestKind: "permissions",
+          decision: "accept",
+        },
+      } satisfies ProviderEvent);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      NodeAssert.equal(events[0]?.type, "request.opened");
+      if (events[0]?.type === "request.opened") {
+        NodeAssert.equal(events[0].payload.requestType, "permissions_approval");
+        NodeAssert.equal(events[0].payload.detail, "Control the desktop");
+      }
+      NodeAssert.equal(events[1]?.type, "request.resolved");
+      if (events[1]?.type === "request.resolved") {
+        NodeAssert.equal(events[1].payload.requestType, "permissions_approval");
+        NodeAssert.equal(events[1].payload.decision, "accept");
+      }
+    }),
+  );
+
+  it.effect("maps generic MCP tool requests and resolutions to canonical tool approvals", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit({
+        id: asEventId("evt-tool-requested"),
+        kind: "request",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "mcpServer/elicitation/request",
+        requestKind: "tool",
+        requestId: ApprovalRequestId.make("req-tool-1"),
+        payload: {
+          _meta: {
+            codex_approval_kind: "mcp_tool_call",
+          },
+          message: "Allow node_repl to run this tool call?",
+          mode: "form",
+          requestedSchema: { type: "object", properties: {} },
+          serverName: "node_repl",
+          threadId: "provider-thread-1",
+          turnId: "turn-1",
+        },
+      } satisfies ProviderEvent);
+      yield* runtime.emit({
+        id: asEventId("evt-tool-resolved"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        method: "item/requestApproval/decision",
+        requestKind: "tool",
+        requestId: ApprovalRequestId.make("req-tool-1"),
+        payload: {
+          requestId: "req-tool-1",
+          requestKind: "tool",
+          decision: "accept",
+        },
+      } satisfies ProviderEvent);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      NodeAssert.equal(events[0]?.type, "request.opened");
+      if (events[0]?.type === "request.opened") {
+        NodeAssert.equal(events[0].payload.requestType, "tool_approval");
+        NodeAssert.equal(events[0].payload.detail, "Allow node_repl to run this tool call?");
+      }
+      NodeAssert.equal(events[1]?.type, "request.resolved");
+      if (events[1]?.type === "request.resolved") {
+        NodeAssert.equal(events[1].payload.requestType, "tool_approval");
+        NodeAssert.equal(events[1].payload.decision, "accept");
+      }
+    }),
+  );
+
   it.effect("preserves explicit empty multi-select user-input answers", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

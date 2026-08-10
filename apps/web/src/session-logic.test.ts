@@ -156,6 +156,58 @@ describe("derivePendingApprovals", () => {
     ]);
   });
 
+  it("derives MCP guardian requests as tool approvals", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "approval-open-tool",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "approval.requested",
+        summary: "Tool approval requested",
+        tone: "approval",
+        payload: {
+          requestId: "req-tool",
+          requestType: "tool_approval",
+          detail: "Allow node_repl to run?",
+        },
+      }),
+    ];
+
+    expect(derivePendingApprovals(activities)).toEqual([
+      {
+        requestId: "req-tool",
+        requestKind: "tool",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        detail: "Allow node_repl to run?",
+      },
+    ]);
+  });
+
+  it("derives Computer Use permission requests as actionable approvals", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "approval-open-permissions",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "approval.requested",
+        summary: "Permission requested",
+        tone: "approval",
+        payload: {
+          requestId: "req-permissions",
+          requestType: "permissions_approval",
+          detail: "Allow Computer Use to view and control the desktop",
+        },
+      }),
+    ];
+
+    expect(derivePendingApprovals(activities)).toEqual([
+      {
+        requestId: "req-permissions",
+        requestKind: "permissions",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        detail: "Allow Computer Use to view and control the desktop",
+      },
+    ]);
+  });
+
   it("clears stale pending approvals when provider reports unknown pending request", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -740,6 +792,32 @@ describe("deriveWorkLogEntries", () => {
 
     const entries = deriveWorkLogEntries(activities);
     expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
+  });
+
+  it("preserves generic tool and Computer Use approval kinds in the work log", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "approval-tool",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "approval.requested",
+        summary: "Tool approval requested",
+        tone: "approval",
+        payload: { requestId: "req-tool", requestType: "tool_approval" },
+      }),
+      makeActivity({
+        id: "approval-computer-use",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "approval.requested",
+        summary: "Permission requested",
+        tone: "approval",
+        payload: { requestId: "req-computer-use", requestKind: "permissions" },
+      }),
+    ];
+
+    expect(deriveWorkLogEntries(activities).map((entry) => entry.requestKind)).toEqual([
+      "tool",
+      "permissions",
+    ]);
   });
 
   it("omits task.started but shows task.progress and task.completed", () => {

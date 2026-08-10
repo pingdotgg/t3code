@@ -315,6 +315,7 @@ export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
     },
     capabilities: {
       experimentalApi: true,
+      mcpServerOpenaiFormElicitation: true,
     },
   };
 }
