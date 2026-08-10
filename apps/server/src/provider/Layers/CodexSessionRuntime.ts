@@ -24,6 +24,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -40,6 +41,9 @@ import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
+const decodeV2ThreadResumeResponse = Schema.decodeUnknownEffect(
+  EffectCodexSchema.V2ThreadResumeResponse,
+);
 
 const PROVIDER = ProviderDriverKind.make("codex");
 
@@ -52,6 +56,7 @@ const BENIGN_ERROR_LOG_SNIPPETS = [
   "state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
 ];
 const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds" as const;
+const CODEX_THREAD_RESUME_TIMEOUT = "30 seconds" as const;
 // A child can settle while a wait request is in flight. Two consecutive empty
 // completions absorb that race; a third provider-confirmed empty result is a
 // liveness failure. Do not gate this on collabChildLiveTurnsRef: that map is a
@@ -485,6 +490,12 @@ type CodexThreadOpenResponse =
 type CodexThreadOpenMethod = "thread/start" | "thread/resume";
 
 interface CodexThreadOpenClient {
+  readonly raw: {
+    readonly request: (
+      method: string,
+      payload?: unknown,
+    ) => Effect.Effect<unknown, CodexErrors.CodexAppServerError>;
+  };
   readonly request: <M extends CodexThreadOpenMethod>(
     method: M,
     payload: CodexRpc.ClientRequestParamsByMethod[M],
@@ -512,22 +523,53 @@ export const openCodexThread = (input: {
     return input.client.request("thread/start", startParams);
   }
 
-  return input.client
+  const resume = input.client.raw
     .request("thread/resume", {
       threadId: resumeThreadId,
       ...startParams,
+      // T3 owns and renders its own projected timeline. Asking Codex to
+      // serialize the provider's entire legacy turn history makes large
+      // threads block session startup even after Codex reports them idle.
+      excludeTurns: true,
     })
     .pipe(
-      Effect.catchIf(isRecoverableThreadResumeError, (error) =>
-        Effect.logWarning("codex app-server thread resume fell back to fresh start", {
-          threadId: input.threadId,
-          requestedRuntimeMode: input.runtimeMode,
-          resumeThreadId,
-          recoverable: true,
-          cause: error,
-        }).pipe(Effect.andThen(input.client.request("thread/start", startParams))),
+      Effect.flatMap((response) =>
+        decodeV2ThreadResumeResponse(response).pipe(
+          Effect.mapError((error) =>
+            CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
+              "decode-response-payload",
+              error,
+              { method: "thread/resume" },
+            ),
+          ),
+        ),
+      ),
+      Effect.timeoutOption(CODEX_THREAD_RESUME_TIMEOUT),
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.fail(
+              new CodexErrors.CodexAppServerRequestError({
+                code: -32000,
+                errorMessage: `thread/resume timed out after ${CODEX_THREAD_RESUME_TIMEOUT}`,
+              }),
+            ),
+          onSome: Effect.succeed,
+        }),
       ),
     );
+
+  return resume.pipe(
+    Effect.catchIf(isRecoverableThreadResumeError, (error) =>
+      Effect.logWarning("codex app-server thread resume fell back to fresh start", {
+        threadId: input.threadId,
+        requestedRuntimeMode: input.runtimeMode,
+        resumeThreadId,
+        recoverable: true,
+        cause: error,
+      }).pipe(Effect.andThen(input.client.request("thread/start", startParams))),
+    ),
+  );
 };
 
 function readNotificationThreadId(notification: CodexServerNotification): string | undefined {
