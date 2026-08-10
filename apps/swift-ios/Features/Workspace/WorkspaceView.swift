@@ -191,8 +191,8 @@ public struct WorkspaceView: View {
     @State private var isSettledExpanded = true
     @State private var isArchiveExpanded = false
     @State private var settledLimit = 12
-    @State private var showingNewTask = false
-    @State private var newTaskInitialProjectID: String?
+    @State private var newTaskPresentation: ThreadNewTaskPresentation?
+    @State private var threadNewTaskError: ThreadNewTaskUnavailableReason?
     @State private var showingAddProject = false
     @State private var showingSettings = false
     @State private var renamingThread: FeatureThread?
@@ -272,6 +272,10 @@ public struct WorkspaceView: View {
     }
 
     public var body: some View {
+        workspaceLifecycle
+    }
+
+    private var workspaceRoot: some View {
         NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
             sidebar
                 .navigationSplitViewColumnWidth(
@@ -283,16 +287,21 @@ public struct WorkspaceView: View {
             detail
         }
         .navigationSplitViewStyle(.balanced)
-        .sheet(isPresented: $showingNewTask) {
+    }
+
+    private var workspaceSheets: some View {
+        workspaceRoot
+        .sheet(item: $newTaskPresentation) { presentation in
             NewThreadView(
                 model: model,
                 submit: submitNewTask,
                 onCreated: { thread in
                     openThread(thread.id)
-                    showingNewTask = false
+                    newTaskPresentation = nil
                 },
                 onCreateProject: openProjectCreation,
-                initialProjectID: newTaskInitialProjectID
+                initialProjectID: presentation.initialProjectID,
+                initialThreadWorkspace: presentation.resolvedSeed
             )
         }
         .sheet(isPresented: $showingAddProject) {
@@ -300,6 +309,21 @@ public struct WorkspaceView: View {
         }
         .sheet(isPresented: $showingSettings) {
             SettingsView(model: model)
+        }
+    }
+
+    private var workspaceAlerts: some View {
+        workspaceSheets
+        .alert(
+            "Couldn’t use this thread’s checkout",
+            isPresented: Binding(
+                get: { threadNewTaskError != nil },
+                set: { if !$0 { threadNewTaskError = nil } }
+            )
+        ) {
+            Button("OK") {}
+        } message: {
+            Text(threadNewTaskError?.feedbackMessage ?? "")
         }
         .alert(
             "Rename thread",
@@ -310,13 +334,8 @@ public struct WorkspaceView: View {
         ) {
             TextField("Thread title", text: $renameTitle)
             Button("Cancel", role: .cancel) { renamingThread = nil }
-            Button("Save") {
-                guard let thread = renamingThread else { return }
-                let title = renameTitle
-                renamingThread = nil
-                Task { await model.renameThread(thread.id, title: title) }
-            }
-            .disabled(renameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Save", action: saveRenamedThread)
+                .disabled(renameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .alert(
             "Delete thread?",
@@ -337,6 +356,10 @@ public struct WorkspaceView: View {
         } message: { request in
             Text("“\(request.title)” will be permanently deleted.")
         }
+    }
+
+    private var workspaceLifecycle: some View {
+        workspaceAlerts
         .onChange(of: selectedThreadIsAvailable) { _, isAvailable in
             if !isAvailable { closeSelectedThread() }
         }
@@ -439,6 +462,8 @@ public struct WorkspaceView: View {
                 onToggleSettled: { isSettledExpanded.toggle() },
                 onToggleArchive: { isArchiveExpanded.toggle() },
                 onShowMoreSettled: { settledLimit += 25 },
+                newThreadAvailability: newThreadAvailability,
+                onNewThreadOnSameBranch: openNewThreadOnSameBranch,
                 onRename: { thread in
                     renameTitle = thread.title
                     renamingThread = thread
@@ -912,7 +937,7 @@ public struct WorkspaceView: View {
 
     @MainActor
     private func openProjectCreation() {
-        showingNewTask = false
+        newTaskPresentation = nil
         showingAddProject = true
     }
 
@@ -924,9 +949,54 @@ public struct WorkspaceView: View {
         if creationProjects.isEmpty {
             showingAddProject = true
         } else {
-            newTaskInitialProjectID = initialProjectID
-            showingNewTask = true
+            newTaskPresentation = .newTask(initialProjectID: initialProjectID)
         }
+    }
+
+    private func openNewThreadOnSameBranch(_ request: ThreadNewTaskSeedRequest) {
+        Task { @MainActor in
+            let branches: [FeatureWorkspaceBranch]
+            do {
+                branches = try await model.workspaceBranches(
+                    projectID: request.projectID,
+                    refresh: true
+                )
+            } catch {
+                threadNewTaskError = .branchesUnavailable
+                return
+            }
+            let currentThread = model.snapshot.threads.first {
+                $0.id == request.sourceThreadID
+            }
+            let projects = creationProjects
+            switch ThreadNewTaskSeedModel.resolve(
+                request,
+                currentThread: currentThread,
+                projects: projects,
+                branches: branches
+            ) {
+            case let .success(seed):
+                newTaskPresentation = .sameBranch(seed)
+            case let .failure(reason):
+                threadNewTaskError = reason
+            }
+        }
+    }
+
+    private func saveRenamedThread() {
+        guard let thread = renamingThread else { return }
+        let title = renameTitle
+        renamingThread = nil
+        Task { await model.renameThread(thread.id, title: title) }
+    }
+
+    private func newThreadAvailability(
+        for thread: FeatureThread
+    ) -> ThreadNewTaskAvailability {
+        ThreadNewTaskSeedModel.availability(
+            for: thread,
+            projects: creationProjects
+        )
     }
 
     private func consumeNavigationRequest() {
@@ -958,10 +1028,11 @@ public struct WorkspaceView: View {
     private func dismissTransientPresentations() {
         deleteConfirmation.cancel()
         settleUndo.dismissAll()
-        showingNewTask = false
+        newTaskPresentation = nil
         showingAddProject = false
         showingSettings = false
         renamingThread = nil
+        threadNewTaskError = nil
     }
 
     private func projectMenuTitle(_ project: FeatureProject) -> String {

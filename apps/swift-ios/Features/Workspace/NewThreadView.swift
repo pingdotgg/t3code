@@ -8,6 +8,7 @@ public struct NewThreadView: View {
     let onCreateProject: @MainActor () -> Void
     private let draftStore: FeatureComposerDraftStore
     private let initialProjectID: String?
+    private let initialThreadWorkspace: ThreadNewTaskResolvedSeed?
 
     @State private var projectID = ""
     @State private var prompt = ""
@@ -30,6 +31,8 @@ public struct NewThreadView: View {
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var immediateDraftSaveTasks: [String: Task<Void, Never>] = [:]
     @State private var submittedSuccessfully = false
+    @State private var initialThreadWorkspaceApplied = false
+    @State private var threadWorkspaceError: ThreadNewTaskUnavailableReason?
     @FocusState private var promptFocused: Bool
 
     public init(
@@ -40,11 +43,32 @@ public struct NewThreadView: View {
         initialProjectID: String? = nil,
         draftStore: FeatureComposerDraftStore = .shared
     ) {
+        self.init(
+            model: model,
+            submit: submit,
+            onCreated: onCreated,
+            onCreateProject: onCreateProject,
+            initialProjectID: initialProjectID,
+            initialThreadWorkspace: nil,
+            draftStore: draftStore
+        )
+    }
+
+    init(
+        model: FeatureRootModel,
+        submit: @escaping (NewTaskRequest) async -> FeatureThread?,
+        onCreated: @escaping (FeatureThread) -> Void,
+        onCreateProject: @escaping @MainActor () -> Void,
+        initialProjectID: String?,
+        initialThreadWorkspace: ThreadNewTaskResolvedSeed?,
+        draftStore: FeatureComposerDraftStore = .shared
+    ) {
         self.model = model
         self.submit = submit
         self.onCreated = onCreated
         self.onCreateProject = onCreateProject
         self.initialProjectID = initialProjectID
+        self.initialThreadWorkspace = initialThreadWorkspace
         self.draftStore = draftStore
     }
 
@@ -105,6 +129,13 @@ public struct NewThreadView: View {
         .onChange(of: projectID) { prepareProjectIfNeeded(projectID) }
         .onChange(of: creationProjectIDs) { _, ids in
             guard !ids.contains(projectID) else { return }
+            if let initialThreadWorkspace,
+               projectID == initialThreadWorkspace.request.projectID {
+                persistCurrentDraftImmediately()
+                restoredDraftProjectID = nil
+                threadWorkspaceError = .projectUnavailable
+                return
+            }
             persistCurrentDraftImmediately()
             let previousProject = model.snapshot.projects.first { $0.id == projectID }
             let previousGroupID = previousProject.map {
@@ -157,6 +188,17 @@ public struct NewThreadView: View {
             Button("OK") {}
         } message: {
             Text("Check your connection and try again.")
+        }
+        .alert(
+            "Couldn’t use this thread’s checkout",
+            isPresented: Binding(
+                get: { threadWorkspaceError != nil },
+                set: { if !$0 { threadWorkspaceError = nil } }
+            )
+        ) {
+            Button("Cancel") { dismiss() }
+        } message: {
+            Text(threadWorkspaceError?.feedbackMessage ?? "")
         }
         .interactiveDismissDisabled(isSubmitting)
         .presentationDetents([.large])
@@ -481,6 +523,8 @@ public struct NewThreadView: View {
             && (!trimmedPrompt.isEmpty || !attachments.isEmpty)
             && (attachments.isEmpty || imagesAllowed)
             && (workspaceMode != .worktree || selectedBranch != nil)
+            && (initialThreadWorkspace == nil || initialThreadWorkspaceApplied)
+            && threadWorkspaceError == nil
     }
 
     private var trimmedPrompt: String {
@@ -748,6 +792,40 @@ public struct NewThreadView: View {
             scheduleDraftSave()
         }
         await loadBranches()
+        applyInitialThreadWorkspaceIfNeeded()
+    }
+
+    private func applyInitialThreadWorkspaceIfNeeded() {
+        guard !initialThreadWorkspaceApplied,
+              threadWorkspaceError == nil,
+              let initialThreadWorkspace else {
+            return
+        }
+        guard initialThreadWorkspace.belongs(to: projectID) else {
+            initialThreadWorkspaceApplied = true
+            return
+        }
+        guard !branchLoadFailed else {
+            threadWorkspaceError = .branchesUnavailable
+            return
+        }
+        switch ThreadNewTaskSeedModel.revalidate(
+            initialThreadWorkspace,
+            projects: creationProjects,
+            branches: branches
+        ) {
+        case let .success(seed):
+            let seededDraft = seed.applying(to: composerDraft)
+            workspaceMode = seededDraft.workspace?.mode ?? .local
+            selectedBranch = seed.branch
+            startFromOrigin = seededDraft.workspace?.startFromOrigin ?? false
+            workspaceSelectionIsExplicit = true
+            initialThreadWorkspaceApplied = true
+            scheduleDraftSave()
+        case let .failure(reason):
+            selectedBranch = nil
+            threadWorkspaceError = reason
+        }
     }
 
     private var currentDraftKey: String? {

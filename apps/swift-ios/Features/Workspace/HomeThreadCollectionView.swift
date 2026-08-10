@@ -55,6 +55,8 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     let onToggleSettled: () -> Void
     let onToggleArchive: () -> Void
     let onShowMoreSettled: () -> Void
+    let newThreadAvailability: (FeatureThread) -> ThreadNewTaskAvailability
+    let onNewThreadOnSameBranch: (ThreadNewTaskSeedRequest) -> Void
     let onRename: (FeatureThread) -> Void
     let onArchive: (FeatureThread, Bool) -> Void
     let onSettle: (FeatureThread, Bool) -> Void
@@ -437,6 +439,17 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         }
 
         private func menuActions(for thread: FeatureThread, isArchived: Bool) -> [UIMenuElement] {
+            let newThreadAvailability = parent.newThreadAvailability(thread)
+            let newThread = UIAction(
+                title: newThreadAvailability.menuTitle,
+                image: UIImage(systemName: "plus.bubble")
+            ) { [weak self] _ in
+                guard case let .available(request) = newThreadAvailability else { return }
+                self?.parent.onNewThreadOnSameBranch(request)
+            }
+            if !newThreadAvailability.isEnabled {
+                newThread.attributes = .disabled
+            }
             let rename = UIAction(title: "Rename", image: UIImage(systemName: "pencil")) { [weak self] _ in
                 self?.parent.onRename(thread)
             }
@@ -447,7 +460,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 self?.parent.onArchive(thread, !isArchived)
             }
 
-            var actions: [UIMenuElement] = [rename, archive]
+            var actions: [UIMenuElement] = [newThread, rename, archive]
             if !isArchived {
                 if thread.canTogglePin {
                     let isPinned = thread.pinnedAt != nil
