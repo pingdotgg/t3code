@@ -57,7 +57,7 @@ public struct ThreadDetailView: View {
 #if DEBUG
         // Dev-build marker inside a thread: the whole title bar goes orange.
         .t3NavigationChrome(background: T3Colors.warning)
-        .tint(.black)
+        .toolbarColorScheme(.light, for: .navigationBar)
 #else
         .t3NavigationChrome()
 #endif
