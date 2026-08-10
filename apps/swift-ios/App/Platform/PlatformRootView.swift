@@ -247,7 +247,7 @@ struct PlatformRootView: View {
                 }
                 try await incomingShareCoordinator.importPending(into: thread)
                 navigationRequest = FeatureWorkspaceNavigationRequest(
-                    destination: .thread(id: thread.id)
+                    destination: .sharedThread(id: thread.id)
                 )
             }
             PlatformHapticEngine.shared.emit(

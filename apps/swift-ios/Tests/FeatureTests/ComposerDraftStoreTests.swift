@@ -264,4 +264,45 @@ struct ComposerDraftStoreTests {
             restoredShareID: "share-a"
         ))
     }
+
+    @Test func sharedThreadNavigationRequestsAComposerReload() {
+        let request = FeatureWorkspaceNavigationRequest(
+            destination: .sharedThread(id: "thread-1")
+        )
+
+        #expect(request.destination == .sharedThread(id: "thread-1"))
+        #expect(request.destination != .thread(id: "thread-1"))
+    }
+
+    @Test func dismissingOldShareSheetPreservesReplacementContext() {
+        let resolution = NewTaskDismissalContext(
+            initialProjectID: "project-a",
+            incomingShareID: "share-a"
+        ).resolve(
+            currentInitialProjectID: nil,
+            currentIncomingShareID: "share-b"
+        )
+
+        #expect(resolution == NewTaskDismissalResolution(
+            remainingInitialProjectID: nil,
+            remainingIncomingShareID: "share-b",
+            releasedIncomingShareID: "share-a"
+        ))
+    }
+
+    @Test func dismissingCurrentShareSheetClearsItsContext() {
+        let resolution = NewTaskDismissalContext(
+            initialProjectID: "project-a",
+            incomingShareID: "share-a"
+        ).resolve(
+            currentInitialProjectID: "project-a",
+            currentIncomingShareID: "share-a"
+        )
+
+        #expect(resolution == NewTaskDismissalResolution(
+            remainingInitialProjectID: nil,
+            remainingIncomingShareID: nil,
+            releasedIncomingShareID: "share-a"
+        ))
+    }
 }

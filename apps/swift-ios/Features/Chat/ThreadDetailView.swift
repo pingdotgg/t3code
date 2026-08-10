@@ -8,6 +8,7 @@ public struct ThreadDetailView: View {
 
     @Bindable var model: FeatureRootModel
     let thread: FeatureThread
+    let composerDraftReloadRevision: Int
     let submitMessage: (FeatureMessageSubmission) async -> Bool
     let onNavigateBack: () -> Void
     private let draftStore: FeatureComposerDraftStore
@@ -26,12 +27,14 @@ public struct ThreadDetailView: View {
     public init(
         model: FeatureRootModel,
         thread: FeatureThread,
+        composerDraftReloadRevision: Int = 0,
         submitMessage: @escaping (FeatureMessageSubmission) async -> Bool,
         onNavigateBack: @escaping () -> Void = {},
         draftStore: FeatureComposerDraftStore = .shared
     ) {
         self.model = model
         self.thread = thread
+        self.composerDraftReloadRevision = composerDraftReloadRevision
         self.submitMessage = submitMessage
         self.onNavigateBack = onNavigateBack
         self.draftStore = draftStore
@@ -70,6 +73,9 @@ public struct ThreadDetailView: View {
             _ = await model.detail(for: thread.id, force: true)
             await restoreDraft(from: restoreBaseline, key: restoreKey)
             isLoading = false
+        }
+        .onChange(of: composerDraftReloadRevision) {
+            reloadImportedDraft()
         }
         .onChange(of: draft) { scheduleDraftSave() }
         .onChange(of: attachments) { scheduleDraftSave() }
@@ -470,6 +476,15 @@ public struct ThreadDetailView: View {
 
     private var draftKey: String {
         FeatureComposerDraftStore.threadKey(currentThread)
+    }
+
+    private func reloadImportedDraft() {
+        draftSaveTask?.cancel()
+        let baseline = composerDraft
+        let key = draftKey
+        Task { @MainActor in
+            await restoreDraft(from: baseline, key: key)
+        }
     }
 
     @MainActor
