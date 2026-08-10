@@ -60,6 +60,12 @@ describe("add project shared logic", () => {
     expect(getCloneDirectoryName("  https://github.com/owner/repo.git  ")).toBe("repo");
   });
 
+  it("keeps a numeric repository name that sits on a path", () => {
+    expect(getCloneDirectoryName("https://github.com/acme/123.git")).toBe("123");
+    expect(getCloneDirectoryName("https://github.com/acme/123")).toBe("123");
+    expect(getCloneDirectoryName("git@github.com:acme/123.git")).toBe("123");
+  });
+
   it("proposes no clone folder for a link that names no repository", () => {
     expect(getCloneDirectoryName("https://github.com/")).toBe("");
     expect(getCloneDirectoryName("https://github.com")).toBe("");

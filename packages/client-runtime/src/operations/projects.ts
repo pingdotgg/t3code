@@ -198,7 +198,10 @@ export function getCloneDirectoryName(repositoryOrRemoteUrl: string | null | und
   }
 
   const lastSegment = segments.at(-1)?.trim() ?? "";
-  if (hasHost && /^\d+$/.test(lastSegment)) {
+  // A port can only sit directly behind the authority, so it is a port only
+  // when nothing follows it. Deeper segments are path, even when numeric: the
+  // repository in `https://host/acme/123` really is named `123`.
+  if (hasHost && segments.length === 2 && /^\d+$/.test(lastSegment)) {
     return "";
   }
   return lastSegment.endsWith(".git") ? lastSegment.slice(0, -".git".length) : lastSegment;
