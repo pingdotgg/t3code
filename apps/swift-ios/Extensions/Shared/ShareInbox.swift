@@ -261,8 +261,11 @@ enum T3IncomingShareStore {
                 guard values?.isRegularFile == true,
                       let byteCount = values?.fileSize,
                       byteCount > 0,
-                      byteCount <= maximumImageBytes,
                       byteCount == image.byteCount else {
+                    warnings.append("One shared image could not be read and was not imported.")
+                    continue
+                }
+                guard byteCount <= maximumImageBytes else {
                     warnings.append("One shared image exceeded the 10 MB attachment limit.")
                     continue
                 }
@@ -298,8 +301,11 @@ enum T3IncomingShareStore {
                 guard values?.isRegularFile == true,
                       let byteCount = values?.fileSize,
                       byteCount > 0,
-                      byteCount <= maximumVideoBytes,
                       byteCount == video.byteCount else {
+                    warnings.append("One shared video could not be read and was not imported.")
+                    continue
+                }
+                guard byteCount <= maximumVideoBytes else {
                     warnings.append("One shared video exceeded the 250 MB import limit.")
                     continue
                 }
@@ -363,7 +369,7 @@ enum T3IncomingShareStore {
         let inboxURL = containerURL.appending(path: inboxRelativePath, directoryHint: .isDirectory)
         guard let directories = try? FileManager.default.contentsOfDirectory(
             at: inboxURL,
-            includingPropertiesForKeys: [.isDirectoryKey],
+            includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
             options: [.skipsHiddenFiles]
         ) else {
             return []
@@ -371,7 +377,15 @@ enum T3IncomingShareStore {
 
         return directories.compactMap { directory in
             let manifestURL = directory.appending(path: manifestFileName, directoryHint: .notDirectory)
-            guard let data = try? Data(contentsOf: manifestURL) else { return nil }
+            guard let data = try? Data(contentsOf: manifestURL) else {
+                let modified = try? directory.resourceValues(
+                    forKeys: [.contentModificationDateKey]
+                ).contentModificationDate
+                if let modified, Date().timeIntervalSince(modified) > 3_600 {
+                    try? FileManager.default.removeItem(at: directory)
+                }
+                return nil
+            }
             return try? decoder.decode(T3IncomingShareEnvelope.self, from: data)
         }
         .filter { T3IncomingShareEnvelope.supportedSchemaVersions.contains($0.schemaVersion) }

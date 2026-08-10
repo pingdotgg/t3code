@@ -329,13 +329,13 @@ enum PlatformSharedVideoProcessor {
             guard !frames.isEmpty else {
                 throw PlatformIncomingShareError.unreadableVideo(video.fileName)
             }
-            return try jpegContactSheet(frames: frames)
+            return try jpegContactSheet(frames: frames, videoName: video.fileName)
         }.value
 
         return try FeatureImageProcessor.attachment(from: data, ordinal: ordinal)
     }
 
-    private static func jpegContactSheet(frames: [CGImage]) throws -> Data {
+    private static func jpegContactSheet(frames: [CGImage], videoName: String) throws -> Data {
         let columns = min(2, frames.count)
         let rows = Int(ceil(Double(frames.count) / Double(columns)))
         let width = Int(cellSize.width) * columns
@@ -350,7 +350,7 @@ enum PlatformSharedVideoProcessor {
                   space: colorSpace,
                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
               ) else {
-            throw PlatformIncomingShareError.invalidEnvelope
+            throw PlatformIncomingShareError.unreadableVideo(videoName)
         }
 
         context.setFillColor(CGColor(gray: 0.04, alpha: 1))
@@ -382,7 +382,7 @@ enum PlatformSharedVideoProcessor {
         }
 
         guard let image = context.makeImage() else {
-            throw PlatformIncomingShareError.invalidEnvelope
+            throw PlatformIncomingShareError.unreadableVideo(videoName)
         }
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(
@@ -391,7 +391,7 @@ enum PlatformSharedVideoProcessor {
             1,
             nil
         ) else {
-            throw PlatformIncomingShareError.invalidEnvelope
+            throw PlatformIncomingShareError.unreadableVideo(videoName)
         }
         CGImageDestinationAddImage(
             destination,
@@ -399,7 +399,7 @@ enum PlatformSharedVideoProcessor {
             [kCGImageDestinationLossyCompressionQuality: 0.82] as CFDictionary
         )
         guard CGImageDestinationFinalize(destination) else {
-            throw PlatformIncomingShareError.invalidEnvelope
+            throw PlatformIncomingShareError.unreadableVideo(videoName)
         }
         return data as Data
     }

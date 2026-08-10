@@ -180,7 +180,7 @@ public struct NewThreadView: View {
                 discardIncomingShare()
             }
         }
-        .interactiveDismissDisabled(isSubmitting)
+        .interactiveDismissDisabled(isSubmitting || pendingIncomingShareID != nil)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
     }
