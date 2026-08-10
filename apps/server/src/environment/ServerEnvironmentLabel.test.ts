@@ -286,6 +286,19 @@ describe("resolveServerEnvironmentLabel", () => {
   );
   it.effect("appends WSL distro name when WSL_DISTRO_NAME is present", () =>
     Effect.gen(function* () {
+      runMock.mockReturnValueOnce(
+        Effect.succeed({
+          stdout: "",
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(1),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        }),
+      );
+
       const WslLayer = Layer.merge(
         ProcessRunnerTest,
         FileSystem.layerNoop({
@@ -311,6 +324,19 @@ describe("resolveServerEnvironmentLabel", () => {
 
   it.effect("appends generic WSL label when WSL_DISTRO_NAME is absent", () =>
     Effect.gen(function* () {
+      runMock.mockReturnValueOnce(
+        Effect.succeed({
+          stdout: "",
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(1),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        }),
+      );
+
       const WslLayer = Layer.merge(
         ProcessRunnerTest,
         FileSystem.layerNoop({
