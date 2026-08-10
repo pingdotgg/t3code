@@ -11,6 +11,7 @@ import {
 } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
+import { McpServerConfig, McpServerId } from "./mcpServers.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -102,7 +103,10 @@ export const DEFAULT_TERMINAL_FONT_SIZE: TerminalFontSize = 12;
 
 export const EnvironmentIdentificationMode = Schema.Literals(["artwork", "pill", "none"]);
 export type EnvironmentIdentificationMode = typeof EnvironmentIdentificationMode.Type;
-export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationMode = "artwork";
+// The blueprint artwork behind the sidebar header reads as a background image
+// rather than an environment cue, so this fork ships it off. Users who want the
+// Dev/Nightly distinction back can pick "artwork" or "pill" in Settings.
+export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationMode = "none";
 
 /**
  * A user-chosen font family (a single name or a comma-separated list). Empty
@@ -495,6 +499,25 @@ export const SourceControlWritingStyleSettings = Schema.Struct({
 });
 export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyleSettings.Type;
 
+export const DEFAULT_PLAN_REVIEW_INSTRUCTIONS = `Review the proposed implementation plan, not the implementation. Do not edit files, make changes, or begin executing the plan.
+
+Check the plan for missing requirements, incorrect assumptions, architecture and compatibility risks, migration or rollout concerns, failure modes, and gaps in test coverage. Inspect repository context when it would verify a concern.
+
+Separate blockers from suggestions. Be specific and evidence-based; do not invent issues. End with a concise "Revision brief" describing exactly what the original planner should change.`;
+
+/**
+ * Seed instructions for the PR review agent.
+ *
+ * Deliberately opinionated about evidence: a reviewer that reports plausible
+ * but unverified findings is worse than one that reports fewer, because every
+ * false positive costs a human read of the diff.
+ */
+export const DEFAULT_CODE_REVIEW_INSTRUCTIONS = `Review this change for correctness first: logic errors, unhandled edge cases, race conditions, and breaking changes to existing callers.
+
+Then note anything that duplicates existing code in the repository, or that could reuse a helper that is already there.
+
+For every finding, give the file and line, one sentence on what is wrong, and a concrete scenario where it fails. Read the surrounding code before reporting — do not report a finding you have not verified against the actual source. If the change looks correct, say so plainly instead of inventing concerns.`;
+
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
 
@@ -588,6 +611,21 @@ export const ServerSettings = Schema.Struct({
   sourceControlWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  // Null uses the model already selected on the source plan's thread.
+  planReviewModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  planReviewInstructions: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PLAN_REVIEW_INSTRUCTIONS)),
+  ),
+  // Null means "review with whatever model the review thread would use anyway",
+  // matching how sourceControlWriterModelSelection treats null.
+  codeReviewModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  codeReviewInstructions: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CODE_REVIEW_INSTRUCTIONS)),
+  ),
 
   // Legacy single-instance-per-driver settings. Continues to be the source
   // of truth until `providerInstances` (below) lands per-driver migration
@@ -608,6 +646,11 @@ export const ServerSettings = Schema.Struct({
   // (forks, downgrades, in-flight PR branches) round-trip without loss.
   // See providerInstance.ts for the forward/backward compatibility invariant.
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  // User-configured MCP servers, merged into every underlying agent CLI's
+  // session alongside T3's own built-in MCP server. See mcpServers.ts.
+  mcpServers: Schema.Record(McpServerId, McpServerConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
@@ -636,6 +679,8 @@ export class ServerSettingsError extends Schema.TaggedErrorClass<ServerSettingsE
     operation: ServerSettingsOperation,
     providerInstanceId: Schema.optional(Schema.String),
     environmentVariable: Schema.optional(Schema.String),
+    mcpServerId: Schema.optional(Schema.String),
+    mcpServerField: Schema.optional(Schema.String),
     cause: Schema.Defect(),
   },
 ) {
@@ -646,7 +691,9 @@ export class ServerSettingsError extends Schema.TaggedErrorClass<ServerSettingsE
       this.environmentVariable === undefined
         ? ""
         : ` and environment variable ${this.environmentVariable}`;
-    return `Server settings ${this.operation} failed${provider}${variable} at ${this.settingsPath}.`;
+    const mcpServer = this.mcpServerId === undefined ? "" : ` for MCP server ${this.mcpServerId}`;
+    const mcpField = this.mcpServerField === undefined ? "" : ` and field ${this.mcpServerField}`;
+    return `Server settings ${this.operation} failed${provider}${variable}${mcpServer}${mcpField} at ${this.settingsPath}.`;
   }
 }
 
@@ -731,6 +778,10 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  planReviewModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  planReviewInstructions: Schema.optionalKey(TrimmedString),
+  codeReviewModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  codeReviewInstructions: Schema.optionalKey(TrimmedString),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
@@ -751,6 +802,9 @@ export const ServerSettingsPatch = Schema.Struct({
   // patches risk leaving driver-specific config in a half-merged state.
   // The web UI sends a fully-formed map every time it edits this field.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
+  // Whole-map replacement, same rationale as `providerInstances` above:
+  // McpServerRegistry always sends the full map so removals take effect.
+  mcpServers: Schema.optionalKey(Schema.Record(McpServerId, McpServerConfig)),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 

@@ -50,6 +50,7 @@ export function HomeHeader(props: {
   readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
   readonly onOpenEnvironments: () => void;
   readonly onOpenSettings: () => void;
+  readonly onImportConversations: () => void;
   readonly onStartNewTask: () => void;
 }) {
   if (Platform.OS === "android") {
@@ -264,6 +265,19 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
             >
               <SymbolView name="gearshape" size={18} tintColor={iconColor} type="monochrome" />
             </Pressable>
+            <Pressable
+              accessibilityLabel="Import conversations"
+              accessibilityRole="button"
+              onPress={props.onImportConversations}
+              className="size-11 items-center justify-center rounded-full bg-subtle"
+            >
+              <SymbolView
+                name="arrow.down.circle"
+                size={18}
+                tintColor={iconColor}
+                type="monochrome"
+              />
+            </Pressable>
           </View>
 
           <View className="min-h-12 flex-row items-center gap-2.5 rounded-2xl border border-input-border bg-input px-3.5">
@@ -335,6 +349,14 @@ function IosHomeHeader(props: HomeHeaderProps) {
                     identifier: "home-settings",
                     label: "",
                     onPress: props.onOpenSettings,
+                    type: "button",
+                  }),
+                  withNativeGlassHeaderItem({
+                    accessibilityLabel: "Import conversations",
+                    icon: { name: "arrow.down.circle", type: "sfSymbol" } as const,
+                    identifier: "home-import-conversations",
+                    label: "",
+                    onPress: props.onImportConversations,
                     type: "button",
                   }),
                 ]
@@ -467,6 +489,12 @@ function IosHomeHeader(props: HomeHeaderProps) {
             accessibilityLabel="New task"
             icon="square.and.pencil"
             onPress={props.onStartNewTask}
+            separateBackground
+          />
+          <NativeHeaderToolbar.Button
+            accessibilityLabel="Import conversations"
+            icon="arrow.down.circle"
+            onPress={props.onImportConversations}
             separateBackground
           />
         </NativeHeaderToolbar>

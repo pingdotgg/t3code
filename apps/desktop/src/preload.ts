@@ -99,6 +99,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   pickFolder: (options) => ipcRenderer.invoke(IpcChannels.PICK_FOLDER_CHANNEL, options),
   pickThemeFiles: () => ipcRenderer.invoke(IpcChannels.PICK_THEME_FILES_CHANNEL, undefined),
   setTheme: (theme) => ipcRenderer.invoke(IpcChannels.SET_THEME_CHANNEL, theme),
+  setChromeBackgroundColor: (color) =>
+    ipcRenderer.invoke(IpcChannels.SET_CHROME_BACKGROUND_COLOR_CHANNEL, color),
   showContextMenu: (items, position) =>
     ipcRenderer.invoke(IpcChannels.CONTEXT_MENU_CHANNEL, {
       items,

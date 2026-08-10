@@ -1,6 +1,7 @@
 export const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 export const PICK_THEME_FILES_CHANNEL = "desktop:pick-theme-files";
 export const SET_THEME_CHANNEL = "desktop:set-theme";
+export const SET_CHROME_BACKGROUND_COLOR_CHANNEL = "desktop:set-chrome-background-color";
 export const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 export const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 export const MENU_ACTION_CHANNEL = "desktop:menu-action";

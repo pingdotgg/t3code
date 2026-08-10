@@ -35,6 +35,7 @@ import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
 import { HomeRouteScreen } from "./features/home/HomeRouteScreen";
+import { ThreadImportRouteScreen } from "./features/thread-import/ThreadImportRouteScreen";
 import { AddProjectDestinationRoute } from "./features/projects/AddProjectDestinationRoute";
 import { AddProjectLocalRoute } from "./features/projects/AddProjectLocalRoute";
 import { AddProjectRepositoryRoute } from "./features/projects/AddProjectRepositoryRoute";
@@ -285,6 +286,7 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "SettingsLegal",
   "SettingsSheet",
   "ThreadReviewComment",
+  "ThreadImport",
 ]);
 
 /**
@@ -416,6 +418,17 @@ export const RootStack = createNativeStackNavigator({
       screen: ThreadRouteScreen,
       linking: THREAD_LINKING_PREFIX,
       options: GLASS_HEADER_OPTIONS,
+    }),
+    ThreadImport: createNativeStackScreen({
+      screen: ThreadImportRouteScreen,
+      linking: "import-conversations",
+      options: {
+        ...SHEET_SOLID_HEADER_OPTIONS,
+        title: "Import conversations",
+        presentation: "formSheet",
+        sheetAllowedDetents: [0.92],
+        sheetGrabberVisible: true,
+      },
     }),
     ThreadTerminal: createNativeStackScreen({
       screen: ThreadTerminalRouteScreen,

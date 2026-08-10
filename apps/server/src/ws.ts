@@ -73,18 +73,21 @@ import {
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ThreadImportService from "./threadImport/ThreadImportService.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
+import * as McpServerRegistry from "./mcp/McpServerRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
@@ -357,6 +360,13 @@ const makeWsRpcLayer = (
       const crypto = yield* Crypto.Crypto;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+      const providerSessions = Option.getOrElse(
+        yield* Effect.serviceOption(ProviderSessionDirectory.ProviderSessionDirectory),
+        () =>
+          ({
+            upsert: () => Effect.void,
+          }) as unknown as ProviderSessionDirectory.ProviderSessionDirectory["Service"],
+      );
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
@@ -373,6 +383,13 @@ const makeWsRpcLayer = (
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const threadImports = ThreadImportService.makeThreadImportService({
+        projection: projectionSnapshotQuery,
+        engine: orchestrationEngine,
+        providerRegistry,
+        providerSessions,
+        settingsService: serverSettings,
+      });
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -408,6 +425,7 @@ const makeWsRpcLayer = (
       );
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const mcpServerRegistry = yield* McpServerRegistry.McpServerRegistry;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
@@ -1175,6 +1193,16 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "orchestration" },
           ),
+        [ORCHESTRATION_WS_METHODS.scanThreadImports]: (input) =>
+          observeRpcEffect(ORCHESTRATION_WS_METHODS.scanThreadImports, threadImports.scan(input), {
+            "rpc.aggregate": "orchestration",
+          }),
+        [ORCHESTRATION_WS_METHODS.commitThreadImports]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.commitThreadImports,
+            threadImports.commit(input),
+            { "rpc.aggregate": "orchestration" },
+          ),
         [ORCHESTRATION_WS_METHODS.subscribeShell]: (input) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeShell,
@@ -1660,6 +1688,34 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "source-control",
             },
           ),
+        [WS_METHODS.mcpServersList]: (_input) =>
+          observeRpcEffect(WS_METHODS.mcpServersList, mcpServerRegistry.list, {
+            "rpc.aggregate": "mcp-servers",
+          }),
+        [WS_METHODS.mcpServersUpsert]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpServersUpsert, mcpServerRegistry.upsert(input), {
+            "rpc.aggregate": "mcp-servers",
+          }),
+        [WS_METHODS.mcpServersRemove]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpServersRemove, mcpServerRegistry.remove(input), {
+            "rpc.aggregate": "mcp-servers",
+          }),
+        [WS_METHODS.mcpServersTestConnection]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpServersTestConnection,
+            mcpServerRegistry.testConnection(input),
+            {
+              "rpc.aggregate": "mcp-servers",
+            },
+          ),
+        [WS_METHODS.sourceControlListChangeRequests]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sourceControlListChangeRequests,
+            sourceControlRepositories.listChangeRequests(input),
+            {
+              "rpc.aggregate": "source-control",
+            },
+          ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,
@@ -1926,6 +1982,22 @@ const makeWsRpcLayer = (
             gitWorkflow.switchRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             { "rpc.aggregate": "vcs" },
           ),
+        [WS_METHODS.vcsStagePaths]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsStagePaths,
+            gitWorkflow.stagePaths(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsUnstagePaths]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsUnstagePaths,
+            gitWorkflow.unstagePaths(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsListCommits]: (input) =>
+          observeRpcEffect(WS_METHODS.vcsListCommits, gitWorkflow.listCommits(input), {
+            "rpc.aggregate": "vcs",
+          }),
         [WS_METHODS.vcsInit]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsInit,

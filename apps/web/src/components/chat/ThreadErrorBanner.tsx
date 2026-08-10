@@ -7,22 +7,37 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   error,
   onDismiss,
+  onContinueInNewThread,
+  recovering,
 }: {
   error: string | null;
   onDismiss?: () => void;
+  onContinueInNewThread?: () => void;
+  recovering?: boolean;
 }) {
   if (!error) return null;
   return (
     <div className="mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
       <Alert variant="error" controlAlignment="first-line">
         <CircleAlertIcon />
-        <AlertDescription>
+        <AlertDescription className="min-w-0">
           <Tooltip>
             <TooltipTrigger render={<div className="line-clamp-3" />}>{error}</TooltipTrigger>
             <TooltipPopup side="top" className="max-w-96 whitespace-pre-wrap">
               {error}
             </TooltipPopup>
           </Tooltip>
+          {onContinueInNewThread && (
+            <Button
+              className="mt-2"
+              variant="outline"
+              size="sm"
+              disabled={recovering}
+              onClick={onContinueInNewThread}
+            >
+              Continue in a new thread
+            </Button>
+          )}
         </AlertDescription>
         {onDismiss && (
           <AlertAction>

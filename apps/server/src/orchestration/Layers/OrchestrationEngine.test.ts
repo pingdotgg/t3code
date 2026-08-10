@@ -123,6 +123,7 @@ describe("OrchestrationEngine", () => {
           id: asProjectId("project-bootstrap"),
           title: "Bootstrap Project",
           workspaceRoot: "/tmp/project-bootstrap",
+          additionalFolders: [],
           defaultModelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
@@ -155,6 +156,7 @@ describe("OrchestrationEngine", () => {
           deletedAt: null,
           messages: [],
           proposedPlans: [],
+          proposedPlanReviews: [],
           activities: [],
           checkpoints: [],
           session: null,
@@ -167,6 +169,7 @@ describe("OrchestrationEngine", () => {
         ...thread,
         messages: [],
         proposedPlans: [],
+        proposedPlanReviews: [],
         activities: [],
         checkpoints: [],
       })),

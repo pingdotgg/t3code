@@ -1,9 +1,15 @@
-import { memo, useState, useId } from "react";
+import { memo, useId, useMemo, useState } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationProposedPlanReview,
+  ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import {
   buildCollapsedProposedPlanPreviewMarkdown,
   buildProposedPlanMarkdownFilename,
@@ -32,6 +38,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { projectEnvironment } from "~/state/projects";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useEnvironmentThread } from "~/state/threads";
 
 export const ProposedPlanCard = memo(function ProposedPlanCard({
   planMarkdown,
@@ -39,12 +46,26 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   threadRef,
   cwd,
   workspaceRoot,
+  planId,
+  review = null,
+  reviewStarting = false,
+  sourceBusy = false,
+  onReviewPlan,
+  onOpenReview,
+  onRevisePlan,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
   threadRef?: ScopedThreadRef | undefined;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
+  planId: string;
+  review?: OrchestrationProposedPlanReview | null;
+  reviewStarting?: boolean;
+  sourceBusy?: boolean;
+  onReviewPlan?: ((planId: string) => void) | undefined;
+  onOpenReview?: ((reviewThreadId: ThreadId) => void) | undefined;
+  onRevisePlan?: ((input: { planId: string; feedback: string }) => void) | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
@@ -75,6 +96,41 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
     : null;
   const downloadFilename = buildProposedPlanMarkdownFilename(planMarkdown);
   const saveContents = normalizePlanMarkdownForExport(planMarkdown);
+  const reviewThreadState = useEnvironmentThread(
+    review ? environmentId : null,
+    review?.reviewThreadId ?? null,
+  );
+  const reviewThread = Option.getOrNull(reviewThreadState.data);
+  const reviewFeedback = useMemo(
+    () =>
+      [...(reviewThread?.messages ?? [])]
+        .reverse()
+        .find(
+          (message) => message.role === "assistant" && !message.streaming && message.text.trim(),
+        )
+        ?.text.trim() ?? null,
+    [reviewThread?.messages],
+  );
+  const reviewState = review
+    ? reviewThread?.latestTurn?.state === "completed"
+      ? "completed"
+      : reviewThread?.latestTurn?.state === "error"
+        ? "error"
+        : reviewThread?.latestTurn?.state === "interrupted"
+          ? "stopped"
+          : "running"
+    : null;
+  const reviewLabel = reviewStarting
+    ? "Starting review…"
+    : reviewState === "completed"
+      ? "Review complete"
+      : reviewState === "error"
+        ? "Review failed"
+        : reviewState === "stopped"
+          ? "Review stopped"
+          : reviewState === "running"
+            ? "Reviewing…"
+            : null;
 
   const handleDownload = () => {
     downloadPlanAsTextFile(downloadFilename, saveContents);
@@ -190,16 +246,64 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
           ) : null}
         </div>
-        {canCollapse ? (
-          <div className="mt-4 flex justify-center">
-            <Button
-              size="sm"
-              variant="outline"
-              data-scroll-anchor-ignore
-              onClick={() => setExpanded((value) => !value)}
-            >
-              {expanded ? "Collapse plan" : "Expand plan"}
-            </Button>
+        {canCollapse || onReviewPlan ? (
+          <div className="mt-4 flex flex-wrap justify-center gap-2">
+            {onReviewPlan ? (
+              <>
+                {reviewLabel ? (
+                  <span className="self-center text-muted-foreground text-xs">{reviewLabel}</span>
+                ) : null}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  data-scroll-anchor-ignore
+                  disabled={reviewStarting || reviewState === "running"}
+                  onClick={() => onReviewPlan(planId)}
+                >
+                  {reviewState === "completed" ||
+                  reviewState === "error" ||
+                  reviewState === "stopped"
+                    ? "Review again"
+                    : reviewStarting || reviewState === "running"
+                      ? reviewLabel
+                      : "Review plan"}
+                </Button>
+                {review && onOpenReview ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    data-scroll-anchor-ignore
+                    onClick={() => onOpenReview(review.reviewThreadId)}
+                  >
+                    Open review
+                  </Button>
+                ) : null}
+                {review && reviewState === "completed" && onRevisePlan ? (
+                  <Button
+                    size="sm"
+                    data-scroll-anchor-ignore
+                    disabled={sourceBusy || reviewFeedback === null}
+                    onClick={() => {
+                      if (reviewFeedback !== null) {
+                        onRevisePlan({ planId, feedback: reviewFeedback });
+                      }
+                    }}
+                  >
+                    Revise plan
+                  </Button>
+                ) : null}
+              </>
+            ) : null}
+            {canCollapse ? (
+              <Button
+                size="sm"
+                variant="outline"
+                data-scroll-anchor-ignore
+                onClick={() => setExpanded((value) => !value)}
+              >
+                {expanded ? "Collapse plan" : "Expand plan"}
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </div>

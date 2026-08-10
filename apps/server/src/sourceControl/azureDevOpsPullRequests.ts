@@ -15,7 +15,14 @@ export interface NormalizedAzureDevOpsPullRequestRecord {
   readonly headRefName: string;
   readonly state: "open" | "closed" | "merged";
   readonly updatedAt: Option.Option<DateTime.Utc>;
+  readonly author?: string | null;
+  readonly assignees?: ReadonlyArray<string>;
 }
+
+const AzureDevOpsIdentitySchema = Schema.Struct({
+  uniqueName: Schema.optional(Schema.NullOr(Schema.String)),
+  displayName: Schema.optional(Schema.NullOr(Schema.String)),
+});
 
 const AzureDevOpsPullRequestSchema = Schema.Struct({
   pullRequestId: PositiveInt,
@@ -45,6 +52,19 @@ const AzureDevOpsPullRequestSchema = Schema.Struct({
         }),
       ),
     }),
+  ),
+  createdBy: Schema.optional(Schema.NullOr(AzureDevOpsIdentitySchema)),
+  // Azure DevOps has no assignee concept on pull requests; required reviewers
+  // are the closest equivalent and are what the PR panel groups on.
+  reviewers: Schema.optional(
+    Schema.NullOr(
+      Schema.Array(
+        Schema.Struct({
+          ...AzureDevOpsIdentitySchema.fields,
+          isRequired: Schema.optional(Schema.NullOr(Schema.Boolean)),
+        }),
+      ),
+    ),
   ),
 });
 
@@ -129,9 +149,24 @@ function normalizeAzureDevOpsPullRequestUrl(
   return trimOptionalString(raw.url) ?? "";
 }
 
+function identityHandle(
+  identity: Schema.Schema.Type<typeof AzureDevOpsIdentitySchema> | null | undefined,
+): string | null {
+  return trimOptionalString(identity?.uniqueName) ?? trimOptionalString(identity?.displayName);
+}
+
 function normalizeAzureDevOpsPullRequestRecord(
   raw: Schema.Schema.Type<typeof AzureDevOpsPullRequestSchema>,
 ): NormalizedAzureDevOpsPullRequestRecord {
+  const author = identityHandle(raw.createdBy);
+  const assignees = [
+    ...new Set(
+      (raw.reviewers ?? [])
+        .map(identityHandle)
+        .filter((handle): handle is string => handle !== null),
+    ),
+  ];
+
   return {
     number: raw.pullRequestId,
     title: raw.title,
@@ -142,6 +177,8 @@ function normalizeAzureDevOpsPullRequestRecord(
     updatedAt: (raw.closedDate ?? Option.none()).pipe(
       Option.orElse(() => raw.creationDate ?? Option.none()),
     ),
+    ...(author ? { author } : {}),
+    ...(assignees.length > 0 ? { assignees } : {}),
   };
 }
 

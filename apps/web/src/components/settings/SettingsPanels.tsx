@@ -61,9 +61,11 @@ import {
   readThemePreference,
   useTheme,
 } from "../../hooks/useTheme";
+import { DEFAULT_THEME_PALETTE, themePaletteLabel } from "../../lib/themePalettes";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
+import { PlanReviewSettingsSection } from "./PlanReviewSettings";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
   getCustomModelOptionsByInstance,
@@ -114,6 +116,8 @@ import {
 } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { ThemePalettePicker } from "./ThemePalettePicker";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThemeLibrary } from "./ThemeSettings";
@@ -453,6 +457,8 @@ export function useSettingsRestore(onRestored?: () => void) {
   const {
     theme,
     setTheme,
+    palette,
+    setPalette,
     followSystem,
     setFollowSystem,
     setThemeHalf,
@@ -473,6 +479,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(theme !== "system" ? ["Theme"] : []),
       ...(!followSystem ? ["Follow system"] : []),
       ...(themeHalves !== null ? ["Theme mix"] : []),
+      ...(palette !== DEFAULT_THEME_PALETTE ? [`Palette (${themePaletteLabel(palette)})`] : []),
       ...(settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? ["Glass opacity"] : []),
       ...(settings.environmentIdentificationMode !==
       DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode
@@ -561,6 +568,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.wordWrap,
       followSystem,
       theme,
+      palette,
       themeHalves,
     ],
   );
@@ -576,6 +584,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     );
     if (!confirmed) return;
 
+    setPalette(DEFAULT_THEME_PALETTE);
     // Only touch the theme keys that are actually dirty, so a theme-storage
     // failure cannot block restoring unrelated settings. Preferences are
     // re-read after the confirmation dialog: they may have changed (another
@@ -659,6 +668,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     clearThemeHalves,
     onRestored,
     setFollowSystem,
+    setPalette,
     setTheme,
     setThemeHalf,
     theme,
@@ -941,9 +951,11 @@ function BackgroundActivityAdvancedDialog({
 export function AppearanceSettingsPanel() {
   const {
     appearanceMode,
+    palette,
     refreshTheme,
     resolvedTheme,
     setAppearanceMode,
+    setPalette,
     setTheme,
     setThemeHalf,
     theme,
@@ -981,6 +993,18 @@ export function AppearanceSettingsPanel() {
             onImportOpenChange={setIsImportThemeOpen}
           />
         </div>
+
+        <SettingsRow
+          {...searchableSetting("theme-palette")}
+          description="Choose the color palette T3 Code uses across the app, including code blocks and diffs. The color mode above is applied on top."
+          resetAction={
+            palette !== DEFAULT_THEME_PALETTE ? (
+              <SettingResetButton label="theme" onClick={() => setPalette(DEFAULT_THEME_PALETTE)} />
+            ) : null
+          }
+        >
+          <ThemePalettePicker value={palette} onValueChange={setPalette} />
+        </SettingsRow>
 
         <SettingsRow
           {...searchableSetting("setting-glass-opacity")}
@@ -2230,6 +2254,8 @@ export function GeneralSettingsPanel() {
           }
         />
       </SettingsSection>
+
+      <PlanReviewSettingsSection />
 
       <SettingsSection title="About">
         {isElectron || HOSTED_APP_CHANNEL ? (

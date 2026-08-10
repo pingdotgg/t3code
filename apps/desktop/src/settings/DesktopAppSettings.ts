@@ -25,6 +25,10 @@ import { resolveDefaultDesktopUpdateChannel } from "../updates/updateChannels.ts
 import { isValidDistroName } from "../wsl/wslPathParsing.ts";
 
 export interface DesktopSettings {
+  // Last chrome color the renderer resolved, so a relaunch can open the window
+  // in the active theme palette's background instead of the hardcoded neutral.
+  // Null until the renderer has reported one.
+  readonly chromeBackgroundColor: string | null;
   readonly linuxPasswordStore: LinuxPasswordStorePreference;
   readonly mainWindowBounds: DesktopWindowBounds | null;
   readonly mainWindowMaximized: boolean;
@@ -73,6 +77,7 @@ export const DEFAULT_MAIN_WINDOW_SIZE = {
 } as const;
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
+  chromeBackgroundColor: null,
   linuxPasswordStore: DEFAULT_LINUX_PASSWORD_STORE,
   mainWindowBounds: null,
   mainWindowMaximized: false,
@@ -94,6 +99,7 @@ const DesktopWindowBoundsDocument = Schema.Struct({
 });
 
 const DesktopSettingsDocument = Schema.Struct({
+  chromeBackgroundColor: Schema.optionalKey(Schema.NullOr(Schema.String)),
   linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
   mainWindowBounds: Schema.optionalKey(Schema.NullOr(DesktopWindowBoundsDocument)),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
@@ -156,6 +162,9 @@ export class DesktopAppSettings extends Context.Service<
       bounds: DesktopWindowBounds,
       isMaximized: boolean,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+    readonly setChromeBackgroundColor: (
+      color: string,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setServerExposureMode: (
       mode: DesktopServerExposureMode,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
@@ -196,6 +205,21 @@ function normalizeTailscaleServePort(value: unknown): number {
     : DEFAULT_TAILSCALE_SERVE_PORT;
 }
 
+/**
+ * The renderer supplies this, and it is handed straight to Electron's
+ * `backgroundColor`, which throws on a value it cannot parse. Accept only the
+ * shapes `getComputedStyle` actually produces plus plain hex, and fall back to
+ * null (meaning "use the built-in neutral") for anything else.
+ */
+const CHROME_BACKGROUND_COLOR_PATTERN =
+  /^(#[0-9a-f]{3,8}|rgba?\(\s*[\d.]+\s*[\s,]\s*[\d.]+\s*[\s,]\s*[\d.]+\s*(?:[\s,/]\s*[\d.]+%?\s*)?\))$/i;
+
+function normalizeChromeBackgroundColor(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return CHROME_BACKGROUND_COLOR_PATTERN.test(trimmed) ? trimmed : null;
+}
+
 function normalizeWslDistro(value: unknown): string | null {
   return typeof value === "string" && isValidDistroName(value) ? value : null;
 }
@@ -224,6 +248,7 @@ function normalizeDesktopSettingsDocument(
     (parsed.wslBackendEnabled === undefined && parsed.wslMode === "wsl");
 
   return {
+    chromeBackgroundColor: normalizeChromeBackgroundColor(parsed.chromeBackgroundColor),
     linuxPasswordStore: normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore),
     mainWindowBounds,
     mainWindowMaximized: mainWindowBounds !== null && parsed.mainWindowMaximized === true,
@@ -247,6 +272,9 @@ function toDesktopSettingsDocument(
 ): DesktopSettingsDocument {
   const document: Mutable<DesktopSettingsDocument> = {};
 
+  if (settings.chromeBackgroundColor !== defaults.chromeBackgroundColor) {
+    document.chromeBackgroundColor = settings.chromeBackgroundColor;
+  }
   if (settings.linuxPasswordStore !== defaults.linuxPasswordStore) {
     document.linuxPasswordStore = settings.linuxPasswordStore;
   }
@@ -358,6 +386,16 @@ function setWslDistro(settings: DesktopSettings, distro: string | null): Desktop
     : {
         ...settings,
         wslDistro: normalized,
+      };
+}
+
+function setChromeBackgroundColor(settings: DesktopSettings, color: string): DesktopSettings {
+  const normalized = normalizeChromeBackgroundColor(color);
+  return settings.chromeBackgroundColor === normalized
+    ? settings
+    : {
+        ...settings,
+        chromeBackgroundColor: normalized,
       };
 }
 
@@ -518,6 +556,10 @@ export const make = Effect.gen(function* () {
           },
         }),
       ),
+    setChromeBackgroundColor: (color) =>
+      persist((settings) => setChromeBackgroundColor(settings, color)).pipe(
+        Effect.withSpan("desktop.settings.setChromeBackgroundColor", { attributes: { color } }),
+      ),
     setServerExposureMode: (mode) =>
       persist((settings) => setServerExposureMode(settings, mode)).pipe(
         Effect.withSpan("desktop.settings.setServerExposureMode", { attributes: { mode } }),
@@ -577,6 +619,8 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
         load: SynchronizedRef.get(settingsRef),
         setMainWindowBounds: (bounds, isMaximized) =>
           update((settings) => setMainWindowBounds(settings, bounds, isMaximized)),
+        setChromeBackgroundColor: (color) =>
+          update((settings) => setChromeBackgroundColor(settings, color)),
         setServerExposureMode: (mode) =>
           update((settings) => setServerExposureMode(settings, mode)),
         setTailscaleServe: (input) => update((settings) => setTailscaleServe(settings, input)),

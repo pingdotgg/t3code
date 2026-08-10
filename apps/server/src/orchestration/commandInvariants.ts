@@ -72,28 +72,39 @@ export function requireProjectAbsent(input: {
   );
 }
 
-export function requireActiveProjectWorkspaceRootAbsent(input: {
+/**
+ * A project may not list the same folder twice.
+ *
+ * Folders are deliberately *not* required to be unique across projects: several
+ * projects may span the same code with different folder sets or different
+ * scopes, so sharing a folder — including the primary — is allowed. Sidebar
+ * identity is the project id rather than its path, so shared folders still
+ * produce distinct rows.
+ *
+ * The duplicate check here also covers the case the Normalizer cannot see: an
+ * additional folder equal to a primary that the command did not touch.
+ */
+export function requireProjectFoldersDistinct(input: {
   readonly readModel: OrchestrationReadModel;
   readonly command: OrchestrationCommand;
-  readonly workspaceRoot: string;
+  /** Every folder the command wants this project to own, primary first. */
+  readonly folders: ReadonlyArray<string>;
   readonly exceptProjectId?: ProjectId;
 }): Effect.Effect<void, OrchestrationCommandInvariantError> {
-  const normalizedWorkspaceRoot = normalizeProjectPathForComparison(input.workspaceRoot);
-  const existingProject = input.readModel.projects.find(
-    (project) =>
-      project.deletedAt === null &&
-      normalizeProjectPathForComparison(project.workspaceRoot) === normalizedWorkspaceRoot &&
-      project.id !== input.exceptProjectId,
-  );
-  if (existingProject === undefined) {
-    return Effect.void;
+  const requested = new Set<string>();
+  for (const folder of input.folders) {
+    const key = normalizeProjectPathForComparison(folder);
+    if (requested.has(key)) {
+      return Effect.fail(
+        invariantError(
+          input.command.type,
+          `Folder '${key}' is listed more than once for this project.`,
+        ),
+      );
+    }
+    requested.add(key);
   }
-  return Effect.fail(
-    invariantError(
-      input.command.type,
-      `Active project '${existingProject.id}' already exists for workspace root '${normalizedWorkspaceRoot}'.`,
-    ),
-  );
+  return Effect.void;
 }
 
 export function requireThread(input: {

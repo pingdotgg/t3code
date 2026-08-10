@@ -11,6 +11,7 @@ import {
   ModelSelection,
   ProjectId,
   ProjectScript,
+  ProjectSourceFolder,
   ThreadEnvMode,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -24,6 +25,9 @@ export const ProjectionProject = Schema.Struct({
   projectId: ProjectId,
   title: Schema.String,
   workspaceRoot: Schema.String,
+  // Required rather than optional so the compiler points at every upsert call
+  // site; the column itself is NOT NULL DEFAULT '[]'.
+  additionalFolders: Schema.Array(ProjectSourceFolder),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   defaultThreadEnvMode: Schema.NullOr(ThreadEnvMode),
   faviconPath: Schema.optional(Schema.NullOr(Schema.String)),

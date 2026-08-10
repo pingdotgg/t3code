@@ -35,7 +35,12 @@ import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
-const DESKTOP_APP_ID = "com.t3tools.t3code";
+// Deliberately not com.t3tools.t3code: this fork ships its own builds, and
+// sharing the upstream bundle id would make an install replace an official
+// T3 Code app and share its userData directory. A distinct id keeps the two
+// side by side with separate settings, and keeps upstream's update feed from
+// treating this build as one of its own.
+const DESKTOP_APP_ID = "com.machirajusaisandeep.t3code-custom";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -1517,7 +1522,7 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
 
 export function resolveDesktopProductName(version: string): string {
   return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "T3 Code (Nightly)"
+    ? "T3 Code Custom (Nightly)"
     : (desktopPackageJson.productName ?? "T3 Code");
 }
 
@@ -1574,6 +1579,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           schemes: ["t3code", "t3code-dev"],
         },
       ],
+      // Unsigned builds still have to be ad-hoc signed. Without this the bundle
+      // keeps only the linker's stub signature on the stock Electron binary
+      // (Identifier=Electron, no sealed resources), and on Apple Silicon
+      // Gatekeeper reports a quarantined copy as "damaged and can't be opened"
+      // — which, unlike the "unidentified developer" prompt, right-click → Open
+      // cannot bypass. "-" means ad-hoc: no certificate needed.
+      ...(signed ? {} : { identity: "-" }),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,

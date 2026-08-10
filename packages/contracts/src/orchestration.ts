@@ -22,6 +22,7 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { RecoverableThreadFailureKind } from "./threadFailure.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -29,6 +30,8 @@ export const ORCHESTRATION_WS_METHODS = {
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   searchThreads: "orchestration.searchThreads",
+  scanThreadImports: "orchestration.threadImports.scan",
+  commitThreadImports: "orchestration.threadImports.commit",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
@@ -211,6 +214,26 @@ export const ProjectScript = Schema.Struct({
 });
 export type ProjectScript = typeof ProjectScript.Type;
 
+/**
+ * A non-primary source folder attached to a project.
+ *
+ * The primary folder is the project's `workspaceRoot`; promoting an entry here
+ * to primary swaps the two. `path` is always an absolute, server-normalized
+ * path (see WorkspacePaths) and doubles as the folder's identity — the project
+ * folder invariants guarantee it is unique across every active project, so no
+ * separate id is minted.
+ *
+ * Modelled as a struct rather than a bare string because event payloads are
+ * immutable and replayed forever: widening `Array(String)` to `Array(Struct)`
+ * later would need a permanent payload upcaster.
+ */
+export const ProjectSourceFolder = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  /** Optional display name; clients fall back to deriving one from the path. */
+  label: Schema.optional(TrimmedNonEmptyString),
+});
+export type ProjectSourceFolder = typeof ProjectSourceFolder.Type;
+
 export const ProjectFaviconPath = TrimmedNonEmptyString.check(
   Schema.isMaxLength(1024),
   Schema.isPattern(/\.(?:avif|gif|ico|jpe?g|png|svg|webp)$/i),
@@ -221,6 +244,9 @@ export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  additionalFolders: Schema.Array(ProjectSourceFolder).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   // Per-project override for where new threads start. Null/absent means
@@ -266,10 +292,27 @@ export const OrchestrationProposedPlan = Schema.Struct({
 });
 export type OrchestrationProposedPlan = typeof OrchestrationProposedPlan.Type;
 
-const SourceProposedPlanReference = Schema.Struct({
+export const SourceProposedPlanKind = Schema.Literals(["implementation", "review"]);
+export type SourceProposedPlanKind = typeof SourceProposedPlanKind.Type;
+
+export const SourceProposedPlanReference = Schema.Struct({
   threadId: ThreadId,
   planId: OrchestrationProposedPlanId,
+  // Existing plan-start links meant implementation. Keep that interpretation
+  // when decoding old events while allowing background review threads to be
+  // linked without marking their source plan as implemented.
+  kind: SourceProposedPlanKind.pipe(
+    Schema.withDecodingDefault(Effect.succeed("implementation" as const)),
+  ),
 });
+export type SourceProposedPlanReference = typeof SourceProposedPlanReference.Type;
+
+export const OrchestrationProposedPlanReview = Schema.Struct({
+  sourcePlanId: OrchestrationProposedPlanId,
+  reviewThreadId: ThreadId,
+  startedAt: IsoDateTime,
+});
+export type OrchestrationProposedPlanReview = typeof OrchestrationProposedPlanReview.Type;
 
 export const OrchestrationSessionStatus = Schema.Literals([
   "idle",
@@ -290,6 +333,9 @@ export const OrchestrationSession = Schema.Struct({
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
+  // Optional so clients can continue reading sessions written before
+  // recoverable provider failures were classified.
+  lastFailureKind: Schema.optionalKey(Schema.NullOr(RecoverableThreadFailureKind)),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationSession = typeof OrchestrationSession.Type;
@@ -402,6 +448,11 @@ export const OrchestrationThread = Schema.Struct({
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  // Derived from review-kind turns, rather than stored on the provider-owned
+  // plan object. That keeps a later provider plan upsert from erasing reviews.
+  proposedPlanReviews: Schema.Array(OrchestrationProposedPlanReview).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   activities: Schema.Array(OrchestrationThreadActivity),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
   session: Schema.NullOr(OrchestrationSession),
@@ -420,6 +471,9 @@ export const OrchestrationProjectShell = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  additionalFolders: Schema.Array(ProjectSourceFolder).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
@@ -625,6 +679,7 @@ export const ProjectCreateCommand = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  additionalFolders: Schema.optional(Schema.Array(ProjectSourceFolder)),
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   createdAt: IsoDateTime,
@@ -636,6 +691,12 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   projectId: ProjectId,
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Whole-set replacement of the project's non-primary folders, matching how
+   * `scripts` behaves. Add / remove / promote are all expressed through this
+   * command so that promotion stays an atomic swap with `workspaceRoot`.
+   */
+  additionalFolders: Schema.optional(Schema.Array(ProjectSourceFolder)),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   // Absent = leave unchanged; null = clear the override.
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
@@ -1023,6 +1084,30 @@ const ThreadTitleRegenerationCompleteCommand = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
 });
 
+/**
+ * Server-only command used to atomically materialize an external transcript.
+ * It is intentionally excluded from both client command unions.
+ */
+const ThreadImportCommand = Schema.Struct({
+  type: Schema.Literal("thread.import"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+  messages: Schema.Array(
+    Schema.Struct({
+      id: MessageId,
+      role: OrchestrationMessageRole,
+      text: Schema.String,
+      createdAt: IsoDateTime,
+    }),
+  ),
+  createdAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -1032,6 +1117,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
   ThreadTitleRegenerationCompleteCommand,
+  ThreadImportCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -1082,6 +1168,11 @@ export const ProjectCreatedPayload = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  // Decoding default, not a bare optional: historical `project.created` events
+  // predate source folders and must keep replaying as an empty list.
+  additionalFolders: Schema.Array(ProjectSourceFolder).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   // Optional so persisted events from older servers still decode.
@@ -1095,6 +1186,8 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   projectId: ProjectId,
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  // Sparse patch: `undefined` means "not touched", so this stays a bare optional.
+  additionalFolders: Schema.optional(Schema.Array(ProjectSourceFolder)),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),

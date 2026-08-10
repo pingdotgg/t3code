@@ -39,8 +39,10 @@ import {
   CircleCheckIcon,
   CircleDashedIcon,
   ClockIcon,
+  DownloadIcon,
   FolderIcon,
   FolderPlusIcon,
+  LayoutGridIcon,
   GitBranchIcon,
   MessageSquareIcon,
   PinIcon,
@@ -97,10 +99,13 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
+import { openThreadImportDialog } from "../threadImportDialog";
+import { openCreateProjectDialog } from "~/createProjectDialogBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useNowMinute } from "../hooks/useNowMinute";
+import { useSnoozeWakeTick } from "../hooks/useSnoozeWakeTick";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
@@ -159,7 +164,15 @@ import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuTrigger,
+} from "./ui/menu";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
@@ -1633,10 +1646,7 @@ export default function Sidebar() {
   });
   const [projectScopeMenuOpen, setProjectScopeMenuOpen] = useState(false);
   const newThreadContext = useHandleNewThread();
-  const openAddProjectCommandPalette = useCallback(
-    () => openCommandPalette({ open: "add-project" }),
-    [],
-  );
+  const openAddProjectCommandPalette = useCallback(() => openCreateProjectDialog(), []);
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
@@ -1756,10 +1766,10 @@ export default function Sidebar() {
   const nowMinute = useNowMinute();
   // Snooze wake times are second-precise, so classifying with the quantized
   // minute would hold a woken thread on the shelf for up to a minute. The
-  // tick is a plain counter bumped exactly at the next wake boundary (armed
-  // below, after the partition knows the boundary); the partition reads a
-  // fresh clock whenever it recomputes.
-  const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
+  // tick is bumped exactly at the next wake boundary; the partition reads a
+  // fresh clock whenever it recomputes. Fed from the raw thread list rather
+  // than the partition, so it also covers threads that raised their hand.
+  const snoozeWakeTick = useSnoozeWakeTick(threads.map((thread) => thread.snoozedUntil));
 
   // PR states stream in per-row (rows own the VCS subscriptions); a merged or
   // closed PR auto-settles its thread on the next partition.
@@ -1982,24 +1992,6 @@ export default function Sidebar() {
       .getElementById(`sidebar-thread-search-result-${activeSearchResultIndex}`)
       ?.scrollIntoView({ block: "nearest" });
   }, [activeSearchResultIndex, isSearchingThreads, threadSearchResultOrderKey]);
-
-  // Arm a timeout for the earliest upcoming wake so the shelf empties the
-  // moment a snooze expires instead of on the next minute tick. Sorted
-  // soonest-first, so entry 0 is the boundary.
-  useEffect(() => {
-    const nextWakeAtMs =
-      snoozedThreads.length > 0 && snoozedThreads[0]?.snoozedUntil != null
-        ? Date.parse(snoozedThreads[0].snoozedUntil)
-        : Number.NaN;
-    if (Number.isNaN(nextWakeAtMs)) return;
-    // setTimeout delays are signed 32-bit: anything larger overflows and
-    // fires immediately, turning a far-future wake (event-condition snoozes
-    // synced from elsewhere) into a tight re-arm loop. Clamped, the timer
-    // just re-arms every ~24.8 days until the wake is in range.
-    const delayMs = Math.min(Math.max(0, nextWakeAtMs - Date.now()) + 50, 2_147_483_647);
-    const id = window.setTimeout(() => bumpSnoozeWakeTick((tick) => tick + 1), delayMs);
-    return () => window.clearTimeout(id);
-  }, [snoozedThreads]);
 
   // The settled tail renders in pages: history shouldn't dominate the
   // sidebar, and the common lookups are recent. Expansion resets when the
@@ -3158,6 +3150,7 @@ export default function Sidebar() {
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.new") ??
     shortcutLabelForCommand(keybindings, "chat.newLocal");
+  const boardShortcutLabel = shortcutLabelForCommand(keybindings, "board.toggle");
   return (
     <>
       <SidebarChromeHeader isElectron={isElectron} />
@@ -3241,6 +3234,28 @@ export default function Sidebar() {
                   </TooltipPopup>
                 </Tooltip>
               </div>
+              <div className="shrink-0">
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <SidebarMenuButton
+                        size="icon"
+                        type="button"
+                        className="focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+                        onClick={() => {
+                          void router.navigate({ to: "/board" });
+                        }}
+                        aria-label="Open board"
+                      />
+                    }
+                  >
+                    <LayoutGridIcon />
+                  </TooltipTrigger>
+                  <TooltipPopup side="right">
+                    {boardShortcutLabel ? `Board (${boardShortcutLabel})` : "Board"}
+                  </TooltipPopup>
+                </Tooltip>
+              </div>
             </div>
             {projectGroups.length > 0 ? (
               <div className="flex items-center gap-1">
@@ -3315,6 +3330,22 @@ export default function Sidebar() {
                         );
                       })}
                     </MenuRadioGroup>
+                    <MenuSeparator />
+                    <MenuItem
+                      onClick={() =>
+                        openThreadImportDialog(
+                          scopedProjectGroup
+                            ? {
+                                environmentId: scopedProjectGroup.environmentId,
+                                projectId: scopedProjectGroup.id,
+                              }
+                            : undefined,
+                        )
+                      }
+                    >
+                      <DownloadIcon />
+                      Import conversations…
+                    </MenuItem>
                   </MenuPopup>
                 </Menu>
                 <Tooltip>

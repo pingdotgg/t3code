@@ -138,6 +138,7 @@ import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
+import * as McpServerRegistry from "./mcp/McpServerRegistry.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
@@ -207,6 +208,7 @@ const makeDefaultOrchestrationReadModel = () => {
         id: defaultProjectId,
         title: "Default Project",
         workspaceRoot: "/tmp/default-project",
+        additionalFolders: [],
         defaultModelSelection,
         scripts: [],
         createdAt: now,
@@ -234,6 +236,7 @@ const makeDefaultOrchestrationReadModel = () => {
         session: null,
         activities: [],
         proposedPlans: [],
+        proposedPlanReviews: [],
         checkpoints: [],
         deletedAt: null,
       },
@@ -394,6 +397,7 @@ const buildAppUnderTest = (options?: {
     sourceControlRepositoryService?: Partial<
       SourceControlRepositoryService.SourceControlRepositoryService["Service"]
     >;
+    mcpServerRegistry?: Partial<McpServerRegistry.McpServerRegistry["Service"]>;
     reviewService?: Partial<ReviewService.ReviewService["Service"]>;
     vcsStatusBroadcaster?: Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>;
     projectSetupScriptRunner?: Partial<
@@ -723,9 +727,14 @@ const buildAppUnderTest = (options?: {
       Layer.provide(reviewLayer),
       Layer.provide(vcsProvisioningLayer),
       Layer.provide(
-        Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
-          ...options?.layers?.sourceControlRepositoryService,
-        }),
+        Layer.mergeAll(
+          Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
+            ...options?.layers?.sourceControlRepositoryService,
+          }),
+          Layer.mock(McpServerRegistry.McpServerRegistry)({
+            ...options?.layers?.mcpServerRegistry,
+          }),
+        ),
       ),
       Layer.provideMerge(vcsStatusBroadcasterLayer),
       Layer.provide(
@@ -5824,6 +5833,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             id: ProjectId.make("project-a"),
             title: "Project A",
             workspaceRoot: "/tmp/project-a",
+            additionalFolders: [],
             defaultModelSelection,
             scripts: [],
             createdAt: now,
@@ -5851,6 +5861,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             session: null,
             activities: [],
             proposedPlans: [],
+            proposedPlanReviews: [],
             checkpoints: [],
             deletedAt: null,
           },

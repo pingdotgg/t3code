@@ -50,8 +50,8 @@ describe("ClientSettings glass opacity", () => {
 });
 
 describe("ClientSettings environment identification", () => {
-  it("defaults to artwork and accepts each presentation mode", () => {
-    expect(decodeClientSettings({}).environmentIdentificationMode).toBe("artwork");
+  it("defaults to none and accepts each presentation mode", () => {
+    expect(decodeClientSettings({}).environmentIdentificationMode).toBe("none");
 
     for (const mode of ["artwork", "pill", "none"] as const) {
       expect(
@@ -119,6 +119,8 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("decodes a fully empty config (legacy on-disk shape) without complaint", () => {
     const decoded = decodeServerSettings({});
     expect(decoded.providerInstances).toEqual({});
+    expect(decoded.planReviewModelSelection).toBeNull();
+    expect(decoded.planReviewInstructions).toContain("Review the proposed implementation plan");
     // Legacy `providers` struct is still hydrated with its per-driver defaults
     // so existing call sites keep working through the migration.
     expect(decoded.providers.codex.enabled).toBe(true);
@@ -241,6 +243,7 @@ describe("ServerSettingsPatch string normalization", () => {
     const patch = decodeServerSettingsPatch({
       addProjectBaseDirectory: "  ~/Development  ",
       textGenerationModelSelection: { model: "  gpt-5.4-mini  " },
+      planReviewInstructions: "  Review database migrations first.  ",
       observability: {
         otlpTracesUrl: "  http://localhost:4318/v1/traces  ",
       },
@@ -262,6 +265,7 @@ describe("ServerSettingsPatch string normalization", () => {
 
     expect(patch.addProjectBaseDirectory).toBe("~/Development");
     expect(patch.textGenerationModelSelection?.model).toBe("gpt-5.4-mini");
+    expect(patch.planReviewInstructions).toBe("Review database migrations first.");
     expect(patch.observability?.otlpTracesUrl).toBe("http://localhost:4318/v1/traces");
     expect(patch.providers?.codex?.binaryPath).toBe("/opt/homebrew/bin/codex");
     expect(patch.providers?.codex?.homePath).toBe("~/.codex");

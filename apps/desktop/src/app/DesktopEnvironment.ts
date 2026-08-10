@@ -79,7 +79,7 @@ export class DesktopEnvironment extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopEnvironment") {}
 
-const APP_BASE_NAME = "T3 Code";
+const APP_BASE_NAME = "T3 Code Custom";
 
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
@@ -168,8 +168,13 @@ const make = Effect.fn("desktop.environment.make")(function* (
     joinPath: path.join,
     t3Home: config.t3Home,
   });
-  const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
-  const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+  // Fork-specific so this build keeps its own settings, projects and sessions
+  // instead of sharing upstream's "t3code" directory with an official install.
+  // The legacy names are deliberately fork-specific too: that branch exists to
+  // adopt an older directory on upgrade, and pointing it at upstream's name
+  // would make this build silently take over an official install's data.
+  const userDataDirName = isDevelopment ? "t3code-custom-dev" : "t3code-custom";
+  const legacyUserDataDirName = isDevelopment ? "T3 Code Custom (Dev)" : "T3 Code Custom (Alpha)";
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
     "applications",

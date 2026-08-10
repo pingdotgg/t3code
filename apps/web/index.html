@@ -10,9 +10,29 @@
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <script>
+      // Runs before the stylesheet and before React, so the first paint is
+      // already in the user's mode AND palette. Anything read here has to come
+      // from a flat localStorage key — see the note on PALETTE_STORAGE_KEY in
+      // src/hooks/useTheme.ts.
       (() => {
         const LIGHT_BACKGROUND = "#ffffff";
         const DARK_BACKGROUND = "#0a0a0a";
+        // Must match THEME_PALETTE_IDS in src/lib/themePalettes.ts. This script
+        // cannot import, so themePalettes.test.ts asserts the two agree. The
+        // palette is orthogonal to the custom-theme system below: it recolors
+        // the app when no custom/built-in theme id is selected, via the
+        // `[data-theme-palette]` rules in index.css.
+        const PALETTES = [
+          "default",
+          "claude",
+          "codex",
+          "zed",
+          "midnight",
+          "ember",
+          "mono",
+          "cyberpunk",
+          "slate",
+        ];
         const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
         const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
         const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
@@ -200,6 +220,8 @@
 
         try {
           const storedTheme = window.localStorage.getItem("t3code:theme");
+          const storedPalette = window.localStorage.getItem("t3code:theme-palette");
+          const palette = PALETTES.includes(storedPalette) ? storedPalette : "default";
           const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           // Older builds stored the dark T3 Chat palette as its own theme id
           // and every maintainer theme under a t3- prefix; keep those
@@ -349,16 +371,37 @@
             delete document.documentElement.dataset.themeSelected;
           }
           document.documentElement.classList.toggle("dark", isDark);
+          // The palette is orthogonal to the custom-theme system above: it
+          // only paints when no custom/built-in theme id is selected (the
+          // `[data-theme-palette]` CSS rules apply beneath `[data-theme-id]`,
+          // which wins the cascade whenever a theme is active).
+          document.documentElement.dataset.themePalette = palette;
+
+          // The palette's real chrome color can only be known once the
+          // stylesheet has applied, so the app caches the last resolved value
+          // (see syncBrowserChromeTheme). Use it only when it was recorded for
+          // this exact palette and mode; otherwise fall back to the neutral
+          // pair, which is correct for the default palette.
+          const cachedPaletteChrome = window.localStorage.getItem("t3code:theme-chrome");
+          const paletteChromePrefix = palette + ":" + (isDark ? "dark" : "light") + ":";
+          const paletteChromeColor =
+            cachedPaletteChrome && cachedPaletteChrome.startsWith(paletteChromePrefix)
+              ? cachedPaletteChrome.slice(paletteChromePrefix.length)
+              : isDark
+                ? DARK_BACKGROUND
+                : LIGHT_BACKGROUND;
+
           const chromeColor = customColors
             ? isHexColor(customColors.chrome)
               ? customColors.chrome
               : (customDefaults?.chrome ?? fallbackSplash.background)
             : builtInSplash
               ? builtInSplash.chrome
-              : isDark
-                ? DARK_BACKGROUND
-                : LIGHT_BACKGROUND;
+              : paletteChromeColor;
           document.documentElement.style.backgroundColor = chromeColor;
+          // The inline <style> below paints the splash from this, since <body>
+          // does not exist yet and cannot be styled directly.
+          document.documentElement.style.setProperty("--boot-chrome", chromeColor);
           if (hasSelection) {
             const splashColors = customSplash ?? builtInSplash ?? fallbackSplash;
             for (const [name, value] of Object.entries(splashColors)) {
@@ -376,9 +419,11 @@
           }
           delete document.documentElement.dataset.themeId;
           delete document.documentElement.dataset.themeSelected;
+          delete document.documentElement.dataset.themePalette;
           document.documentElement.classList.toggle("dark", prefersDark);
           const fallbackColor = prefersDark ? DARK_BACKGROUND : LIGHT_BACKGROUND;
           document.documentElement.style.backgroundColor = fallbackColor;
+          document.documentElement.style.setProperty("--boot-chrome", fallbackColor);
           setThemeColor(fallbackColor);
         }
       })();
@@ -392,14 +437,17 @@
         margin: 0;
       }
 
+      /* --boot-chrome is set by the script above from the active palette; the
+         literals remain the fallback for the default palette and for a first
+         load that has nothing cached yet. */
       body {
-        background: #ffffff;
+        background: var(--boot-chrome, #ffffff);
         color: #262626;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       }
 
       html.dark body {
-        background: #0a0a0a;
+        background: var(--boot-chrome, #0a0a0a);
         color: #f5f5f5;
       }
 
@@ -435,7 +483,7 @@
         object-fit: contain;
       }
     </style>
-    <title>T3 Code (Alpha)</title>
+    <title>T3 Code Custom (Alpha)</title>
   </head>
   <body>
     <div id="root">

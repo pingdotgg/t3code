@@ -143,6 +143,29 @@ function readThemeColor(styles: CSSStyleDeclaration, variable: string, fallback:
   return normalizeComputedColor(styles.getPropertyValue(variable), fallback);
 }
 
+/**
+ * `getPropertyValue("--primary")` hands back the *specified* value (an
+ * `oklch(...)` or another `var(...)`), which the terminal's color parser
+ * cannot read. Painting the variable onto a throwaway element and reading the
+ * computed `color` back forces the browser to resolve it to `rgb(...)`.
+ */
+function resolveCssColorVariable(scope: Element, variable: string): string | null {
+  if (typeof document === "undefined") return null;
+  const probe = document.createElement("span");
+  probe.style.display = "none";
+  probe.style.color = `var(${variable})`;
+  scope.appendChild(probe);
+  try {
+    const resolved = getComputedStyle(probe).color?.trim();
+    // An unset variable resolves to the inherited/initial color rather than
+    // failing, so only reject the values that carry no paint at all.
+    if (!resolved || resolved === "rgba(0, 0, 0, 0)" || resolved === "transparent") return null;
+    return resolved;
+  } finally {
+    probe.remove();
+  }
+}
+
 /** The surface treats an omitted family or size as "use the built-in default". */
 function terminalFontOptions(family: string, size: number): { family?: string; size: number } {
   const trimmed = family.trim();
@@ -180,6 +203,7 @@ export function terminalThemeFromApp(mountElement?: HTMLElement | null): Ghostty
     "--terminal-selection-background",
     isDark ? "rgba(180, 203, 255, 0.25)" : "rgba(37, 63, 99, 0.2)",
   );
+  const accentColor = resolveCssColorVariable(drawerSurface, "--primary");
   return {
     background: parseTerminalColor(
       terminalBackground,
@@ -189,11 +213,16 @@ export function terminalThemeFromApp(mountElement?: HTMLElement | null): Ghostty
       terminalForeground,
       isDark ? { r: 237, g: 241, b: 247 } : { r: 28, g: 33, b: 41 },
     ),
+    // Follow the active theme palette's accent, falling back to the
+    // `--terminal-cursor`/`--terminal-selection-background` variables (and
+    // finally the original blues) when the accent cannot be resolved.
     cursor: parseTerminalColor(
-      terminalCursor,
+      accentColor ?? terminalCursor,
       isDark ? { r: 180, g: 203, b: 255 } : { r: 38, g: 56, b: 78 },
     ),
-    selectionBackground: terminalSelection,
+    selectionBackground: accentColor
+      ? `color-mix(in srgb, ${accentColor} ${isDark ? 25 : 20}%, transparent)`
+      : terminalSelection,
   };
 }
 
@@ -734,7 +763,9 @@ export function TerminalViewport({
       });
       themeObserver.observe(document.documentElement, {
         attributes: true,
-        attributeFilter: ["class", "style"],
+        // data-theme-palette is how a palette change reaches the DOM; without
+        // it the terminal keeps the previous palette's colors until remount.
+        attributeFilter: ["class", "style", "data-theme-palette"],
       });
       setupCleanups.push(() => themeObserver.disconnect());
 

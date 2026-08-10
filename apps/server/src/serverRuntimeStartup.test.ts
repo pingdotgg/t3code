@@ -147,6 +147,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
               id: bootstrapProjectId,
               title: "Startup Project",
               workspaceRoot: "/tmp/startup-project",
+              additionalFolders: [],
               defaultModelSelection: ServerRuntimeStartup.getAutoBootstrapDefaultModelSelection(),
               scripts: [],
               createdAt: "2026-01-01T00:00:00.000Z",

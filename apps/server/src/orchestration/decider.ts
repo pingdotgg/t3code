@@ -12,7 +12,7 @@ import type * as PlatformError from "effect/PlatformError";
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
   listThreadsByProjectId,
-  requireActiveProjectWorkspaceRootAbsent,
+  requireProjectFoldersDistinct,
   requireProject,
   requireProjectAbsent,
   requireThread,
@@ -230,10 +230,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         projectId: command.projectId,
       });
-      yield* requireActiveProjectWorkspaceRootAbsent({
+      yield* requireProjectFoldersDistinct({
         readModel,
         command,
-        workspaceRoot: command.workspaceRoot,
+        folders: [
+          command.workspaceRoot,
+          ...(command.additionalFolders ?? []).map((folder) => folder.path),
+        ],
         exceptProjectId: command.projectId,
       });
 
@@ -249,6 +252,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           title: command.title,
           workspaceRoot: command.workspaceRoot,
+          additionalFolders: command.additionalFolders ?? [],
           defaultModelSelection: command.defaultModelSelection ?? null,
           faviconPath: null,
           scripts: [],
@@ -259,16 +263,21 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "project.meta.update": {
-      yield* requireProject({
+      const project = yield* requireProject({
         readModel,
         command,
         projectId: command.projectId,
       });
-      if (command.workspaceRoot !== undefined) {
-        yield* requireActiveProjectWorkspaceRootAbsent({
+      if (command.workspaceRoot !== undefined || command.additionalFolders !== undefined) {
+        // Check the effective folder set the update would produce, so that an
+        // additional folder colliding with an untouched primary is caught here
+        // — the Normalizer has no read model and cannot see it.
+        const nextPrimary = command.workspaceRoot ?? project.workspaceRoot;
+        const nextAdditional = command.additionalFolders ?? project.additionalFolders;
+        yield* requireProjectFoldersDistinct({
           readModel,
           command,
-          workspaceRoot: command.workspaceRoot,
+          folders: [nextPrimary, ...nextAdditional.map((folder) => folder.path)],
           exceptProjectId: command.projectId,
         });
       }
@@ -285,6 +294,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           ...(command.title !== undefined ? { title: command.title } : {}),
           ...(command.workspaceRoot !== undefined ? { workspaceRoot: command.workspaceRoot } : {}),
+          ...(command.additionalFolders !== undefined
+            ? { additionalFolders: command.additionalFolders }
+            : {}),
           ...(command.defaultModelSelection !== undefined
             ? { defaultModelSelection: command.defaultModelSelection }
             : {}),
@@ -381,6 +393,67 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
+    }
+
+    case "thread.import": {
+      yield* requireProject({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
+      yield* requireThreadAbsent({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+
+      const created = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.created" as const,
+        payload: {
+          threadId: command.threadId,
+          projectId: command.projectId,
+          title: command.title,
+          modelSelection: command.modelSelection,
+          runtimeMode: command.runtimeMode,
+          interactionMode: command.interactionMode,
+          branch: null,
+          worktreePath: null,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+
+      const messages = yield* Effect.forEach(command.messages, (message) =>
+        withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: message.createdAt,
+          commandId: command.commandId,
+        }).pipe(
+          Effect.map((base) => ({
+            ...base,
+            type: "thread.message-sent" as const,
+            payload: {
+              threadId: command.threadId,
+              messageId: message.id,
+              role: message.role,
+              text: message.text,
+              turnId: null,
+              streaming: false,
+              createdAt: message.createdAt,
+              updatedAt: message.createdAt,
+            },
+          })),
+        ),
+      );
+
+      return [created, ...messages];
     }
 
     case "thread.delete": {

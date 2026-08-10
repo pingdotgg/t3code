@@ -30,9 +30,11 @@ import * as Option from "effect/Option";
 import {
   ArrowLeftIcon,
   CornerLeftUpIcon,
+  DownloadIcon,
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
+  LayoutGridIcon,
   LinkIcon,
   MessageSquareIcon,
   PaletteIcon,
@@ -83,6 +85,7 @@ import {
   resolveProjectPathForDispatch,
 } from "../lib/projectPaths";
 import { onOpenCommandPalette } from "../commandPaletteBus";
+import { openThreadImportDialog } from "../threadImportDialog";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
@@ -1436,6 +1439,25 @@ function OpenCommandPaletteDialog(props: {
 
   actionItems.push({
     kind: "action",
+    value: "action:import-conversations",
+    searchTerms: [
+      "import conversations",
+      "import threads",
+      "cursor",
+      "claude code",
+      "codex",
+      "grok",
+    ],
+    title: "Import conversations…",
+    description: "Cursor, Claude Code, Codex, or Grok",
+    icon: <DownloadIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      openThreadImportDialog();
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
     value: "action:add-project",
     searchTerms: [
       "add project",
@@ -1478,6 +1500,18 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:board",
+    searchTerms: ["board", "kanban", "agents", "overview", "columns", "status"],
+    title: "Open board",
+    description: "Every agent, grouped by what it is doing",
+    icon: <LayoutGridIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/board" });
+    },
+  });
 
   actionItems.push({
     kind: "action",

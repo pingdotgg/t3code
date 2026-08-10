@@ -113,6 +113,7 @@ const SNAPSHOT: OrchestrationShellSnapshot = {
       id: PROJECT_ID,
       title: "Project",
       workspaceRoot: "/repo",
+      additionalFolders: [],
       repositoryIdentity: null,
       defaultModelSelection: null,
       scripts: [],
@@ -123,6 +124,7 @@ const SNAPSHOT: OrchestrationShellSnapshot = {
       id: OTHER_PROJECT_ID,
       title: "Other project",
       workspaceRoot: "/other-repo",
+      additionalFolders: [],
       repositoryIdentity: null,
       defaultModelSelection: null,
       scripts: [],
@@ -210,6 +212,7 @@ describe("environment entity projections", () => {
       proposedPlans: [],
       activities: [],
       checkpoints: [],
+      proposedPlanReviews: [],
     } satisfies OrchestrationThread & { readonly environmentId: EnvironmentId };
     const shell = {
       ...THREAD_SHELL,
@@ -325,6 +328,7 @@ describe("environment entity projections", () => {
       proposedPlans: [],
       activities: [],
       checkpoints: [],
+      proposedPlanReviews: [],
     } satisfies OrchestrationThread;
 
     harness.registry.set(

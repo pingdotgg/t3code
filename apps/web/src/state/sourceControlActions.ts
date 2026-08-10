@@ -11,6 +11,7 @@ import {
 import type {
   EnvironmentId,
   GitActionProgressEvent,
+  GitCommitScope,
   GitResolvePullRequestResult,
   GitStackedAction,
   SourceControlCloneProtocol,
@@ -34,7 +35,9 @@ export type SourceControlActionKind =
   | "pull"
   | "publishRepository"
   | "runStackedAction"
-  | "preparePullRequestThread";
+  | "preparePullRequestThread"
+  | "stagePaths"
+  | "unstagePaths";
 
 export interface SourceControlActionScope {
   readonly environmentId: EnvironmentId | null;
@@ -61,6 +64,8 @@ const ACTION_OPERATION = {
   publishRepository: "publish_repository",
   runStackedAction: "run_change_request",
   preparePullRequestThread: "prepare_pull_request_thread",
+  stagePaths: "stage_paths",
+  unstagePaths: "unstage_paths",
 } as const satisfies Record<SourceControlActionKind, VcsActionOperation>;
 
 function useAction<
@@ -198,6 +203,62 @@ export function useVcsPullAction(scope: SourceControlActionScope) {
   });
 }
 
+/**
+ * Stage or unstage paths in the real git index.
+ *
+ * Both share one hook because they differ only in direction, and both refresh
+ * the status subscription on success so the panel repaints immediately rather
+ * than waiting for the server's own watch to notice.
+ */
+export function useVcsStagingAction(
+  scope: SourceControlActionScope,
+  direction: "stage" | "unstage",
+) {
+  const stagePaths = useAtomCommand(vcsEnvironment.stagePaths, { reportFailure: false });
+  const unstagePaths = useAtomCommand(vcsEnvironment.unstagePaths, { reportFailure: false });
+  const status = useEnvironmentQuery(
+    scope.environmentId !== null && scope.cwd !== null
+      ? vcsEnvironment.status({
+          environmentId: scope.environmentId,
+          input: { cwd: scope.cwd },
+        })
+      : null,
+  );
+  const run = direction === "stage" ? stagePaths : unstagePaths;
+  const kind = direction === "stage" ? "stagePaths" : "unstagePaths";
+  const operation = ACTION_OPERATION[kind];
+
+  const action = useCallback(
+    async (input: { paths: ReadonlyArray<string> }) => {
+      const target = resolveScope(scope);
+      if (target === null || input.paths.length === 0) {
+        return AsyncResult.failure<never, VcsActionUnavailableError>(
+          Cause.fail(
+            new VcsActionUnavailableError({
+              operation,
+              environmentId: scope.environmentId,
+              cwd: scope.cwd,
+            }),
+          ),
+        );
+      }
+      return run({
+        environmentId: target.environmentId,
+        input: { cwd: target.cwd, paths: [...input.paths] },
+      });
+    },
+    [operation, run, scope],
+  );
+
+  return useAction({
+    kind,
+    label: direction === "stage" ? "Staging changes" : "Unstaging changes",
+    scope,
+    action,
+    onSuccess: status.refresh,
+  });
+}
+
 export function useGitStackedAction(scope: SourceControlActionScope) {
   const runStackedAction = useAtomCommand(vcsActionManager.runStackedAction(scope), {
     reportFailure: false,
@@ -218,6 +279,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
       commitMessage?: string;
       featureBranch?: boolean;
       filePaths?: string[];
+      commitScope?: GitCommitScope;
       onProgress?: (event: GitActionProgressEvent) => void;
     }) => {
       if (resolveScope(scope) === null) {
@@ -237,6 +299,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
         ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
         ...(input.featureBranch ? { featureBranch: true } : {}),
         ...(input.filePaths?.length ? { filePaths: input.filePaths } : {}),
+        ...(input.commitScope ? { commitScope: input.commitScope } : {}),
         ...(input.onProgress ? { onProgress: input.onProgress } : {}),
       });
     },

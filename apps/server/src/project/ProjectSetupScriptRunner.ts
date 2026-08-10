@@ -1,4 +1,5 @@
 import { ProjectId } from "@t3tools/contracts";
+import { additionalProjectFolderPaths } from "@t3tools/shared/projectFolders";
 import { projectScriptRuntimeEnv, setupProjectScript } from "@t3tools/shared/projectScripts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -134,7 +135,10 @@ export const make = Effect.gen(function* () {
     const terminalId = input.preferredTerminalId ?? `setup-${script.id}`;
     const cwd = input.worktreePath;
     const env = projectScriptRuntimeEnv({
-      project: { cwd: project.workspaceRoot },
+      project: {
+        cwd: project.workspaceRoot,
+        additionalFolders: additionalProjectFolderPaths(project),
+      },
       worktreePath: input.worktreePath,
     });
 

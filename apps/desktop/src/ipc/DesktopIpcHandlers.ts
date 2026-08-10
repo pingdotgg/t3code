@@ -38,6 +38,7 @@ import {
   openExternal,
   pickFolder,
   pickThemeFiles,
+  setChromeBackgroundColor,
   setTheme,
   showContextMenu,
 } from "./methods/window.ts";
@@ -81,6 +82,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(pickFolder);
   yield* ipc.handle(pickThemeFiles);
   yield* ipc.handle(setTheme);
+  yield* ipc.handle(setChromeBackgroundColor);
   yield* ipc.handle(showContextMenu);
   yield* ipc.handle(openExternal);
   yield* ipc.handle(getUpdateState);

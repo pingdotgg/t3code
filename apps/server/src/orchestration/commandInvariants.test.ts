@@ -29,6 +29,7 @@ const readModel: OrchestrationReadModel = {
       id: ProjectId.make("project-a"),
       title: "Project A",
       workspaceRoot: "/tmp/project-a",
+      additionalFolders: [],
       defaultModelSelection: {
         instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5-codex",
@@ -42,6 +43,7 @@ const readModel: OrchestrationReadModel = {
       id: ProjectId.make("project-b"),
       title: "Project B",
       workspaceRoot: "/tmp/project-b",
+      additionalFolders: [],
       defaultModelSelection: {
         instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5-codex",
@@ -75,6 +77,7 @@ const readModel: OrchestrationReadModel = {
       session: null,
       activities: [],
       proposedPlans: [],
+      proposedPlanReviews: [],
       checkpoints: [],
       deletedAt: null,
     },
@@ -100,6 +103,7 @@ const readModel: OrchestrationReadModel = {
       session: null,
       activities: [],
       proposedPlans: [],
+      proposedPlanReviews: [],
       checkpoints: [],
       deletedAt: null,
     },

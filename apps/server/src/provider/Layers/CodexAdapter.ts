@@ -42,6 +42,7 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { resolveSessionMcpServers } from "../../mcp/resolveSessionMcpServers.ts";
 
 import {
   ProviderAdapterRequestError,
@@ -147,6 +148,51 @@ function readPayload<A>(
 function trimText(value: string | undefined | null): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Builds `-c mcp_servers.<key>.*` app-server args plus any env vars they
+ * reference, for one user-configured MCP server. Verified against
+ * `codex mcp add --help` / `codex mcp get --json`:
+ *   - stdio: `type/command/args/env.<NAME>/cwd`.
+ *   - http: `type="streamable_http"`, `url`, secrets passed indirectly via
+ *     `env_http_headers.<Header>=<ENV_VAR_NAME>` (never a literal value in
+ *     the CLI args) with the referenced env var set on the child process.
+ *   - Codex has no distinct SSE transport — `sse` servers fall back to
+ *     `streamable_http`, which only works if the target also speaks it.
+ */
+function codexMcpServerArgs(
+  key: string,
+  config: ReturnType<typeof resolveSessionMcpServers>[number]["config"],
+): { readonly args: ReadonlyArray<string>; readonly env: Readonly<Record<string, string>> } {
+  const toml = (value: string) => JSON.stringify(value);
+  const sanitize = (value: string) => value.replace(/[^a-zA-Z0-9]+/g, "_").toUpperCase();
+  const args: string[] = [];
+  const env: Record<string, string> = {};
+
+  if (config.transport.type === "stdio") {
+    args.push("-c", `mcp_servers.${key}.type="stdio"`);
+    args.push("-c", `mcp_servers.${key}.command=${toml(config.transport.command)}`);
+    if (config.transport.args.length > 0) {
+      args.push("-c", `mcp_servers.${key}.args=${JSON.stringify(config.transport.args)}`);
+    }
+    if (config.transport.cwd) {
+      args.push("-c", `mcp_servers.${key}.cwd=${toml(config.transport.cwd)}`);
+    }
+    for (const variable of config.transport.env ?? []) {
+      args.push("-c", `mcp_servers.${key}.env.${variable.name}=${toml(variable.value)}`);
+    }
+    return { args, env };
+  }
+
+  args.push("-c", `mcp_servers.${key}.type="streamable_http"`);
+  args.push("-c", `mcp_servers.${key}.url=${toml(config.transport.url)}`);
+  for (const header of config.transport.headers ?? []) {
+    const envVarName = `T3_MCP_HEADER_${sanitize(key)}_${sanitize(header.name)}`;
+    env[envVarName] = header.value;
+    args.push("-c", `mcp_servers.${key}.env_http_headers.${header.name}=${toml(envVarName)}`);
+  }
+  return { args, env };
 }
 
 const FATAL_CODEX_STDERR_SNIPPETS = ["failed to connect to websocket"];
@@ -1667,6 +1713,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
           cwd: input.cwd ?? process.cwd(),
+          ...(input.additionalDirectories !== undefined
+            ? { additionalDirectories: input.additionalDirectories }
+            : {}),
           binaryPath: codexConfig.binaryPath,
           launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment),
           ...(options?.environment ? { environment: options.environment } : {}),
@@ -1679,20 +1728,36 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? { model: input.modelSelection.model }
             : {}),
           ...(serviceTier ? { serviceTier } : {}),
-          ...(mcpSession
-            ? {
-                environment: {
-                  ...(options?.environment ?? process.env),
-                  T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
-                },
-                appServerArgs: [
-                  "-c",
-                  `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
-                  "-c",
-                  'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
-                ],
-              }
-            : {}),
+          ...((): Partial<CodexSessionRuntimeOptions> => {
+            const mcpEnvironment: Record<string, string> = {};
+            const mcpAppServerArgs: string[] = [];
+
+            if (mcpSession) {
+              mcpEnvironment.T3_MCP_BEARER_TOKEN = mcpSession.authorizationHeader.replace(
+                /^Bearer\s+/,
+                "",
+              );
+              mcpAppServerArgs.push(
+                "-c",
+                `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
+                "-c",
+                'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+              );
+            }
+
+            for (const { key, config } of resolveSessionMcpServers()) {
+              const built = codexMcpServerArgs(key, config);
+              Object.assign(mcpEnvironment, built.env);
+              mcpAppServerArgs.push(...built.args);
+            }
+
+            return mcpAppServerArgs.length > 0
+              ? {
+                  environment: { ...(options?.environment ?? process.env), ...mcpEnvironment },
+                  appServerArgs: mcpAppServerArgs,
+                }
+              : {};
+          })(),
         };
         const sessionScope = yield* Scope.make("sequential");
         let sessionScopeTransferred = false;

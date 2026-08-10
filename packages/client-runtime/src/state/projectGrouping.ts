@@ -64,30 +64,33 @@ function deriveRepositoryRelativeProjectPath(
   return normalizedProjectPath.slice(rootPrefix.length).replaceAll("\\", "/");
 }
 
-export function derivePhysicalProjectKeyFromPath(environmentId: string, cwd: string): string {
-  return `${environmentId}:${normalizeProjectPathForComparison(cwd)}`;
-}
-
+/**
+ * Identity of a single project row in the sidebar.
+ *
+ * Keyed on the project id rather than its path: several projects may share the
+ * same source folders (different scopes over the same code), and a path-derived
+ * key would collapse them into one indistinguishable row.
+ */
 export function derivePhysicalProjectKey(
-  project: Pick<EnvironmentProject, "environmentId" | "workspaceRoot">,
+  project: Pick<EnvironmentProject, "environmentId" | "id">,
 ): string {
-  return derivePhysicalProjectKeyFromPath(project.environmentId, project.workspaceRoot);
+  return scopedProjectKey(scopeProjectRef(project.environmentId, project.id));
 }
 
 export function deriveProjectGroupingOverrideKey(
-  project: Pick<EnvironmentProject, "environmentId" | "workspaceRoot">,
+  project: Pick<EnvironmentProject, "environmentId" | "id">,
 ): string {
   return derivePhysicalProjectKey(project);
 }
 
 export function getProjectOrderKey(
-  project: Pick<EnvironmentProject, "environmentId" | "workspaceRoot">,
+  project: Pick<EnvironmentProject, "environmentId" | "id">,
 ): string {
   return derivePhysicalProjectKey(project);
 }
 
 export function resolveProjectGroupingMode(
-  project: Pick<EnvironmentProject, "environmentId" | "workspaceRoot">,
+  project: Pick<EnvironmentProject, "environmentId" | "id">,
   settings: ProjectGroupingSettings,
 ): SidebarProjectGroupingMode {
   return (
@@ -209,46 +212,6 @@ export interface ProjectGroup<TProject extends EnvironmentProject = EnvironmentP
   readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef>;
 }
 
-function projectFreshnessTime(project: EnvironmentProject): number {
-  const updatedAtTime = Date.parse(project.updatedAt);
-  if (Number.isFinite(updatedAtTime)) {
-    return updatedAtTime;
-  }
-  const createdAtTime = Date.parse(project.createdAt);
-  return Number.isFinite(createdAtTime) ? createdAtTime : 0;
-}
-
-function shouldReplacePhysicalProjectWinner<TProject extends EnvironmentProject>(
-  existing: TProject,
-  candidate: TProject,
-): boolean {
-  const freshnessDelta = projectFreshnessTime(candidate) - projectFreshnessTime(existing);
-  return freshnessDelta > 0 || (freshnessDelta === 0 && candidate.id > existing.id);
-}
-
-function selectProjectIdentitySource<TProject extends EnvironmentProject>(
-  projects: ReadonlyArray<TProject>,
-  winner: TProject,
-): TProject {
-  if (winner.repositoryIdentity !== null) {
-    return winner;
-  }
-
-  let freshestIdentifiedProject: TProject | null = null;
-  for (const project of projects) {
-    if (project.repositoryIdentity === null) {
-      continue;
-    }
-    if (
-      freshestIdentifiedProject === null ||
-      shouldReplacePhysicalProjectWinner(freshestIdentifiedProject, project)
-    ) {
-      freshestIdentifiedProject = project;
-    }
-  }
-  return freshestIdentifiedProject ?? winner;
-}
-
 /**
  * Builds logical project groups without losing the physical projects that
  * remain the actual navigation and task-creation targets.
@@ -262,29 +225,20 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
   readonly settings: ProjectGroupingSettings;
   readonly preferredEnvironmentId?: EnvironmentId | null;
 }): ReadonlyArray<ProjectGroup<TProject>> {
-  const projectsByPhysicalKey = new Map<string, TProject[]>();
-  for (const project of input.projects) {
-    const physicalProjectKey = derivePhysicalProjectKey(project);
-    const existing = projectsByPhysicalKey.get(physicalProjectKey);
-    if (existing) {
-      existing.push(project);
-    } else {
-      projectsByPhysicalKey.set(physicalProjectKey, [project]);
-    }
-  }
-
+  // One physical entry per project. Projects are no longer deduplicated by
+  // path: several projects may deliberately share source folders, and merging
+  // them would hide all but one. Repository-based grouping still collapses them
+  // into a single logical group when that is the active grouping mode.
   const logicalKeyByPhysicalKey = new Map<string, string>();
   const groupedMembers = new Map<string, ProjectGroupMember<TProject>[]>();
-  for (const [physicalProjectKey, physicalProjects] of projectsByPhysicalKey) {
-    const winner = physicalProjects.reduce((current, candidate) =>
-      shouldReplacePhysicalProjectWinner(current, candidate) ? candidate : current,
-    );
-    const identitySource = selectProjectIdentitySource(physicalProjects, winner);
-    const logicalKey = deriveLogicalProjectKey(identitySource, {
-      groupingMode: resolveProjectGroupingMode(winner, input.settings),
+  for (const project of input.projects) {
+    const physicalProjectKey = derivePhysicalProjectKey(project);
+    if (logicalKeyByPhysicalKey.has(physicalProjectKey)) continue;
+    const logicalKey = deriveLogicalProjectKey(project, {
+      groupingMode: resolveProjectGroupingMode(project, input.settings),
     });
     logicalKeyByPhysicalKey.set(physicalProjectKey, logicalKey);
-    const member = { physicalProjectKey, project: winner };
+    const member = { physicalProjectKey, project };
     const existing = groupedMembers.get(logicalKey);
     if (existing) {
       existing.push(member);

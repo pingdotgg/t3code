@@ -493,6 +493,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
   return {
     service: {
       execute,
+      listRepositoryPullRequests: () => Effect.succeed([]),
       listOpenPullRequests: (input) =>
         execute({
           cwd: input.cwd,

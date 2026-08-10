@@ -15,6 +15,9 @@ import {
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
+  type McpServerConfig,
+  type McpServerEnvVar,
+  type McpServerHeader,
   type ModelSelection,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
@@ -83,18 +86,60 @@ function providerEnvironmentSecretName(input: {
   return `provider-env-${Buffer.from(input.instanceId, "utf8").toString("base64url")}-${Buffer.from(input.name, "utf8").toString("base64url")}`;
 }
 
+function mcpServerSecretName(input: { readonly serverId: string; readonly name: string }): string {
+  return `mcp-server-${Buffer.from(input.serverId, "utf8").toString("base64url")}-${Buffer.from(input.name, "utf8").toString("base64url")}`;
+}
+
+function redactSecretField<
+  T extends {
+    readonly value: string;
+    readonly sensitive: boolean;
+    readonly valueRedacted?: boolean;
+  },
+>(field: T): T {
+  if (!field.sensitive) {
+    const { valueRedacted: _omit, ...rest } = field;
+    return rest as T;
+  }
+  return {
+    ...field,
+    value: "",
+    ...(field.value.length > 0 || field.valueRedacted ? { valueRedacted: true } : {}),
+  };
+}
+
 function redactProviderEnvironmentVariable(
   variable: ProviderInstanceEnvironmentVariable,
 ): ProviderInstanceEnvironmentVariable {
-  if (!variable.sensitive) {
-    const { valueRedacted: _omit, ...rest } = variable;
-    return rest;
-  }
-  return {
-    ...variable,
-    value: "",
-    ...(variable.value.length > 0 || variable.valueRedacted ? { valueRedacted: true } : {}),
-  };
+  return redactSecretField(variable);
+}
+
+/** Returns the field array that carries secret-bearing values for a given MCP server's transport. */
+function mcpServerSecretFields(
+  config: McpServerConfig,
+): ReadonlyArray<McpServerEnvVar> | ReadonlyArray<McpServerHeader> | undefined {
+  return config.transport.type === "stdio" ? config.transport.env : config.transport.headers;
+}
+
+function withMcpServerSecretFields(
+  config: McpServerConfig,
+  fields: ReadonlyArray<McpServerEnvVar | McpServerHeader>,
+): McpServerConfig {
+  return config.transport.type === "stdio"
+    ? {
+        ...config,
+        transport: { ...config.transport, env: fields as ReadonlyArray<McpServerEnvVar> },
+      }
+    : {
+        ...config,
+        transport: { ...config.transport, headers: fields as ReadonlyArray<McpServerHeader> },
+      };
+}
+
+function redactMcpServerConfig(config: McpServerConfig): McpServerConfig {
+  const fields = mcpServerSecretFields(config);
+  if (!fields) return config;
+  return withMcpServerSecretFields(config, fields.map(redactSecretField));
 }
 
 export function redactServerSettingsForClient(settings: ServerSettings): ServerSettings {
@@ -109,7 +154,13 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
         : instance,
     ]),
   );
-  return { ...settings, providerInstances };
+  const mcpServers = Object.fromEntries(
+    Object.entries(settings.mcpServers).map(([serverId, config]) => [
+      serverId,
+      redactMcpServerConfig(config),
+    ]),
+  );
+  return { ...settings, providerInstances, mcpServers };
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -358,6 +409,47 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const materializeMcpServerSecrets = (
+    settings: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      const mcpServers: Record<string, McpServerConfig> = { ...settings.mcpServers };
+      for (const [serverId, config] of Object.entries(settings.mcpServers)) {
+        const fields = mcpServerSecretFields(config);
+        if (!fields) continue;
+        const materialized: Array<McpServerEnvVar | McpServerHeader> = [];
+        for (const field of fields) {
+          if (!field.sensitive || !field.valueRedacted) {
+            materialized.push(field);
+            continue;
+          }
+          const secret = yield* secretStore
+            .get(mcpServerSecretName({ serverId, name: field.name }))
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({
+                    settingsPath,
+                    operation: "read-secret",
+                    mcpServerId: serverId,
+                    mcpServerField: field.name,
+                    cause,
+                  }),
+              ),
+            );
+          materialized.push({
+            ...field,
+            value: Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
+          });
+        }
+        mcpServers[serverId] = withMcpServerSecretFields(config, materialized);
+      }
+      return {
+        ...settings,
+        mcpServers: mcpServers as ServerSettings["mcpServers"],
+      };
+    });
+
   const materializeChanges = (changes: Stream.Stream<ServerSettings>) =>
     changes.pipe(
       Stream.mapEffect((settings) =>
@@ -367,6 +459,18 @@ const make = Effect.gen(function* () {
               operation: error.operation,
               providerInstanceId: error.providerInstanceId,
               environmentVariable: error.environmentVariable,
+              cause: error.cause,
+            }).pipe(Effect.as(settings)),
+          ),
+        ),
+      ),
+      Stream.mapEffect((settings) =>
+        materializeMcpServerSecrets(settings).pipe(
+          Effect.catch((error: ServerSettingsError) =>
+            Effect.logWarning("failed to materialize MCP server secrets", {
+              operation: error.operation,
+              mcpServerId: error.mcpServerId,
+              mcpServerField: error.mcpServerField,
               cause: error.cause,
             }).pipe(Effect.as(settings)),
           ),
@@ -476,6 +580,103 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const persistMcpServerSecrets = (
+    current: ServerSettings,
+    next: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      const mcpServers: Record<string, McpServerConfig> = { ...next.mcpServers };
+
+      const nextSecretKeys = new Set<string>();
+      for (const [serverId, config] of Object.entries(next.mcpServers)) {
+        const fields = mcpServerSecretFields(config);
+        if (!fields) continue;
+        const persisted: Array<McpServerEnvVar | McpServerHeader> = [];
+        for (const field of fields) {
+          const secretName = mcpServerSecretName({ serverId, name: field.name });
+          if (!field.sensitive) {
+            yield* secretStore.remove(secretName).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({
+                    settingsPath,
+                    operation: "remove-secret",
+                    mcpServerId: serverId,
+                    mcpServerField: field.name,
+                    cause,
+                  }),
+              ),
+            );
+            persisted.push(redactSecretField(field));
+            continue;
+          }
+
+          nextSecretKeys.add(secretName);
+          if (!field.valueRedacted) {
+            if (field.value.length > 0) {
+              yield* secretStore.set(secretName, textEncoder.encode(field.value)).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ServerSettingsError({
+                      settingsPath,
+                      operation: "write-secret",
+                      mcpServerId: serverId,
+                      mcpServerField: field.name,
+                      cause,
+                    }),
+                ),
+              );
+              persisted.push({ ...field, value: "", valueRedacted: true });
+            } else {
+              yield* secretStore.remove(secretName).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ServerSettingsError({
+                      settingsPath,
+                      operation: "remove-secret",
+                      mcpServerId: serverId,
+                      mcpServerField: field.name,
+                      cause,
+                    }),
+                ),
+              );
+              const { valueRedacted: _omit, ...rest } = field;
+              persisted.push(rest);
+            }
+            continue;
+          }
+
+          persisted.push(redactSecretField(field));
+        }
+        mcpServers[serverId] = withMcpServerSecretFields(config, persisted);
+      }
+
+      for (const [serverId, config] of Object.entries(current.mcpServers)) {
+        for (const field of mcpServerSecretFields(config) ?? []) {
+          if (!field.sensitive) continue;
+          const secretName = mcpServerSecretName({ serverId, name: field.name });
+          if (nextSecretKeys.has(secretName)) continue;
+          yield* secretStore.remove(secretName).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  operation: "remove-stale-secret",
+                  mcpServerId: serverId,
+                  mcpServerField: field.name,
+                  cause,
+                }),
+            ),
+          );
+        }
+      }
+
+      return {
+        ...next,
+        mcpServers: mcpServers as ServerSettings["mcpServers"],
+      };
+    });
+
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
       const sparseSettingsJson = yield* encodeServerSettingsJson(
@@ -573,21 +774,22 @@ const make = Effect.gen(function* () {
     ready: Deferred.await(startedDeferred),
     getSettings: getSettingsFromCache.pipe(
       Effect.flatMap(materializeProviderEnvironmentSecrets),
+      Effect.flatMap(materializeMcpServerSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
     updateSettings: (patch) =>
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* getSettingsFromCache;
-          const nextPersisted = yield* persistProviderEnvironmentSecrets(
-            current,
-            applyServerSettingsPatch(current, patch),
-          );
+          const patched = applyServerSettingsPatch(current, patch);
+          const nextPersistedProviders = yield* persistProviderEnvironmentSecrets(current, patched);
+          const nextPersisted = yield* persistMcpServerSecrets(current, nextPersistedProviders);
           const next = yield* normalizeServerSettings(nextPersisted);
           yield* writeSettingsAtomically(next);
           yield* Cache.set(settingsCache, cacheKey, next);
           yield* emitChange(next);
-          const materialized = yield* materializeProviderEnvironmentSecrets(next);
+          const materializedProviders = yield* materializeProviderEnvironmentSecrets(next);
+          const materialized = yield* materializeMcpServerSecrets(materializedProviders);
           return resolveTextGenerationProvider(materialized);
         }),
       ),

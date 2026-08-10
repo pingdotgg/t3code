@@ -4,6 +4,7 @@ export type SettingsPath =
   | "/settings/keybindings"
   | "/settings/providers"
   | "/settings/source-control"
+  | "/settings/mcp-servers"
   | "/settings/connections"
   | "/settings/archived";
 
@@ -24,6 +25,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
   "/settings/source-control": "Source Control",
+  "/settings/mcp-servers": "MCP Servers",
   "/settings/connections": "Connections",
   "/settings/archived": "Archive",
 };
@@ -49,6 +51,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     // Theme cards live directly under the scheme tiles; the section is the
     // stable scroll destination for both.
     targetId: "appearance",
+  },
+  {
+    id: "theme-palette",
+    title: "Palette",
+    to: "/settings/appearance",
   },
   {
     // Prefixed because the slider control already owns the `glass-opacity` id.
@@ -150,6 +157,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "plan-review-agent",
+    title: "Default plan review agent",
+    to: "/settings/general",
+  },
+  {
+    id: "plan-review-instructions",
+    title: "Plan review instructions",
+    to: "/settings/general",
+  },
+  {
     id: "diagnostics",
     title: "Diagnostics",
     to: "/settings/general",
@@ -182,6 +199,21 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "source-control",
     title: "Source control",
+    to: "/settings/source-control",
+  },
+  {
+    id: "mcp-servers",
+    title: "MCP servers",
+    to: "/settings/mcp-servers",
+  },
+  {
+    id: "code-review-agent",
+    title: "Default code review agent",
+    to: "/settings/source-control",
+  },
+  {
+    id: "code-review-instructions",
+    title: "Review instructions",
     to: "/settings/source-control",
   },
   {
