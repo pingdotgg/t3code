@@ -8,5 +8,8 @@
       "icon": "configure",
       "runOnWorktreeCreate": true
     }
-  ]
+  ],
+  "mirror": {
+    "include": [".env", "infra/relay/.env"]
+  }
 }
