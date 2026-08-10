@@ -58,13 +58,11 @@ public struct UsageView: View {
                     } description: {
                         Text("Connect an environment to see usage.")
                     }
-                } else if !environments.contains(where: {
-                    $0.summary?.contractVersion == usageContractVersion
-                }) {
+                } else if !hasCompatibleSummary {
                     ContentUnavailableView {
                         Label("Couldn’t load usage", systemImage: "exclamationmark.circle")
                     } description: {
-                        Text("No environments could report usage.")
+                        Text("No compatible usage data is available.")
                     } actions: {
                         Button("Try again") { Task { await load() } }
                     }
@@ -93,7 +91,7 @@ public struct UsageView: View {
     private var coverageNotice: some View {
         let failed = environments.filter { $0.errorMessage != nil }
         let stale = environments.filter { merged.staleEnvironments.contains($0.environmentID) }
-        let hasRefreshError = errorMessage != nil && !environments.isEmpty
+        let hasRefreshError = errorMessage != nil && hasCompatibleSummary
         if hasRefreshError
             || !failed.isEmpty
             || !stale.isEmpty
@@ -340,6 +338,12 @@ public struct UsageView: View {
 
     private var usageDivider: some View {
         Divider().overlay(T3Colors.separator)
+    }
+
+    private var hasCompatibleSummary: Bool {
+        environments.contains {
+            $0.summary?.contractVersion == usageContractVersion
+        }
     }
 
     private func load() async {
