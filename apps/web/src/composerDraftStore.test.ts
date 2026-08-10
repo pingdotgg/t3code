@@ -1150,6 +1150,49 @@ describe("composerDraftStore project draft thread mapping", () => {
       startFromOrigin: true,
     });
   });
+
+  it("creates a recovery draft without replacing an unrelated project draft or carrying its model", () => {
+    const store = useComposerDraftStore.getState();
+    const recoveryDraftId = DraftId.make("draft-recovery");
+    const recoveryThreadId = ThreadId.make("thread-recovery");
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      branch: "feature/regular-draft",
+    });
+    store.setPrompt(draftId, "Keep this unrelated draft");
+    store.setModelSelection(draftId, modelSelection(CODEX_DRIVER, "gpt-failed"));
+
+    store.createDetachedDraftThread(scopedProjectKey(projectRef), projectRef, recoveryDraftId, {
+      threadId: recoveryThreadId,
+      createdAt: "2026-08-10T00:00:00.000Z",
+      envMode: "worktree",
+      startFromOrigin: true,
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+    });
+    store.setPrompt(recoveryDraftId, "Retry the failed submission");
+
+    const next = useComposerDraftStore.getState();
+    expect(next.getDraftSessionByProjectRef(projectRef)?.draftId).toBe(draftId);
+    expect(next.getComposerDraft(draftId)?.prompt).toBe("Keep this unrelated draft");
+    expect(next.getComposerDraft(draftId)?.modelSelectionByProvider[CODEX_INSTANCE]?.model).toBe(
+      "gpt-failed",
+    );
+    expect(next.getDraftSession(recoveryDraftId)).toMatchObject({
+      threadId: recoveryThreadId,
+      branch: null,
+      worktreePath: null,
+      envMode: "worktree",
+      startFromOrigin: true,
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+    });
+    expect(next.getComposerDraft(recoveryDraftId)).toMatchObject({
+      prompt: "Retry the failed submission",
+      modelSelectionByProvider: {},
+      activeProvider: null,
+    });
+  });
 });
 
 describe("composerDraftStore modelSelection", () => {

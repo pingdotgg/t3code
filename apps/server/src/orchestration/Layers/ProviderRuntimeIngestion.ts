@@ -30,6 +30,7 @@ import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { classifyRecoverableThreadFailure } from "../../provider/Errors.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { isGitRepository } from "../../git/Utils.ts";
@@ -1628,6 +1629,12 @@ const make = Effect.gen(function* () {
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: nextActiveTurnId,
               lastError,
+              lastFailureKind:
+                status === "error"
+                  ? (classifyRecoverableThreadFailure(lastError) ??
+                    thread.session?.lastFailureKind ??
+                    null)
+                  : null,
               updatedAt: now,
             },
             createdAt: now,
@@ -1878,6 +1885,10 @@ const make = Effect.gen(function* () {
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: eventTurnId ?? null,
               lastError: runtimeErrorMessage,
+              lastFailureKind:
+                event.payload.failureKind ??
+                classifyRecoverableThreadFailure(runtimeErrorMessage) ??
+                null,
               updatedAt: now,
             },
             createdAt: now,

@@ -31,7 +31,10 @@ import {
   resolveThreadWorkspaceFolders,
 } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
-import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
+import {
+  classifyRecoverableThreadFailure,
+  ProviderAdapterRequestError,
+} from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
@@ -244,7 +247,7 @@ function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolea
 }
 
 function findProviderAdapterRequestError(
-  cause: Cause.Cause<ProviderServiceError>,
+  cause: Cause.Cause<unknown>,
 ): ProviderAdapterRequestError | undefined {
   const failReason = cause.reasons.find(Cause.isFailReason);
   return isProviderAdapterRequestError(failReason?.error) ? failReason.error : undefined;
@@ -393,6 +396,13 @@ const make = Effect.gen(function* () {
     return Cause.pretty(cause);
   };
 
+  const recoverableFailureKind = (cause: Cause.Cause<unknown>) => {
+    const providerError = findProviderAdapterRequestError(cause);
+    return (
+      providerError?.failureKind ?? classifyRecoverableThreadFailure(formatFailureDetail(cause))
+    );
+  };
+
   const setThreadSession = (input: {
     readonly threadId: ThreadId;
     readonly session: OrchestrationSession;
@@ -413,6 +423,7 @@ const make = Effect.gen(function* () {
   const setThreadSessionErrorOnTurnStartFailure = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly detail: string;
+    readonly failureKind: OrchestrationSession["lastFailureKind"];
     readonly createdAt: string;
   }) {
     const thread = yield* resolveThread(input.threadId);
@@ -432,6 +443,7 @@ const make = Effect.gen(function* () {
         status: session?.status === "stopped" ? "stopped" : "error",
         activeTurnId: null,
         lastError: input.detail,
+        lastFailureKind: input.failureKind ?? null,
         updatedAt: input.createdAt,
       },
       createdAt: input.createdAt,
@@ -573,6 +585,7 @@ const make = Effect.gen(function* () {
           runtimeMode: desiredRuntimeMode,
           activeTurnId: null,
           lastError: null,
+          lastFailureKind: null,
           updatedAt: createdAt,
         },
         createdAt,
@@ -659,6 +672,7 @@ const make = Effect.gen(function* () {
             // Provider turn ids are not orchestration turn ids.
             activeTurnId: null,
             lastError: session.lastError ?? null,
+            lastFailureKind: null,
             updatedAt: session.updatedAt,
           },
           createdAt,
@@ -1148,6 +1162,7 @@ const make = Effect.gen(function* () {
       return setThreadSessionErrorOnTurnStartFailure({
         threadId: event.payload.threadId,
         detail,
+        failureKind: recoverableFailureKind(cause),
         createdAt: event.payload.createdAt,
       }).pipe(
         Effect.flatMap(() =>
@@ -1335,6 +1350,7 @@ const make = Effect.gen(function* () {
         runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
         activeTurnId: null,
         lastError: thread.session?.lastError ?? null,
+        lastFailureKind: null,
         updatedAt: now,
       },
       createdAt: now,

@@ -181,6 +181,7 @@ import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import { useClientSettings, useEnvironmentSettings } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { useFailedSubmissionRecoveryHandler } from "../hooks/useFailedSubmissionRecovery";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { preventRepeatedTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
@@ -193,9 +194,14 @@ import { buildDraftThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
+  type PersistedComposerImageAttachment,
   useComposerDraftStore,
   type DraftId,
 } from "../composerDraftStore";
+import {
+  useFailedSubmissionRecoverySnapshot,
+  useFailedSubmissionRecoveryStore,
+} from "../failedSubmissionRecoveryStore";
 import {
   appendTerminalContextsToPrompt,
   formatTerminalContextLabel,
@@ -276,6 +282,7 @@ import {
   buildLocalDraftThread,
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
+  canContinueFailedSubmissionInNewThread,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
@@ -1484,6 +1491,21 @@ function ChatViewContent(props: ChatViewProps) {
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
+  const failedSubmissionSnapshot = useFailedSubmissionRecoverySnapshot(
+    activeServerThread
+      ? scopeThreadRef(activeServerThread.environmentId, activeServerThread.id)
+      : null,
+  );
+  const recoverFailedSubmission = useFailedSubmissionRecoveryHandler();
+  const removeFailedSubmissionSnapshot = useFailedSubmissionRecoveryStore((store) => store.remove);
+  const [recoveringFailedSubmission, setRecoveringFailedSubmission] = useState(false);
+  const canContinueFailedSubmission =
+    threadError === activeServerThread?.session?.lastError &&
+    canContinueFailedSubmissionInNewThread({
+      session: activeServerThread?.session ?? null,
+      snapshotMessageId: failedSubmissionSnapshot?.messageId ?? null,
+      messages: activeServerThread?.messages ?? [],
+    });
   const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   // Plan mode is legacy (Settings → Beta). With the flag off the effective
   // mode is forced to "default" — even for threads with a stored plan mode —
@@ -4766,6 +4788,58 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
+  // A later successful turn, or a newer user submission, makes the saved
+  // recovery payload stale. Retain it only while it still represents this
+  // terminal failure.
+  useEffect(() => {
+    if (!activeServerThread || !failedSubmissionSnapshot) {
+      return;
+    }
+    const latestUserMessage = activeServerThread.messages.findLast(
+      (message) => message.role === "user",
+    );
+    if (
+      activeServerThread.latestTurn?.state === "completed" ||
+      (latestUserMessage !== undefined &&
+        latestUserMessage.id !== failedSubmissionSnapshot.messageId)
+    ) {
+      removeFailedSubmissionSnapshot(failedSubmissionSnapshot.sourceThreadRef);
+    }
+  }, [activeServerThread, failedSubmissionSnapshot, removeFailedSubmissionSnapshot]);
+
+  const onContinueFailedSubmissionInNewThread = useCallback(async () => {
+    if (!activeServerThread || !failedSubmissionSnapshot || recoveringFailedSubmission) {
+      return;
+    }
+    setRecoveringFailedSubmission(true);
+    try {
+      await recoverFailedSubmission(
+        scopeProjectRef(activeServerThread.environmentId, activeServerThread.projectId),
+        failedSubmissionSnapshot,
+      );
+      // The image Files are now owned by the destination draft. Removing the
+      // source snapshot makes the handoff one-way without touching the
+      // failed thread or any regular unsent draft.
+      removeFailedSubmissionSnapshot(failedSubmissionSnapshot.sourceThreadRef);
+    } catch {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not create recovery draft",
+          description: "The failed submission is still available in this thread.",
+        }),
+      );
+    } finally {
+      setRecoveringFailedSubmission(false);
+    }
+  }, [
+    activeServerThread,
+    failedSubmissionSnapshot,
+    recoverFailedSubmission,
+    recoveringFailedSubmission,
+    removeFailedSubmissionSnapshot,
+  ]);
+
   const onSend = async (
     e?: { preventDefault: () => void },
     directAnnotation?: {
@@ -4938,6 +5012,10 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
 
+    const recoverySourceThreadRef = scopeThreadRef(environmentId, threadIdForSend);
+    // A real new send supersedes any older failed submission for this thread,
+    // even when this attempt later fails before the provider is started.
+    useFailedSubmissionRecoveryStore.getState().remove(recoverySourceThreadRef);
     sendInFlightRef.current = true;
     if (isDraftHeroState && activeThreadKey) {
       let resolveDockStarted: (() => void) | undefined;
@@ -4982,6 +5060,23 @@ function ChatViewContent(props: ChatViewProps) {
       effort: ctxSelectedPromptEffort,
       text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
     });
+    // Snapshot synchronously while the composer still owns the original
+    // Files. Durable image data is filled in once FileReader finishes below;
+    // until then the live snapshot is still an exact, complete browser-local
+    // copy of the submission.
+    const recoverySnapshotForSend = {
+      sourceThreadRef: recoverySourceThreadRef,
+      messageId: messageIdForSend,
+      prompt: promptForSend,
+      images: composerImagesSnapshot.map(cloneComposerImageForRetry),
+      terminalContexts: composerTerminalContextsSnapshot,
+      elementContexts: composerElementContextsSnapshot,
+      previewAnnotations: composerPreviewAnnotationsSnapshot,
+      reviewComments: composerReviewCommentsSnapshot,
+      runtimeMode,
+      interactionMode,
+    };
+    useFailedSubmissionRecoveryStore.getState().capture(recoverySnapshotForSend, []);
     const turnAttachmentsPromise = Promise.all(
       composerImagesSnapshot.map(async (image) => ({
         type: "image" as const,
@@ -5109,6 +5204,30 @@ function ChatViewContent(props: ChatViewProps) {
 
     let turnStartSucceeded = false;
     if (failure === null && turnAttachmentsResult._tag === "Success") {
+      const persistedRecoveryImages = turnAttachmentsResult.value.map((attachment, index) => {
+        const image = composerImagesSnapshot[index];
+        return image
+          ? {
+              id: image.id,
+              name: attachment.name,
+              mimeType: attachment.mimeType,
+              sizeBytes: attachment.sizeBytes,
+              dataUrl: attachment.dataUrl,
+            }
+          : null;
+      });
+      // `Promise.all` preserves order, but keep this all-or-nothing guard at
+      // the capture boundary: recovery is never offered with an image missing.
+      if (
+        persistedRecoveryImages.length === composerImagesSnapshot.length &&
+        persistedRecoveryImages.every(
+          (image): image is PersistedComposerImageAttachment => image !== null,
+        )
+      ) {
+        useFailedSubmissionRecoveryStore
+          .getState()
+          .capture(recoverySnapshotForSend, persistedRecoveryImages);
+      }
       const bootstrap =
         isLocalDraftThread || baseBranchForWorktree
           ? {
@@ -5167,6 +5286,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     if (failure !== null) {
+      useFailedSubmissionRecoveryStore.getState().remove(recoverySourceThreadRef);
       if (
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0 &&
@@ -6054,6 +6174,14 @@ function ChatViewContent(props: ChatViewProps) {
         <ThreadErrorBanner
           error={threadError}
           onDismiss={() => setThreadError(activeThread.id, null)}
+          {...(canContinueFailedSubmission
+            ? {
+                onContinueInNewThread: () => {
+                  void onContinueFailedSubmissionInNewThread();
+                },
+                recovering: recoveringFailedSubmission,
+              }
+            : {})}
         />
         {/* Main content area with optional plan sidebar */}
         <div className="flex min-h-0 min-w-0 flex-1">
