@@ -77,7 +77,8 @@ import {
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { isElectron } from "../env";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { isMacPlatform, newCommandId, newDraftId, newThreadId } from "../lib/utils";
+import { cn, isMacPlatform, newCommandId, newDraftId, newThreadId } from "../lib/utils";
+import { TITLEBAR_ROW_CLASS } from "../lib/titlebar";
 import {
   selectProjectsAcrossEnvironments,
   selectSidebarThreadsForProjectRefs,
@@ -2902,7 +2903,12 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
   );
 
   return isElectron ? (
-    <SidebarHeader className="drag-region h-8 flex-row items-center gap-3 py-0 pr-3 pl-[90px] sm:gap-2.5 sm:pr-4 wco:h-8 wco:pl-[calc(env(titlebar-area-x)+1em)]">
+    <SidebarHeader
+      className={cn(
+        "drag-region flex-row items-center gap-3 py-0 pr-3 pl-[90px] sm:gap-2.5 sm:pr-4 wco:pl-[calc(env(titlebar-area-x)+1em)]",
+        TITLEBAR_ROW_CLASS,
+      )}
+    >
       {wordmark}
     </SidebarHeader>
   ) : (

@@ -2,6 +2,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { SidebarInset, SidebarTrigger } from "./ui/sidebar";
 import { isElectron } from "../env";
 import { cn } from "~/lib/utils";
+import { TITLEBAR_ROW_CLASS } from "~/lib/titlebar";
 
 export function NoActiveThreadState() {
   return (
@@ -10,9 +11,8 @@ export function NoActiveThreadState() {
         <header
           className={cn(
             "border-b border-border px-3 sm:px-5",
-            isElectron
-              ? "drag-region flex h-[52px] items-center wco:h-[env(titlebar-area-height)]"
-              : "py-2 sm:py-3",
+            isElectron && cn("drag-region flex items-center", TITLEBAR_ROW_CLASS),
+            !isElectron && "py-2 sm:py-3",
           )}
         >
           <div

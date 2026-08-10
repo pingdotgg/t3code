@@ -12,6 +12,7 @@ import type { ServerSkillCatalogEntry, ServerSkillCatalogIssue } from "@t3tools/
 
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
+import { TITLEBAR_CONTROL_INSET_CLASS, TITLEBAR_ROW_CLASS } from "../lib/titlebar";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -150,8 +151,7 @@ function SkillsHeader({
     <header
       className={cn(
         "shrink-0 border-b border-border px-3 py-2 sm:px-5",
-        isElectron &&
-          "drag-region h-[52px] wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]",
+        isElectron && cn("drag-region", TITLEBAR_ROW_CLASS, TITLEBAR_CONTROL_INSET_CLASS),
       )}
     >
       <div className="flex min-h-7 items-center gap-2 sm:min-h-6">

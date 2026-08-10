@@ -2046,7 +2046,10 @@ function getWindowTitleBarOptions(): WindowTitleBarOptions {
   if (process.platform === "darwin") {
     return {
       titleBarStyle: "hiddenInset",
-      trafficLightPosition: { x: 16, y: 18 },
+      // Centers the 12px traffic lights on the renderer's shared title-bar row
+      // (--spacing-titlebar: 52px), so window controls, sidebar navigation, and
+      // pane headers share one baseline.
+      trafficLightPosition: { x: 16, y: 20 },
     };
   }
 

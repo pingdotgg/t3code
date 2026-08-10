@@ -58,6 +58,7 @@ import {
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { CHAT_SPLIT_THREAD_DRAG_MIME, decodeChatSplitThreadDragPayload } from "../chatSplitDrag";
 import { cn } from "~/lib/utils";
+import { TITLEBAR_CONTROL_INSET_CLASS, TITLEBAR_ROW_CLASS } from "~/lib/titlebar";
 
 interface ChatPaneActionsProps {
   canClose: boolean;
@@ -764,7 +765,13 @@ function ChatPaneLeaf(props: ChatPaneLeafProps) {
           focusRing,
         )}
       >
-        <div className="drag-region flex h-13 shrink-0 items-center justify-end border-b border-border/40 px-2">
+        <div
+          className={cn(
+            "drag-region flex shrink-0 items-center justify-end border-b border-border px-3 sm:px-5",
+            TITLEBAR_ROW_CLASS,
+            props.reserveTitleBarControlInset && TITLEBAR_CONTROL_INSET_CLASS,
+          )}
+        >
           <div className="no-drag">{paneActions}</div>
         </div>
         <ChatSplitEmptyPane

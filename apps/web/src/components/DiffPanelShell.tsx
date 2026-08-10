@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import { isElectron } from "~/env";
 import { cn } from "~/lib/utils";
+import { TITLEBAR_CONTROL_INSET_CLASS, TITLEBAR_ROW_CLASS } from "~/lib/titlebar";
 
 import { Skeleton } from "./ui/skeleton";
 
@@ -12,7 +13,7 @@ function getDiffPanelHeaderRowClassName(mode: DiffPanelMode) {
   return cn(
     "flex items-center justify-between gap-2 px-4",
     shouldUseDragRegion
-      ? "drag-region h-[52px] border-b border-border wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]"
+      ? cn("drag-region border-b border-border", TITLEBAR_ROW_CLASS, TITLEBAR_CONTROL_INSET_CLASS)
       : "h-12 wco:max-h-[env(titlebar-area-height)]",
   );
 }

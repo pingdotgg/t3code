@@ -13,6 +13,8 @@ import { useSettingsRestore } from "../components/settings/SettingsPanels";
 import { Button } from "../components/ui/button";
 import { SidebarInset, SidebarTrigger } from "../components/ui/sidebar";
 import { isElectron } from "../env";
+import { TITLEBAR_CONTROL_INSET_CLASS, TITLEBAR_ROW_CLASS } from "../lib/titlebar";
+import { cn } from "../lib/utils";
 
 function RestoreDefaultsButton({ onRestored }: { onRestored: () => void }) {
   const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
@@ -79,7 +81,13 @@ function SettingsContentLayout() {
         )}
 
         {isElectron && (
-          <div className="drag-region flex h-[52px] shrink-0 items-center gap-2 border-b border-border px-5 wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]">
+          <div
+            className={cn(
+              "drag-region flex shrink-0 items-center gap-2 border-b border-border px-5",
+              TITLEBAR_ROW_CLASS,
+              TITLEBAR_CONTROL_INSET_CLASS,
+            )}
+          >
             <SidebarTrigger className="no-drag size-7 shrink-0" />
             <span className="text-xs font-medium tracking-wide text-muted-foreground/70">
               Settings

@@ -5,6 +5,9 @@
 @custom-variant wco (&:is(.wco, .wco *));
 
 @theme inline {
+  /* One title-bar row height shared by the sidebar chrome and every pane header
+     so window controls, navigation, titles, and actions sit on a single line. */
+  --spacing-titlebar: 52px;
   --animate-skeleton: skeleton 2s -1s infinite linear;
   --animate-status-pulse: status-pulse 2s infinite;
   /* Opacity-only, 3s cadence — cheap to composite and matches the Working badge. */
