@@ -46,7 +46,6 @@ import {
   type ServerSelfUpdateProgressEvent,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
-  AssetGeneratedImageInspectionError,
   AssetGeneratedImageNotFoundError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
@@ -1840,7 +1839,7 @@ const makeWsRpcLayer = (
                   .pipe(
                     Effect.mapError(
                       (cause) =>
-                        new AssetGeneratedImageInspectionError({
+                        new AssetWorkspaceContextResolutionError({
                           resource,
                           cause,
                         }),
