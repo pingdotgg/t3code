@@ -1246,11 +1246,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.message.assistant.complete": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      const existingMessage = thread.messages.find(
+        (message) => message.id === command.messageId && message.role === "assistant",
+      );
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1263,7 +1266,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           messageId: command.messageId,
           role: "assistant",
-          text: "",
+          // Completion is a self-contained convergence event. A client may
+          // resume between the final text delta and this event; carrying the
+          // projected text prevents that boundary from producing an empty
+          // assistant row until the next full snapshot.
+          text: existingMessage?.text ?? "",
           turnId: command.turnId ?? null,
           streaming: false,
           createdAt: command.createdAt,

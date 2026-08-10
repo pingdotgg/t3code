@@ -2902,7 +2902,7 @@ describe("ProviderRuntimeIngestion", () => {
         expect(assistantEvents[0]?.payload.streaming).toBe(true);
         expect(assistantEvents[0]?.payload.text).toBe("first half");
         expect(assistantEvents[1]?.payload.streaming).toBe(false);
-        expect(assistantEvents[1]?.payload.text).toBe("");
+        expect(assistantEvents[1]?.payload.text).toBe("first half");
         expect(assistantEvents[2]?.payload.messageId).toBe(
           "assistant:item-buffered-request-append:segment:1",
         );
@@ -2912,7 +2912,7 @@ describe("ProviderRuntimeIngestion", () => {
           "assistant:item-buffered-request-append:segment:1",
         );
         expect(assistantEvents[3]?.payload.streaming).toBe(false);
-        expect(assistantEvents[3]?.payload.text).toBe("");
+        expect(assistantEvents[3]?.payload.text).toBe(" second half");
       }),
   );
 

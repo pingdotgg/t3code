@@ -5,6 +5,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type OrchestrationReadModel,
   type OrchestrationSession,
   type OrchestrationThread,
@@ -400,6 +401,52 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
       ]);
       expect(sessionEvents[1]?.payload).toMatchObject({
         turnStartDelivery: { messageId: "message-1", requestSequence: 42 },
+      });
+    }),
+  );
+
+  it.effect("makes assistant completion events self-contained for resumed clients", () =>
+    Effect.gen(function* () {
+      const messageId = MessageId.make("assistant-message-1");
+      const turnId = TurnId.make("turn-1");
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.message.assistant.complete",
+          commandId: CommandId.make("cmd-assistant-complete"),
+          threadId: ThreadId.make("thread-1"),
+          messageId,
+          turnId,
+          createdAt: NOW,
+        },
+        readModel: makeReadModel(
+          null,
+          null,
+          makeSession("running"),
+          [],
+          [
+            {
+              id: messageId,
+              role: "assistant",
+              text: "Persisted update before tool calls.",
+              turnId,
+              streaming: true,
+              createdAt: NOW,
+              updatedAt: NOW,
+            },
+          ],
+        ),
+      });
+      const events = Array.isArray(result) ? result : [result];
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        type: "thread.message-sent",
+        payload: {
+          messageId: "assistant-message-1",
+          role: "assistant",
+          text: "Persisted update before tool calls.",
+          streaming: false,
+        },
       });
     }),
   );
