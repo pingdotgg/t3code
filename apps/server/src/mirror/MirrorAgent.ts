@@ -662,6 +662,17 @@ export const make = Effect.gen(function* () {
               });
               return;
             }
+            if (event.type === "settings-updated") {
+              const activeConnectionId = yield* Ref.get(connectionIdRef);
+              if (activeConnectionId !== null && event.connectionId === activeConnectionId) {
+                yield* SynchronizedRef.update(extraIncludePathsByProject, (current) => {
+                  const next = new Map(current);
+                  next.set(link.projectId, event.extraIncludePaths);
+                  return next;
+                });
+              }
+              return;
+            }
             const connectionId = yield* Ref.get(connectionIdRef);
             if (connectionId === null || event.connectionId !== connectionId) return;
             if (event.directive.type === "link-revoked") {

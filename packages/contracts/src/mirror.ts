@@ -133,6 +133,17 @@ export const MirrorStreamEvent = Schema.Union([
     connectionId: MirrorConnectionId,
     directive: MirrorDirective,
   }),
+  Schema.Struct({
+    type: Schema.Literal("settings-updated"),
+    connectionId: MirrorConnectionId,
+    /**
+     * Freshly resolved extra include patterns, sent right before every
+     * directive so a project-settings change (e.g. toggling
+     * mirrorIncludeIgnoredFiles) takes effect on the next sync without
+     * requiring the origin to reconnect.
+     */
+    extraIncludePaths: Schema.Array(TrimmedNonEmptyString),
+  }),
 ]);
 export type MirrorStreamEvent = typeof MirrorStreamEvent.Type;
 

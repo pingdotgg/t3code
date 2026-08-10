@@ -520,6 +520,16 @@ export const make = Effect.gen(function* () {
       pending.delete(input.syncId);
       return { ...current, pending };
     });
+    // Re-resolve the project's current settings right before every directive:
+    // the connection is long-lived, but a settings change (e.g. toggling
+    // mirrorIncludeIgnoredFiles) should apply on the next sync, not only on
+    // the next reconnect.
+    const currentProject = yield* resolveMirroredProject(input.projectId);
+    yield* Queue.offer(connection.queue, {
+      type: "settings-updated",
+      connectionId: connection.connectionId,
+      extraIncludePaths: currentProject?.mirrorIncludeIgnoredFiles ? MIRROR_EXTRA_ENV_PATTERNS : [],
+    });
     const offered = yield* Queue.offer(connection.queue, {
       type: "directive",
       connectionId: connection.connectionId,
