@@ -340,7 +340,11 @@ export function isTerminalPasteShortcut(
   event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey" | "shiftKey">,
   platform = navigator.platform,
 ) {
-  if (event.key.toLowerCase() !== "v") return false;
+  const key = event.key.toLowerCase();
+  if (key === "insert" && !isMacPlatform(platform)) {
+    return event.shiftKey && !event.ctrlKey && !event.metaKey;
+  }
+  if (key !== "v") return false;
   return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
 }
 
