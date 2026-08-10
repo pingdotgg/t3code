@@ -228,3 +228,133 @@ it.effect("upgrades a database already at released main migration 040", () =>
     assert.strictEqual(legacyImportTables.length, 1);
   }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
 );
+
+it.effect("upgrades a database that already ran legacy import as private migration 045", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* runMigrations({ toMigrationInclusive: 44 });
+    yield* sql`
+      CREATE TABLE orchestration_v2_legacy_imports (
+        thread_id TEXT PRIMARY KEY,
+        source_updated_at TEXT NOT NULL,
+        shell_imported_at TEXT NOT NULL,
+        transcript_imported_at TEXT,
+        imported_message_count INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT
+      )
+    `;
+    yield* sql`
+      CREATE INDEX orchestration_v2_legacy_imports_pending_transcript_idx
+      ON orchestration_v2_legacy_imports(transcript_imported_at, shell_imported_at, thread_id)
+    `;
+    yield* sql`
+      INSERT INTO effect_sql_migrations (migration_id, name)
+      VALUES (45, 'LegacyV1ImportState')
+    `;
+
+    yield* runMigrations({ toMigrationInclusive: 46 });
+
+    const requiredTables = yield* sql<{ readonly name: string }>`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table'
+        AND name IN ('scheduled_tasks', 'orchestration_v2_legacy_imports')
+      ORDER BY name
+    `;
+    assert.deepStrictEqual(
+      requiredTables.map(({ name }) => name),
+      ["orchestration_v2_legacy_imports", "scheduled_tasks"],
+    );
+
+    const migrations = yield* sql<{
+      readonly migration_id: number;
+      readonly name: string;
+    }>`
+      SELECT migration_id, name
+      FROM effect_sql_migrations
+      WHERE migration_id IN (45, 46)
+      ORDER BY migration_id
+    `;
+    assert.deepStrictEqual(
+      migrations.map(({ migration_id, name }) => [migration_id, name]),
+      [
+        [45, "ScheduledTasks"],
+        [46, "LegacyV1ImportState"],
+      ],
+    );
+  }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+);
+
+it.effect("upgrades a database that ran v2 migrations before the final id shift", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* runMigrations({ toMigrationInclusive: 45 });
+    yield* sql`DROP INDEX idx_projection_turns_thread_keyset`;
+    yield* sql`
+      CREATE TABLE orchestration_v2_legacy_imports (
+        thread_id TEXT PRIMARY KEY,
+        source_updated_at TEXT NOT NULL,
+        shell_imported_at TEXT NOT NULL,
+        transcript_imported_at TEXT,
+        imported_message_count INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT
+      )
+    `;
+    yield* sql`
+      CREATE INDEX orchestration_v2_legacy_imports_pending_transcript_idx
+      ON orchestration_v2_legacy_imports(transcript_imported_at, shell_imported_at, thread_id)
+    `;
+    yield* sql`
+      UPDATE effect_sql_migrations
+      SET name = CASE migration_id
+        WHEN 37 THEN 'OrchestrationV2'
+        WHEN 38 THEN 'OrchestrationV2Subagents'
+        WHEN 39 THEN 'OrchestrationV2Foundation'
+        WHEN 40 THEN 'OrchestrationV2ProviderSessionBindings'
+        WHEN 41 THEN 'OrchestrationV2ThreadLaunchWorkflows'
+        WHEN 42 THEN 'ApplicationEventSource'
+        WHEN 43 THEN 'OrchestrationV2EffectCancellation'
+        WHEN 44 THEN 'ScheduledTasks'
+        WHEN 45 THEN 'LegacyV1ImportState'
+        ELSE name
+      END
+      WHERE migration_id BETWEEN 37 AND 45
+    `;
+
+    yield* runMigrations({ toMigrationInclusive: 46 });
+
+    const keysetIndexes = yield* sql<{ readonly name: string }>`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'index' AND name = 'idx_projection_turns_thread_keyset'
+    `;
+    assert.strictEqual(keysetIndexes.length, 1);
+
+    const migrations = yield* sql<{
+      readonly migration_id: number;
+      readonly name: string;
+    }>`
+      SELECT migration_id, name
+      FROM effect_sql_migrations
+      WHERE migration_id BETWEEN 37 AND 46
+      ORDER BY migration_id
+    `;
+    assert.deepStrictEqual(
+      migrations.map(({ migration_id, name }) => [migration_id, name]),
+      [
+        [37, "ProjectionTurnsKeysetIndex"],
+        [38, "OrchestrationV2"],
+        [39, "OrchestrationV2Subagents"],
+        [40, "OrchestrationV2Foundation"],
+        [41, "OrchestrationV2ProviderSessionBindings"],
+        [42, "OrchestrationV2ThreadLaunchWorkflows"],
+        [43, "ApplicationEventSource"],
+        [44, "OrchestrationV2EffectCancellation"],
+        [45, "ScheduledTasks"],
+        [46, "LegacyV1ImportState"],
+      ],
+    );
+  }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+);
