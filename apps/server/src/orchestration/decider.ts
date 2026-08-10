@@ -79,10 +79,12 @@ type DecideOrchestrationCommandResult =
 
 const hasCanonicalActiveWorktreeOwner = Effect.fn("hasCanonicalActiveWorktreeOwner")(function* (
   readModel: OrchestrationReadModel,
-  threadId: ThreadId,
+  excludedThreadIds: ThreadId | Iterable<ThreadId>,
   worktreePath: string,
 ) {
-  return Option.isSome(yield* findCanonicalActiveWorktreeOwner(readModel, threadId, worktreePath));
+  return Option.isSome(
+    yield* findCanonicalActiveWorktreeOwner(readModel, excludedThreadIds, worktreePath),
+  );
 });
 
 function forkedTitle(title: string): string {
@@ -539,6 +541,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       });
       const occurredAt = nowIso();
       const threadsToArchive = collectActiveThreadSubtree(readModel, command.threadId);
+      // Cleanup is scheduled by ThreadDeletionReactor after a live PR-state refresh so
+      // chats associated while open still clean up once the PR has merged.
       return threadsToArchive.map(
         (thread): PlannedOrchestrationEvent => ({
           ...withEventBase({

@@ -245,4 +245,46 @@ describe("decider archive cascade", () => {
 
     expect(events.map((event) => event.payload.threadId)).toEqual([asThreadId("grandchild")]);
   });
+
+  it("does not embed worktree cleanup on archive events (reactor live-refreshes PR state)", async () => {
+    const worktreePath = "/tmp/project-archive-merged-worktree";
+    const baseReadModel = await seedReadModel();
+    const readModel: OrchestrationReadModel = {
+      ...baseReadModel,
+      threads: baseReadModel.threads.map((thread) =>
+        thread.id === asThreadId("grandchild")
+          ? {
+              ...thread,
+              worktreePath,
+              pullRequest: {
+                number: 42,
+                title: "Merged feature",
+                url: "https://github.com/example/repo/pull/42",
+                baseBranch: "main",
+                headBranch: "feature",
+                state: "merged",
+              },
+            }
+          : thread,
+      ),
+    };
+
+    const decided = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.archive",
+          commandId: asCommandId("cmd-archive-merged-cleanup"),
+          threadId: asThreadId("grandchild"),
+        } satisfies OrchestrationCommand,
+        readModel,
+      }),
+    );
+    const events = Array.isArray(decided) ? decided : [decided];
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event?.type).toBe("thread.archived");
+    if (event?.type === "thread.archived") {
+      expect(event.payload.worktreeCleanup).toBeUndefined();
+    }
+  });
 });

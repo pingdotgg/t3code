@@ -3,14 +3,28 @@ import { Effect, Option } from "effect";
 
 import { canonicalizeWorktreePath } from "../git/worktreePaths.ts";
 
+function toExcludedThreadIdSet(
+  excludedThreadIds: ThreadId | Iterable<ThreadId>,
+): ReadonlySet<ThreadId> {
+  if (typeof excludedThreadIds === "string") {
+    return new Set([excludedThreadIds]);
+  }
+  return new Set(excludedThreadIds);
+}
+
 export const findCanonicalActiveWorktreeOwner = Effect.fn("findCanonicalActiveWorktreeOwner")(
-  function* (readModel: OrchestrationReadModel, excludedThreadId: ThreadId, worktreePath: string) {
+  function* (
+    readModel: OrchestrationReadModel,
+    excludedThreadIds: ThreadId | Iterable<ThreadId>,
+    worktreePath: string,
+  ) {
+    const excluded = toExcludedThreadIdSet(excludedThreadIds);
     const canonicalWorktreePath = yield* Effect.promise(() =>
       canonicalizeWorktreePath(worktreePath),
     );
     const activeThreads = readModel.threads.flatMap((thread) => {
       if (
-        thread.id === excludedThreadId ||
+        excluded.has(thread.id) ||
         thread.deletedAt !== null ||
         thread.archivedAt !== null ||
         thread.worktreePath === null

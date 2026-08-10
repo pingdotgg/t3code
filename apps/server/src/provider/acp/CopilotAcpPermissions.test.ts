@@ -71,11 +71,10 @@ describe("CopilotAcpPermissions", () => {
     ).toEqual({ _tag: "select", optionId: "allow-always-id" });
   });
 
-  it("rejects raw Git worktree mutations so agents must use workspace handoff tools", () => {
+  it("rejects raw Git worktree add/move so agents must use workspace handoff tools", () => {
     for (const command of [
       "git worktree add /tmp/feature -b feature",
       "git -C /repo worktree move /tmp/old /tmp/new",
-      "cd /repo && git worktree remove /tmp/feature",
     ]) {
       expect(
         selectCopilotPermissionForRuntimeMode({
@@ -85,6 +84,17 @@ describe("CopilotAcpPermissions", () => {
         }),
       ).toEqual({ _tag: "cancel", reason: "workspace_handoff_required" });
     }
+  });
+
+  it("allows git worktree remove in full-access mode", () => {
+    const command = "cd /repo && git worktree remove /tmp/feature";
+    expect(
+      selectCopilotPermissionForRuntimeMode({
+        runtimeMode: "full-access",
+        params: request({ rawInput: { command } }),
+        permissionRequest: permission({ detail: command }),
+      }),
+    ).toEqual({ _tag: "select", optionId: "allow-always-id" });
   });
 
   it("continues auto-approving read-only Git worktree commands", () => {

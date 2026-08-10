@@ -1189,21 +1189,27 @@ export const ThreadCreatedPayload = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 
+export const ThreadWorktreeCleanup = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  path: TrimmedNonEmptyString,
+});
+export type ThreadWorktreeCleanup = typeof ThreadWorktreeCleanup.Type;
+
 export const ThreadDeletedPayload = Schema.Struct({
   threadId: ThreadId,
   deletedAt: IsoDateTime,
-  worktreeCleanup: Schema.optional(
-    Schema.Struct({
-      cwd: TrimmedNonEmptyString,
-      path: TrimmedNonEmptyString,
-    }),
-  ),
+  worktreeCleanup: Schema.optional(ThreadWorktreeCleanup),
 });
 
 export const ThreadArchivedPayload = Schema.Struct({
   threadId: ThreadId,
   archivedAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  /**
+   * When set, the durable cleanup worker should remove this thread's worktree
+   * after archive (used for merged-PR chats). Same safety rules as delete cleanup.
+   */
+  worktreeCleanup: Schema.optional(ThreadWorktreeCleanup),
 });
 
 export const ThreadUnarchivedPayload = Schema.Struct({

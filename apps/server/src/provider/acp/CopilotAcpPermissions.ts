@@ -57,7 +57,9 @@ function getPermissionText(params: EffectAcpSchema.RequestPermissionRequest): st
 
 function isRawGitWorktreeMutation(params: EffectAcpSchema.RequestPermissionRequest): boolean {
   const text = getPermissionText(params);
-  return /\bgit\b(?:(?![;&|]\s*git\b)[\s\S]){0,300}\bworktree\s+(?:add|move|remove)\b/.test(text);
+  // Block only add/move. Agents may run `git worktree remove` for cleanup; create/switch
+  // still go through workspace handoff tools so thread cwd/checkpoints stay aligned.
+  return /\bgit\b(?:(?![;&|]\s*git\b)[\s\S]){0,300}\bworktree\s+(?:add|move)\b/.test(text);
 }
 
 function isQuestionLikePermissionRequest(

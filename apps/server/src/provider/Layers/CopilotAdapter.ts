@@ -170,7 +170,7 @@ type CopilotStartSessionInput = Parameters<CopilotAdapterShape["startSession"]>[
 const COPILOT_FORK_UNSUPPORTED_DETAIL =
   "This Copilot ACP agent does not support native chat forking. The visible T3 chat fork was created, but Copilot context cannot be continued safely from it.";
 const WORKSPACE_HANDOFF_REQUIRED_MESSAGE =
-  "T3 blocked a raw Git worktree mutation. Use the create_isolated_workspace or switch_workspace tool so the thread's workspace, checkpoints, and diffs stay aligned.";
+  "T3 blocked a raw Git worktree add/move. Use the create_isolated_workspace or switch_workspace tool so the thread's workspace, checkpoints, and diffs stay aligned. git worktree remove is allowed for cleanup.";
 
 function stringifyCause(value: unknown): string {
   if (value instanceof Error) {

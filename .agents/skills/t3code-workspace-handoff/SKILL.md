@@ -1,6 +1,6 @@
 ---
 name: t3code-workspace-handoff
-description: Moves the current T3 Code thread into a new or existing Git worktree using durable workspace handoff tools. Use when a task needs an isolated checkout, another branch or PR worktree, raw git worktree commands are blocked, or before attempting git worktree add, move, or remove.
+description: Moves the current T3 Code thread into a new or existing Git worktree using durable workspace handoff tools. Use when a task needs an isolated checkout, another branch or PR worktree, raw git worktree add/move commands are blocked, or before attempting git worktree add or move.
 ---
 
 # T3 Code Workspace Handoff
@@ -13,7 +13,7 @@ Use T3's workspace tools instead of mutating Git worktrees directly.
 - Use `create_isolated_workspace` for a new worktree and new local branch.
 - Use `switch_workspace` when the desired worktree already exists.
 - Use `git worktree list --porcelain` only for read-only discovery.
-- If a workspace tool is deferred, load its definition with tool search first. Never substitute a raw `git worktree add`, `move`, or `remove` command.
+- If a workspace tool is deferred, load its definition with tool search first. Never substitute a raw `git worktree add` or `move` command.
 
 ## Create an isolated workspace
 
@@ -57,6 +57,7 @@ switch_workspace({
 
 ## Non-negotiable safety
 
-- Never run raw `git worktree add`, `git worktree move`, or `git worktree remove`.
+- Never run raw `git worktree add` or `git worktree move`.
+- `git worktree remove` is allowed for cleanup of unneeded checkouts; prefer clean, unshared worktrees.
 - Never edit another checkout before T3 has rebound the thread to it.
 - Never continue the current turn after a successful handoff tool call.
