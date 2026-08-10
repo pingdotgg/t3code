@@ -123,6 +123,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "thread.unsnooze":
     case "thread.pin":
     case "thread.unpin":
+    case "thread.pin.reorder":
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
