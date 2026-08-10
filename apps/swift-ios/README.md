@@ -134,7 +134,9 @@ default. Set `T3_SWIFT_CONFIGURATION=Release` for the TestFlight identity. It
 accepts the T3 Connect build settings above as environment variables.
 `T3_SWIFT_BUILD_NUMBER` is required and must be greater than the build already
 installed on the phone. Optional overrides are `T3_SWIFT_DERIVED_DATA_PATH` and
-`T3_SWIFT_VERSION`. Run with
+`T3_SWIFT_VERSION`. If the phone cannot report its installed apps, retry only
+after checking the target device with `T3_SWIFT_SKIP_INSTALLED_BUILD_CHECK=1`.
+Run with
 `T3_SWIFT_VERIFY_BUNDLE_IDENTIFIERS_ONLY=1` to verify the configuration's host
 and extension bundle identifiers without a device build.
 

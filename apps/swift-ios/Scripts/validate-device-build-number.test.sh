@@ -30,7 +30,7 @@ expect_rejection "missing requested build" "" 21
 expect_rejection "nonnumeric requested build" next 21
 expect_rejection "equal installed build" 21 21
 expect_rejection "older installed build" 20 21
-expect_rejection "nonnumeric installed build" 22 old
+expect_acceptance "legacy nonnumeric installed build" 22 old
 
 resolved="$(xcrun swift "$RESOLVE" "$FIXTURE" com.t3tools.t3code.swiftui.dev)"
 [ "$resolved" = 21 ] || {

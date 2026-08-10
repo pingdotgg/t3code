@@ -20,8 +20,9 @@ esac
 
 case "$installed" in
   *[!0-9]*)
-    printf '[swift-ios-device] error: installed app has nonnumeric build number %s\n' "$installed" >&2
-    exit 1
+    printf '[swift-ios-device] warning: installed app has nonnumeric build number %s; skipping comparison\n' \
+      "$installed" >&2
+    exit 0
     ;;
 esac
 

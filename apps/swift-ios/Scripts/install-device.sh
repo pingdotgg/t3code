@@ -80,23 +80,29 @@ build_settings=(
 
 DEVICE_JSON="$(mktemp -t t3-swift-devices.XXXXXX)"
 INSTALLED_APPS_JSON="$(mktemp -t t3-swift-installed-apps.XXXXXX)"
-trap 'unlink "${DEVICE_JSON}" "${INSTALLED_APPS_JSON}" 2>/dev/null || true' EXIT
+cleanup() {
+  rm -f -- "${DEVICE_JSON}" "${INSTALLED_APPS_JSON}"
+}
+trap cleanup EXIT
 xcrun devicectl list devices --json-output "${DEVICE_JSON}" --quiet >/dev/null
 DESTINATION_ID="$(
   xcrun swift "${SCRIPT_DIR}/resolve-device-udid.swift" "${DEVICE_JSON}" "${DEVICE_ID}"
 )" || die "could not resolve device '${DEVICE_ID}' to an Xcode destination UDID"
 
-if ! xcrun devicectl device info apps \
-  --device "${DESTINATION_ID}" \
-  --bundle-id "${BUNDLE_IDENTIFIER}" \
-  --json-output "${INSTALLED_APPS_JSON}" \
-  --quiet >/dev/null; then
-  die "could not query installed apps on device '${DESTINATION_ID}'"
+INSTALLED_BUILD_NUMBER=""
+if [[ "${T3_SWIFT_SKIP_INSTALLED_BUILD_CHECK:-0}" != "1" ]]; then
+  if ! xcrun devicectl device info apps \
+    --device "${DESTINATION_ID}" \
+    --bundle-id "${BUNDLE_IDENTIFIER}" \
+    --json-output "${INSTALLED_APPS_JSON}" \
+    --quiet >/dev/null; then
+    die "could not query installed apps; set T3_SWIFT_SKIP_INSTALLED_BUILD_CHECK=1 to bypass this check"
+  fi
+  INSTALLED_BUILD_NUMBER="$(
+    xcrun swift "${SCRIPT_DIR}/resolve-installed-build-number.swift" \
+      "${INSTALLED_APPS_JSON}" "${BUNDLE_IDENTIFIER}"
+  )" || die "could not read the installed build number"
 fi
-INSTALLED_BUILD_NUMBER="$(
-  xcrun swift "${SCRIPT_DIR}/resolve-installed-build-number.swift" \
-    "${INSTALLED_APPS_JSON}" "${BUNDLE_IDENTIFIER}"
-)"
 "${SCRIPT_DIR}/validate-device-build-number.sh" \
   "${T3_SWIFT_BUILD_NUMBER}" "${INSTALLED_BUILD_NUMBER}"
 build_settings+=("CURRENT_PROJECT_VERSION=${T3_SWIFT_BUILD_NUMBER}")
