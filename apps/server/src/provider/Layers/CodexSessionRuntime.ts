@@ -1294,10 +1294,10 @@ export const makeCodexSessionRuntime = (
         const payload = notification.params;
         const route = readRouteFields(notification);
         const collabReceiverTurns = yield* Ref.get(collabReceiverTurnsRef);
+        const notificationProviderThreadId = readNotificationThreadId(notification);
         const childParentTurnId = (() => {
-          const providerConversationId = readNotificationThreadId(notification);
-          return providerConversationId
-            ? collabReceiverTurns.get(providerConversationId)
+          return notificationProviderThreadId
+            ? collabReceiverTurns.get(notificationProviderThreadId)
             : undefined;
         })();
 
@@ -1321,11 +1321,10 @@ export const makeCodexSessionRuntime = (
         // root's own early notifications flowing during session open.
         const suppressRootId = currentProviderThreadId(yield* Ref.get(sessionRef));
         const foreignConversation = (() => {
-          const providerConversationId = readNotificationThreadId(notification);
           return (
-            providerConversationId !== undefined &&
+            notificationProviderThreadId !== undefined &&
             suppressRootId !== undefined &&
-            providerConversationId !== suppressRootId
+            notificationProviderThreadId !== suppressRootId
           );
         })();
         if (
@@ -1372,7 +1371,15 @@ export const makeCodexSessionRuntime = (
         const activeTurnId = childParentTurnId ?? route.turnId ?? session.activeTurnId ?? null;
         const providerThreadId = currentProviderThreadId(session);
         const completedEmptyCollabWait = isCompletedEmptyCollabWait(notification);
-        if (completedEmptyCollabWait && activeTurnId !== null && providerThreadId !== undefined) {
+        const rootConversation =
+          notificationProviderThreadId === undefined ||
+          notificationProviderThreadId === providerThreadId;
+        if (
+          completedEmptyCollabWait &&
+          rootConversation &&
+          activeTurnId !== null &&
+          providerThreadId !== undefined
+        ) {
           const shouldInterrupt = yield* Ref.modify(emptyCollabWaitGuardRef, (current) => {
             if (current.turnId === activeTurnId && current.interruptRequested) {
               return [false, current] as const;

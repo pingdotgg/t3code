@@ -28,7 +28,10 @@ const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
 function collabWaitCompletion(input: {
   readonly id: string;
   readonly receiverThreadIds?: ReadonlyArray<string>;
+  readonly threadId?: string;
+  readonly turnId?: string;
 }) {
+  const threadId = input.threadId ?? ROOT;
   return {
     method: "item/completed",
     params: {
@@ -37,15 +40,15 @@ function collabWaitCompletion(input: {
         id: input.id,
         tool: "wait",
         status: "completed",
-        senderThreadId: ROOT,
+        senderThreadId: threadId,
         receiverThreadIds: input.receiverThreadIds ?? [],
         prompt: null,
         model: null,
         reasoningEffort: null,
         agentsStates: {},
       },
-      threadId: ROOT,
-      turnId: wireFixture.responses.turnStart.turn.id,
+      threadId,
+      turnId: input.turnId ?? wireFixture.responses.turnStart.turn.id,
       completedAtMs: 1_785_898_349_931,
     },
   } as const;
@@ -391,6 +394,82 @@ describe("CodexSessionRuntime collab integration", () => {
         interrupted.map((entry) => entry.threadId),
         [ROOT],
       );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("ignores empty collaboration waits from an unregistered foreign child", () =>
+    Effect.gen(function* () {
+      const script = {
+        rootThreadId: ROOT,
+        holdTurnOpen: true,
+        notifications: [
+          collabWaitCompletion({
+            id: "foreign-empty-wait-1",
+            threadId: CHILD_A,
+            turnId: "foreign-turn-1",
+          }),
+          collabWaitCompletion({
+            id: "foreign-empty-wait-2",
+            threadId: CHILD_A,
+            turnId: "foreign-turn-1",
+          }),
+          collabWaitCompletion({
+            id: "foreign-empty-wait-3",
+            threadId: CHILD_A,
+            turnId: "foreign-turn-1",
+          }),
+          collabWaitCompletion({ id: "root-empty-wait-1" }),
+          collabWaitCompletion({ id: "root-empty-wait-2" }),
+          collabWaitCompletion({ id: "root-empty-wait-3" }),
+        ],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      const interruptsPath = `${scriptPath}.interrupts`;
+      NodeFS.rmSync(interruptsPath, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(interruptsPath, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-empty-collab-wait-foreign-child"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const guardEventFiber = yield* runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.method === "process/stderr" &&
+            event.message?.includes("three completed collaboration waits") === true,
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "ignore foreign waits, then stop the root loop" });
+      const guardEvents = yield* Fiber.join(guardEventFiber).pipe(Effect.timeout("2 seconds"));
+      assert.lengthOf(Array.from(guardEvents), 1);
+
+      const interrupted = NodeFS.readFileSync(interruptsPath, "utf8")
+        .trim()
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as { threadId?: string; turnId?: string });
+      assert.deepEqual(interrupted, [
+        {
+          threadId: ROOT,
+          turnId: wireFixture.responses.turnStart.turn.id,
+        },
+      ]);
 
       yield* runtime.close;
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
