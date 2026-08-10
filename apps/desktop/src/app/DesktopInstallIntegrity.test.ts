@@ -14,11 +14,12 @@ const makeEnvironmentLayer = (input: {
   readonly resourcesPath: string;
   readonly isPackaged: boolean;
   readonly homeDirectory: string;
+  readonly platform?: NodeJS.Platform;
 }) =>
   DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: input.homeDirectory,
-    platform: "win32",
+    platform: input.platform ?? "win32",
     processArch: "x64",
     appVersion: "1.2.3",
     appPath: "/repo",
@@ -104,7 +105,27 @@ describe("DesktopInstallIntegrity", () => {
     ),
   );
 
-  it.effect("skips when no manifest exists (pre-stamp installs, macOS/Linux, dev)", () =>
+  it.effect("treats a missing manifest on packaged Windows as a half-applied update", () =>
+    withInstallDir(({ resourcesPath }) =>
+      Effect.gen(function* () {
+        // New app.asar (which ships this checker AND the stamp in the same
+        // build) with a pre-stamp unpacked tree = partial apply. Skipping
+        // here would launch straight into the mixed-build crash.
+        const result = yield* DesktopInstallIntegrity.checkInstallIntegrity.pipe(
+          Effect.provide(
+            makeEnvironmentLayer({
+              resourcesPath,
+              isPackaged: true,
+              homeDirectory: `/tmp/t3-integrity-home-${process.pid}`,
+            }),
+          ),
+        );
+        assert.equal(result._tag, "MissingManifest");
+      }),
+    ),
+  );
+
+  it.effect("skips a missing manifest on platforms that pack the server dist inside the asar", () =>
     withInstallDir(({ resourcesPath }) =>
       Effect.gen(function* () {
         const result = yield* DesktopInstallIntegrity.checkInstallIntegrity.pipe(
@@ -112,6 +133,7 @@ describe("DesktopInstallIntegrity", () => {
             makeEnvironmentLayer({
               resourcesPath,
               isPackaged: true,
+              platform: "darwin",
               homeDirectory: `/tmp/t3-integrity-home-${process.pid}`,
             }),
           ),

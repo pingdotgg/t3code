@@ -39,10 +39,16 @@ const decodeDesktopBuildManifest = Schema.decodeUnknownEffect(
 
 export type DesktopInstallIntegrityResult =
   | { readonly _tag: "Ok" }
-  // No manifest to compare against: dev runs, macOS/Linux (which pack the
-  // server dist inside the asar), installs predating the stamp, or an
+  // No manifest to compare against where none is expected: dev runs,
+  // macOS/Linux (which pack the server dist inside the asar), or an
   // unreadable/corrupt manifest. Never blocks launch.
   | { readonly _tag: "Skipped"; readonly reason: string }
+  // Packaged Windows build with no manifest at all. Every Windows artifact
+  // that ships this checker also ships the stamp (both come from the same
+  // build script), so a missing manifest means the unpacked tree is from an
+  // older, pre-stamp build — i.e. a half-applied update that replaced
+  // app.asar but not app.asar.unpacked.
+  | { readonly _tag: "MissingManifest"; readonly appVersion: string; readonly manifestPath: string }
   | {
       readonly _tag: "Mismatch";
       readonly appVersion: string;
@@ -71,6 +77,13 @@ export const checkInstallIntegrity: Effect.Effect<
   );
   const raw = yield* fileSystem.readFileString(manifestPath, "utf-8").pipe(Effect.option);
   if (Option.isNone(raw)) {
+    if (environment.platform === "win32") {
+      return {
+        _tag: "MissingManifest",
+        appVersion: environment.appVersion,
+        manifestPath,
+      } as const;
+    }
     return { _tag: "Skipped", reason: `no build manifest at ${manifestPath}` } as const;
   }
 
@@ -156,16 +169,20 @@ export const enforceInstallIntegrity = (options: {
       "install is internally inconsistent (half-applied update); refusing to launch",
       {
         appVersion: result.appVersion,
-        unpackedVersion: result.unpackedVersion,
+        unpackedVersion: result._tag === "Mismatch" ? result.unpackedVersion : "<no manifest>",
         manifestPath: result.manifestPath,
       },
     );
 
     const wasQuitting = yield* Ref.getAndSet(state.quitting, true);
     if (!wasQuitting) {
+      const supportFilesDescription =
+        result._tag === "Mismatch"
+          ? `support files are version ${result.unpackedVersion}`
+          : `support files are from an older build with no version stamp`;
       const message =
         `This T3 Code installation is damaged: a previous update was only partially applied ` +
-        `(application core is version ${result.appVersion}, support files are version ${result.unpackedVersion}). ` +
+        `(application core is version ${result.appVersion}, ${supportFilesDescription}). ` +
         `Please reinstall T3 Code to repair it.`;
       const buttons = Option.isSome(options.downloadPageUrl)
         ? ["Open Download Page", "Quit"]
