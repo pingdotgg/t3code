@@ -143,15 +143,12 @@ describe("WSL runtime cache", () => {
     expect(script).toContain('  [ -f "$runtime_root/apps/server/dist/bin.mjs" ] &&');
     expect(script).toContain('  [ -f "$runtime_root/node_modules/effect/package.json" ]');
     expect(script).toContain("if runtime_is_ready; then");
-    expect(script).toContain('printf \'%s\\n\' "$$" > "$runtime_lock_candidate/pid"');
-    expect(script).toContain("trap cleanup_runtime_lock_candidate EXIT");
     expect(script).toContain("trap 'exit 1' HUP INT TERM");
-    expect(script).not.toContain("trap cleanup_runtime_lock_candidate EXIT HUP INT TERM");
-    expect(script).toContain(
-      'while ! mv -T "$runtime_lock_candidate" "$runtime_lock" 2>/dev/null; do',
-    );
-    expect(script).toContain('kill -0 "$runtime_lock_pid"');
-    expect(script).toContain('mv -T "$runtime_lock" "$runtime_lock_stale"');
+    expect(script).toContain('exec 9> "$runtime_lock"');
+    expect(script).toContain("flock -x 9");
+    expect(script).not.toContain("runtime_lock_pid");
+    expect(script).not.toContain("sleep 0.1");
+    expect(script).not.toContain('rm -rf "$runtime_lock"');
     expect(script).toContain('mv -T "$runtime_root" "$runtime_stale"');
     expect(script).toContain('mktemp -d "$runtime_parent/.1.2.3-x64.tmp.XXXXXX"');
     expect(script).toContain(
@@ -162,9 +159,7 @@ describe("WSL runtime cache", () => {
     expect(script).toContain('mv -T "$runtime_tmp" "$runtime_root"');
     expect(script).not.toContain('rm -rf "$runtime_root"');
 
-    const lockAcquired = script.indexOf(
-      'while ! mv -T "$runtime_lock_candidate" "$runtime_lock" 2>/dev/null; do',
-    );
+    const lockAcquired = script.indexOf("flock -x 9");
     const readinessAfterLock = script.indexOf("if runtime_is_ready; then", lockAcquired + 1);
     const existingRuntimeMoved = script.indexOf('mv -T "$runtime_root" "$runtime_stale"');
     expect(lockAcquired).toBeGreaterThan(-1);
