@@ -285,7 +285,7 @@ export const make = Effect.fn("MobileStorage.make")(function* () {
             Effect.logWarning("Ignored an invalid retained background thread.").pipe(
               Effect.annotateLogs({
                 storageKey: BACKGROUND_CONNECTION_RETAINED_THREAD_KEY,
-                cause: String(cause),
+                cause,
               }),
               Effect.andThen(secureStorage.removeItem(BACKGROUND_CONNECTION_RETAINED_THREAD_KEY)),
               Effect.as(null),
