@@ -53,6 +53,8 @@ on:
       - packages/client-runtime/**
       - packages/contracts/**
       - packages/shared/**
+      - assets/**
+      - scripts/**
       - patches/**
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
@@ -154,9 +156,11 @@ jobs:
             --non-interactive
 
       # No --status filter on build:list: an in-queue/in-progress build must
-      # count as existing, or every merge during the ~20 min build window
-      # would cut a duplicate. The flip side: after an errored build, retry
-      # via workflow_dispatch mode=build — pushes won't re-trigger it.
+      # count as existing, or every merge during the build window would cut a
+      # duplicate. Builds started here stay attached to this serialized run so
+      # the queued run for a later merge cannot overtake them and lose its OTA.
+      # After an errored build, retry via workflow_dispatch mode=build — pushes
+      # won't re-trigger it until the app version changes.
       - name: Ensure store builds exist for the current app version
         if: steps.expo-token.outputs.present == 'true' && github.event_name == 'push'
         working-directory: apps/mobile
@@ -171,7 +175,7 @@ jobs:
               continue
             fi
             echo "$platform: latest production build is $latest, app.config.ts says $version — building"
-            eas build --platform "$platform" --profile production --auto-submit --non-interactive --no-wait
+            eas build --platform "$platform" --profile production --auto-submit --non-interactive
             echo ":building_construction: $platform: cut production build for $version (auto-submitted)" >> "$GITHUB_STEP_SUMMARY"
           done
 
@@ -183,8 +187,8 @@ jobs:
         run: |
           message="$(git log -1 --pretty=%s | head -c 120) ($(git rev-parse --short=9 HEAD))"
           for platform in ios android; do
-            hash="$(npx expo-updates fingerprint:generate --platform "$platform" | jq -r '.hash')"
-            matching="$(eas build:list --platform "$platform" --buildProfile production --status finished --runtimeVersion "$hash" --limit 1 --json --non-interactive | jq 'length')"
+            hash="$(eas fingerprint:generate --platform "$platform" --environment production --json --non-interactive | jq -r '.hash')"
+            matching="$(eas build:list --platform "$platform" --build-profile production --status finished --fingerprint-hash "$hash" --limit 1 --json --non-interactive | jq 'length')"
             if [ "$matching" -gt 0 ]; then
               eas update \
                 --channel production \

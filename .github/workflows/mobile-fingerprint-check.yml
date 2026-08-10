@@ -18,6 +18,8 @@ on:
       - packages/client-runtime/**
       - packages/contracts/**
       - packages/shared/**
+      - assets/**
+      - scripts/**
       - patches/**
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
