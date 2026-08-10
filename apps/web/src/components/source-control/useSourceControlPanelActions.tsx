@@ -17,7 +17,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useTheme } from "~/hooks/useTheme";
-import { readLocalApi } from "~/localApi";
+import { ensureLocalApi, readLocalApi } from "~/localApi";
 import { useGitStackedAction } from "~/state/sourceControlActions";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { serverEnvironment } from "~/state/server";
@@ -47,6 +47,7 @@ import {
   branchOperationCwd,
   branchSyncCounts,
   branchSyncState,
+  confirmSourceControlPanelMutation,
   drainPanelRefreshQueue,
   namedBranchOperationCwd,
   panelActionError,
@@ -179,7 +180,7 @@ export function useSourceControlPanelActions(
   );
 
   const confirm = useCallback(async (message: string) => {
-    return (await readLocalApi()?.dialogs.confirm(message)) ?? window.confirm(message);
+    return confirmSourceControlPanelMutation(ensureLocalApi().dialogs.confirm, message);
   }, []);
 
   const copyText = useCallback((value: string, missingMessage = "Nothing to copy.") => {

@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  LocalApi,
   VcsPanelChangeGroup,
   VcsPanelStash,
   VcsPanelSnapshotResult,
@@ -29,6 +30,13 @@ export type { BranchSyncState, PanelChangedFile };
 export type AttentionKind = BranchAttentionKind;
 
 export type PanelRefreshMode = "full" | "working-tree";
+
+export function confirmSourceControlPanelMutation(
+  confirm: LocalApi["dialogs"]["confirm"],
+  message: string,
+): Promise<boolean> {
+  return confirm(message, { variant: "destructive" });
+}
 
 export interface SourceControlEnvironmentCandidate {
   readonly environmentId: EnvironmentId;

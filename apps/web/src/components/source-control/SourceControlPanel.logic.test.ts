@@ -16,6 +16,7 @@ import {
   branchOperationCwd,
   branchSyncState,
   completePanelFileDiffLoad,
+  confirmSourceControlPanelMutation,
   drainPanelRefreshQueue,
   failPanelFileDiffLoad,
   formatRelativeDate,
@@ -317,6 +318,20 @@ describe("SourceControlPanel stash identity", () => {
         message: "stash@{0}",
       }),
     ).toBe("ref:stash@{0}");
+  });
+});
+
+describe("SourceControlPanel mutation confirmation", () => {
+  it("uses the themed destructive confirmation contract", async () => {
+    const calls: Array<{ message: string; variant: string | undefined }> = [];
+
+    const confirmed = await confirmSourceControlPanelMutation(async (message, options) => {
+      calls.push({ message, variant: options?.variant });
+      return true;
+    }, "Discard 2 files?");
+
+    expect(confirmed).toBe(true);
+    expect(calls).toEqual([{ message: "Discard 2 files?", variant: "destructive" }]);
   });
 });
 
