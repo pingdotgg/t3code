@@ -700,6 +700,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
               : "Other entries in this grouped project are unaffected.",
             "This action cannot be undone.",
           ].join("\n"),
+          { variant: "destructive" },
         ),
       );
       if (confirmed._tag === "Failure" || !confirmed.value) return;

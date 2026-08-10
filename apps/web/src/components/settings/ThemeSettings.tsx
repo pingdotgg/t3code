@@ -183,7 +183,7 @@ function ThemeLibraryCard({
                               onDownload();
                             }}
                           >
-                            <DownloadIcon />
+                            <UploadIcon />
                           </Button>
                         }
                       />
@@ -475,6 +475,14 @@ export function ThemeLibrary({
             activeModes={pickedModesFor(null)}
             isActive={false}
             key={standardTheme.id}
+            onDuplicate={() =>
+              openThemeEditor({
+                editingThemeId: null,
+                seedThemeId: null,
+                seedName: `${standardTheme.label} copy`,
+                initialAppearance,
+              })
+            }
             onUse={() => persistTheme(appearanceMode === "system" ? "system" : appearanceMode)}
             onUseMode={handlePairPick(null)}
             theme={standardTheme}
@@ -570,7 +578,7 @@ export function ThemeLibrary({
             Create theme
           </Button>
           <Button size="xs" variant="outline" onClick={() => onImportOpenChange(true)}>
-            <UploadIcon />
+            <DownloadIcon />
             Import theme
           </Button>
         </div>
