@@ -429,7 +429,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-user-message-fade="false"');
   });
 
-  it("keeps footer controls for collapsed long user messages", async () => {
+  it("hides sent-message actions while keeping the collapse control", async () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -437,7 +437,9 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain('aria-label="Copy link"');
+    expect(markup).not.toContain('aria-label="Copy link"');
+    expect(markup).not.toContain("Revert to this message");
+    expect(markup).not.toContain("7:12:28 PM");
     expect(markup).toContain('data-user-message-collapsed="true"');
     expect(markup).toContain('data-user-message-footer="true"');
   });

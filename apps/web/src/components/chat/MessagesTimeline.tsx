@@ -448,7 +448,6 @@ function TimelineRowContent(props: { row: TimelineRow }) {
           const regularImages = userImages.filter(
             (image) => !image.name.startsWith("preview-annotation-"),
           );
-          const canRevertAgentWork = typeof row.revertTurnCount === "number";
           return (
             <div className="flex justify-end">
               <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
@@ -501,30 +500,6 @@ function TimelineRowContent(props: { row: TimelineRow }) {
                   text={visibleText}
                   terminalContexts={terminalContexts}
                   forceExpanded={ctx.activeChatFindRowId === row.id}
-                  footer={
-                    <>
-                      <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-                        {displayedUserMessage.copyText && (
-                          <MessageCopyButton text={displayedUserMessage.copyText} />
-                        )}
-                        {canRevertAgentWork && (
-                          <Button
-                            type="button"
-                            size="xs"
-                            variant="outline"
-                            disabled={ctx.isRevertingCheckpoint || ctx.isWorking}
-                            onClick={() => ctx.onRevertUserMessage(row.message.id)}
-                            title="Revert to this message"
-                          >
-                            <Undo2Icon className="size-3" />
-                          </Button>
-                        )}
-                      </div>
-                      <p className="text-right text-xs text-muted-foreground/50">
-                        {formatTimestamp(row.message.createdAt, ctx.timestampFormat)}
-                      </p>
-                    </>
-                  }
                 />
               </div>
             </div>
@@ -1084,7 +1059,6 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
   text: string;
   terminalContexts: ParsedTerminalContextEntry[];
   forceExpanded: boolean;
-  footer: ReactNode;
 }) {
   const hasBody = props.text.trim().length > 0 || props.terminalContexts.length > 0;
   const isCollapsible = shouldCollapseUserMessage(props.text, props.terminalContexts);
@@ -1114,8 +1088,8 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
           <UserMessageBody text={props.text} terminalContexts={props.terminalContexts} />
         </div>
       ) : null}
-      <div data-user-message-footer="true" className="mt-1.5 flex items-center justify-end gap-2">
-        {isCollapsible ? (
+      {isCollapsible ? (
+        <div data-user-message-footer="true" className="mt-1.5 flex items-center justify-end gap-2">
           <Button
             type="button"
             size="xs"
@@ -1126,9 +1100,8 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
           >
             {isExpanded ? "Show less" : "Show full message"}
           </Button>
-        ) : null}
-        {props.footer}
-      </div>
+        </div>
+      ) : null}
     </>
   );
 });
