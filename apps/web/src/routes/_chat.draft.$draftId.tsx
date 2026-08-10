@@ -31,11 +31,14 @@ function DraftChatThreadRouteView() {
   const canonicalThreadRef = serverThreadStarted ? serverThreadRef : null;
 
   useEffect(() => {
-    if (!inferredThreadRef || draftSession?.promotedTo) {
+    // A bootstrap send creates the thread before preparing its worktree and
+    // rolls it back when preparation fails. Marking on mere existence would
+    // stick `promotedTo` on the surviving draft, hiding it from the sidebar.
+    if (!inferredThreadRef || draftSession?.promotedTo || !serverThreadStarted) {
       return;
     }
     markPromotedDraftThreadByRef(inferredThreadRef);
-  }, [draftSession?.promotedTo, inferredThreadRef]);
+  }, [draftSession?.promotedTo, inferredThreadRef, serverThreadStarted]);
 
   useEffect(() => {
     if (!canonicalThreadRef) {
