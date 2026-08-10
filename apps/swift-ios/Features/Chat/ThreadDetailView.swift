@@ -106,20 +106,13 @@ public struct ThreadDetailView: View {
         } message: {
             Text("Your draft is still here. Check your connection and try again.")
         }
-        .simultaneousGesture(edgeBackGesture)
-    }
-
-    private var edgeBackGesture: some Gesture {
-        DragGesture(minimumDistance: 18, coordinateSpace: .local)
-            .onEnded { value in
-                guard horizontalSizeClass == .compact,
-                      value.startLocation.x <= 24,
-                      value.translation.width >= 72,
-                      abs(value.translation.height) <= abs(value.translation.width) * 0.7 else {
-                    return
-                }
-                onNavigateBack()
-            }
+        .background {
+            ThreadBackSwipeGestureView(
+                isEnabled: horizontalSizeClass == .compact,
+                onNavigateBack: onNavigateBack
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 
     private var detail: FeatureThreadDetail? {
@@ -1279,6 +1272,234 @@ struct TranscriptViewportGeometry: Equatable {
         guard contentChanged || viewportChanged else { return nil }
 
         return bottomOffset
+    }
+}
+
+/// The detail surface uses a native pan recognizer instead of a SwiftUI
+/// `DragGesture`. SwiftUI's broad drag recognizer can begin before it knows
+/// whether a gesture is vertical, which competes with the transcript's native
+/// collection-view scrolling. This recognizer fails for vertical motion at
+/// gesture-begin time and remains simultaneous with the collection view for
+/// horizontal motion.
+enum ThreadBackSwipeGesture {
+    static let minimumTranslation: CGFloat = 72
+    static let horizontalToVerticalRatio: CGFloat = 1.4
+    private static let scrollExtentEpsilon: CGFloat = 1
+
+    static func shouldBegin(with velocity: CGPoint) -> Bool {
+        shouldBegin(with: velocity, translation: .zero)
+    }
+
+    static func shouldBegin(with velocity: CGPoint, translation: CGPoint) -> Bool {
+        let direction = hypot(translation.x, translation.y) >= 8 ? translation : velocity
+        return direction.x > 0
+            && direction.x >= abs(direction.y) * horizontalToVerticalRatio
+    }
+
+    static func shouldNavigateBack(with translation: CGPoint) -> Bool {
+        translation.x >= minimumTranslation
+            && translation.x >= abs(translation.y) * horizontalToVerticalRatio
+    }
+
+    @MainActor
+    static func shouldAllowSimultaneousRecognition(with scrollView: UIScrollView) -> Bool {
+        let hasHorizontalContent = scrollView.alwaysBounceHorizontal
+            || scrollView.contentSize.width
+                > scrollView.bounds.width + scrollExtentEpsilon
+        guard hasHorizontalContent else {
+            return scrollView.alwaysBounceVertical
+                || scrollView.contentSize.height
+                    > scrollView.bounds.height + scrollExtentEpsilon
+        }
+        return isAtLeadingEdge(scrollView)
+    }
+
+    @MainActor
+    static func shouldReceiveTouch(in view: UIView?, host: UIView) -> Bool {
+        var currentView = view
+        while let current = currentView {
+            if let scrollView = current as? UIScrollView,
+               scrollView.alwaysBounceHorizontal
+                || scrollView.contentSize.width
+                    > scrollView.bounds.width + scrollExtentEpsilon {
+                guard isAtLeadingEdge(scrollView) else { return false }
+            }
+            if current === host { return true }
+            currentView = current.superview
+        }
+        return false
+    }
+
+    @MainActor
+    private static func isAtLeadingEdge(_ scrollView: UIScrollView) -> Bool {
+        scrollView.contentOffset.x
+            <= -scrollView.adjustedContentInset.left + scrollExtentEpsilon
+    }
+
+    @MainActor
+    static func shouldReceiveTouch(
+        _ touch: UITouch,
+        surface: UIView,
+        host: UIView
+    ) -> Bool {
+        guard surface.window === host.window,
+              surface.bounds.contains(touch.location(in: surface)),
+              shouldReceiveTouch(in: touch.view, host: host),
+              surface.window?.rootViewController?.presentedViewController == nil else {
+            return false
+        }
+        return true
+    }
+}
+
+private struct ThreadBackSwipeGestureView: UIViewRepresentable {
+    let isEnabled: Bool
+    let onNavigateBack: () -> Void
+
+    func makeUIView(context: Context) -> InstallerView {
+        let view = InstallerView()
+        view.update(isEnabled: isEnabled, onNavigateBack: onNavigateBack)
+        return view
+    }
+
+    func updateUIView(_ view: InstallerView, context: Context) {
+        view.update(isEnabled: isEnabled, onNavigateBack: onNavigateBack)
+    }
+
+    static func dismantleUIView(_ view: InstallerView, coordinator: ()) {
+        view.uninstallGesture()
+    }
+
+    final class InstallerView: UIView {
+        private var isEnabled = false
+        private var onNavigateBack: (() -> Void)?
+        private weak var gestureHost: UIView?
+        private var panGesture: UIPanGestureRecognizer?
+        private var gestureDelegate: GestureDelegate?
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isUserInteractionEnabled = false
+        }
+
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        deinit {
+            uninstallGesture()
+        }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window == nil {
+                uninstallGesture()
+            } else {
+                installGestureIfPossible()
+            }
+        }
+
+        func update(isEnabled: Bool, onNavigateBack: @escaping () -> Void) {
+            self.isEnabled = isEnabled
+            self.onNavigateBack = onNavigateBack
+            installGestureIfPossible()
+        }
+
+        func uninstallGesture() {
+            if let panGesture, let gestureHost {
+                gestureHost.removeGestureRecognizer(panGesture)
+            }
+            panGesture = nil
+            gestureDelegate = nil
+            gestureHost = nil
+        }
+
+        private func installGestureIfPossible() {
+            // SwiftUI hosts a background UIViewRepresentable beside, rather than
+            // above, the transcript and composer. Install on their shared root
+            // view and use the representable's frame to scope received touches.
+            guard isEnabled, let window, let host = window.rootViewController?.view else {
+                if !isEnabled { uninstallGesture() }
+                return
+            }
+            guard gestureHost !== host else { return }
+
+            uninstallGesture()
+            let panGesture = UIPanGestureRecognizer(
+                target: self,
+                action: #selector(handlePan(_:))
+            )
+            let gestureDelegate = GestureDelegate(owner: self)
+            panGesture.delegate = gestureDelegate
+            panGesture.cancelsTouchesInView = false
+            panGesture.delaysTouchesBegan = false
+            panGesture.maximumNumberOfTouches = 1
+            host.addGestureRecognizer(panGesture)
+            gestureHost = host
+            self.panGesture = panGesture
+            self.gestureDelegate = gestureDelegate
+        }
+
+        @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+            guard isEnabled,
+                  gesture.state == .ended,
+                  ThreadBackSwipeGesture.shouldNavigateBack(
+                      with: gesture.translation(in: gesture.view)
+                  ) else {
+                return
+            }
+            onNavigateBack?()
+        }
+
+        private final class GestureDelegate: NSObject, UIGestureRecognizerDelegate {
+            weak var owner: InstallerView?
+
+            init(owner: InstallerView) {
+                self.owner = owner
+            }
+
+            func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+                guard let owner,
+                      owner.isEnabled,
+                      let panGesture = gestureRecognizer as? UIPanGestureRecognizer else {
+                    return false
+                }
+                return ThreadBackSwipeGesture.shouldBegin(
+                    with: panGesture.velocity(in: panGesture.view),
+                    translation: panGesture.translation(in: panGesture.view)
+                )
+            }
+
+            func gestureRecognizer(
+                _ gestureRecognizer: UIGestureRecognizer,
+                shouldReceive touch: UITouch
+            ) -> Bool {
+                guard let owner,
+                      let gestureHost = owner.gestureHost,
+                      ThreadBackSwipeGesture.shouldReceiveTouch(
+                          touch,
+                          surface: owner,
+                          host: gestureHost
+                      )
+                else { return false }
+                return true
+            }
+
+            func gestureRecognizer(
+                _ gestureRecognizer: UIGestureRecognizer,
+                shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+            ) -> Bool {
+                if otherGestureRecognizer is UIScreenEdgePanGestureRecognizer {
+                    return true
+                }
+                guard let scrollView = otherGestureRecognizer.view as? UIScrollView else {
+                    return false
+                }
+                return ThreadBackSwipeGesture.shouldAllowSimultaneousRecognition(
+                    with: scrollView
+                )
+            }
+        }
     }
 }
 
