@@ -735,7 +735,22 @@ export const make = Effect.gen(function* () {
             cause: String(cause),
           }),
         ),
-        Effect.retry(RECONNECT_SCHEDULE),
+        Effect.retry({
+          // "Not a mirrored project" is the host's definitive answer for a
+          // stale link (the project was deleted or detached there):
+          // reconnecting can never succeed, so stop instead of retrying
+          // every 15 seconds forever. The link row is kept — a transient
+          // host-side read hiccup reports the same tag, and a real re-attach
+          // restarts the agent anyway.
+          while: (error) => error._tag !== "MirrorProjectNotMirroredError",
+          schedule: RECONNECT_SCHEDULE,
+        }),
+        Effect.catchTag("MirrorProjectNotMirroredError", (error) =>
+          Effect.logWarning("Mirror link is stale on the host; agent stopped.", {
+            projectId: link.projectId,
+            detail: error.message,
+          }),
+        ),
       );
     });
 
