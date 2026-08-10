@@ -51,6 +51,7 @@ import {
   drainPanelRefreshQueue,
   namedBranchOperationCwd,
   panelActionError,
+  resolveBranchSyncSnapshot,
   runPanelActionAndReconcile,
   type PanelChangedFile,
   stashIdentityKey,
@@ -466,7 +467,6 @@ export function useSourceControlPanelActions(
       } = {},
     ) => {
       if (!snapshot) return;
-      const { aheadCount, behindCount } = branchSyncCounts(branch, snapshot);
       const state = branchSyncState(branch, snapshot);
       if (state === "diverged") {
         setDivergedSyncBranch(branch);
@@ -501,9 +501,19 @@ export function useSourceControlPanelActions(
       void runAction(`branch-sync:${branch.name}`, async () => {
         if (!api) return;
         const targetCwd = branchOperationCwd(branch, cwd);
-        if (fetchFirst) {
-          await api.vcs.fetchBranch({ cwd: targetCwd, branchName: branch.name });
+        const fetch = () => api.vcs.fetchBranch({ cwd: targetCwd, branchName: branch.name });
+        const syncSnapshot = await resolveBranchSyncSnapshot({
+          snapshot,
+          fetchFirst,
+          fetch,
+          refreshSnapshot: () => api.vcs.panelSnapshot({ cwd: targetCwd, refresh: "full" }),
+        });
+        const syncState = branchSyncState(branch, syncSnapshot);
+        if (syncState === "diverged") {
+          setDivergedSyncBranch(branch);
+          return;
         }
+        const { aheadCount, behindCount } = branchSyncCounts(branch, syncSnapshot);
         if (aheadCount > 0) {
           await api.vcs.pushBranch({ cwd: targetCwd, branchName: branch.name });
           return;
@@ -516,7 +526,9 @@ export function useSourceControlPanelActions(
           });
           return;
         }
-        await api.vcs.fetchBranch({ cwd: targetCwd, branchName: branch.name });
+        if (!fetchFirst) {
+          await fetch();
+        }
       });
     },
     [api, cwd, publishBranchWithRemoteChoice, runAction, snapshot],

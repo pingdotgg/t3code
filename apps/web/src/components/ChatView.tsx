@@ -1698,6 +1698,17 @@ function ChatViewContent(props: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
+  const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
+  const gitStatusQuery = useEnvironmentQuery(
+    gitStatusCwd === null
+      ? null
+      : vcsEnvironment.status({
+          environmentId,
+          input: { cwd: gitStatusCwd },
+        }),
+  );
+  // Default true while loading to avoid hiding an available panel before Git status resolves.
+  const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const {
     addSourceControlSurface,
     sourceControlAvailable,
@@ -1707,6 +1718,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeRightPanelSurface,
     activeThreadRef,
     gitCwd,
+    isGitRepo,
     rightPanelSurfaces: rightPanelState.surfaces,
   });
   const activeFileSurface =
@@ -2609,15 +2621,6 @@ function ChatViewContent(props: ChatViewProps) {
     return byUserMessageId;
   }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
 
-  const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
-  const gitStatusQuery = useEnvironmentQuery(
-    gitStatusCwd === null
-      ? null
-      : vcsEnvironment.status({
-          environmentId,
-          input: { cwd: gitStatusCwd },
-        }),
-  );
   const sourceControlPanelTarget = resolveSourceControlPanelTarget({
     activeThreadRef,
     gitCwd,
@@ -2668,8 +2671,6 @@ function ChatViewContent(props: ChatViewProps) {
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
   const activeTerminalLaunchContext =
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
-  // Default true while loading to avoid toolbar flicker.
-  const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const showComposerContextStrip = shouldShowComposerContextStrip({
     hasActiveProject: activeProject !== null,
     isGitRepo,

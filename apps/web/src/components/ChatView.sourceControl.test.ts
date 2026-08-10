@@ -102,9 +102,18 @@ describe("source control right panel surface visibility", () => {
   };
 
   it("requires both a thread ref and Git cwd before making Source Control available", () => {
-    expect(isSourceControlAvailable({ activeThreadRef, gitCwd: "/repo" })).toBe(true);
-    expect(isSourceControlAvailable({ activeThreadRef: null, gitCwd: "/repo" })).toBe(false);
-    expect(isSourceControlAvailable({ activeThreadRef, gitCwd: null })).toBe(false);
+    expect(isSourceControlAvailable({ activeThreadRef, gitCwd: "/repo", isGitRepo: true })).toBe(
+      true,
+    );
+    expect(
+      isSourceControlAvailable({ activeThreadRef: null, gitCwd: "/repo", isGitRepo: true }),
+    ).toBe(false);
+    expect(isSourceControlAvailable({ activeThreadRef, gitCwd: null, isGitRepo: true })).toBe(
+      false,
+    );
+    expect(isSourceControlAvailable({ activeThreadRef, gitCwd: "/repo", isGitRepo: false })).toBe(
+      false,
+    );
   });
 
   it("hides unavailable Source Control surfaces without affecting other surfaces", () => {

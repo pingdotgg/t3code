@@ -26,6 +26,7 @@ import {
   isLatestPanelDetailRequest,
   panelActionError,
   resolveFederatedSourceControlTargets,
+  resolveBranchSyncSnapshot,
   runPanelActionAndReconcile,
   stashIdentityKey,
   vcsPanelSnapshotFingerprint,
@@ -92,6 +93,56 @@ function branch(input: Partial<VcsRef>): VcsRef {
 }
 
 describe("SourceControlPanel branch sync logic", () => {
+  it("refreshes branch sync state after a fetch-before-sync request", async () => {
+    const calls: string[] = [];
+    const refreshedSnapshot = {
+      ...baseSnapshot,
+      status: {
+        ...baseSnapshot.status,
+        aheadCount: 0,
+        behindCount: 3,
+      },
+    };
+
+    const resolved = await resolveBranchSyncSnapshot({
+      snapshot: baseSnapshot,
+      fetchFirst: true,
+      fetch: async () => {
+        calls.push("fetch");
+      },
+      refreshSnapshot: async () => {
+        calls.push("snapshot");
+        return refreshedSnapshot;
+      },
+    });
+
+    expect(calls).toEqual(["fetch", "snapshot"]);
+    expect(resolved).toBe(refreshedSnapshot);
+    expect(
+      branchSyncState(
+        branch({ name: "topic", current: true, upstreamName: "origin/topic" }),
+        resolved,
+      ),
+    ).toBe("pull");
+  });
+
+  it("reuses the current branch sync snapshot when no prefetch is requested", async () => {
+    let fetched = false;
+    const resolved = await resolveBranchSyncSnapshot({
+      snapshot: baseSnapshot,
+      fetchFirst: false,
+      fetch: async () => {
+        fetched = true;
+      },
+      refreshSnapshot: async () => {
+        throw new Error("unexpected snapshot refresh");
+      },
+    });
+
+    expect(fetched).toBe(false);
+    expect(resolved).toBe(baseSnapshot);
+  });
+
   it("publishes a local branch whose configured upstream is only its comparison base", () => {
     const localBranch = branch({
       current: true,

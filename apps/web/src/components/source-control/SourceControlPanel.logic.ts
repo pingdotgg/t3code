@@ -127,6 +127,17 @@ export async function runPanelActionAndReconcile(options: {
   return result;
 }
 
+export async function resolveBranchSyncSnapshot(options: {
+  readonly snapshot: VcsPanelSnapshotResult;
+  readonly fetchFirst: boolean;
+  readonly fetch: () => Promise<void>;
+  readonly refreshSnapshot: () => Promise<VcsPanelSnapshotResult>;
+}): Promise<VcsPanelSnapshotResult> {
+  if (!options.fetchFirst) return options.snapshot;
+  await options.fetch();
+  return options.refreshSnapshot();
+}
+
 export function beginPanelAction(runningActionKeys: Set<string>, actionKey: string): boolean {
   if (runningActionKeys.has(actionKey)) return false;
   runningActionKeys.add(actionKey);

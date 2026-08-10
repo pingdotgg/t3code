@@ -61,6 +61,7 @@ interface UseSourceControlRightPanelSurfaceInput {
   readonly activeRightPanelSurface: RightPanelSurface | null;
   readonly activeThreadRef: ScopedThreadRef | null;
   readonly gitCwd: string | null;
+  readonly isGitRepo: boolean;
   readonly rightPanelSurfaces: readonly RightPanelSurface[];
 }
 
@@ -136,8 +137,9 @@ export function resolveSourceControlDraftMetadataTarget(input: {
 export function isSourceControlAvailable(input: {
   readonly activeThreadRef: ScopedThreadRef | null;
   readonly gitCwd: string | null;
+  readonly isGitRepo: boolean;
 }): boolean {
-  return input.activeThreadRef !== null && input.gitCwd !== null;
+  return input.activeThreadRef !== null && input.gitCwd !== null && input.isGitRepo;
 }
 
 export function filterVisibleSourceControlSurfaces(input: {
@@ -252,8 +254,12 @@ export async function runSourceControlServerMetadataUpdate(
 export function useSourceControlRightPanelSurfaceState(
   input: UseSourceControlRightPanelSurfaceInput,
 ): SourceControlRightPanelSurfaceState {
-  const { activeRightPanelSurface, activeThreadRef, gitCwd, rightPanelSurfaces } = input;
-  const sourceControlAvailable = isSourceControlAvailable({ activeThreadRef, gitCwd });
+  const { activeRightPanelSurface, activeThreadRef, gitCwd, isGitRepo, rightPanelSurfaces } = input;
+  const sourceControlAvailable = isSourceControlAvailable({
+    activeThreadRef,
+    gitCwd,
+    isGitRepo,
+  });
   const visibleRightPanelSurfaces = useMemo(
     () =>
       filterVisibleSourceControlSurfaces({
