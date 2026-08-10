@@ -31,6 +31,9 @@ describe("changedThemePaintKinds", () => {
 describe("themeRoleFromUtilityClass", () => {
   it("maps semantic utilities to their actual palette role", () => {
     expect(themeRoleFromUtilityClass("text-foreground", "foreground")).toBe("text");
+    expect(themeRoleFromUtilityClass("text-muted-foreground", "foreground")).toBe(
+      "mutedForeground",
+    );
     expect(themeRoleFromUtilityClass("bg-primary/90", "background")).toBe("messageAction");
     expect(themeRoleFromUtilityClass("ring-ring", "border")).toBe("focus");
   });

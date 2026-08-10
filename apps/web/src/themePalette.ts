@@ -325,6 +325,7 @@ function legacyThemeMode(theme: ThemePreference): ThemeAppearance | null {
 // Measured from the live t3.chat default theme. Translucent chat surfaces are
 // flattened over --chat-background so this opaque palette reproduces the
 // pixels users see after T3 Chat's blur and noise layers are composited.
+// Foreground pairs deviate where necessary to keep normal text at WCAG AA.
 const T3_CHAT_LIGHT_COLORS: ThemeColors = {
   canvas: "#fdf7fd",
   // T3 Code's workspace header belongs to the chat panel, so keep it seamless
@@ -346,31 +347,31 @@ const T3_CHAT_LIGHT_COLORS: ThemeColors = {
   border: "#eee1ed",
   input: "#e7c1dc",
   focus: "#db2777",
-  accent: "#e33f86",
+  accent: "#db2777",
   accentForeground: "#ffffff",
   secondary: "#f1c4e6",
   secondaryForeground: "#77347c",
   muted: "#eaa7cb",
-  mutedForeground: "#ac1668",
-  placeholder: "#ad83b0",
+  mutedForeground: "#8d1255",
+  placeholder: "#8b5f90",
   secondaryLabel: "#ac1668",
   iconMuted: "#ac1668",
   error: "#f7086c",
   errorForeground: "#9d174d",
   errorSurface: "#fde4f1",
   warning: "#f59e0b",
-  warningForeground: "#b45309",
+  warningForeground: "#b05109",
   warningSurface: "#fcf0ea",
-  update: "#e33f86",
+  update: "#db2777",
   updateForeground: "#ac1668",
   updateSurface: "#fadfef",
   accentSurface: "#f3e6f5",
   accentSurfaceForeground: "#454554",
   messageSurface: "#f7def2",
   messageForeground: "#492c61",
-  messageAction: "#e33f86",
+  messageAction: "#db2777",
   messageActionForeground: "#ffffff",
-  messageActionHover: "#d56698",
+  messageActionHover: "#c12269",
   // T3 Chat uses a light lavender code surface in light mode. Keeping the
   // dark plum pair here also leaked the dark palette into T3 Code's diffs.
   codeBackground: "#f5ecf9",
@@ -422,7 +423,7 @@ const T3_CHAT_DARK_COLORS: ThemeColors = {
   secondaryForeground: "#d4c7e1",
   muted: "#423a45",
   mutedForeground: "#e7d0dd",
-  placeholder: "#8f8699",
+  placeholder: "#968d9f",
   secondaryLabel: "#e7d0dd",
   iconMuted: "#d4c7e1",
   error: "#9d174d",
@@ -549,8 +550,8 @@ const T3_CODE_DARK_THEME_COLORS: ThemeColors = {
   textMuted: "#818181",
   border: "#191919",
   input: "#1e1e1e",
-  focus: "#366ffb",
-  accent: "#366ffb",
+  focus: "#346bf1",
+  accent: "#346bf1",
   accentForeground: "#ffffff",
   secondary: "#141414",
   secondaryForeground: "#f5f5f5",
@@ -565,16 +566,16 @@ const T3_CODE_DARK_THEME_COLORS: ThemeColors = {
   warning: "#fe9a00",
   warningForeground: "#ffb900",
   warningSurface: "#312108",
-  update: "#366ffb",
+  update: "#346bf1",
   updateForeground: "#51a2ff",
-  updateSurface: "#121c35",
+  updateSurface: "#121b34",
   accentSurface: "#141414",
   accentSurfaceForeground: "#f5f5f5",
   messageSurface: "#141414",
   messageForeground: "#f5f5f5",
-  messageAction: "#366ffb",
+  messageAction: "#346bf1",
   messageActionForeground: "#ffffff",
-  messageActionHover: "#3265e3",
+  messageActionHover: "#3061d9",
   codeBackground: "#111111",
   codeForeground: "#f5f5f5",
   sidebar: "#000000",
@@ -941,12 +942,14 @@ export function createVividThemeColors(
   const sidebarRgb = themeOklchToRgb(sidebar);
   const surface = surfaceAt(0.015);
   const surfaceRaised = surfaceAt(0.05);
+  const surfaceRaisedRgb = themeOklchToRgb(surfaceRaised);
   const surfaceOverlay = surfaceAt(0.075);
   const border = surfaceAt(dark ? 0.16 : 0.12, Math.min(0.07, accent.C * 0.35));
   const input = surfaceAt(dark ? 0.21 : 0.16, Math.min(0.08, accent.C * 0.4));
   const secondary = surfaceAt(dark ? 0.1 : 0.06, Math.min(0.09, accent.C * 0.5));
   const secondaryRgb = themeOklchToRgb(secondary);
   const muted = surfaceAt(dark ? 0.06 : 0.04, Math.min(0.06, accent.C * 0.35));
+  const mutedRgb = themeOklchToRgb(muted);
   const accentSurface = surfaceAt(dark ? 0.13 : 0.08, Math.min(0.11, accent.C * 0.55));
   const accentSurfaceRgb = themeOklchToRgb(accentSurface);
   const messageSurface = surfaceAt(dark ? 0.16 : 0.1, Math.min(0.13, accent.C * 0.6));
@@ -958,6 +961,8 @@ export function createVividThemeColors(
     themeRgbToHexColor(
       themeOklchToRgb(solveOklchLightness(textBase, surfaceRgb, 4.6, dark ? "lighter" : "darker")),
     );
+  const mutedForeground = foregroundOn(mutedRgb);
+  const placeholder = foregroundOn(surfaceRaisedRgb);
 
   const actionHover: ThemeOklch = { ...action, L: action.L + (dark ? 0.06 : -0.06) };
 
@@ -986,8 +991,8 @@ export function createVividThemeColors(
     secondary: hex(secondary),
     secondaryForeground: foregroundOn(secondaryRgb),
     muted: hex(muted),
-    mutedForeground: themeRgbToHexColor(textMutedRgb),
-    placeholder: themeRgbToHexColor(textMutedRgb),
+    mutedForeground,
+    placeholder,
     secondaryLabel: themeRgbToHexColor(textMutedRgb),
     iconMuted: themeRgbToHexColor(textMutedRgb),
     update: themeRgbToHexColor(accentRgb),
@@ -1174,6 +1179,8 @@ export function createManagedThemeColors(
   const surfaceOverlay = mixThemeRgbColors(canvas, text, appearance === "dark" ? 0.18 : 0.06);
   const secondary = mixThemeRgbColors(canvas, accent, appearance === "dark" ? 0.2 : 0.08);
   const muted = mixThemeRgbColors(canvas, accent, appearance === "dark" ? 0.13 : 0.06);
+  const mutedForeground = readableThemeText(muted, text, 1, 4.6);
+  const placeholder = readableThemeText(surfaceRaised, text, 1, 4.6);
   const accentSurface = mixThemeRgbColors(canvas, accent, appearance === "dark" ? 0.3 : 0.14);
   const messageSurface = mixThemeRgbColors(canvas, accent, appearance === "dark" ? 0.36 : 0.18);
   const toolbarControl = mixThemeRgbColors(chrome, accent, appearance === "dark" ? 0.2 : 0.08);
@@ -1244,8 +1251,8 @@ export function createManagedThemeColors(
     secondary: themeRgbToHexColor(secondary),
     secondaryForeground: themeRgbToHexColor(readableThemeForeground(secondary)),
     muted: themeRgbToHexColor(muted),
-    mutedForeground: themeRgbToHexColor(textMuted),
-    placeholder: themeRgbToHexColor(textMuted),
+    mutedForeground: themeRgbToHexColor(mutedForeground),
+    placeholder: themeRgbToHexColor(placeholder),
     secondaryLabel: themeRgbToHexColor(textMuted),
     iconMuted: themeRgbToHexColor(textMuted),
     accentSurface: themeRgbToHexColor(accentSurface),
