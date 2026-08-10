@@ -333,7 +333,13 @@ html[data-ui-font="geist"] {
 }
 
 html[data-ui-font="system-ui"] {
+  /* Prefer the Apple system UI face, then platform fallbacks. */
   --app-font-sans-stack: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  /* SF Pro reads loose at default web tracking vs Cursor/native chrome; tighten slightly. */
+  --app-font-letter-spacing: -0.015em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 html[data-code-font="sf-mono"] {
@@ -383,6 +389,7 @@ html[data-sidebar-row-spacing="relaxed"] {
 
 body {
   font-family: var(--app-font-sans-stack);
+  letter-spacing: var(--app-font-letter-spacing, normal);
   margin: 0;
   padding: 0;
 }
