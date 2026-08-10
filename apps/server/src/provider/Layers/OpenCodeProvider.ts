@@ -129,8 +129,8 @@ function formatOpenCodeProbeError(input: {
   return {
     installed: true,
     message: detail
-      ? `Failed to execute OpenCode CLI health check: ${detail}`
-      : "Failed to execute OpenCode CLI health check.",
+      ? `Failed to load OpenCode inventory: ${detail}`
+      : "Failed to load OpenCode inventory.",
   };
 }
 
@@ -180,11 +180,11 @@ function openCodeCapabilitiesForModel(input: {
       ? { id: value, label: titleCaseSlug(value), isDefault: true as const }
       : { id: value, label: titleCaseSlug(value) },
   );
-  const primaryAgents = input.agents.filter(
+  const selectableAgents = input.agents.filter(
     (agent) => !agent.hidden && (agent.mode === "primary" || agent.mode === "all"),
   );
-  const defaultAgent = inferDefaultAgent(primaryAgents);
-  const agentOptions = primaryAgents.map((agent) =>
+  const defaultAgent = inferDefaultAgent(selectableAgents);
+  const agentOptions = selectableAgents.map((agent) =>
     defaultAgent === agent.name
       ? { id: agent.name, label: titleCaseSlug(agent.name), isDefault: true as const }
       : { id: agent.name, label: titleCaseSlug(agent.name) },
@@ -364,14 +364,8 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       return fallback(Cause.squash(versionExit.cause));
     }
     version = parseGenericCliVersion(versionExit.value.stdout) ?? null;
-
     if (!version) {
-      return fallback(
-        new Error(
-          `Unable to determine OpenCode version from \`opencode --version\` output. T3 Code requires OpenCode v${MINIMUM_OPENCODE_VERSION} or newer.`,
-        ),
-        null,
-      );
+      return fallback(new Error("Unable to determine OpenCode version."), null);
     }
     if (compareSemverVersions(version, MINIMUM_OPENCODE_VERSION) < 0) {
       return buildServerProvider({
@@ -391,29 +385,23 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   }
 
   const inventoryExit = yield* Effect.exit(
-    (isExternalServer
-      ? Effect.scoped(
-          Effect.gen(function* () {
-            const server = yield* openCodeRuntime.connectToOpenCodeServer({
-              binaryPath: openCodeSettings.binaryPath,
-              serverUrl: openCodeSettings.serverUrl,
-              environment: resolvedEnvironment,
-            });
-            return yield* openCodeRuntime.loadOpenCodeInventory(
-              openCodeRuntime.createOpenCodeSdkClient({
-                baseUrl: server.url,
-                directory: cwd,
-                ...(openCodeSettings.serverPassword
-                  ? { serverPassword: openCodeSettings.serverPassword }
-                  : {}),
-              }),
-            );
-          }),
-        )
-      : openCodeRuntime.loadInventoryFromCli({
+    Effect.scoped(
+      Effect.gen(function* () {
+        const server = yield* openCodeRuntime.connectToOpenCodeServer({
           binaryPath: openCodeSettings.binaryPath,
+          serverUrl: openCodeSettings.serverUrl,
           environment: resolvedEnvironment,
-        })
+        });
+        return yield* openCodeRuntime.loadOpenCodeInventory(
+          openCodeRuntime.createOpenCodeSdkClient({
+            baseUrl: server.url,
+            directory: cwd,
+            ...(openCodeSettings.serverPassword
+              ? { serverPassword: openCodeSettings.serverPassword }
+              : {}),
+          }),
+        );
+      }),
     ).pipe(
       Effect.mapError(
         (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
@@ -421,7 +409,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     ),
   );
   if (inventoryExit._tag === "Failure") {
-    return fallback(Cause.squash(inventoryExit.cause), version);
+    return fallback(Cause.squash(inventoryExit.cause));
   }
 
   const models = providerModelsFromSettings(

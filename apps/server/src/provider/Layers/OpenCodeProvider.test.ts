@@ -35,6 +35,7 @@ const runtimeMock = {
     versionStdout: DEFAULT_VERSION_STDOUT,
     inventoryError: null as Error | null,
     closeCalls: 0,
+    sdkInventoryCalls: 0,
     inventory: {
       providerList: { connected: [] as string[], all: [] as unknown[], default: {} },
       agents: [] as unknown[],
@@ -45,6 +46,7 @@ const runtimeMock = {
     this.state.versionStdout = DEFAULT_VERSION_STDOUT;
     this.state.inventoryError = null;
     this.state.closeCalls = 0;
+    this.state.sdkInventoryCalls = 0;
     this.state.inventory = {
       providerList: { connected: [], all: [] as unknown[], default: {} },
       agents: [] as unknown[],
@@ -85,8 +87,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
   createOpenCodeSdkClient: () =>
     ({}) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
-  loadOpenCodeInventory: () =>
-    runtimeMock.state.inventoryError
+  loadOpenCodeInventory: () => {
+    runtimeMock.state.sdkInventoryCalls += 1;
+    return runtimeMock.state.inventoryError
       ? Effect.fail(
           new OpenCodeRuntimeError({
             operation: "loadOpenCodeInventory",
@@ -94,17 +97,8 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
             cause: runtimeMock.state.inventoryError,
           }),
         )
-      : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory),
-  loadInventoryFromCli: () =>
-    runtimeMock.state.inventoryError
-      ? Effect.fail(
-          new OpenCodeRuntimeError({
-            operation: "loadInventoryFromCli",
-            detail: runtimeMock.state.inventoryError.message,
-            cause: runtimeMock.state.inventoryError,
-          }),
-        )
-      : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory),
+      : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory);
+  },
 };
 
 beforeEach(() => {
@@ -148,7 +142,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
 
       NodeAssert.equal(snapshot.status, "error");
       NodeAssert.equal(snapshot.installed, true);
-      NodeAssert.equal(snapshot.message, "Failed to execute OpenCode CLI health check.");
+      NodeAssert.equal(snapshot.message, "Failed to load OpenCode inventory.");
     }),
   );
 
@@ -181,6 +175,10 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         agents: [
           { name: "build", hidden: false, mode: "primary" },
           { name: "plan", hidden: false, mode: "primary" },
+          { name: "Pro Max", hidden: false, mode: "all" },
+          { name: "Pro Max GLM", hidden: false, mode: "subagent" },
+          { name: "hidden-primary", hidden: true, mode: "primary" },
+          { name: "hidden-all", hidden: true, mode: "all" },
         ],
       };
 
@@ -204,18 +202,23 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         agentDescriptor.options.find((option) => option.isDefault === true)?.id,
         "build",
       );
+      NodeAssert.deepEqual(
+        agentDescriptor.options.map((option) => option.id),
+        ["build", "plan", "Pro Max"],
+      );
     }),
   );
 
-  it.effect("does not spawn a local server for health check (uses CLI instead)", () =>
+  it.effect("uses SDK inventory for local servers and closes the owned server", () =>
     Effect.gen(function* () {
       yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
 
-      NodeAssert.equal(runtimeMock.state.closeCalls, 0);
+      NodeAssert.equal(runtimeMock.state.closeCalls, 1);
+      NodeAssert.equal(runtimeMock.state.sdkInventoryCalls, 1);
     }),
   );
 
-  it.effect("reports local model inventory failures without treating them as empty", () =>
+  it.effect("reports inventory failures without treating them as empty", () =>
     Effect.gen(function* () {
       runtimeMock.state.inventoryError = new Error("opencode models failed");
       const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
@@ -225,7 +228,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       NodeAssert.equal(snapshot.models.length, 0);
       NodeAssert.equal(
         snapshot.message,
-        "Failed to execute OpenCode CLI health check: opencode models failed",
+        "Failed to load OpenCode inventory: opencode models failed",
       );
     }),
   );
@@ -249,6 +252,18 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
         snapshot.message,
         "OpenCode server rejected authentication. Check the server URL and password.",
       );
+    }),
+  );
+
+  it.effect("uses SDK inventory for configured servers", () =>
+    Effect.gen(function* () {
+      yield* checkOpenCodeProviderStatus(
+        makeOpenCodeSettings({ serverUrl: "http://127.0.0.1:9999" }),
+        process.cwd(),
+      );
+
+      NodeAssert.equal(runtimeMock.state.closeCalls, 0);
+      NodeAssert.equal(runtimeMock.state.sdkInventoryCalls, 1);
     }),
   );
 
