@@ -353,7 +353,9 @@ export const make = Effect.gen(function* () {
         command: "gh",
         args: input.args,
         cwd: input.cwd,
-        ...(input.host ? { env: { ...globalThis.process.env, GH_HOST: input.host } } : {}),
+        // `extendEnv` follows `env` down in the runner, so the host environment is merged in and
+        // this is the override alone.
+        ...(input.host ? { env: { GH_HOST: input.host } } : {}),
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.maxOutputBytes !== undefined ? { maxOutputBytes: input.maxOutputBytes } : {}),

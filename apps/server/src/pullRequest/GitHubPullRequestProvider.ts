@@ -119,7 +119,9 @@ export const makeProvider = (kind: GitHubPullRequestProviderKind) =>
       capabilities: CAPABILITIES,
 
       getViewer: (input) =>
-        cli.getViewerLogin({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
+        cli
+          .getViewerLogin({ cwd: input.cwd, host: input.host })
+          .pipe(Effect.mapError(fail("getViewer"))),
 
       listChangeRequests: (input) =>
         cli

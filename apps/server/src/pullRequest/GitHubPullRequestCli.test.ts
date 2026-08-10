@@ -1298,12 +1298,33 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("reads the viewer from the host it was asked about", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("octocat")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const login = yield* cli.getViewerLogin({ cwd: "/w", host: "ghe.example.com" });
+
+      assert.strictEqual(login, "octocat");
+      // `gh api` reads no repository context: without the host it answers for github.com, which
+      // on an Enterprise install is either a different account or none at all.
+      assert.deepStrictEqual(mockedExecute.mock.calls[0]![0].args, [
+        "api",
+        "user",
+        "--hostname",
+        "ghe.example.com",
+        "--jq",
+        ".login",
+      ]);
+    }),
+  );
+
   it.effect("fails when the authenticated account has no login", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("  ")));
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
-      const error = yield* Effect.flip(cli.getViewerLogin({ cwd: "/w" }));
+      const error = yield* Effect.flip(cli.getViewerLogin({ cwd: "/w", host: "github.com" }));
 
       assert.strictEqual(error._tag, "GitHubViewerLoginUnavailableError");
     }),

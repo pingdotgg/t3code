@@ -455,6 +455,9 @@ describe("GitHubCli host targeting", () => {
       });
 
       expect(mockRun.mock.calls[0]![0].env?.GH_HOST).toBe("git.corp.com");
+      // The override alone: the runner extends the host environment wherever `env` is set, so
+      // copying it in here would only pin a snapshot of it.
+      expect(Object.keys(mockRun.mock.calls[0]![0].env ?? {})).toEqual(["GH_HOST"]);
     }).pipe(Effect.provide(layer)),
   );
 

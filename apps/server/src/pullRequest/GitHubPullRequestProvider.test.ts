@@ -212,7 +212,7 @@ describe("makeProvider", () => {
       const provider = yield* makeProvider("github-enterprise");
       expect(provider.kind).toBe("github-enterprise");
 
-      const error = yield* Effect.flip(provider.getViewer({ cwd: "/w" }));
+      const error = yield* Effect.flip(provider.getViewer({ cwd: "/w", host: "ghe.example.com" }));
       expect(error.provider).toBe("github-enterprise");
       expect(error.reason).toBe("unauthenticated");
     }).pipe(
