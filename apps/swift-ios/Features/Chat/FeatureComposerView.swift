@@ -731,8 +731,10 @@ enum FeatureComposerPasteTextPolicy {
                 return String(data: data, encoding: .utf16)
             }
             if type.conforms(to: .utf16ExternalPlainText) {
-                return String(data: data, encoding: .utf16LittleEndian)
-                    ?? String(data: data, encoding: .utf16BigEndian)
+                // RFC 2781 defines big-endian as the default for UTF-16 data
+                // without a byte-order mark in an external representation.
+                return String(data: data, encoding: .utf16BigEndian)
+                    ?? String(data: data, encoding: .utf16LittleEndian)
             }
             return String(data: data, encoding: .utf16)
                 ?? String(data: data, encoding: .utf16LittleEndian)

@@ -132,7 +132,7 @@ struct FeatureComposerPowerTests {
             ],
             [
                 UTType.utf16ExternalPlainText.identifier:
-                    "external UTF-16".data(using: .utf16LittleEndian)!,
+                    "external UTF-16".data(using: .utf16BigEndian)!,
             ],
             [UTType.swiftSource.identifier: Data("let x = 1\0".utf8)],
             [
