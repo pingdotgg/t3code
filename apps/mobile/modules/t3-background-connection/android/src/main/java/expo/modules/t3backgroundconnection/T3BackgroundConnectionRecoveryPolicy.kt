@@ -2,12 +2,12 @@ package expo.modules.t3backgroundconnection
 
 internal object T3BackgroundConnectionRecoveryPolicy {
   fun shouldScheduleRestartAfterStartFailure(
-    batteryOptimizationIgnored: Boolean,
+    batteryOptimizationIgnored: Boolean
   ): Boolean = batteryOptimizationIgnored
 
   fun shouldEnsureStartedOnActivityForeground(
     enabled: Boolean,
     serviceRunning: Boolean,
-    runtimeReady: Boolean,
+    runtimeReady: Boolean
   ): Boolean = enabled && (!serviceRunning || !runtimeReady)
 }

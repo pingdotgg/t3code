@@ -192,6 +192,7 @@ internal object T3BackgroundConnectionState {
     }
   }
 
+  @Suppress("TooGenericExceptionCaught")
   fun scheduleRestartAfterUnexpectedTaskFinish(context: Context) {
     initialize(context)
     cancelScheduledRestart(context)
@@ -304,6 +305,7 @@ internal object T3BackgroundConnectionState {
 }
 
 internal object T3BackgroundConnectionController {
+  @Suppress("TooGenericExceptionCaught")
   fun ensureStarted(context: Context): Boolean {
     val applicationContext = context.applicationContext
     T3BackgroundConnectionState.initialize(applicationContext)
