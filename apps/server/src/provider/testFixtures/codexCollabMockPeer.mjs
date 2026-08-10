@@ -41,6 +41,11 @@ rl.on("line", (line) => {
   }
   if (method === "thread/start" || method === "thread/resume") {
     write({ id, result: fixture.responses.threadStart });
+    // Some ordering regressions need child traffic before the first parent
+    // turn has started, when the runtime has no active spawn turn yet.
+    for (const notification of script.preTurnNotifications ?? []) {
+      write({ jsonrpc: "2.0", method: notification.method, params: notification.params });
+    }
     return;
   }
   if (method === "turn/start") {

@@ -153,24 +153,6 @@ function buildOutOfOrderNamingScript() {
   return {
     rootThreadId: ROOT,
     notifications: [
-      // Child B speaks before the parent-side fan-out arrives. This makes
-      // provisional registration order differ from receiverThreadIds order.
-      {
-        method: "turn/started",
-        params: {
-          threadId: CHILD_B,
-          turn: {
-            id: `${CHILD_B}-early-turn`,
-            items: [],
-            itemsView: "notLoaded",
-            status: "inProgress",
-            error: null,
-            startedAt: 1785898342,
-            completedAt: null,
-            durationMs: null,
-          },
-        },
-      },
       {
         method: "item/completed",
         params: {
@@ -245,6 +227,68 @@ function buildOutOfOrderNamingScript() {
             id: "root-order-summary",
             phase: "final_answer",
             text: "Agents:\n- Alpha\n- Beta\n- Gamma\n- Delta",
+          },
+          completedAtMs: 1785898350000,
+        },
+      },
+    ],
+  };
+}
+
+function buildUnscopedExistingChildScript() {
+  const rootTurnId = "019fcfd6-1806-7de1-8564-de69fd55bffb";
+  return {
+    rootThreadId: ROOT,
+    preTurnNotifications: [
+      {
+        method: "turn/started",
+        params: {
+          threadId: CHILD_B,
+          turn: {
+            id: `${CHILD_B}-pre-turn`,
+            items: [],
+            itemsView: "notLoaded",
+            status: "inProgress",
+            error: null,
+            startedAt: 1785898342,
+            completedAt: null,
+            durationMs: null,
+          },
+        },
+      },
+    ],
+    notifications: [
+      {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: rootTurnId,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_unscoped_spawn",
+            tool: "spawnAgent",
+            status: "completed",
+            senderThreadId: ROOT,
+            receiverThreadIds: [CHILD_A, CHILD_B],
+            prompt: "Return one concise result.",
+            agentsStates: {
+              [CHILD_A]: { status: "pendingInit", message: null },
+              [CHILD_B]: { status: "pendingInit", message: null },
+            },
+          },
+          completedAtMs: 1785898350000,
+        },
+      },
+      {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: rootTurnId,
+          item: {
+            type: "agentMessage",
+            id: "root-unscoped-summary",
+            phase: "final_answer",
+            text: "Agents:\n- Alpha\n- Beta",
           },
           completedAtMs: 1785898350000,
         },
@@ -359,6 +403,51 @@ describe("CodexSessionRuntime collab integration", () => {
           [CHILD_C, "Gamma"],
           [CHILD_D, "Delta"],
         ],
+      );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not backfill an unscoped child into a later parent turn", () =>
+    Effect.gen(function* () {
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(buildUnscopedExistingChildScript()), "utf8");
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-unscoped-child"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      const eventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.method === "turn/completed"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "keep the unscoped child separate" });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const childBEvents = events.filter(
+        (event) =>
+          (event.payload as { agentThreadId?: string } | undefined)?.agentThreadId === CHILD_B,
+      );
+      assert.isAbove(childBEvents.length, 0);
+      assert.isTrue(
+        childBEvents.every((event) => event.turnId === undefined),
+        "an existing child without a spawn turn must not inherit a later turn id",
+      );
+      assert.notInclude(
+        events.map((event) => event.method),
+        "collabAgent/renamed",
+        "the unscoped child must not be included in the later fleet name batch",
       );
 
       yield* runtime.close;

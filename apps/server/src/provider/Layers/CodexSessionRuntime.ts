@@ -934,8 +934,6 @@ export const makeCodexSessionRuntime = (
     const pendingUserInputsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingUserInput>());
     const collabReceiverTurnsRef = yield* Ref.make(new Map<string, TurnId>());
     const collabChildAgentsRef = yield* Ref.make(new Map<string, CollabChildAgentState>());
-    /** Spawn-order receiver ids grouped by the parent turn that created them. */
-    const collabSpawnOrderRef = yield* Ref.make(new Map<string, ReadonlyArray<string>>());
     /** Child provider-thread id → its currently running provider turn id. */
     const collabChildLiveTurnsRef = yield* Ref.make(new Map<string, string>());
     const closedRef = yield* Ref.make(false);
@@ -1103,28 +1101,6 @@ export const makeCodexSessionRuntime = (
         },
       });
 
-    const rememberCollabSpawnOrder = (
-      parentTurnId: TurnId,
-      receiverThreadIds: ReadonlyArray<string>,
-      rootProviderThreadId: string | undefined,
-    ) =>
-      Ref.modify(collabSpawnOrderRef, (current) => {
-        const known = current.get(parentTurnId) ?? [];
-        const next = [...known];
-        for (const receiverThreadId of receiverThreadIds) {
-          if (
-            receiverThreadId &&
-            receiverThreadId !== rootProviderThreadId &&
-            !next.includes(receiverThreadId)
-          ) {
-            next.push(receiverThreadId);
-          }
-        }
-        const updated = new Map(current);
-        updated.set(parentTurnId, next);
-        return [next, updated] as const;
-      });
-
     const registerCollabChild = (input: CollabChildRegistrationInput) =>
       Effect.gen(function* () {
         const existing = (yield* Ref.get(collabChildAgentsRef)).get(input.agentThreadId);
@@ -1143,7 +1119,7 @@ export const makeCodexSessionRuntime = (
           // Registration-time-only: a late metadata signal must not attach
           // an old child to an unrelated parent turn.
           spawnTurnId: existing
-            ? (existing.spawnTurnId ?? input.spawnTurnId)
+            ? existing.spawnTurnId
             : (input.spawnTurnId ?? session.activeTurnId ?? undefined),
         };
         yield* Ref.update(collabChildAgentsRef, (current) => {
@@ -1234,19 +1210,26 @@ export const makeCodexSessionRuntime = (
           const senderIsChild =
             rootProviderThreadId !== undefined && item.senderThreadId !== rootProviderThreadId;
           const spawnTurnId = TurnId.make(notification.params.turnId);
-          const spawnOrder =
-            item.tool === "spawnAgent"
-              ? yield* rememberCollabSpawnOrder(
-                  spawnTurnId,
-                  item.receiverThreadIds,
-                  rootProviderThreadId,
+          let nextSpawnIndex: number | undefined;
+          if (item.tool === "spawnAgent") {
+            const currentChildren = yield* Ref.get(collabChildAgentsRef);
+            nextSpawnIndex =
+              Array.from(currentChildren.values())
+                .filter(
+                  (state) => state.spawnTurnId === spawnTurnId && state.spawnIndex !== undefined,
                 )
-              : undefined;
+                .reduce((highest, state) => Math.max(highest, state.spawnIndex ?? -1), -1) + 1;
+          }
           for (const receiverThreadId of item.receiverThreadIds) {
             if (!receiverThreadId || receiverThreadId === rootProviderThreadId) {
               continue;
             }
-            const spawnIndex = spawnOrder?.indexOf(receiverThreadId);
+            const existing = (yield* Ref.get(collabChildAgentsRef)).get(receiverThreadId);
+            const spawnIndex =
+              item.tool === "spawnAgent" ? (existing?.spawnIndex ?? nextSpawnIndex) : undefined;
+            if (item.tool === "spawnAgent" && existing?.spawnIndex === undefined) {
+              nextSpawnIndex = (nextSpawnIndex ?? 0) + 1;
+            }
             const child = yield* registerCollabChild({
               agentThreadId: receiverThreadId,
               nickname:
@@ -1706,17 +1689,10 @@ export const makeCodexSessionRuntime = (
             payload.turn.status === "failed" && "error" in payload.turn && payload.turn.error
               ? payload.turn.error.message
               : undefined;
-          return Effect.gen(function* () {
-            yield* updateSession(sessionRef, {
-              status: payload.turn.status === "failed" ? "error" : "ready",
-              activeTurnId: undefined,
-              ...(lastError ? { lastError } : {}),
-            });
-            yield* Ref.update(collabSpawnOrderRef, (current) => {
-              const next = new Map(current);
-              next.delete(TurnId.make(payload.turn.id));
-              return next;
-            });
+          return updateSession(sessionRef, {
+            status: payload.turn.status === "failed" ? "error" : "ready",
+            activeTurnId: undefined,
+            ...(lastError ? { lastError } : {}),
           });
         }),
       ),
