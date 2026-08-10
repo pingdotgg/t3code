@@ -178,6 +178,43 @@ it.effect("treats empty non-open change request listing output as no results", (
   }),
 );
 
+it.effect("preserves explicit ports in GitHub Enterprise auth targets", () =>
+  Effect.gen(function* () {
+    let listInput: Parameters<GitHubCli.GitHubCli["Service"]["listOpenPullRequests"]>[0] | null =
+      null;
+    const provider = yield* makeProvider({
+      listOpenPullRequests: (input) => {
+        listInput = input;
+        return Effect.succeed([]);
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "github",
+          name: "GitHub Enterprise",
+          baseUrl: "https://github.example:8443",
+        },
+        remoteName: "origin",
+        remoteUrl: "https://github.example:8443/owner/repo.git",
+      },
+      headSelector: "feature/accounts",
+      state: "open",
+      limit: 10,
+    });
+
+    assert.deepStrictEqual(listInput, {
+      cwd: "/repo",
+      host: "github.example:8443",
+      repository: "owner/repo",
+      headSelector: "feature/accounts",
+      limit: 10,
+    });
+  }),
+);
+
 it.effect("creates GitHub PRs through provider-neutral input names", () =>
   Effect.gen(function* () {
     let createInput: Parameters<GitHubCli.GitHubCli["Service"]["createPullRequest"]>[0] | null =

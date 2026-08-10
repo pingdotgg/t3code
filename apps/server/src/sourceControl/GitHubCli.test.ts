@@ -3,9 +3,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
+import { ServerSettingsError, VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 
-import { ServerSettingsService } from "../serverSettings.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 
@@ -19,9 +19,9 @@ const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
 
 const mockRun = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
 
-const layerWithSettings = (overrides: Parameters<typeof ServerSettingsService.layerTest>[0] = {}) =>
+const layerWithSettings = (overrides: Parameters<typeof ServerSettings.layerTest>[0] = {}) =>
   GitHubCli.layer.pipe(
-    Layer.provide(ServerSettingsService.layerTest(overrides)),
+    Layer.provide(ServerSettings.layerTest(overrides)),
     Layer.provide(
       Layer.mock(VcsProcess.VcsProcess)({
         run: mockRun,
@@ -128,6 +128,232 @@ describe("GitHubCli.layer", () => {
         env: { GH_TOKEN: "keyring-token" },
         timeoutMs: 30_000,
       });
+    }).pipe(Effect.provide(selectedLayer));
+  });
+
+  it.effect("reads keyring credentials again after token rotation", () => {
+    mockRun
+      .mockReturnValueOnce(Effect.succeed(processOutput("first-token\n")))
+      .mockReturnValueOnce(Effect.succeed(processOutput("ok")))
+      .mockReturnValueOnce(Effect.succeed(processOutput("rotated-token\n")))
+      .mockReturnValueOnce(Effect.succeed(processOutput("ok")));
+    const selectedLayer = layerWithSettings({
+      githubDefaultAccounts: {
+        "github.com": {
+          host: "github.com",
+          login: "work-user",
+          tokenSource: "keyring",
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      const input = {
+        cwd: "/repo",
+        host: "github.com",
+        repository: "acme/widget",
+        args: ["api", "user"],
+      } as const;
+
+      yield* gh.execute(input);
+      yield* gh.execute(input);
+
+      expect(mockRun).toHaveBeenNthCalledWith(2, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["api", "user"],
+        cwd: "/repo",
+        env: { GH_TOKEN: "first-token" },
+        timeoutMs: 30_000,
+      });
+      expect(mockRun).toHaveBeenNthCalledWith(4, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["api", "user"],
+        cwd: "/repo",
+        env: { GH_TOKEN: "rotated-token" },
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(selectedLayer));
+  });
+
+  it.effect("normalizes host casing before selecting the token environment variable", () => {
+    process.env.GITHUB_TOKEN = "environment-token";
+    mockRun.mockReturnValueOnce(Effect.succeed(processOutput("ok")));
+    const selectedLayer = layerWithSettings({
+      githubDefaultAccounts: {
+        "github.com": {
+          host: "GitHub.com",
+          login: "work-user",
+          tokenSource: "GITHUB_TOKEN",
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.execute({
+        cwd: "/repo",
+        host: "GitHub.com",
+        repository: "acme/widget",
+        args: ["api", "user"],
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["api", "user"],
+        cwd: "/repo",
+        env: { GH_TOKEN: "environment-token" },
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(selectedLayer));
+  });
+
+  it.effect("reports conflicting repository account selections structurally", () => {
+    const selectedLayer = layerWithSettings({
+      githubDefaultAccounts: {
+        "github.com": { host: "github.com", login: "personal", tokenSource: "keyring" },
+      },
+      githubAccountOverrides: {
+        "github.com/acme": { host: "github.com", login: "work", tokenSource: "keyring" },
+      },
+    });
+
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* gh.getAuthScope!({
+        cwd: "/repo",
+        host: "github.com",
+        repositories: ["personal/widget", "acme/widget"],
+      }).pipe(Effect.flip);
+
+      assert.equal(error._tag, "GitHubAccountSelectionConflictError");
+      if (error._tag !== "GitHubAccountSelectionConflictError") return;
+      assert.equal(error.host, "github.com");
+      assert.deepStrictEqual(error.repositories, ["personal/widget", "acme/widget"]);
+      assert.notProperty(error, "cause");
+    }).pipe(Effect.provide(selectedLayer));
+  });
+
+  it.effect("reports account host mismatches structurally", () => {
+    const selectedLayer = layerWithSettings({
+      githubDefaultAccounts: {
+        "github.com": {
+          host: "github.example.test",
+          login: "enterprise-user",
+          tokenSource: "keyring",
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* gh.getAuthScope!({
+        cwd: "/repo",
+        host: "github.com",
+        repository: "acme/widget",
+      }).pipe(Effect.flip);
+
+      assert.equal(error._tag, "GitHubAccountHostMismatchError");
+      if (error._tag !== "GitHubAccountHostMismatchError") return;
+      assert.equal(error.host, "github.com");
+      assert.equal(error.accountHost, "github.example.test");
+      assert.equal(error.login, "enterprise-user");
+      assert.notProperty(error, "cause");
+    }).pipe(Effect.provide(selectedLayer));
+  });
+
+  it.effect("reports unavailable token sources structurally", () => {
+    delete process.env.GITHUB_TOKEN;
+    const selectedLayer = layerWithSettings({
+      githubDefaultAccounts: {
+        "github.com": {
+          host: "github.com",
+          login: "environment-user",
+          tokenSource: "GITHUB_TOKEN",
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* gh
+        .execute({
+          cwd: "/repo",
+          host: "github.com",
+          repository: "acme/widget",
+          args: ["api", "user"],
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "GitHubAccountTokenUnavailableError");
+      if (error._tag !== "GitHubAccountTokenUnavailableError") return;
+      assert.equal(error.reason, "env-missing");
+      assert.equal(error.tokenSource, "GITHUB_TOKEN");
+      assert.notProperty(error, "cause");
+    }).pipe(Effect.provide(selectedLayer));
+  });
+
+  it.effect("reports empty keyring token output structurally", () => {
+    mockRun.mockReturnValueOnce(Effect.succeed(processOutput("\n")));
+    const selectedLayer = layerWithSettings({
+      githubDefaultAccounts: {
+        "github.com": { host: "github.com", login: "work-user", tokenSource: "keyring" },
+      },
+    });
+
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* gh
+        .execute({
+          cwd: "/repo",
+          host: "github.com",
+          repository: "acme/widget",
+          args: ["api", "user"],
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "GitHubAccountTokenUnavailableError");
+      if (error._tag !== "GitHubAccountTokenUnavailableError") return;
+      assert.equal(error.reason, "empty-output");
+      assert.equal(error.login, "work-user");
+      assert.notProperty(error, "cause");
+    }).pipe(Effect.provide(selectedLayer));
+  });
+
+  it.effect("reports settings read failures at the account-selection stage", () => {
+    const cause = new ServerSettingsError({
+      settingsPath: "/settings.json",
+      operation: "read-file",
+      cause: new Error("unavailable"),
+    });
+    const selectedLayer = GitHubCli.layer.pipe(
+      Layer.provide(
+        Layer.mock(ServerSettings.ServerSettingsService)({
+          getSettings: Effect.fail(cause),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: mockRun,
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* gh.getAuthScope!({
+        cwd: "/repo",
+        host: "github.com",
+        repository: "acme/widget",
+      }).pipe(Effect.flip);
+
+      assert.equal(error._tag, "GitHubAccountSettingsUnavailableError");
+      if (error._tag !== "GitHubAccountSettingsUnavailableError") return;
+      assert.equal(error.host, "github.com");
+      assert.strictEqual(error.cause, cause);
     }).pipe(Effect.provide(selectedLayer));
   });
 

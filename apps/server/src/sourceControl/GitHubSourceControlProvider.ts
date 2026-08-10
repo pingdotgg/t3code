@@ -23,7 +23,14 @@ import {
 
 function authTarget(context: SourceControlProvider.SourceControlProviderContext | undefined) {
   if (context === undefined) return {};
-  const [host, ...path] = normalizeGitRemoteUrl(context.remoteUrl).split("/");
+  const [normalizedHost, ...path] = normalizeGitRemoteUrl(context.remoteUrl).split("/");
+  let host = normalizedHost;
+  try {
+    const remote = new URL(context.remoteUrl);
+    host = remote.host.toLowerCase();
+  } catch {
+    // SCP-style remotes have no explicit port and already use the normalized host.
+  }
   return host && path.length >= 2 ? { host, repository: path.join("/") } : {};
 }
 

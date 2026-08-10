@@ -442,7 +442,7 @@ function githubAccountKey(account: GitHubAccountSelection): string {
 }
 
 function githubAccountLabel(account: GitHubAccountSelection): string {
-  return `${account.login} · ${account.tokenSource}`;
+  return `${account.login} · ${account.host} · ${account.tokenSource}`;
 }
 
 function githubAccountSelection(account: GitHubAuthAccount): GitHubAccountSelection {

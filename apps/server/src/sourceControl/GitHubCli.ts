@@ -79,6 +79,83 @@ export class GitHubCliCommandError extends Schema.TaggedErrorClass<GitHubCliComm
   }
 }
 
+export class GitHubAccountSettingsUnavailableError extends Schema.TaggedErrorClass<GitHubAccountSettingsUnavailableError>()(
+  "GitHubAccountSettingsUnavailableError",
+  {
+    command: Schema.Literal("gh"),
+    cwd: Schema.String,
+    host: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  get detail(): string {
+    return `GitHub account settings could not be loaded for ${this.host}.`;
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in accountSelection: ${this.detail}`;
+  }
+}
+
+export class GitHubAccountSelectionConflictError extends Schema.TaggedErrorClass<GitHubAccountSelectionConflictError>()(
+  "GitHubAccountSelectionConflictError",
+  {
+    command: Schema.Literal("gh"),
+    cwd: Schema.String,
+    host: Schema.String,
+    repositories: Schema.Array(Schema.String),
+  },
+) {
+  get detail(): string {
+    return `Repositories on ${this.host} require different GitHub accounts: ${this.repositories.join(", ")}.`;
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in accountSelection: ${this.detail}`;
+  }
+}
+
+export class GitHubAccountHostMismatchError extends Schema.TaggedErrorClass<GitHubAccountHostMismatchError>()(
+  "GitHubAccountHostMismatchError",
+  {
+    command: Schema.Literal("gh"),
+    cwd: Schema.String,
+    host: Schema.String,
+    accountHost: Schema.String,
+    login: Schema.String,
+  },
+) {
+  get detail(): string {
+    return `GitHub account ${this.login} belongs to ${this.accountHost}, not ${this.host}.`;
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in accountSelection: ${this.detail}`;
+  }
+}
+
+export class GitHubAccountTokenUnavailableError extends Schema.TaggedErrorClass<GitHubAccountTokenUnavailableError>()(
+  "GitHubAccountTokenUnavailableError",
+  {
+    command: Schema.Literal("gh"),
+    cwd: Schema.String,
+    host: Schema.String,
+    login: Schema.String,
+    tokenSource: Schema.String,
+    reason: Schema.Literals(["env-missing", "empty-output"]),
+  },
+) {
+  get detail(): string {
+    return this.reason === "env-missing"
+      ? `GitHub token source ${this.tokenSource} is unavailable for ${this.login} on ${this.host}.`
+      : `GitHub CLI returned no token for ${this.login} on ${this.host}.`;
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in tokenFor: ${this.detail}`;
+  }
+}
+
 const gitHubCliDecodeFields = {
   command: Schema.Literal("gh"),
   cwd: Schema.String,
@@ -142,6 +219,10 @@ export const GitHubCliError = Schema.Union([
   GitHubCliAuthenticationError,
   GitHubPullRequestNotFoundError,
   GitHubCliCommandError,
+  GitHubAccountSettingsUnavailableError,
+  GitHubAccountSelectionConflictError,
+  GitHubAccountHostMismatchError,
+  GitHubAccountTokenUnavailableError,
   GitHubPullRequestListDecodeError,
   GitHubChangeRequestListDecodeError,
   GitHubPullRequestDecodeError,
@@ -358,7 +439,6 @@ function deriveRepositoryCloneUrlsFromCreateOutput(
 export const make = Effect.gen(function* () {
   const vcsProcess = yield* VcsProcess.VcsProcess;
   const settings = yield* ServerSettingsService;
-  const tokens = new Map<string, string>();
 
   const accountSelection = Effect.fn("GitHubCli.accountSelection")(function* (
     input: GitHubAuthTarget & { readonly cwd: string },
@@ -366,7 +446,13 @@ export const make = Effect.gen(function* () {
     const host = (input.host ?? "github.com").toLowerCase();
     const current = yield* settings.getSettings.pipe(
       Effect.mapError(
-        (cause) => new GitHubCliCommandError({ command: "gh", cwd: input.cwd, cause }),
+        (cause) =>
+          new GitHubAccountSettingsUnavailableError({
+            command: "gh",
+            cwd: input.cwd,
+            host,
+            cause,
+          }),
       ),
     );
     const defaults = new Map(
@@ -399,18 +485,21 @@ export const make = Effect.gen(function* () {
       ]),
     );
     if (byKey.size > 1) {
-      return yield* new GitHubCliCommandError({
+      return yield* new GitHubAccountSelectionConflictError({
         command: "gh",
         cwd: input.cwd,
-        cause: new Error("Repositories require different GitHub accounts."),
+        host,
+        repositories,
       });
     }
     const account = byKey.values().next().value;
     if (account !== undefined && account.host.toLowerCase() !== host) {
-      return yield* new GitHubCliAuthenticationError({
+      return yield* new GitHubAccountHostMismatchError({
         command: "gh",
         cwd: input.cwd,
-        cause: new Error("The selected GitHub account belongs to a different host."),
+        host,
+        accountHost: account.host,
+        login: account.login,
       });
     }
     return account;
@@ -423,16 +512,15 @@ export const make = Effect.gen(function* () {
     if (GITHUB_TOKEN_ENV_SOURCES.has(input.account.tokenSource)) {
       const token = process.env[input.account.tokenSource]?.trim();
       if (token !== undefined && token.length > 0) return token;
-      return yield* new GitHubCliAuthenticationError({
+      return yield* new GitHubAccountTokenUnavailableError({
         command: "gh",
         cwd: input.cwd,
-        cause: new Error("The selected GitHub token environment variable is unavailable."),
+        host: input.account.host,
+        login: input.account.login,
+        tokenSource: input.account.tokenSource,
+        reason: "env-missing",
       });
     }
-
-    const key = selectionKey(input.account);
-    const cached = tokens.get(key);
-    if (cached !== undefined) return cached;
 
     const output = yield* vcsProcess
       .run({
@@ -449,13 +537,15 @@ export const make = Effect.gen(function* () {
       );
     const token = output.stdout.trim();
     if (token.length === 0) {
-      return yield* new GitHubCliAuthenticationError({
+      return yield* new GitHubAccountTokenUnavailableError({
         command: "gh",
         cwd: input.cwd,
-        cause: new Error("GitHub CLI returned an empty account token."),
+        host: input.account.host,
+        login: input.account.login,
+        tokenSource: input.account.tokenSource,
+        reason: "empty-output",
       });
     }
-    tokens.set(key, token);
     return token;
   });
 
@@ -478,7 +568,7 @@ export const make = Effect.gen(function* () {
       const account = yield* accountSelection(input);
       if (account === undefined) return yield* run(input);
 
-      const host = input.host ?? "github.com";
+      const host = (input.host ?? "github.com").toLowerCase();
       const token = yield* tokenFor({ account, cwd: input.cwd });
       const tokenVariable =
         host === "github.com" || host.endsWith(".ghe.com") ? "GH_TOKEN" : "GH_ENTERPRISE_TOKEN";

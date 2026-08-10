@@ -67,7 +67,11 @@ function reasonFor(
   error: GitHubPullRequestCli.GitHubPullRequestCliError,
 ): PullRequestProviderError["reason"] {
   if (error._tag === "GitHubCliUnavailableError") return "missing-tool";
-  if (error._tag === "GitHubCliAuthenticationError") return "unauthenticated";
+  if (
+    error._tag === "GitHubCliAuthenticationError" ||
+    error._tag === "GitHubAccountTokenUnavailableError"
+  )
+    return "unauthenticated";
   return "failed";
 }
 
