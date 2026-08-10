@@ -27,9 +27,19 @@ const getLiteralValue = (node: unknown): Option.Option<string | number> => {
     : Option.none();
 };
 
+// Style props take an object or an array of them (`style={[base, {…}]}`), so
+// array elements are flattened; a non-literal element (a StyleSheet
+// reference) contributes nothing and is simply skipped.
 const getObjectProperties = (node: unknown): ReadonlyArray<unknown> => {
   const expression = unwrapExpression(node);
-  if (Option.isNone(expression) || expression.value.type !== "ObjectExpression") return [];
+  if (Option.isNone(expression)) return [];
+
+  if (expression.value.type === "ArrayExpression") {
+    const { elements } = expression.value;
+    return Array.isArray(elements) ? elements.flatMap(getObjectProperties) : [];
+  }
+
+  if (expression.value.type !== "ObjectExpression") return [];
   const { properties } = expression.value;
   return Array.isArray(properties) ? properties : [];
 };
@@ -88,17 +98,51 @@ export default defineRule({
   },
   createOnce(context) {
     let isReactNativeFile = false;
-    let readsSafeAreaInset = false;
-    const candidates: Array<unknown> = [];
+    // Inset reads are tracked per top-level function, not per file: a file
+    // holding a header component that reads the inset and a list component
+    // that does not must still report the list. Nested functions (renderItem,
+    // callbacks) share their component's id, since the hook is called once in
+    // the component body and closed over.
+    let functionDepth = 0;
+    let lastComponentId = 0;
+    let currentComponentId = 0;
+    const componentsReadingInset = new Set<number>();
+    const candidates: Array<{ readonly node: unknown; readonly componentId: number }> = [];
 
     const reset = () => {
       isReactNativeFile = false;
-      readsSafeAreaInset = false;
+      functionDepth = 0;
+      lastComponentId = 0;
+      currentComponentId = 0;
+      componentsReadingInset.clear();
       candidates.length = 0;
+    };
+
+    const enterFunction = () => {
+      if (functionDepth === 0) {
+        lastComponentId += 1;
+        currentComponentId = lastComponentId;
+      }
+      functionDepth += 1;
+    };
+
+    const exitFunction = () => {
+      functionDepth -= 1;
+      if (functionDepth === 0) {
+        // Module scope shares id 0: a style object declared there belongs to
+        // no component and can never be excused by a component's inset read.
+        currentComponentId = 0;
+      }
     };
 
     return {
       before: reset,
+      FunctionDeclaration: enterFunction,
+      "FunctionDeclaration:exit": exitFunction,
+      FunctionExpression: enterFunction,
+      "FunctionExpression:exit": exitFunction,
+      ArrowFunctionExpression: enterFunction,
+      "ArrowFunctionExpression:exit": exitFunction,
       ImportDeclaration(node) {
         const source = getLiteralValue(node.source);
         if (
@@ -113,7 +157,7 @@ export default defineRule({
       Identifier(node) {
         if (typeof node.name !== "string") return;
         if (SAFE_AREA_BOTTOM_IDENTIFIERS.has(node.name)) {
-          readsSafeAreaInset = true;
+          componentsReadingInset.add(currentComponentId);
         }
       },
       MemberExpression(node) {
@@ -123,7 +167,7 @@ export default defineRule({
         const object = unwrapExpression(node.object);
         if (Option.isNone(object) || object.value.type !== "Identifier") return;
         if (INSET_HOLDER_NAMES.has(object.value.name)) {
-          readsSafeAreaInset = true;
+          componentsReadingInset.add(currentComponentId);
         }
       },
       ObjectExpression(node) {
@@ -138,7 +182,7 @@ export default defineRule({
         // claims to have measured the bottom edge itself.
         const value = getLiteralValue(bottom.value.value);
         if (Option.exists(value, (literal) => typeof literal === "number" && literal !== 0)) {
-          candidates.push(bottom.value);
+          candidates.push({ node: bottom.value, componentId: currentComponentId });
         }
       },
       JSXAttribute(node) {
@@ -150,15 +194,16 @@ export default defineRule({
           const property = findProperty(properties, propertyName);
           if (Option.isNone(property)) continue;
           if (Option.isSome(getLiteralValue(property.value.value))) {
-            candidates.push(property.value);
+            candidates.push({ node: property.value, componentId: currentComponentId });
           }
         }
       },
       "Program:exit"() {
-        if (!isReactNativeFile || readsSafeAreaInset) return;
+        if (!isReactNativeFile) return;
 
         for (const candidate of candidates) {
-          context.report({ node: candidate as never, message: MESSAGE });
+          if (componentsReadingInset.has(candidate.componentId)) continue;
+          context.report({ node: candidate.node as never, message: MESSAGE });
         }
       },
     };

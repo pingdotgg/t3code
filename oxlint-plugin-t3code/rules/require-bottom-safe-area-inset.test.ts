@@ -66,6 +66,72 @@ describe("t3code/require-bottom-safe-area-inset", () => {
     `,
   );
 
+  rule.valid(
+    "allows a nested callback that closes over its component's inset",
+    `
+      import { FlatList, View } from "react-native";
+      import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+      export function FileList() {
+        const insets = useSafeAreaInsets();
+        return (
+          <FlatList
+            data={[]}
+            renderItem={() => <View style={{ position: "absolute", bottom: insets.bottom + 8 }} />}
+            contentContainerStyle={{ paddingBottom: insets.bottom }}
+          />
+        );
+      }
+    `,
+  );
+
+  rule.invalid(
+    "reports a component that ignores the inset even when a sibling component reads it",
+    `
+      import { Pressable, View } from "react-native";
+      import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+      function Header() {
+        const insets = useSafeAreaInsets();
+        return <View style={{ paddingBottom: insets.bottom }} />;
+      }
+
+      export function Screen() {
+        return (
+          <View>
+            <Header />
+            <Pressable style={{ position: "absolute", bottom: 16, right: 16 }} />
+          </View>
+        );
+      }
+    `,
+    (output) => {
+      assert.match(output, /safe-area inset/);
+    },
+  );
+
+  rule.invalid(
+    "reports a fixed bottom padding inside a style array",
+    `
+      import { FlatList, StyleSheet } from "react-native";
+
+      const styles = StyleSheet.create({ base: { paddingTop: 8 } });
+
+      export function FileList() {
+        return (
+          <FlatList
+            data={[]}
+            renderItem={() => null}
+            contentContainerStyle={[styles.base, { paddingBottom: 8 }]}
+          />
+        );
+      }
+    `,
+    (output) => {
+      assert.match(output, /safe-area inset/);
+    },
+  );
+
   rule.invalid(
     "reports a floating button pinned with a fixed bottom offset",
     `

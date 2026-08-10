@@ -630,9 +630,11 @@ export function ArchivedThreadsScreen(props: {
         <LegendList
           className="flex-1"
           contentContainerStyle={{
-            // contentInsetAdjustmentBehavior only pads the safe area on iOS,
-            // so Android needs the bottom inset spelled out.
-            paddingBottom: Math.max(insets.bottom, 16) + 16,
+            // iOS is left alone: contentInsetAdjustmentBehavior="automatic"
+            // already adds the safe area to the content inset, and adding it
+            // here again would leave a dead strip below the last thread.
+            // Android ignores that prop, so it needs the inset spelled out.
+            paddingBottom: Platform.OS === "android" ? Math.max(insets.bottom, 16) + 16 : 32,
             paddingHorizontal: 16,
             paddingTop: 4,
           }}

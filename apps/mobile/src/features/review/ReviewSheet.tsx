@@ -275,7 +275,9 @@ function ReviewFileNavigator({
       keyExtractor={(file) => file.id}
       contentContainerStyle={{
         paddingHorizontal: 8,
-        paddingBottom: 8,
+        // iOS hosts this list in a native Screen whose content insets already
+        // cover the home indicator; Android needs the gesture bar reserved.
+        paddingBottom: Platform.OS === "android" ? Math.max(insets.bottom, 8) + 8 : 8,
         // The nested native header is translucent; start the list below it so
         // the scroll-edge effect can sample the content (same treatment as
         // FileTreeBrowser in the Files pane).
