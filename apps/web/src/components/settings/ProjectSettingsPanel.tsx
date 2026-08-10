@@ -90,6 +90,11 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { SidebarInset } from "../ui/sidebar";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
+  WorkspaceBreadcrumb,
+  WorkspaceBreadcrumbItem,
+  WorkspaceBreadcrumbSeparator,
+} from "../WorkspaceBreadcrumb";
+import {
   SettingResetButton,
   SettingsPageContainer,
   SettingsRow,
@@ -193,46 +198,43 @@ function ProjectSettingsBreadcrumb({ projectKey }: { projectKey: string }) {
   const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
 
   return (
-    <nav
-      aria-label="Project settings breadcrumb"
-      className="flex min-w-0 items-center gap-2 overflow-hidden [-webkit-app-region:no-drag] sm:gap-3"
-    >
-      <span className="shrink-0 text-sm font-medium text-muted-foreground">Projects</span>
-      <span aria-hidden="true" className="shrink-0 text-icon-muted">
-        /
-      </span>
-      {selected ? (
-        <Select
-          value={selected.projectKey}
-          onValueChange={(value) =>
-            void navigate({
-              to: "/projects/$projectKey",
-              params: { projectKey: String(value) },
-              replace: true,
-              hashScrollIntoView: false,
-            })
-          }
-        >
-          <SelectTrigger
-            aria-label="Switch project"
-            className="h-auto min-h-0 min-w-0 max-w-64 gap-1 border-0 px-0 py-0 text-sm font-medium text-foreground sm:h-auto sm:min-h-0 sm:text-sm"
-            size="xs"
-            variant="ghost"
+    <WorkspaceBreadcrumb ariaLabel="Project settings breadcrumb">
+      <WorkspaceBreadcrumbItem>Projects</WorkspaceBreadcrumbItem>
+      <WorkspaceBreadcrumbSeparator />
+      <WorkspaceBreadcrumbItem current>
+        {selected ? (
+          <Select
+            value={selected.projectKey}
+            onValueChange={(value) =>
+              void navigate({
+                to: "/projects/$projectKey",
+                params: { projectKey: String(value) },
+                replace: true,
+                hashScrollIntoView: false,
+              })
+            }
           >
-            <SelectValue>{selected.displayName}</SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="start" alignItemWithTrigger={false}>
-            {groups.map((candidate) => (
-              <SelectItem key={candidate.projectKey} hideIndicator value={candidate.projectKey}>
-                {candidate.displayName}
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
-      ) : (
-        <span className="truncate text-sm text-muted-foreground">Unavailable project</span>
-      )}
-    </nav>
+            <SelectTrigger
+              aria-label="Switch project"
+              className="h-auto min-h-0 min-w-0 max-w-64 gap-1 border-0 px-0 py-0 text-sm font-medium text-foreground sm:h-auto sm:min-h-0 sm:text-sm"
+              size="xs"
+              variant="ghost"
+            >
+              <SelectValue>{selected.displayName}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="start" alignItemWithTrigger={false}>
+              {groups.map((candidate) => (
+                <SelectItem key={candidate.projectKey} hideIndicator value={candidate.projectKey}>
+                  {candidate.displayName}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        ) : (
+          <span className="truncate text-sm text-muted-foreground">Unavailable project</span>
+        )}
+      </WorkspaceBreadcrumbItem>
+    </WorkspaceBreadcrumb>
   );
 }
 

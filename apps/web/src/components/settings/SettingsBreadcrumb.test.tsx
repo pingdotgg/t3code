@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { SettingsBreadcrumb, settingsBreadcrumbLabel } from "./SettingsBreadcrumb";
+import { SettingsBreadcrumb } from "./SettingsBreadcrumb";
 
 describe("SettingsBreadcrumb", () => {
   it.each([
@@ -14,7 +14,9 @@ describe("SettingsBreadcrumb", () => {
     ["/settings/archived", "Archive"],
     ["/settings/diagnostics", "Diagnostics"],
   ])("labels %s as %s", (pathname, label) => {
-    expect(settingsBreadcrumbLabel(pathname)).toBe(label);
+    const markup = renderToStaticMarkup(<SettingsBreadcrumb pathname={pathname} />);
+
+    expect(markup).toContain(label);
   });
 
   it("renders settings as the parent of a section", () => {
