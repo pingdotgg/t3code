@@ -46,6 +46,7 @@ import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
 } from "./composerMentionDrag";
+import { prepareComposerFileUpload } from "./composerFileUpload";
 import {
   type ComposerImageAttachment,
   type DraftId,
@@ -505,6 +506,7 @@ export interface ChatComposerProps {
   isLocalDraftThread: boolean;
   forceExpandedOnMobile: boolean;
   projectSelectionRequired: boolean;
+  canUseDesktopFilePaths: boolean;
 
   // Session phase
   phase: SessionPhase;
@@ -614,6 +616,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isLocalDraftThread: _isLocalDraftThread,
     forceExpandedOnMobile,
     projectSelectionRequired,
+    canUseDesktopFilePaths,
     phase,
     isConnecting,
     isSendBusy,
@@ -2371,13 +2374,53 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Callbacks: paste / drag
   // ------------------------------------------------------------------
+  const addComposerFiles = (files: File[]): { handled: boolean; insertedPaths: boolean } => {
+    const prepared = prepareComposerFileUpload(files, {
+      allowLocalPaths: canUseDesktopFilePaths,
+      getPathForFile: window.desktopBridge?.getPathForFile,
+    });
+    let handled = false;
+    let insertedPaths = false;
+    if (prepared.paths.length > 0) {
+      handled = true;
+      const mentions = prepared.paths.map(serializeComposerFileLink).join(" ");
+      insertedPaths = insertComposerTextAtEnd(`${mentions} `, { ensureLeadingBoundary: true });
+      if (!insertedPaths) {
+        toastManager.add({
+          type: "error",
+          title: "Unable to add files",
+          description: "The composer is busy; try again once it is ready.",
+        });
+      }
+    }
+    if (prepared.imageFiles.length > 0) {
+      handled = true;
+      void addComposerImages(prepared.imageFiles);
+    }
+    if (prepared.unresolvedNames.length > 0) {
+      toastManager.add({
+        type: "error",
+        title: "Unable to add files",
+        description: `Could not read the local path for ${prepared.unresolvedNames.join(", ")}.`,
+      });
+    }
+    if (prepared.unsupportedNames.length > 0) {
+      handled = true;
+      toastManager.add({
+        type: "warning",
+        title: "File uploads aren't supported here",
+        description: "Non-image files can only be added to this computer's local environment.",
+      });
+    }
+    return { handled, insertedPaths };
+  };
+
   const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
     const files = Array.from(event.clipboardData.files);
     if (files.length === 0) return;
-    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
-    if (imageFiles.length === 0) return;
-    event.preventDefault();
-    void addComposerImages(imageFiles);
+    if (addComposerFiles(files).handled) {
+      event.preventDefault();
+    }
   };
 
   const onComposerDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
@@ -2411,8 +2454,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     const files = Array.from(event.dataTransfer.files);
-    void addComposerImages(files);
-    focusComposer();
+    const result = addComposerFiles(files);
+    if (!result.insertedPaths) {
+      focusComposer();
+    }
   };
 
   const insertComposerTextAtEnd = (
