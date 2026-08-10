@@ -206,6 +206,7 @@ import {
 import {
   appendTerminalContextsToPrompt,
   formatTerminalContextLabel,
+  stripInlineTerminalContextPlaceholders,
   type TerminalContextDraft,
   type TerminalContextSelection,
 } from "../lib/terminalContext";
@@ -292,6 +293,7 @@ import {
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveRevertedMessagePrompt,
   dismissBranchMismatchForSession,
   hasEnvironmentReconnectWarningGraceElapsed,
   scheduleEnvironmentReconnectWarning,
@@ -462,6 +464,71 @@ type EnvironmentUnavailableState = {
   readonly label: string;
   readonly connection: EnvironmentConnectionPresentation;
 };
+
+interface PendingRevertedMessageRestore {
+  threadId: ThreadId;
+  messageId: MessageId;
+  turnCount: number;
+  knownFailureActivityIds: ReadonlySet<string>;
+  draft: RevertedMessageDraft;
+}
+
+interface RevertedMessageDraft {
+  prompt: string;
+  images: ComposerImageAttachment[];
+  unavailableImageNames: string[];
+}
+
+async function prepareRevertedMessageDraft(message: ChatMessage): Promise<RevertedMessageDraft> {
+  const prepared = await Promise.all(
+    (message.attachments ?? [])
+      .filter((attachment) => !attachment.name.startsWith("preview-annotation-"))
+      .map(async (attachment) => {
+        if (!attachment.previewUrl) {
+          return { image: null, unavailableImageName: attachment.name };
+        }
+        try {
+          // The timeline may have already cached this URL from an <img>
+          // request, which carries no Origin header and therefore no CORS
+          // response header. Reload it so the fetch gets its own CORS-aware
+          // response instead of reusing that incompatible cache entry.
+          const response = await fetch(attachment.previewUrl, { cache: "reload" });
+          if (!response.ok) throw new Error(`Could not load ${attachment.name}.`);
+          const blob = await response.blob();
+          const file = new File([blob], attachment.name, {
+            type: blob.type || attachment.mimeType,
+          });
+          return {
+            image: {
+              type: "image" as const,
+              id: attachment.id,
+              name: attachment.name,
+              mimeType: file.type || attachment.mimeType,
+              sizeBytes: file.size,
+              previewUrl: URL.createObjectURL(file),
+              file,
+            },
+            unavailableImageName: null,
+          };
+        } catch {
+          return { image: null, unavailableImageName: attachment.name };
+        }
+      }),
+  );
+  return {
+    prompt: deriveRevertedMessagePrompt(message.text),
+    images: prepared.flatMap((entry) => (entry.image ? [entry.image] : [])),
+    unavailableImageNames: prepared.flatMap((entry) =>
+      entry.unavailableImageName ? [entry.unavailableImageName] : [],
+    ),
+  };
+}
+
+function releaseRevertedMessageDraft(draft: RevertedMessageDraft): void {
+  for (const image of draft.images) {
+    if (image.previewUrl.startsWith("blob:")) URL.revokeObjectURL(image.previewUrl);
+  }
+}
 
 function eventPathContainsSelector(event: Event, selector: string): boolean {
   const path = event.composedPath();
@@ -1338,6 +1405,11 @@ function ChatViewContent(props: ChatViewProps) {
   >({});
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
+  const [pendingRevertedMessageRestore, setPendingRevertedMessageRestore] =
+    useState<PendingRevertedMessageRestore | null>(null);
+  const pendingRevertedMessageRestoreRef = useRef(pendingRevertedMessageRestore);
+  pendingRevertedMessageRestoreRef.current = pendingRevertedMessageRestore;
+  const chatViewMountedRef = useRef(true);
   const [maximizedRightPanelThreadKey, setMaximizedRightPanelThreadKey] = useState<string | null>(
     null,
   );
@@ -2319,7 +2391,11 @@ function ChatViewContent(props: ChatViewProps) {
     setAttachmentPreviewHandoffByMessageId({});
   }, []);
   useEffect(() => {
+    chatViewMountedRef.current = true;
     return () => {
+      chatViewMountedRef.current = false;
+      const pendingRevert = pendingRevertedMessageRestoreRef.current;
+      if (pendingRevert) releaseRevertedMessageDraft(pendingRevert.draft);
       clearAttachmentPreviewHandoffs();
       for (const message of optimisticUserMessagesRef.current) {
         revokeUserMessagePreviewUrls(message);
@@ -3984,9 +4060,120 @@ function ChatViewContent(props: ChatViewProps) {
     // activeThreadRef resets transitively with the active thread.
   }, [activeThread?.id]);
 
+  const revertObservedThreadId = activeThread?.id ?? null;
+  const revertObservedActivities = activeThread?.activities ?? null;
+  const revertObservedMessages = activeThread?.messages ?? null;
   useEffect(() => {
-    setIsRevertingCheckpoint(false);
-  }, [activeThread?.id]);
+    const pending = pendingRevertedMessageRestore;
+    if (
+      !pending ||
+      revertObservedThreadId !== pending.threadId ||
+      !revertObservedActivities ||
+      !revertObservedMessages
+    ) {
+      return;
+    }
+
+    const failed = revertObservedActivities.some((activity) => {
+      if (
+        activity.kind !== "checkpoint.revert.failed" ||
+        pending.knownFailureActivityIds.has(activity.id) ||
+        typeof activity.payload !== "object" ||
+        activity.payload === null
+      ) {
+        return false;
+      }
+      return (activity.payload as { turnCount?: unknown }).turnCount === pending.turnCount;
+    });
+    if (failed) {
+      releaseRevertedMessageDraft(pending.draft);
+      pendingRevertedMessageRestoreRef.current = null;
+      setPendingRevertedMessageRestore(null);
+      return;
+    }
+
+    if (revertObservedMessages.some((message) => message.id === pending.messageId)) {
+      return;
+    }
+
+    pendingRevertedMessageRestoreRef.current = null;
+    setPendingRevertedMessageRestore(null);
+
+    if (
+      pending.draft.prompt.length === 0 &&
+      pending.draft.images.length === 0 &&
+      pending.draft.unavailableImageNames.length === 0
+    ) {
+      releaseRevertedMessageDraft(pending.draft);
+      toastManager.add({
+        type: "warning",
+        title: "Message context was not restored",
+        description:
+          "The reverted message only contained attached context, which cannot be safely reused after a rewind.",
+        data: { hideCopyButton: true },
+      });
+      return;
+    }
+
+    const writeRevertedMessageToComposer = () => {
+      const currentDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      const existingPrompt = currentDraft?.prompt.trimEnd() ?? "";
+      const existingText = stripInlineTerminalContextPlaceholders(existingPrompt).trim();
+      const nextPrompt =
+        existingPrompt.length > 0 && pending.draft.prompt.length > 0
+          ? `${existingPrompt}${existingText.length > 0 ? "\n\n" : ""}${pending.draft.prompt}`
+          : existingPrompt || pending.draft.prompt;
+      setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+      if (pending.draft.images.length > 0) {
+        addComposerDraftImages(composerDraftTarget, pending.draft.images);
+      }
+      composerRef.current?.resetCursorState({ cursor: nextPrompt.length, prompt: nextPrompt });
+      window.requestAnimationFrame(() => composerRef.current?.focusAtEnd());
+      if (pending.draft.unavailableImageNames.length > 0) {
+        toastManager.add({
+          type: "warning",
+          title: "Some images could not be restored",
+          description: pending.draft.unavailableImageNames.join(", "),
+        });
+      }
+    };
+
+    const currentDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+    const hasDraftToStash = Boolean(
+      currentDraft &&
+      (stripInlineTerminalContextPlaceholders(currentDraft.prompt).trim().length > 0 ||
+        currentDraft.images.length > 0),
+    );
+    if (hasDraftToStash && composerRef.current?.stashCurrentPrompt() !== true) {
+      writeRevertedMessageToComposer();
+      toastManager.add({
+        type: "warning",
+        title: "Reverted message appended",
+        description:
+          "Your current draft could not be stashed, so the reverted message was added after it instead.",
+        data: { hideCopyButton: true },
+      });
+      return;
+    }
+
+    writeRevertedMessageToComposer();
+    if (hasDraftToStash) {
+      toastManager.add({
+        type: "info",
+        title: "Current draft stashed",
+        description: "The reverted message is ready to edit in the composer.",
+        data: { hideCopyButton: true },
+      });
+    }
+  }, [
+    addComposerDraftImages,
+    composerDraftTarget,
+    pendingRevertedMessageRestore,
+    revertObservedActivities,
+    revertObservedMessages,
+    revertObservedThreadId,
+    setComposerDraftPrompt,
+  ]);
 
   useEffect(() => {
     if (!activeThread?.id || terminalUiState.terminalOpen) return;
@@ -4794,9 +4981,12 @@ function ChatViewContent(props: ChatViewProps) {
   ]);
 
   const onRevertToTurnCount = useCallback(
-    async (turnCount: number) => {
+    async (turnCount: number, message: ChatMessage) => {
       const localApi = readLocalApi();
-      if (!localApi || !activeThread || isRevertingCheckpoint) return;
+      if (!localApi || !activeThread || isRevertingCheckpoint || pendingRevertedMessageRestore) {
+        return;
+      }
+      const threadId = activeThread.id;
 
       if (activeEnvironmentUnavailable && activeEnvironmentUnavailableLabel) {
         setThreadError(
@@ -4809,6 +4999,10 @@ function ChatViewContent(props: ChatViewProps) {
         setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
         return;
       }
+      // Start copying image blobs before opening the confirmation dialog. The
+      // optimistic preview handoff can be promoted to its server URL while the
+      // dialog is open, which revokes the blob URL captured by this callback.
+      const draftPromise = prepareRevertedMessageDraft(message);
       const confirmed = await localApi.dialogs.confirm(
         [
           `Revert this thread to checkpoint ${turnCount}?`,
@@ -4818,24 +5012,49 @@ function ChatViewContent(props: ChatViewProps) {
         { variant: "destructive" },
       );
       if (!confirmed) {
+        releaseRevertedMessageDraft(await draftPromise);
         return;
       }
 
       setIsRevertingCheckpoint(true);
-      setThreadError(activeThread.id, null);
+      setThreadError(threadId, null);
+      const draft = await draftPromise;
+      if (!chatViewMountedRef.current) {
+        releaseRevertedMessageDraft(draft);
+        return;
+      }
+      const pendingRestore: PendingRevertedMessageRestore = {
+        threadId,
+        messageId: message.id,
+        turnCount,
+        knownFailureActivityIds: new Set(
+          activeThread.activities
+            .filter((activity) => activity.kind === "checkpoint.revert.failed")
+            .map((activity) => activity.id),
+        ),
+        draft,
+      };
+      setPendingRevertedMessageRestore(pendingRestore);
       const result = await revertThreadCheckpoint({
         environmentId,
         input: {
-          threadId: activeThread.id,
+          threadId,
           turnCount,
         },
       });
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        setThreadError(
-          activeThread.id,
-          error instanceof Error ? error.message : "Failed to revert thread state.",
-        );
+      if (result._tag === "Failure") {
+        setPendingRevertedMessageRestore((current) => {
+          if (current !== pendingRestore) return current;
+          releaseRevertedMessageDraft(current.draft);
+          return null;
+        });
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          setThreadError(
+            threadId,
+            error instanceof Error ? error.message : "Failed to revert thread state.",
+          );
+        }
       }
       setIsRevertingCheckpoint(false);
     },
@@ -4847,6 +5066,7 @@ function ChatViewContent(props: ChatViewProps) {
       isConnecting,
       isRevertingCheckpoint,
       isSendBusy,
+      pendingRevertedMessageRestore,
       phase,
       revertThreadCheckpoint,
       setThreadError,
@@ -5961,14 +6181,17 @@ function ChatViewContent(props: ChatViewProps) {
   // the callback reference is fully stable and never busts context identity.
   const revertTurnCountRef = useRef(revertTurnCountByUserMessageId);
   revertTurnCountRef.current = revertTurnCountByUserMessageId;
+  const timelineMessagesRef = useRef(timelineMessages);
+  timelineMessagesRef.current = timelineMessages;
   const onRevertToTurnCountRef = useRef(onRevertToTurnCount);
   onRevertToTurnCountRef.current = onRevertToTurnCount;
   const onRevertUserMessage = useCallback((messageId: MessageId) => {
     const targetTurnCount = revertTurnCountRef.current.get(messageId);
-    if (typeof targetTurnCount !== "number") {
+    const message = timelineMessagesRef.current.find((entry) => entry.id === messageId);
+    if (typeof targetTurnCount !== "number" || !message || message.role !== "user") {
       return;
     }
-    void onRevertToTurnCountRef.current(targetTurnCount);
+    void onRevertToTurnCountRef.current(targetTurnCount, message);
   }, []);
 
   // Empty state: no active thread

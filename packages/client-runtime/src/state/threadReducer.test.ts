@@ -827,6 +827,15 @@ describe("applyThreadDetailEvent", () => {
           },
           {
             id: MessageId.make("msg-3"),
+            role: "user",
+            text: "Second",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-04-01T02:30:00.000Z",
+            updatedAt: "2026-04-01T02:30:00.000Z",
+          },
+          {
+            id: MessageId.make("msg-4"),
             role: "assistant",
             text: "Response 2",
             turnId: TurnId.make("turn-2"),
@@ -851,7 +860,7 @@ describe("applyThreadDetailEvent", () => {
             checkpointRef: CheckpointRef.make("ref-2"),
             status: "ready",
             files: [],
-            assistantMessageId: MessageId.make("msg-3"),
+            assistantMessageId: MessageId.make("msg-4"),
             completedAt: "2026-04-01T03:00:00.000Z",
           },
         ],
@@ -875,8 +884,9 @@ describe("applyThreadDetailEvent", () => {
         // turn-2 checkpoint is filtered out (turnCount 2 > revert target 1)
         expect(result.thread.checkpoints).toHaveLength(1);
         expect(result.thread.checkpoints[0]?.turnId).toBe("turn-1");
-        // msg-3 (turn-2) is filtered, msg-1 (no turn) and msg-2 (turn-1) remain
+        // The second turnless user prompt and its turn-2 response are filtered.
         expect(result.thread.messages).toHaveLength(2);
+        expect(result.thread.messages.map((message) => message.id)).toEqual(["msg-1", "msg-2"]);
         expect(result.thread.latestTurn?.turnId).toBe("turn-1");
       }
     });

@@ -460,6 +460,8 @@ export interface ChatComposerHandle {
     expandedCursor: number;
     terminalContextIds: string[];
   };
+  /** Stash the current text and images, returning whether the initial write succeeded. */
+  stashCurrentPrompt: () => boolean;
   /** Reset composer cursor/trigger/highlight after external prompt mutations (e.g. onSend). */
   resetCursorState: (options?: {
     cursor?: number;
@@ -980,6 +982,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    * thread) can still be stashed while an earlier encode is running.
    */
   const stashInFlightRef = useRef<Set<string>>(new Set());
+  const stashInitialWriteSucceededRef = useRef(false);
   /**
    * Count of pasted images still being compressed, per thread. Reserved
    * against the attachment limit so concurrent pastes can't overshoot it,
@@ -2065,6 +2068,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
 
   const stashCurrentPrompt = useCallback(async () => {
+    stashInitialWriteSucceededRef.current = false;
     // Terminal-context placeholders reference live sessions the stash can't
     // round-trip, so they are stripped from the stashed prompt.
     const prompt = promptRef.current.split(INLINE_TERMINAL_CONTEXT_PLACEHOLDER).join("").trim();
@@ -2137,6 +2141,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setComposerCursor(0);
       setComposerTrigger(null);
       pulseStashBadge();
+      stashInitialWriteSucceededRef.current = true;
 
       if (evicted) {
         toastManager.add({
@@ -2548,6 +2553,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       readSnapshot: () => {
         return readComposerSnapshot();
       },
+      stashCurrentPrompt: () => {
+        void stashCurrentPrompt();
+        return stashInitialWriteSucceededRef.current;
+      },
       resetCursorState: (options?: {
         cursor?: number;
         prompt?: string;
@@ -2643,6 +2652,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedPromptEffort,
       selectedProvider,
       selectedProviderModels,
+      stashCurrentPrompt,
     ],
   );
 

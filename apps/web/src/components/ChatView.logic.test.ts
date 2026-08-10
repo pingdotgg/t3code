@@ -18,6 +18,7 @@ import {
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveRevertedMessagePrompt,
   dismissBranchMismatchForSession,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   getStartedThreadModelChangeBlockReason,
@@ -33,6 +34,37 @@ import {
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
+
+describe("reverted message prompt", () => {
+  it("restores editable text without sent-only context blocks", () => {
+    const prompt = [
+      "Please fix this",
+      "",
+      "<terminal_context>",
+      "- Terminal 1:",
+      "  npm test",
+      "</terminal_context>",
+      "",
+      "<element_context>",
+      "- <button>:",
+      "  url: http://localhost:5173",
+      "</element_context>",
+      "",
+      "<preview_annotation>",
+      '{"id":"preview-1","title":"Button","x":1,"y":2}',
+      "</preview_annotation>",
+      "",
+      '<review_comment sectionId="file:a.ts" filePath="a.ts" startIndex="1" endIndex="1">',
+      "Check this line",
+      "```diff",
+      "+const value = 1;",
+      "```",
+      "</review_comment>",
+    ].join("\n");
+
+    expect(deriveRevertedMessagePrompt(prompt)).toBe("Please fix this");
+  });
+});
 
 const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
