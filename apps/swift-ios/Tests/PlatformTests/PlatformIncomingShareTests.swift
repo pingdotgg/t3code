@@ -363,6 +363,31 @@ struct PlatformIncomingShareTests {
 
     @Test
     @MainActor
+    func staleThreadDestinationCanFallBackToThePicker() async {
+        var envelope = Self.envelope(text: "Pending")
+        envelope.destination = .existingThread(environmentID: "env", threadID: "deleted")
+        let coordinator = PlatformIncomingShareCoordinator(
+            pipeline: PlatformIncomingSharePipeline(
+                source: PlatformIncomingShareSource(
+                    loadAll: { [envelope] },
+                    data: { _ in Data() },
+                    remove: { _ in }
+                ),
+                drafts: PlatformIncomingShareDraftRepository(
+                    importContent: { _, _, _, _, _ in FeatureComposerDraft() }
+                ),
+                prepareImage: { _, _ in Self.attachment(id: UUID(), value: 1) }
+            )
+        )
+
+        _ = await coordinator.refresh(hasProjects: true)
+        coordinator.requestAnotherDestination()
+
+        #expect(coordinator.pendingEnvelope?.destination == nil)
+    }
+
+    @Test
+    @MainActor
     func preferredEnvelopeDoesNotFallBackToAnotherPendingShare() async {
         let envelope = Self.envelope(text: "Do not route me")
         let coordinator = PlatformIncomingShareCoordinator(

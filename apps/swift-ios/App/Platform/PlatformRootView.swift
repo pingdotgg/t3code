@@ -241,9 +241,8 @@ struct PlatformRootView: View {
                           environmentID: destination.environmentID,
                           id: threadID
                       ) else {
-                    if model.errorMessage == nil {
-                        model.errorMessage = "That thread is no longer available. Choose another destination by sharing again."
-                    }
+                    incomingShareCoordinator.requestAnotherDestination()
+                    model.errorMessage = "That thread is no longer available. Choose another destination."
                     return
                 }
                 try await incomingShareCoordinator.importPending(into: thread)
@@ -365,8 +364,6 @@ struct PlatformRootView: View {
             PlatformHapticEngine.shared.selection(
                 enabled: model.snapshot.settings.hapticsEnabled
             )
-        case let .incomingShare(id):
-            refreshIncomingShares(preferredID: id)
         }
     }
 

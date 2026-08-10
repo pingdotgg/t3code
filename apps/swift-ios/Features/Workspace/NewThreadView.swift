@@ -716,10 +716,15 @@ public struct NewThreadView: View {
         let routedShareID = pendingIncomingShareID
         let saved: FeatureComposerDraft?
         if let routedShareID {
-            saved = try? await draftStore.routeIncomingShare(
-                shareID: routedShareID,
-                to: key
-            )
+            do {
+                saved = try await draftStore.routeIncomingShare(
+                    shareID: routedShareID,
+                    to: key
+                )
+            } catch {
+                saved = nil
+                model.errorMessage = error.localizedDescription
+            }
         } else {
             saved = try? await draftStore.draft(for: key)
         }

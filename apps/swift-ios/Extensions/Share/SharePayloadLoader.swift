@@ -15,6 +15,8 @@ enum T3SharePayloadLoader {
         var videos: [T3PendingShareVideo] = []
         var skippedOversizedImage = false
         var skippedOversizedVideo = false
+        var skippedUnreadableImage = false
+        var skippedUnreadableVideo = false
         var skippedExcessMedia = false
 
         for case let item as NSExtensionItem in inputItems {
@@ -51,6 +53,7 @@ enum T3SharePayloadLoader {
                         // A movie provider is terminal even if it also vends a
                         // thumbnail. Preserve the user's choice instead of
                         // silently substituting a still image.
+                        skippedUnreadableVideo = true
                     }
                     continue
                 }
@@ -83,6 +86,7 @@ enum T3SharePayloadLoader {
                         // An image provider is terminal even if it also vends a
                         // URL or text representation. Falling through would
                         // silently turn a rejected attachment into other input.
+                        skippedUnreadableImage = true
                     }
                     continue
                 }
@@ -116,6 +120,12 @@ enum T3SharePayloadLoader {
         }
         if skippedOversizedVideo {
             warnings.append("One shared video exceeded the 250 MB import limit.")
+        }
+        if skippedUnreadableImage {
+            warnings.append("One shared image could not be read and was not imported.")
+        }
+        if skippedUnreadableVideo {
+            warnings.append("One shared video could not be read and was not imported.")
         }
         if skippedExcessMedia {
             warnings.append(

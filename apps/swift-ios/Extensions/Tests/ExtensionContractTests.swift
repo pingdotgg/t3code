@@ -16,17 +16,6 @@ final class ExtensionContractTests: XCTestCase {
         XCTAssertNil(envelope.destination)
     }
 
-    func testIncomingShareHostURLTargetsExactEnvelope() throws {
-        let id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-        let url = try XCTUnwrap(T3IncomingShareStore.hostAppURL(for: id))
-        let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
-
-        XCTAssertEqual(components.scheme, T3SharedContainer.urlScheme)
-        XCTAssertEqual(components.host, "share")
-        XCTAssertEqual(components.queryItems, [URLQueryItem(name: "id", value: id)])
-        XCTAssertNil(T3IncomingShareStore.hostAppURL(for: "../not-valid"))
-    }
-
     func testSharedContainerAcceptsAConfiguredTeamSpecificAppGroup() {
         XCTAssertEqual(
             T3SharedContainer.configuredAppGroupID("group.com.saphid.t3code.swiftui.dev"),

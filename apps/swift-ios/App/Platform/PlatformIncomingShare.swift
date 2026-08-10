@@ -434,6 +434,11 @@ final class PlatformIncomingShareCoordinator {
         pendingEnvelope = nil
     }
 
+    func requestAnotherDestination() {
+        guard !isImporting else { return }
+        pendingEnvelope?.destination = nil
+    }
+
     func importPending(into project: FeatureProject) async throws {
         guard let pendingEnvelope, !isImporting else { return }
         isImporting = true

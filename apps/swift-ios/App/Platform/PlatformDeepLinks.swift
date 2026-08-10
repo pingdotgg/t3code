@@ -12,7 +12,6 @@ enum PlatformRoute: Codable, Hashable, Identifiable, Sendable {
     case project(environmentID: String?, projectID: String)
     case thread(environmentID: String?, threadID: String)
     case newTask(environmentID: String?, projectID: String?)
-    case incomingShare(id: String)
 
     var id: String {
         switch self {
@@ -26,8 +25,6 @@ enum PlatformRoute: Codable, Hashable, Identifiable, Sendable {
             "thread:\(environmentID ?? ""):\(threadID)"
         case let .newTask(environmentID, projectID):
             "new-task:\(environmentID ?? ""):\(projectID ?? "")"
-        case let .incomingShare(id):
-            "incoming-share:\(id)"
         }
     }
 
@@ -63,9 +60,6 @@ enum PlatformRoute: Codable, Hashable, Identifiable, Sendable {
                 environmentID.map { URLQueryItem(name: "environment", value: $0) },
                 projectID.map { URLQueryItem(name: "project", value: $0) },
             ].compactMap { $0 }
-        case let .incomingShare(id):
-            components.host = "share"
-            components.queryItems = [URLQueryItem(name: "id", value: id)]
         }
         return components.url
     }
@@ -180,15 +174,6 @@ enum PlatformDeepLinkParser {
                 environmentID: try queryEnvironment.map(validatedIdentifier),
                 projectID: try queryProject.map(validatedIdentifier)
             )
-        case "share", "incoming-share":
-            guard let rawID = tail.first ?? query["id"] else {
-                throw PlatformDeepLinkError.missingIdentifier
-            }
-            let id = try validatedIdentifier(rawID)
-            guard UUID(uuidString: id) != nil else {
-                throw PlatformDeepLinkError.invalidIdentifier
-            }
-            return .incomingShare(id: id.lowercased())
         default:
             if let queryThread {
                 return .thread(

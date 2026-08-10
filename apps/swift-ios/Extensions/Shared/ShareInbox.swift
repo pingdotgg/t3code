@@ -406,15 +406,6 @@ enum T3IncomingShareStore {
         fileURL(relativePath: video.relativePath)
     }
 
-    static func hostAppURL(for envelopeID: String) -> URL? {
-        guard UUID(uuidString: envelopeID) != nil else { return nil }
-        var components = URLComponents()
-        components.scheme = T3SharedContainer.urlScheme
-        components.host = "share"
-        components.queryItems = [URLQueryItem(name: "id", value: envelopeID)]
-        return components.url
-    }
-
     private static func fileURL(relativePath: String) -> URL? {
         guard let root = T3SharedContainer.rootURL?.standardizedFileURL else { return nil }
         let inbox = root.appending(path: inboxRelativePath, directoryHint: .isDirectory)
