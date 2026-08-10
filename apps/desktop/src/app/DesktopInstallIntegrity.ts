@@ -75,8 +75,28 @@ export const checkInstallIntegrity: Effect.Effect<
     environment.resourcesPath,
     ...DESKTOP_BUILD_MANIFEST_RELATIVE_PATH.split("/"),
   );
-  const raw = yield* fileSystem.readFileString(manifestPath, "utf-8").pipe(Effect.option);
-  if (Option.isNone(raw)) {
+  const read = yield* fileSystem.readFileString(manifestPath, "utf-8").pipe(
+    Effect.match({
+      onFailure: (error) =>
+        error.reason._tag === "NotFound"
+          ? ({ _tag: "NotFound" } as const)
+          : ({ _tag: "Unreadable", detail: error.message } as const),
+      onSuccess: (contents) => ({ _tag: "Found", contents }) as const,
+    }),
+  );
+  if (read._tag === "Unreadable") {
+    // The manifest exists (or at least the failure is not "absent") but
+    // could not be read — access denied, I/O error. That is not evidence of
+    // a half-applied update, and blocking every launch on a transient read
+    // failure would brick healthy installs. Log loudly and let the launch
+    // proceed.
+    yield* logIntegrityWarning("build manifest could not be read; skipping integrity check", {
+      manifestPath,
+      detail: read.detail,
+    });
+    return { _tag: "Skipped", reason: `unreadable build manifest at ${manifestPath}` } as const;
+  }
+  if (read._tag === "NotFound") {
     if (environment.platform === "win32") {
       return {
         _tag: "MissingManifest",
@@ -87,7 +107,7 @@ export const checkInstallIntegrity: Effect.Effect<
     return { _tag: "Skipped", reason: `no build manifest at ${manifestPath}` } as const;
   }
 
-  const manifest = yield* decodeDesktopBuildManifest(raw.value).pipe(Effect.option);
+  const manifest = yield* decodeDesktopBuildManifest(read.contents).pipe(Effect.option);
   if (Option.isNone(manifest)) {
     // A corrupt manifest could itself be fallout from a partial apply, but a
     // false positive here bricks every launch — log loudly and let the

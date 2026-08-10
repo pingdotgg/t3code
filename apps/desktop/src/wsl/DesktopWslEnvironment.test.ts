@@ -455,13 +455,16 @@ describe("ensureWindowsPathReleasedImpl", () => {
     ),
   );
 
-  it.effect("reports unavailable when wsl.exe cannot be spawned for the release check", () =>
+  it.effect("reports unknown when the release-check spawn fails against a reachable distro", () =>
     Effect.gen(function* () {
+      // wslpath just succeeded, so the distro was reachable moments ago — a
+      // release-script spawn failure must read as "unverified" (abort), not
+      // as "WSL is gone".
       const result = yield* ensureWindowsPathReleasedImpl({
         distro: "Ubuntu",
         windowsPath: "C:\\Users\\test\\AppData\\Local\\Programs\\t3code",
       });
-      expect(result).toBe("unavailable");
+      expect(result).toBe("unknown");
     }).pipe(
       Effect.provideService(
         ChildProcessSpawner.ChildProcessSpawner,

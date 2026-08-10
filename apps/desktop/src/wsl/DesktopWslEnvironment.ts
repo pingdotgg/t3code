@@ -81,13 +81,15 @@ const decodeWslServerRuntimeState = Schema.decodeUnknownEffect(
 // Outcome of ensureWindowsPathReleased. "released" — no Linux-side process
 // holds anything under the path. "busy" — processes survived SIGTERM +
 // SIGKILL and still hold the path; replacing files under it from Windows
-// WILL fail. "unavailable" — wsl.exe itself could not be spawned, so no
-// running VM can be holding /mnt handles either; callers may proceed.
-// "unknown" — the check started but could not verify (timeout, path
-// translation failure, unparsable output) while the distro may well be
-// operational; callers that need the path free must treat this as a
-// failure, not a pass.
-export type WslPathReleaseResult = "released" | "busy" | "unavailable" | "unknown";
+// WILL fail. "unknown" — the check could not verify (spawn failure, path
+// translation failure, timeout, unparsable output). The caller only asks
+// about a distro that was hosting a backend moments ago, so "unknown"
+// means the distro may well be alive and holding handles: callers that
+// need the path free must treat it as a failure, not a pass. (A machine
+// whose WSL layer is genuinely broken recovers on the next app launch —
+// preflight falls back to Windows, no WSL config enters the pool, and no
+// release check runs.)
+export type WslPathReleaseResult = "released" | "busy" | "unknown";
 
 const isDesktopWslDistroListError = Schema.is(DesktopWslDistroListError);
 
@@ -925,18 +927,11 @@ export const ensureWindowsPathReleasedImpl = (input: {
           killSignal: "SIGTERM",
           forceKillAfter: PROCESS_TERMINATE_GRACE,
         });
-        const spawnResult = yield* spawner.spawn(command).pipe(
-          Effect.match({
-            onFailure: () => ({ _tag: "Failure" }) as const,
-            onSuccess: (handle) => ({ _tag: "Success", handle }) as const,
-          }),
-        );
-        if (spawnResult._tag === "Failure") {
-          // wsl.exe itself would not start — no running VM, so nothing can
-          // be holding /mnt handles either.
-          return "unavailable" as WslPathReleaseResult;
-        }
-        const handle = spawnResult.handle;
+        // A spawn failure here is NOT evidence that WSL is gone: wslpath just
+        // succeeded against this distro, so the VM was reachable moments
+        // ago. Fall through to "unknown" (via the catch below) and let the
+        // caller abort.
+        const handle = yield* spawner.spawn(command);
         const stdoutBytes = yield* Stream.runCollect(handle.stdout);
         const exitCode = yield* handle.exitCode;
         const raw = decodeUtf8(concatChunks(stdoutBytes)).trim();

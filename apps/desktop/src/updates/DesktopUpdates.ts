@@ -561,29 +561,21 @@ export const make = Effect.gen(function* () {
           }
           if (released === "unknown") {
             // The check ran against a distro that was hosting this backend
-            // moments ago but could not verify release (timeout, path
-            // translation failure). Handles may well still be open — abort
-            // rather than risk the half-applied install this guard exists
-            // to prevent.
+            // moments ago but could not verify release (spawn failure,
+            // timeout, path translation failure). Handles may well still be
+            // open — abort rather than risk the half-applied install this
+            // guard exists to prevent. A machine whose WSL layer is truly
+            // broken recovers on the next launch: preflight falls back to
+            // Windows and no WSL config enters the pool.
             return yield* abortInstall(
               previouslyRunning,
               `Update install aborted: could not verify that WSL (${result.instance.id}) released the files under ${installDir}. Run "wsl --shutdown" and try the update again.`,
             );
           }
-          if (released === "unavailable") {
-            // wsl.exe itself would not start, so no running VM can be
-            // holding /mnt handles either — proceed, but leave a trace in
-            // case an apply failure still follows.
-            yield* logUpdaterWarning(
-              "wsl.exe unavailable while verifying install-directory release; proceeding with install",
-              { instanceId: result.instance.id, installDir },
-            );
-          } else {
-            yield* logUpdaterInfo("verified WSL released the install directory", {
-              instanceId: result.instance.id,
-              installDir,
-            });
-          }
+          yield* logUpdaterInfo("verified WSL released the install directory", {
+            instanceId: result.instance.id,
+            installDir,
+          });
         }
       }
 

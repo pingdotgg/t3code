@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Path from "effect/Path";
 
 import * as DesktopConfig from "./DesktopConfig.ts";
@@ -136,6 +137,41 @@ describe("DesktopInstallIntegrity", () => {
               platform: "darwin",
               homeDirectory: `/tmp/t3-integrity-home-${process.pid}`,
             }),
+          ),
+        );
+        assert.equal(result._tag, "Skipped");
+      }),
+    ),
+  );
+
+  it.effect("skips an unreadable (but present) manifest instead of blocking launch", () =>
+    withInstallDir(({ resourcesPath }) =>
+      Effect.gen(function* () {
+        // Access denied / I/O error is not evidence of a partial apply; a
+        // false MissingManifest here would brick every launch of a healthy
+        // install.
+        const failingFs = FileSystem.layerNoop({
+          readFileString: () =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "PermissionDenied",
+                module: "FileSystem",
+                method: "readFileString",
+                pathOrDescriptor: "desktop-build-manifest.json",
+                description: "EACCES",
+              }),
+            ),
+        });
+        const result = yield* DesktopInstallIntegrity.checkInstallIntegrity.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              makeEnvironmentLayer({
+                resourcesPath,
+                isPackaged: true,
+                homeDirectory: `/tmp/t3-integrity-home-${process.pid}`,
+              }),
+              failingFs,
+            ),
           ),
         );
         assert.equal(result._tag, "Skipped");

@@ -745,28 +745,6 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("proceeds when wsl.exe is unavailable for the release check", () => {
-    const harness = makeHarness({
-      platform: "win32",
-      backendConfig: Option.some(makeWslBackendConfig()),
-      wslReleaseResult: "unavailable",
-    });
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-        harness.emit("update-downloaded", { version: "1.2.4" });
-        yield* flushCallbacks;
-
-        const result = yield* updates.install;
-        assert.isTrue(result.accepted);
-        // No running VM can hold /mnt handles, so the install hands off.
-        assert.equal(harness.quitAndInstallCount(), 1);
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
-
   it.effect("hands off to the installer after a verified stop and WSL release", () => {
     const harness = makeHarness({
       platform: "win32",
