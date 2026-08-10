@@ -221,6 +221,20 @@ describe("buildThreadTurnInterruptInput", () => {
       threadId,
     });
   });
+
+  it("omits a turn id when a running session has not projected its active turn yet", () => {
+    expect(
+      buildThreadTurnInterruptInput(
+        makeThread({
+          session: {
+            ...readySession,
+            status: "running",
+            activeTurnId: null,
+          },
+        }),
+      ),
+    ).toEqual({ threadId });
+  });
 });
 
 describe("buildRunningThreadTurnInterruptInput", () => {
