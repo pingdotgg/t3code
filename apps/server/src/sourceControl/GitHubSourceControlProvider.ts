@@ -239,6 +239,29 @@ function pickRepositorySearchMatch(
   return { _tag: "match", fullName: candidates[0]!.fullName };
 }
 
+/**
+ * What a bare name that resolved to nothing, or to more than one repository, tells the reader.
+ * It lives beside the taxonomy that produced it: the failure carries the same structural fields
+ * either way, and only the sentence differs between the two outcomes.
+ */
+function repositorySearchFailureDetail(
+  match: Extract<RepositorySearchMatch, { readonly _tag: "ambiguous" | "none" }>,
+  context: { readonly repository: string; readonly host?: string },
+): string {
+  const repository = SourceControlProvider.transportSafeSourceControlErrorValue(context.repository);
+  const host = context.host
+    ? SourceControlProvider.transportSafeSourceControlErrorValue(context.host)
+    : "the configured host";
+  if (match._tag === "none") {
+    return `No repository named "${repository}" was found on ${host}.`;
+  }
+  const candidates = match.candidates
+    .slice(0, AMBIGUOUS_REPOSITORY_CANDIDATE_LIMIT)
+    .map((candidate) => SourceControlProvider.transportSafeSourceControlErrorValue(candidate))
+    .join(", ");
+  return `More than one repository on ${host} matches "${repository}": ${candidates}. Enter the full owner/repo path.`;
+}
+
 export const makeProvider = (kind: GitHubProviderKind) =>
   Effect.gen(function* () {
     const github = yield* GitHubCli.GitHubCli;
@@ -314,27 +337,18 @@ export const makeProvider = (kind: GitHubProviderKind) =>
                   return Effect.succeed(match.fullName);
                 }
 
-                const safeRepository =
-                  SourceControlProvider.transportSafeSourceControlErrorValue(repository);
-                const hostLabel = input.host
-                  ? SourceControlProvider.transportSafeSourceControlErrorValue(input.host)
-                  : "the configured host";
                 return Effect.fail(
                   new SourceControlProviderError({
                     provider: kind,
                     operation: "getRepositoryCloneUrls",
                     command: "gh",
                     cwd: input.cwd,
-                    repository: safeRepository,
-                    detail:
-                      match._tag === "ambiguous"
-                        ? `More than one repository on ${hostLabel} matches "${safeRepository}": ${match.candidates
-                            .slice(0, AMBIGUOUS_REPOSITORY_CANDIDATE_LIMIT)
-                            .map((candidate) =>
-                              SourceControlProvider.transportSafeSourceControlErrorValue(candidate),
-                            )
-                            .join(", ")}. Enter the full owner/repo path.`
-                        : `No repository named "${safeRepository}" was found on ${hostLabel}.`,
+                    repository:
+                      SourceControlProvider.transportSafeSourceControlErrorValue(repository),
+                    detail: repositorySearchFailureDetail(match, {
+                      repository,
+                      ...(input.host ? { host: input.host } : {}),
+                    }),
                   }),
                 );
               }),
