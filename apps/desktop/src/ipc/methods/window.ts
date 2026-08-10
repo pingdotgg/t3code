@@ -30,9 +30,10 @@ import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import {
-  extractDistroFromUncPath,
+  isSameWslDistro,
+  isValidDistroName,
+  parseWslUncPath,
   resolveWslPickFolderDefaultPath,
-  wslUncPathToLinuxPath,
 } from "../../wsl/wslPathParsing.ts";
 
 const ContextMenuPosition = Schema.Struct({
@@ -131,17 +132,104 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
   }),
 });
 
-// Pull the distro selection out of a backend instance id like
-// "wsl:ubuntu". Returns null for "wsl:default", which is the sentinel
-// for "track the user's WSL default distro" and maps to the
-// wslEnv-derived default at picker time.
+// Pull an explicit distro selection out of a backend instance id like
+// "wsl:ubuntu". Returns null for "wsl:default": that sentinel must be
+// resolved from the concrete running backend before any filesystem operation.
 function extractWslDistroFromEnvironmentId(envId: string): string | null {
   if (!envId.startsWith(DesktopWslBackend.WSL_INSTANCE_ID_PREFIX)) {
     return null;
   }
   const suffix = envId.slice(DesktopWslBackend.WSL_INSTANCE_ID_PREFIX.length);
-  return suffix === "default" || suffix.length === 0 ? null : suffix;
+  if (suffix === "default" || suffix.length === 0) {
+    return null;
+  }
+  return isValidDistroName(suffix) ? suffix : null;
 }
+
+const runningDistroFromInstance = Effect.fn("desktop.ipc.window.runningDistroFromInstance")(
+  function* (instance: DesktopBackendPool.DesktopBackendInstance) {
+    const config = yield* instance.currentConfig;
+    if (Option.isNone(config)) {
+      return null;
+    }
+    return config.value.runningDistro ?? null;
+  },
+);
+
+// Resolve a WSL picker target to the concrete distro already backing that
+// environment. This is deliberately runtime-first: a stable `wsl:default` id
+// must not be re-resolved against the Windows system default after its backend
+// has started, otherwise changing the default distro while the app is open can
+// make the picker and backend point at different filesystems. In WSL-only mode
+// the renderer still uses a synthetic `wsl:*` picker target while the actual
+// backend lives in the pool's `primary` instance, so consult that primary too.
+export const resolveWslPickerDistro = Effect.fn("desktop.ipc.window.resolveWslPickerDistro")(
+  function* (input: {
+    readonly targetEnvironmentId: string;
+    readonly configuredDistro: string | null;
+    readonly wslOnly: boolean;
+  }) {
+    const pool = yield* DesktopBackendPool.DesktopBackendPool;
+
+    // In WSL-only mode the target id is synthetic and the real backend is the
+    // primary instance. Prefer it even if a stale secondary still exists while
+    // a relaunch-triggering settings change is winding the old process down.
+    if (input.wslOnly) {
+      const primary = yield* pool.primary;
+      const runningDistro = yield* runningDistroFromInstance(primary);
+      if (runningDistro !== null) {
+        return runningDistro;
+      }
+    }
+
+    const targetInstance = yield* pool.get(
+      DesktopBackendPool.BackendInstanceId(input.targetEnvironmentId),
+    );
+    if (Option.isSome(targetInstance)) {
+      const runningDistro = yield* runningDistroFromInstance(targetInstance.value);
+      if (runningDistro !== null) {
+        return runningDistro;
+      }
+    }
+
+    return extractWslDistroFromEnvironmentId(input.targetEnvironmentId) ?? input.configuredDistro;
+  },
+);
+
+export type WslPickerSelectionResolution =
+  | { readonly _tag: "Success"; readonly linuxPath: string }
+  | {
+      readonly _tag: "CrossDistro";
+      readonly selectedDistro: string;
+      readonly targetDistro: string;
+    }
+  | { readonly _tag: "ConversionFailed"; readonly targetDistro: string };
+
+export const resolveWslPickerSelection = Effect.fn("desktop.ipc.window.resolveWslPickerSelection")(
+  function* (input: { readonly selectedPath: string; readonly targetDistro: string }) {
+    const parsedUnc = parseWslUncPath(input.selectedPath);
+    if (parsedUnc !== null) {
+      if (!isSameWslDistro(parsedUnc.distro, input.targetDistro)) {
+        return {
+          _tag: "CrossDistro",
+          selectedDistro: parsedUnc.distro,
+          targetDistro: input.targetDistro,
+        } as const;
+      }
+      return { _tag: "Success", linuxPath: parsedUnc.linuxPath } as const;
+    }
+
+    const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
+    const converted = yield* wslEnvironment.windowsToWslPath(
+      input.targetDistro,
+      input.selectedPath,
+    );
+    if (Option.isNone(converted) || !converted.value.startsWith("/")) {
+      return { _tag: "ConversionFailed", targetDistro: input.targetDistro } as const;
+    }
+    return { _tag: "Success", linuxPath: converted.value } as const;
+  },
+);
 
 export const getLocalEnvironmentBearerToken = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.GET_LOCAL_ENVIRONMENT_BEARER_TOKEN_CHANNEL,
@@ -173,19 +261,30 @@ export const pickFolder = DesktopIpc.makeIpcMethod({
     //     wslDistro when the id is the "wsl:default" sentinel).
     //   - anything else (incl. PRIMARY_LOCAL_ENVIRONMENT_ID): primary picker.
     const targetId = options?.targetEnvironmentId;
-    const wslDistroFromTarget =
-      targetId !== undefined && targetId.startsWith(DesktopWslBackend.WSL_INSTANCE_ID_PREFIX)
-        ? extractWslDistroFromEnvironmentId(targetId)
-        : null;
     const useWsl =
       targetId !== undefined &&
       targetId !== PRIMARY_LOCAL_ENVIRONMENT_ID &&
       targetId.startsWith(DesktopWslBackend.WSL_INSTANCE_ID_PREFIX);
     const settings = yield* appSettings.get;
-    // Fall back to the persisted wslDistro when the id is the
-    // "wsl:default" sentinel; the orchestrator uses the same fallback
-    // for the actual backend.
-    const wslDistro = useWsl ? (wslDistroFromTarget ?? settings.wslDistro) : null;
+    const wslDistro = useWsl
+      ? yield* resolveWslPickerDistro({
+          targetEnvironmentId: targetId,
+          configuredDistro: settings.wslDistro,
+          wslOnly: settings.wslOnly,
+        })
+      : null;
+
+    // An environment-specific WSL picker is only safe when its concrete distro
+    // is known. In particular, never silently re-resolve `wsl:default` here: if
+    // no running identity exists, there is no trustworthy filesystem target.
+    if (useWsl && wslDistro === null) {
+      yield* dialog.showErrorBox(
+        "WSL folder picker unavailable",
+        "T3 Code could not determine which WSL distribution backs this environment. Start or reconnect the WSL backend, then choose the folder again.",
+      );
+      return null;
+    }
+
     const defaultPath = useWsl
       ? Option.fromNullishOr(
           resolveWslPickFolderDefaultPath(
@@ -207,16 +306,28 @@ export const pickFolder = DesktopIpc.makeIpcMethod({
       return selectedPath.value;
     }
 
-    const linuxUncPath = wslUncPathToLinuxPath(selectedPath.value);
-    if (linuxUncPath !== null) {
-      return linuxUncPath;
+    // `useWsl` implies wslDistro is concrete because of the guard above.
+    const targetDistro = wslDistro!;
+    const resolution = yield* resolveWslPickerSelection({
+      selectedPath: selectedPath.value,
+      targetDistro,
+    });
+    switch (resolution._tag) {
+      case "Success":
+        return resolution.linuxPath;
+      case "CrossDistro":
+        yield* dialog.showErrorBox(
+          "Folder belongs to a different WSL distribution",
+          `The selected folder belongs to ${resolution.selectedDistro}, but this environment is running in ${resolution.targetDistro}. Choose a folder from ${resolution.targetDistro} instead.`,
+        );
+        return null;
+      case "ConversionFailed":
+        yield* dialog.showErrorBox(
+          "Could not convert folder path for WSL",
+          `T3 Code could not convert the selected Windows path for ${resolution.targetDistro}. Choose a folder inside \\\\wsl.localhost\\${resolution.targetDistro} or verify that the distribution is running.`,
+        );
+        return null;
     }
-
-    const converted = yield* wslEnvironment.windowsToWslPath(
-      extractDistroFromUncPath(selectedPath.value) ?? wslDistro,
-      selectedPath.value,
-    );
-    return Option.getOrElse(converted, () => selectedPath.value);
   }),
 });
 

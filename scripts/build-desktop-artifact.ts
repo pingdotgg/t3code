@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
 import * as NodeModule from "node:module";
 
 import { fromYaml } from "@t3tools/shared/schemaYaml";
@@ -71,6 +72,46 @@ const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknow
 const decodeWorkspaceConfig = Schema.decodeEffect(fromYaml(WorkspaceConfig));
 const decodeNodePtyManifest = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ version: Schema.String })),
+);
+const WslNativeAbiArtifact = Schema.Struct({
+  name: Schema.String,
+  path: Schema.String,
+  sha256: Schema.String,
+  elfClass: Schema.String,
+  machine: Schema.String,
+  neededLibraries: Schema.Array(Schema.String),
+  requiredVersions: Schema.Struct({
+    GLIBC: Schema.Array(Schema.String),
+    GLIBCXX: Schema.Array(Schema.String),
+    CXXABI: Schema.Array(Schema.String),
+  }),
+  maxRequired: Schema.Struct({
+    GLIBC: Schema.String,
+    GLIBCXX: Schema.String,
+    CXXABI: Schema.String,
+  }),
+});
+const WslNativeAbiManifest = Schema.Struct({
+  schemaVersion: Schema.Literal(2),
+  nodeRuntime: Schema.Struct({
+    version: Schema.String,
+  }),
+  baseline: Schema.Struct({
+    id: Schema.String,
+    arch: Schema.String,
+    glibcRuntime: Schema.String,
+    limits: Schema.Struct({
+      glibc: Schema.String,
+      glibcxx: Schema.String,
+      cxxabi: Schema.String,
+    }),
+    libstdcxx: Schema.String,
+  }),
+  artifacts: Schema.Array(WslNativeAbiArtifact),
+});
+type WslNativeAbiManifest = typeof WslNativeAbiManifest.Type;
+const decodeWslNativeAbiManifest = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(WslNativeAbiManifest),
 );
 const encodeStageWorkspaceConfig = Schema.encodeEffect(fromYaml(StageWorkspaceConfig));
 
@@ -145,6 +186,7 @@ interface BuildCliInput {
   readonly mockUpdates: Option.Option<boolean>;
   readonly mockUpdateServerPort: Option.Option<number>;
   readonly wslPrebuild: Option.Option<string>;
+  readonly withoutWsl?: Option.Option<boolean>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -436,6 +478,28 @@ export class WslNodePtyPrebuildMissingError extends Schema.TaggedErrorClass<WslN
   }
 }
 
+export class WslNodePtyPrebuildRequiredError extends Schema.TaggedErrorClass<WslNodePtyPrebuildRequiredError>()(
+  "WslNodePtyPrebuildRequiredError",
+  {
+    arch: BuildArch,
+  },
+) {
+  override get message(): string {
+    return `Windows ${this.arch} builds include WSL support by default and require an ABI-audited Linux node-pty prebuild plus adjacent wsl-native-abi.json receipt. Pass --wsl-prebuild <path-to-pty.node> (or T3CODE_DESKTOP_WSL_PREBUILD), or explicitly opt out with --without-wsl.`;
+  }
+}
+
+export class WslPackagingAuditError extends Schema.TaggedErrorClass<WslPackagingAuditError>()(
+  "WslPackagingAuditError",
+  {
+    missingPaths: Schema.Array(Schema.String),
+  },
+) {
+  override get message(): string {
+    return `Windows WSL packaging audit failed; missing required staged assets: ${this.missingPaths.join(", ")}`;
+  }
+}
+
 export class WslNodePtyManifestReadError extends Schema.TaggedErrorClass<WslNodePtyManifestReadError>()(
   "WslNodePtyManifestReadError",
   {
@@ -445,6 +509,19 @@ export class WslNodePtyManifestReadError extends Schema.TaggedErrorClass<WslNode
 ) {
   override get message(): string {
     return `Could not read node-pty version from ${this.manifestPath}.`;
+  }
+}
+
+export class WslNativeAbiManifestError extends Schema.TaggedErrorClass<WslNativeAbiManifestError>()(
+  "WslNativeAbiManifestError",
+  {
+    manifestPath: Schema.String,
+    reason: Schema.String,
+    cause: Schema.optionalKey(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `WSL native ABI manifest validation failed at ${this.manifestPath}: ${this.reason}`;
   }
 }
 
@@ -606,6 +683,7 @@ interface ResolvedBuildOptions {
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: number | undefined;
   readonly wslPrebuild: string | undefined;
+  readonly wslSupport: boolean;
 }
 
 interface StagePackageJson {
@@ -632,9 +710,13 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // so the SDK's optional platform packages (each a ~200MB bundled executable)
   // are dead weight. The trailing dash keeps the SDK's own JS package.
   "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
+  // The packaged Linux Node runtime must be readable by WSL, so Windows copies
+  // it through extraResources to resources/wsl-node. Exclude the staging source
+  // from app.asar to avoid embedding a second, unusable copy of the same ELF.
+  "!apps/desktop/prod-resources/wsl-node/**/*",
 ] as const;
-// The WSL backend launches the server with plain `wsl.exe -- node`, which
-// cannot read inside an asar archive — and the server bundle externalizes its
+// The WSL backend launches Linux processes through `wsl.exe`, which cannot
+// read inside an asar archive — and the server bundle externalizes its
 // runtime deps, so the whole node_modules tree must be unpacked, not just the
 // bundle (otherwise ERR_MODULE_NOT_FOUND: "Cannot find package 'effect'").
 // The Windows primary backend reads the same files through the asar redirect,
@@ -644,6 +726,12 @@ export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
+  },
+] as const;
+export const WINDOWS_WSL_EXTRA_RESOURCES = [
+  {
+    from: "apps/desktop/prod-resources/wsl-node",
+    to: "wsl-node",
   },
 ] as const;
 
@@ -954,6 +1042,7 @@ const stageClerkPasskeyNativeBinaries = Effect.fn("stageClerkPasskeyNativeBinari
 export function createStageWorkspaceConfig(input: {
   readonly platform: typeof BuildPlatform.Type;
   readonly arch: typeof BuildArch.Type;
+  readonly includeWsl?: boolean;
   readonly allowBuilds?: Record<string, boolean>;
   readonly patchedDependencies?: Record<string, string>;
   readonly overrides?: Record<string, string>;
@@ -961,10 +1050,11 @@ export function createStageWorkspaceConfig(input: {
   const { platform, arch, allowBuilds, patchedDependencies, overrides } = input;
   const hostOs = platform === "mac" ? "darwin" : platform === "win" ? "win32" : "linux";
   const hostCpu = arch === "universal" ? ["arm64", "x64"] : [arch];
-  // Linux AppImages and Windows WSL backends both execute a Linux/glibc Node
-  // process that loads Linux-native optional deps at runtime (e.g.
-  // @yuuang/ffi-rs-linux-x64-gnu). Keep libc explicit so pnpm includes those
-  // optional packages in the staged production install.
+  const includeWsl = input.includeWsl ?? platform === "win";
+  // Linux AppImages and WSL-capable Windows artifacts execute a Linux/glibc
+  // Node process that loads Linux-native optional deps at runtime (e.g.
+  // @yuuang/ffi-rs-linux-x64-gnu). Intentionally Windows-only artifacts omit
+  // those Linux packages instead of pretending to include WSL support.
   const supportedArchitectures =
     platform === "linux"
       ? {
@@ -972,7 +1062,7 @@ export function createStageWorkspaceConfig(input: {
           cpu: hostCpu,
           libc: ["glibc"],
         }
-      : platform === "win"
+      : platform === "win" && includeWsl
         ? {
             os: Array.from(new Set([hostOs, "linux"])),
             cpu: hostCpu,
@@ -1040,6 +1130,7 @@ const BuildEnvConfig = Config.all({
   // into the staged node-pty so the WSL backend ships a ready binary and never
   // compiles on the user's machine.
   wslPrebuild: Config.string("T3CODE_DESKTOP_WSL_PREBUILD").pipe(Config.option),
+  withoutWsl: Config.boolean("T3CODE_DESKTOP_WITHOUT_WSL").pipe(Config.withDefault(false)),
 });
 
 const MockUpdateServerPortSchema = Schema.NumberFromString.check(
@@ -1133,6 +1224,11 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
 
   const wslPrebuild =
     Option.getOrUndefined(input.wslPrebuild) ?? Option.getOrUndefined(env.wslPrebuild);
+  const withoutWsl = resolveBooleanFlag(input.withoutWsl ?? Option.none(), env.withoutWsl);
+  const wslSupport = platform === "win" && !withoutWsl;
+  if (wslSupport && wslPrebuild === undefined) {
+    return yield* new WslNodePtyPrebuildRequiredError({ arch });
+  }
 
   return {
     platform,
@@ -1147,6 +1243,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     mockUpdates,
     mockUpdateServerPort,
     wslPrebuild,
+    wslSupport,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -1534,6 +1631,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         readonly provisioningProfilePath: string;
       }
     | undefined,
+  wslSupport = platform === "win",
 ) {
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
@@ -1548,7 +1646,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // WINDOWS_ASAR_UNPACK); macOS and Linux stay packed — smart unpack
     // extracts native libraries, which fff-node finds in app.asar.unpacked.
     ...(platform === "win" ? { asarUnpack: [...WINDOWS_ASAR_UNPACK] } : {}),
-    extraResources: DESKTOP_EXTRA_RESOURCES,
+    extraResources: [
+      ...DESKTOP_EXTRA_RESOURCES,
+      ...(platform === "win" && wslSupport ? WINDOWS_WSL_EXTRA_RESOURCES : []),
+    ],
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
   const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
@@ -1647,14 +1748,33 @@ const assertPlatformBuildResources = Effect.fn("assertPlatformBuildResources")(f
 });
 
 // Stage the prebuilt Linux node-pty binary into the packaged app so the WSL
-// backend never compiles on the user's machine. node-pty publishes no Linux
-// prebuilt and the WSL Linux Node can't load the Windows/Electron binary, so the
-// Linux CI job builds pty.node and hands it here. We drop it into the staged
-// node-pty's prebuilds/linux-<arch>/ with a t3code marker the WSL preflight
-// checks (arch + node-pty version; the binary is N-API, hence ABI-stable across
-// Node versions). A missing prebuild is a warning, not an error, so local and
-// non-Windows builds still succeed — they just won't ship a working WSL backend.
-const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (input: {
+// backend never compiles on the user's machine. Windows builds are WSL-capable
+// by default and therefore fail closed when the required Linux binary is absent.
+// A Windows-only artifact must be requested explicitly with --without-wsl.
+const sha256File = Effect.fn("sha256File")(function* (filePath: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const bytes = yield* fs.readFile(filePath);
+  return createHash("sha256").update(bytes).digest("hex");
+});
+
+function findWslAbiArtifact(manifest: WslNativeAbiManifest, name: string) {
+  return manifest.artifacts.find((artifact) => artifact.name === name);
+}
+
+interface WslNodePtyStageReceipt {
+  readonly linuxArch: "x64" | "arm64";
+  readonly nodePtyVersion: string;
+  readonly binaryPath: string;
+  readonly markerPath: string;
+  readonly nodeRuntimePath: string;
+  readonly nodeRuntimeMarkerPath: string;
+  readonly nodeRuntimeSha256: string;
+  readonly nodeRuntimeVersion: string;
+  readonly abiManifestPath: string;
+  readonly abiManifest: WslNativeAbiManifest;
+}
+
+export const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (input: {
   readonly stageAppDir: string;
   readonly arch: typeof BuildArch.Type;
   readonly prebuildPath: string | undefined;
@@ -1663,19 +1783,14 @@ const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (
   const path = yield* Path.Path;
 
   if (input.prebuildPath === undefined) {
-    yield* Effect.logWarning(
-      "[desktop-artifact] No WSL node-pty prebuild provided (--wsl-prebuild / T3CODE_DESKTOP_WSL_PREBUILD); the packaged WSL backend will not start until a Linux pty.node is bundled.",
-    );
-    return;
+    return yield* new WslNodePtyPrebuildRequiredError({ arch: input.arch });
   }
 
-  // WSL runs the same CPU arch as the Windows host; universal is mac-only.
+  // WSL runs the same CPU arch as the Windows host; universal is mac-only and
+  // is rejected by build option resolution before this function is reached.
   const linuxArch = input.arch === "x64" ? "x64" : input.arch === "arm64" ? "arm64" : undefined;
   if (linuxArch === undefined) {
-    yield* Effect.logWarning(
-      `[desktop-artifact] No WSL node-pty prebuild mapping for arch "${input.arch}"; skipping WSL backend bundling.`,
-    );
-    return;
+    return yield* new WslNodePtyPrebuildRequiredError({ arch: input.arch });
   }
 
   const prebuildExists = yield* fs
@@ -1684,6 +1799,86 @@ const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (
   if (!prebuildExists) {
     return yield* new WslNodePtyPrebuildMissingError({
       prebuildPath: input.prebuildPath,
+    });
+  }
+
+  // PR5 compatibility contract: every WSL prebuild must travel with the ABI
+  // receipt generated in the Ubuntu 22.04 compatibility-floor environment. This
+  // makes a manually supplied or stale pty.node fail closed instead of bypassing
+  // the release ABI audit.
+  const abiManifestPath = path.join(path.dirname(input.prebuildPath), "wsl-native-abi.json");
+  const abiManifestExists = yield* fs.exists(abiManifestPath).pipe(Effect.orElseSucceed(() => false));
+  if (!abiManifestExists) {
+    return yield* new WslNativeAbiManifestError({
+      manifestPath: abiManifestPath,
+      reason: "missing ABI receipt beside pty.node; run scripts/audit-wsl-native-abi.mjs on the compatibility-floor image",
+    });
+  }
+  const abiManifestRaw = yield* fs.readFileString(abiManifestPath);
+  const abiManifest = yield* decodeWslNativeAbiManifest(abiManifestRaw).pipe(
+    Effect.mapError(
+      (cause) =>
+        new WslNativeAbiManifestError({
+          manifestPath: abiManifestPath,
+          reason: "invalid manifest schema",
+          cause,
+        }),
+    ),
+  );
+  if (abiManifest.baseline.id !== "ubuntu-22.04") {
+    return yield* new WslNativeAbiManifestError({
+      manifestPath: abiManifestPath,
+      reason: `expected baseline ubuntu-22.04, received ${abiManifest.baseline.id}`,
+    });
+  }
+  if (abiManifest.baseline.arch !== linuxArch) {
+    return yield* new WslNativeAbiManifestError({
+      manifestPath: abiManifestPath,
+      reason: `manifest architecture ${abiManifest.baseline.arch} does not match linux-${linuxArch}`,
+    });
+  }
+  if (abiManifest.baseline.limits.glibc !== "2.35") {
+    return yield* new WslNativeAbiManifestError({
+      manifestPath: abiManifestPath,
+      reason: `expected GLIBC compatibility ceiling 2.35, received ${abiManifest.baseline.limits.glibc}`,
+    });
+  }
+  const auditedNodePty = findWslAbiArtifact(abiManifest, "node-pty");
+  if (auditedNodePty === undefined) {
+    return yield* new WslNativeAbiManifestError({
+      manifestPath: abiManifestPath,
+      reason: "manifest does not contain a node-pty artifact receipt",
+    });
+  }
+  const auditedNodeRuntime = findWslAbiArtifact(abiManifest, "node-runtime");
+  if (auditedNodeRuntime === undefined) {
+    return yield* new WslNativeAbiManifestError({
+      manifestPath: abiManifestPath,
+      reason: "manifest does not contain a bundled Node runtime artifact receipt",
+    });
+  }
+  const nodeRuntimeSourcePath = path.join(path.dirname(input.prebuildPath), "node");
+  const nodeRuntimeExists = yield* fs
+    .exists(nodeRuntimeSourcePath)
+    .pipe(Effect.orElseSucceed(() => false));
+  if (!nodeRuntimeExists) {
+    return yield* new WslNativeAbiManifestError({
+      manifestPath: abiManifestPath,
+      reason: `bundled Linux Node runtime is missing beside pty.node at ${nodeRuntimeSourcePath}`,
+    });
+  }
+  const nodeRuntimeSha256 = yield* sha256File(nodeRuntimeSourcePath);
+  if (nodeRuntimeSha256 !== auditedNodeRuntime.sha256) {
+    return yield* new WslNativeAbiManifestError({
+      manifestPath: abiManifestPath,
+      reason: `bundled Node SHA-256 mismatch; audited ${auditedNodeRuntime.sha256}, received ${nodeRuntimeSha256}`,
+    });
+  }
+  const prebuildSha256 = yield* sha256File(input.prebuildPath);
+  if (prebuildSha256 !== auditedNodePty.sha256) {
+    return yield* new WslNativeAbiManifestError({
+      manifestPath: abiManifestPath,
+      reason: `pty.node SHA-256 mismatch; audited ${auditedNodePty.sha256}, received ${prebuildSha256}`,
     });
   }
 
@@ -1706,13 +1901,208 @@ const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (
   const nodePtyVersion = manifest.version;
 
   const prebuildDir = path.join(nodePtyDir, "prebuilds", `linux-${linuxArch}`);
+  const binaryPath = path.join(prebuildDir, "pty.node");
+  const markerPath = path.join(prebuildDir, "t3code-wsl-node-pty.json");
   yield* fs.makeDirectory(prebuildDir, { recursive: true });
-  yield* fs.copyFile(input.prebuildPath, path.join(prebuildDir, "pty.node"));
-  const markerJson = yield* encodeJsonString({ arch: linuxArch, nodePtyVersion });
-  yield* fs.writeFileString(path.join(prebuildDir, "t3code-wsl-node-pty.json"), `${markerJson}\n`);
+  yield* fs.copyFile(input.prebuildPath, binaryPath);
+  const markerJson = yield* encodeJsonString({
+    arch: linuxArch,
+    nodePtyVersion,
+    sha256: prebuildSha256,
+    abiBaseline: abiManifest.baseline.id,
+    glibcCeiling: abiManifest.baseline.limits.glibc,
+  });
+  yield* fs.writeFileString(markerPath, `${markerJson}\n`);
+
+  // Keep the Linux runtime outside app.asar. At runtime Electron converts this
+  // Windows resource path into the selected WSL distro and copies the exact
+  // audited bytes into a per-distro Linux cache before executing them.
+  const nodeRuntimeDir = path.join(
+    input.stageAppDir,
+    "apps",
+    "desktop",
+    "prod-resources",
+    "wsl-node",
+    "bin",
+  );
+  const nodeRuntimePath = path.join(nodeRuntimeDir, "node");
+  const nodeRuntimeMarkerPath = path.join(nodeRuntimeDir, "t3code-wsl-node.json");
+  yield* fs.makeDirectory(nodeRuntimeDir, { recursive: true });
+  yield* fs.copyFile(nodeRuntimeSourcePath, nodeRuntimePath);
+  const nodeRuntimeMarker = yield* encodeJsonString({
+    arch: linuxArch,
+    version: abiManifest.nodeRuntime.version,
+    sha256: nodeRuntimeSha256,
+    abiBaseline: abiManifest.baseline.id,
+    glibcCeiling: abiManifest.baseline.limits.glibc,
+  });
+  yield* fs.writeFileString(nodeRuntimeMarkerPath, `${nodeRuntimeMarker}\n`);
 
   yield* Effect.log(
-    `[desktop-artifact] Staged WSL node-pty prebuild (linux-${linuxArch}, node-pty ${nodePtyVersion}).`,
+    `[desktop-artifact] Staged ABI-audited WSL runtime (Linux Node ${abiManifest.nodeRuntime.version}, linux-${linuxArch}, node-pty ${nodePtyVersion}, ${abiManifest.baseline.id}).`,
+  );
+
+  return {
+    linuxArch,
+    nodePtyVersion,
+    binaryPath,
+    markerPath,
+    nodeRuntimePath,
+    nodeRuntimeMarkerPath,
+    nodeRuntimeSha256,
+    nodeRuntimeVersion: abiManifest.nodeRuntime.version,
+    abiManifestPath,
+    abiManifest,
+  } satisfies WslNodePtyStageReceipt;
+});
+
+export const writeAndAuditWindowsWslCapability = Effect.fn(
+  "writeAndAuditWindowsWslCapability",
+)(function* (input: {
+  readonly stageAppDir: string;
+  readonly arch: typeof BuildArch.Type;
+  readonly enabled: boolean;
+  readonly nodePtyReceipt?: WslNodePtyStageReceipt;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const manifestPath = path.join(
+    input.stageAppDir,
+    "apps",
+    "desktop",
+    "prod-resources",
+    "wsl-capability.json",
+  );
+  yield* fs.makeDirectory(path.dirname(manifestPath), { recursive: true });
+
+  if (!input.enabled) {
+    const manifest = yield* encodeJsonString({
+      schemaVersion: 3,
+      enabled: false,
+      reason: "explicit-build-opt-out",
+      windowsArch: input.arch,
+    });
+    yield* fs.writeFileString(manifestPath, `${manifest}\n`);
+    yield* Effect.log(
+      "[desktop-artifact] WSL support explicitly disabled for this Windows artifact (--without-wsl).",
+    );
+    return;
+  }
+
+  const receipt = input.nodePtyReceipt;
+  if (receipt === undefined) {
+    return yield* new WslNodePtyPrebuildRequiredError({ arch: input.arch });
+  }
+
+  const linuxArch = receipt.linuxArch;
+  const requiredPaths = [
+    path.join(input.stageAppDir, "apps", "server", "dist", "bin.mjs"),
+    path.join(input.stageAppDir, "node_modules", "effect", "package.json"),
+    path.join(input.stageAppDir, "node_modules", "node-pty", "package.json"),
+    receipt.binaryPath,
+    receipt.markerPath,
+    receipt.nodeRuntimePath,
+    receipt.nodeRuntimeMarkerPath,
+  ];
+
+  const missingPaths: string[] = [];
+  for (const requiredPath of requiredPaths) {
+    const exists = yield* fs.exists(requiredPath).pipe(Effect.orElseSucceed(() => false));
+    if (!exists) missingPaths.push(path.relative(input.stageAppDir, requiredPath));
+  }
+
+  // fff-node loads two Linux-native packages through pnpm's transitive graph.
+  // Resolve them from the same package contexts Node will use at runtime rather
+  // than assuming pnpm hoisted their symlinks to the staging root.
+  let fffNativeEntry: string | undefined;
+  let ffiNativeEntry: string | undefined;
+  try {
+    const stageRequire = NodeModule.createRequire(path.join(input.stageAppDir, "package.json"));
+    const fffNodeEntry = stageRequire.resolve("@ff-labs/fff-node");
+    const fffRequire = NodeModule.createRequire(fffNodeEntry);
+    fffNativeEntry = fffRequire.resolve(`@ff-labs/fff-bin-linux-${linuxArch}-gnu`);
+    const ffiEntry = fffRequire.resolve("ffi-rs");
+    const ffiRequire = NodeModule.createRequire(ffiEntry);
+    ffiNativeEntry = ffiRequire.resolve(`@yuuang/ffi-rs-linux-${linuxArch}-gnu`);
+  } catch {
+    // Report both runtime-native package requirements below. Keeping the audit
+    // fail-closed is preferable to shipping an installer that crashes in WSL.
+  }
+  if (fffNativeEntry === undefined) {
+    missingPaths.push(`package:@ff-labs/fff-bin-linux-${linuxArch}-gnu`);
+  }
+  if (ffiNativeEntry === undefined) {
+    missingPaths.push(`package:@yuuang/ffi-rs-linux-${linuxArch}-gnu`);
+  }
+
+  if (missingPaths.length > 0 || fffNativeEntry === undefined || ffiNativeEntry === undefined) {
+    return yield* new WslPackagingAuditError({ missingPaths });
+  }
+
+  // Verify that the Linux-native dependency bytes staged on Windows are the
+  // exact artifacts audited on the Ubuntu 22.04 compatibility-floor job. This
+  // prevents lockfile/package-resolution drift between Linux CI and Windows
+  // packaging from invalidating the ABI receipt.
+  for (const [name, stagedPath] of [
+    ["node-runtime", receipt.nodeRuntimePath],
+    ["node-pty", receipt.binaryPath],
+    ["fff", fffNativeEntry],
+    ["ffi-rs", ffiNativeEntry],
+  ] as const) {
+    const auditedArtifact = findWslAbiArtifact(receipt.abiManifest, name);
+    if (auditedArtifact === undefined) {
+      return yield* new WslNativeAbiManifestError({
+        manifestPath: receipt.abiManifestPath,
+        reason: `manifest does not contain the required ${name} artifact receipt`,
+      });
+    }
+    const stagedSha256 = yield* sha256File(stagedPath);
+    if (stagedSha256 !== auditedArtifact.sha256) {
+      return yield* new WslNativeAbiManifestError({
+        manifestPath: receipt.abiManifestPath,
+        reason: `${name} SHA-256 differs from the compatibility-audited artifact; audited ${auditedArtifact.sha256}, staged ${stagedSha256}`,
+      });
+    }
+  }
+
+  const auditedAssets = [
+    ...requiredPaths.map((requiredPath) => path.relative(input.stageAppDir, requiredPath)),
+    path.relative(input.stageAppDir, fffNativeEntry),
+    path.relative(input.stageAppDir, ffiNativeEntry),
+  ];
+  const packagedAbiManifestPath = path.join(
+    input.stageAppDir,
+    "apps",
+    "desktop",
+    "prod-resources",
+    "wsl-native-abi.json",
+  );
+  const packagedAbiManifest = yield* encodeJsonString(receipt.abiManifest);
+  yield* fs.writeFileString(packagedAbiManifestPath, `${packagedAbiManifest}\n`);
+
+  const manifest = yield* encodeJsonString({
+    schemaVersion: 3,
+    enabled: true,
+    windowsArch: input.arch,
+    linuxArch,
+    nodePtyVersion: receipt.nodePtyVersion,
+    serverEntry: "apps/server/dist/bin.mjs",
+    nodePtyBinary: `node_modules/node-pty/prebuilds/linux-${linuxArch}/pty.node`,
+    nodeRuntime: {
+      path: "wsl-node/bin/node",
+      version: receipt.nodeRuntimeVersion,
+      sha256: receipt.nodeRuntimeSha256,
+      launchMode: "per-distro-sha256-cache",
+    },
+    nativeAbi: {
+      baseline: receipt.abiManifest.baseline,
+      receipt: "apps/desktop/prod-resources/wsl-native-abi.json",
+    },
+    auditedAssets,
+  });
+  yield* fs.writeFileString(manifestPath, `${manifest}\n`);
+  yield* Effect.log(
+    `[desktop-artifact] WSL packaging + ABI audit passed (${linuxArch}, Node ${receipt.nodeRuntimeVersion}, node-pty ${receipt.nodePtyVersion}, ${receipt.abiManifest.baseline.id}).`,
   );
 });
 
@@ -1899,7 +2289,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     // fff native binary through ffi-rs. The platform fff binary above is the
     // host's (win32), so promote the matching Linux fff binaries too; without
     // them file-finding in WSL fails to load its Linux native package.
-    ...(options.platform === "win"
+    ...(options.platform === "win" && options.wslSupport
       ? resolveFffNativeDependencies(
           "linux",
           options.arch,
@@ -1934,6 +2324,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
             provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
           }
         : undefined,
+      options.wslSupport,
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -1946,6 +2337,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const stageWorkspaceConfig = createStageWorkspaceConfig({
     platform: options.platform,
     arch: options.arch,
+    includeWsl: options.wslSupport,
     allowBuilds: workspaceAllowBuilds,
     patchedDependencies: stagePatchedDependencies,
     overrides: resolvedOverrides,
@@ -1971,13 +2363,23 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   );
   yield* stageClerkPasskeyNativeBinaries(stageAppDir, options.platform, options.arch);
 
-  // WSL is Windows-only, so only the Windows artifact carries the Linux backend
-  // binary; other platforms ignore the prebuild input.
+  // Windows artifacts are WSL-capable by default. A missing Linux native
+  // prebuild is a release-blocking error unless the builder explicitly opted
+  // out with --without-wsl. Audit the complete staged Linux runtime surface
+  // before electron-builder is allowed to create an installer.
   if (options.platform === "win") {
-    yield* stageWslNodePtyPrebuild({
+    const nodePtyReceipt = options.wslSupport
+      ? yield* stageWslNodePtyPrebuild({
+          stageAppDir,
+          arch: options.arch,
+          prebuildPath: options.wslPrebuild,
+        })
+      : undefined;
+    yield* writeAndAuditWindowsWslCapability({
       stageAppDir,
       arch: options.arch,
-      prebuildPath: options.wslPrebuild,
+      enabled: options.wslSupport,
+      ...(nodePtyReceipt === undefined ? {} : { nodePtyReceipt }),
     });
   }
 
@@ -2137,7 +2539,13 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   ),
   wslPrebuild: Flag.string("wsl-prebuild").pipe(
     Flag.withDescription(
-      "Path to a prebuilt Linux node-pty (pty.node) for the target arch, staged for the WSL backend (env: T3CODE_DESKTOP_WSL_PREBUILD).",
+      "Path to a prebuilt Linux node-pty (pty.node) for the target arch, required by default for Windows WSL support (env: T3CODE_DESKTOP_WSL_PREBUILD).",
+    ),
+    Flag.optional,
+  ),
+  withoutWsl: Flag.boolean("without-wsl").pipe(
+    Flag.withDescription(
+      "Explicitly build a Windows-only artifact without WSL support (env: T3CODE_DESKTOP_WITHOUT_WSL).",
     ),
     Flag.optional,
   ),

@@ -2,12 +2,12 @@ import { describe, it, expect } from "vite-plus/test";
 
 import {
   DISTRO_NAME_PATTERN,
-  extractDistroFromUncPath,
+  isSameWslDistro,
   isValidDistroName,
   parseWslDistroList,
+  parseWslUncPath,
   resolveWslHomeUncPath,
   resolveWslPickFolderDefaultPath,
-  wslUncPathToLinuxPath,
 } from "./wslPathParsing.ts";
 
 function makeUtf16LeBuffer(text: string): Buffer {
@@ -78,41 +78,18 @@ describe("parseWslDistroList", () => {
   });
 });
 
-describe("extractDistroFromUncPath", () => {
-  it("extracts the distro from \\\\wsl.localhost UNC paths", () => {
-    expect(extractDistroFromUncPath("\\\\wsl.localhost\\Ubuntu-22.04\\home\\josh")).toBe(
-      "Ubuntu-22.04",
-    );
+
+describe("parseWslUncPath", () => {
+  it("preserves distro identity with the Linux path", () => {
+    expect(parseWslUncPath("\\\\wsl.localhost\\Debian\\home\\alice\\repo")).toEqual({
+      distro: "Debian",
+      linuxPath: "/home/alice/repo",
+    });
   });
 
-  it("extracts the distro from the legacy \\\\wsl$ UNC paths", () => {
-    expect(extractDistroFromUncPath("\\\\wsl$\\Debian\\home\\josh")).toBe("Debian");
-  });
-
-  it("returns null for non-UNC Windows paths", () => {
-    expect(extractDistroFromUncPath("C:\\Users\\Josh\\project")).toBeNull();
-  });
-
-  it("returns null when the segment is not a valid distro name", () => {
-    expect(extractDistroFromUncPath("\\\\wsl.localhost\\bad name!\\home")).toBeNull();
-  });
-});
-
-describe("wslUncPathToLinuxPath", () => {
-  it("maps WSL UNC paths back to Linux absolute paths", () => {
-    expect(wslUncPathToLinuxPath("\\\\wsl.localhost\\Ubuntu-22.04\\home\\josh\\repo")).toBe(
-      "/home/josh/repo",
-    );
-  });
-
-  it("maps a distro UNC root to Linux root", () => {
-    expect(wslUncPathToLinuxPath("\\\\wsl$\\Debian")).toBe("/");
-    expect(wslUncPathToLinuxPath("\\\\wsl.localhost\\Debian\\")).toBe("/");
-  });
-
-  it("rejects invalid distro names and non-WSL paths", () => {
-    expect(wslUncPathToLinuxPath("\\\\wsl.localhost\\bad!name\\home")).toBeNull();
-    expect(wslUncPathToLinuxPath("C:\\Users\\Josh\\repo")).toBeNull();
+  it("treats distro names case-insensitively without changing path text", () => {
+    expect(isSameWslDistro("ubuntu-22.04", "Ubuntu-22.04")).toBe(true);
+    expect(isSameWslDistro("Ubuntu", "Debian")).toBe(false);
   });
 });
 
@@ -173,14 +150,24 @@ describe("resolveWslPickFolderDefaultPath", () => {
     );
   });
 
-  it("preserves existing UNC initial paths", () => {
+  it("preserves existing UNC initial paths only for the target distro", () => {
+    expect(
+      resolveWslPickFolderDefaultPath(
+        { initialPath: "\\\\wsl.localhost\\debian\\home\\josh" },
+        config,
+        distros,
+      ),
+    ).toBe("\\\\wsl.localhost\\debian\\home\\josh");
+  });
+
+  it("does not seed a target-distro picker with another distro's UNC path", () => {
     expect(
       resolveWslPickFolderDefaultPath(
         { initialPath: "\\\\wsl.localhost\\Ubuntu\\home\\josh" },
         config,
         distros,
       ),
-    ).toBe("\\\\wsl.localhost\\Ubuntu\\home\\josh");
+    ).toBe("\\\\wsl.localhost\\Debian\\home");
   });
 });
 

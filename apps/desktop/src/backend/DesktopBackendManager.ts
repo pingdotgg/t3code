@@ -99,6 +99,9 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   // Present for a WSL run after the configured/default distro has been
   // resolved to the concrete distro passed to wsl.exe.
   readonly runningDistro?: string;
+  // Linux Node executable selected during WSL preflight. Diagnostics only;
+  // absent for Windows-native and failed-preflight configs.
+  readonly wslNodePath?: string;
 }
 
 // A preflight failure records whether it is fatal. Transient failures (WSL
@@ -268,6 +271,10 @@ export interface DesktopBackendInstance {
   // ready, false on timeout. Used by the WSL backend swap to drive its
   // rollback path.
   readonly waitForReady: (timeout: Duration.Duration) => Effect.Effect<boolean>;
+  // Performs a fresh HTTP readiness probe against the currently resolved
+  // endpoint. Unlike snapshot.ready, this detects stale sockets / WSL IPs
+  // after Windows suspend-resume without restarting a healthy backend.
+  readonly probeReady: (timeout: Duration.Duration) => Effect.Effect<boolean>;
 }
 
 // Spec describing one backend instance to spawn. The configResolve
@@ -276,6 +283,14 @@ export interface DesktopBackendInstance {
 // onShutdown let the primary instance trigger UI side effects (window
 // open, global readiness flag) without coupling the factory to those
 // concerns; other instances pass them as undefined.
+export interface BackendInstanceFailure {
+  readonly phase: "spawn" | "readiness" | "runtime-exit";
+  readonly reason: string;
+  readonly config: DesktopBackendStartConfig;
+  readonly pid: number | null;
+  readonly restartAttempt: number;
+}
+
 export interface BackendInstanceSpec {
   readonly id: BackendInstanceId;
   readonly label: Effect.Effect<string>;
@@ -290,6 +305,9 @@ export interface BackendInstanceSpec {
   // between "fired onReady" and "currentConfig already advanced".
   readonly onReady?: (httpBaseUrl: URL) => Effect.Effect<void>;
   readonly onShutdown?: () => Effect.Effect<void>;
+  // Captures failures that happen after preflight. WSL uses this to retain
+  // readiness/runtime-exit diagnostics instead of reducing them to a log line.
+  readonly onFailure?: (failure: BackendInstanceFailure) => Effect.Effect<void>;
   // Fired once when a fatal or bounded preflight failure has exhausted its
   // retries. Returns true when the callback changed configuration and the
   // manager should resolve once more; false stops the failed instance.
@@ -880,6 +898,15 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               }
 
               if (isCurrentRun && nextState.desiredRunning) {
+                if (exitObserved && !stopRequested) {
+                  yield* spec.onFailure?.({
+                    phase: "runtime-exit",
+                    reason,
+                    config: config.value,
+                    pid: Option.getOrNull(pid),
+                    restartAttempt: nextState.restartAttempt,
+                  }) ?? Effect.void;
+                }
                 yield* scheduleRestart(reason);
               }
             }),
@@ -935,6 +962,15 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               yield* backendOutputLog.persistFailureSnapshot({
                 details: error.message,
               });
+              const latest = yield* Ref.get(state);
+              const activeRun = Option.getOrUndefined(latest.active);
+              yield* spec.onFailure?.({
+                phase: "readiness",
+                reason: error.message,
+                config: config.value,
+                pid: activeRun ? Option.getOrNull(activeRun.pid) : null,
+                restartAttempt: latest.restartAttempt,
+              }) ?? Effect.void;
             },
           ),
           onOutput: (streamName, chunk) => backendOutputLog.writeOutputChunk(streamName, chunk),
@@ -943,7 +979,18 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Scope.provide(runScope),
           Effect.matchEffect({
-            onFailure: (error) => finalizeRun(error.message),
+            onFailure: (error) =>
+              (spec.onFailure?.({
+                phase:
+                  error._tag === "BackendProcessSpawnError" ||
+                  error._tag === "BackendProcessBootstrapEncodeError"
+                    ? "spawn"
+                    : "runtime-exit",
+                reason: error.message,
+                config: config.value,
+                pid: null,
+                restartAttempt: current.restartAttempt,
+              }) ?? Effect.void).pipe(Effect.andThen(finalizeRun(error.message))),
             onSuccess: (exit) => finalizeRun(exit.reason),
           }),
           Effect.ensuring(Scope.close(runScope, Exit.void).pipe(Effect.ignore)),
@@ -1127,6 +1174,27 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
       Effect.map(Option.getOrElse(() => false)),
     );
 
+  const probeReady = (timeout: Duration.Duration): Effect.Effect<boolean> =>
+    Ref.get(state).pipe(
+      Effect.flatMap((current) => {
+        if (!current.desiredRunning || !current.ready) return Effect.succeed(false);
+        return Option.match(current.config, {
+          onNone: () => Effect.succeed(false),
+          onSome: (config) =>
+            waitForHttpReady({
+              executablePath: config.executablePath,
+              entryPath: config.entryPath,
+              cwd: config.cwd,
+              httpBaseUrl: config.httpBaseUrl,
+              timeout,
+            }).pipe(
+              Effect.as(true),
+              Effect.catchTag("BackendReadinessTimeoutError", () => Effect.succeed(false)),
+            ),
+        });
+      }),
+    );
+
   yield* Effect.addFinalizer(() => stop());
 
   return {
@@ -1137,5 +1205,6 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     currentConfig,
     snapshot,
     waitForReady,
+    probeReady,
   } satisfies DesktopBackendInstance;
 });

@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { DesktopEnvironmentBootstrapSchema } from "./ipc.ts";
+import { DesktopEnvironmentBootstrapSchema, DesktopWslStateSchema } from "./ipc.ts";
 
 describe("DesktopEnvironmentBootstrapSchema", () => {
   const decode = Schema.decodeUnknownSync(DesktopEnvironmentBootstrapSchema);
@@ -34,5 +34,37 @@ describe("DesktopEnvironmentBootstrapSchema", () => {
         wsBaseUrl: null,
       }).runningDistro,
     ).toBeNull();
+  });
+});
+
+
+describe("DesktopWslStateSchema diagnostics", () => {
+  const decode = Schema.decodeUnknownSync(DesktopWslStateSchema);
+
+  it("preserves structured post-preflight failure evidence", () => {
+    const diagnostic = {
+      occurredAt: "2026-08-10T06:00:00.000Z",
+      phase: "runtime-exit",
+      message: "backend exited with code 1",
+      distro: "Ubuntu",
+      wslVersion: 2,
+      nodePath: "/home/user/.cache/t3code/node",
+      httpBaseUrl: "http://172.20.0.2:3774/",
+      bindHost: "172.20.0.2",
+      port: 3774,
+      restartAttempt: 2,
+      pid: 4242,
+    } as const;
+    expect(
+      decode({
+        enabled: true,
+        distro: "Ubuntu",
+        available: true,
+        wslOnly: false,
+        distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+        preflightError: null,
+        diagnostic,
+      }).diagnostic,
+    ).toEqual(diagnostic);
   });
 });

@@ -35,6 +35,10 @@ the upstream pin (the upstream `LICENSE` lives beside it). Then run:
 pnpm --dir apps/web build:ghostty-wasm
 ```
 
+On native Windows this specialized vendor-regeneration command is not part of the normal build or
+test pipeline; run it from WSL (or another POSIX environment with Bash, Git, and Zig). Normal
+Windows development consumes the checked-in WASM artifacts and does not require Bash.
+
 Commit the regenerated web `wasm` artifacts. The build embeds the pinned revision into the binary as
 semver build metadata, and the focused web ABI test reads it back through `ghostty_build_info` and
 compares it against mobile's `VERSION` — so the web vendor directory holds only the artifacts, drift

@@ -2617,6 +2617,41 @@ export function ConnectionsSettings() {
     refreshDesktopWslState();
   }, []);
 
+  const retryWslBackend = useCallback(async () => {
+    if (!desktopBridge) return;
+    setIsUpdatingWslBackend(true);
+    setDesktopWslMutationError(null);
+    try {
+      await desktopBridge.retryWslBackend();
+      refreshDesktopWslState();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to retry WSL backend.";
+      setDesktopWslMutationError(message);
+    } finally {
+      setIsUpdatingWslBackend(false);
+    }
+  }, [desktopBridge]);
+
+  const copyWslDiagnosticReport = useCallback(async () => {
+    if (!desktopBridge) return;
+    try {
+      const report = await desktopBridge.getWslDiagnosticReport();
+      await navigator.clipboard.writeText(report);
+      toastManager.add(stackedThreadToast({
+        type: "success",
+        title: "WSL diagnostics copied",
+        description: "The current WSL runtime and failure report is on your clipboard.",
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to copy WSL diagnostics.";
+      toastManager.add(stackedThreadToast({
+        type: "error",
+        title: "Could not copy WSL diagnostics",
+        description: message,
+      }));
+    }
+  }, [desktopBridge]);
+
   // True when a desktop-local WSL backend is currently registered as an
   // environment on this machine. We use this as a proxy for "the user has work
   // that lives on the WSL side": if WSL has connected in a way that registered
@@ -2825,6 +2860,10 @@ export function ConnectionsSettings() {
               <span className="block text-destructive">
                 WSL backend couldn't start: {desktopWslState.preflightError}
               </span>
+            ) : desktopWslState.diagnostic ? (
+              <span className="block text-destructive">
+                WSL {desktopWslState.diagnostic.phase}: {desktopWslState.diagnostic.message}
+              </span>
             ) : null
           }
           control={
@@ -2852,9 +2891,15 @@ export function ConnectionsSettings() {
                   </SelectItem>
                 ) : (
                   desktopWslState.distros.map((distro) => (
-                    <SelectItem hideIndicator key={distro.name} value={distro.name}>
+                    <SelectItem
+                      hideIndicator
+                      disabled={distro.version !== 2}
+                      key={distro.name}
+                      value={distro.name}
+                    >
                       {distro.name}
                       {distro.isDefault ? " (default)" : ""}
+                      {distro.version === 1 ? " (WSL 1 — unsupported)" : " (WSL 2)"}
                     </SelectItem>
                   ))
                 )}
@@ -2862,6 +2907,37 @@ export function ConnectionsSettings() {
             </Select>
           }
         />
+        {desktopWslState.diagnostic ? (
+          <SettingsRow
+            title="WSL diagnostics"
+            description={`Latest failure: ${desktopWslState.diagnostic.phase} on ${desktopWslState.diagnostic.distro ?? "unknown distro"}. ${desktopWslState.diagnostic.httpBaseUrl ?? "No backend URL was established."}`}
+            className="bg-muted/20 pl-7 sm:pl-8"
+            status={
+              <span className="block text-xs text-muted-foreground">
+                {new Date(desktopWslState.diagnostic.occurredAt).toLocaleString()}
+                {desktopWslState.diagnostic.port ? ` · port ${desktopWslState.diagnostic.port}` : ""}
+                {desktopWslState.diagnostic.wslVersion
+                  ? ` · WSL ${desktopWslState.diagnostic.wslVersion}`
+                  : ""}
+              </span>
+            }
+            control={
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button
+                  variant="outline"
+                  disabled={isUpdatingWslBackend || !desktopWslState.enabled}
+                  onClick={() => void retryWslBackend()}
+                >
+                  <RefreshCwIcon className="size-4" />
+                  Retry backend
+                </Button>
+                <Button variant="outline" onClick={() => void copyWslDiagnosticReport()}>
+                  Copy diagnostics
+                </Button>
+              </div>
+            }
+          />
+        ) : null}
         {desktopWslState.enabled ? (
           <SettingsRow
             title="WSL only"

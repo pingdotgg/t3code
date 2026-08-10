@@ -20,6 +20,8 @@ import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 
+export type WslBackendPortStrategy = "fixed" | "wsl-auto";
+
 export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedErrorClass<DesktopBackendObservabilitySettingsReadError>()(
   "DesktopBackendObservabilitySettingsReadError",
   {
@@ -44,13 +46,19 @@ export class DesktopBackendConfiguration extends Context.Service<
       PlatformError.PlatformError
     >;
     // Build a WSL backend start config for the given distro on the given
-    // port. The WSL backend is always loopback-only (the primary owns LAN
-    // exposure when the user opts in), so this takes the port directly and
-    // hardcodes 127.0.0.1. Distro=null means "WSL default distro" and is
-    // forwarded to wsl.exe with no -d flag.
+    // port. The WSL backend is private to the desktop app: WSL2 NAT mode binds
+    // only the distro's concrete IPv4 address, while mirrored/fallback mode
+    // binds loopback. It never binds every Linux interface. Distro=null means
+    // "WSL default distro" and is resolved to one concrete distro in preflight.
     readonly resolveWsl: (input: {
       readonly port: number;
       readonly distro: string | null;
+      // `fixed` is used by the WSL-only primary because the production
+      // desktop protocol is registered against the configured primary port.
+      // `wsl-auto` is used by dual-mode secondary backends: the preferred
+      // number is tested inside Linux and WSL may fall back to a kernel-chosen
+      // ephemeral port when it is occupied there.
+      readonly portStrategy?: WslBackendPortStrategy;
     }) => Effect.Effect<
       DesktopBackendManager.DesktopBackendStartConfig,
       PlatformError.PlatformError
@@ -235,12 +243,14 @@ interface WslPreflightFailure {
 }
 
 const WSL_TRANSIENT_PREFLIGHT_RETRY_LIMIT = 12;
+const WSL_PORT_ALLOCATION_RETRY_LIMIT = 3;
 
 const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(function* (input: {
   readonly distro: string | null;
   readonly windowsEntryPath: string;
   readonly windowsRepoRoot: string;
   readonly allowBuild: boolean;
+  readonly bundledNodeWindowsPath?: string | null;
 }): Effect.fn.Return<
   WslPreflightSuccess | WslPreflightFailure,
   never,
@@ -271,12 +281,12 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
   }
 
   const installedDistros = distroProbe.distros;
-  const runningDistro = input.distro
+  const runningDistroRecord = input.distro
     ? (installedDistros.find(
         (installed) => installed.name.toLowerCase() === input.distro?.toLowerCase(),
-      )?.name ?? null)
-    : (installedDistros.find((installed) => installed.isDefault)?.name ?? null);
-  if (runningDistro === null) {
+      ) ?? null)
+    : (installedDistros.find((installed) => installed.isDefault) ?? null);
+  if (runningDistroRecord === null) {
     return {
       _tag: "Failed",
       reason: input.distro
@@ -288,6 +298,20 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
     } as const;
   }
 
+  // The desktop transport below relies on WSL2 networking semantics. WSL1
+  // shares the Windows network stack differently and does not provide the
+  // distro-address contract used for direct host-to-guest backend access.
+  // Fail closed before touching paths or native modules so a WSL1 install
+  // never enters a half-working/restart-loop state.
+  if (runningDistroRecord.version !== 2) {
+    return {
+      _tag: "Failed",
+      reason: `WSL distro "${runningDistroRecord.name}" is using WSL 1, which T3 Code does not support. Convert it to WSL 2 with \`wsl.exe --set-version "${runningDistroRecord.name}" 2\`, then retry.`,
+      fatal: true,
+    } as const;
+  }
+  const runningDistro = runningDistroRecord.name;
+
   const entryExists = yield* fileSystem
     .exists(input.windowsEntryPath)
     .pipe(Effect.orElseSucceed(() => false));
@@ -297,6 +321,19 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
       reason: `missing server entry at ${input.windowsEntryPath}`,
       fatal: true,
     } as const;
+  }
+
+  if (input.bundledNodeWindowsPath) {
+    const bundledNodeExists = yield* fileSystem
+      .exists(input.bundledNodeWindowsPath)
+      .pipe(Effect.orElseSucceed(() => false));
+    if (!bundledNodeExists) {
+      return {
+        _tag: "Failed",
+        reason: `missing packaged WSL Node runtime at ${input.bundledNodeWindowsPath}`,
+        fatal: true,
+      } as const;
+    }
   }
 
   const linuxEntry = yield* wslEnv.windowsToWslPath(runningDistro, input.windowsEntryPath);
@@ -311,6 +348,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
   const nodePtyResult = yield* wslEnv.ensureNodePty(runningDistro, input.windowsRepoRoot, {
     allowBuild: input.allowBuild,
     nodeEngineRange: serverPackageJson.engines.node,
+    bundledNodeWindowsPath: input.bundledNodeWindowsPath,
   });
   if (!nodePtyResult.ok) {
     return {
@@ -418,6 +456,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   input: SharedBootstrapInput & {
     readonly port: number;
     readonly distro: string | null;
+    readonly portStrategy?: WslBackendPortStrategy;
   },
 ): Effect.fn.Return<
   DesktopBackendManager.DesktopBackendStartConfig,
@@ -429,52 +468,20 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
 
-  // Bind to 0.0.0.0 inside WSL so the backend is reachable both via
-  // WSL2's automatic localhost forwarding (wslhost: Windows 127.0.0.1
-  // -> WSL 127.0.0.1) AND via the distro's eth0 IP directly from
-  // Windows. wslhost forwarding is unreliable on some Windows hosts:
-  // the desktop's readiness probe and the renderer's saved-env-style
-  // fetch both saw "Failed to fetch" when the backend only bound to
-  // 127.0.0.1 inside WSL. Binding to 0.0.0.0 plus advertising the
-  // WSL IP as the renderer-visible URL avoids that dependency.
-  // Security-wise this is acceptable for the local-only WSL backend:
-  // the network it exposes on is the WSL-vEthernet network, not the
-  // LAN; the primary owns LAN exposure when the user opts in.
-  const wslBindHost = "0.0.0.0";
-
-  const bootstrap = {
-    mode: "desktop" as const,
-    noBrowser: true,
-    port: input.port,
-    // Omit t3Home so the Linux backend uses its own home dir instead of
-    // the Windows-side baseDir (which would be a /mnt/c path and share
-    // the SQLite file with the primary).
-    host: wslBindHost,
-    desktopBootstrapToken: input.bootstrapToken,
-    // PortSchema rejects 0, so when tailscale serve is disabled we still
-    // need a valid number in this slot. The backend reads tailscaleServePort
-    // only when tailscaleServeEnabled is true, so the actual value here is
-    // inert.
-    tailscaleServeEnabled: false,
-    tailscaleServePort: 443,
-    // The packaged sidecar is a Windows executable and cannot run inside the
-    // Linux WSL backend. Keep the field absent instead of passing an unusable
-    // `/mnt/.../*.exe` path; WSL resource telemetry is reported unavailable.
-    // See docs/architecture/resource-telemetry.md.
-    ...buildObservabilityFragment(input.observabilitySettings),
-  };
-
   // In packaged builds environment.appRoot is .../resources/app.asar — an
   // archive FILE. The Windows primary reads its entry through
-  // ELECTRON_RUN_AS_NODE (asar-aware), but the WSL backend launches plain
-  // `wsl.exe -- node`, which can't read inside an asar. electron-builder unpacks
-  // the server bundle + node-pty (see asarUnpack in build-desktop-artifact.ts)
-  // to the app.asar.unpacked sibling, so point WSL there. In dev appRoot is
-  // already a real directory, so this is a no-op.
+  // ELECTRON_RUN_AS_NODE (asar-aware), but processes launched through WSL cannot
+  // read inside an asar. electron-builder therefore unpacks the server bundle +
+  // node_modules to the app.asar.unpacked sibling; the Linux Node executable is
+  // staged separately under resources/wsl-node and cached into the distro during
+  // preflight. In dev appRoot is already a real directory, so this is a no-op.
   const wslAppRoot = environment.isPackaged
     ? environment.path.join(environment.resourcesPath, "app.asar.unpacked")
     : environment.appRoot;
   const wslEntryPath = environment.path.join(wslAppRoot, "apps/server/dist/bin.mjs");
+  const bundledNodeWindowsPath = environment.isPackaged
+    ? environment.path.join(environment.resourcesPath, "wsl-node", "bin", "node")
+    : null;
 
   const preflight = yield* runWslPreflight({
     distro: input.distro,
@@ -488,6 +495,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     // surface a clear diagnostic if the prebuilt can't load (unsupported
     // arch/distro), rather than silently dropping into a fragile runtime build.
     allowBuild: !environment.isPackaged,
+    bundledNodeWindowsPath,
   });
 
   // Every operation after preflight uses the same concrete distro. In
@@ -496,18 +504,58 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const runningDistro = preflight._tag === "Ready" ? preflight.runningDistro : null;
   const distroForConfig = runningDistro ?? input.distro;
 
-  // Resolve the selected distro's IPv4 address. In mirrored mode the distro
-  // reports a host interface, so use loopback instead; a failed probe also
-  // falls back to loopback and preserves the previous behavior.
-  const distroIp = yield* wslEnvironment.getDistroIp(distroForConfig);
+  // Resolve the selected distro's IPv4 address only after a successful WSL2
+  // preflight. In NAT mode Windows can reach that concrete distro address, so
+  // bind exactly that interface rather than 0.0.0.0. In mirrored mode the
+  // distro reports a Windows-owned address; bind loopback because both sides
+  // share localhost semantics. If address probing fails, fall back to loopback
+  // instead of broadening exposure to every Linux interface.
+  const distroIp =
+    preflight._tag === "Ready"
+      ? yield* wslEnvironment.getDistroIp(preflight.runningDistro)
+      : Option.none<string>();
   const usesSharedNetworkStack = Option.match(distroIp, {
     onNone: () => false,
     onSome: (ip) => isLocalHostIpv4(ip),
   });
-  const rendererHost = usesSharedNetworkStack
+  const wslPrivateHost = usesSharedNetworkStack
     ? "127.0.0.1"
     : Option.getOrElse(distroIp, () => "127.0.0.1");
-  const httpBaseUrl = new URL(`http://${rendererHost}:${input.port}`);
+  const portStrategy = input.portStrategy ?? "fixed";
+  const portAllocation =
+    preflight._tag === "Ready"
+      ? yield* wslEnvironment.allocateTcpPort({
+          distro: preflight.runningDistro,
+          nodePath: preflight.nodePath,
+          host: wslPrivateHost,
+          preferredPort: input.port,
+          fallbackToEphemeral: portStrategy === "wsl-auto",
+        })
+      : null;
+  const effectivePort = portAllocation?.ok === true ? portAllocation.port : input.port;
+  const httpBaseUrl = new URL(`http://${wslPrivateHost}:${effectivePort}`);
+
+  const bootstrap = {
+    mode: "desktop" as const,
+    noBrowser: true,
+    port: effectivePort,
+    // Omit t3Home so the Linux backend uses its own home dir instead of
+    // the Windows-side baseDir (which would be a /mnt/c path and share
+    // the SQLite file with the primary).
+    host: wslPrivateHost,
+    desktopBootstrapToken: input.bootstrapToken,
+    // PortSchema rejects 0, so when tailscale serve is disabled we still
+    // need a valid number in this slot. The backend reads tailscaleServePort
+    // only when tailscaleServeEnabled is true, so the actual value here is
+    // inert.
+    tailscaleServeEnabled: false,
+    tailscaleServePort: 443,
+    // The packaged sidecar is a Windows executable and cannot run inside the
+    // Linux WSL backend. Keep the field absent instead of passing an unusable
+    // `/mnt/.../*.exe` path; WSL resource telemetry is reported unavailable.
+    // See docs/architecture/resource-telemetry.md.
+    ...buildObservabilityFragment(input.observabilitySettings),
+  };
 
   const distroArgs = distroForConfig ? ["-d", distroForConfig] : [];
   const forwardedEnv: Record<string, string> = {};
@@ -550,6 +598,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     httpBaseUrl,
     captureOutput: true,
     ...(runningDistro !== null ? { runningDistro } : {}),
+    ...(preflight._tag === "Ready" ? { wslNodePath: preflight.nodePath } : {}),
   };
 
   // Forward the dev-server URL as an explicit CLI flag so the WSL backend's
@@ -576,11 +625,38 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     } satisfies DesktopBackendManager.DesktopBackendStartConfig;
   }
 
-  // The WSL server spawns commands its providers reference by name — `npm`/`npx`
-  // for provider updates, and the installed CLIs themselves (e.g. `codex`). Those
-  // live in the resolved Node's bin dir, which `wsl.exe -- node` does NOT put on
-  // the process PATH, so `npm install -g ...` fails with NotFound. Pass the
-  // user PATH entries captured by the login-shell preflight. Every dynamic
+  if (portAllocation?.ok === false) {
+    const fixedPortHint =
+      portStrategy === "fixed"
+        ? ` The required WSL-only primary port ${input.port} must be free inside ${preflight.runningDistro}; stop the Linux process using it or switch back to the Windows backend.`
+        : "";
+    return {
+      ...baseConfig,
+      args: [...distroArgs, "--", "node", "--version"],
+      preflightFailure: Option.some({
+        reason: `WSL backend could not allocate TCP port ${input.port} on ${wslPrivateHost} inside ${preflight.runningDistro}: ${portAllocation.reason}${fixedPortHint}`,
+        fatal: false,
+        retryLimit: WSL_PORT_ALLOCATION_RETRY_LIMIT,
+      }),
+    } satisfies DesktopBackendManager.DesktopBackendStartConfig;
+  }
+
+  if (portAllocation?.ok === true && portAllocation.usedEphemeralFallback) {
+    yield* Effect.logInfo("WSL backend preferred port was occupied inside Linux; using ephemeral port", {
+      distro: preflight.runningDistro,
+      preferredPort: input.port,
+      allocatedPort: portAllocation.port,
+      host: wslPrivateHost,
+    });
+  }
+
+  // The WSL server spawns commands its providers reference by name. Put the exact
+  // preflight Node runtime first — packaged builds use T3 Code's per-distro cached
+  // Linux Node, while development can still use a version-manager Node — then add
+  // the distro system/login PATH for user-installed package managers/provider CLIs.
+  // Bundling Node removes the server-start dependency on distro Node; npm/pnpm/bun
+  // remain provider-tooling concerns and are intentionally resolved from user PATH.
+  // Every dynamic
   // value is a separate argv entry under `wsl.exe --exec`; no shell command is
   // involved, so Windows cannot mangle nested quotes and stdin remains reserved
   // for the bootstrap envelope.
@@ -662,6 +738,7 @@ export const make = Effect.gen(function* () {
       ...shared,
       port: backendExposure.port,
       distro: persistedSettings.wslDistro,
+      portStrategy: "fixed",
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
@@ -731,7 +808,11 @@ export const make = Effect.gen(function* () {
         );
       }).pipe(
         Effect.withSpan("desktop.backendConfiguration.resolveWsl", {
-          attributes: { port: input.port, distro: input.distro ?? null },
+          attributes: {
+            port: input.port,
+            portStrategy: input.portStrategy ?? "fixed",
+            distro: input.distro ?? null,
+          },
         }),
       ),
   });

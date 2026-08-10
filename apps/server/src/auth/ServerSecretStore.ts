@@ -1,3 +1,4 @@
+import { retryWindowsFileSystemOperation } from "@t3tools/shared/windowsFileRetry";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -155,7 +156,9 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
 
-  yield* fileSystem.makeDirectory(serverConfig.secretsDir, { recursive: true });
+  yield* retryWindowsFileSystemOperation(
+    fileSystem.makeDirectory(serverConfig.secretsDir, { recursive: true }),
+  );
   yield* fileSystem.chmod(serverConfig.secretsDir, 0o700).pipe(
     Effect.mapError(
       (cause) =>
@@ -197,13 +200,13 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((uuid) => {
         const tempPath = `${secretPath}.${uuid}.tmp`;
         return Effect.gen(function* () {
-          yield* fileSystem.writeFile(tempPath, value);
+          yield* retryWindowsFileSystemOperation(fileSystem.writeFile(tempPath, value));
           yield* fileSystem.chmod(tempPath, 0o600);
-          yield* fileSystem.rename(tempPath, secretPath);
+          yield* retryWindowsFileSystemOperation(fileSystem.rename(tempPath, secretPath));
           yield* fileSystem.chmod(secretPath, 0o600);
         }).pipe(
           Effect.catch((cause) =>
-            fileSystem.remove(tempPath).pipe(
+            retryWindowsFileSystemOperation(fileSystem.remove(tempPath, { force: true })).pipe(
               Effect.ignore,
               Effect.flatMap(() =>
                 Effect.fail(

@@ -1,6 +1,7 @@
 import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
 import { makeLocalFileTracer, makeTraceSink } from "@t3tools/shared/observability";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
+import { retryWindowsFileSystemOperation } from "@t3tools/shared/windowsFileRetry";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -247,7 +248,9 @@ const makeRotatingLogFileWriter = Effect.fn("makeRotatingLogFileWriter")(functio
     });
   }
 
-  yield* fileSystem.makeDirectory(directory, { recursive: true });
+  yield* retryWindowsFileSystemOperation(
+    fileSystem.makeDirectory(directory, { recursive: true }),
+  );
 
   const withSuffix = (index: number) => `${input.filePath}.${index}`;
   const currentSize = yield* Ref.make(yield* refreshFileSize(fileSystem, input.filePath));
@@ -259,24 +262,32 @@ const makeRotatingLogFileWriter = Effect.fn("makeRotatingLogFileWriter")(functio
       if (!entry.startsWith(`${baseName}.`)) continue;
       const suffix = Number(entry.slice(baseName.length + 1));
       if (!Number.isInteger(suffix) || suffix <= maxFiles) continue;
-      yield* fileSystem.remove(path.join(directory, entry), { force: true }).pipe(Effect.ignore);
+      yield* retryWindowsFileSystemOperation(
+        fileSystem.remove(path.join(directory, entry), { force: true }),
+      ).pipe(Effect.ignore);
     }
   });
 
   const rotate = Effect.gen(function* () {
-    yield* fileSystem.remove(withSuffix(maxFiles), { force: true }).pipe(Effect.ignore);
+    yield* retryWindowsFileSystemOperation(
+      fileSystem.remove(withSuffix(maxFiles), { force: true }),
+    ).pipe(Effect.ignore);
     for (let index = maxFiles - 1; index >= 1; index -= 1) {
       const source = withSuffix(index);
       const sourceExists = yield* fileSystem.exists(source).pipe(Effect.orElseSucceed(() => false));
       if (sourceExists) {
-        yield* fileSystem.rename(source, withSuffix(index + 1));
+        yield* retryWindowsFileSystemOperation(
+          fileSystem.rename(source, withSuffix(index + 1)),
+        );
       }
     }
     const currentExists = yield* fileSystem
       .exists(input.filePath)
       .pipe(Effect.orElseSucceed(() => false));
     if (currentExists) {
-      yield* fileSystem.rename(input.filePath, withSuffix(1));
+      yield* retryWindowsFileSystemOperation(
+        fileSystem.rename(input.filePath, withSuffix(1)),
+      );
     }
     yield* Ref.set(currentSize, 0);
   }).pipe(
@@ -297,7 +308,9 @@ const makeRotatingLogFileWriter = Effect.fn("makeRotatingLogFileWriter")(functio
           yield* rotate;
         }
 
-        yield* fileSystem.writeFile(input.filePath, chunk, { flag: "a" });
+        yield* retryWindowsFileSystemOperation(
+          fileSystem.writeFile(input.filePath, chunk, { flag: "a" }),
+        );
         const afterSize = (yield* Ref.get(currentSize)) + chunk.byteLength;
         yield* Ref.set(currentSize, afterSize);
 

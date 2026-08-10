@@ -218,6 +218,10 @@
     "./usageFormat": {
       "types": "./src/usageFormat.ts",
       "import": "./src/usageFormat.ts"
+    },
+    "./windowsFileRetry": {
+      "types": "./src/windowsFileRetry.ts",
+      "import": "./src/windowsFileRetry.ts"
     }
   },
   "scripts": {

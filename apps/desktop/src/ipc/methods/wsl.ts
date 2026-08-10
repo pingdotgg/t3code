@@ -26,6 +26,7 @@ const readWslState: Effect.Effect<
   // non-WSL host would spawn wsl.exe and hit the timeout for nothing.
   const distros = available ? yield* wslEnvironment.listDistros : [];
   const preflightError = yield* wslBackend.lastPreflightError;
+  const diagnostic = yield* wslBackend.lastDiagnostic;
   return {
     enabled: settings.wslBackendEnabled,
     distro: settings.wslDistro,
@@ -35,6 +36,7 @@ const readWslState: Effect.Effect<
     // Only the dual-mode secondary records this; a wsl-only failure surfaces via
     // a dialog + Windows fallback, so it stays null there.
     preflightError: settings.wslOnly ? null : Option.getOrNull(preflightError),
+    diagnostic: Option.getOrNull(diagnostic),
   };
 });
 
@@ -118,5 +120,43 @@ export const setWslOnly = makeIpcMethod({
       yield* lifecycle.relaunch(`wslOnly=${enabled}`);
     }
     return state;
+  }),
+});
+
+
+export const retryWslBackend = makeIpcMethod({
+  channel: IpcChannels.RETRY_WSL_BACKEND_CHANNEL,
+  payload: Schema.Void,
+  result: DesktopWslStateSchema,
+  handler: Effect.fn("desktop.ipc.wsl.retry")(function* () {
+    const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
+    yield* wslBackend.retry;
+    return yield* readWslState;
+  }),
+});
+
+export const getWslDiagnosticReport = makeIpcMethod({
+  channel: IpcChannels.GET_WSL_DIAGNOSTIC_REPORT_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.String,
+  handler: Effect.fn("desktop.ipc.wsl.getDiagnosticReport")(function* () {
+    const state = yield* readWslState;
+    const selectedDistro =
+      state.distro ?? state.distros.find((candidate) => candidate.isDefault)?.name ?? null;
+    const report = {
+      generatedAt: new Date().toISOString(),
+      platform: process.platform,
+      arch: process.arch,
+      wsl: {
+        enabled: state.enabled,
+        wslOnly: state.wslOnly,
+        available: state.available,
+        selectedDistro,
+        configuredDistro: state.distro,
+        distros: state.distros,
+        latestFailure: state.diagnostic,
+      },
+    };
+    return `T3 Code WSL diagnostic report\n${JSON.stringify(report, null, 2)}`;
   }),
 });

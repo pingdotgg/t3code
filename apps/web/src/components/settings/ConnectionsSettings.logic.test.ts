@@ -13,6 +13,7 @@ const baseWslState: DesktopWslState = {
   wslOnly: true,
   distros: [],
   preflightError: null,
+  diagnostic: null,
 };
 
 describe("applyWslEnableSelection", () => {

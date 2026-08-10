@@ -18,6 +18,7 @@ const wslState: DesktopWslState = {
   ],
   enabled: true,
   preflightError: null,
+  diagnostic: null,
   wslOnly: false,
 };
 
@@ -70,6 +71,7 @@ describe("desktopWslState", () => {
     const refreshedState: DesktopWslState = {
       ...wslState,
       preflightError: "WSL backend stopped unexpectedly.",
+      diagnostic: null,
     };
     let currentState = wslState;
     const getWslState = vi.fn(async () => currentState);

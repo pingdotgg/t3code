@@ -100,6 +100,7 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
+import * as DesktopWslDiagnostics from "../wsl/DesktopWslDiagnostics.ts";
 
 const { logWarning: logBackendPoolWarning } =
   DesktopObservability.makeComponentLogger("desktop-backend-pool");
@@ -212,6 +213,7 @@ export const layer = Layer.effect(
     const desktopWindow = yield* DesktopWindow.DesktopWindow;
     const electronDialog = yield* ElectronDialog.ElectronDialog;
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
+    const wslDiagnostics = yield* DesktopWslDiagnostics.DesktopWslDiagnostics;
     // Anchor the pool's lifetime to its layer scope so registered
     // instance scopes can be forked off it. Without this, instance
     // scopes are orphaned: they only close via explicit unregister()
@@ -234,6 +236,21 @@ export const layer = Layer.effect(
     const handlePrimaryPreflightFailure = Effect.fn("desktop.backendPool.primaryPreflightFailed")(
       function* (failure: DesktopBackendManager.PreflightFailure) {
         const { reason, fatal } = failure;
+        const currentSettings = yield* appSettings.get;
+        if (currentSettings.wslOnly) {
+          yield* wslDiagnostics.record({
+            phase: "preflight",
+            message: reason,
+            distro: currentSettings.wslDistro,
+            wslVersion: null,
+            nodePath: null,
+            httpBaseUrl: null,
+            bindHost: null,
+            port: null,
+            restartAttempt: null,
+            pid: null,
+          });
+        }
         if (!fatal) {
           yield* logBackendPoolWarning(
             "primary WSL preflight retry window exhausted; using Windows for this launch",
@@ -298,6 +315,21 @@ export const layer = Layer.effect(
           ),
         ),
       onShutdown: () => desktopWindow.handleBackendNotReady,
+      onFailure: (failure) =>
+        failure.config.runningDistro
+          ? wslDiagnostics.record({
+              phase: failure.phase,
+              message: failure.reason,
+              distro: failure.config.runningDistro,
+              wslVersion: 2,
+              nodePath: failure.config.wslNodePath ?? null,
+              httpBaseUrl: failure.config.httpBaseUrl.href,
+              bindHost: failure.config.bootstrap.host,
+              port: failure.config.bootstrap.port,
+              restartAttempt: failure.restartAttempt,
+              pid: failure.pid,
+            })
+          : Effect.void,
       onPreflightFailed: handlePrimaryPreflightFailure,
     });
 

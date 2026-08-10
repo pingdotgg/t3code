@@ -8,7 +8,13 @@ import type * as Electron from "electron";
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
-import { getLocalEnvironmentBootstraps, getWindowFullscreenState } from "./window.ts";
+import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
+import {
+  getLocalEnvironmentBootstraps,
+  getWindowFullscreenState,
+  resolveWslPickerDistro,
+  resolveWslPickerSelection,
+} from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "wsl.exe",
@@ -47,6 +53,13 @@ const defaultWslInstance: DesktopBackendManager.DesktopBackendInstance = {
     restartScheduled: false,
   }),
   waitForReady: () => Effect.succeed(true),
+    probeReady: () => Effect.succeed(true),
+};
+
+const primaryWslInstance: DesktopBackendManager.DesktopBackendInstance = {
+  ...defaultWslInstance,
+  id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
+  label: Effect.succeed("WSL (Ubuntu)"),
 };
 
 describe("getLocalEnvironmentBootstraps", () => {
@@ -128,6 +141,93 @@ describe("getLocalEnvironmentBootstraps", () => {
       const result = yield* getLocalEnvironmentBootstraps.handler();
       assert.deepEqual(result, []);
     }).pipe(Effect.provide(DesktopBackendPool.layerTest([stoppedInstance])));
+  });
+});
+
+describe("WSL picker distro identity", () => {
+  it.effect("pins wsl:default to the distro already running in the target instance", () =>
+    Effect.gen(function* () {
+      const distro = yield* resolveWslPickerDistro({
+        targetEnvironmentId: "wsl:default",
+        configuredDistro: null,
+        wslOnly: false,
+      });
+      assert.equal(distro, "Ubuntu");
+    }).pipe(Effect.provide(DesktopBackendPool.layerTest([defaultWslInstance]))),
+  );
+
+  it.effect("uses the concrete primary distro for a WSL-only synthetic picker target", () =>
+    Effect.gen(function* () {
+      const distro = yield* resolveWslPickerDistro({
+        targetEnvironmentId: "wsl:default",
+        configuredDistro: null,
+        wslOnly: true,
+      });
+      assert.equal(distro, "Ubuntu");
+    }).pipe(Effect.provide(DesktopBackendPool.layerTest([primaryWslInstance]))),
+  );
+});
+
+describe("WSL picker selection safety", () => {
+  it.effect("accepts a UNC path only when it belongs to the target distro", () =>
+    Effect.gen(function* () {
+      const result = yield* resolveWslPickerSelection({
+        selectedPath: "\\\\wsl.localhost\\ubuntu\\home\\alice\\repo",
+        targetDistro: "Ubuntu",
+      });
+      assert.deepEqual(result, { _tag: "Success", linuxPath: "/home/alice/repo" });
+    }).pipe(Effect.provide(DesktopWslEnvironment.layerTest())),
+  );
+
+  it.effect("rejects a UNC path owned by another distro", () =>
+    Effect.gen(function* () {
+      const result = yield* resolveWslPickerSelection({
+        selectedPath: "\\\\wsl.localhost\\Debian\\home\\alice\\repo",
+        targetDistro: "Ubuntu",
+      });
+      assert.deepEqual(result, {
+        _tag: "CrossDistro",
+        selectedDistro: "Debian",
+        targetDistro: "Ubuntu",
+      });
+    }).pipe(Effect.provide(DesktopWslEnvironment.layerTest())),
+  );
+
+  it.effect("fails closed when a Windows path cannot be converted", () =>
+    Effect.gen(function* () {
+      const result = yield* resolveWslPickerSelection({
+        selectedPath: "C:\\Users\\Alice\\repo",
+        targetDistro: "Ubuntu",
+      });
+      assert.deepEqual(result, { _tag: "ConversionFailed", targetDistro: "Ubuntu" });
+    }).pipe(
+      Effect.provide(
+        DesktopWslEnvironment.layerTest({
+          windowsToWslPath: () => Option.none(),
+        }),
+      ),
+    ),
+  );
+
+  it.effect("converts Windows paths inside the concrete target distro", () => {
+    const calls: Array<readonly [string | null, string]> = [];
+    return Effect.gen(function* () {
+      const result = yield* resolveWslPickerSelection({
+        selectedPath: "C:\\Users\\Alice\\repo",
+        targetDistro: "Ubuntu",
+      });
+      assert.deepEqual(result, { _tag: "Success", linuxPath: "/mnt/c/Users/Alice/repo" });
+      assert.deepEqual(calls, [["Ubuntu", "C:\\Users\\Alice\\repo"]]);
+    }).pipe(
+      Effect.provide(
+        DesktopWslEnvironment.layerTest({
+          windowsToWslPath: (distro, windowsPath) => {
+            calls.push([distro, windowsPath]);
+            return Option.some("/mnt/c/Users/Alice/repo");
+          },
+        }),
+      ),
+    );
   });
 });
 

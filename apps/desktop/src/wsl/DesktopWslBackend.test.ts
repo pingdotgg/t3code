@@ -4,8 +4,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import * as NetService from "@t3tools/shared/Net";
-
 import * as DesktopBackendConfiguration from "../backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import type {
@@ -15,6 +13,7 @@ import type {
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "./DesktopWslEnvironment.ts";
+import * as DesktopWslDiagnostics from "./DesktopWslDiagnostics.ts";
 import * as DesktopWslBackend from "./DesktopWslBackend.ts";
 
 function makeStubInstance(input: {
@@ -31,6 +30,7 @@ function makeStubInstance(input: {
     currentConfig: Effect.succeed(Option.none<DesktopBackendStartConfig>()),
     snapshot: Effect.succeed(input.snapshot),
     waitForReady: (_timeout: Duration.Duration) => Effect.succeed(false),
+    probeReady: (_timeout: Duration.Duration) => Effect.succeed(false),
   };
 }
 
@@ -74,16 +74,16 @@ const backendConfigurationLayer = Layer.succeed(
   } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"],
 );
 
-const netLayer = Layer.succeed(NetService.NetService, {
-  canListenOnHost: () => Effect.succeed(true),
-  isPortAvailableOnLoopback: () => Effect.succeed(true),
-  reserveLoopbackPort: () => Effect.succeed(41773),
-  findAvailablePort: (preferred) => Effect.succeed(preferred),
-} satisfies NetService.NetService["Service"]);
-
 describe("DesktopWslBackend", () => {
   it.effect("clears the stored preflight error when a registered WSL backend becomes ready", () => {
     let registeredSpec: DesktopBackendPool.BackendInstanceSpec | undefined;
+    let resolveWslInput:
+      | {
+          readonly port: number;
+          readonly distro: string | null;
+          readonly portStrategy?: DesktopBackendConfiguration.WslBackendPortStrategy;
+        }
+      | undefined;
     const primary = makeStubInstance({
       id: DesktopBackendPool.PRIMARY_INSTANCE_ID,
       label: "Windows",
@@ -110,11 +110,27 @@ describe("DesktopWslBackend", () => {
         }),
       unregister: () => Effect.die("unexpected unregister"),
     } satisfies DesktopBackendPool.DesktopBackendPool["Service"]);
+    const configurationLayer = Layer.succeed(
+      DesktopBackendConfiguration.DesktopBackendConfiguration,
+      {
+        resolvePrimary: Effect.die("unexpected resolvePrimary"),
+        resolvePrimaryLabel: Effect.succeed("Windows"),
+        resolveWsl: (input) => {
+          resolveWslInput = input;
+          return Effect.die("configResolve should remain lazy during registration");
+        },
+      } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"],
+    );
 
     return Effect.gen(function* () {
       const backend = yield* DesktopWslBackend.DesktopWslBackend;
 
       yield* backend.reconcile;
+      assert.deepEqual(resolveWslInput, {
+        port: 3774,
+        distro: "Ubuntu",
+        portStrategy: "wsl-auto",
+      });
       const spec = registeredSpec;
       assert.isDefined(spec);
       if (spec === undefined) {
@@ -137,9 +153,8 @@ describe("DesktopWslBackend", () => {
       Effect.provide(
         DesktopWslBackend.layer.pipe(
           Layer.provideMerge(poolLayer),
-          Layer.provideMerge(backendConfigurationLayer),
+          Layer.provideMerge(configurationLayer),
           Layer.provideMerge(serverExposureLayer),
-          Layer.provideMerge(netLayer),
           Layer.provideMerge(
             DesktopAppSettings.layerTest({
               ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
@@ -149,6 +164,7 @@ describe("DesktopWslBackend", () => {
             }),
           ),
           Layer.provideMerge(DesktopWslEnvironment.layerTest({ isAvailable: true })),
+          Layer.provideMerge(DesktopWslDiagnostics.layer),
         ),
       ),
     );
@@ -182,7 +198,6 @@ describe("DesktopWslBackend", () => {
           Layer.provideMerge(DesktopBackendPool.layerTest([primary, wsl])),
           Layer.provideMerge(backendConfigurationLayer),
           Layer.provideMerge(serverExposureLayer),
-          Layer.provideMerge(netLayer),
           Layer.provideMerge(
             DesktopAppSettings.layerTest({
               ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
@@ -192,6 +207,7 @@ describe("DesktopWslBackend", () => {
             }),
           ),
           Layer.provideMerge(DesktopWslEnvironment.layerTest({ isAvailable: true })),
+          Layer.provideMerge(DesktopWslDiagnostics.layer),
         ),
       ),
     );

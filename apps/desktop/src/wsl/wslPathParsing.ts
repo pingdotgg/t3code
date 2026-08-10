@@ -38,27 +38,32 @@ export function parseWslDistroList(stdout: Buffer): readonly WslDistro[] {
   return distros;
 }
 
-// Recognizes \\wsl.localhost\<distro>\... and the legacy \\wsl$\<distro>\... so
-// `wslpath` can be invoked inside the distro that actually owns the path,
-// rather than whichever distro is configured for the desktop backend.
-export function extractDistroFromUncPath(windowsPath: string): string | null {
-  const match = /^\\\\(?:wsl\.localhost|wsl\$)\\([^\\]+)/i.exec(windowsPath);
-  if (!match) return null;
-  const candidate = match[1]!;
-  return DISTRO_NAME_PATTERN.test(candidate) ? candidate : null;
+export interface WslUncPath {
+  readonly distro: string;
+  readonly linuxPath: string;
 }
 
-export function wslUncPathToLinuxPath(windowsPath: string): string | null {
-  const match = /^\\\\(?:wsl\.localhost|wsl\$)\\([^\\]+)(?:\\(.*))?$/i.exec(windowsPath.trim());
+// Recognizes \\wsl.localhost\<distro>\... and the legacy \\wsl$\<distro>\...
+// while preserving the distro identity. Dropping that identity is unsafe: the
+// same Linux path can exist in multiple distros, so callers must validate the
+// selected distro against the concrete backend they are targeting before
+// returning only the Linux path.
+export function parseWslUncPath(windowsPath: string): WslUncPath | null {
+  const match = /^\\\\(?:wsl\.localhost|wsl\$)\\([^\\]+)(?:\\(.*))?$/i.exec(windowsPath);
   if (!match) return null;
 
   const distro = match[1]!;
   if (!DISTRO_NAME_PATTERN.test(distro)) return null;
 
   const rest = match[2] ?? "";
-  if (rest.length === 0) return "/";
+  return {
+    distro,
+    linuxPath: rest.length === 0 ? "/" : `/${rest.split("\\").filter(Boolean).join("/")}`,
+  };
+}
 
-  return `/${rest.split("\\").filter(Boolean).join("/")}`;
+export function isSameWslDistro(left: string, right: string): boolean {
+  return left.toLowerCase() === right.toLowerCase();
 }
 
 export function resolveWslHomeUncPath(
@@ -93,13 +98,18 @@ export function resolveWslPickFolderDefaultPath(
   if (trimmedPath.length === 0) {
     return homePath;
   }
-  if (trimmedPath.startsWith("\\\\")) {
-    return trimmedPath;
-  }
-
   const distroName = config.distro ?? distros.find((distro) => distro.isDefault)?.name ?? null;
   if (!distroName) {
     return homePath;
+  }
+
+  if (trimmedPath.startsWith("\\\\")) {
+    const parsed = parseWslUncPath(trimmedPath);
+    // Never seed a picker for one distro with a path owned by another distro.
+    // That makes it far too easy to select a valid-looking path that is later
+    // interpreted by the wrong Linux backend. Non-WSL UNC paths also fall back
+    // to the target distro's home rather than becoming an accidental default.
+    return parsed && isSameWslDistro(parsed.distro, distroName) ? trimmedPath : homePath;
   }
 
   const toUncPath = (linuxPath: string) =>

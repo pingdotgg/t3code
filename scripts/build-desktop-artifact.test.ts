@@ -2,8 +2,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -20,6 +22,8 @@ import {
   InvalidMacPasskeyPublishableKeyError,
   InvalidMockUpdateServerPortError,
   UnsupportedDesktopBuildArchitectureError,
+  WslNativeAbiManifestError,
+  WslNodePtyPrebuildRequiredError,
   isMacPasskeySigningConfigurationError,
   LinuxIconResizeError,
   MacPasskeySigningConfigurationResolutionError,
@@ -41,8 +45,10 @@ import {
   resolveMockUpdateServerUrl,
   resolvePackageManagerUserAgent,
   stageLinuxIconSize,
+  stageWslNodePtyPrebuild,
   STAGE_INSTALL_ARGS,
   WINDOWS_ASAR_UNPACK,
+  WINDOWS_WSL_EXTRA_RESOURCES,
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -244,6 +250,15 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         libc: ["glibc"],
       },
     });
+    assert.deepStrictEqual(
+      createStageWorkspaceConfig({ platform: "win", arch: "x64", includeWsl: false }),
+      {
+        supportedArchitectures: {
+          os: ["win32"],
+          cpu: ["x64"],
+        },
+      },
+    );
     assert.deepStrictEqual(createStageWorkspaceConfig({ platform: "mac", arch: "universal" }), {
       supportedArchitectures: {
         os: ["darwin"],
@@ -309,10 +324,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     );
   });
 
-  it("limits Electron locales and excludes the unused Claude SDK executable", () => {
+  it("limits Electron locales and excludes dead weight plus external-only WSL runtime bytes", () => {
     assert.deepStrictEqual(DESKTOP_ELECTRON_LANGUAGES, ["en-US"]);
     assert.deepStrictEqual(DESKTOP_FILE_EXCLUSIONS, [
       "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
+      "!apps/desktop/prod-resources/wsl-node/**/*",
     ]);
   });
 
@@ -345,10 +361,25 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
         undefined,
       );
+      const winWithoutWsl = yield* createBuildConfig(
+        "win",
+        "nsis",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
+      );
 
       assert.notProperty(mac, "asarUnpack");
       assert.notProperty(linux, "asarUnpack");
       assert.deepStrictEqual(win.asarUnpack, WINDOWS_ASAR_UNPACK);
+      assert.deepStrictEqual(win.extraResources, [
+        ...DESKTOP_EXTRA_RESOURCES,
+        ...WINDOWS_WSL_EXTRA_RESOURCES,
+      ]);
+      assert.deepStrictEqual(winWithoutWsl.extraResources, DESKTOP_EXTRA_RESOURCES);
       // Linux must register the renderer schemes so the generated .desktop
       // entry advertises MimeType=x-scheme-handler/t3code; for OAuth deep links.
       assert.deepStrictEqual((linux.linux as Record<string, unknown>).protocols, [
@@ -552,11 +583,17 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
-  it("stages the resource monitor as an external executable resource", () => {
+  it("stages platform runtime helpers as external executable resources", () => {
     assert.deepStrictEqual(DESKTOP_EXTRA_RESOURCES, [
       {
         from: "apps/desktop/prod-resources/resource-monitor",
         to: "resource-monitor",
+      },
+    ]);
+    assert.deepStrictEqual(WINDOWS_WSL_EXTRA_RESOURCES, [
+      {
+        from: "apps/desktop/prod-resources/wsl-node",
+        to: "wsl-node",
       },
     ]);
     assert.deepStrictEqual(resolveResourceMonitorRustTargets("mac", "universal"), [
@@ -678,7 +715,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         verbose: Option.none(),
         mockUpdates: Option.none(),
         mockUpdateServerPort: Option.none(),
-        wslPrebuild: Option.none(),
+        wslPrebuild: Option.some("/tmp/wsl-prebuild/pty.node"),
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -699,7 +736,125 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(resolved.platform, "win");
       assert.equal(resolved.target, "nsis");
       assert.equal(resolved.arch, "arm64");
+      assert.equal(resolved.wslSupport, true);
     }),
+  );
+
+  it.effect("requires an explicit opt-out for Windows artifacts without WSL support", () =>
+    Effect.gen(function* () {
+      const resolved = yield* resolveBuildOptions({
+        platform: Option.some("win"),
+        target: Option.none(),
+        arch: Option.some("x64"),
+        buildVersion: Option.none(),
+        outputDir: Option.some("release-test"),
+        skipBuild: Option.none(),
+        keepStage: Option.none(),
+        signed: Option.none(),
+        verbose: Option.none(),
+        mockUpdates: Option.none(),
+        mockUpdateServerPort: Option.none(),
+        wslPrebuild: Option.none(),
+        withoutWsl: Option.some(true),
+      });
+
+      assert.equal(resolved.wslSupport, false);
+    }),
+  );
+
+  it.effect("rejects a normal Windows build before staging when the WSL prebuild is missing", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        resolveBuildOptions({
+          platform: Option.some("win"),
+          target: Option.none(),
+          arch: Option.some("x64"),
+          buildVersion: Option.none(),
+          outputDir: Option.some("release-test"),
+          skipBuild: Option.none(),
+          keepStage: Option.none(),
+          signed: Option.none(),
+          verbose: Option.none(),
+          mockUpdates: Option.none(),
+          mockUpdateServerPort: Option.none(),
+          wslPrebuild: Option.none(),
+        }),
+      );
+      assert.instanceOf(error, WslNodePtyPrebuildRequiredError);
+    }),
+  );
+
+  it.effect("fails closed when a WSL-capable Windows build has no node-pty prebuild", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        stageWslNodePtyPrebuild({
+          stageAppDir: "/tmp/t3code-wsl-stage-not-needed",
+          arch: "x64",
+          prebuildPath: undefined,
+        }),
+      );
+      assert.instanceOf(error, WslNodePtyPrebuildRequiredError);
+    }),
+  );
+
+  it.effect("fails closed when the ABI receipt has no adjacent bundled Linux Node runtime", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-wsl-node-runtime-test-" });
+      const prebuildDir = path.join(baseDir, "prebuild");
+      const stageDir = path.join(baseDir, "stage");
+      yield* fs.makeDirectory(prebuildDir, { recursive: true });
+      yield* fs.makeDirectory(stageDir, { recursive: true });
+      const ptyPath = path.join(prebuildDir, "pty.node");
+      yield* fs.writeFileString(ptyPath, "pty-fixture");
+      yield* fs.writeFileString(
+        path.join(prebuildDir, "wsl-native-abi.json"),
+        `${JSON.stringify({
+          schemaVersion: 2,
+          nodeRuntime: { version: "24.13.1" },
+          baseline: {
+            id: "ubuntu-22.04",
+            arch: "x64",
+            glibcRuntime: "2.35",
+            limits: { glibc: "2.35", glibcxx: "3.4.30", cxxabi: "1.3.13" },
+            libstdcxx: "libstdc++.so.6",
+          },
+          artifacts: [
+            {
+              name: "node-runtime",
+              path: "node",
+              sha256: "0".repeat(64),
+              elfClass: "ELF64",
+              machine: "Advanced Micro Devices X86-64",
+              neededLibraries: [],
+              requiredVersions: { GLIBC: [], GLIBCXX: [], CXXABI: [] },
+              maxRequired: { GLIBC: "none", GLIBCXX: "none", CXXABI: "none" },
+            },
+            {
+              name: "node-pty",
+              path: "pty.node",
+              sha256: "1".repeat(64),
+              elfClass: "ELF64",
+              machine: "Advanced Micro Devices X86-64",
+              neededLibraries: [],
+              requiredVersions: { GLIBC: [], GLIBCXX: [], CXXABI: [] },
+              maxRequired: { GLIBC: "none", GLIBCXX: "none", CXXABI: "none" },
+            },
+          ],
+        })}\n`,
+      );
+
+      const error = yield* Effect.flip(
+        stageWslNodePtyPrebuild({
+          stageAppDir: stageDir,
+          arch: "x64",
+          prebuildPath: ptyPath,
+        }),
+      );
+      assert.instanceOf(error, WslNativeAbiManifestError);
+      assert.include(error.reason, "bundled Linux Node runtime is missing");
+    }).pipe(Effect.scoped),
   );
 
   it.effect("rejects universal builds on Linux and Windows before staging binaries", () =>

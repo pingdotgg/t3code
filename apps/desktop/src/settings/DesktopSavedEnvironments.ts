@@ -1,5 +1,6 @@
 import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import { retryWindowsFileSystemOperation } from "@t3tools/shared/windowsFileRetry";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -293,7 +294,9 @@ const writeRegistryDocument = Effect.fn("desktop.savedEnvironments.writeRegistry
           }),
       ),
     );
-    yield* input.fileSystem.makeDirectory(directory, { recursive: true }).pipe(
+    yield* retryWindowsFileSystemOperation(
+      input.fileSystem.makeDirectory(directory, { recursive: true }),
+    ).pipe(
       Effect.mapError(
         (cause) =>
           new DesktopSavedEnvironmentsWriteError({
@@ -303,24 +306,36 @@ const writeRegistryDocument = Effect.fn("desktop.savedEnvironments.writeRegistry
           }),
       ),
     );
-    yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`).pipe(
-      Effect.mapError(
-        (cause) =>
-          new DesktopSavedEnvironmentsWriteError({
-            operation: "write-temporary-file",
-            path: tempPath,
-            cause,
-          }),
-      ),
-    );
-    yield* input.fileSystem.rename(tempPath, input.registryPath).pipe(
-      Effect.mapError(
-        (cause) =>
-          new DesktopSavedEnvironmentsWriteError({
-            operation: "replace-registry-file",
-            path: input.registryPath,
-            cause,
-          }),
+    yield* Effect.gen(function* () {
+      yield* retryWindowsFileSystemOperation(
+        input.fileSystem.writeFileString(tempPath, `${encoded}\n`),
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DesktopSavedEnvironmentsWriteError({
+              operation: "write-temporary-file",
+              path: tempPath,
+              cause,
+            }),
+        ),
+      );
+      yield* retryWindowsFileSystemOperation(
+        input.fileSystem.rename(tempPath, input.registryPath),
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DesktopSavedEnvironmentsWriteError({
+              operation: "replace-registry-file",
+              path: input.registryPath,
+              cause,
+            }),
+        ),
+      );
+    }).pipe(
+      Effect.ensuring(
+        retryWindowsFileSystemOperation(
+          input.fileSystem.remove(tempPath, { force: true }),
+        ).pipe(Effect.ignore),
       ),
     );
   },

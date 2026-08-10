@@ -264,18 +264,122 @@ jobs:
           echo "clerk_cli_oauth_client_id=$CLERK_CLI_OAUTH_CLIENT_ID" >> "$GITHUB_OUTPUT"
           echo "relay_url=https://$relay_domain" >> "$GITHUB_OUTPUT"
 
-  # node-pty publishes no Linux prebuilt and the WSL backend runs under the
-  # distro's own (Linux) Node, which can't load the Windows/Electron binary. We
-  # build the Linux pty.node here, on Linux, and hand it to the Windows packaging
-  # job — the Windows artifact then ships a ready WSL backend binary with no
-  # cross-compiling and no first-launch compiler/node-gyp/network on the user's
-  # machine. node-pty is N-API, so one binary works across all WSL Node versions.
+  # node-pty publishes no Linux prebuilt. Build its native binary on the declared
+  # WSL compatibility floor (Ubuntu 22.04 / glibc 2.35) and capture the exact
+  # Linux Node runtime used for the build. The Windows artifact ships that Node
+  # binary too, so packaged WSL startup never depends on a distro-installed Node.
+  # Audit every Linux executable/native dependency that Windows will hand to WSL.
   build_wsl_node_pty:
-    name: Build WSL node-pty (linux-x64)
+    name: Build + audit WSL native runtime (Ubuntu 22.04 ABI container)
     needs: [preflight]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 15
+    # Keep the ABI floor on Jammy/glibc 2.35 without depending on GitHub's
+    # ubuntu-22.04 runner label, which is entering deprecation. The host can
+    # advance independently while every compiler/auditor command runs in the
+    # Ubuntu 22.04 container.
+    runs-on: ubuntu-24.04
+    container:
+      image: ubuntu:22.04
+    timeout-minutes: 20
+    steps:
+      - name: Bootstrap Ubuntu 22.04 ABI container
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            build-essential \
+            ca-certificates \
+            curl \
+            git \
+            file \
+            python3 \
+            binutils
+          test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.35"
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Report WSL ABI build tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          getconf GNU_LIBC_VERSION
+          g++ --version
+          readelf --version | head -n 1
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3...
+
+      - name: Test WSL ABI auditor
+        run: node --test scripts/audit-wsl-native-abi.test.mjs
+
+      - name: Build node-pty + capture bundled Linux Node runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          pty_pkg="$(node -e "console.log(require.resolve('node-pty/package.json', { paths: ['$GITHUB_WORKSPACE/apps/server'] }))")"
+          pty_dir="$(dirname "$pty_pkg")"
+          ( cd "$pty_dir" && npx --yes node-gyp@12.3.0 rebuild )
+          mkdir -p wsl-prebuild
+          cp "$pty_dir/build/Release/pty.node" wsl-prebuild/pty.node
+          cp -L "$(command -v node)" wsl-prebuild/node
+          chmod 0755 wsl-prebuild/node
+          file wsl-prebuild/pty.node wsl-prebuild/node
+          echo "Bundled WSL Node: $(wsl-prebuild/node --version)"
+
+      - name: Audit WSL native ABI floor
+        shell: bash
+        run: |
+          set -euo pipefail
+          libstdcxx="$(g++ -print-file-name=libstdc++.so.6)"
+          node scripts/audit-wsl-native-abi.mjs \
+            --baseline ubuntu-22.04 \
+            --arch x64 \
+            --max-glibc 2.35 \
+            --libstdcxx "$libstdcxx" \
+            --server-root apps/server \
+            --node-pty wsl-prebuild/pty.node \
+            --node-runtime wsl-prebuild/node \
+            --output wsl-prebuild/wsl-native-abi.json
+          cat wsl-prebuild/wsl-native-abi.json
+
+      - name: Smoke WSL native runtime on compatibility floor
+        shell: bash
+        run: |
+          set -euo pipefail
+          wsl-prebuild/node scripts/smoke-wsl-native-runtime.mjs \
+            --server-root apps/server \
+            --arch x64 \
+            --node-pty wsl-prebuild/pty.node \
+            --node-runtime wsl-prebuild/node \
+            --manifest wsl-prebuild/wsl-native-abi.json
+
+      - name: Upload ABI-audited WSL runtime receipt
+        uses: actions/upload-artifact@v7
+        with:
+          name: wsl-node-pty-x64
+          path: wsl-prebuild/
+          if-no-files-found: error
+
+  validate_wsl_native_runtime:
+    name: Validate WSL native runtime (Ubuntu 24.04)
+    needs: [preflight, build_wsl_node_pty]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build_wsl_node_pty.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -295,37 +399,35 @@ jobs:
             args:
               - --filter=t3...
 
-      - name: Build node-pty linux-x64 prebuild
+      - name: Download ABI-audited WSL runtime
+        uses: actions/download-artifact@v8
+        with:
+          name: wsl-node-pty-x64
+          path: wsl-prebuild
+
+      - name: Smoke identical native bytes on Ubuntu 24.04
         shell: bash
         run: |
           set -euo pipefail
-          # Resolve node-pty from apps/server (where it's a dependency) and build
-          # its native binary from source for Linux. node-addon-api resolves from
-          # node-pty's own dependency tree, so node-gyp has everything it needs.
-          pty_pkg="$(node -e "console.log(require.resolve('node-pty/package.json', { paths: ['$GITHUB_WORKSPACE/apps/server'] }))")"
-          pty_dir="$(dirname "$pty_pkg")"
-          ( cd "$pty_dir" && npx --yes node-gyp rebuild )
-          mkdir -p wsl-prebuild
-          cp "$pty_dir/build/Release/pty.node" wsl-prebuild/pty.node
-          file wsl-prebuild/pty.node
-
-      - name: Upload node-pty linux-x64 prebuild
-        uses: actions/upload-artifact@v7
-        with:
-          name: wsl-node-pty-x64
-          path: wsl-prebuild/pty.node
-          if-no-files-found: error
+          getconf GNU_LIBC_VERSION
+          # Artifact upload/download does not preserve POSIX executable mode.
+          # Runtime hashing is content-only, so restore execute permission before
+          # exercising the exact audited Node bytes.
+          chmod 0755 wsl-prebuild/node
+          wsl-prebuild/node scripts/smoke-wsl-native-runtime.mjs \
+            --server-root apps/server \
+            --arch x64 \
+            --node-pty wsl-prebuild/pty.node \
+            --node-runtime wsl-prebuild/node \
+            --manifest wsl-prebuild/wsl-native-abi.json
 
   build:
     name: Build ${{ matrix.label }}
-    # build_wsl_node_pty stays in `needs` so it runs first and its artifact is
-    # available to download, but only the Windows matrix entry consumes it. We
-    # therefore gate the job on preflight + relay (must succeed) WITHOUT requiring
-    # build_wsl_node_pty, so a failed Linux prebuild doesn't skip the macOS/Linux
-    # builds. `!cancelled()` (not `!failure()`) lets the job run even when
-    # build_wsl_node_pty failed; the Windows-only download step below then fails
-    # that single platform if the prebuild is missing.
-    needs: [preflight, relay_public_config, build_wsl_node_pty]
+    # WSL native build/validation jobs stay in `needs` so their audited artifact
+    # is available to Windows. macOS/Linux builds remain independent: if either
+    # WSL job fails, the matrix still runs and the Windows-only gate below fails
+    # that platform instead of suppressing unrelated artifacts.
+    needs: [preflight, relay_public_config, build_wsl_node_pty, validate_wsl_native_runtime]
     if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -414,9 +516,18 @@ jobs:
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
 
-      - name: Download WSL node-pty prebuild
+      - name: Require WSL native compatibility validation
         if: matrix.platform == 'win'
-        uses: actions/download-artifact@v7
+        shell: bash
+        run: |
+          if [[ "${{ needs.build_wsl_node_pty.result }}" != "success" || "${{ needs.validate_wsl_native_runtime.result }}" != "success" ]]; then
+            echo "Windows packaging requires successful Ubuntu 22.04 ABI audit and Ubuntu 24.04 native-runtime smoke validation." >&2
+            exit 1
+          fi
+
+      - name: Download WSL runtime + ABI receipt
+        if: matrix.platform == 'win'
+        uses: actions/download-artifact@v8
         with:
           name: wsl-node-pty-x64
           path: wsl-prebuild
@@ -574,9 +685,9 @@ jobs:
               echo "macOS signing disabled (missing one or more Apple signing secrets)."
             fi
           elif [[ "${{ matrix.platform }}" == "win" ]]; then
-            # Bundle the Linux node-pty binary built by the build_wsl_node_pty job
-            # so the packaged WSL backend ships a ready binary (no first-launch
-            # compile). Required for a working WSL backend on Windows.
+            # Bundle the ABI-audited Linux Node runtime and node-pty binary built
+            # by the compatibility-floor job. WSL startup must not depend on a
+            # user-installed Node.js or first-launch native compilation.
             args+=(--wsl-prebuild "$GITHUB_WORKSPACE/wsl-prebuild/pty.node")
             if has_all \
               "$AZURE_TENANT_ID" \

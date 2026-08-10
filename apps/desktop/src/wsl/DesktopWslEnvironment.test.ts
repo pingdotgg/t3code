@@ -14,11 +14,17 @@ import {
   DesktopWslDistroListError,
   formatMissingToolsReason,
   formatNodePtyProbeFailureReason,
+  formatWslLibcCompatibilityReason,
   formatWslShellTransportFailureReason,
+  MIN_WSL_GLIBC_VERSION,
+  parseGlibcVersion,
+  parseLibcFamily,
+  parseBundledWslNodePreparationOutput,
   parseNodePath,
   parseNodeVersion,
   parseResolvedPath,
   parseToolchainReport,
+  parseWslTcpPortAllocationOutput,
   probeWslDistros,
 } from "./DesktopWslEnvironment.ts";
 
@@ -101,12 +107,96 @@ describe("formatNodePtyProbeFailureReason", () => {
   });
 });
 
+
+describe("bundled WSL Node preparation output", () => {
+  it("parses an absolute cached runtime path and exact Node version", () => {
+    expect(
+      parseBundledWslNodePreparationOutput(
+        "bundledNodePath:/home/test user/.cache/t3code/wsl-runtime/node-abc\nbundledNodeVersion:24.13.1\n",
+      ),
+    ).toEqual({
+      nodePath: "/home/test user/.cache/t3code/wsl-runtime/node-abc",
+      nodeVersion: "24.13.1",
+    });
+  });
+
+  it("rejects relative paths, missing fields, and malformed versions", () => {
+    expect(
+      parseBundledWslNodePreparationOutput(
+        "bundledNodePath:relative/node\nbundledNodeVersion:24.13.1\n",
+      ),
+    ).toBeNull();
+    expect(
+      parseBundledWslNodePreparationOutput(
+        "bundledNodePath:/home/test/node\nbundledNodeVersion:24.x\n",
+      ),
+    ).toBeNull();
+    expect(parseBundledWslNodePreparationOutput("bundledNodeVersion:24.13.1\n")).toBeNull();
+  });
+});
+
+describe("WSL libc compatibility", () => {
+  it("parses glibc identity and version from preflight output", () => {
+    const stdout = "libcFamily:glibc\nglibcVersion:2.35\nnodePath:/usr/bin/node\n";
+    expect(parseLibcFamily(stdout)).toBe("glibc");
+    expect(parseGlibcVersion(stdout)).toBe("2.35");
+    expect(MIN_WSL_GLIBC_VERSION).toBe("2.35");
+  });
+
+  it("rejects a glibc distro below the packaged runtime floor", () => {
+    const reason = formatWslLibcCompatibilityReason("Ubuntu-20.04", "glibc", "2.31");
+    expect(reason).toContain("Ubuntu-20.04");
+    expect(reason).toContain("glibc 2.31");
+    expect(reason).toContain("requires glibc 2.35 or newer");
+  });
+
+  it("accepts the floor and newer glibc versions", () => {
+    expect(formatWslLibcCompatibilityReason("Ubuntu", "glibc", "2.35")).toBeNull();
+    expect(formatWslLibcCompatibilityReason("Ubuntu", "glibc", "2.39")).toBeNull();
+  });
+
+  it("rejects musl but lets an unknown libc reach the real native load probe", () => {
+    expect(formatWslLibcCompatibilityReason("Alpine", "musl", null)).toContain("musl libc");
+    expect(formatWslLibcCompatibilityReason("Custom", "unknown", null)).toBeNull();
+  });
+
+  it("does not accept malformed glibc version text", () => {
+    expect(parseGlibcVersion("glibcVersion:2.35-custom")).toBeNull();
+  });
+});
+
 describe("formatWslShellTransportFailureReason", () => {
   it("distinguishes timeouts and spawn failures from normal shell exit codes", () => {
     expect(formatWslShellTransportFailureReason("timeout")).toContain("timed out");
     expect(formatWslShellTransportFailureReason("spawn")).toContain("could not start wsl.exe");
     expect(formatWslShellTransportFailureReason("process")).toContain("lost communication");
     expect(formatWslShellTransportFailureReason(null)).toBeNull();
+  });
+});
+
+describe("parseWslTcpPortAllocationOutput", () => {
+  it("parses a preferred-port success", () => {
+    expect(parseWslTcpPortAllocationOutput("t3code-wsl-port:3774:0\n")).toEqual({
+      port: 3774,
+      usedEphemeralFallback: false,
+    });
+  });
+
+  it("parses a Linux-kernel ephemeral fallback", () => {
+    expect(
+      parseWslTcpPortAllocationOutput("noise\nt3code-wsl-port:49152:1\nmore noise\n"),
+    ).toEqual({
+      port: 49152,
+      usedEphemeralFallback: true,
+    });
+  });
+
+  it("rejects malformed and out-of-range announcements", () => {
+    expect(parseWslTcpPortAllocationOutput("t3code-wsl-port:0:1\n")).toBeNull();
+    expect(parseWslTcpPortAllocationOutput("t3code-wsl-port:70000:1\n")).toBeNull();
+    expect(parseWslTcpPortAllocationOutput("t3code-wsl-port:3774:maybe\n")).toBeNull();
+    expect(parseWslTcpPortAllocationOutput("t3code-wsl-port:3774abc:0\n")).toBeNull();
+    expect(parseWslTcpPortAllocationOutput("t3code-wsl-port:3774:0:extra\n")).toBeNull();
   });
 });
 

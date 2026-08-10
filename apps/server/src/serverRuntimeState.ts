@@ -1,3 +1,4 @@
+import { retryWindowsFileSystemOperation } from "@t3tools/shared/windowsFileRetry";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -82,7 +83,7 @@ export const persistServerRuntimeState = (input: {
 export const clearPersistedServerRuntimeState = (path: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    yield* fs.remove(path, { force: true }).pipe(
+    yield* retryWindowsFileSystemOperation(fs.remove(path, { force: true })).pipe(
       Effect.mapError(
         (cause) =>
           new ServerRuntimeStateError({

@@ -176,6 +176,9 @@ describe("DesktopBackendConfiguration", () => {
       const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
       yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
       yield* fileSystem.writeFileString(entryPath, "");
+      const bundledNodePath = path.join(baseDir, "wsl-node/bin/node");
+      yield* fileSystem.makeDirectory(path.dirname(bundledNodePath), { recursive: true });
+      yield* fileSystem.writeFileString(bundledNodePath, "bundled-node-fixture");
 
       const observedDistros: Array<string | null> = [];
       const config = yield* Effect.gen(function* () {
@@ -197,8 +200,9 @@ describe("DesktopBackendConfiguration", () => {
                   observedDistros.push(distro);
                   return Option.some("/repo/apps/server/dist/bin.mjs");
                 },
-                ensureNodePty: (distro) => {
+                ensureNodePty: (distro, _windowsRepoRoot, options) => {
                   observedDistros.push(distro);
+                  assert.equal(options?.bundledNodeWindowsPath, bundledNodePath);
                   return { ok: true, nodePath: "/usr/bin/node", resolvedPath: "/usr/bin:/bin" };
                 },
                 getDistroIp: (distro) => {
@@ -225,6 +229,147 @@ describe("DesktopBackendConfiguration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("resolveWsl lets Linux replace an occupied preferred secondary port", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
+      yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fileSystem.writeFileString(entryPath, "");
+      const bundledNodePath = path.join(baseDir, "wsl-node/bin/node");
+      yield* fileSystem.makeDirectory(path.dirname(bundledNodePath), { recursive: true });
+      yield* fileSystem.writeFileString(bundledNodePath, "bundled-node-fixture");
+
+      let allocationInput:
+        | {
+            readonly distro: string;
+            readonly nodePath: string;
+            readonly host: string;
+            readonly preferredPort: number;
+            readonly fallbackToEphemeral: boolean;
+          }
+        | undefined;
+
+      const config = yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        return yield* configuration.resolveWsl({
+          port: 5000,
+          distro: "Ubuntu",
+          portStrategy: "wsl-auto",
+        });
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+                windowsToWslPath: () => Option.some("/repo/apps/server/dist/bin.mjs"),
+                ensureNodePty: () => ({
+                  ok: true,
+                  nodePath: "/usr/bin/node",
+                  resolvedPath: "/usr/bin:/bin",
+                }),
+                getDistroIp: () => Option.some("172.27.0.99"),
+                allocateTcpPort: (input) => {
+                  allocationInput = input;
+                  return { ok: true, port: 49152, usedEphemeralFallback: true };
+                },
+              }),
+            ),
+            Layer.provideMerge(
+              makeEnvironmentLayer(baseDir, {
+                appPath: baseDir,
+                platform: "win32",
+                resourcesPath: baseDir,
+              }),
+            ),
+          ),
+        ),
+      );
+
+      assert.deepEqual(allocationInput, {
+        distro: "Ubuntu",
+        nodePath: "/usr/bin/node",
+        host: "172.27.0.99",
+        preferredPort: 5000,
+        fallbackToEphemeral: true,
+      });
+      assert.equal(config.bootstrap.port, 49152);
+      assert.equal(config.httpBaseUrl.href, "http://172.27.0.99:49152/");
+      assert.isTrue(Option.isNone(config.preflightFailure));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("resolveWsl surfaces a Linux-side fixed-port collision before server spawn", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
+      yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fileSystem.writeFileString(entryPath, "");
+      const bundledNodePath = path.join(baseDir, "wsl-node/bin/node");
+      yield* fileSystem.makeDirectory(path.dirname(bundledNodePath), { recursive: true });
+      yield* fileSystem.writeFileString(bundledNodePath, "bundled-node-fixture");
+
+      const config = yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        return yield* configuration.resolveWsl({
+          port: 5000,
+          distro: "Ubuntu",
+          portStrategy: "fixed",
+        });
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+                windowsToWslPath: () => Option.some("/repo/apps/server/dist/bin.mjs"),
+                ensureNodePty: () => ({
+                  ok: true,
+                  nodePath: "/usr/bin/node",
+                  resolvedPath: "/usr/bin:/bin",
+                }),
+                getDistroIp: () => Option.some("172.27.0.99"),
+                allocateTcpPort: () => ({
+                  ok: false,
+                  reason: "EADDRINUSE:listen EADDRINUSE 172.27.0.99:5000",
+                }),
+              }),
+            ),
+            Layer.provideMerge(
+              makeEnvironmentLayer(baseDir, {
+                appPath: baseDir,
+                platform: "win32",
+                resourcesPath: baseDir,
+              }),
+            ),
+          ),
+        ),
+      );
+
+      const failure = Option.getOrThrow(config.preflightFailure);
+      assert.isFalse(failure.fatal);
+      assert.equal(failure.retryLimit, 3);
+      assert.include(failure.reason, "EADDRINUSE");
+      assert.include(failure.reason, "required WSL-only primary port 5000");
+      assert.equal(config.bootstrap.port, 5000);
+      assert.deepEqual(config.args, ["-d", "Ubuntu", "--", "node", "--version"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect(
     "resolveWsl preserves inherited PATH with quote-sensitive values as separate args",
     () =>
@@ -237,6 +382,9 @@ describe("DesktopBackendConfiguration", () => {
         const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
         yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
         yield* fileSystem.writeFileString(entryPath, "");
+        const bundledNodePath = path.join(baseDir, "wsl-node/bin/node");
+        yield* fileSystem.makeDirectory(path.dirname(bundledNodePath), { recursive: true });
+        yield* fileSystem.writeFileString(bundledNodePath, "bundled-node-fixture");
 
         const nodePath = "/home/test user's/.nvm/versions/node/v22.0.0/bin/node";
         const linuxEntryPath = "/tmp/t3 code's launch/entry file.mjs";
@@ -461,9 +609,9 @@ describe("DesktopBackendConfiguration", () => {
 
           assert.equal(config.executablePath, "wsl.exe");
           assert.equal(config.bootstrap.port, 5050);
-          // Binds to 0.0.0.0 inside WSL so the backend is reachable via
-          // both wslhost-forwarded localhost and the distro's eth0 IP.
-          assert.equal(config.bootstrap.host, "0.0.0.0");
+          // NAT-mode WSL2 binds only the concrete distro interface, never
+          // every Linux interface. The renderer URL uses the same address.
+          assert.equal(config.bootstrap.host, "172.27.0.99");
           assert.equal(config.bootstrap.tailscaleServeEnabled, false);
           assert.notProperty(config.bootstrap, "desktopTelemetryFd");
           assert.notProperty(config.bootstrap, "resourceMonitorPath");
@@ -502,6 +650,155 @@ describe("DesktopBackendConfiguration", () => {
         restoreEnv("OPENAI_API_KEY", previousOpenAiKey);
         restoreEnv("ANTHROPIC_API_KEY", previousAnthropicKey);
       }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("resolveWsl fails closed when the packaged Linux Node runtime is missing", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
+      yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fileSystem.writeFileString(entryPath, "");
+
+      let nodePtyProbeCount = 0;
+      yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const config = yield* configuration.resolveWsl({ port: 5050, distro: "Ubuntu" });
+        const failure = Option.getOrThrow(config.preflightFailure);
+
+        assert.isTrue(failure.fatal);
+        assert.include(failure.reason, "missing packaged WSL Node runtime");
+        assert.include(failure.reason, "wsl-node");
+        assert.equal(nodePtyProbeCount, 0);
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+                windowsToWslPath: () => Option.some("/should/not/reach/native-probe"),
+                ensureNodePty: () => {
+                  nodePtyProbeCount += 1;
+                  return { ok: true, nodePath: "/usr/bin/node", resolvedPath: "/usr/bin:/bin" };
+                },
+              }),
+            ),
+            Layer.provideMerge(
+              makeEnvironmentLayer(baseDir, {
+                appPath: baseDir,
+                platform: "win32",
+                resourcesPath: baseDir,
+              }),
+            ),
+          ),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("resolveWsl rejects WSL1 before path or native-module preflight", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+
+      let pathProbeCount = 0;
+      let nodePtyProbeCount = 0;
+      yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const config = yield* configuration.resolveWsl({ port: 5050, distro: "Legacy-Ubuntu" });
+        const failure = Option.getOrThrow(config.preflightFailure);
+
+        assert.isTrue(failure.fatal);
+        assert.include(failure.reason, "WSL 1");
+        assert.include(failure.reason, 'wsl.exe --set-version "Legacy-Ubuntu" 2');
+        assert.equal(pathProbeCount, 0);
+        assert.equal(nodePtyProbeCount, 0);
+        assert.equal(config.bootstrap.host, "127.0.0.1");
+        assert.isUndefined(config.runningDistro);
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                distros: [{ name: "Legacy-Ubuntu", isDefault: true, version: 1 }],
+                windowsToWslPath: () => {
+                  pathProbeCount += 1;
+                  return Option.some("/should/not/be/used");
+                },
+                ensureNodePty: () => {
+                  nodePtyProbeCount += 1;
+                  return { ok: true, nodePath: "/usr/bin/node", resolvedPath: "/usr/bin:/bin" };
+                },
+              }),
+            ),
+            Layer.provideMerge(makeEnvironmentLayer(baseDir, { platform: "win32" })),
+          ),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("resolveWsl falls back to loopback when the WSL2 address probe fails", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
+      yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fileSystem.writeFileString(entryPath, "");
+      const bundledNodePath = path.join(baseDir, "wsl-node/bin/node");
+      yield* fileSystem.makeDirectory(path.dirname(bundledNodePath), { recursive: true });
+      yield* fileSystem.writeFileString(bundledNodePath, "bundled-node-fixture");
+
+      yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const config = yield* configuration.resolveWsl({ port: 5050, distro: "Ubuntu" });
+
+        assert.isTrue(Option.isNone(config.preflightFailure));
+        assert.equal(config.bootstrap.host, "127.0.0.1");
+        assert.equal(config.httpBaseUrl.href, "http://127.0.0.1:5050/");
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+                windowsToWslPath: () => Option.some("/repo/apps/server/dist/bin.mjs"),
+                ensureNodePty: () => ({
+                  ok: true,
+                  nodePath: "/usr/bin/node",
+                  resolvedPath: "/usr/bin:/bin",
+                }),
+                getDistroIp: () => Option.none(),
+              }),
+            ),
+            Layer.provideMerge(
+              makeEnvironmentLayer(baseDir, {
+                appPath: baseDir,
+                platform: "win32",
+                resourcesPath: baseDir,
+              }),
+            ),
+          ),
+        ),
+      );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

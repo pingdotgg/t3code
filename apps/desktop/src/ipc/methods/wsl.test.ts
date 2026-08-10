@@ -31,7 +31,9 @@ function makeWslBackendLayer(input: { readonly onReconcile?: Effect.Effect<void>
     DesktopWslBackend.DesktopWslBackend,
     DesktopWslBackend.DesktopWslBackend.of({
       reconcile: input.onReconcile ?? Effect.void,
+      retry: Effect.void,
       lastPreflightError: Effect.succeed(Option.none()),
+      lastDiagnostic: Effect.succeed(Option.none()),
     }),
   );
 }
@@ -99,6 +101,7 @@ describe("WSL IPC", () => {
         wslOnly: false,
         distros: [],
         preflightError: null,
+        diagnostic: null,
       });
       assert.deepEqual(relaunchReasons, []);
     }).pipe(Effect.provide(layer));
@@ -135,6 +138,7 @@ describe("WSL IPC", () => {
         wslOnly: true,
         distros: [],
         preflightError: null,
+        diagnostic: null,
       });
       assert.deepEqual(relaunchReasons, ["wslBackendEnabled=true"]);
     }).pipe(Effect.provide(layer));
@@ -169,6 +173,7 @@ describe("WSL IPC", () => {
         wslOnly: true,
         distros: [],
         preflightError: null,
+        diagnostic: null,
       });
       assert.equal(reconcileCount, 0);
       assert.deepEqual(relaunchReasons, ["wslBackendEnabled=true"]);
@@ -235,6 +240,7 @@ describe("WSL IPC", () => {
         wslOnly: false,
         distros: [],
         preflightError: null,
+        diagnostic: null,
       });
       assert.equal(settings.wslBackendEnabled, false);
       assert.equal(settings.wslOnly, false);

@@ -126,6 +126,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
       restartScheduled: false,
     }),
     waitForReady: () => Effect.succeed(true),
+    probeReady: () => Effect.succeed(true),
   };
   const backendLayer = DesktopBackendPool.layerTest([stubBackendInstance]);
 

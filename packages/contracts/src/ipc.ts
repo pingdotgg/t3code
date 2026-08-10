@@ -469,6 +469,41 @@ export const DesktopWslDistroSchema = Schema.Struct({
   version: Schema.Literals([1, 2]),
 });
 
+export type DesktopWslDiagnosticPhase =
+  | "preflight"
+  | "spawn"
+  | "readiness"
+  | "runtime-exit"
+  | "configuration";
+
+export interface DesktopWslDiagnosticRecord {
+  occurredAt: string;
+  phase: DesktopWslDiagnosticPhase;
+  message: string;
+  distro: string | null;
+  wslVersion: 1 | 2 | null;
+  nodePath: string | null;
+  httpBaseUrl: string | null;
+  bindHost: string | null;
+  port: number | null;
+  restartAttempt: number | null;
+  pid: number | null;
+}
+
+export const DesktopWslDiagnosticRecordSchema = Schema.Struct({
+  occurredAt: Schema.String,
+  phase: Schema.Literals(["preflight", "spawn", "readiness", "runtime-exit", "configuration"]),
+  message: Schema.String,
+  distro: Schema.NullOr(Schema.String),
+  wslVersion: Schema.NullOr(Schema.Literals([1, 2])),
+  nodePath: Schema.NullOr(Schema.String),
+  httpBaseUrl: Schema.NullOr(Schema.String),
+  bindHost: Schema.NullOr(Schema.String),
+  port: Schema.NullOr(Schema.Number),
+  restartAttempt: Schema.NullOr(Schema.Number),
+  pid: Schema.NullOr(Schema.Number),
+});
+
 export interface DesktopWslState {
   // True when the user has opted the WSL backend in; the actual backend
   // process is registered with the desktop pool independently of this
@@ -488,6 +523,11 @@ export interface DesktopWslState {
   // settings. Always null in wsl-only mode — that path shows a dialog and
   // falls back to Windows instead.
   preflightError: string | null;
+  // Most recent structured failure for the WSL backend. Unlike the legacy
+  // preflightError string, this survives post-preflight crashes/readiness
+  // failures and is retained until a successful WSL readiness event or an
+  // explicit retry/state change clears it.
+  diagnostic: DesktopWslDiagnosticRecord | null;
 }
 
 export const DesktopWslStateSchema = Schema.Struct({
@@ -497,6 +537,7 @@ export const DesktopWslStateSchema = Schema.Struct({
   wslOnly: Schema.Boolean,
   distros: Schema.Array(DesktopWslDistroSchema),
   preflightError: Schema.NullOr(Schema.String),
+  diagnostic: Schema.NullOr(DesktopWslDiagnosticRecordSchema),
 });
 
 /**
@@ -1035,6 +1076,8 @@ export interface DesktopBridge {
   setWslBackendEnabled: (enabled: boolean) => Promise<DesktopWslState>;
   setWslDistro: (distro: string | null) => Promise<DesktopWslState>;
   setWslOnly: (enabled: boolean) => Promise<DesktopWslState>;
+  retryWslBackend: () => Promise<DesktopWslState>;
+  getWslDiagnosticReport: () => Promise<string>;
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
   /**
    * Multi-select JSON file picker that opens in the VS Code extensions

@@ -9,6 +9,7 @@ import {
   resolveElectronLaunchCommand,
 } from "./electron-launcher.mjs";
 import { waitForResources } from "./wait-for-resources.mjs";
+import { terminateWindowsProcessTree } from "./windows-process-tree.mjs";
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL?.trim();
 if (!devServerUrl) {
@@ -60,11 +61,18 @@ const expectedExits = new WeakSet();
 const watchers = [];
 
 function killChildTreeByPid(pid, signal) {
-  if (hostPlatform === "win32" || typeof pid !== "number") {
-    return;
+  if (typeof pid !== "number") {
+    return false;
   }
 
-  NodeChildProcess.spawnSync("pkill", [`-${signal}`, "-P", String(pid)], { stdio: "ignore" });
+  if (hostPlatform === "win32") {
+    return terminateWindowsProcessTree(pid, { force: signal === "KILL" }).ok;
+  }
+
+  const result = NodeChildProcess.spawnSync("pkill", [`-${signal}`, "-P", String(pid)], {
+    stdio: "ignore",
+  });
+  return result.status === 0;
 }
 
 function cleanupStaleDevApps() {
@@ -141,8 +149,10 @@ async function stopApp() {
     };
 
     app.once("exit", finish);
-    app.kill("SIGTERM");
-    killChildTreeByPid(app.pid, "TERM");
+    const gracefulTreeKill = killChildTreeByPid(app.pid, "TERM");
+    if (hostPlatform !== "win32" || !gracefulTreeKill) {
+      app.kill("SIGTERM");
+    }
     cleanupStaleDevApps();
 
     setTimeout(() => {
@@ -150,8 +160,10 @@ async function stopApp() {
         return;
       }
 
-      app.kill("SIGKILL");
-      killChildTreeByPid(app.pid, "KILL");
+      const forcedTreeKill = killChildTreeByPid(app.pid, "KILL");
+      if (hostPlatform !== "win32" || !forcedTreeKill) {
+        app.kill("SIGKILL");
+      }
       cleanupStaleDevApps();
       finish();
     }, forcedShutdownTimeoutMs).unref();

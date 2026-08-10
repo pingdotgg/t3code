@@ -3,12 +3,11 @@ import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const require = NodeModule.createRequire(import.meta.url);
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone repair script has no Effect runtime.
 const hostPlatform = NodeOS.platform();
-// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone repair script has no Effect runtime.
-const hostArch = NodeOS.arch();
 
 function getPlatformPath() {
   switch (hostPlatform) {
@@ -100,50 +99,55 @@ function invalidRuntimePaths(electronDir, platformPath) {
   ].filter((runtimePath) => NodeFS.existsSync(runtimePath) && !isMachO(runtimePath));
 }
 
-function runChecked(command, args) {
+function runChecked(command, args, options = {}) {
   const result = NodeChildProcess.spawnSync(command, args, {
+    cwd: options.cwd,
+    env: options.env,
     encoding: "utf8",
     stdio: "inherit",
+    windowsHide: true,
   });
 
   if (result.status === 0) {
     return;
   }
 
+  const cause = result.error ? `: ${result.error.message}` : "";
   throw new Error(
-    `${command} ${args.join(" ")} failed with exit code ${result.status ?? "unknown"}`,
+    `${command} ${args.join(" ")} failed with exit code ${result.status ?? "unknown"}${cause}`,
   );
 }
 
-function installElectronRuntime(electronDir, version) {
-  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-electron-"));
-  const zipPath = NodePath.join(tempDir, `electron-v${version}-${hostPlatform}-${hostArch}.zip`);
-
-  try {
-    runChecked("curl", [
-      "-fsSL",
-      `https://github.com/electron/electron/releases/download/v${version}/electron-v${version}-${hostPlatform}-${hostArch}.zip`,
-      "-o",
-      zipPath,
-    ]);
-    if (hostPlatform === "darwin") {
-      runChecked("ditto", ["-x", "-k", zipPath, NodePath.join(electronDir, "dist")]);
-    } else {
-      runChecked("python3", [
-        "-c",
-        "import os, sys, zipfile; os.makedirs(sys.argv[2], exist_ok=True); zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])",
-        zipPath,
-        NodePath.join(electronDir, "dist"),
-      ]);
-    }
-  } finally {
-    NodeFS.rmSync(tempDir, { recursive: true, force: true });
+export function createElectronInstallInvocation(electronDir, env = process.env) {
+  const installScript = NodePath.join(electronDir, "install.js");
+  if (!NodeFS.existsSync(installScript)) {
+    throw new Error(`Electron installer script is missing: ${installScript}`);
   }
+
+  // This function is itself the recovery path for an intentionally skipped or
+  // incomplete Electron postinstall. Do not let a stale skip flag suppress the
+  // explicit repair attempt. Mirrors/proxies remain inherited.
+  const repairEnv = { ...env };
+  delete repairEnv.ELECTRON_SKIP_BINARY_DOWNLOAD;
+
+  return {
+    command: process.execPath,
+    args: [installScript],
+    cwd: electronDir,
+    env: repairEnv,
+  };
+}
+
+function installElectronRuntime(electronDir) {
+  const invocation = createElectronInstallInvocation(electronDir);
+  runChecked(invocation.command, invocation.args, {
+    cwd: invocation.cwd,
+    env: invocation.env,
+  });
 }
 
 export function ensureElectronRuntime() {
   const electronPackageJsonPath = require.resolve("electron/package.json");
-  const electronPackageJson = JSON.parse(NodeFS.readFileSync(electronPackageJsonPath, "utf8"));
   const electronDir = NodePath.dirname(electronPackageJsonPath);
   const platformPath = getPlatformPath();
   const electronPath = NodePath.join(electronDir, "dist", platformPath);
@@ -155,7 +159,7 @@ export function ensureElectronRuntime() {
       NodeFS.rmSync(NodePath.join(electronDir, "dist"), { recursive: true, force: true });
     }
     NodeFS.rmSync(NodePath.join(electronDir, "path.txt"), { force: true });
-    installElectronRuntime(electronDir, electronPackageJson.version);
+    installElectronRuntime(electronDir);
   }
 
   const missingAfterInstall = missingRuntimePaths(electronDir, platformPath);
@@ -176,7 +180,9 @@ export function ensureElectronRuntime() {
   return electronPath;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+const scriptPath = fileURLToPath(import.meta.url);
+
+if (process.argv[1] && NodePath.resolve(process.argv[1]) === scriptPath) {
   const electronPath = ensureElectronRuntime();
   process.stdout.write(`${electronPath}\n`);
 }

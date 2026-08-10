@@ -12,6 +12,7 @@ import {
 } from "@t3tools/client-runtime/platform";
 import type { PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import { retryWindowsFileSystemOperation } from "@t3tools/shared/windowsFileRetry";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -236,7 +237,9 @@ const writeDocument = Effect.fn("desktop.connectionCatalogStore.writeDocument")(
         }),
     ),
   );
-  yield* input.fileSystem.makeDirectory(directory, { recursive: true }).pipe(
+  yield* retryWindowsFileSystemOperation(
+    input.fileSystem.makeDirectory(directory, { recursive: true }),
+  ).pipe(
     Effect.mapError(
       (cause) =>
         new DesktopConnectionCatalogStoreWriteError({
@@ -247,7 +250,9 @@ const writeDocument = Effect.fn("desktop.connectionCatalogStore.writeDocument")(
     ),
   );
   yield* Effect.gen(function* () {
-    yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`).pipe(
+    yield* retryWindowsFileSystemOperation(
+      input.fileSystem.writeFileString(tempPath, `${encoded}\n`),
+    ).pipe(
       Effect.mapError(
         (cause) =>
           new DesktopConnectionCatalogStoreWriteError({
@@ -257,7 +262,9 @@ const writeDocument = Effect.fn("desktop.connectionCatalogStore.writeDocument")(
           }),
       ),
     );
-    yield* input.fileSystem.rename(tempPath, input.catalogPath).pipe(
+    yield* retryWindowsFileSystemOperation(
+      input.fileSystem.rename(tempPath, input.catalogPath),
+    ).pipe(
       Effect.mapError(
         (cause) =>
           new DesktopConnectionCatalogStoreWriteError({
@@ -269,7 +276,7 @@ const writeDocument = Effect.fn("desktop.connectionCatalogStore.writeDocument")(
     );
   }).pipe(
     Effect.ensuring(
-      input.fileSystem.remove(tempPath, { force: true }).pipe(
+      retryWindowsFileSystemOperation(input.fileSystem.remove(tempPath, { force: true })).pipe(
         Effect.catch((error) =>
           Effect.logWarning("Could not remove a temporary connection catalog file.", {
             tempPath,
@@ -501,7 +508,7 @@ export const make = Effect.gen(function* () {
       yield* writeCatalog(catalog);
       return true;
     }),
-    clear: fileSystem.remove(catalogPath, { force: true }).pipe(
+    clear: retryWindowsFileSystemOperation(fileSystem.remove(catalogPath, { force: true })).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Could not clear the desktop connection catalog.", {
           catalogPath,

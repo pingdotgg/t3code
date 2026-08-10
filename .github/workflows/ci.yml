@@ -89,6 +89,22 @@ jobs:
           T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
         run: vp run test
 
+      - name: Test WSL native ABI auditor
+        run: node --test scripts/audit-wsl-native-abi.test.mjs
+
+      - name: Test Windows/WSL CI contract
+        run: >-
+          node --test
+          scripts/windows-wsl-ci-contract.test.mjs
+          scripts/windows-native-hardening-contract.test.mjs
+          scripts/stage-wsl-ci-node-pty.test.mjs
+          scripts/clean.test.mjs
+          apps/desktop/scripts/ensure-electron-runtime.test.mjs
+          apps/desktop/scripts/windows-process-tree.test.mjs
+          scripts/windows-packaged-lifecycle-contract.test.mjs
+          scripts/windows-persistence-resume-contract.test.mjs
+          scripts/windows-persistence-lock.test.mjs
+
       - name: Publish transfer budget report
         if: always()
         run: |
@@ -109,6 +125,287 @@ jobs:
 
       - name: Test resource monitor
         run: cargo test --locked --manifest-path native/resource-monitor/Cargo.toml
+
+  windows_native:
+    name: Windows Native
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Check on Windows
+        run: vp check
+
+      - name: Typecheck on Windows
+        run: vpr typecheck
+
+      - name: Test desktop on Windows
+        run: vp run --filter @t3tools/desktop test
+
+      - name: Test shared Windows shell semantics
+        run: vp run --filter @t3tools/shared test
+
+      - name: Test Windows developer tooling
+        run: >-
+          node --test
+          scripts/clean.test.mjs
+          apps/desktop/scripts/ensure-electron-runtime.test.mjs
+          apps/desktop/scripts/windows-process-tree.test.mjs
+          scripts/windows-persistence-lock.test.mjs
+          scripts/windows-persistence-resume-contract.test.mjs
+
+      - name: Test web Windows/WSL path logic
+        run: vp run --filter @t3tools/web test
+
+      - name: Test server on Windows
+        run: vp run --filter t3 test
+
+      - name: Build desktop pipeline on Windows
+        run: vp run build:desktop
+
+      - name: Verify preload bundle output on Windows
+        shell: pwsh
+        run: |
+          $preload = "apps/desktop/dist-electron/preload.cjs"
+          if (-not (Test-Path $preload)) { throw "Missing $preload" }
+          $text = Get-Content -Raw $preload
+          foreach ($needle in @("desktopBridge", "getLocalEnvironmentBootstrap", "PICK_FOLDER_CHANNEL", "wsUrl", "__clerk_internal_electron_passkeys")) {
+            if (-not $text.Contains($needle)) { throw "Preload bundle is missing $needle" }
+          }
+
+      - name: Test Windows resource monitor
+        run: cargo test --locked --manifest-path native/resource-monitor/Cargo.toml
+
+      - name: Exercise release-only workflow steps on Windows
+        run: node scripts/release-smoke.ts
+
+  wsl_native_ci:
+    name: WSL Native Runtime CI (Ubuntu 22.04 ABI floor)
+    runs-on: ubuntu-24.04
+    container:
+      image: ubuntu:22.04
+    timeout-minutes: 20
+    steps:
+      - name: Bootstrap Ubuntu 22.04 ABI container
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            build-essential \
+            ca-certificates \
+            curl \
+            git \
+            file \
+            python3 \
+            binutils
+          test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.35"
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3...
+
+      - name: Test WSL ABI auditor
+        run: node --test scripts/audit-wsl-native-abi.test.mjs
+
+      - name: Build node-pty and capture bundled Linux Node
+        shell: bash
+        run: |
+          set -euo pipefail
+          pty_pkg="$(node -e "console.log(require.resolve('node-pty/package.json', { paths: ['$GITHUB_WORKSPACE/apps/server'] }))")"
+          pty_dir="$(dirname "$pty_pkg")"
+          ( cd "$pty_dir" && npx --yes node-gyp@12.3.0 rebuild )
+          mkdir -p wsl-prebuild
+          cp "$pty_dir/build/Release/pty.node" wsl-prebuild/pty.node
+          cp -L "$(command -v node)" wsl-prebuild/node
+          chmod 0755 wsl-prebuild/node
+          file wsl-prebuild/pty.node wsl-prebuild/node
+
+      - name: Audit WSL native ABI floor
+        shell: bash
+        run: |
+          set -euo pipefail
+          libstdcxx="$(g++ -print-file-name=libstdc++.so.6)"
+          node scripts/audit-wsl-native-abi.mjs \
+            --baseline ubuntu-22.04 \
+            --arch x64 \
+            --max-glibc 2.35 \
+            --libstdcxx "$libstdcxx" \
+            --server-root apps/server \
+            --node-pty wsl-prebuild/pty.node \
+            --node-runtime wsl-prebuild/node \
+            --output wsl-prebuild/wsl-native-abi.json
+
+      - name: Smoke WSL native runtime on ABI floor
+        shell: bash
+        run: |
+          set -euo pipefail
+          wsl-prebuild/node scripts/smoke-wsl-native-runtime.mjs \
+            --server-root apps/server \
+            --arch x64 \
+            --node-pty wsl-prebuild/pty.node \
+            --node-runtime wsl-prebuild/node \
+            --manifest wsl-prebuild/wsl-native-abi.json
+
+      - name: Upload audited WSL runtime for Windows/WSL2 integration
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-wsl-native-runtime-x64
+          path: wsl-prebuild/
+          if-no-files-found: error
+          retention-days: 7
+
+  windows_wsl2_integration:
+    name: Windows + real WSL2 + Packaged Lifecycle
+    needs: [wsl_native_ci]
+    runs-on: windows-2025
+    timeout-minutes: 55
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/desktop...
+              - --filter=t3...
+              - --filter=@t3tools/scripts...
+
+      - name: Setup Rust for packaged resource monitor
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Download ABI-audited WSL runtime
+        uses: actions/download-artifact@v8
+        with:
+          name: ci-wsl-native-runtime-x64
+          path: wsl-prebuild
+
+      - name: Stage production node-pty marker into Windows workspace
+        run: node scripts/stage-wsl-ci-node-pty.mjs --server-root apps/server --runtime-dir wsl-prebuild --arch x64
+
+      - name: Install and initialize real WSL2 distros
+        shell: pwsh
+        run: ./scripts/bootstrap-wsl2-ci.ps1 -Distros Ubuntu-24.04,Debian
+
+      - name: Smoke audited native runtime inside each WSL2 distro
+        shell: pwsh
+        run: ./scripts/smoke-wsl2-native-runtime.ps1 -RuntimeDir ./wsl-prebuild -Distros Ubuntu-24.04,Debian
+
+      - name: Run desktop WSL integration against real wsl.exe
+        shell: pwsh
+        run: |
+          Push-Location apps/desktop
+          try {
+            vp test run src/wsl/DesktopWslEnvironment.windows.integration.test.ts --testTimeout=120000
+          } finally {
+            Pop-Location
+          }
+
+      - name: Build real portable Windows artifact with audited WSL runtime
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "t3code-packaged-smoke-dist"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          node scripts/build-desktop-artifact.ts `
+            --platform win `
+            --target portable `
+            --arch x64 `
+            --wsl-prebuild (Resolve-Path "wsl-prebuild/pty.node").Path `
+            --output-dir $out
+          "T3CODE_PACKAGED_SMOKE_ARTIFACT_DIR=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Launch packaged Windows artifact through Windows + WSL lifecycle
+        shell: pwsh
+        run: ./scripts/run-windows-packaged-lifecycle-smoke.ps1 -ArtifactDir $env:T3CODE_PACKAGED_SMOKE_ARTIFACT_DIR -Distro Ubuntu-24.04 -TimeoutSeconds 300
+
+      - name: Upload packaged lifecycle receipt and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-packaged-lifecycle-smoke
+          path: |
+            ${{ runner.temp }}/T3 Code José QA/packaged lifecycle/receipt lifecycle.json
+            ${{ runner.temp }}/T3 Code José QA/packaged lifecycle/packaged stdout.log
+            ${{ runner.temp }}/T3 Code José QA/packaged lifecycle/packaged stderr.log
+            ${{ runner.temp }}/T3 Code José QA/packaged lifecycle/state home Ω/userdata/logs/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Capture WSL diagnostics
+        if: always()
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "t3code-wsl-ci-diagnostics.txt"
+          "=== wsl --version ===" | Out-File $out -Encoding utf8
+          (& wsl.exe --version 2>&1) | Out-File $out -Encoding utf8 -Append
+          "=== wsl --status ===" | Out-File $out -Encoding utf8 -Append
+          (& wsl.exe --status 2>&1) | Out-File $out -Encoding utf8 -Append
+          "=== wsl --list --verbose ===" | Out-File $out -Encoding utf8 -Append
+          (& wsl.exe --list --verbose 2>&1) | Out-File $out -Encoding utf8 -Append
+          foreach ($distro in @("Ubuntu-24.04", "Debian")) {
+            "=== $distro ===" | Out-File $out -Encoding utf8 -Append
+            (& wsl.exe --distribution $distro --user root -- /bin/sh -lc 'cat /etc/os-release; uname -a; getconf GNU_LIBC_VERSION 2>/dev/null || true; hostname -I' 2>&1) | Out-File $out -Encoding utf8 -Append
+          }
+          Get-Content $out
+
+      - name: Upload WSL diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-wsl2-diagnostics
+          path: ${{ runner.temp }}/t3code-wsl-ci-diagnostics.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Shutdown WSL
+        if: always()
+        shell: pwsh
+        run: wsl.exe --shutdown
 
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis

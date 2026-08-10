@@ -23,12 +23,17 @@ const PROBE_TIMEOUT = Duration.seconds(10);
 const TOOLCHAIN_TIMEOUT = Duration.seconds(10);
 const BUILD_TIMEOUT = Duration.minutes(5);
 const USER_HOME_TIMEOUT = Duration.seconds(5);
+const TCP_PORT_ALLOCATION_TIMEOUT = Duration.seconds(5);
 const TOOLCHAIN_TRANSPORT_RETRY_LIMIT = 12;
 const BUILD_TRANSPORT_RETRY_LIMIT = 2;
 
 export interface EnsureWslNodePtyOptions {
   readonly allowBuild?: boolean;
   readonly nodeEngineRange?: string | null;
+  // Packaged Windows builds provide an ABI-audited Linux Node executable. The
+  // preflight copies it from the Windows resource mount into a per-distro Linux
+  // cache and uses that exact runtime instead of requiring user-managed Node.
+  readonly bundledNodeWindowsPath?: string | null;
 }
 
 export type EnsureWslNodePtyResult =
@@ -42,6 +47,17 @@ export type EnsureWslNodePtyResult =
       readonly reason: string;
       readonly fatal: boolean;
       readonly retryLimit?: number;
+    };
+
+export type WslTcpPortAllocationResult =
+  | {
+      readonly ok: true;
+      readonly port: number;
+      readonly usedEphemeralFallback: boolean;
+    }
+  | {
+      readonly ok: false;
+      readonly reason: string;
     };
 
 export class DesktopWslDistroListError extends Schema.TaggedErrorClass<DesktopWslDistroListError>()(
@@ -79,6 +95,19 @@ export class DesktopWslEnvironment extends Context.Service<
     // (the backend can be listening for 30+ seconds before wslhost starts
     // forwarding 127.0.0.1:port to WSL-side localhost).
     readonly getDistroIp: (distro: string | null) => Effect.Effect<Option.Option<string>>;
+    // Select/check the backend TCP port inside the concrete WSL distro — the
+    // Linux process that will own the real listener. `fallbackToEphemeral`
+    // keeps a preferred port when it is actually free in Linux, but lets the
+    // Linux kernel select a replacement when that preferred port is occupied.
+    // WSL-only mode disables the fallback because the desktop protocol still
+    // requires its configured primary port to remain stable.
+    readonly allocateTcpPort: (input: {
+      readonly distro: string;
+      readonly nodePath: string;
+      readonly host: string;
+      readonly preferredPort: number;
+      readonly fallbackToEphemeral: boolean;
+    }) => Effect.Effect<WslTcpPortAllocationResult>;
     readonly ensureNodePty: (
       distro: string | null,
       windowsRepoRoot: string,
@@ -145,11 +174,16 @@ ensure_remote_node_path || true
 // wsl.exe re-escapes args before forwarding them to the Linux side, which
 // mangles quotes inside `bash -lc "<script>"`. Pipe the script via stdin to
 // avoid passing it on the command line at all.
+interface RunWslShellOptions {
+  readonly nodeEngineRange?: string | null;
+  readonly resolveUserNode?: boolean;
+}
+
 const runWslShell = (
   distro: string | null,
   bashScript: string,
   timeout: Duration.Duration,
-  options: EnsureWslNodePtyOptions = {},
+  options: RunWslShellOptions = {},
 ): Effect.Effect<ShellResult, never, ChildProcessSpawner.ChildProcessSpawner> => {
   const spawner = ChildProcessSpawner.ChildProcessSpawner;
   // -l picks up profile-managed PATH; the shared resolver covers supported
@@ -160,7 +194,9 @@ const runWslShell = (
     [...buildDistroArgs(distro), "--", "bash", "-l", "-s"],
     {
       stdin: Stream.encodeText(
-        Stream.make(`${buildWslNodeEnvPreamble(options.nodeEngineRange)}${bashScript}`),
+        Stream.make(
+          `${options.resolveUserNode === false ? "" : buildWslNodeEnvPreamble(options.nodeEngineRange)}${bashScript}`,
+        ),
       ),
       stdout: "pipe",
       stderr: "pipe",
@@ -216,7 +252,247 @@ const runWslShell = (
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 
+const WSL_TCP_PORT_RESULT_PREFIX = "t3code-wsl-port:";
+const WSL_TCP_PORT_ERROR_PREFIX = "t3code-wsl-port-error:";
+
+export const parseWslTcpPortAllocationOutput = (
+  stdout: string,
+): { readonly port: number; readonly usedEphemeralFallback: boolean } | null => {
+  for (const rawLine of stdout.split("\n")) {
+    const line = rawLine.trim();
+    if (!line.startsWith(WSL_TCP_PORT_RESULT_PREFIX)) continue;
+    const payload = line.slice(WSL_TCP_PORT_RESULT_PREFIX.length);
+    const match = /^(\d+):(0|1)$/.exec(payload);
+    if (match === null) return null;
+    const port = Number.parseInt(match[1] ?? "", 10);
+    if (!Number.isInteger(port) || port < 1 || port > 65_535) return null;
+    return { port, usedEphemeralFallback: match[2] === "1" };
+  }
+  return null;
+};
+
+const buildWslTcpPortAllocationScript = (input: {
+  readonly nodePath: string;
+  readonly host: string;
+  readonly preferredPort: number;
+  readonly fallbackToEphemeral: boolean;
+}): string => `${shellQuote(input.nodePath)} <<'T3CODE_WSL_PORT_NODE'
+const net = require("node:net");
+const host = ${JSON.stringify(input.host)};
+const preferredPort = ${input.preferredPort};
+const fallbackToEphemeral = ${input.fallbackToEphemeral ? "true" : "false"};
+const resultPrefix = ${JSON.stringify(WSL_TCP_PORT_RESULT_PREFIX)};
+const errorPrefix = ${JSON.stringify(WSL_TCP_PORT_ERROR_PREFIX)};
+
+function attempt(port, usedEphemeralFallback) {
+  const server = net.createServer();
+  server.once("error", (error) => {
+    if (error && error.code === "EADDRINUSE" && fallbackToEphemeral && port !== 0) {
+      attempt(0, true);
+      return;
+    }
+    const code = error && typeof error.code === "string" ? error.code : "UNKNOWN";
+    const message = error && typeof error.message === "string" ? error.message : String(error);
+    process.stderr.write(errorPrefix + code + ":" + message.replace(/[\r\n]+/g, " ") + "\n");
+    process.exitCode = 2;
+  });
+  server.listen({ host, port, exclusive: true }, () => {
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      process.stderr.write(errorPrefix + "INVALID_ADDRESS:listener did not expose a TCP port\n");
+      process.exitCode = 3;
+      server.close();
+      return;
+    }
+    process.stdout.write(resultPrefix + String(address.port) + ":" + (usedEphemeralFallback ? "1" : "0") + "\n");
+    server.close();
+  });
+}
+
+attempt(preferredPort, false);
+T3CODE_WSL_PORT_NODE`;
+
+const allocateTcpPortImpl = (input: {
+  readonly distro: string;
+  readonly nodePath: string;
+  readonly host: string;
+  readonly preferredPort: number;
+  readonly fallbackToEphemeral: boolean;
+}): Effect.Effect<WslTcpPortAllocationResult, never, ChildProcessSpawner.ChildProcessSpawner> =>
+  Effect.gen(function* () {
+    if (
+      !Number.isInteger(input.preferredPort) ||
+      input.preferredPort < 1 ||
+      input.preferredPort > 65_535
+    ) {
+      return {
+        ok: false,
+        reason: `invalid preferred TCP port: ${input.preferredPort}`,
+      } as const;
+    }
+
+    const result = yield* runWslShell(
+      input.distro,
+      buildWslTcpPortAllocationScript(input),
+      TCP_PORT_ALLOCATION_TIMEOUT,
+      { resolveUserNode: false },
+    );
+    if (result.transportFailure !== null) {
+      return {
+        ok: false,
+        reason: `WSL TCP port allocation could not communicate with ${input.distro} (${result.transportFailure}).`,
+      } as const;
+    }
+    const parsed = parseWslTcpPortAllocationOutput(result.stdout);
+    if (result.exitCode === 0 && parsed !== null) {
+      return { ok: true, ...parsed } as const;
+    }
+    const detail = `${result.stdout}\n${result.stderr}`
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.startsWith(WSL_TCP_PORT_ERROR_PREFIX));
+    return {
+      ok: false,
+      reason:
+        detail?.slice(WSL_TCP_PORT_ERROR_PREFIX.length) ||
+        `WSL TCP port allocation failed in ${input.distro} (exit ${result.exitCode}).`,
+    } as const;
+  });
+
+const BUNDLED_NODE_PATH_PREFIX = "bundledNodePath:";
+const BUNDLED_NODE_VERSION_PREFIX = "bundledNodeVersion:";
+const BUNDLED_NODE_ERROR_PREFIX = "bundledNodeError:";
+
+export interface BundledWslNodePreparation {
+  readonly nodePath: string;
+  readonly nodeVersion: string;
+}
+
+export const parseBundledWslNodePreparationOutput = (
+  stdout: string,
+): BundledWslNodePreparation | null => {
+  const lines = stdout.split("\n").map((line) => line.replace(/\r$/, ""));
+  const nodePath = lines
+    .find((line) => line.startsWith(BUNDLED_NODE_PATH_PREFIX))
+    ?.slice(BUNDLED_NODE_PATH_PREFIX.length);
+  const nodeVersion = lines
+    .find((line) => line.startsWith(BUNDLED_NODE_VERSION_PREFIX))
+    ?.slice(BUNDLED_NODE_VERSION_PREFIX.length);
+  if (!nodePath || !nodePath.startsWith("/") || nodePath.includes("\0")) return null;
+  if (!nodeVersion || !/^\d+(?:\.\d+){2}(?:[-+].+)?$/.test(nodeVersion)) return null;
+  return { nodePath, nodeVersion };
+};
+
+const BUNDLED_NODE_PREP_SCRIPT = (linuxSourcePath: string) => `set -u
+source_node=${shellQuote(linuxSourcePath)}
+if [ ! -r "$source_node" ]; then
+  printf '${BUNDLED_NODE_ERROR_PREFIX}%s\n' 'PACKAGED_RUNTIME_NOT_READABLE'
+  exit 40
+fi
+if ! command -v sha256sum >/dev/null 2>&1; then
+  printf '${BUNDLED_NODE_ERROR_PREFIX}%s\n' 'SHA256SUM_NOT_FOUND'
+  exit 41
+fi
+source_sha="$(sha256sum "$source_node" 2>/dev/null | awk '{print $1}')"
+case "$source_sha" in
+  ''|*[!0-9a-fA-F]*) printf '${BUNDLED_NODE_ERROR_PREFIX}%s\n' 'SOURCE_HASH_FAILED'; exit 42 ;;
+esac
+if [ "\${#source_sha}" -ne 64 ]; then
+  printf '${BUNDLED_NODE_ERROR_PREFIX}%s\n' 'SOURCE_HASH_INVALID'
+  exit 42
+fi
+if [ -n "\${HOME:-}" ]; then
+  runtime_dir="$HOME/.cache/t3code/wsl-runtime"
+else
+  runtime_dir="/tmp/t3code-\${UID:-0}/wsl-runtime"
+fi
+if ! mkdir -p "$runtime_dir" 2>/dev/null; then
+  runtime_dir="/tmp/t3code-\${UID:-0}/wsl-runtime"
+  mkdir -p "$runtime_dir" || { printf '${BUNDLED_NODE_ERROR_PREFIX}%s\n' 'CACHE_CREATE_FAILED'; exit 43; }
+fi
+target="$runtime_dir/node-$source_sha"
+needs_copy=1
+if [ -f "$target" ]; then
+  target_sha="$(sha256sum "$target" 2>/dev/null | awk '{print $1}')"
+  if [ "$target_sha" = "$source_sha" ]; then
+    needs_copy=0
+  fi
+fi
+if [ "$needs_copy" -ne 0 ]; then
+  tmp="$target.tmp.$$"
+  rm -f "$tmp"
+  cp "$source_node" "$tmp" || { rm -f "$tmp"; printf '${BUNDLED_NODE_ERROR_PREFIX}%s\n' 'COPY_FAILED'; exit 44; }
+  chmod 0755 "$tmp" || { rm -f "$tmp"; printf '${BUNDLED_NODE_ERROR_PREFIX}%s\n' 'CHMOD_FAILED'; exit 45; }
+  tmp_sha="$(sha256sum "$tmp" 2>/dev/null | awk '{print $1}')"
+  if [ "$tmp_sha" != "$source_sha" ]; then
+    rm -f "$tmp"
+    printf '${BUNDLED_NODE_ERROR_PREFIX}%s\n' 'CACHE_HASH_MISMATCH'
+    exit 46
+  fi
+  mv -f "$tmp" "$target" || { rm -f "$tmp"; printf '${BUNDLED_NODE_ERROR_PREFIX}%s\n' 'CACHE_COMMIT_FAILED'; exit 47; }
+fi
+chmod 0755 "$target" 2>/dev/null || { printf '${BUNDLED_NODE_ERROR_PREFIX}%s\n' 'CHMOD_FAILED'; exit 48; }
+final_sha="$(sha256sum "$target" 2>/dev/null | awk '{print $1}')"
+if [ "$final_sha" != "$source_sha" ]; then
+  printf '${BUNDLED_NODE_ERROR_PREFIX}%s\n' 'CACHE_HASH_MISMATCH'
+  exit 49
+fi
+node_version="$("$target" -p 'process.versions.node' 2>/dev/null)" || { printf '${BUNDLED_NODE_ERROR_PREFIX}%s\n' 'EXEC_FAILED'; exit 50; }
+printf '${BUNDLED_NODE_PATH_PREFIX}%s\n' "$target"
+printf '${BUNDLED_NODE_VERSION_PREFIX}%s\n' "$node_version"
+`;
+
 const NODE_PTY_PREBUILD_MISSING_EXIT_CODE = 4;
+export const MIN_WSL_GLIBC_VERSION = "2.35";
+
+const compareNumericVersion = (left: string, right: string): number => {
+  const leftParts = left.split(".").map((part) => Number.parseInt(part, 10));
+  const rightParts = right.split(".").map((part) => Number.parseInt(part, 10));
+  const count = Math.max(leftParts.length, rightParts.length);
+  for (let index = 0; index < count; index += 1) {
+    const leftPart = leftParts[index] ?? 0;
+    const rightPart = rightParts[index] ?? 0;
+    if (leftPart !== rightPart) return leftPart < rightPart ? -1 : 1;
+  }
+  return 0;
+};
+
+export const parseLibcFamily = (stdout: string): string | null => {
+  const family = stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("libcFamily:"))
+    .map((line) => line.slice("libcFamily:".length).trim().toLowerCase())
+    .find((value) => value.length > 0);
+  return family ?? null;
+};
+
+export const parseGlibcVersion = (stdout: string): string | null => {
+  const version = stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("glibcVersion:"))
+    .map((line) => line.slice("glibcVersion:".length).trim())
+    .find((value) => /^\d+(?:\.\d+)+$/.test(value));
+  return version ?? null;
+};
+
+export const formatWslLibcCompatibilityReason = (
+  distro: string | null,
+  family: string | null,
+  glibcVersion: string | null,
+): string | null => {
+  const distroLabel = distro ?? "selected WSL distro";
+  if (family === "musl") {
+    return `${distroLabel} uses musl libc, but T3 Code's packaged WSL native runtime targets GNU glibc ${MIN_WSL_GLIBC_VERSION} or newer. Use a glibc-based WSL2 distro (for example Ubuntu 22.04 or newer), then retry.`;
+  }
+  if (family === "glibc" && glibcVersion !== null) {
+    if (compareNumericVersion(glibcVersion, MIN_WSL_GLIBC_VERSION) < 0) {
+      return `${distroLabel} has GNU glibc ${glibcVersion}, but T3 Code's packaged WSL native runtime requires glibc ${MIN_WSL_GLIBC_VERSION} or newer. Upgrade this distro to a newer release or select another compatible WSL2 distro, then retry.`;
+    }
+  }
+  return null;
+};
 
 export const formatNodePtyProbeFailureReason = (exitCode: number): string | null =>
   exitCode === NODE_PTY_PREBUILD_MISSING_EXIT_CODE
@@ -225,10 +501,28 @@ export const formatNodePtyProbeFailureReason = (exitCode: number): string | null
 
 const NODE_PTY_PROBE_SCRIPT = (
   linuxServerDir: string,
-) => `printf 'nodePath:%s\\n' "$(command -v node 2>/dev/null)"
-printf 'nodeVersion:%s\\n' "$(node -p 'process.versions.node' 2>/dev/null)"
+  exactNodePath: string | null,
+) => `libc_family=unknown
+glibc_version=
+glibc_report="$(getconf GNU_LIBC_VERSION 2>/dev/null || true)"
+case "$glibc_report" in
+  glibc\ *) libc_family=glibc; glibc_version="$(printf '%s\\n' "$glibc_report" | cut -d' ' -f2)" ;;
+  *)
+    ldd_banner="$(ldd --version 2>&1 | head -n 1 || true)"
+    case "$ldd_banner" in *musl*|*Musl*) libc_family=musl ;; esac
+    ;;
+esac
+printf 'libcFamily:%s\\n' "$libc_family"
+printf 'glibcVersion:%s\\n' "$glibc_version"
+node_path=${exactNodePath === null ? '"$(command -v node 2>/dev/null)"' : shellQuote(exactNodePath)}
+printf 'nodePath:%s\\n' "$node_path"
 printf 'resolvedPath:%s\\n' "$PATH"
-cd ${shellQuote(linuxServerDir)} && node <<'NODE' >/dev/null 2>&1
+if [ -z "$node_path" ]; then
+  printf 'nodeVersion:\n'
+  exit 127
+fi
+printf 'nodeVersion:%s\\n' "$("$node_path" -p 'process.versions.node' 2>/dev/null)"
+cd ${shellQuote(linuxServerDir)} && "$node_path" <<'NODE' >/dev/null 2>&1
 // The server bundle externalizes its deps to node_modules, and the WSL Node
 // can't read inside app.asar, so confirm those deps are unpacked on the real
 // filesystem before reporting the backend healthy. "effect" is the framework
@@ -242,11 +536,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const pkgDir = path.dirname(require.resolve("node-pty/package.json"));
 // node-pty 1.x is N-API based, so a single Linux pty.node is ABI-stable across
-// Node versions — require() succeeding IS the real compatibility test. Compare
-// only arch and node-pty version (a stale binary from a different node-pty),
-// NOT process.versions.modules: that would reject a perfectly loadable prebuilt
-// whenever the user's WSL Node ABI differs from the build's, defeating the
-// whole point of shipping one prebuilt for all Node versions.
+// Node versions. require() succeeding is the compatibility test.
 const expected = {
   arch: process.arch,
   nodePtyVersion: require("node-pty/package.json").version,
@@ -408,14 +698,64 @@ const ensureNodePtyImpl = (
     // there rather than the monorepo root, where Bun's hoist layout omits it.
     const linuxServerDir = `${linuxRepoRoot}/apps/server`;
 
+    let bundledNodePath: string | null = null;
+    if (options.bundledNodeWindowsPath) {
+      const bundledSource = yield* windowsToWslPath(distro, options.bundledNodeWindowsPath);
+      if (Option.isNone(bundledSource)) {
+        return {
+          ok: false,
+          reason: `wslpath conversion failed for bundled Node runtime ${options.bundledNodeWindowsPath}`,
+          fatal: false,
+        } as const;
+      }
+      const prepared = yield* runWslShell(
+        distro,
+        BUNDLED_NODE_PREP_SCRIPT(bundledSource.value),
+        PROBE_TIMEOUT,
+        { resolveUserNode: false },
+      );
+      const prepareTransportFailure = formatWslShellTransportFailureReason(prepared.transportFailure);
+      if (prepareTransportFailure !== null) {
+        return { ok: false, reason: prepareTransportFailure, fatal: false } as const;
+      }
+      const parsedPreparation = parseBundledWslNodePreparationOutput(prepared.stdout);
+      if (prepared.exitCode !== 0 || parsedPreparation === null) {
+        const detail = `${prepared.stdout}\n${prepared.stderr}`
+          .split("\n")
+          .map((line) => line.trim())
+          .find((line) => line.startsWith(BUNDLED_NODE_ERROR_PREFIX));
+        return {
+          ok: false,
+          reason: `The packaged WSL Node runtime could not be prepared inside ${distro ?? "the selected distro"}${detail ? ` (${detail.slice(BUNDLED_NODE_ERROR_PREFIX.length)})` : ""}. Reinstall T3 Code or check that the distro can read the Windows installation and write to its Linux cache directory.`,
+          fatal: true,
+        } as const;
+      }
+      bundledNodePath = parsedPreparation.nodePath;
+      if (
+        options.nodeEngineRange &&
+        !satisfiesSemverRange(parsedPreparation.nodeVersion, options.nodeEngineRange.trim())
+      ) {
+        return {
+          ok: false,
+          reason: `Packaged WSL Node.js ${parsedPreparation.nodeVersion} does not satisfy the server's required engine range (${options.nodeEngineRange.trim()}). This build is internally inconsistent; please report it.`,
+          fatal: true,
+        } as const;
+      }
+    }
+
     const probe = yield* runWslShell(
       distro,
-      NODE_PTY_PROBE_SCRIPT(linuxServerDir),
+      NODE_PTY_PROBE_SCRIPT(linuxServerDir, bundledNodePath),
       PROBE_TIMEOUT,
-      options,
+      {
+        nodeEngineRange: options.nodeEngineRange,
+        resolveUserNode: bundledNodePath === null,
+      },
     );
     const nodePath = parseNodePath(probe.stdout);
     const resolvedPath = parseResolvedPath(probe.stdout);
+    const libcFamily = parseLibcFamily(probe.stdout);
+    const glibcVersion = parseGlibcVersion(probe.stdout);
 
     const transportFailureReason = formatWslShellTransportFailureReason(probe.transportFailure);
     if (transportFailureReason !== null) {
@@ -423,6 +763,19 @@ const ensureNodePtyImpl = (
         ok: false,
         reason: transportFailureReason,
         fatal: false,
+      } as const;
+    }
+
+    const libcCompatibilityReason = formatWslLibcCompatibilityReason(
+      distro,
+      libcFamily,
+      glibcVersion,
+    );
+    if (libcCompatibilityReason !== null) {
+      return {
+        ok: false,
+        reason: libcCompatibilityReason,
+        fatal: true,
       } as const;
     }
 
@@ -434,7 +787,7 @@ const ensureNodePtyImpl = (
         distro,
         TOOLCHAIN_CHECK_SCRIPT,
         TOOLCHAIN_TIMEOUT,
-        options,
+        { nodeEngineRange: options.nodeEngineRange, resolveUserNode: true },
       );
       const toolchainTransportFailure = formatWslShellTransportFailureReason(
         toolchainCheck.transportFailure,
@@ -509,7 +862,7 @@ const ensureNodePtyImpl = (
       distro,
       TOOLCHAIN_CHECK_SCRIPT,
       TOOLCHAIN_TIMEOUT,
-      options,
+      { nodeEngineRange: options.nodeEngineRange, resolveUserNode: true },
     );
     const toolchainTransportFailure = formatWslShellTransportFailureReason(
       toolchainCheck.transportFailure,
@@ -531,18 +884,21 @@ const ensureNodePtyImpl = (
       // prebuilt and the server require a compatible Node); otherwise reaching
       // here means the bundled binary itself couldn't load, which is almost
       // always an unsupported CPU architecture or incompatible system libraries.
-      const nodeOnlyReason = formatMissingToolsReason(
-        {
-          missingTools: report.missingTools.filter((tool) => tool === "node"),
-          nodeVersion: report.nodeVersion,
-        },
-        options.nodeEngineRange?.trim() || null,
-      );
+      const nodeOnlyReason =
+        bundledNodePath === null
+          ? formatMissingToolsReason(
+              {
+                missingTools: report.missingTools.filter((tool) => tool === "node"),
+                nodeVersion: report.nodeVersion,
+              },
+              options.nodeEngineRange?.trim() || null,
+            )
+          : null;
       return {
         ok: false,
         reason:
           nodeOnlyReason ??
-          "The bundled WSL backend binary (node-pty) could not be loaded in this distro. This usually means an unsupported CPU architecture or incompatible system libraries (glibc). Use a glibc-based x64/arm64 WSL distro such as Ubuntu; if you already are, please report this with your distro and the output of `uname -m`.",
+          "The bundled WSL backend native module (node-pty) could not be loaded with T3 Code's packaged Linux Node runtime. This usually means an unsupported CPU architecture or incompatible system libraries (glibc). Use a supported glibc-based WSL2 distro; if you already are, please report this with your distro and the output of `uname -m`.",
         fatal: true,
       } as const;
     }
@@ -560,7 +916,7 @@ const ensureNodePtyImpl = (
       distro,
       NODE_PTY_BUILD_SCRIPT(linuxServerDir),
       BUILD_TIMEOUT,
-      options,
+      { nodeEngineRange: options.nodeEngineRange, resolveUserNode: true },
     );
     const buildTransportFailure = formatWslShellTransportFailureReason(build.transportFailure);
     if (buildTransportFailure !== null) {
@@ -774,6 +1130,13 @@ export interface DesktopWslEnvironmentTestStub {
   readonly windowsToWslPath?: (distro: string | null, windowsPath: string) => Option.Option<string>;
   readonly getUserHome?: (distro: string | null) => Option.Option<string>;
   readonly getDistroIp?: (distro: string | null) => Option.Option<string>;
+  readonly allocateTcpPort?: (input: {
+    readonly distro: string;
+    readonly nodePath: string;
+    readonly host: string;
+    readonly preferredPort: number;
+    readonly fallbackToEphemeral: boolean;
+  }) => WslTcpPortAllocationResult;
   readonly ensureNodePty?: (
     distro: string | null,
     windowsRepoRoot: string,
@@ -796,6 +1159,14 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
         Effect.succeed(stub.windowsToWslPath?.(distro, windowsPath) ?? Option.none()),
       getUserHome: (distro) => Effect.succeed(stub.getUserHome?.(distro) ?? Option.none<string>()),
       getDistroIp: (distro) => Effect.succeed(stub.getDistroIp?.(distro) ?? Option.none<string>()),
+      allocateTcpPort: (input) =>
+        Effect.succeed(
+          stub.allocateTcpPort?.(input) ?? {
+            ok: true,
+            port: input.preferredPort,
+            usedEphemeralFallback: false,
+          },
+        ),
       ensureNodePty: (distro, windowsRepoRoot, options) =>
         Effect.succeed(
           stub.ensureNodePty?.(distro, windowsRepoRoot, options) ?? {
@@ -862,6 +1233,18 @@ export const layer = Layer.effect(
     const getDistroIp = (distro: string | null) =>
       provideSpawner(getDistroIpImpl(distro)).pipe(Effect.withSpan("desktop.wsl.getDistroIp"));
 
+    const allocateTcpPort: DesktopWslEnvironment["Service"]["allocateTcpPort"] = (input) =>
+      provideSpawner(allocateTcpPortImpl(input)).pipe(
+        Effect.withSpan("desktop.wsl.allocateTcpPort", {
+          attributes: {
+            distro: input.distro,
+            host: input.host,
+            preferredPort: input.preferredPort,
+            fallbackToEphemeral: input.fallbackToEphemeral,
+          },
+        }),
+      );
+
     const probeDistros = provideSpawner(probeWslDistros).pipe(
       Effect.withSpan("desktop.wsl.probeDistros"),
     );
@@ -878,6 +1261,7 @@ export const layer = Layer.effect(
       windowsToWslPath,
       getUserHome,
       getDistroIp,
+      allocateTcpPort,
       ensureNodePty: (distro, windowsRepoRoot, options) =>
         provideSpawner(ensureNodePtyImpl(distro, windowsRepoRoot, windowsToWslPath, options)).pipe(
           Effect.withSpan("desktop.wsl.ensureNodePty"),
