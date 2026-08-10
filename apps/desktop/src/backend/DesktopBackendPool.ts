@@ -236,7 +236,14 @@ export const layer = Layer.effect(
         const { reason, fatal } = failure;
         if (!fatal) {
           const settings = yield* appSettings.get;
-          if (!settings.wslOnly) {
+          // Mirror resolvePrimary's own condition (`wslRequested = wslOnly &&
+          // wslBackendEnabled`): the primary only resolves as WSL when BOTH
+          // flags are set. Checking wslOnly alone would misroute a
+          // wslOnly-but-disabled Windows primary into the WSL branch below —
+          // a misleading "WSL backend unavailable" dialog plus an unrelated
+          // in-memory WSL settings mutation.
+          const primaryResolvesAsWsl = settings.wslOnly && settings.wslBackendEnabled;
+          if (!primaryResolvesAsWsl) {
             // The primary is already the Windows backend (the only non-fatal
             // surfacing a Windows primary can hit is readiness exhaustion),
             // so "fall back to Windows" is a no-op. Returning true would
