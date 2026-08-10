@@ -28,6 +28,7 @@ import * as ElectronPowerMonitor from "./electron/ElectronPowerMonitor.ts";
 import * as ElectronProtocol from "./electron/ElectronProtocol.ts";
 import * as ElectronSafeStorage from "./electron/ElectronSafeStorage.ts";
 import * as ElectronShell from "./electron/ElectronShell.ts";
+import * as ElectronSystemPreferences from "./electron/ElectronSystemPreferences.ts";
 import * as ElectronTheme from "./electron/ElectronTheme.ts";
 import * as ElectronUpdater from "./electron/ElectronUpdater.ts";
 import * as ElectronWindow from "./electron/ElectronWindow.ts";
@@ -121,6 +122,7 @@ const electronLayer = Layer.mergeAll(
   ElectronProtocol.layer,
   ElectronSafeStorage.layer,
   ElectronShell.layer,
+  ElectronSystemPreferences.layer,
   ElectronTheme.layer,
   ElectronUpdater.layer,
   ElectronWindow.layer,

@@ -152,6 +152,16 @@ export type DesktopTheme = "light" | "dark" | "system";
 export type DesktopUpdateChannel = "latest" | "nightly";
 export type DesktopAppStageLabel = "Alpha" | "Dev" | "Nightly";
 
+export const DesktopMicrophoneAccessStatusSchema = Schema.Literals([
+  "not-determined",
+  "granted",
+  "denied",
+  "restricted",
+  "unknown",
+  "unsupported",
+]);
+export type DesktopMicrophoneAccessStatus = typeof DesktopMicrophoneAccessStatusSchema.Type;
+
 export const DesktopUpdateStatusSchema = Schema.Literals([
   "disabled",
   "idle",
@@ -1003,6 +1013,8 @@ export interface DesktopBridge {
   getLocalEnvironmentBearerToken: () => Promise<string>;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;
+  getMicrophoneAccessStatus?: () => Promise<DesktopMicrophoneAccessStatus>;
+  requestMicrophoneAccess?: () => Promise<DesktopMicrophoneAccessStatus>;
   getConnectionCatalog?: () => Promise<string | null>;
   setConnectionCatalog?: (catalog: string) => Promise<boolean>;
   clearConnectionCatalog?: () => Promise<void>;

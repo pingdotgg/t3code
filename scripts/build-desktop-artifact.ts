@@ -853,6 +853,8 @@ export function renderMacPasskeyEntitlements(
     <array>
 ${associatedDomains}
     </array>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
@@ -1521,6 +1523,9 @@ export function resolveDesktopProductName(version: string): string {
     : (desktopPackageJson.productName ?? "T3 Code");
 }
 
+export const DESKTOP_MACOS_MICROPHONE_USAGE_DESCRIPTION =
+  "Allow T3 Code to use your microphone for voice conversations with coding agents.";
+
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -1568,6 +1573,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      extendInfo: {
+        NSMicrophoneUsageDescription: DESKTOP_MACOS_MICROPHONE_USAGE_DESCRIPTION,
+      },
       protocols: [
         {
           name: "T3 Code",

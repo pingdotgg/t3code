@@ -7,6 +7,8 @@ import {
   getConnectionCatalog,
   setConnectionCatalog,
 } from "./methods/connectionCatalog.ts";
+import { getMicrophoneAccessStatus, requestMicrophoneAccess } from "./methods/microphone.ts";
+import * as PreviewIpc from "./methods/preview.ts";
 import {
   getAdvertisedEndpoints,
   getServerExposureState,
@@ -41,7 +43,6 @@ import {
   setTheme,
   showContextMenu,
 } from "./methods/window.ts";
-import * as PreviewIpc from "./methods/preview.ts";
 import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./methods/wsl.ts";
 
 export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
@@ -55,6 +56,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
 
   yield* ipc.handle(getClientSettings);
   yield* ipc.handle(setClientSettings);
+  yield* ipc.handle(getMicrophoneAccessStatus);
+  yield* ipc.handle(requestMicrophoneAccess);
   yield* ipc.handle(getConnectionCatalog);
   yield* ipc.handle(setConnectionCatalog);
   yield* ipc.handle(clearConnectionCatalog);
