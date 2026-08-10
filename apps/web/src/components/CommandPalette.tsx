@@ -812,10 +812,13 @@ function OpenCommandPaletteDialog(props: {
   const isRemoteProjectRepositoryStep = addProjectCloneFlow?.step === "repository";
   // The destination step pins the repository folder onto the browsed path, so
   // the proposed clone target is "<chosen folder>/<repo>" instead of the bare
-  // folder. A pasted clone URL never runs a lookup, so it has no name to pin.
+  // folder. A lookup reports "owner/repo"; a pasted clone URL falls back to its
+  // own last segment, minus ".git".
   const pinnedCloneDirectoryName =
-    addProjectCloneFlow?.step === "confirm" && addProjectCloneFlow.repository
-      ? getCloneDirectoryName(addProjectCloneFlow.repository.nameWithOwner)
+    addProjectCloneFlow?.step === "confirm"
+      ? getCloneDirectoryName(
+          addProjectCloneFlow.repository?.nameWithOwner ?? addProjectCloneFlow.remoteUrl,
+        )
       : "";
   const browsePath = useMemo(
     () => getFilesystemBrowsePath(query, browseEnvironmentPlatform, !isRemoteProjectRepositoryStep),
@@ -1807,7 +1810,10 @@ function OpenCommandPaletteDialog(props: {
 
       const provider = remoteProjectSourceProvider(addProjectCloneFlow.source);
       if (!provider) {
-        const destinationPath = getDefaultCloneParentPath(addProjectCloneFlow.environmentId);
+        const destinationPath = getCloneDestinationPath(
+          getDefaultCloneParentPath(addProjectCloneFlow.environmentId),
+          getCloneDirectoryName(rawRepository),
+        );
         setAddProjectCloneFlow({
           step: "confirm",
           environmentId: addProjectCloneFlow.environmentId,

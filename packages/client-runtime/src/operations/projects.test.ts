@@ -45,6 +45,20 @@ describe("add project shared logic", () => {
     expect(getCloneDirectoryName(null)).toBe("");
   });
 
+  it("derives the clone folder name from any pasted clone URL", () => {
+    expect(getCloneDirectoryName("https://github.com/owner/repo.git")).toBe("repo");
+    expect(getCloneDirectoryName("https://github.com/owner/repo")).toBe("repo");
+    expect(getCloneDirectoryName("https://github.com/owner/repo/")).toBe("repo");
+    expect(getCloneDirectoryName("git@github.com:owner/repo.git")).toBe("repo");
+    expect(getCloneDirectoryName("ssh://git@github.com:22/owner/repo.git")).toBe("repo");
+    expect(getCloneDirectoryName("https://user@bitbucket.org/owner/repo.git")).toBe("repo");
+    expect(getCloneDirectoryName("https://dev.azure.com/org/project/_git/repo")).toBe("repo");
+    expect(getCloneDirectoryName("https://github.com/owner/repo.git?ref=main#readme")).toBe("repo");
+    expect(getCloneDirectoryName("/srv/git/repo.git")).toBe("repo");
+    expect(getCloneDirectoryName("C:\\src\\repo.git")).toBe("repo");
+    expect(getCloneDirectoryName("https://github.com/")).toBe("github.com");
+  });
+
   it("proposes the clone destination inside the selected directory", () => {
     expect(getCloneDestinationPath("~/Projects/", "repo")).toBe("~/Projects/repo");
     expect(getCloneDestinationPath("~/Projects", "repo")).toBe("~/Projects/repo");

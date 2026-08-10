@@ -651,6 +651,7 @@ export function AddProjectRepositoryScreen(props: {
           source,
           remoteUrl,
           repositoryTitle: remoteUrl,
+          repositoryName: getCloneDirectoryName(remoteUrl),
         }),
       );
       setIsSubmitting(false);
@@ -870,8 +871,8 @@ export function AddProjectDestinationScreen(props: {
   const createProject = useCreateProject(environment);
   const remoteUrl = stringParam(props.remoteUrl);
   const repositoryTitle = stringParam(props.repositoryTitle);
-  // Only a provider lookup gives us a repository folder to propose. A pasted
-  // clone URL sends no name, so the destination stays the browsed folder.
+  // A lookup derives this from "owner/repo", a pasted clone URL from its own
+  // last segment. Older links without the param keep the browsed folder.
   const repositoryName = stringParam(props.repositoryName) ?? "";
   const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } = useBrowsePathInput(
     environment,

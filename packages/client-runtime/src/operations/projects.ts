@@ -177,13 +177,18 @@ export function getAddProjectInitialQuery(baseDirectory: string | null | undefin
 }
 
 /**
- * Folder name `git clone` would pick for a looked-up repository. Providers
- * report `owner/repo`, and Azure DevOps reports `org/project/repo`, so the
- * last segment is the repository itself.
+ * Folder name `git clone` would pick, from either a looked-up repository or a
+ * pasted clone URL. Providers report `owner/repo`, Azure DevOps reports
+ * `org/project/repo`, and a URL can arrive in any form: `https://host/owner/
+ * repo.git`, `ssh://git@host:22/owner/repo`, `git@host:owner/repo.git`, with
+ * or without a query, a fragment or a trailing slash. The repository is always
+ * the last segment, minus the `.git` suffix.
  */
-export function getCloneDirectoryName(nameWithOwner: string | null | undefined): string {
-  const segments = (nameWithOwner ?? "").split("/").filter((segment) => segment.trim().length > 0);
-  return segments.at(-1)?.trim() ?? "";
+export function getCloneDirectoryName(repositoryOrRemoteUrl: string | null | undefined): string {
+  const withoutQuery = (repositoryOrRemoteUrl ?? "").split(/[?#]/)[0] ?? "";
+  const segments = withoutQuery.split(/[/\\:]+/).filter((segment) => segment.trim().length > 0);
+  const lastSegment = segments.at(-1)?.trim() ?? "";
+  return lastSegment.endsWith(".git") ? lastSegment.slice(0, -".git".length) : lastSegment;
 }
 
 /**
