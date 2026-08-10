@@ -1,4 +1,4 @@
-import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
+import { CheckpointRef, EnvironmentId, EventId, MessageId, TurnId } from "@t3tools/contracts";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
@@ -552,6 +552,35 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Context compacted");
     expect(markup).toContain("Work Log");
+  });
+
+  it("renders completed generated images as right-panel links", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-image",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-image",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Image view",
+              tone: "tool",
+              generatedImage: {
+                activityId: EventId.make("activity-image"),
+                name: "concept.png",
+              },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Open generated image concept.png"');
+    expect(markup).toContain("concept.png");
+    expect(markup).toContain("lucide-image");
   });
 
   it("formats changed file paths from the workspace root", () => {

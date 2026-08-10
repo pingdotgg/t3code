@@ -541,6 +541,92 @@ describe("deriveMessagesTimelineRows", () => {
     ).toBeDefined();
   });
 
+  it("keeps generated image evidence visible when settled tool activity folds", () => {
+    const timelineEntries = [
+      {
+        id: "user-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:00Z",
+        message: {
+          id: "user-1" as never,
+          role: "user" as const,
+          text: "Generate an image",
+          turnId: null,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "work-entry-1",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:08Z",
+        entry: {
+          id: "work-1",
+          createdAt: "2026-01-01T00:00:08Z",
+          turnId: "turn-1" as never,
+          label: "Read prompt",
+          tone: "tool" as const,
+        },
+      },
+      {
+        id: "generated-image-entry",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:12Z",
+        entry: {
+          id: "work-image",
+          createdAt: "2026-01-01T00:00:12Z",
+          turnId: "turn-1" as never,
+          label: "Image view",
+          tone: "tool" as const,
+          generatedImage: {
+            activityId: "activity-image" as never,
+            name: "concept.png",
+          },
+        },
+      },
+      {
+        id: "assistant-final-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:20Z",
+        message: {
+          id: "assistant-final" as never,
+          role: "assistant" as const,
+          text: "Done",
+          turnId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:20Z",
+          updatedAt: "2026-01-01T00:00:22Z",
+          streaming: false,
+        },
+      },
+    ];
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.id)).toEqual([
+      "user-entry",
+      "turn-fold:turn-1",
+      "generated-image-entry",
+      "assistant-final-entry",
+    ]);
+    expect(rows.find((row) => row.id === "generated-image-entry")).toMatchObject({
+      kind: "work",
+      groupedEntries: [
+        {
+          generatedImage: {
+            name: "concept.png",
+          },
+        },
+      ],
+    });
+  });
+
   it("derives a sane duration for a steer-superseded turn with one instant commentary message", () => {
     // A steer ends the previous turn early: its only message completes the
     // instant it is created, and trailing work entries land after it. The

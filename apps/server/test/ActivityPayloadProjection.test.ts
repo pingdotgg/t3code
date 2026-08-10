@@ -130,6 +130,12 @@ const fixtures = [
     ignored: "top-level bulk",
   }),
   makeActivity("image", "image_view", {
+    item: {
+      type: "imageGeneration",
+      status: "completed",
+      savedPath: "/provider/session/generated.png",
+      prompt: "private generation prompt",
+    },
     ignored: "top-level bulk",
   }),
 ] satisfies ReadonlyArray<OrchestrationThreadActivity>;
@@ -182,6 +188,22 @@ describe("projectActivityPayload", () => {
         files: [{ path: "src/new.ts" }, { path: "src/old.ts" }, { path: "src/second.ts" }],
       },
     });
+
+    expect(projectActivityPayload(fixtures[6]!).payload).toEqual({
+      itemType: "image_view",
+      title: "image_view",
+      detail: "image_view detail",
+      status: "completed",
+      requestKind: "command",
+      data: {
+        item: {
+          type: "imageGeneration",
+          status: "completed",
+          fileName: "generated.png",
+        },
+      },
+    });
+    expect(JSON.stringify(projectActivityPayload(fixtures[6]!))).not.toContain("/provider/session");
   });
 
   it("slims MCP tool data to the fields the expanded row renders", () => {
