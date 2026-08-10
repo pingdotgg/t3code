@@ -474,23 +474,31 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     )
                 }
 
-                if thread.canToggleSnooze {
-                    let isSnoozed = thread.isEffectivelySnoozed(at: .now)
-                    let snooze = UIAction(
-                        title: isSnoozed ? "Unsnooze" : "Snooze 1 hour",
-                        image: UIImage(systemName: isSnoozed ? "bell" : "clock")
-                    ) { [weak self] _ in
-                        self?.parent.onSnooze(
-                            thread,
-                            isSnoozed ? nil : Date.now.addingTimeInterval(60 * 60)
+                switch ThreadSnoozeMenuModel.menu(for: thread, isArchived: isArchived) {
+                case .hidden:
+                    break
+                case .unsnooze:
+                    actions.append(
+                        UIAction(title: "Unsnooze", image: UIImage(systemName: "bell")) {
+                            [weak self] _ in
+                            self?.parent.onSnooze(thread, nil)
+                        }
+                    )
+                case let .presets(presets, enabled):
+                    let presetActions = presets.map { preset in
+                        let action = UIAction(title: preset.menuTitle) { [weak self] _ in
+                            self?.parent.onSnooze(thread, preset.until)
+                        }
+                        if !enabled { action.attributes = .disabled }
+                        return action
+                    }
+                    actions.append(
+                        UIMenu(
+                            title: "Snooze",
+                            image: UIImage(systemName: "clock"),
+                            children: presetActions
                         )
-                    }
-                    if thread.state == .queued
-                        || thread.state == .waitingForApproval
-                        || thread.state == .waitingForInput {
-                        snooze.attributes = .disabled
-                    }
-                    actions.append(snooze)
+                    )
                 }
             }
 
