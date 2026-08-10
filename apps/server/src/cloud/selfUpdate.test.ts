@@ -45,6 +45,8 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
             timedOut: false,
             stdoutTruncated: false,
             stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
           };
         }
         order.push("preflight");
@@ -64,6 +66,8 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
           timedOut: false,
           stdoutTruncated: false,
           stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
         };
       }),
   });
