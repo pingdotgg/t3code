@@ -73,16 +73,9 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/appearance": PaletteIcon,
   "/settings/keybindings": KeyboardIcon,
   "/settings/providers": BotIcon,
-<<<<<<< HEAD
-  "/settings/source-control": GitBranchIcon,
-  "/settings/connections": Link2Icon,
-  "/settings/scheduled-tasks": CalendarClockIcon,
-=======
   "/settings/scheduled-tasks": CalendarClockIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/connections": Link2Icon,
-  "/settings/beta": FlaskConicalIcon,
->>>>>>> 290392fac9 (fix: reconcile rebase with latest main)
   "/settings/archived": ArchiveIcon,
 };
 

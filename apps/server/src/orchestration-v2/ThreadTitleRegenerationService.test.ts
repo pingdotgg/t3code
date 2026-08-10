@@ -65,6 +65,7 @@ function makeHarness(
               title: "Project",
               workspaceRoot: "/repo",
               defaultModelSelection: modelSelection,
+              defaultThreadEnvMode: null,
               scripts: [],
               createdAt: "2026-06-20T00:00:00.000Z",
               updatedAt: "2026-06-20T00:00:00.000Z",

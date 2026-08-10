@@ -232,6 +232,7 @@ export const layer: Layer.Layer<
       "thread.unsnoozed",
       "thread.pinned",
       "thread.unpinned",
+      "thread.pin-reordered",
       "thread.metadata-updated",
       "thread.runtime-mode-updated",
       "thread.interaction-mode-updated",

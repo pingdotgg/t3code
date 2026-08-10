@@ -325,6 +325,9 @@ export const OrchestrationV2AppThread = Schema.Struct({
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  // Fractional-index slot in the user-arranged pinned order. Optional so
+  // payloads from pre-reorder servers still decode.
+  pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1098,6 +1101,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.unsnoozed",
       "thread.pinned",
       "thread.unpinned",
+      "thread.pin-reordered",
       "thread.visited",
       "thread.marked-unread",
       "thread.metadata-updated",
@@ -1301,6 +1305,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   /** Omitted by servers that predate thread pinning. */
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** Slot in the user-arranged pinned order; omitted by pre-reorder servers. */
+  pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /**
    * Omitted by servers that predate server-side visited tracking; clients fall
    * back to their local visited state when the field is absent.
@@ -1818,6 +1824,7 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.unsnoozed",
       "thread.pinned",
       "thread.unpinned",
+      "thread.pin-reordered",
       "thread.visited",
       "thread.marked-unread",
       "thread.metadata-updated",
@@ -1994,11 +2001,25 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.pin"),
     commandId: CommandId,
     threadId: ThreadId,
+    // Initial slot in the user-arranged pinned order (see thread.pin.reorder).
+    // Optional: clients on pre-reorder servers omit it, and the pinned block
+    // falls back to creation order for keyless threads.
+    orderKey: Schema.optional(TrimmedNonEmptyString),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unpin"),
     commandId: CommandId,
     threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.pin.reorder"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    // Fractional-index key: pinned threads sort lexicographically by these
+    // keys, so a drag writes one key to one thread — neighbors are never
+    // touched. Clients compute a key that sorts between the dropped
+    // position's neighbors.
+    orderKey: TrimmedNonEmptyString,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.visit"),

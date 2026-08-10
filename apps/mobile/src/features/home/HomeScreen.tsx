@@ -1076,50 +1076,15 @@ export function HomeScreen(props: HomeScreenProps) {
             onAction={!props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined}
             variant="plain"
           />
-<<<<<<< HEAD
-<<<<<<< HEAD
           {emptyState.loading ? (
-=======
-          {emptyState.loading && !shouldShowConnectionStatus ? (
->>>>>>> 290392fac9 (fix: reconcile rebase with latest main)
             <View className="mt-4 items-center">
               <ActivityIndicator colorClassName={"accent-icon-muted"} />
             </View>
           ) : null}
-<<<<<<< HEAD
         </View>
       </View>
     );
   }
-=======
-        ) : !hasResults ? (
-          <EmptyState
-            title="No threads yet"
-            detail="Create a task to start a new coding runtime."
-          />
-        ) : (
-          projectGroups.map((group) => {
-            const isExpanded = expandedProjects.has(group.key);
-            const visibleThreads = isExpanded
-              ? group.threads
-              : group.threads.slice(0, COLLAPSED_THREAD_LIMIT);
->>>>>>> 8f521e516e (Complete orchestration V2 frontend cutover)
-=======
-          {shouldShowConnectionStatus && Platform.OS === "ios" ? (
-            <View className="mt-4">
-              <WorkspaceConnectionStatus
-                state={props.catalogState}
-                onPress={props.onOpenEnvironments}
-                variant="sidebar"
-              />
-            </View>
-          ) : null}
-        </View>
-        {connectionStatus}
-      </View>
-    );
-  }
->>>>>>> 290392fac9 (fix: reconcile rebase with latest main)
 
   const listHeader = Platform.OS === "ios" ? null : <HomeTopContentSpacer />;
 
