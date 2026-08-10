@@ -88,6 +88,91 @@ struct MergedUsage: Equatable {
     var staleEnvironments: [String] = []
 }
 
+struct UsageLoadRequest: Equatable {
+    let id: UUID
+    let days: Int
+    let input: UsageSummaryInput
+}
+
+struct UsageLoadState: Equatable {
+    private(set) var windowDays: Int
+    private(set) var windowInput: UsageSummaryInput
+    private(set) var environments: [FeatureEnvironmentUsage] = []
+    private(set) var merged = MergedUsage()
+    private(set) var isLoading = true
+    private(set) var errorMessage: String?
+    private var activeLoadID: UUID?
+
+    init(
+        days: Int = 30,
+        now: Date = Date(),
+        timeZone: TimeZone = .current
+    ) {
+        windowDays = days
+        windowInput = UsageWindow.make(days: days, now: now, timeZone: timeZone)
+    }
+
+    mutating func begin(
+        days: Int,
+        now: Date = Date(),
+        timeZone: TimeZone = .current
+    ) -> UsageLoadRequest {
+        selectWindow(days: days, now: now, timeZone: timeZone)
+        let request = UsageLoadRequest(
+            id: UUID(),
+            days: days,
+            input: UsageWindow.make(days: days, now: now, timeZone: timeZone)
+        )
+        activeLoadID = request.id
+        isLoading = true
+        errorMessage = nil
+        return request
+    }
+
+    mutating func selectWindow(
+        days: Int,
+        now: Date = Date(),
+        timeZone: TimeZone = .current
+    ) {
+        guard days != windowDays else { return }
+        windowDays = days
+        windowInput = UsageWindow.make(days: days, now: now, timeZone: timeZone)
+        environments = []
+        merged = MergedUsage()
+        isLoading = true
+        errorMessage = nil
+    }
+
+    @discardableResult
+    mutating func receive(
+        _ result: [FeatureEnvironmentUsage],
+        for request: UsageLoadRequest
+    ) -> Bool {
+        guard activeLoadID == request.id, request.days == windowDays else { return false }
+        windowInput = request.input
+        environments = result
+        merged = UsageMerger.merge(result)
+        errorMessage = nil
+        return true
+    }
+
+    @discardableResult
+    mutating func fail(
+        _ error: any Error,
+        for request: UsageLoadRequest
+    ) -> Bool {
+        guard activeLoadID == request.id, request.days == windowDays else { return false }
+        errorMessage = error.localizedDescription
+        return true
+    }
+
+    mutating func finish(_ request: UsageLoadRequest) {
+        guard activeLoadID == request.id, request.days == windowDays else { return }
+        activeLoadID = nil
+        isLoading = false
+    }
+}
+
 enum UsageMerger {
     private struct OwnedContribution {
         let buckets: [UsageBucket]

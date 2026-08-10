@@ -12,23 +12,29 @@ private enum UsageMetric: String, CaseIterable, Identifiable {
 public struct UsageView: View {
     private let client: any FeatureClient
 
-    @State private var windowDays = 30
-    @State private var windowInput = UsageWindow.make(days: 30)
+    @State private var loadState = UsageLoadState()
     @State private var metric = UsageMetric.cost
-    @State private var environments: [FeatureEnvironmentUsage] = []
-    @State private var merged = MergedUsage()
-    @State private var isLoading = true
-    @State private var errorMessage: String?
-    @State private var activeLoadID: UUID?
 
     public init(client: any FeatureClient) {
         self.client = client
     }
 
+    private var windowInput: UsageSummaryInput { loadState.windowInput }
+    private var environments: [FeatureEnvironmentUsage] { loadState.environments }
+    private var merged: MergedUsage { loadState.merged }
+    private var isLoading: Bool { loadState.isLoading }
+    private var errorMessage: String? { loadState.errorMessage }
+    private var windowDays: Binding<Int> {
+        Binding(
+            get: { loadState.windowDays },
+            set: { loadState.selectWindow(days: $0) }
+        )
+    }
+
     public var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 24) {
-                Picker("Usage window", selection: $windowDays) {
+                Picker("Usage window", selection: windowDays) {
                     Text("7 days").tag(7)
                     Text("30 days").tag(30)
                     Text("90 days").tag(90)
@@ -50,7 +56,7 @@ public struct UsageView: View {
                     } description: {
                         Text(errorMessage)
                     } actions: {
-                        Button("Try again") { Task { await load(input: windowInput) } }
+                        Button("Try again") { Task { await load() } }
                     }
                 } else if environments.isEmpty {
                     ContentUnavailableView {
@@ -64,7 +70,7 @@ public struct UsageView: View {
                     } description: {
                         Text("No compatible usage data is available.")
                     } actions: {
-                        Button("Try again") { Task { await load(input: windowInput) } }
+                        Button("Try again") { Task { await load() } }
                     }
                 } else {
                     chartCard
@@ -78,14 +84,14 @@ public struct UsageView: View {
             .padding(.bottom, 32)
         }
         .scrollIndicators(.hidden)
-        .refreshable { await load(input: windowInput) }
+        .refreshable { await load() }
         .background(T3Colors.background)
         .navigationTitle("Usage")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .t3NavigationChrome()
-        .task(id: windowDays) {
-            await load(input: UsageWindow.make(days: windowDays))
+        .task(id: loadState.windowDays) {
+            await load()
         }
     }
 
@@ -348,32 +354,17 @@ public struct UsageView: View {
         }
     }
 
-    private func load(input: UsageSummaryInput) async {
-        let loadID = UUID()
-        activeLoadID = loadID
-        if input != windowInput {
-            windowInput = input
-            environments = []
-            merged = MergedUsage()
-        }
-        isLoading = true
-        defer {
-            if activeLoadID == loadID {
-                isLoading = false
-            }
-        }
+    private func load() async {
+        let request = loadState.begin(days: loadState.windowDays)
+        defer { loadState.finish(request) }
         do {
-            let result = try await client.usageSummaries(input)
+            let result = try await client.usageSummaries(request.input)
             try Task.checkCancellation()
-            guard activeLoadID == loadID else { return }
-            environments = result
-            merged = UsageMerger.merge(result)
-            errorMessage = nil
+            loadState.receive(result, for: request)
         } catch is CancellationError {
             return
         } catch {
-            guard activeLoadID == loadID else { return }
-            errorMessage = error.localizedDescription
+            loadState.fail(error, for: request)
         }
     }
 }
