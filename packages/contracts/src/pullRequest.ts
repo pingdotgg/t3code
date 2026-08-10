@@ -691,6 +691,12 @@ const PROVIDER_REQUIREMENT: Partial<
       "GitHub CLI (`gh`) is required to browse change requests on this host. Install it from https://cli.github.com/ and reload.",
     unauthenticated: "GitHub CLI is not authenticated. Run `gh auth login` and retry.",
   },
+  "github-enterprise": {
+    missing:
+      "GitHub CLI (`gh`) is required to browse change requests on this host. Install it from https://cli.github.com/ and reload.",
+    unauthenticated:
+      "GitHub CLI is not authenticated for this Enterprise host. Run `gh auth login --hostname <host>` and retry.",
+  },
   gitlab: {
     missing:
       "GitLab CLI (`glab`) is required to browse change requests on this host. Install it from https://gitlab.com/gitlab-org/cli and reload.",
