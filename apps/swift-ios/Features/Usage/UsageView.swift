@@ -50,7 +50,7 @@ public struct UsageView: View {
                     } description: {
                         Text(errorMessage)
                     } actions: {
-                        Button("Try again") { Task { await load() } }
+                        Button("Try again") { Task { await load(input: windowInput) } }
                     }
                 } else if environments.isEmpty {
                     ContentUnavailableView {
@@ -64,7 +64,7 @@ public struct UsageView: View {
                     } description: {
                         Text("No compatible usage data is available.")
                     } actions: {
-                        Button("Try again") { Task { await load() } }
+                        Button("Try again") { Task { await load(input: windowInput) } }
                     }
                 } else {
                     chartCard
@@ -78,13 +78,15 @@ public struct UsageView: View {
             .padding(.bottom, 32)
         }
         .scrollIndicators(.hidden)
-        .refreshable { await load() }
+        .refreshable { await load(input: windowInput) }
         .background(T3Colors.background)
         .navigationTitle("Usage")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .t3NavigationChrome()
-        .task(id: windowDays) { await load() }
+        .task(id: windowDays) {
+            await load(input: UsageWindow.make(days: windowDays))
+        }
     }
 
     @ViewBuilder
@@ -346,10 +348,9 @@ public struct UsageView: View {
         }
     }
 
-    private func load() async {
+    private func load(input: UsageSummaryInput) async {
         let loadID = UUID()
         activeLoadID = loadID
-        let input = UsageWindow.make(days: windowDays)
         if input != windowInput {
             windowInput = input
             environments = []
