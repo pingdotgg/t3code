@@ -46,7 +46,7 @@ type NativePasteImagesEvent = NativeSyntheticEvent<{
 }>;
 
 type NativeContentSizeChangeEvent = NativeSyntheticEvent<{
-  readonly width: number;
+  readonly width?: number;
   readonly height: number;
 }>;
 
@@ -282,7 +282,7 @@ export function ComposerEditor({
       onComposerBlur={onBlur}
       onComposerSubmit={onSubmit}
       onComposerContentSizeChange={(event) =>
-        onContentSizeChange?.(event.nativeEvent.width, event.nativeEvent.height)
+        onContentSizeChange?.(event.nativeEvent.width ?? 0, event.nativeEvent.height)
       }
     />
   );

@@ -65,6 +65,11 @@ import {
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
+import {
+  COMPOSER_EDITOR_MAX_HEIGHT,
+  COMPOSER_EDITOR_MIN_HEIGHT,
+  deriveComposerEditorSizing,
+} from "./composerSizing";
 import { ThreadSettingsSheet, threadSettingsSummaryLabel } from "./ThreadSettingsSheet";
 import { useThreadSettingsSheetPresentation } from "./use-thread-settings-sheet-presentation";
 
@@ -116,11 +121,11 @@ export interface ThreadComposerProps {
 }
 
 /**
- * The pill / card container ÔÇö renders as LiquidGlassView on supported
+ * The pill / card container — renders as LiquidGlassView on supported
  * iOS 26+ devices (progressive blur, native morph), opaque View otherwise.
  * Exported so NewTaskDraftScreen can render the same composer chrome.
  */
-// One timing for every piece of the expandedÔåöcompact morph so the surface,
+// One timing for every piece of the expanded↔compact morph so the surface,
 // toolbar, and siblings move together instead of popping between layouts.
 // Android gets NO layout transition: the composer rides the keyboard via
 // KeyboardStickyView (frame-synced to the IME), and a time-based morph
@@ -217,7 +222,7 @@ function composerConnectionStatus(input: {
   }
 
   // Connected: the pill is the single loading/sync indicator. One stable
-  // label per open ÔÇö "Loading" when starting from scratch, "Syncing" when
+  // label per open — "Loading" when starting from scratch, "Syncing" when
   // cached messages are already visible.
   switch (input.threadSyncPhase) {
     case "loading":
@@ -270,7 +275,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
-  const [contentHeight, setContentHeight] = useState(0);
+  const [contentHeight, setContentHeight] = useState(COMPOSER_EDITOR_MIN_HEIGHT);
+  const composerEditorSizing = deriveComposerEditorSizing(contentHeight);
   const settingsSheetPresentation = useThreadSettingsSheetPresentation({
     editorRef: inputRef,
     isEditorFocused: isFocused,
@@ -343,7 +349,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     );
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
 
-  // ÔöÇÔöÇ Trigger detection ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+  // ── Trigger detection ────────────────────────────────────
   const [composerSelection, setComposerSelection] = useState(() => ({
     start: props.draftMessage.length,
     end: props.draftMessage.length,
@@ -521,7 +527,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     return [];
   }, [composerTrigger, pathSearch.entries, selectedProviderStatus]);
 
-  // ÔöÇÔöÇ Handle command selection ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+  // ── Handle command selection ──────────────────────────────
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
 
   const handleSend = useCallback(async () => {
@@ -591,7 +597,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     [composerTrigger, draftMessage, onChangeDraftMessage, onUpdateInteractionMode],
   );
 
-  // ÔöÇÔöÇ Model menu ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+  // ── Model menu ───────────────────────────────────────────
   const modelOptions = useMemo(
     () => buildModelOptions(props.serverConfig, currentModelSelection),
     [props.serverConfig, currentModelSelection],
@@ -691,7 +697,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 }
           }
         >
-          {/* Attachment strip ÔÇö inside the card, above the text input */}
+          {/* Attachment strip — inside the card, above the text input */}
           {isExpanded ? (
             <Animated.View
               className={props.draftAttachments.length > 0 ? "pb-2.5" : undefined}
@@ -720,8 +726,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               onFocus={handleFocus}
               onBlur={handleBlur}
               onSubmit={handleSend}
-              onContentSizeChange={(w, h) => setContentHeight(h)}
-              scrollEnabled={isExpanded && contentHeight >= 160}
+              onContentSizeChange={(_width, height) => setContentHeight(height)}
+              scrollEnabled={isExpanded && composerEditorSizing.scrollEnabled}
               // Android: collapsed single line centers natively (gravity) in
               // a pill-height box matching the send button; iOS keeps insets.
               singleLineCentered={!isExpanded}
@@ -729,8 +735,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               style={
                 isExpanded
                   ? {
-                      minHeight: 80,
-                      maxHeight: 160,
+                      height: composerEditorSizing.height,
+                      minHeight: COMPOSER_EDITOR_MIN_HEIGHT,
+                      maxHeight: COMPOSER_EDITOR_MAX_HEIGHT,
                       paddingHorizontal: 4,
                       paddingVertical: 4,
                     }
@@ -781,7 +788,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         </ComposerSurface>
 
         {isExpanded ? (
-          // Toolbar row ÔÇö matches draft page layout (expanded only)
+          // Toolbar row — matches draft page layout (expanded only)
           <Animated.View entering={FadeIn.duration(160)} exiting={FadeOut.duration(120)}>
             <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
               <ComposerToolbarScroller

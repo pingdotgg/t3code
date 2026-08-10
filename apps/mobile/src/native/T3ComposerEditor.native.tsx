@@ -47,6 +47,11 @@ type NativePasteImagesEvent = NativeSyntheticEvent<{
   readonly uris: ReadonlyArray<string>;
 }>;
 
+type NativeContentSizeChangeEvent = NativeSyntheticEvent<{
+  readonly width?: number;
+  readonly height: number;
+}>;
+
 interface NativeComposerEditorRef {
   focus: () => Promise<void>;
   blur: () => Promise<void>;
@@ -73,6 +78,7 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly onComposerPasteImages?: (event: NativePasteImagesEvent) => void;
   readonly onComposerFocus?: () => void;
   readonly onComposerBlur?: () => void;
+  readonly onComposerContentSizeChange?: (event: NativeContentSizeChangeEvent) => void;
 }
 
 const NativeView = requireNativeView<NativeComposerEditorProps>(NATIVE_MODULE_NAME);
@@ -97,6 +103,7 @@ export function ComposerEditor({
   onPasteImages,
   onFocus,
   onBlur,
+  onContentSizeChange,
   contentInsetVertical = 0,
   ...props
 }: ComposerEditorProps) {
@@ -279,6 +286,9 @@ export function ComposerEditor({
         onComposerPasteImages={(event) => onPasteImages?.(event.nativeEvent.uris)}
         onComposerFocus={onFocus}
         onComposerBlur={onBlur}
+        onComposerContentSizeChange={(event) =>
+          onContentSizeChange?.(event.nativeEvent.width ?? 0, event.nativeEvent.height)
+        }
       />
     </TextInputWrapper>
   );
