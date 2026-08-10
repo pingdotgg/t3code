@@ -7,12 +7,13 @@ import UniformTypeIdentifiers
 @Suite("Composer power features")
 struct FeatureComposerPowerTests {
     @Test
-    func composerTextInputHasNoNumericLineCap() {
+    func composerTextInputUsesAFallbackBoundWithoutAViewport() {
         #expect(
             FeatureComposerTextInputSizing.height(
                 fittingHeight: 1_200,
-                proposedHeight: nil
-            ) == 1_200
+                proposedHeight: nil,
+                lineHeight: 22
+            ) == 264
         )
     }
 
@@ -21,8 +22,9 @@ struct FeatureComposerPowerTests {
         #expect(
             FeatureComposerTextInputSizing.height(
                 fittingHeight: 1_200,
-                proposedHeight: 500
-            ) == 500
+                proposedHeight: 500,
+                lineHeight: 22
+            ) == 250
         )
     }
 

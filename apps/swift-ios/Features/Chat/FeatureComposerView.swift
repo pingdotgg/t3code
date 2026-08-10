@@ -773,11 +773,13 @@ private struct FeatureComposerTextInput: UIViewRepresentable {
                 )
                 let length = previousText.isEmpty ? 0 : min(selectedRange.length, text.utf16.count - location)
                 textView.selectedRange = NSRange(location: location, length: length)
+                textView.scrollRangeToVisible(textView.selectedRange)
             }
         }
         if shouldApplySelection, let selectionRequest {
             let location = min(selectionRequest.location, textView.text.utf16.count)
             textView.selectedRange = NSRange(location: location, length: 0)
+            textView.scrollRangeToVisible(textView.selectedRange)
             context.coordinator.lastAppliedSelectionRequestID = selectionRequest.id
         }
         updateAccessibility(textView)
@@ -806,7 +808,8 @@ private struct FeatureComposerTextInput: UIViewRepresentable {
             width: width,
             height: FeatureComposerTextInputSizing.height(
                 fittingHeight: fittingSize.height,
-                proposedHeight: proposal.height
+                proposedHeight: proposal.height,
+                lineHeight: uiView.font?.lineHeight ?? 22
             )
         )
     }
@@ -850,9 +853,16 @@ private struct FeatureComposerTextInput: UIViewRepresentable {
 }
 
 enum FeatureComposerTextInputSizing {
-    static func height(fittingHeight: CGFloat, proposedHeight: CGFloat?) -> CGFloat {
-        guard let proposedHeight, proposedHeight.isFinite else { return fittingHeight }
-        return min(fittingHeight, proposedHeight)
+    static func height(
+        fittingHeight: CGFloat,
+        proposedHeight: CGFloat?,
+        lineHeight: CGFloat,
+        maximumViewportFraction: CGFloat = 0.5
+    ) -> CGFloat {
+        guard let proposedHeight, proposedHeight.isFinite, proposedHeight > 0 else {
+            return min(fittingHeight, lineHeight * 12)
+        }
+        return min(fittingHeight, proposedHeight * maximumViewportFraction)
     }
 }
 
