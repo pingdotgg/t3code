@@ -5,7 +5,6 @@ import {
   CheckIcon,
   CloudIcon,
   GitPullRequestIcon,
-  PlayIcon,
   TerminalIcon,
 } from "lucide-react";
 import { memo, type ReactNode, useEffect, useMemo, useState } from "react";
@@ -24,11 +23,10 @@ import type { SidebarThreadSummary } from "../types";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 /** Static glyph nodes — avoid re-allocating Lucide elements on every row render.
- *  Circle matches text cap-height; play is optically nudged right inside the disc. */
+ *  Working is a plain dot; Done keeps a check disc so the terminal state reads
+ *  as a distinct mark rather than just a colour change. */
 const WORKING_BADGE_ICON = (
-  <span className="inline-flex size-3 shrink-0 items-center justify-center rounded-full bg-sky-500 text-white dark:bg-sky-400">
-    <PlayIcon className="size-[0.45rem] translate-x-px fill-current" strokeWidth={0} />
-  </span>
+  <span className="inline-flex size-1.5 shrink-0 rounded-full bg-sky-500 dark:bg-sky-400" />
 );
 
 const DONE_BADGE_ICON = (
@@ -259,7 +257,7 @@ export const ThreadStatusCornerBadge = memo(function ThreadStatusCornerBadge({
         spec.showElapsed && "animate-status-badge-pulse motion-reduce:animate-none",
         className,
       )}
-      style={{ fontSize: "var(--app-sidebar-font-size)" }}
+      style={{ fontSize: "calc(var(--app-sidebar-font-size) * 0.92)" }}
     >
       <span aria-hidden="true" className="inline-flex items-center gap-1.5">
         {spec.icon}
