@@ -197,6 +197,7 @@ function commandThreadId(command: OrchestrationV2Command): ThreadId {
     case "thread.unsnooze":
     case "thread.pin":
     case "thread.unpin":
+    case "thread.pin.reorder":
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
@@ -1346,6 +1347,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.unsnooze"
           | "thread.pin"
           | "thread.unpin"
+          | "thread.pin.reorder"
           | "thread.visit"
           | "thread.mark-unread"
           | "thread.metadata.update"
@@ -1407,13 +1409,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.type === "thread.snooze" ||
         command.type === "thread.unsnooze" ||
         command.type === "thread.pin" ||
-        command.type === "thread.unpin") &&
+        command.type === "thread.unpin" ||
+        command.type === "thread.pin.reorder") &&
       thread.archivedAt !== null
     ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
         cause: `Thread ${command.threadId} is archived.`,
+      });
+    }
+    // Only pinned threads have a slot in the arranged order. Rejecting
+    // (rather than silently pinning) keeps a raced reorder-after-unpin from
+    // resurrecting a pin the user just cleared.
+    if (command.type === "thread.pin.reorder" && thread.pinnedAt == null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is not pinned and cannot be reordered.`,
       });
     }
     if (
@@ -1530,6 +1543,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             settledOverride: "settled",
             settledAt: alreadySettled ? thread.settledAt : now,
             pinnedAt: null,
+            pinOrderKey: null,
             updatedAt: alreadySettled ? thread.updatedAt : now,
           };
         }
@@ -1573,6 +1587,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             pinnedAt: alreadyPinned ? thread.pinnedAt : now,
+            // A fresh pin takes the client's slot in the arranged order; on a
+            // re-pin the existing key wins so raced duplicates cannot move a
+            // thread the user already placed.
+            ...(alreadyPinned || command.orderKey === undefined
+              ? {}
+              : { pinOrderKey: command.orderKey }),
             settledOverride:
               thread.settledOverride === "settled" ? "active" : thread.settledOverride,
             settledAt: thread.settledOverride === "settled" ? null : thread.settledAt,
@@ -1586,7 +1606,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             pinnedAt: null,
+            // Unpin clears the slot: re-pinning is "pin again", not "restore
+            // an ancient position".
+            pinOrderKey: null,
             updatedAt: alreadyUnpinned ? thread.updatedAt : now,
+          };
+        }
+        case "thread.pin.reorder": {
+          // Idempotent by re-emission (see thread.settle): a duplicate drop on
+          // the same slot keeps the existing updatedAt so it projects as a
+          // no-op.
+          const keyUnchanged = thread.pinOrderKey === command.orderKey;
+          return {
+            ...thread,
+            pinOrderKey: command.orderKey,
+            updatedAt: keyUnchanged ? thread.updatedAt : now,
           };
         }
         // Visited tracking records read state only; it must not bump updatedAt,
@@ -1660,6 +1694,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.pinned" as const;
         case "thread.unpin":
           return "thread.unpinned" as const;
+        case "thread.pin.reorder":
+          return "thread.pin-reordered" as const;
         case "thread.visit":
           return "thread.visited" as const;
         case "thread.mark-unread":
@@ -6692,6 +6728,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.unsnooze":
       case "thread.pin":
       case "thread.unpin":
+      case "thread.pin.reorder":
       case "thread.visit":
       case "thread.mark-unread":
       case "thread.metadata.update":
