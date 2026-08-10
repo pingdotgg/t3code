@@ -50,7 +50,7 @@ guard arguments.count == 4 else {
 let repository = arguments[1]
 let baseRef = arguments[2]
 let outputURL = URL(fileURLWithPath: arguments[3])
-let revision = git(["rev-parse", "HEAD"], repository: repository)!
+let revision = git(["rev-parse", "HEAD"], repository: repository, required: false) ?? "unknown"
 let baseRevision = git(["rev-parse", baseRef], repository: repository, required: false)
 let rawRepositoryURL = git(
     ["remote", "get-url", "upstream"], repository: repository, required: false
@@ -68,9 +68,9 @@ let repositoryURL: String? = {
 let fieldSeparator = Character("\u{1f}")
 let recordSeparator = Character("\u{1e}")
 let log: String
-if baseRevision == nil {
+if baseRevision == nil || revision == "unknown" {
     FileHandle.standardError.write(
-        Data("[swift-ios-changelog] warning: base ref \(baseRef) is unavailable; embedding an empty changelog\n".utf8)
+        Data("[swift-ios-changelog] warning: Git history is unavailable; embedding an empty changelog\n".utf8)
     )
     log = ""
 } else {

@@ -22,6 +22,7 @@ require_cmd awk
 require_cmd base64
 require_cmd mktemp
 require_cmd plutil
+require_cmd tr
 require_cmd xcodebuild
 require_cmd xcrun
 
