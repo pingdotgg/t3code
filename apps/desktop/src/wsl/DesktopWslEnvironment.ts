@@ -81,10 +81,13 @@ const decodeWslServerRuntimeState = Schema.decodeUnknownEffect(
 // Outcome of ensureWindowsPathReleased. "released" — no Linux-side process
 // holds anything under the path. "busy" — processes survived SIGTERM +
 // SIGKILL and still hold the path; replacing files under it from Windows
-// WILL fail. "unknown" — the check could not run (wsl.exe missing/VM down),
-// which in practice also means no Linux process can be holding /mnt/c
-// handles through a running VM.
-export type WslPathReleaseResult = "released" | "busy" | "unknown";
+// WILL fail. "unavailable" — wsl.exe itself could not be spawned, so no
+// running VM can be holding /mnt handles either; callers may proceed.
+// "unknown" — the check started but could not verify (timeout, path
+// translation failure, unparsable output) while the distro may well be
+// operational; callers that need the path free must treat this as a
+// failure, not a pass.
+export type WslPathReleaseResult = "released" | "busy" | "unavailable" | "unknown";
 
 const isDesktopWslDistroListError = Schema.is(DesktopWslDistroListError);
 
@@ -119,6 +122,7 @@ export class DesktopWslEnvironment extends Context.Service<
     // server actually advertises.
     readonly readServerRuntimeState: (
       distro: string | null,
+      stateDir: WslServerStateDir,
     ) => Effect.Effect<Option.Option<WslServerRuntimeState>>;
     // Terminates any Linux-side process still holding files (cwd, exe, open
     // fd, or mapped file) under the given Windows path via /mnt, then
@@ -804,15 +808,21 @@ export const getNetworkingModeImpl = (
     Effect.orElseSucceed((): WslNetworkingMode => "unknown"),
   );
 
+// State-dir flavor mirroring the server's deriveServerPaths: backends
+// launched with --dev-url resolve state under ~/.t3/dev, packaged ones
+// under ~/.t3/userdata. The caller says which one the backend it spawned
+// uses — reading "whichever exists" would return a stale packaged file on
+// machines that have run both.
+export type WslServerStateDir = "userdata" | "dev";
+
 // The backend runs with the distro user's own $HOME (the bootstrap omits
-// t3Home so Linux state never lands on /mnt/c). Packaged builds resolve
-// state under ~/.t3/userdata; dev runs (--dev-url) under ~/.t3/dev. Try
-// both, first hit wins.
-const READ_SERVER_RUNTIME_STATE_SCRIPT =
-  'cat "$HOME/.t3/userdata/server-runtime.json" 2>/dev/null || cat "$HOME/.t3/dev/server-runtime.json" 2>/dev/null || true';
+// t3Home so Linux state never lands on /mnt/c).
+const readServerRuntimeStateScript = (stateDir: WslServerStateDir): string =>
+  `cat "$HOME/.t3/${stateDir}/server-runtime.json" 2>/dev/null || true`;
 
 export const readServerRuntimeStateImpl = (
   distro: string | null,
+  stateDir: WslServerStateDir,
 ): Effect.Effect<
   Option.Option<WslServerRuntimeState>,
   never,
@@ -823,7 +833,7 @@ export const readServerRuntimeStateImpl = (
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const command = ChildProcess.make(
         "wsl.exe",
-        [...buildDistroArgs(distro), "--", "sh", "-c", READ_SERVER_RUNTIME_STATE_SCRIPT],
+        [...buildDistroArgs(distro), "--", "sh", "-c", readServerRuntimeStateScript(stateDir)],
         {
           stdin: "ignore",
           stdout: "pipe",
@@ -852,6 +862,10 @@ export const readServerRuntimeStateImpl = (
 // open fd, or a mapped file; SIGTERMs, then SIGKILLs stragglers, then
 // reports. `cd /` first so the probe shell itself (spawned with the
 // desktop's install-dir cwd mapped through /mnt) never counts as a holder.
+// Matching is anchored: descendants must match "$dir/" and the directory
+// itself must match as an exact readlink line — a bare substring match
+// would classify /mnt/c/application as a holder of /mnt/c/app and kill
+// unrelated processes.
 export const buildEnsurePathReleasedScript = (quotedLinuxPath: string): string => `cd /
 dir=${quotedLinuxPath}
 self=$$
@@ -860,7 +874,8 @@ find_holders() {
     pid=\${p#/proc/}
     [ "$pid" = "$self" ] && continue
     [ "$pid" = "1" ] && continue
-    if { readlink "$p/cwd"; readlink "$p/exe"; ls -l "$p/fd" 2>/dev/null; cat "$p/maps" 2>/dev/null; } 2>/dev/null | grep -qF "$dir"; then
+    if { readlink "$p/cwd" "$p/exe" "$p"/fd/* 2>/dev/null; cat "$p/maps" 2>/dev/null; } 2>/dev/null | grep -qF "$dir/" ||
+      readlink "$p/cwd" "$p/exe" "$p"/fd/* 2>/dev/null | grep -qxF "$dir"; then
       printf '%s ' "$pid"
     fi
   done
@@ -888,6 +903,10 @@ export const ensureWindowsPathReleasedImpl = (input: {
   readonly windowsPath: string;
 }): Effect.Effect<WslPathReleaseResult, never, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.gen(function* () {
+    // The caller only asks about a distro that was running a backend moments
+    // ago, so a failed path translation means "distro reachable but the
+    // check can't run" — unverifiable ("unknown"), not "no VM" — and the
+    // caller must not treat it as a pass.
     const linuxPath = yield* windowsToWslPathImpl(input.distro, input.windowsPath);
     if (Option.isNone(linuxPath)) {
       return "unknown" as WslPathReleaseResult;
@@ -906,7 +925,18 @@ export const ensureWindowsPathReleasedImpl = (input: {
           killSignal: "SIGTERM",
           forceKillAfter: PROCESS_TERMINATE_GRACE,
         });
-        const handle = yield* spawner.spawn(command);
+        const spawnResult = yield* spawner.spawn(command).pipe(
+          Effect.match({
+            onFailure: () => ({ _tag: "Failure" }) as const,
+            onSuccess: (handle) => ({ _tag: "Success", handle }) as const,
+          }),
+        );
+        if (spawnResult._tag === "Failure") {
+          // wsl.exe itself would not start — no running VM, so nothing can
+          // be holding /mnt handles either.
+          return "unavailable" as WslPathReleaseResult;
+        }
+        const handle = spawnResult.handle;
         const stdoutBytes = yield* Stream.runCollect(handle.stdout);
         const exitCode = yield* handle.exitCode;
         const raw = decodeUtf8(concatChunks(stdoutBytes)).trim();
@@ -985,6 +1015,7 @@ export interface DesktopWslEnvironmentTestStub {
   readonly getNetworkingMode?: (distro: string | null) => WslNetworkingMode;
   readonly readServerRuntimeState?: (
     distro: string | null,
+    stateDir: WslServerStateDir,
   ) => Option.Option<WslServerRuntimeState>;
   readonly ensureWindowsPathReleased?: (input: {
     readonly distro: string | null;
@@ -1013,8 +1044,8 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
       getUserHome: (distro) => Effect.succeed(stub.getUserHome?.(distro) ?? Option.none<string>()),
       getDistroIps: (distro) => Effect.succeed(stub.getDistroIps?.(distro) ?? []),
       getNetworkingMode: (distro) => Effect.succeed(stub.getNetworkingMode?.(distro) ?? "unknown"),
-      readServerRuntimeState: (distro) =>
-        Effect.succeed(stub.readServerRuntimeState?.(distro) ?? Option.none()),
+      readServerRuntimeState: (distro, stateDir) =>
+        Effect.succeed(stub.readServerRuntimeState?.(distro, stateDir) ?? Option.none()),
       ensureWindowsPathReleased: (input) =>
         Effect.succeed(stub.ensureWindowsPathReleased?.(input) ?? "unknown"),
       ensureNodePty: (distro, windowsRepoRoot, options) =>
@@ -1088,8 +1119,8 @@ export const layer = Layer.effect(
         Effect.withSpan("desktop.wsl.getNetworkingMode"),
       );
 
-    const readServerRuntimeState = (distro: string | null) =>
-      provideSpawner(readServerRuntimeStateImpl(distro)).pipe(
+    const readServerRuntimeState = (distro: string | null, stateDir: WslServerStateDir) =>
+      provideSpawner(readServerRuntimeStateImpl(distro, stateDir)).pipe(
         Effect.withSpan("desktop.wsl.readServerRuntimeState"),
       );
 

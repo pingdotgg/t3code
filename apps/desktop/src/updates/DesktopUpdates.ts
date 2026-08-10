@@ -462,17 +462,18 @@ export const make = Effect.gen(function* () {
   // The install cannot proceed: a backend process (or a Linux-side process
   // holding /mnt handles into the install directory) survived teardown, so
   // running the installer now would half-apply the update and corrupt the
-  // install. Restart the backends so the app stays usable, surface the
-  // failure through the update state machine, and leave the downloaded
-  // update in place so the user can retry.
+  // install. Restart the backends that were running before the attempt (and
+  // only those — an instance that was already stopped stays stopped),
+  // surface the failure through the update state machine, and leave the
+  // downloaded update in place so the user can retry.
   const abortInstall = (
-    stoppedInstances: ReadonlyArray<DesktopBackendPool.DesktopBackendInstance>,
+    instancesToRestart: ReadonlyArray<DesktopBackendPool.DesktopBackendInstance>,
     message: string,
   ) =>
     Effect.gen(function* () {
       yield* logUpdaterError(message, { stage: "pre-install-teardown" });
       yield* Effect.forEach(
-        stoppedInstances,
+        instancesToRestart,
         (instance) => instance.start.pipe(Effect.ignore),
         { concurrency: "unbounded" },
       );
@@ -508,19 +509,27 @@ export const make = Effect.gen(function* () {
         instances,
         (instance) =>
           Effect.gen(function* () {
-            // Capture the config before stop so the WSL release check below
-            // still knows which distro the instance was running in.
+            // Capture config and run-state before stop: the WSL release
+            // check below needs the distro, and the abort path must only
+            // restart instances that were actually running — a backend that
+            // was already stopped (e.g. after a preflight failure) must not
+            // be resurrected by a failed install attempt.
             const instanceConfig = yield* instance.currentConfig;
+            const beforeStop = yield* instance.snapshot;
+            const wasRunning = beforeStop.desiredRunning || Option.isSome(beforeStop.activePid);
             const finalized = yield* instance.stop({ timeout: INSTALL_BACKEND_STOP_TIMEOUT });
-            return { instance, instanceConfig, finalized };
+            return { instance, instanceConfig, wasRunning, finalized };
           }),
         { concurrency: "unbounded" },
       );
+      const previouslyRunning = stopResults
+        .filter((result) => result.wasRunning)
+        .map((result) => result.instance);
 
-      const unstopped = stopResults.filter((result) => !result.finalized);
+      const unstopped = stopResults.filter((result) => result.wasRunning && !result.finalized);
       if (unstopped.length > 0) {
         return yield* abortInstall(
-          instances,
+          previouslyRunning,
           `Update install aborted: backend ${unstopped
             .map((result) => `"${result.instance.id}"`)
             .join(", ")} did not shut down in time. Try the update again.`,
@@ -546,16 +555,27 @@ export const make = Effect.gen(function* () {
           });
           if (released === "busy") {
             return yield* abortInstall(
-              instances,
+              previouslyRunning,
               `Update install aborted: processes inside WSL (${result.instance.id}) still hold files under ${installDir}. Close them (or run "wsl --shutdown") and try the update again.`,
             );
           }
           if (released === "unknown") {
-            // wsl.exe unavailable or the check timed out. An unreachable WSL
-            // VM cannot hold 9p handles open either, so proceed — but leave
-            // a trace in case an apply failure still follows.
+            // The check ran against a distro that was hosting this backend
+            // moments ago but could not verify release (timeout, path
+            // translation failure). Handles may well still be open — abort
+            // rather than risk the half-applied install this guard exists
+            // to prevent.
+            return yield* abortInstall(
+              previouslyRunning,
+              `Update install aborted: could not verify that WSL (${result.instance.id}) released the files under ${installDir}. Run "wsl --shutdown" and try the update again.`,
+            );
+          }
+          if (released === "unavailable") {
+            // wsl.exe itself would not start, so no running VM can be
+            // holding /mnt handles either — proceed, but leave a trace in
+            // case an apply failure still follows.
             yield* logUpdaterWarning(
-              "could not verify WSL released the install directory; proceeding with install",
+              "wsl.exe unavailable while verifying install-directory release; proceeding with install",
               { instanceId: result.instance.id, installDir },
             );
           } else {

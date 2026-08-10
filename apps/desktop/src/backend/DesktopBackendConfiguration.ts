@@ -547,10 +547,19 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     ...distroIps.map((ip) => new URL(`http://${ip}:${input.port}`)),
   ].filter((url) => url.href !== httpBaseUrl.href);
   // Last-resort readiness fallback: the backend persists its actual origin
-  // (server-runtime.json) once its HTTP listener is up. Only trust the file
-  // when it names the port this instance was told to bind — the file is
-  // per-distro-home, so another backend instance may own it.
-  const resolveReadinessFallbackUrls = wslEnvironment.readServerRuntimeState(distroForConfig).pipe(
+  // (server-runtime.json) once its HTTP listener is up. Read the state-dir
+  // flavor this spawn actually uses (--dev-url runs persist under dev/,
+  // packaged under userdata/), and only trust the file when it names the
+  // port this instance was told to bind — the file is per-distro-home, so
+  // another backend instance may own it.
+  const wslServerStateDir: DesktopWslEnvironment.WslServerStateDir = Option.isSome(
+    environment.devServerUrl,
+  )
+    ? "dev"
+    : "userdata";
+  const resolveReadinessFallbackUrls = wslEnvironment
+    .readServerRuntimeState(distroForConfig, wslServerStateDir)
+    .pipe(
     Effect.map(
       Option.match({
         onNone: () => [] as ReadonlyArray<URL>,

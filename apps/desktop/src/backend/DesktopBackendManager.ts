@@ -620,32 +620,37 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     // runtime state (when the config wired a resolver) and probe those —
     // a ready server on a reachable port must not present as a dead one
     // just because the advertised host heuristic was wrong.
-    Effect.catchTag("BackendReadinessTimeoutError", (error) => {
-      const failWithProbed = (probedUrls: ReadonlyArray<URL>) =>
-        Effect.fail(
-          new BackendReadinessTimeoutError({
-            ...processContext,
-            readinessUrl: error.readinessUrl,
-            timeoutMs: error.timeoutMs,
-            probedUrls,
-            cause: error.cause,
+    Effect.catchTags({
+      BackendReadinessTimeoutError: (error) => {
+        const failWithProbed = (probedUrls: ReadonlyArray<URL>) =>
+          Effect.fail(
+            new BackendReadinessTimeoutError({
+              ...processContext,
+              readinessUrl: error.readinessUrl,
+              timeoutMs: error.timeoutMs,
+              probedUrls,
+              cause: error.cause,
+            }),
+          );
+        return (
+          options.resolveReadinessFallbackUrls ?? Effect.succeed<ReadonlyArray<URL>>([])
+        ).pipe(
+          Effect.flatMap((fallbackUrls) => {
+            const fresh = dedupeUrls(fallbackUrls).filter(
+              (url) => !staticCandidates.some((candidate) => candidate.href === url.href),
+            );
+            if (fresh.length === 0) {
+              return failWithProbed(staticCandidates);
+            }
+            return probeCandidates(fresh, READINESS_FALLBACK_PROBE_TIMEOUT).pipe(
+              Effect.catchTags({
+                BackendReadinessTimeoutError: () =>
+                  failWithProbed([...staticCandidates, ...fresh]),
+              }),
+            );
           }),
         );
-      return (options.resolveReadinessFallbackUrls ?? Effect.succeed<ReadonlyArray<URL>>([])).pipe(
-        Effect.flatMap((fallbackUrls) => {
-          const fresh = dedupeUrls(fallbackUrls).filter(
-            (url) => !staticCandidates.some((candidate) => candidate.href === url.href),
-          );
-          if (fresh.length === 0) {
-            return failWithProbed(staticCandidates);
-          }
-          return probeCandidates(fresh, READINESS_FALLBACK_PROBE_TIMEOUT).pipe(
-            Effect.catchTag("BackendReadinessTimeoutError", () =>
-              failWithProbed([...staticCandidates, ...fresh]),
-            ),
-          );
-        }),
-      );
+      },
     }),
     Effect.tap((readyBaseUrl) => options.onReady?.(readyBaseUrl) ?? Effect.void),
     Effect.catchTags({

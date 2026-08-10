@@ -132,9 +132,9 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     stop: () => options.stopBackend ?? Effect.succeed(true),
     currentConfig: Effect.succeed(options.backendConfig ?? Option.none()),
     snapshot: Effect.succeed({
-      desiredRunning: false,
-      ready: false,
-      activePid: Option.none(),
+      desiredRunning: true,
+      ready: true,
+      activePid: Option.some(123),
       restartAttempt: 0,
       restartScheduled: false,
     }),
@@ -230,6 +230,29 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     },
   };
 }
+
+const makeWslBackendConfig = (): DesktopBackendManager.DesktopBackendStartConfig => ({
+  executablePath: "wsl.exe",
+  args: [],
+  entryPath: "C:\\install\\resources\\app.asar.unpacked\\apps\\server\\dist\\bin.mjs",
+  cwd: "C:\\install",
+  env: {},
+  extendEnv: false,
+  bootstrap: {
+    mode: "desktop",
+    noBrowser: true,
+    port: 3774,
+    host: "0.0.0.0",
+    desktopBootstrapToken: "token",
+    tailscaleServeEnabled: false,
+    tailscaleServePort: 443,
+  },
+  bootstrapDelivery: "stdin",
+  httpBaseUrl: new URL("http://127.0.0.1:3774"),
+  captureOutput: true,
+  preflightFailure: Option.none(),
+  runningDistro: "Ubuntu",
+});
 
 describe("DesktopUpdates", () => {
   it("preserves complete causes for update poller and event failures", () => {
@@ -665,31 +688,9 @@ describe("DesktopUpdates", () => {
   });
 
   it.effect("aborts the install when WSL still holds files under the install directory", () => {
-    const wslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
-      executablePath: "wsl.exe",
-      args: [],
-      entryPath: "C:\\install\\resources\\app.asar.unpacked\\apps\\server\\dist\\bin.mjs",
-      cwd: "C:\\install",
-      env: {},
-      extendEnv: false,
-      bootstrap: {
-        mode: "desktop",
-        noBrowser: true,
-        port: 3774,
-        host: "0.0.0.0",
-        desktopBootstrapToken: "token",
-        tailscaleServeEnabled: false,
-        tailscaleServePort: 443,
-      },
-      bootstrapDelivery: "stdin",
-      httpBaseUrl: new URL("http://127.0.0.1:3774"),
-      captureOutput: true,
-      preflightFailure: Option.none(),
-      runningDistro: "Ubuntu",
-    };
     const harness = makeHarness({
       platform: "win32",
-      backendConfig: Option.some(wslConfig),
+      backendConfig: Option.some(makeWslBackendConfig()),
       wslReleaseResult: "busy",
     });
 
@@ -718,32 +719,58 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("hands off to the installer after a verified stop and WSL release", () => {
-    const wslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
-      executablePath: "wsl.exe",
-      args: [],
-      entryPath: "C:\\install\\resources\\app.asar.unpacked\\apps\\server\\dist\\bin.mjs",
-      cwd: "C:\\install",
-      env: {},
-      extendEnv: false,
-      bootstrap: {
-        mode: "desktop",
-        noBrowser: true,
-        port: 3774,
-        host: "0.0.0.0",
-        desktopBootstrapToken: "token",
-        tailscaleServeEnabled: false,
-        tailscaleServePort: 443,
-      },
-      bootstrapDelivery: "stdin",
-      httpBaseUrl: new URL("http://127.0.0.1:3774"),
-      captureOutput: true,
-      preflightFailure: Option.none(),
-      runningDistro: "Ubuntu",
-    };
+  it.effect("aborts the install when the WSL release check cannot verify (unknown)", () => {
     const harness = makeHarness({
       platform: "win32",
-      backendConfig: Option.some(wslConfig),
+      backendConfig: Option.some(makeWslBackendConfig()),
+      wslReleaseResult: "unknown",
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+        assert.isTrue(result.accepted);
+        assert.isFalse(result.completed);
+        assert.equal(harness.quitAndInstallCount(), 0);
+
+        const failedState = yield* updates.getState;
+        assert.equal(failedState.errorContext, "install");
+        assert.include(failedState.message ?? "", "could not verify");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("proceeds when wsl.exe is unavailable for the release check", () => {
+    const harness = makeHarness({
+      platform: "win32",
+      backendConfig: Option.some(makeWslBackendConfig()),
+      wslReleaseResult: "unavailable",
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+        assert.isTrue(result.accepted);
+        // No running VM can hold /mnt handles, so the install hands off.
+        assert.equal(harness.quitAndInstallCount(), 1);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("hands off to the installer after a verified stop and WSL release", () => {
+    const harness = makeHarness({
+      platform: "win32",
+      backendConfig: Option.some(makeWslBackendConfig()),
       wslReleaseResult: "released",
     });
 

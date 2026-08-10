@@ -10,6 +10,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 
 import {
   buildEnsurePathReleasedScript,
@@ -379,9 +380,9 @@ describe("getNetworkingModeImpl", () => {
 });
 
 describe("readServerRuntimeStateImpl", () => {
-  it.effect("parses the persisted runtime state", () =>
+  it.effect("parses the persisted runtime state from the requested state dir", () =>
     Effect.gen(function* () {
-      const state = yield* readServerRuntimeStateImpl("Ubuntu");
+      const state = yield* readServerRuntimeStateImpl("Ubuntu", "userdata");
       expect(Option.isSome(state)).toBe(true);
       if (Option.isSome(state)) {
         expect(state.value.port).toBe(3773);
@@ -391,18 +392,22 @@ describe("readServerRuntimeStateImpl", () => {
     }).pipe(
       Effect.provideService(
         ChildProcessSpawner.ChildProcessSpawner,
-        makeArgvSpawner(() => ({
-          stdout:
-            '{"version":1,"pid":4242,"host":"0.0.0.0","port":3773,"origin":"http://127.0.0.1:3773","startedAt":"2026-08-09T17:15:00Z"}\n',
-          exitCode: 0,
-        })),
+        makeArgvSpawner((argv) => {
+          expect(argv.join(" ")).toContain(".t3/userdata/server-runtime.json");
+          expect(argv.join(" ")).not.toContain(".t3/dev/");
+          return {
+            stdout:
+              '{"version":1,"pid":4242,"host":"0.0.0.0","port":3773,"origin":"http://127.0.0.1:3773","startedAt":"2026-08-09T17:15:00Z"}\n',
+            exitCode: 0,
+          };
+        }),
       ),
     ),
   );
 
   it.effect("returns none for a missing or unparsable file", () =>
     Effect.gen(function* () {
-      expect(Option.isNone(yield* readServerRuntimeStateImpl(null))).toBe(true);
+      expect(Option.isNone(yield* readServerRuntimeStateImpl(null, "dev"))).toBe(true);
     }).pipe(
       Effect.provideService(
         ChildProcessSpawner.ChildProcessSpawner,
@@ -446,6 +451,49 @@ describe("ensureWindowsPathReleasedImpl", () => {
       Effect.provideService(
         ChildProcessSpawner.ChildProcessSpawner,
         releaseSpawner({ stdout: "BUSY 4242 4243\n", exitCode: 1 }),
+      ),
+    ),
+  );
+
+  it.effect("reports unavailable when wsl.exe cannot be spawned for the release check", () =>
+    Effect.gen(function* () {
+      const result = yield* ensureWindowsPathReleasedImpl({
+        distro: "Ubuntu",
+        windowsPath: "C:\\Users\\test\\AppData\\Local\\Programs\\t3code",
+      });
+      expect(result).toBe("unavailable");
+    }).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => {
+          const argv = command._tag === "StandardCommand" ? [command.command, ...command.args] : [];
+          if (argv.includes("wslpath")) {
+            return Effect.succeed(
+              ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(1),
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                isRunning: Effect.succeed(false),
+                kill: () => Effect.void,
+                unref: Effect.succeed(Effect.void),
+                stdin: Sink.drain,
+                stdout: Stream.make(encoder.encode("/mnt/c/install\n")),
+                stderr: Stream.empty,
+                all: Stream.empty,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+              }),
+            );
+          }
+          return Effect.fail(
+            PlatformError.systemError({
+              _tag: "NotFound",
+              module: "ChildProcessSpawner",
+              method: "spawn",
+              pathOrDescriptor: "wsl.exe",
+              description: "wsl.exe missing",
+            }),
+          );
+        }),
       ),
     ),
   );
