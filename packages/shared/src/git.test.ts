@@ -91,6 +91,11 @@ describe("isTemporaryWorktreeBranch", () => {
     expect(isTemporaryWorktreeBranch("team_42-dev/deadbeef", " Team_42-Dev ")).toBe(true);
   });
 
+  it("does not retain previously configured custom prefixes", () => {
+    expect(isTemporaryWorktreeBranch("team/deadbeef", "org")).toBe(false);
+    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef`, "org")).toBe(true);
+  });
+
   it.each(["", "   ", "t3.code", "team/feature", "a".repeat(65)])(
     "rejects invalid custom prefix %j",
     (worktreeBranchPrefix) => {
