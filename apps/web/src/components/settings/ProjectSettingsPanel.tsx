@@ -23,7 +23,15 @@ import { resolveEnvModeLabel } from "../BranchToolbar.logic";
 import { createModelSelection } from "@t3tools/shared/model";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
-import { CopyIcon, FolderIcon, PlusIcon, ServerIcon, SettingsIcon, Trash2Icon } from "lucide-react";
+import {
+  CopyIcon,
+  FolderIcon,
+  PlusIcon,
+  SearchIcon,
+  ServerIcon,
+  SettingsIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -78,6 +86,7 @@ import {
 } from "../projectScriptEditor";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
@@ -131,6 +140,22 @@ export function ProjectSettingsPanel({
   const groups = useSettingsProjectGroups();
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
+  const [searchQuery, setSearchQuery] = useState("");
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  // Match checkout titles and paths too, so a group is findable by any of
+  // the names it goes by, not just the grouped display name.
+  const visibleGroups = useMemo(() => {
+    if (!normalizedQuery) return groups;
+    return groups.filter(
+      (group) =>
+        group.displayName.toLowerCase().includes(normalizedQuery) ||
+        group.memberProjects.some(
+          (member) =>
+            member.title.toLowerCase().includes(normalizedQuery) ||
+            member.workspaceRoot.toLowerCase().includes(normalizedQuery),
+        ),
+    );
+  }, [groups, normalizedQuery]);
 
   // The index route auto-selects the first project so /settings/projects is
   // never a dead end. Hash is preserved for settings-search jumps.
@@ -206,7 +231,37 @@ export function ProjectSettingsPanel({
         aria-label="Projects"
         className="w-60 shrink-0 space-y-0.5 overflow-y-auto border-e border-border/40 p-3 pt-10 max-sm:hidden sm:pt-12"
       >
-        {groups.map((group) => {
+        {groups.length > 0 ? (
+          <InputGroup variant="ghost" className="mb-1 h-8 rounded-md">
+            <InputGroupAddon>
+              <SearchIcon className="size-4 text-muted-foreground" />
+            </InputGroupAddon>
+            <InputGroupInput
+              type="search"
+              size="sm"
+              value={searchQuery}
+              aria-label="Search projects"
+              placeholder="Search projects"
+              spellCheck={false}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              onKeyDown={(event) => {
+                // Only intercept Escape while filtering, so an empty field
+                // still lets the global shortcut close the settings page.
+                if (event.key === "Escape" && searchQuery.length > 0) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setSearchQuery("");
+                  return;
+                }
+                if (event.key === "Enter") {
+                  const first = visibleGroups[0];
+                  if (first) selectProject(first.projectKey);
+                }
+              }}
+            />
+          </InputGroup>
+        ) : null}
+        {visibleGroups.map((group) => {
           const isActive = group.projectKey === selected?.projectKey;
           return (
             <button
@@ -236,6 +291,10 @@ export function ProjectSettingsPanel({
         })}
         {groups.length === 0 ? (
           <p className="px-2 py-4 text-sm text-muted-foreground">No projects yet.</p>
+        ) : visibleGroups.length === 0 ? (
+          <p role="status" className="px-2 py-4 text-sm text-muted-foreground">
+            No matching projects.
+          </p>
         ) : null}
       </nav>
       {selected ? (
