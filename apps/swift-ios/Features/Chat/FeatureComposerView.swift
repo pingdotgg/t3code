@@ -83,7 +83,9 @@ struct FeatureComposerView: View {
                         onSelect: selectCommandItem
                     )
                     .alignmentGuide(.top) { dimensions in
-                        dimensions[.bottom] + 8
+                        // Keep the menu clear of the text entry surface so the
+                        // active `$`/`@`/`/` token remains readable while typing.
+                        dimensions[.bottom] + 24
                     }
                 }
             }
