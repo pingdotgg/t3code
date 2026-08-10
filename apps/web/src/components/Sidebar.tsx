@@ -165,6 +165,7 @@ import {
   ComboboxItem,
   ComboboxList,
   ComboboxPopup,
+  useComboboxFilter,
 } from "./ui/combobox";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
@@ -1813,6 +1814,7 @@ export default function Sidebar() {
   // Popup anchor: the whole row, not the inner input element, so the list
   // lines up with the control the user sees.
   const projectScopeAnchorRef = useRef<HTMLDivElement | null>(null);
+  const projectScopeFilter = useComboboxFilter();
   const scopedProjectGroup = useMemo(
     () =>
       projectScopeKey === null
@@ -3274,6 +3276,16 @@ export default function Sidebar() {
                   items={projectScopeItems}
                   autoHighlight
                   openOnInputClick
+                  // "All projects" is a scope reset, not a searchable entry:
+                  // hide it while filtering so it can't outrank a project
+                  // match under autoHighlight, and so no-hit queries reach
+                  // the empty state. Same convention as DiffPanel's
+                  // "Automatic" row.
+                  filter={(item, query, itemToString) =>
+                    item.value === "all"
+                      ? query.trim().length === 0
+                      : projectScopeFilter.contains(item, query, itemToString)
+                  }
                   itemToStringLabel={(item) => item.label}
                   isItemEqualToValue={(a, b) => a.value === b.value}
                   open={projectScopeMenuOpen}
