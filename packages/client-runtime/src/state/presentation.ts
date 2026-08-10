@@ -38,10 +38,8 @@ export function createEnvironmentPresentationAtoms<E>(input: {
       if (entry === undefined) {
         return null;
       }
-      const enabled = Option.getOrNull(AsyncResult.value(get(input.enabledAtom(environmentId))));
-      if (enabled === null) {
-        return null;
-      }
+      const enabled =
+        Option.getOrNull(AsyncResult.value(get(input.enabledAtom(environmentId)))) ?? false;
       const state = Option.getOrElse(
         AsyncResult.value(get(input.stateAtom(environmentId))),
         () => AVAILABLE_CONNECTION_STATE,
