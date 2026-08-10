@@ -166,7 +166,8 @@ export class GitSync extends Context.Service<
     /**
      * Point a freshly seeded mirror at the origin's HEAD branch (or detach
      * onto the snapshot when the origin was detached) and hard-reset the
-     * empty working tree to it.
+     * empty working tree to it. When the origin's branch is unborn, that
+     * branch is started here at `fallbackOid`.
      */
     readonly checkoutSeedHead: (
       root: string,
@@ -601,9 +602,21 @@ export const make = Effect.gen(function* () {
   const createSeedBundle: GitSync["Service"]["createSeedBundle"] = Effect.fn(
     "GitSync.createSeedBundle",
   )(function* (input) {
+    // An origin folder we just initialized has an unborn HEAD and no branches.
+    // Naming HEAD there fails the whole bundle ("ambiguous argument 'HEAD'"),
+    // and --branches matches nothing, so the snapshot ref carries the working
+    // tree on its own.
+    const head = yield* headCommit(input.root);
     yield* run({
       root: input.root,
-      args: ["bundle", "create", input.bundlePath, "--branches", "HEAD", input.snapshotRef],
+      args: [
+        "bundle",
+        "create",
+        input.bundlePath,
+        "--branches",
+        ...(head === null ? [] : ["HEAD"]),
+        input.snapshotRef,
+      ],
     });
   });
 
@@ -657,6 +670,14 @@ export const make = Effect.gen(function* () {
         yield* run({ root, args: ["reset", "--hard", "--quiet"] });
         return;
       }
+      // The origin named a branch the seed bundle did not carry, which means
+      // the origin's branch is unborn (a folder we just initialized). Start
+      // that branch here at the snapshot so the mirror runs on a real branch
+      // under the same name instead of a detached HEAD.
+      yield* run({ root, args: ["update-ref", headRef, fallbackOid] });
+      yield* run({ root, args: ["symbolic-ref", "HEAD", headRef] });
+      yield* run({ root, args: ["reset", "--hard", "--quiet"] });
+      return;
     }
     yield* run({ root, args: ["update-ref", "--no-deref", "HEAD", fallbackOid] });
     yield* run({ root, args: ["reset", "--hard", "--quiet"] });

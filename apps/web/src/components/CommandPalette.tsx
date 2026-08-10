@@ -1967,7 +1967,7 @@ function OpenCommandPaletteDialog(props: {
               stackedThreadToast({
                 type: "error",
                 title: isMirrorNotARepositoryError(error)
-                  ? "Folder is not a git repository"
+                  ? "Could not prepare that folder"
                   : "Failed to link machines",
                 description: errorMessage(error),
               }),
@@ -2673,7 +2673,7 @@ function OpenCommandPaletteDialog(props: {
               : willCreateProjectPath
                 ? {
                     emptyStateMessage: isMirrorBrowseStep
-                      ? "Mirrored folders must be existing git repositories on the other machine."
+                      ? "Mirrored folders must already exist on the other machine."
                       : "Press Enter to create this folder and add it as a project.",
                   }
                 : threadSearch.isPending

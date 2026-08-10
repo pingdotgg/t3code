@@ -231,14 +231,27 @@ export class MirrorSyncFailedError extends Schema.TaggedErrorClass<MirrorSyncFai
   }
 }
 
+/**
+ * The mirrored folder could not be made into a git repository. A plain folder
+ * is a valid origin — it gets initialized in place — so this now only fires
+ * when that initialization fails: the path is missing, is not a directory, or
+ * is not writable.
+ *
+ * The tag is unchanged from when a non-repository was refused outright, so
+ * older paired clients still decode it.
+ */
 export class MirrorNotARepositoryError extends Schema.TaggedErrorClass<MirrorNotARepositoryError>()(
   "MirrorNotARepositoryError",
   {
     path: TrimmedNonEmptyString,
+    detail: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
-    return `Mirrored folders must be git repositories; ${this.path} is not.`;
+    const detail = this.detail?.trim();
+    return `Could not prepare ${this.path} as a git repository${
+      detail !== undefined && detail.length > 0 ? `: ${detail}` : "."
+    }`;
   }
 }
 

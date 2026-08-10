@@ -11,7 +11,7 @@ Use this when your project files live on one machine (say, your laptop) but you 
 ## Requirements
 
 - Both machines run a T3 Code server that supports mirroring (the desktop app counts — it runs one for you).
-- The project folder is a **git repository**. Mirroring is built on git; folders without a `.git` cannot be mirrored.
+- The project folder already exists on the other machine. It does not have to be a git repository — mirroring is built on git, so a plain folder gets a repository initialized inside it the first time you mirror it.
 - Both servers can run `git` (2.38 or newer recommended).
 
 ## Setting it up

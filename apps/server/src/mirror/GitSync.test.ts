@@ -168,6 +168,80 @@ it.layer(GitSyncTestLayer)("GitSync", (it) => {
       }),
     );
 
+    it.effect("seeds a plain folder that was only just initialized (no commits yet)", () =>
+      Effect.gen(function* () {
+        const gitSync = yield* GitSync.GitSync;
+        const origin = yield* makeTmpDir();
+        const mirror = yield* makeTmpDir();
+        // A folder the user never ran `git init` in. MirrorAgent.attach
+        // initializes it, which leaves an unborn HEAD and zero branches.
+        yield* write(NodePath.join(origin, "index.html"), "<h1>plain</h1>\n");
+        yield* write(NodePath.join(origin, "src/app.ts"), "export const one = 1;\n");
+        yield* write(NodePath.join(origin, ".gitignore"), "ignored.log\n");
+        yield* write(NodePath.join(origin, "ignored.log"), "must not sync\n");
+        yield* gitSync.initRepository(origin);
+        expect(yield* gitSync.headCommit(origin)).toBeNull();
+
+        const seed = yield* seedMirror({ origin, mirror, syncId: "seed-plain" });
+
+        expect(Option.getOrNull(yield* readOption(NodePath.join(mirror, "index.html")))).toBe(
+          "<h1>plain</h1>\n",
+        );
+        expect(Option.getOrNull(yield* readOption(NodePath.join(mirror, "src/app.ts")))).toBe(
+          "export const one = 1;\n",
+        );
+        expect(Option.isNone(yield* readOption(NodePath.join(mirror, "ignored.log")))).toBe(true);
+
+        // The mirror runs on a real branch under the origin's branch name, not
+        // a detached HEAD, so host-side git behaves normally.
+        expect(yield* gitSync.symbolicHead(mirror)).toBe(yield* gitSync.symbolicHead(origin));
+        expect(yield* gitSync.headCommit(mirror)).toBe(seed.snapshotOid);
+      }),
+    );
+
+    it.effect("keeps syncing a plain-folder origin after the seed", () =>
+      Effect.gen(function* () {
+        const gitSync = yield* GitSync.GitSync;
+        const origin = yield* makeTmpDir();
+        const mirror = yield* makeTmpDir();
+        yield* write(NodePath.join(origin, "src/app.ts"), "export const one = 1;\n");
+        yield* gitSync.initRepository(origin);
+        const seed = yield* seedMirror({ origin, mirror, syncId: "seed-plain-2" });
+
+        yield* write(NodePath.join(origin, "src/app.ts"), "export const one = 111;\n");
+        yield* write(NodePath.join(origin, "added.txt"), "added later\n");
+        const next = yield* gitSync.createSnapshot({ root: origin, syncId: "sync-plain" });
+        const bundlePath = NodePath.join(origin, "..", "sync-plain.bundle");
+        yield* gitSync.createIncrementalBundle({
+          root: origin,
+          bundlePath,
+          baseOid: seed.snapshotOid,
+          snapshotRef: GitSync.mirrorSnapshotRef("sync-plain"),
+          includeBranches: true,
+        });
+        yield* gitSync.fetchBundle({
+          root: mirror,
+          bundlePath,
+          refspecs: ["+refs/t3/mirror/snapshots/*:refs/t3/mirror/snapshots/*"],
+        });
+        const apply = yield* gitSync.applySnapshot({
+          root: mirror,
+          syncId: "sync-plain",
+          baseOid: seed.snapshotOid,
+          targetOid: next.snapshotOid,
+          conflictPreference: "target",
+        });
+
+        expect(apply.outcome).toBe("applied");
+        expect(Option.getOrNull(yield* readOption(NodePath.join(mirror, "src/app.ts")))).toBe(
+          "export const one = 111;\n",
+        );
+        expect(Option.getOrNull(yield* readOption(NodePath.join(mirror, "added.txt")))).toBe(
+          "added later\n",
+        );
+      }),
+    );
+
     it.effect("mirror.include force-syncs declared gitignored paths", () =>
       Effect.gen(function* () {
         const origin = yield* makeTmpDir();

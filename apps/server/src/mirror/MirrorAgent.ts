@@ -575,7 +575,20 @@ export const make = Effect.gen(function* () {
       const localRoot = path.resolve(input.localRootPath);
       const isRepo = yield* gitSync.isRepository(localRoot).pipe(Effect.orElseSucceed(() => false));
       if (!isRepo) {
-        return yield* new MirrorNotARepositoryError({ path: localRoot });
+        // A plain folder is a valid origin. The sync protocol only needs *a*
+        // repository to snapshot into, so create one in place rather than
+        // refusing the folder — the host does the same for its mirror.
+        yield* gitSync
+          .initRepository(localRoot)
+          .pipe(
+            Effect.mapError(
+              (cause) => new MirrorNotARepositoryError({ path: localRoot, detail: cause.message }),
+            ),
+          );
+        yield* Effect.logInfo("Initialized a git repository for a plain mirror origin folder.", {
+          projectId: input.projectId,
+          localRoot,
+        });
       }
       yield* secretStore
         .set(linkTokenSecretName(input.projectId), new TextEncoder().encode(input.token))
