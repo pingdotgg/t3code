@@ -7,6 +7,7 @@ struct BuildChangelog: Codable, Equatable, Sendable {
         let title: String
         let summary: String
         let pullRequest: Int?
+        let pullRequestURL: URL?
         let committedAt: Date?
 
         var id: String { commit }
@@ -15,6 +16,7 @@ struct BuildChangelog: Codable, Equatable, Sendable {
 
     let revision: String
     let baseRevision: String?
+    let repositoryURL: URL?
     let generatedBy: String
     let entries: [Entry]
 
@@ -41,8 +43,24 @@ struct BuildChangelogView: View {
                 header.padding(.bottom, 24)
 
                 if let changelog, !changelog.entries.isEmpty {
-                    ForEach(Array(changelog.entries.enumerated()), id: \.element.id) { index, entry in
-                        milestone(entry, isLast: index == changelog.entries.count - 1)
+                    if let latest = changelog.entries.last {
+                        latestChange(latest, repositoryURL: changelog.repositoryURL)
+                            .padding(.bottom, 28)
+                    }
+
+                    let earlierEntries = Array(changelog.entries.dropLast().reversed())
+                    if !earlierEntries.isEmpty {
+                        Text("Earlier in this build")
+                            .font(T3Typography.homeTitle)
+                            .foregroundStyle(T3Colors.textPrimary)
+                            .padding(.bottom, 16)
+                    }
+                    ForEach(Array(earlierEntries.enumerated()), id: \.element.id) { index, entry in
+                        milestone(
+                            entry,
+                            repositoryURL: changelog.repositoryURL,
+                            isLast: index == earlierEntries.count - 1
+                        )
                     }
                 } else {
                     ContentUnavailableView(
@@ -75,7 +93,35 @@ struct BuildChangelogView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func milestone(_ entry: BuildChangelog.Entry, isLast: Bool) -> some View {
+    private func latestChange(_ entry: BuildChangelog.Entry, repositoryURL: URL?) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("New in this version", systemImage: "sparkles")
+                .font(T3Typography.homeTitle)
+                .foregroundStyle(T3Colors.accent)
+            Text(entry.title)
+                .font(T3Typography.threadBody)
+                .fontWeight(.semibold)
+                .foregroundStyle(T3Colors.textPrimary)
+            Text(entry.summary)
+                .font(T3Typography.supporting)
+                .foregroundStyle(T3Colors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            changeLinks(entry, repositoryURL: repositoryURL)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(T3Colors.surface, in: RoundedRectangle(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(T3Colors.border, lineWidth: 1)
+        }
+    }
+
+    private func milestone(
+        _ entry: BuildChangelog.Entry,
+        repositoryURL: URL?,
+        isLast: Bool
+    ) -> some View {
         HStack(alignment: .top, spacing: 14) {
             VStack(spacing: 0) {
                 Circle()
@@ -99,16 +145,32 @@ struct BuildChangelogView: View {
                     .font(T3Typography.supporting)
                     .foregroundStyle(T3Colors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 8) {
-                    if let pullRequest = entry.pullRequest { Text("PR #\(pullRequest)") }
-                    Text(entry.shortCommit)
-                }
-                .font(.caption.monospaced())
-                .foregroundStyle(T3Colors.textTertiary)
+                changeLinks(entry, repositoryURL: repositoryURL)
             }
             .padding(.bottom, isLast ? 0 : 22)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .accessibilityElement(children: .combine)
+    }
+
+    private func changeLinks(
+        _ entry: BuildChangelog.Entry,
+        repositoryURL: URL?
+    ) -> some View {
+        HStack(spacing: 12) {
+            if let repositoryURL {
+                Link(destination: repositoryURL.appending(path: "commit/\(entry.commit)")) {
+                    Label(entry.shortCommit, systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                }
+            } else {
+                Text(entry.shortCommit)
+            }
+            if let pullRequest = entry.pullRequest, let pullRequestURL = entry.pullRequestURL {
+                Link(destination: pullRequestURL) {
+                    Label("PR #\(pullRequest)", systemImage: "arrow.triangle.pull")
+                }
+            }
+        }
+        .font(.caption.monospaced())
+        .foregroundStyle(T3Colors.accent)
     }
 }

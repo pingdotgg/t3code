@@ -29,13 +29,15 @@ struct SettingsAboutMetadataTests {
 
     @Test
     func decodesEmbeddedBuildChangelog() throws {
-        let json = #"{"revision":"abc123","baseRevision":"def456","generatedBy":"GPT-5.6 Luna","entries":[{"commit":"abc123","title":"Fix sync","summary":"Keeps messages in sync.","pullRequest":42,"committedAt":"2026-08-10T01:02:03Z"}]}"#
+        let json = #"{"revision":"abc123","baseRevision":"def456","repositoryURL":"https://github.com/pingdotgg/t3code","generatedBy":"GPT-5.6 Luna","entries":[{"commit":"abc123","title":"Fix sync","summary":"Keeps messages in sync.","pullRequest":42,"pullRequestURL":"https://github.com/pingdotgg/t3code/pull/42","committedAt":"2026-08-10T01:02:03Z"}]}"#
         let info = ["T3BuildChangelog": Data(json.utf8).base64EncodedString()]
         let changelog = try #require(BuildChangelog.load(info: info))
 
         #expect(changelog.revision == "abc123")
         #expect(changelog.generatedBy == "GPT-5.6 Luna")
         #expect(changelog.entries.first?.pullRequest == 42)
+        #expect(changelog.entries.first?.pullRequestURL?.absoluteString == "https://github.com/pingdotgg/t3code/pull/42")
+        #expect(changelog.repositoryURL?.absoluteString == "https://github.com/pingdotgg/t3code")
         #expect(changelog.entries.first?.shortCommit == "abc123")
         #expect(BuildChangelog.load(info: nil) == nil)
         #expect(BuildChangelog.load(info: ["T3BuildChangelog": "not base64"]) == nil)

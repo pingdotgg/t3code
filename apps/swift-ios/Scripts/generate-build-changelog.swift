@@ -7,12 +7,14 @@ struct Entry: Codable {
     let title: String
     let summary: String
     let pullRequest: Int?
+    let pullRequestURL: String?
     let committedAt: String?
 }
 
 struct Changelog: Codable {
     let revision: String
     let baseRevision: String?
+    let repositoryURL: String?
     let generatedBy: String
     let entries: [Entry]
 }
@@ -24,6 +26,16 @@ struct Summaries: Codable {
     }
 
     let summaries: [Item]
+}
+
+struct ApprovedManifest: Decodable {
+    struct Item: Decodable {
+        let integratedCommit: String
+        let pullRequest: String?
+    }
+
+    let features: [Item]
+    let candidates: [Item]
 }
 
 func fail(_ message: String) -> Never {
@@ -75,6 +87,27 @@ if let summariesURL {
 
 let revision = git(["rev-parse", "HEAD"], repository: repository)
 let baseRevision = git(["rev-parse", baseRef], repository: repository)
+let rawRepositoryURL = git(["remote", "get-url", "upstream"], repository: repository)
+let repositoryURL: String? = {
+    var value = rawRepositoryURL.replacingOccurrences(of: #"\.git$"#, with: "", options: .regularExpression)
+    if value.hasPrefix("git@") {
+        value = "https://" + value.dropFirst("git@".count).replacingOccurrences(of: ":", with: "/")
+    } else if value.hasPrefix("ssh://git@") {
+        value = "https://" + value.dropFirst("ssh://git@".count)
+    }
+    return value.hasPrefix("https://") ? value : nil
+}()
+let approvedPullRequests: [String: String] = {
+    let url = URL(fileURLWithPath: repository)
+        .appending(path: "scripts/t3-swift-approved/manifest.json")
+    guard let data = try? Data(contentsOf: url),
+          let manifest = try? JSONDecoder().decode(ApprovedManifest.self, from: data)
+    else { return [:] }
+    return Dictionary(uniqueKeysWithValues: (manifest.features + manifest.candidates).compactMap {
+        guard let pullRequest = $0.pullRequest else { return nil }
+        return ($0.integratedCommit, pullRequest)
+    })
+}()
 let fieldSeparator = Character("\u{1f}")
 let recordSeparator = Character("\u{1e}")
 let log = git([
@@ -93,12 +126,18 @@ let entries = log.split(separator: recordSeparator).compactMap { record -> Entry
     let pullRequest = pullRequestPattern.firstMatch(in: title, range: range).flatMap { match in
         Range(match.range(at: 1), in: title).flatMap { Int(title[$0]) }
     }
+    let approvedPullRequestURL = approvedPullRequests[commit]
+    let pullRequestURL = approvedPullRequestURL
+        ?? pullRequest.flatMap { number in repositoryURL.map { "\($0)/pull/\(number)" } }
+    let resolvedPullRequest = approvedPullRequestURL.flatMap { URL(string: $0)?.lastPathComponent }
+        .flatMap(Int.init) ?? pullRequest
     let fallback = body.split(separator: "\n").first.map(String.init) ?? title
     return Entry(
         commit: commit,
         title: title,
         summary: summaries[commit] ?? summaries[String(commit.prefix(12))] ?? fallback,
-        pullRequest: pullRequest,
+        pullRequest: resolvedPullRequest,
+        pullRequestURL: pullRequestURL,
         committedAt: date.isEmpty ? nil : date
     )
 }
@@ -123,6 +162,7 @@ if !summaries.isEmpty {
 let changelog = Changelog(
     revision: revision,
     baseRevision: baseRevision,
+    repositoryURL: repositoryURL,
     generatedBy: summaries.isEmpty ? "Git history" : "GPT-5.6 Luna",
     entries: entries
 )
