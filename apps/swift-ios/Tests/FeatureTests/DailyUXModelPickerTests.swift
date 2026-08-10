@@ -201,6 +201,101 @@ struct DailyUXModelPickerTests {
     }
 
     @Test
+    func composerReasoningSelectionMaterializesInheritedThreadModel() throws {
+        let inherited = FeatureSelection(
+            providerID: "codex",
+            modelID: "gpt-5.6-sol",
+            options: [
+                .init(id: "reasoningEffort", value: .string("medium")),
+                .init(id: "fast", value: .boolean(true)),
+            ]
+        )
+        let providers = [
+            FeatureProvider(
+                id: "codex",
+                name: "Codex",
+                models: [
+                    FeatureModel(
+                        id: "gpt-5.6-sol",
+                        name: "Sol",
+                        options: [
+                            .init(
+                                id: "reasoningEffort",
+                                label: "Reasoning",
+                                kind: .select,
+                                choices: [
+                                    .init(id: "medium", label: "Medium", isDefault: true),
+                                    .init(id: "high", label: "High"),
+                                ]
+                            ),
+                            .init(id: "fast", label: "Fast", kind: .boolean),
+                        ]
+                    ),
+                ]
+            ),
+        ]
+
+        let updated = try #require(
+            FeatureComposerReasoningSelection.updating(
+                explicit: nil,
+                inherited: inherited,
+                providers: providers,
+                materializesDefaultSelection: false,
+                value: .string("high")
+            )
+        )
+
+        #expect(updated.providerID == inherited.providerID)
+        #expect(updated.modelID == inherited.modelID)
+        #expect(
+            updated.options == [
+                .init(id: "fast", value: .boolean(true)),
+                .init(id: "reasoningEffort", value: .string("high")),
+            ]
+        )
+    }
+
+    @Test
+    func composerReasoningSelectionUsesDisplayedDefaultForNewTask() throws {
+        let providers = [
+            FeatureProvider(
+                id: "codex",
+                name: "Codex",
+                models: [
+                    FeatureModel(
+                        id: "gpt-5.6-sol",
+                        name: "Sol",
+                        isDefault: true,
+                        options: [
+                            .init(
+                                id: "effort",
+                                label: "Reasoning effort",
+                                kind: .select,
+                                choices: [
+                                    .init(id: "medium", label: "Medium", isDefault: true),
+                                    .init(id: "high", label: "High"),
+                                ]
+                            ),
+                        ]
+                    ),
+                ]
+            ),
+        ]
+
+        let context = try #require(
+            FeatureComposerReasoningSelection.context(
+                explicit: nil,
+                inherited: nil,
+                providers: providers,
+                materializesDefaultSelection: true
+            )
+        )
+
+        #expect(context.summary == "Medium")
+        #expect(context.value == .string("medium"))
+    }
+
+    @Test
     func preferredSelectionFindsDefaultAcrossProvidersAndIncludesDefaults() {
         let providers = [
             FeatureProvider(
