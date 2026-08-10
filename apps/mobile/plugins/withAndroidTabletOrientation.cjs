@@ -6,14 +6,33 @@ const { withMainActivity } = require("expo/config-plugins");
 // because the app is multitasking-capable, so only iPhones end up portrait-only.
 // Mirror that split on Android: keep the manifest lock for phones and lift it at
 // runtime on tablets (smallest width >= 600dp, the standard tablet breakpoint),
-// since requestedOrientation set in onCreate overrides the manifest value.
+// since requestedOrientation set at runtime overrides the manifest value.
 // FULL_USER allows all four orientations while still respecting the user's
-// auto-rotate lock, matching iPad behavior.
+// auto-rotate lock, matching iPad behavior. Foldables change
+// smallestScreenWidthDp on fold/unfold without recreating the activity
+// (smallestScreenSize is in the manifest's configChanges), so the policy is
+// re-evaluated in onConfigurationChanged: unfolding past the tablet breakpoint
+// unlocks rotation, and folding back restores the portrait lock.
 
-const ORIENTATION_OVERRIDE = `
-    if (resources.configuration.smallestScreenWidthDp >= 600) {
-      requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_USER
-    }`;
+const ORIENTATION_METHODS = `
+  // Applied in onCreate and re-applied on fold/unfold; added by
+  // withAndroidTabletOrientation.
+  override fun onConfigurationChanged(newConfig: Configuration) {
+    super.onConfigurationChanged(newConfig)
+    applyTabletOrientation()
+  }
+
+  private fun applyTabletOrientation() {
+    requestedOrientation = if (resources.configuration.smallestScreenWidthDp >= 600) {
+      ActivityInfo.SCREEN_ORIENTATION_FULL_USER
+    } else {
+      ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+    }
+  }
+`;
+
+const ORIENTATION_ON_CREATE_CALL = `
+    applyTabletOrientation()`;
 
 function insertAfter(contents, anchor, insertion, description) {
   const index = contents.indexOf(anchor);
@@ -39,13 +58,19 @@ module.exports = function withAndroidTabletOrientation(config) {
     contents = insertAfter(
       contents,
       "import android.os.Bundle",
-      "\nimport android.content.pm.ActivityInfo",
+      "\nimport android.content.pm.ActivityInfo\nimport android.content.res.Configuration",
       "the android.os.Bundle import",
     );
     contents = insertAfter(
       contents,
+      "class MainActivity : ReactActivity() {",
+      ORIENTATION_METHODS,
+      "the MainActivity class declaration",
+    );
+    contents = insertAfter(
+      contents,
       "super.onCreate(null)",
-      ORIENTATION_OVERRIDE,
+      ORIENTATION_ON_CREATE_CALL,
       "the super.onCreate call",
     );
 
