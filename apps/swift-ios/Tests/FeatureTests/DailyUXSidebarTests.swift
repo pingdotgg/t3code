@@ -133,7 +133,9 @@ struct DailyUXSidebarTests {
             now: now
         )
 
-        #expect(actions == [.delete, .unpin, .settle])
+        #expect(actions == [.settle, .unpin, .delete])
+        #expect(actions.first == .settle)
+        #expect(actions.last == .delete)
     }
 
     @Test

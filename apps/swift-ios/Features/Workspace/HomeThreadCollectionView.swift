@@ -17,19 +17,20 @@ enum HomeThreadSwipeActions {
         now: Date
     ) -> [HomeThreadSwipeActionKind] {
         if isArchived {
-            return [.delete, .restore]
+            return [.restore, .delete]
         }
 
-        var kinds: [HomeThreadSwipeActionKind] = [.delete]
-        if thread.pinnedAt != nil, thread.canTogglePin {
-            kinds.append(.unpin)
-        }
+        var kinds: [HomeThreadSwipeActionKind] = []
         if thread.canToggleSettlement {
             kinds.append(thread.isEffectivelySettled(at: now) ? .reopen : .settle)
         }
-        if kinds.count == 1 {
+        if thread.pinnedAt != nil, thread.canTogglePin {
+            kinds.append(.unpin)
+        }
+        if kinds.isEmpty {
             kinds.append(.archive)
         }
+        kinds.append(.delete)
         return kinds
     }
 }
@@ -232,6 +233,8 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 now: .now
             ).map { swipeAction($0, for: thread) }
             let configuration = UISwipeActionsConfiguration(actions: actions)
+            // UIKit performs actions[0] on a full swipe. The model keeps the
+            // reversible lifecycle action first and destructive Delete last.
             configuration.performsFirstActionWithFullSwipe = true
             return configuration
         }
