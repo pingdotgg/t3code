@@ -168,6 +168,27 @@ public struct SettingsView: View {
             VStack(spacing: 0) {
                 SettingsValueRow(title: "App", value: appDisplayName)
                 settingsDivider
+                SettingsValueRow(title: "Version", value: appVersionLabel)
+                settingsDivider
+                SettingsValueRow(
+                    title: "Environment version",
+                    value: activeEnvironmentVersion
+                )
+                settingsDivider
+                NavigationLink {
+                    BuildChangelogView(
+                        changelog: buildChangelog,
+                        versionLabel: appVersionLabel
+                    )
+                } label: {
+                    SettingsNavigationRow(
+                        title: "Build changelog",
+                        systemImage: "clock.arrow.circlepath",
+                        trailingSystemImage: "chevron.right"
+                    )
+                }
+                .buttonStyle(.plain)
+                settingsDivider
                 SettingsValueRow(title: "Platform", value: "Native SwiftUI")
                 settingsDivider
                 Link(destination: URL(string: "https://github.com/pingdotgg/t3code")!) {
@@ -194,6 +215,20 @@ public struct SettingsView: View {
             ?? "T3 Code SwiftUI"
     }
 
+    private var appVersionLabel: String {
+        SettingsAboutMetadata.appVersionLabel(info: Bundle.main.infoDictionary)
+    }
+
+    private var activeEnvironmentVersion: String {
+        SettingsAboutMetadata.environmentVersionLabel(
+            connectionState: model.snapshot.connection.state,
+            serverVersion: model.snapshot.environments.first(where: \.isActive)?.serverVersion
+        )
+    }
+
+    private var buildChangelog: BuildChangelog? {
+        BuildChangelog.load(info: Bundle.main.infoDictionary)
+    }
     private var canSave: Bool {
         !isSaving && settings != model.snapshot.settings
     }
@@ -219,6 +254,35 @@ public struct SettingsView: View {
             }
         }
     }
+}
+
+enum SettingsAboutMetadata {
+    static func environmentVersionLabel(
+        connectionState: FeatureConnection.State,
+        serverVersion: String?
+    ) -> String {
+        guard connectionState == .connected else { return "Not connected" }
+        return serverVersion ?? "Unknown"
+    }
+
+    static func appVersionLabel(info: [String: Any]?) -> String {
+        let version = nonemptyValue("CFBundleShortVersionString", info: info) ?? "?"
+        let build = nonemptyValue("CFBundleVersion", info: info) ?? "?"
+        return "\(version) (\(build))"
+    }
+
+    private static func nonemptyValue(_ key: String, info: [String: Any]?) -> String? {
+        guard let value = info?[key] as? String,
+              !value.isEmpty,
+              !value.hasPrefix("$(")
+        else { return nil }
+        return value
+    }
+}
+private struct EnvironmentStatusPresentation {
+    let title: String
+    let symbol: String
+    let color: Color
 }
 
 private struct SettingsSection<Content: View>: View {

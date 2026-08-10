@@ -136,6 +136,12 @@ overrides are `T3_SWIFT_DERIVED_DATA_PATH`, `T3_SWIFT_VERSION`, and
 `T3_SWIFT_VERIFY_BUNDLE_IDENTIFIERS_ONLY=1` to verify the configuration's host
 and extension bundle identifiers without a device build.
 
+Debug installations embed an offline changelog for the commits after
+`upstream/t3code/rebuild-mobile-app-swift`. Set `T3_SWIFT_CHANGELOG_BASE_REF` to
+compare with another build base. Set `T3_SWIFT_CHANGELOG_USE_LUNA=1` to generate
+one GPT-5.6 Luna summary per commit with the local Codex CLI, or pass a previously
+generated response with `T3_SWIFT_CHANGELOG_SUMMARIES`.
+
 ## Release checklist
 
 1. Set a unique `MARKETING_VERSION` and a higher `CURRENT_PROJECT_VERSION`.
