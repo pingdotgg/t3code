@@ -23,20 +23,18 @@ export function WorkspaceBreadcrumb({ ariaLabel, children, className }: Workspac
 }
 
 interface WorkspaceBreadcrumbItemProps {
-  readonly as?: "h1" | "span";
   readonly children: ReactNode;
   readonly className?: string;
   readonly current?: boolean;
 }
 
 export function WorkspaceBreadcrumbItem({
-  as: Component = "span",
   children,
   className,
   current = false,
 }: WorkspaceBreadcrumbItemProps) {
   return (
-    <Component
+    <span
       aria-current={current ? "page" : undefined}
       className={cn(
         "min-w-0 text-sm font-medium",
@@ -45,7 +43,7 @@ export function WorkspaceBreadcrumbItem({
       )}
     >
       {children}
-    </Component>
+    </span>
   );
 }
 

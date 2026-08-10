@@ -73,9 +73,7 @@ export function UsagePage() {
             )}
           >
             <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb">
-              <WorkspaceBreadcrumbItem as="h1" current>
-                Usage
-              </WorkspaceBreadcrumbItem>
+              <WorkspaceBreadcrumbItem current>Usage</WorkspaceBreadcrumbItem>
             </WorkspaceBreadcrumb>
           </header>
         )}
@@ -88,9 +86,7 @@ export function UsagePage() {
             )}
           >
             <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb">
-              <WorkspaceBreadcrumbItem as="h1" current>
-                Usage
-              </WorkspaceBreadcrumbItem>
+              <WorkspaceBreadcrumbItem current>Usage</WorkspaceBreadcrumbItem>
             </WorkspaceBreadcrumb>
           </div>
         )}
