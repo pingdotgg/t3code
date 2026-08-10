@@ -139,6 +139,29 @@ struct DailyUXSidebarTests {
     }
 
     @Test
+    func fullSwipeAlwaysChoosesAReversibleAction() {
+        let settled = thread(
+            id: "settled",
+            created: -100,
+            updated: -50,
+            state: .idle,
+            isSettled: true
+        )
+        var fallback = thread(id: "fallback", created: -100, updated: -50, state: .idle)
+        fallback.supportsSettlement = false
+        let shapes = [
+            HomeThreadSwipeActions.kinds(for: fallback, isArchived: true, now: now),
+            HomeThreadSwipeActions.kinds(for: settled, isArchived: false, now: now),
+            HomeThreadSwipeActions.kinds(for: fallback, isArchived: false, now: now),
+        ]
+
+        #expect(shapes[0] == [.restore, .delete])
+        #expect(shapes[1].first == .reopen)
+        #expect(shapes[2] == [.archive, .delete])
+        #expect(shapes.allSatisfy { $0.first != .delete })
+    }
+
+    @Test
     func pinActionsTolerateMissingCapabilitiesAndKeepPinsReversible() {
         var legacyDescriptor = thread(id: "legacy", created: -20, updated: -10)
         legacyDescriptor.supportsPinning = nil
