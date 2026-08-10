@@ -2253,24 +2253,24 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         rawPayload: result ?? { status },
       });
 
-      const stamp = yield* makeEventStamp();
-      yield* offerRuntimeEvent({
-        type: "turn.completed",
-        eventId: stamp.eventId,
-        provider: PROVIDER,
-        createdAt: stamp.createdAt,
+      // A result with no local turn is never a turn this adapter started:
+      // real turns get turnState in sendTurn, and assistant messages that
+      // arrive outside a turn auto-start a synthetic one. What lands here is
+      // the resume handshake (system/init + result(num_turns: 0)), a late
+      // result for a turn already completed locally (steer auto-close,
+      // stream teardown), or a stream failure with no turn in flight. The
+      // untargeted turn.completed this branch used to emit carried no turnId,
+      // so ingestion could not attribute it — and whenever the projection had
+      // no active turn (a pending turn start included) it flipped the session
+      // lifecycle for a turn that never existed. Keep the usage emission,
+      // drop the lifecycle event, and leave a tripwire so the upstream
+      // trigger stays measurable in the field.
+      yield* Effect.logInfo("claude.turn.result-without-active-turn", {
         threadId: context.session.threadId,
-        payload: {
-          state: status,
-          ...(result?.stop_reason !== undefined ? { stopReason: result.stop_reason } : {}),
-          ...(result?.usage ? { usage: result.usage } : {}),
-          ...(result?.modelUsage ? { modelUsage: result.modelUsage } : {}),
-          ...(typeof result?.total_cost_usd === "number"
-            ? { totalCostUsd: result.total_cost_usd }
-            : {}),
-          ...(errorMessage ? { errorMessage } : {}),
-        },
-        providerRefs: {},
+        status,
+        numTurns: result?.num_turns,
+        hasUsage: result?.usage !== undefined,
+        ...(errorMessage ? { errorMessage } : {}),
       });
       return;
     }
@@ -4132,6 +4132,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ]),
         ),
       };
+      // The attachments dir grant lets the agent Read/copy pasted images at
+      // the paths ProviderService injects into the turn text, without an
+      // approval prompt. It is a leaf directory holding only attachment
+      // files; siblings like secrets/ and state.sqlite stay ungranted.
+      const additionalDirectories = [
+        ...new Set([...claudeAdditionalDirectories, serverConfig.attachmentsDir]),
+      ];
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
@@ -4155,9 +4162,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         includePartialMessages: true,
         canUseTool,
         env: claudeEnvironment,
-        ...(claudeAdditionalDirectories.length > 0
-          ? { additionalDirectories: claudeAdditionalDirectories }
-          : {}),
+        ...(additionalDirectories.length > 0 ? { additionalDirectories } : {}),
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
         ...(Object.keys(claudeMcpServers).length > 0 ? { mcpServers: claudeMcpServers } : {}),
       };
@@ -4180,7 +4185,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.resume": existingResumeSessionId ?? "",
         "claude.query.session_id": newSessionId ?? "",
         "claude.query.include_partial_messages": true,
-        "claude.query.additional_directories": claudeAdditionalDirectories,
+        "claude.query.additional_directories": additionalDirectories,
         "claude.query.setting_sources": [...CLAUDE_SETTING_SOURCES],
         "claude.query.settings_json": encodeJsonStringForDiagnostics(settings) ?? "",
         "claude.query.extra_args_json": encodeJsonStringForDiagnostics(extraArgs) ?? "",

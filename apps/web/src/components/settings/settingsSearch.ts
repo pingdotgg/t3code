@@ -6,7 +6,6 @@ export type SettingsPath =
   | "/settings/source-control"
   | "/settings/mcp-servers"
   | "/settings/connections"
-  | "/settings/beta"
   | "/settings/archived";
 
 export interface SettingsSearchItem {
@@ -28,7 +27,6 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/source-control": "Source Control",
   "/settings/mcp-servers": "MCP Servers",
   "/settings/connections": "Connections",
-  "/settings/beta": "Beta",
   "/settings/archived": "Archive",
 };
 
@@ -40,13 +38,23 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
  */
 export const SETTINGS_SEARCH_ITEMS = [
   {
-    id: "theme",
-    title: "Color mode",
+    id: "color-scheme",
+    title: "Color scheme",
     to: "/settings/appearance",
+    // The scheme tiles sit at the top of the Appearance section.
+    targetId: "appearance",
+  },
+  {
+    id: "theme",
+    title: "Themes",
+    to: "/settings/appearance",
+    // Theme cards live directly under the scheme tiles; the section is the
+    // stable scroll destination for both.
+    targetId: "appearance",
   },
   {
     id: "theme-palette",
-    title: "Theme",
+    title: "Palette",
     to: "/settings/appearance",
   },
   {
@@ -98,6 +106,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "auto-settle-inactive-threads",
+    title: "Auto-settle inactive threads",
+    to: "/settings/general",
+  },
+  {
     id: "time-format",
     title: "Time format",
     to: "/settings/general",
@@ -105,11 +118,6 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "hide-whitespace-changes",
     title: "Hide whitespace changes",
-    to: "/settings/general",
-  },
-  {
-    id: "assistant-output",
-    title: "Assistant output",
     to: "/settings/general",
   },
   {
@@ -149,8 +157,33 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "plan-review-agent",
+    title: "Default plan review agent",
+    to: "/settings/general",
+  },
+  {
+    id: "plan-review-instructions",
+    title: "Plan review instructions",
+    to: "/settings/general",
+  },
+  {
     id: "diagnostics",
     title: "Diagnostics",
+    to: "/settings/general",
+  },
+  {
+    id: "legacy-plan-mode",
+    title: "Plan mode (legacy)",
+    to: "/settings/general",
+  },
+  {
+    id: "legacy-token-streaming",
+    title: "Stream token by token (legacy)",
+    to: "/settings/general",
+  },
+  {
+    id: "legacy-sidebar",
+    title: "Sidebar (legacy)",
     to: "/settings/general",
   },
   {
@@ -174,25 +207,19 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/mcp-servers",
   },
   {
+    id: "code-review-agent",
+    title: "Default code review agent",
+    to: "/settings/source-control",
+  },
+  {
+    id: "code-review-instructions",
+    title: "Review instructions",
+    to: "/settings/source-control",
+  },
+  {
     id: "remote-environments",
     title: "Remote environments",
     to: "/settings/connections",
-  },
-  {
-    id: "sidebar-v2",
-    title: "Sidebar v2",
-    to: "/settings/beta",
-  },
-  {
-    id: "auto-settle-inactive-threads",
-    title: "Auto-settle inactive threads",
-    to: "/settings/beta",
-    targetId: "sidebar-v2",
-  },
-  {
-    id: "restore-plan-mode",
-    title: "Restore plan mode (legacy)",
-    to: "/settings/beta",
   },
   {
     id: "archive",

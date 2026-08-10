@@ -2582,6 +2582,7 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
           sourceProposedPlan: {
             threadId: sourcePlanThreadId,
             planId: sourcePlanId,
+            kind: "implementation",
           },
           runtimeMode: "approval-required",
           createdAt: turnStartedAt,
@@ -2764,15 +2765,18 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
           instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5",
         },
+        faviconPath: "brand/icon.svg",
       });
 
       const projectRows = yield* sql<{
         readonly scriptsJson: string;
         readonly defaultModelSelection: string;
+        readonly faviconPath: string | null;
       }>`
         SELECT
           scripts_json AS "scriptsJson",
-          default_model_selection_json AS "defaultModelSelection"
+          default_model_selection_json AS "defaultModelSelection",
+          favicon_path AS "faviconPath"
         FROM projection_projects
         WHERE project_id = 'project-scripts'
       `;
@@ -2781,6 +2785,7 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
           scriptsJson:
             '[{"id":"script-1","name":"Build","command":"bun run build","icon":"build","runOnWorktreeCreate":false}]',
           defaultModelSelection: '{"instanceId":"codex","model":"gpt-5"}',
+          faviconPath: "brand/icon.svg",
         },
       ]);
     }),

@@ -211,6 +211,12 @@ export class AzureDevOpsCli extends Context.Service<
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<NormalizedAzureDevOpsPullRequestRecord>, AzureDevOpsCliError>;
 
+    readonly listRepositoryPullRequests: (input: {
+      readonly cwd: string;
+      readonly state: "open" | "closed" | "merged" | "all";
+      readonly limit?: number;
+    }) => Effect.Effect<ReadonlyArray<NormalizedAzureDevOpsPullRequestRecord>, AzureDevOpsCliError>;
+
     readonly getPullRequest: (input: {
       readonly cwd: string;
       readonly reference: string;
@@ -366,8 +372,48 @@ export const make = Effect.gen(function* () {
       args: [...input.args, "--only-show-errors", "--output", "json"],
     });
 
+  const listRepositoryPullRequests: AzureDevOpsCli["Service"]["listRepositoryPullRequests"] = (
+    input,
+  ) =>
+    executeJson({
+      cwd: input.cwd,
+      args: [
+        "repos",
+        "pr",
+        "list",
+        "--detect",
+        "true",
+        "--status",
+        toAzureStatus(input.state),
+        "--top",
+        String(input.limit ?? 50),
+      ],
+    }).pipe(
+      Effect.map((result) => result.stdout.trim()),
+      Effect.flatMap((raw) =>
+        raw.length === 0
+          ? Effect.succeed([])
+          : Effect.sync(() => decodeAzureDevOpsPullRequestListJson(raw)).pipe(
+              Effect.flatMap((decoded) =>
+                Result.isSuccess(decoded)
+                  ? Effect.succeed(decoded.success)
+                  : Effect.fail(
+                      new AzureDevOpsPullRequestListDecodeError({
+                        operation: "listPullRequests",
+                        command: "az",
+                        cwd: input.cwd,
+                        outputLength: raw.length,
+                        cause: decoded.failure,
+                      }),
+                    ),
+              ),
+            ),
+      ),
+    );
+
   return AzureDevOpsCli.of({
     execute,
+    listRepositoryPullRequests,
     listPullRequests: (input) =>
       executeJson({
         cwd: input.cwd,

@@ -254,6 +254,12 @@ export class BitbucketApi extends Context.Service<
       readonly state: "open" | "closed" | "merged" | "all";
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<NormalizedBitbucketPullRequestRecord>, BitbucketApiError>;
+    readonly listRepositoryPullRequests: (input: {
+      readonly cwd: string;
+      readonly context?: SourceControlProvider.SourceControlProviderContext;
+      readonly state: "open" | "closed" | "merged" | "all";
+      readonly limit?: number;
+    }) => Effect.Effect<ReadonlyArray<NormalizedBitbucketPullRequestRecord>, BitbucketApiError>;
     readonly getPullRequest: (input: {
       readonly cwd: string;
       readonly context?: SourceControlProvider.SourceControlProviderContext;
@@ -714,6 +720,30 @@ export const make = Effect.gen(function* () {
               `source.branch.name = "${SourceControlProvider.sourceBranch(input).replaceAll('"', '\\"')}"`,
               bitbucketStateFilter(states),
             ]),
+            state: states,
+          };
+
+          return executeJson(
+            "listPullRequests",
+            HttpClientRequest.get(
+              apiUrl(
+                `/repositories/${encodeURIComponent(repository.workspace)}/${encodeURIComponent(repository.repoSlug)}/pullrequests`,
+              ),
+              { urlParams: query },
+            ),
+            BitbucketPullRequestListSchema,
+          );
+        }),
+        Effect.map((list) => list.values.map(normalizeBitbucketPullRequestRecord)),
+      ),
+    listRepositoryPullRequests: (input) =>
+      resolveRepository(input).pipe(
+        Effect.flatMap((repository) => {
+          const states = toBitbucketStates(input.state);
+          const query: Record<string, string | ReadonlyArray<string>> = {
+            pagelen: String(Math.max(1, Math.min(input.limit ?? 50, 50))),
+            sort: "-updated_on",
+            q: bitbucketQueryString([bitbucketStateFilter(states)]),
             state: states,
           };
 

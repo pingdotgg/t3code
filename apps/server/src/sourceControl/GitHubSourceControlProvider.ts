@@ -39,6 +39,8 @@ function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeReq
     ...(summary.headRepositoryOwnerLogin !== undefined
       ? { headRepositoryOwnerLogin: summary.headRepositoryOwnerLogin }
       : {}),
+    ...(summary.author !== undefined ? { author: summary.author } : {}),
+    ...(summary.assignees !== undefined ? { assignees: summary.assignees } : {}),
   };
 }
 
@@ -184,9 +186,35 @@ export const make = Effect.gen(function* () {
         );
     };
 
+  const listRepositoryChangeRequests: SourceControlProvider.SourceControlProvider["Service"]["listRepositoryChangeRequests"] =
+    (input) =>
+      github
+        .listRepositoryPullRequests({
+          cwd: input.cwd,
+          state: input.state,
+          ...(input.limit !== undefined ? { limit: input.limit } : {}),
+        })
+        .pipe(
+          Effect.map((items) =>
+            items.map((item) => ({ ...toChangeRequest(item), updatedAt: item.updatedAt })),
+          ),
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "github",
+                operation: "listRepositoryChangeRequests",
+                command: error.command,
+                cwd: input.cwd,
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
+        );
+
   return SourceControlProvider.SourceControlProvider.of({
     kind: "github",
     listChangeRequests,
+    listRepositoryChangeRequests,
     getChangeRequest: (input) =>
       github.getPullRequest(input).pipe(
         Effect.map(toChangeRequest),

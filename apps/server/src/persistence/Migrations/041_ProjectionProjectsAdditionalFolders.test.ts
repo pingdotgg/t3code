@@ -8,7 +8,7 @@ import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("038_ProjectionProjectsAdditionalFolders", (it) => {
+layer("041_ProjectionProjectsAdditionalFolders", (it) => {
   it.effect("adds the additional folders column and backfills existing rows", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -27,7 +27,7 @@ layer("038_ProjectionProjectsAdditionalFolders", (it) => {
         )
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 38 });
+      yield* runMigrations({ toMigrationInclusive: 41 });
 
       const columns = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(projection_projects)
@@ -48,8 +48,8 @@ layer("038_ProjectionProjectsAdditionalFolders", (it) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 38 });
-      yield* runMigrations({ toMigrationInclusive: 38 });
+      yield* runMigrations({ toMigrationInclusive: 41 });
+      yield* runMigrations({ toMigrationInclusive: 41 });
 
       const columns = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(projection_projects)

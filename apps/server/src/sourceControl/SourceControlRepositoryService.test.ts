@@ -33,6 +33,7 @@ function makeProvider(
   return {
     kind: "github",
     listChangeRequests: () => unsupported("listChangeRequests"),
+    listRepositoryChangeRequests: () => unsupported("listRepositoryChangeRequests"),
     getChangeRequest: () => unsupported("getChangeRequest"),
     createChangeRequest: () => unsupported("createChangeRequest"),
     getRepositoryCloneUrls: () => Effect.succeed(CLONE_URLS),

@@ -164,11 +164,14 @@ import {
   McpServerUpsertResult,
   McpServersListResult,
 } from "./mcpServers.ts";
+import { UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
 import {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
   SourceControlDiscoveryResult,
+  SourceControlListChangeRequestsInput,
+  SourceControlListChangeRequestsResult,
   SourceControlPublishRepositoryInput,
   SourceControlPublishRepositoryResult,
   SourceControlRepositoryError,
@@ -259,6 +262,7 @@ export const WS_METHODS = {
   serverReportClientActivity: "server.reportClientActivity",
   serverReportHostPowerState: "server.reportHostPowerState",
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
+  serverGetUsageSummary: "server.getUsageSummary",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -268,6 +272,7 @@ export const WS_METHODS = {
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
+  sourceControlListChangeRequests: "sourceControl.listChangeRequests",
 
   // MCP server registry methods
   mcpServersList: "mcpServers.list",
@@ -402,6 +407,12 @@ export const WsServerRetryResourceTelemetryRpc = Rpc.make(WS_METHODS.serverRetry
   error: EnvironmentAuthorizationError,
 });
 
+export const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSummary, {
+  payload: UsageSummaryInput,
+  success: UsageSummary,
+  error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
+});
+
 export const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess, {
   payload: ServerSignalProcessInput,
   success: ServerSignalProcessResult,
@@ -484,6 +495,15 @@ export const WsMcpServersTestConnectionRpc = Rpc.make(WS_METHODS.mcpServersTestC
   success: McpServerTestConnectionResult,
   error: Schema.Union([McpServerRegistryError, ServerSettingsError, EnvironmentAuthorizationError]),
 });
+
+export const WsSourceControlListChangeRequestsRpc = Rpc.make(
+  WS_METHODS.sourceControlListChangeRequests,
+  {
+    payload: SourceControlListChangeRequestsInput,
+    success: SourceControlListChangeRequestsResult,
+    error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
+  },
+);
 
 export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
   payload: ProjectSearchEntriesInput,
@@ -880,6 +900,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetProcessResourceHistoryRpc,
   WsServerGetResourceTelemetryHistoryRpc,
   WsServerRetryResourceTelemetryRpc,
+  WsServerGetUsageSummaryRpc,
   WsServerSignalProcessRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
@@ -893,6 +914,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsMcpServersUpsertRpc,
   WsMcpServersRemoveRpc,
   WsMcpServersTestConnectionRpc,
+  WsSourceControlListChangeRequestsRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchContentsRpc,

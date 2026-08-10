@@ -234,6 +234,8 @@ export interface GitLabMergeRequestSummary {
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
+  readonly author?: string | null;
+  readonly assignees?: ReadonlyArray<string>;
 }
 
 export interface GitLabRepositoryCloneUrls {
@@ -258,6 +260,17 @@ export class GitLabCli extends Context.Service<
       readonly state: "open" | "closed" | "merged" | "all";
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<GitLabMergeRequestSummary>, GitLabCliError>;
+
+    readonly listRepositoryMergeRequests: (input: {
+      readonly cwd: string;
+      readonly state: "open" | "closed" | "merged" | "all";
+      readonly limit?: number;
+    }) => Effect.Effect<
+      ReadonlyArray<
+        GitLabMergeRequestSummary & { readonly updatedAt: Option.Option<DateTime.Utc> }
+      >,
+      GitLabCliError
+    >;
 
     readonly getMergeRequest: (input: {
       readonly cwd: string;
@@ -429,8 +442,45 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const listRepositoryMergeRequests: GitLabCli["Service"]["listRepositoryMergeRequests"] = (
+    input,
+  ) =>
+    execute({
+      cwd: input.cwd,
+      args: [
+        "mr",
+        "list",
+        ...stateArgs(input.state),
+        "--per-page",
+        String(input.limit ?? 50),
+        "--output",
+        "json",
+      ],
+    }).pipe(
+      Effect.map((result) => result.stdout.trim()),
+      Effect.flatMap((raw) =>
+        raw.length === 0
+          ? Effect.succeed([])
+          : Effect.sync(() => decodeGitLabMergeRequestListJson(raw)).pipe(
+              Effect.flatMap((decoded) =>
+                Result.isSuccess(decoded)
+                  ? Effect.succeed(decoded.success)
+                  : Effect.fail(
+                      new GitLabMergeRequestListDecodeError({
+                        operation: "listMergeRequests",
+                        command: "glab",
+                        cwd: input.cwd,
+                        cause: decoded.failure,
+                      }),
+                    ),
+              ),
+            ),
+      ),
+    );
+
   return GitLabCli.of({
     execute,
+    listRepositoryMergeRequests,
     listMergeRequests: (input) =>
       execute({
         cwd: input.cwd,

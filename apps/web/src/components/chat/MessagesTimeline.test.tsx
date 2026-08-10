@@ -18,7 +18,6 @@ vi.mock("@legendapp/list/react", async () => {
       anchorMaxSize?: number;
       anchorOffset?: number;
       onReady?: (info: { anchorIndex: number }) => void;
-      onSizeChanged?: (size: number) => void;
     };
     contentInsetEndAdjustment?: number;
     className?: string;
@@ -42,7 +41,6 @@ vi.mock("@legendapp/list/react", async () => {
     ref?: Ref<LegendListRef>;
   }) => {
     if (props.anchoredEndSpace) {
-      props.anchoredEndSpace.onSizeChanged?.(240);
       props.anchoredEndSpace.onReady?.({ anchorIndex: props.anchoredEndSpace.anchorIndex });
     }
     return (
@@ -88,6 +86,11 @@ vi.mock("@legendapp/list/react", async () => {
         data-maintain-visible-content-position-size={
           typeof props.maintainVisibleContentPosition === "object"
             ? props.maintainVisibleContentPosition.size
+            : undefined
+        }
+        data-maintain-visible-content-position-restore={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? Boolean(props.maintainVisibleContentPosition.shouldRestorePosition)
             : undefined
         }
       >
@@ -195,7 +198,6 @@ function buildProps() {
     workspaceRoot: undefined,
     anchorMessageId: null,
     onAnchorReady: () => {},
-    onAnchorSizeChanged: () => {},
     contentInsetEndAdjustment: 0,
     liveFollowEnabled: true,
     onIsAtEndChange: () => {},
@@ -241,6 +243,33 @@ describe("MessagesTimeline", () => {
     expect(compactMarkup).not.toContain("chat-timeline-scroll-fade");
     expect(fadedMarkup).toContain('class="h-10 sm:h-12"');
     expect(fadedMarkup).toContain("chat-timeline-scroll-fade");
+  });
+
+  it("renders a review action for proposed plans", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        onReviewPlan={() => {}}
+        timelineEntries={[
+          {
+            id: "proposed-plan-1",
+            kind: "proposed-plan",
+            createdAt: MESSAGE_CREATED_AT,
+            proposedPlan: {
+              id: "plan:thread-1:turn:turn-1",
+              turnId: TurnId.make("turn-1"),
+              planMarkdown: "# Review this plan\n\n- Verify the flow",
+              implementedAt: null,
+              implementationThreadId: null,
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Review plan");
   });
 
   it("keeps assistant changed-files headers sticky below the thread header", () => {
@@ -389,7 +418,6 @@ describe("MessagesTimeline", () => {
 
   it("anchors a sent attachment message using its measured height", () => {
     const onAnchorReady = vi.fn();
-    const onAnchorSizeChanged = vi.fn();
     const firstEntry = buildUserTimelineEntry("First prompt.");
     const secondEntry = {
       ...buildUserTimelineEntry("Newest prompt."),
@@ -414,7 +442,6 @@ describe("MessagesTimeline", () => {
         {...buildProps()}
         anchorMessageId={secondEntry.message.id}
         onAnchorReady={onAnchorReady}
-        onAnchorSizeChanged={onAnchorSizeChanged}
         contentInsetEndAdjustment={144}
         timelineEntries={[firstEntry, secondEntry]}
       />,
@@ -429,10 +456,10 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
     expect(markup).toContain('data-maintain-visible-content-position="object"');
     expect(markup).toContain('data-maintain-visible-content-position-data="true"');
-    expect(markup).toContain('data-maintain-visible-content-position-size="false"');
+    expect(markup).toContain('data-maintain-visible-content-position-size="true"');
+    expect(markup).toContain('data-maintain-visible-content-position-restore="true"');
     expect(onAnchorReady).toHaveBeenCalledOnce();
     expect(onAnchorReady).toHaveBeenCalledWith(secondEntry.message.id, 1);
-    expect(onAnchorSizeChanged).toHaveBeenCalledWith(secondEntry.message.id, 240);
   });
 
   it("renders collapse controls for long user messages", () => {
@@ -464,7 +491,7 @@ describe("MessagesTimeline", () => {
 
     expect(markup).not.toContain("Show full message");
     expect(markup).toContain('data-user-message-collapsible="false"');
-    expect(markup).toContain("rounded-2xl bg-accent p-3");
+    expect(markup).toContain("rounded-2xl bg-message p-3");
   });
 
   it("renders inline terminal labels with the composer chip UI", () => {

@@ -87,6 +87,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           pending_approval_count,
           pending_user_input_count,
           has_actionable_proposed_plan,
+          pinned_at,
+          pin_order_key,
           created_at,
           updated_at,
           deleted_at
@@ -105,6 +107,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           1,
           0,
           0,
+          '2026-02-24T00:00:01.000Z',
+          'gm',
           '2026-02-24T00:00:02.000Z',
           '2026-02-24T00:00:03.000Z',
           NULL
@@ -240,6 +244,43 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         )
       `;
 
+      yield* sql`
+        INSERT INTO projection_turns (
+          thread_id,
+          turn_id,
+          pending_message_id,
+          source_proposed_plan_thread_id,
+          source_proposed_plan_id,
+          source_proposed_plan_kind,
+          assistant_message_id,
+          state,
+          requested_at,
+          started_at,
+          completed_at,
+          checkpoint_turn_count,
+          checkpoint_ref,
+          checkpoint_status,
+          checkpoint_files_json
+        )
+        VALUES (
+          'thread-1',
+          'turn-review',
+          NULL,
+          'thread-1',
+          'plan-1',
+          'review',
+          NULL,
+          'completed',
+          '2026-02-24T00:00:08.500Z',
+          '2026-02-24T00:00:08.500Z',
+          '2026-02-24T00:00:08.500Z',
+          NULL,
+          NULL,
+          NULL,
+          '[]'
+        )
+      `;
+
       let sequence = 5;
       for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
         yield* sql`
@@ -272,6 +313,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
+          faviconPath: null,
           scripts: [
             {
               id: "script-1",
@@ -281,6 +323,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               runOnWorktreeCreate: false,
             },
           ],
+          defaultThreadEnvMode: null,
           createdAt: "2026-02-24T00:00:00.000Z",
           updatedAt: "2026-02-24T00:00:01.000Z",
           deletedAt: null,
@@ -309,6 +352,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             sourceProposedPlan: {
               threadId: ThreadId.make("thread-1"),
               planId: "plan-1",
+              kind: "implementation",
             },
           },
           createdAt: "2026-02-24T00:00:02.000Z",
@@ -318,7 +362,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           settledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
-          pinnedAt: null,
+          pinnedAt: "2026-02-24T00:00:01.000Z",
+          pinOrderKey: "gm",
           titleRegeneration: null,
           deletedAt: null,
           messages: [
@@ -341,6 +386,13 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               implementationThreadId: ThreadId.make("thread-2"),
               createdAt: "2026-02-24T00:00:05.000Z",
               updatedAt: "2026-02-24T00:00:05.500Z",
+            },
+          ],
+          proposedPlanReviews: [
+            {
+              sourcePlanId: "plan-1",
+              reviewThreadId: ThreadId.make("thread-1"),
+              startedAt: "2026-02-24T00:00:08.500Z",
             },
           ],
           activities: [
@@ -390,6 +442,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
+          faviconPath: null,
           scripts: [
             {
               id: "script-1",
@@ -399,6 +452,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               runOnWorktreeCreate: false,
             },
           ],
+          defaultThreadEnvMode: null,
           createdAt: "2026-02-24T00:00:00.000Z",
           updatedAt: "2026-02-24T00:00:01.000Z",
         },
@@ -426,6 +480,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             sourceProposedPlan: {
               threadId: ThreadId.make("thread-1"),
               planId: "plan-1",
+              kind: "implementation",
             },
           },
           createdAt: "2026-02-24T00:00:02.000Z",
@@ -435,7 +490,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           settledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
-          pinnedAt: null,
+          pinnedAt: "2026-02-24T00:00:01.000Z",
+          pinOrderKey: "gm",
           titleRegeneration: null,
           session: {
             threadId: ThreadId.make("thread-1"),

@@ -20,4 +20,14 @@ describe("ThreadErrorBanner", () => {
     expect(markup).toContain("h-lh w-4");
     expect(markup).toContain("h-lh self-start");
   });
+
+  it("renders the recovery action only when the caller has a complete recovery path", () => {
+    const recoverableMarkup = renderToStaticMarkup(
+      <ThreadErrorBanner error="Authentication failed" onContinueInNewThread={() => {}} />,
+    );
+    const genericMarkup = renderToStaticMarkup(<ThreadErrorBanner error="Network disconnected" />);
+
+    expect(recoverableMarkup).toContain("Continue in a new thread");
+    expect(genericMarkup).not.toContain("Continue in a new thread");
+  });
 });
