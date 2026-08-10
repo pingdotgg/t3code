@@ -235,14 +235,9 @@ const endorsementRows = [
         <code>npx t3 pair</code>
       </header>
       <div class="v2-connect-visual" aria-hidden="true">
-        <div class="v2-connect-status">
-          <i></i>
-          <span>One live thread</span>
-          <strong>on both screens</strong>
-        </div>
         <div class="v2-connect-screens">
           <div class="v2-connect-desktop">
-            <img src="/screenshot.webp" alt="" loading="lazy" />
+            <img src="/mobile-states/ios-thread.png" alt="" loading="lazy" />
           </div>
           <div class="v2-connect-phone">
             <img src="/mobile-states/ios-thread.png" alt="" loading="lazy" />
@@ -962,29 +957,6 @@ const endorsementRows = [
     overflow: hidden;
   }
 
-  .v2-connect-status {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    width: fit-content;
-    margin: 0 0 14px auto;
-    color: #74747d;
-    font-size: 12px;
-  }
-
-  .v2-connect-status i {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: #73d58b;
-    box-shadow: 0 0 14px rgba(115, 213, 139, 0.5);
-  }
-
-  .v2-connect-status strong {
-    color: #d5d5da;
-    font-weight: 550;
-  }
-
   .v2-connect-screens {
     position: relative;
     display: flex;
@@ -993,9 +965,13 @@ const endorsementRows = [
   }
 
   .v2-connect-desktop {
+    display: grid;
     width: 88%;
+    aspect-ratio: 1.62;
+    place-items: center;
     border: 1px solid var(--border-strong);
     border-radius: 18px;
+    background: #08080a;
     overflow: hidden;
   }
 
@@ -1010,9 +986,15 @@ const endorsementRows = [
     background: #08080a;
   }
 
-  .v2-connect-desktop img,
   .v2-connect-phone img {
     width: 100%;
+  }
+
+  .v2-connect-desktop img {
+    width: auto;
+    height: 100%;
+    max-width: 100%;
+    object-fit: contain;
   }
 
   .v2-connect-phone img {
