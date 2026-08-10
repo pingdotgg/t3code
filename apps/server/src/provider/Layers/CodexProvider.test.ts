@@ -2,9 +2,17 @@ import { assert, it } from "@effect/vitest";
 
 import {
   applyPreferredCodexDefaultModel,
+  buildCodexInitializeParams,
   isLegacyCodexModel,
   mapCodexModelCapabilities,
 } from "./CodexProvider.ts";
+
+it("advertises form elicitation support to Codex App Server sessions", () => {
+  assert.deepStrictEqual(buildCodexInitializeParams().capabilities, {
+    experimentalApi: true,
+    mcpServerOpenaiFormElicitation: true,
+  });
+});
 
 it("keeps only the GPT-5.6 Codex family out of legacy models", () => {
   assert.deepStrictEqual(

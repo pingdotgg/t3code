@@ -16,10 +16,19 @@ import {
 } from "../CodexDeveloperInstructions.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
+  buildMcpApprovalResponse,
+  buildDirectComputerUseThreadConfig,
+  buildPermissionsApprovalResponse,
   buildTurnStartParams,
   hasConfiguredMcpServer,
+  isComputerUseMcpApproval,
+  isMcpToolApproval,
   isRecoverableThreadResumeError,
+<<<<<<< HEAD
   makeMemoryConsolidationNotificationFilter,
+=======
+  mcpApprovalRequestKind,
+>>>>>>> a279d4081 (feat(codex): surface Computer Use and MCP tool approvals; Windows native bridge)
   openCodexThread,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
@@ -245,6 +254,183 @@ describe("buildTurnStartParams", () => {
         },
       ],
     });
+  });
+});
+
+describe("buildPermissionsApprovalResponse", () => {
+  const permissions = {
+    network: { enabled: true },
+    fileSystem: {
+      entries: [{ access: "write" as const, path: { type: "path" as const, path: "/tmp" } }],
+    },
+  };
+
+  it("grants the requested execution context for this turn", () => {
+    NodeAssert.deepStrictEqual(buildPermissionsApprovalResponse(permissions, "accept"), {
+      permissions,
+      scope: "turn",
+    });
+  });
+
+  it("persists an accepted execution context only for acceptForSession", () => {
+    NodeAssert.deepStrictEqual(buildPermissionsApprovalResponse(permissions, "acceptForSession"), {
+      permissions,
+      scope: "session",
+    });
+  });
+
+  it("denies every requested capability on decline or cancellation", () => {
+    for (const decision of ["decline", "cancel"] as const) {
+      NodeAssert.deepStrictEqual(buildPermissionsApprovalResponse(permissions, decision), {
+        permissions: {},
+        scope: "turn",
+      });
+    }
+  });
+});
+
+describe("MCP tool approval", () => {
+  const request = {
+    _meta: {
+      codex_approval_kind: "mcp_tool_call",
+      connector_id: "computer-use",
+      persist: ["session", "always"],
+    },
+    message: "Allow Computer Use to control this desktop?",
+    mode: "form" as const,
+    requestedSchema: { type: "object" as const, properties: {} },
+    serverName: "computer-use",
+    threadId: "provider-thread-1",
+    turnId: "turn-1",
+  };
+
+  it("recognizes only the Computer Use connector approval", () => {
+    NodeAssert.equal(isComputerUseMcpApproval(request), true);
+    NodeAssert.equal(
+      isComputerUseMcpApproval({
+        ...request,
+        _meta: { ...request._meta, connector_id: "calendar" },
+      }),
+      false,
+    );
+  });
+
+  it("recognizes generic MCP tool guardian approvals without a connector id", () => {
+    const genericRequest = {
+      ...request,
+      _meta: { codex_approval_kind: "mcp_tool_call" as const },
+      message: "Allow node_repl to run this tool call?",
+      serverName: "node_repl",
+    };
+
+    NodeAssert.equal(isMcpToolApproval(genericRequest), true);
+    NodeAssert.equal(isComputerUseMcpApproval(genericRequest), false);
+    NodeAssert.equal(mcpApprovalRequestKind(genericRequest), "tool");
+    NodeAssert.equal(mcpApprovalRequestKind(request), "permissions");
+  });
+
+  it("does not recognize URL or unrelated form elicitations as MCP tool approvals", () => {
+    NodeAssert.equal(
+      isMcpToolApproval({
+        ...request,
+        mode: "url",
+        url: "https://example.com/approve",
+        elicitationId: "elicitation-1",
+      }),
+      false,
+    );
+    const unrelatedRequest = {
+      ...request,
+      _meta: { connector_id: "computer-use" },
+    };
+    NodeAssert.equal(isMcpToolApproval(unrelatedRequest), false);
+    NodeAssert.equal(mcpApprovalRequestKind(unrelatedRequest), undefined);
+    NodeAssert.equal(
+      mcpApprovalRequestKind({
+        ...request,
+        mode: "url",
+        url: "https://example.com/approve",
+        elicitationId: "elicitation-1",
+      }),
+      undefined,
+    );
+  });
+
+  it("maps approval decisions to MCP actions and session persistence", () => {
+    NodeAssert.deepStrictEqual(buildMcpApprovalResponse("accept"), { action: "accept" });
+    NodeAssert.deepStrictEqual(buildMcpApprovalResponse("acceptForSession"), {
+      action: "accept",
+      _meta: { persist: "session" },
+    });
+    NodeAssert.deepStrictEqual(buildMcpApprovalResponse("decline"), { action: "decline" });
+    NodeAssert.deepStrictEqual(buildMcpApprovalResponse("cancel"), { action: "cancel" });
+  });
+
+  it("builds a Windows thread override without Desktop's native pipe", () => {
+    const config = {
+      mcp_servers: {
+        node_repl: {
+          command: "node_repl.exe",
+          args: [],
+          startup_timeout_sec: 120,
+          tool_timeout_sec: "",
+          env: {
+            NODE_REPL_NODE_PATH: "node.exe",
+            SKY_CUA_NATIVE_PIPE: "1",
+            SKY_CUA_NATIVE_PIPE_DIRECTORY: "desktop-owned-pipe",
+          },
+        },
+      },
+    };
+
+    NodeAssert.deepStrictEqual(buildDirectComputerUseThreadConfig(config, "win32"), {
+      "mcp_servers.node_repl": {
+        command: "node_repl.exe",
+        args: [],
+        startup_timeout_sec: 120,
+        env: {
+          NODE_REPL_NODE_PATH: "node.exe",
+        },
+      },
+    });
+    NodeAssert.equal(buildDirectComputerUseThreadConfig(config, "linux"), undefined);
+  });
+
+  it("prepends the trusted T3 Computer Use shim without replacing configured roots or hashes", () => {
+    const config = {
+      mcp_servers: {
+        node_repl: {
+          command: "node_repl.exe",
+          env: {
+            NODE_REPL_NODE_MODULE_DIRS: "C:\\original\\node_modules",
+            NODE_REPL_TRUSTED_BROWSER_CLIENT_SHA256S: "existing-hash",
+            SKY_CUA_NATIVE_PIPE: "1",
+          },
+        },
+      },
+    };
+
+    NodeAssert.deepStrictEqual(
+      buildDirectComputerUseThreadConfig(config, "win32", {
+        nodeModulesRoot: "C:\\shim\\node_modules",
+        pipePath: "\\\\.\\pipe\\t3code-cua-test",
+        trustedModuleSha256: "shim-hash",
+      }),
+      {
+        "mcp_servers.node_repl": {
+          command: "node_repl.exe",
+          env: {
+            NODE_REPL_NODE_MODULE_DIRS: "C:\\shim\\node_modules;C:\\original\\node_modules",
+            NODE_REPL_TRUSTED_BROWSER_CLIENT_SHA256S: "existing-hash,shim-hash",
+            T3_CODEX_COMPUTER_USE_PIPE_PATH: "\\\\.\\pipe\\t3code-cua-test",
+          },
+        },
+      },
+    );
+  });
+
+  it("does not create an incomplete node_repl transport", () => {
+    NodeAssert.equal(buildDirectComputerUseThreadConfig({}, "win32"), undefined);
   });
 });
 
@@ -575,6 +761,12 @@ describe("openCodexThread", () => {
         requestedModel: "gpt-5.3-codex",
         serviceTier: undefined,
         resumeThreadId: "stale-thread",
+        config: {
+          "mcp_servers.node_repl": {
+            command: "node_repl.exe",
+            env: { NODE_REPL_NODE_PATH: "node.exe" },
+          },
+        },
       });
 
       NodeAssert.equal(opened.thread.id, "fresh-thread");
@@ -582,6 +774,14 @@ describe("openCodexThread", () => {
         calls.map((call) => call.method),
         ["thread/resume", "thread/start"],
       );
+      for (const call of calls) {
+        NodeAssert.deepStrictEqual((call.payload as { config?: unknown }).config, {
+          "mcp_servers.node_repl": {
+            command: "node_repl.exe",
+            env: { NODE_REPL_NODE_PATH: "node.exe" },
+          },
+        });
+      }
     }),
   );
 
