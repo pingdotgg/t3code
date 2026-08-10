@@ -1,25 +1,16 @@
 import AppIntents
 import Foundation
 
-struct PlatformRecentThreadRecord: Codable, Equatable, Sendable {
-    let id: String
-    let environmentID: String?
-    let wireID: String
-    let title: String
-    let environmentName: String?
-    let updatedAt: Date
-}
-
 final class PlatformRecentThreadStore: @unchecked Sendable {
     static let shared = PlatformRecentThreadStore()
 
-    private let defaults: UserDefaults
-    private let key: String
-    private let lock = NSLock()
+    private let sharedStore: T3SharedRecentThreadStore
 
-    init(defaults: UserDefaults = .standard, key: String = "swift-ios.recent-threads.v1") {
-        self.defaults = defaults
-        self.key = key
+    init(
+        defaults: UserDefaults? = UserDefaults(suiteName: T3SharedContainer.appGroupID),
+        key: String = "swift-ios.shared-recent-threads.v1"
+    ) {
+        sharedStore = T3SharedRecentThreadStore(defaults: defaults, key: key)
     }
 
     func update(from threads: [FeatureThread]) {
@@ -29,9 +20,9 @@ final class PlatformRecentThreadStore: @unchecked Sendable {
                 if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
                 return lhs.id < rhs.id
             }
-            .prefix(12)
+            .prefix(T3SharedRecentThreadStore.maximumCount)
             .map {
-                PlatformRecentThreadRecord(
+                T3SharedRecentThreadRecord(
                     id: $0.id,
                     environmentID: $0.environmentID,
                     wireID: $0.wireID ?? $0.id,
@@ -40,16 +31,11 @@ final class PlatformRecentThreadStore: @unchecked Sendable {
                     updatedAt: $0.updatedAt
                 )
             }
-        lock.withLock {
-            defaults.set(try? JSONEncoder().encode(records), forKey: key)
-        }
+        sharedStore.update(records)
     }
 
-    func records() -> [PlatformRecentThreadRecord] {
-        lock.withLock {
-            guard let data = defaults.data(forKey: key) else { return [] }
-            return (try? JSONDecoder().decode([PlatformRecentThreadRecord].self, from: data)) ?? []
-        }
+    func records() -> [T3SharedRecentThreadRecord] {
+        sharedStore.records()
     }
 }
 
@@ -70,7 +56,7 @@ struct PlatformRecentThreadEntity: AppEntity {
         )
     }
 
-    init(record: PlatformRecentThreadRecord) {
+    init(record: T3SharedRecentThreadRecord) {
         id = record.id
         environmentID = record.environmentID
         wireID = record.wireID
@@ -88,7 +74,9 @@ struct PlatformRecentThreadQuery: EntityQuery {
     }
 
     func suggestedEntities() async throws -> [PlatformRecentThreadEntity] {
-        PlatformRecentThreadStore.shared.records().map(PlatformRecentThreadEntity.init)
+        PlatformRecentThreadStore.shared.records()
+            .prefix(12)
+            .map(PlatformRecentThreadEntity.init)
     }
 }
 

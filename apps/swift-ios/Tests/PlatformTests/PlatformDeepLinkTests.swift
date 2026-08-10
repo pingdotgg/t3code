@@ -70,6 +70,7 @@ struct PlatformDeepLinkTests {
             .project(environmentID: "environment 1", projectID: "project/1"),
             .thread(environmentID: "environment 1", threadID: "thread 1"),
             .newTask(environmentID: "environment 1", projectID: "project 1"),
+            .incomingShare(id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
             .connection(endpoint: "https://remote.example.com", token: "PAIR"),
         ]
 
@@ -78,6 +79,18 @@ struct PlatformDeepLinkTests {
             #expect(url.scheme == PlatformRoute.nativeScheme)
             let parsed = try PlatformDeepLinkParser.parse(url)
             #expect(parsed == route, "Failed to round-trip \(route) through \(url.absoluteString)")
+        }
+    }
+
+    @Test
+    func incomingShareRouteRequiresAUUID() throws {
+        #expect(
+            try PlatformDeepLinkParser.parse(
+                "t3code-swiftui://share?id=AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+            ) == .incomingShare(id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        )
+        #expect(throws: PlatformDeepLinkError.invalidIdentifier) {
+            try PlatformDeepLinkParser.parse("t3code-swiftui://share?id=not-a-uuid")
         }
     }
 

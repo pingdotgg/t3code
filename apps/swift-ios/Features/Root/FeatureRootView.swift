@@ -4,21 +4,29 @@ public struct FeatureRootView: View {
     @State private var model: FeatureRootModel
     private let navigationRequest: FeatureWorkspaceNavigationRequest?
     private let onNavigationRequestConsumed: @MainActor (UUID) -> Void
+    private let acknowledgeIncomingShare: (String) async -> Void
+    private let releaseIncomingSharePresentation: @MainActor (String) -> Void
 
     public init(client: any FeatureClient) {
         _model = State(initialValue: FeatureRootModel(client: client))
         navigationRequest = nil
         onNavigationRequestConsumed = { _ in }
+        acknowledgeIncomingShare = { _ in }
+        releaseIncomingSharePresentation = { _ in }
     }
 
     init(
         model: FeatureRootModel,
         navigationRequest: FeatureWorkspaceNavigationRequest? = nil,
-        onNavigationRequestConsumed: @escaping @MainActor (UUID) -> Void = { _ in }
+        onNavigationRequestConsumed: @escaping @MainActor (UUID) -> Void = { _ in },
+        acknowledgeIncomingShare: @escaping (String) async -> Void = { _ in },
+        releaseIncomingSharePresentation: @escaping @MainActor (String) -> Void = { _ in }
     ) {
         _model = State(initialValue: model)
         self.navigationRequest = navigationRequest
         self.onNavigationRequestConsumed = onNavigationRequestConsumed
+        self.acknowledgeIncomingShare = acknowledgeIncomingShare
+        self.releaseIncomingSharePresentation = releaseIncomingSharePresentation
     }
 
     public var body: some View {
@@ -35,7 +43,9 @@ public struct FeatureRootView: View {
                     },
                     submitMessage: { submission in
                         await model.sendMessage(submission)
-                    }
+                    },
+                    acknowledgeIncomingShare: acknowledgeIncomingShare,
+                    releaseIncomingSharePresentation: releaseIncomingSharePresentation
                 )
             } else {
                 ConnectionOnboardingView(model: model)

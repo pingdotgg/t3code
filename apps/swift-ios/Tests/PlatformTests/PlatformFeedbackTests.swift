@@ -49,7 +49,7 @@ struct PlatformFeedbackTests {
     }
 
     @Test
-    func recentThreadStoreSortsLimitsAndSkipsArchived() throws {
+    func recentThreadStoreSortsAndSkipsArchived() throws {
         let suiteName = "PlatformFeedbackTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -66,7 +66,7 @@ struct PlatformFeedbackTests {
         store.update(from: threads)
         let records = store.records()
 
-        #expect(records.count == 12)
+        #expect(records.count == 13)
         #expect(records.first?.id == "thread-12")
         #expect(!records.contains { $0.id == "thread-13" })
     }

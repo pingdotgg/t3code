@@ -234,6 +234,110 @@ struct PlatformIncomingShareTests {
     }
 
     @Test
+    func existingThreadImportUsesItsDraftAndRepresentsVideoAsAContactSheet() async throws {
+        let recorder = IncomingShareTestRecorder()
+        let videoID = "12345678-1234-1234-1234-123456789abc"
+        let envelope = Self.envelope(
+            text: "Review this",
+            videos: [Self.video(id: videoID)]
+        )
+        let thread = FeatureThread(
+            id: "thread:environment:thread",
+            wireID: "thread",
+            projectID: "project",
+            environmentID: "environment",
+            title: "Existing"
+        )
+        let pipeline = PlatformIncomingSharePipeline(
+            source: PlatformIncomingShareSource(
+                loadAll: { [envelope] },
+                data: { _ in Data() },
+                videoURL: { video in
+                    await recorder.record("video:\(video.id)")
+                    return URL(fileURLWithPath: "/tmp/video.mov")
+                },
+                remove: { id in await recorder.record("remove:\(id)") }
+            ),
+            drafts: PlatformIncomingShareDraftRepository(
+                importContent: { shareID, text, attachments, key, _ in
+                    await recorder.capture(
+                        draft: FeatureComposerDraft(text: text, attachments: attachments),
+                        key: key
+                    )
+                    await recorder.record("import:\(shareID)")
+                    return FeatureComposerDraft(text: text, attachments: attachments)
+                }
+            ),
+            prepareImage: { _, _ in Self.attachment(id: UUID(), value: 1) },
+            prepareVideo: { _, _, _ in
+                Self.attachment(id: UUID(), value: 9)
+            }
+        )
+
+        let imported = try await pipeline.importEnvelope(envelope, into: thread)
+        let captured = await recorder.capturedDraft
+
+        #expect(captured?.key == FeatureComposerDraftStore.threadKey(thread))
+        #expect(imported.text.contains("Review this"))
+        #expect(imported.text.contains("Shared video: reference.mov"))
+        #expect(imported.attachments.first?.id.uuidString.lowercased() == videoID)
+        #expect(await recorder.events == [
+            "video:\(videoID)",
+            "import:\(envelope.id)",
+            "remove:\(envelope.id)",
+        ])
+    }
+
+    @Test
+    func newThreadShareStaysDurableUntilProjectSelectionRoutesIt() async throws {
+        let recorder = IncomingShareTestRecorder()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        let envelope = Self.envelope(text: "Choose my project")
+        let pipeline = PlatformIncomingSharePipeline(
+            source: PlatformIncomingShareSource(
+                loadAll: { [envelope] },
+                data: { _ in Data() },
+                remove: { id in await recorder.record("remove:\(id)") }
+            ),
+            drafts: PlatformIncomingShareDraftRepository(
+                importContent: { shareID, text, attachments, key, maximumCount in
+                    try await store.importSharedContent(
+                        shareID: shareID,
+                        text: text,
+                        attachments: attachments,
+                        for: key,
+                        maximumAttachmentCount: maximumCount
+                    )
+                }
+            ),
+            prepareImage: { _, _ in Self.attachment(id: UUID(), value: 1) }
+        )
+
+        _ = try await pipeline.stageEnvelopeForNewThread(envelope)
+        let transferKey = FeatureComposerDraftStore.incomingShareKey(shareID: envelope.id)
+        #expect(try await store.draft(for: transferKey)?.text == "Choose my project")
+        #expect(await recorder.events.isEmpty)
+
+        let project = Self.project()
+        let destinationKey = FeatureComposerDraftStore.newTaskKey(project: project)
+        let routed = try await store.routeIncomingShare(
+            shareID: envelope.id,
+            to: destinationKey
+        )
+        #expect(routed?.text == "Choose my project")
+        #expect(try await store.draft(for: transferKey) == nil)
+        #expect(try await store.draft(for: destinationKey) == routed)
+
+        try await pipeline.acknowledgeEnvelope(id: envelope.id)
+        #expect(await recorder.events == ["remove:\(envelope.id)"])
+    }
+
+    @Test
     @MainActor
     func noProjectNoticeKeepsEnvelopePendingAndOnlyReportsOnce() async {
         let envelope = Self.envelope(text: "Pending")
@@ -257,9 +361,37 @@ struct PlatformIncomingShareTests {
         #expect(coordinator.pendingEnvelope == envelope)
     }
 
+    @Test
+    @MainActor
+    func preferredEnvelopeDoesNotFallBackToAnotherPendingShare() async {
+        let envelope = Self.envelope(text: "Do not route me")
+        let coordinator = PlatformIncomingShareCoordinator(
+            pipeline: PlatformIncomingSharePipeline(
+                source: PlatformIncomingShareSource(
+                    loadAll: { [envelope] },
+                    data: { _ in Data() },
+                    remove: { _ in }
+                ),
+                drafts: PlatformIncomingShareDraftRepository(
+                    importContent: { _, _, _, _, _ in FeatureComposerDraft() }
+                ),
+                prepareImage: { _, _ in Self.attachment(id: UUID(), value: 1) }
+            )
+        )
+
+        #expect(
+            !(await coordinator.refresh(
+                preferredID: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+                hasProjects: true
+            ))
+        )
+        #expect(coordinator.pendingEnvelope == nil)
+    }
+
     private static func envelope(
         text: String = "",
-        images: [T3IncomingShareImage] = []
+        images: [T3IncomingShareImage] = [],
+        videos: [T3IncomingShareVideo] = []
     ) -> T3IncomingShareEnvelope {
         T3IncomingShareEnvelope(
             schemaVersion: T3IncomingShareEnvelope.schemaVersion,
@@ -267,6 +399,7 @@ struct PlatformIncomingShareTests {
             createdAt: Date(timeIntervalSince1970: 100),
             text: text,
             images: images,
+            videos: videos,
             warnings: []
         )
     }
@@ -277,6 +410,16 @@ struct PlatformIncomingShareTests {
             fileName: "reference.png",
             typeIdentifier: "public.png",
             relativePath: "image.png",
+            byteCount: 2
+        )
+    }
+
+    private static func video(id: String) -> T3IncomingShareVideo {
+        T3IncomingShareVideo(
+            id: id,
+            fileName: "reference.mov",
+            typeIdentifier: "com.apple.quicktime-movie",
+            relativePath: "video.mov",
             byteCount: 2
         )
     }

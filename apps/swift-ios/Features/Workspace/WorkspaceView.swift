@@ -6,6 +6,7 @@ struct FeatureWorkspaceNavigationRequest: Equatable, Sendable {
         case thread(id: String)
         case project(id: String)
         case newTask(projectID: String?)
+        case sharedNewTask(shareID: String)
     }
 
     let id: UUID
@@ -25,6 +26,8 @@ public struct WorkspaceView: View {
     private let onNavigationRequestConsumed: @MainActor (UUID) -> Void
     private let submitNewTask: (NewTaskRequest) async -> FeatureThread?
     private let submitMessage: (FeatureMessageSubmission) async -> Bool
+    private let acknowledgeIncomingShare: (String) async -> Void
+    private let releaseIncomingSharePresentation: @MainActor (String) -> Void
 
     @State private var selectedThreadID: String?
     @State private var selectedProjectID: String?
@@ -36,6 +39,7 @@ public struct WorkspaceView: View {
     @State private var settledLimit = 12
     @State private var showingNewTask = false
     @State private var newTaskInitialProjectID: String?
+    @State private var newTaskIncomingShareID: String?
     @State private var showingAddProject = false
     @State private var showingSettings = false
     @State private var renamingThread: FeatureThread?
@@ -55,7 +59,9 @@ public struct WorkspaceView: View {
             navigationRequest: nil,
             onNavigationRequestConsumed: { _ in },
             submitNewTask: submitNewTask,
-            submitMessage: submitMessage
+            submitMessage: submitMessage,
+            acknowledgeIncomingShare: { _ in },
+            releaseIncomingSharePresentation: { _ in }
         )
     }
 
@@ -64,11 +70,15 @@ public struct WorkspaceView: View {
         navigationRequest: FeatureWorkspaceNavigationRequest?,
         onNavigationRequestConsumed: @escaping @MainActor (UUID) -> Void,
         submitNewTask: ((NewTaskRequest) async -> FeatureThread?)? = nil,
-        submitMessage: ((FeatureMessageSubmission) async -> Bool)? = nil
+        submitMessage: ((FeatureMessageSubmission) async -> Bool)? = nil,
+        acknowledgeIncomingShare: @escaping (String) async -> Void = { _ in },
+        releaseIncomingSharePresentation: @escaping @MainActor (String) -> Void = { _ in }
     ) {
         self.model = model
         self.navigationRequest = navigationRequest
         self.onNavigationRequestConsumed = onNavigationRequestConsumed
+        self.acknowledgeIncomingShare = acknowledgeIncomingShare
+        self.releaseIncomingSharePresentation = releaseIncomingSharePresentation
         self.submitNewTask = submitNewTask ?? { request in
             do {
                 let thread = try await model.client.createThreadAndSend(
@@ -124,7 +134,13 @@ public struct WorkspaceView: View {
             detail
         }
         .navigationSplitViewStyle(.balanced)
-        .sheet(isPresented: $showingNewTask) {
+        .sheet(isPresented: $showingNewTask, onDismiss: {
+            if let shareID = newTaskIncomingShareID {
+                releaseIncomingSharePresentation(shareID)
+            }
+            newTaskInitialProjectID = nil
+            newTaskIncomingShareID = nil
+        }) {
             NewThreadView(
                 model: model,
                 submit: submitNewTask,
@@ -133,7 +149,9 @@ public struct WorkspaceView: View {
                     showingNewTask = false
                 },
                 onCreateProject: openProjectCreation,
-                initialProjectID: newTaskInitialProjectID
+                initialProjectID: newTaskInitialProjectID,
+                incomingShareID: newTaskIncomingShareID,
+                acknowledgeIncomingShare: acknowledgeIncomingShare
             )
         }
         .sheet(isPresented: $showingAddProject) {
@@ -597,6 +615,14 @@ public struct WorkspaceView: View {
             Task { @MainActor in
                 await Task.yield()
                 openNewTaskOrProjectCreation(initialProjectID: projectID)
+            }
+        case let .sharedNewTask(shareID):
+            dismissTransientPresentations()
+            newTaskIncomingShareID = shareID
+            Task { @MainActor in
+                await Task.yield()
+                newTaskInitialProjectID = nil
+                showingNewTask = true
             }
         }
         onNavigationRequestConsumed(navigationRequest.id)

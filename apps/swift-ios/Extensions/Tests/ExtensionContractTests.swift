@@ -3,6 +3,30 @@ import XCTest
 @testable import T3Code
 
 final class ExtensionContractTests: XCTestCase {
+    func testIncomingShareDecodesLegacyEnvelopeWithoutDestinationOrVideos() throws {
+        let data = Data(#"{"createdAt":"2026-08-10T01:02:03Z","id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","images":[],"schemaVersion":1,"text":"Legacy","warnings":[]}"#.utf8)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let envelope = try decoder.decode(T3IncomingShareEnvelope.self, from: data)
+
+        XCTAssertEqual(envelope.schemaVersion, 1)
+        XCTAssertEqual(envelope.text, "Legacy")
+        XCTAssertTrue(envelope.videos.isEmpty)
+        XCTAssertNil(envelope.destination)
+    }
+
+    func testIncomingShareHostURLTargetsExactEnvelope() throws {
+        let id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        let url = try XCTUnwrap(T3IncomingShareStore.hostAppURL(for: id))
+        let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+
+        XCTAssertEqual(components.scheme, T3SharedContainer.urlScheme)
+        XCTAssertEqual(components.host, "share")
+        XCTAssertEqual(components.queryItems, [URLQueryItem(name: "id", value: id)])
+        XCTAssertNil(T3IncomingShareStore.hostAppURL(for: "../not-valid"))
+    }
+
     func testLiveActivityDecodesTheRelayAPNSEnvelope() throws {
         let props = #"{"title":"T3 Code","subtitle":"2 active agents, 1 needs attention","activeCount":2,"updatedAt":"2026-08-01T12:00:00.000Z","activities":[{"environmentId":"env-1","threadId":"thread-working","projectTitle":"t3code","threadTitle":"Build the native app","modelTitle":"GPT-5.6 Sol","phase":"running","status":"Working","updatedAt":"2026-08-01T12:00:00.000Z","deepLink":"/env-1/thread-working"},{"environmentId":"env-2","threadId":"thread-approval","projectTitle":"uploadthing","threadTitle":"Ship upload recovery","modelTitle":"Claude Opus 5","phase":"waiting_for_approval","status":"Approval","updatedAt":"2026-08-01T11:59:00.000Z","deepLink":"/env-2/thread-approval"}]}"#
         let state = LiveActivityAttributes.ContentState(
