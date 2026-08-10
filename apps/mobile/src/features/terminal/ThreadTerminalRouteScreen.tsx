@@ -12,6 +12,7 @@ import {
   KeyboardStickyView,
   useKeyboardState,
 } from "react-native-keyboard-controller";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import {
@@ -503,9 +504,13 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     height: state.height,
     isVisible: state.isVisible,
   }));
+  const insets = useSafeAreaInsets();
   const isAccessoryVisible = keyboardState.isVisible && !isAccessoryDismissed;
+  // With the keyboard up its height already clears the gesture bar and the
+  // home indicator; with it down the terminal owns the bottom edge, so the
+  // last rows need the safe area or they scroll under the system chrome.
   const terminalBottomInset =
-    (keyboardState.isVisible ? keyboardState.height : 0) +
+    (keyboardState.isVisible ? keyboardState.height : insets.bottom) +
     (isAccessoryVisible ? TERMINAL_ACCESSORY_HEIGHT : 0);
 
   useEffect(() => {
@@ -1289,7 +1294,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                 accessibilityRole="button"
                 onPress={handleShowKeyboard}
                 style={({ pressed }) => ({
-                  bottom: 16,
+                  bottom: Math.max(insets.bottom, 16) + 16,
                   borderRadius: 28,
                   opacity: pressed ? 0.72 : 1,
                   position: "absolute",

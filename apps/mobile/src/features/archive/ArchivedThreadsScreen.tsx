@@ -511,6 +511,7 @@ export function ArchivedThreadsScreen(props: {
   readonly onUnarchiveThread: (thread: EnvironmentThreadShell) => void;
 }) {
   const { onDeleteThread, onUnarchiveThread } = props;
+  const insets = useSafeAreaInsets();
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const archiveScrollGesture = useMemo(() => Gesture.Native(), []);
   const refreshTint = useThemeColor("--color-icon");
@@ -629,7 +630,9 @@ export function ArchivedThreadsScreen(props: {
         <LegendList
           className="flex-1"
           contentContainerStyle={{
-            paddingBottom: 32,
+            // contentInsetAdjustmentBehavior only pads the safe area on iOS,
+            // so Android needs the bottom inset spelled out.
+            paddingBottom: Math.max(insets.bottom, 16) + 16,
             paddingHorizontal: 16,
             paddingTop: 4,
           }}
