@@ -746,8 +746,15 @@ describe("ClaudeAdapterV2 attachments", () => {
             data: "AQIDBA==",
           },
         } as const;
+        const expectedAttachmentPath = path.join(
+          attachmentsDir,
+          attachmentRelativePath(attachment),
+        );
         assert.deepEqual(offeredMessages[0]?.message.content, [
-          { type: "text", text: "Ultrathink:\nWhat's in this image?" },
+          {
+            type: "text",
+            text: `Ultrathink:\nWhat's in this image?\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]`,
+          },
           expectedImageBlock,
         ]);
 
@@ -771,7 +778,10 @@ describe("ClaudeAdapterV2 attachments", () => {
 
         assert.equal(offeredMessages[1]?.priority, "now");
         assert.deepEqual(offeredMessages[1]?.message.content, [
-          { type: "text", text: "Ultrathink:\nFocus on the diagram labels." },
+          {
+            type: "text",
+            text: `Ultrathink:\nFocus on the diagram labels.\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]`,
+          },
           expectedImageBlock,
         ]);
       }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
