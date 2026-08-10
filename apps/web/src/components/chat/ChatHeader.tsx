@@ -4,6 +4,7 @@ import { memo } from "react";
 import { cn } from "~/lib/utils";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ThreadFindBar } from "./ThreadFindBar";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -12,6 +13,15 @@ interface ChatHeaderProps {
   activeProjectCwd: string | null;
   rightPanelOpen: boolean;
   onNewThreadInProject: () => void;
+  findOpen: boolean;
+  findQuery: string;
+  findMatchCount: number;
+  findActiveIndex: number;
+  findFocusRequestId: number;
+  onFindQueryChange: (query: string) => void;
+  onFindNext: () => void;
+  onFindPrevious: () => void;
+  onCloseFind: () => void;
 }
 
 export const ChatHeader = memo(function ChatHeader({
@@ -21,11 +31,20 @@ export const ChatHeader = memo(function ChatHeader({
   activeProjectCwd,
   rightPanelOpen,
   onNewThreadInProject,
+  findOpen,
+  findQuery,
+  findMatchCount,
+  findActiveIndex,
+  findFocusRequestId,
+  onFindQueryChange,
+  onFindNext,
+  onFindPrevious,
+  onCloseFind,
 }: ChatHeaderProps) {
   return (
     <div
       className={cn(
-        "flex min-w-0 flex-1 items-center gap-2 sm:gap-3",
+        "relative flex min-w-0 flex-1 self-stretch items-center gap-2 sm:gap-3",
         rightPanelOpen ? "pr-10" : "pr-24",
       )}
     >
@@ -74,6 +93,17 @@ export const ChatHeader = memo(function ChatHeader({
           <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
         </Tooltip>
       </div>
+      <ThreadFindBar
+        open={findOpen}
+        query={findQuery}
+        matchCount={findMatchCount}
+        activeIndex={findActiveIndex}
+        focusRequestId={findFocusRequestId}
+        onQueryChange={onFindQueryChange}
+        onNext={onFindNext}
+        onPrevious={onFindPrevious}
+        onClose={onCloseFind}
+      />
     </div>
   );
 });

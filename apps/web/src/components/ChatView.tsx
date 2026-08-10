@@ -184,6 +184,7 @@ import { useNowMinute } from "../hooks/useNowMinute";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
+import { isPreviewFocused } from "../lib/previewFocus";
 import { preventRepeatedTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import {
@@ -243,6 +244,12 @@ import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
+import {
+  buildThreadFindMatches,
+  clampThreadFindIndex,
+  stepThreadFindIndex,
+} from "./chat/threadFind";
+import { subscribeThreadFindOpen } from "./chat/threadFindActionBus";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
 import {
@@ -350,6 +357,22 @@ const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PROJECTION_RUNS: OrchestrationV2ThreadProjection["runs"] = [];
 const EMPTY_ATTACHMENT_IDS: string[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+
+interface ChatFindState {
+  readonly threadKey: string | null;
+  readonly query: string;
+  readonly activeIndex: number;
+  readonly focusRequestId: number;
+  readonly navigationId: number;
+}
+
+const CLOSED_CHAT_FIND_STATE: ChatFindState = {
+  threadKey: null,
+  query: "",
+  activeIndex: 0,
+  focusRequestId: 0,
+  navigationId: 0,
+};
 
 function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
   const transitionGroupRef = useRef<HTMLDivElement | null>(null);
@@ -1331,6 +1354,7 @@ function ChatViewContent(props: ChatViewProps) {
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [findState, setFindState] = useState<ChatFindState>(CLOSED_CHAT_FIND_STATE);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
@@ -4593,6 +4617,48 @@ function ChatViewContent(props: ChatViewProps) {
     terminalUiOpenByThreadRef.current[activeThreadKey] = current;
   }, [activeThreadKey, focusComposer, terminalUiState.terminalOpen]);
 
+  const openThreadFind = useCallback(() => {
+    if (activeThreadKey === null) return;
+    setFindState((state) => {
+      const focusRequestId = state.focusRequestId + 1;
+      return state.threadKey === activeThreadKey
+        ? { ...state, focusRequestId }
+        : {
+            ...CLOSED_CHAT_FIND_STATE,
+            threadKey: activeThreadKey,
+            focusRequestId,
+          };
+    });
+  }, [activeThreadKey]);
+  const closeThreadFind = useCallback(() => setFindState(CLOSED_CHAT_FIND_STATE), []);
+  const changeThreadFindQuery = useCallback((query: string) => {
+    setFindState((state) => ({ ...state, query, activeIndex: 0 }));
+  }, []);
+  const isThreadFindActive = activeThreadKey !== null && findState.threadKey === activeThreadKey;
+  const threadFindMatches = useMemo(
+    () => buildThreadFindMatches(timelineEntries, isThreadFindActive ? findState.query : ""),
+    [findState.query, isThreadFindActive, timelineEntries],
+  );
+  const threadFindActiveIndex = clampThreadFindIndex(
+    findState.activeIndex,
+    threadFindMatches.length,
+  );
+  const activeThreadFindMatch = threadFindMatches[threadFindActiveIndex] ?? null;
+  const stepThreadFind = useCallback(
+    (delta: number) => {
+      setFindState((state) => ({
+        ...state,
+        activeIndex: stepThreadFindIndex(state.activeIndex, threadFindMatches.length, delta),
+        navigationId: state.navigationId + 1,
+      }));
+    },
+    [threadFindMatches.length],
+  );
+  const findNextThreadMatch = useCallback(() => stepThreadFind(1), [stepThreadFind]);
+  const findPreviousThreadMatch = useCallback(() => stepThreadFind(-1), [stepThreadFind]);
+
+  useEffect(() => subscribeThreadFindOpen(openThreadFind), [openThreadFind]);
+
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
       if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
@@ -4609,6 +4675,7 @@ function ChatViewContent(props: ChatViewProps) {
       const shortcutContext = {
         terminalFocus: terminalFocusOwner !== null,
         terminalOpen: Boolean(terminalUiState.terminalOpen),
+        previewFocus: isPreviewFocused(),
         modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
       };
 
@@ -4633,6 +4700,13 @@ function ChatViewContent(props: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         toggleTerminalVisibility();
+        return;
+      }
+
+      if (command === "chat.find") {
+        event.preventDefault();
+        event.stopPropagation();
+        openThreadFind();
         return;
       }
 
@@ -4744,6 +4818,7 @@ function ChatViewContent(props: ChatViewProps) {
     splitPanelTerminal,
     keybindings,
     onToggleDiff,
+    openThreadFind,
     toggleRightPanel,
     toggleThreadPanel,
     toggleTerminalVisibility,
@@ -6239,6 +6314,15 @@ function ChatViewContent(props: ChatViewProps) {
             activeProjectCwd={activeProject?.workspaceRoot ?? null}
             rightPanelOpen={inlineRightPanelOwnsTitleBar}
             onNewThreadInProject={handleNewThreadInActiveProject}
+            findOpen={isThreadFindActive}
+            findQuery={findState.query}
+            findMatchCount={threadFindMatches.length}
+            findActiveIndex={threadFindActiveIndex}
+            findFocusRequestId={findState.focusRequestId}
+            onFindQueryChange={changeThreadFindQuery}
+            onFindNext={findNextThreadMatch}
+            onFindPrevious={findPreviousThreadMatch}
+            onCloseFind={closeThreadFind}
           />
         </header>
 
@@ -6300,6 +6384,9 @@ function ChatViewContent(props: ChatViewProps) {
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
                 hideEmptyPlaceholder={isDraftHeroState}
                 topFadeEnabled={!hasTimelineTopBanner}
+                findQuery={isThreadFindActive ? findState.query : ""}
+                activeFindMatch={activeThreadFindMatch}
+                findNavigationId={findState.navigationId}
               />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}
