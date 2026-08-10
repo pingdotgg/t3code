@@ -94,6 +94,11 @@ function ModelRow(props: {
   const primaryFg = useThemeColor("--color-primary-foreground");
   return (
     <Pressable
+      accessibilityLabel={
+        props.option.subProvider
+          ? `${props.option.label}, ${props.option.subProvider}`
+          : props.option.label
+      }
       accessibilityRole="button"
       accessibilityState={{ selected: props.selected }}
       onPress={props.onPress}
@@ -106,15 +111,28 @@ function ModelRow(props: {
         props.selected ? "bg-primary" : "bg-transparent",
       )}
     >
-      <Text
-        className={cn(
-          "shrink text-sm font-t3-medium",
-          props.selected ? "text-primary-foreground" : "text-foreground",
-        )}
-        numberOfLines={1}
-      >
-        {props.option.label}
-      </Text>
+      <View className="min-w-0 flex-1">
+        <Text
+          className={cn(
+            "text-sm font-t3-medium",
+            props.selected ? "text-primary-foreground" : "text-foreground",
+          )}
+          numberOfLines={1}
+        >
+          {props.option.label}
+        </Text>
+        {props.option.subProvider ? (
+          <Text
+            className={cn(
+              "mt-0.5 text-xs",
+              props.selected ? "text-primary-foreground" : "text-foreground-muted",
+            )}
+            numberOfLines={1}
+          >
+            {props.option.subProvider}
+          </Text>
+        ) : null}
+      </View>
       {props.option.isDefault ? (
         <View className="rounded-md bg-subtle-strong px-1.5 py-0.5">
           <Text className="text-3xs font-t3-bold text-foreground-muted">Default</Text>
@@ -125,7 +143,6 @@ function ModelRow(props: {
           <Text className="text-3xs font-t3-bold text-foreground-muted">Legacy</Text>
         </View>
       ) : null}
-      <View className="flex-1" />
       {props.selected ? (
         <SymbolView name="checkmark" size={14} tintColor={primaryFg} type="monochrome" />
       ) : null}

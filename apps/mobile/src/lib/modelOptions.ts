@@ -11,7 +11,7 @@ import {
 export type ModelOption = {
   readonly key: string;
   readonly label: string;
-  readonly subtitle: string;
+  readonly subProvider?: string | undefined;
   readonly providerKey: string;
   readonly providerLabel: string;
   readonly providerDriver: string;
@@ -121,7 +121,7 @@ export function buildModelOptions(
       options.set(key, {
         key,
         label: model.name,
-        subtitle: providerLabel,
+        ...(model.subProvider ? { subProvider: model.subProvider } : {}),
         providerKey: provider.instanceId,
         providerLabel,
         providerDriver: provider.driver,
@@ -152,7 +152,6 @@ export function buildModelOptions(
       options.set(key, {
         key,
         label: fallbackModelSelection.model,
-        subtitle: providerLabel,
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
         providerDriver: fallbackModelSelection.instanceId,

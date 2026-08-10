@@ -51,6 +51,68 @@ describe("mobile model options", () => {
     ]);
   });
 
+  it("preserves OpenCode sub-provider labels for duplicate model names", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "opencode",
+          driver: "opencode",
+          displayName: "OpenCode",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "opencode/grok-4.5",
+              name: "Grok 4.5",
+              subProvider: "OpenCode Go",
+              isCustom: false,
+              capabilities: null,
+            },
+            {
+              slug: "openrouter/x-ai/grok-4.5",
+              name: "Grok 4.5",
+              subProvider: "OpenRouter",
+              isCustom: false,
+              capabilities: null,
+            },
+            {
+              slug: "xai/grok-4.5",
+              name: "Grok 4.5",
+              subProvider: "xAI OAuth",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    expect(
+      buildModelOptions(config, null).map(({ key, label, subProvider }) => ({
+        key,
+        label,
+        subProvider,
+      })),
+    ).toEqual([
+      {
+        key: "opencode:opencode/grok-4.5",
+        label: "Grok 4.5",
+        subProvider: "OpenCode Go",
+      },
+      {
+        key: "opencode:openrouter/x-ai/grok-4.5",
+        label: "Grok 4.5",
+        subProvider: "OpenRouter",
+      },
+      {
+        key: "opencode:xai/grok-4.5",
+        label: "Grok 4.5",
+        subProvider: "xAI OAuth",
+      },
+    ]);
+  });
+
   it("normalizes a legacy fallback selection against current capabilities", () => {
     const config = {
       providers: [
