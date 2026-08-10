@@ -29,6 +29,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Cookies from "effect/unstable/http/Cookies";
 import * as HttpEffect from "effect/unstable/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
@@ -36,6 +37,8 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
+import * as SelfHostedAccountStore from "./SelfHostedAccountStore.ts";
+import * as ServerConfig from "../config.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
@@ -203,6 +206,8 @@ export const authHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const sessions = yield* SessionStore.SessionStore;
+    const selfHostedAccounts = yield* SelfHostedAccountStore.SelfHostedAccountStore;
+    const config = yield* ServerConfig.ServerConfig;
 
     return handlers
       .handle(
@@ -213,6 +218,60 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             const request = yield* HttpServerRequest.HttpServerRequest;
             return yield* serverAuth.getSessionState(request);
           },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("internal_error", error),
+          ),
+        ),
+      )
+      .handle(
+        "selfHostedLogin",
+        Effect.fn("environment.auth.selfHostedLogin")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            if (config.selfHostedRequireSecureTransport === true) {
+              const forwardedProtocol = request.headers["x-forwarded-proto"]
+                ?.split(",")[0]
+                ?.trim()
+                .toLowerCase();
+              const requestUrl = HttpServerRequest.toURL(request);
+              const directProtocol = Option.isSome(requestUrl) ? requestUrl.value.protocol : null;
+              if (forwardedProtocol !== "https" && directProtocol !== "https:") {
+                return yield* failEnvironmentAuthInvalid("invalid_credential");
+              }
+            }
+
+            const account = yield* selfHostedAccounts.authenticate(
+              args.payload.username,
+              args.payload.password,
+            );
+            if (Option.isNone(account)) {
+              return yield* failEnvironmentAuthInvalid("invalid_credential");
+            }
+            const client = deriveAuthClientMetadata({
+              request,
+              presented: {
+                ...args.payload.client,
+                label: account.value.label ?? args.payload.client?.label ?? account.value.username,
+              },
+            });
+            const session = yield* serverAuth.issueSession({
+              subject: `selfhost:${account.value.username}`,
+              scopes: account.value.scopes,
+              ...(account.value.label === undefined ? {} : { label: account.value.label }),
+              client,
+            });
+            yield* appendCredentialResponseHeaders;
+            return {
+              accessToken: session.token,
+              tokenType: "Bearer" as const,
+              expiresAt: session.expiresAt,
+              scope: session.scopes.join(" "),
+            };
+          },
+          Effect.catchTag("SelfHostedAccountStoreError", (error) =>
+            failEnvironmentInternal("internal_error", error),
+          ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("internal_error", error),
           ),

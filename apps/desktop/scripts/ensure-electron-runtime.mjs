@@ -3,8 +3,12 @@ import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeProcess from "node:process";
 
 const require = NodeModule.createRequire(import.meta.url);
+const electronMirror = (
+  NodeProcess.env.ELECTRON_MIRROR ?? "https://npmmirror.com/mirrors/electron/"
+).replace(/\/?$/, "/");
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone repair script has no Effect runtime.
 const hostPlatform = NodeOS.platform();
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone repair script has no Effect runtime.
@@ -122,7 +126,7 @@ function installElectronRuntime(electronDir, version) {
   try {
     runChecked("curl", [
       "-fsSL",
-      `https://github.com/electron/electron/releases/download/v${version}/electron-v${version}-${hostPlatform}-${hostArch}.zip`,
+      `${electronMirror}${version}/electron-v${version}-${hostPlatform}-${hostArch}.zip`,
       "-o",
       zipPath,
     ]);

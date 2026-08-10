@@ -6,6 +6,7 @@ import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-nat
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { reportAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";
+import { createTranslator, resolveSystemLocale } from "@t3tools/client-runtime/i18n";
 import { AndroidSheetHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -14,6 +15,8 @@ import { splitEnvironmentSections } from "../connection/environmentSections";
 import { useConnectionController } from "../connection/useConnectionController";
 import { optOutOfConnectOnboarding } from "./connectOnboardingOptOut";
 import { hasCloudPublicConfig } from "./publicConfig";
+
+const t = createTranslator(resolveSystemLocale());
 
 /**
  * Post-sign-in onboarding sheet for T3 Connect. Mobile never publishes
@@ -84,8 +87,8 @@ function ConfiguredConnectOnboardingRouteScreen() {
     <View collapsable={false} className="flex-1 bg-sheet">
       {Platform.OS === "android" ? (
         <AndroidSheetHeader
-          title="Set up T3 Connect"
-          actions={[{ accessibilityLabel: "Close", icon: "xmark", onPress: handleClose }]}
+          title={t("connect.setup")}
+          actions={[{ accessibilityLabel: t("common.close"), icon: "xmark", onPress: handleClose }]}
         />
       ) : (
         <NativeHeaderToolbar placement="right">
@@ -116,7 +119,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
         ) : (
           <View collapsable={false} className="rounded-[24px] bg-card p-5">
             <Text className="text-sm leading-normal text-foreground-muted">
-              Sign in to your T3 account to set up T3 Connect.
+              {t("connect.signIn")}
             </Text>
           </View>
         )}
@@ -128,7 +131,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
             onPress={handleDontShowAgain}
             className="items-center py-1 active:opacity-70"
           >
-            <Text className="text-xs text-foreground-muted">{"Don't show this again"}</Text>
+            <Text className="text-xs text-foreground-muted">{t("connect.dontShowAgain")}</Text>
           </Pressable>
         ) : null}
       </ScrollView>

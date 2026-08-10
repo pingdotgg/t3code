@@ -193,6 +193,24 @@ export const AuthAccessTokenResult = Schema.Struct({
 });
 export type AuthAccessTokenResult = typeof AuthAccessTokenResult.Type;
 
+export const AuthSelfHostedLoginRequest = Schema.Struct({
+  username: TrimmedNonEmptyString.pipe(Schema.check(Schema.isMaxLength(128))),
+  password: Schema.String.pipe(
+    Schema.check(Schema.isMinLength(1)),
+    Schema.check(Schema.isMaxLength(1024)),
+  ),
+  client: Schema.optionalKey(AuthClientPresentationMetadata),
+});
+export type AuthSelfHostedLoginRequest = typeof AuthSelfHostedLoginRequest.Type;
+
+export const AuthSelfHostedLoginResult = Schema.Struct({
+  accessToken: TrimmedNonEmptyString,
+  tokenType: Schema.Literal("Bearer"),
+  expiresAt: Schema.DateTimeUtc,
+  scope: TrimmedNonEmptyString,
+});
+export type AuthSelfHostedLoginResult = typeof AuthSelfHostedLoginResult.Type;
+
 export const AuthWebSocketTicketResult = Schema.Struct({
   ticket: TrimmedNonEmptyString,
   expiresAt: Schema.DateTimeUtc,

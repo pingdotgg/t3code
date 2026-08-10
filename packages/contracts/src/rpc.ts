@@ -4,6 +4,16 @@ import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
+  ControlPingInput,
+  ControlPingResult,
+  ControlReadError,
+  ControlRequestStatusInput,
+  ControlRequestStatusResult,
+  ControlSendTextError,
+  ControlSendTextInput,
+  ControlSendTextResult,
+} from "./control.ts";
+import {
   AuthAccessStreamError,
   AuthAccessStreamEvent,
   EnvironmentAuthorizationError,
@@ -167,6 +177,9 @@ import {
 import { VcsError } from "./vcs.ts";
 
 export const WS_METHODS = {
+  controlPing: "control.ping",
+  controlRequestStatus: "control.requestStatus",
+  controlSendText: "control.sendText",
   // Project registry methods
   projectsList: "projects.list",
   projectsAdd: "projects.add",
@@ -268,6 +281,24 @@ export const WS_METHODS = {
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
 } as const;
+
+export const WsControlPingRpc = Rpc.make(WS_METHODS.controlPing, {
+  payload: ControlPingInput,
+  success: ControlPingResult,
+  error: ControlReadError,
+});
+
+export const WsControlRequestStatusRpc = Rpc.make(WS_METHODS.controlRequestStatus, {
+  payload: ControlRequestStatusInput,
+  success: ControlRequestStatusResult,
+  error: ControlReadError,
+});
+
+export const WsControlSendTextRpc = Rpc.make(WS_METHODS.controlSendText, {
+  payload: ControlSendTextInput,
+  success: ControlSendTextResult,
+  error: ControlSendTextError,
+});
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
   payload: ServerUpsertKeybindingInput,
@@ -811,6 +842,9 @@ export const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeReso
 });
 
 export const WsRpcGroup = RpcGroup.make(
+  WsControlPingRpc,
+  WsControlRequestStatusRpc,
+  WsControlSendTextRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

@@ -1,0 +1,21 @@
+services:
+  t3code:
+    build:
+      context: ../..
+      dockerfile: infra/self-hosted/Dockerfile
+    restart: unless-stopped
+    environment:
+      T3CODE_HOST: 0.0.0.0
+      T3CODE_PORT: 3773
+      T3CODE_HOME: /var/lib/t3code
+      T3CODE_NO_BROWSER: "true"
+      T3CODE_SELFHOST_ACCOUNTS_FILE: /run/secrets/t3-accounts.json
+      T3CODE_SELFHOST_REQUIRE_SECURE_TRANSPORT: "true"
+    ports:
+      - "127.0.0.1:${T3CODE_PORT:-3773}:3773"
+    volumes:
+      - t3code-data:/var/lib/t3code
+      - "${T3CODE_ACCOUNTS_FILE:-./accounts.json}:/run/secrets/t3-accounts.json:ro"
+
+volumes:
+  t3code-data:

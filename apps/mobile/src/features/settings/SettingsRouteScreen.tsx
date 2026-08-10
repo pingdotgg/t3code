@@ -19,6 +19,7 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { createTranslator, resolveSystemLocale } from "@t3tools/client-runtime/i18n";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { supportsAgentAwarenessPush } from "../agent-awareness/capabilities";
@@ -48,6 +49,8 @@ import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 
+const t = createTranslator(resolveSystemLocale());
+
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
 
@@ -74,7 +77,7 @@ export function SettingsRouteScreen() {
         <>
           {/* Android renders its own in-screen header instead of the native bar. */}
           <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader title="Settings" onBack={() => navigation.goBack()} />
+          <AndroidScreenHeader title={t("settings.title")} onBack={() => navigation.goBack()} />
         </>
       ) : (
         <NativeStackScreenOptions
@@ -83,7 +86,7 @@ export function SettingsRouteScreen() {
               Platform.OS === "ios"
                 ? () => [
                     withNativeGlassHeaderItem({
-                      accessibilityLabel: "Close settings",
+                      accessibilityLabel: t("settings.close"),
                       icon: { name: "xmark", type: "sfSymbol" } as const,
                       identifier: "settings-close",
                       label: "",
@@ -116,10 +119,10 @@ function LocalSettingsRouteScreen() {
           paddingBottom: Math.max(insets.bottom, 18) + 18,
         }}
       >
-        <SettingsSection title="Configuration">
+        <SettingsSection title={t("settings.configuration")}>
           <SettingsRow
             icon="desktopcomputer"
-            label="Environments"
+            label={t("settings.environments")}
             value={`${environmentCount}`}
             target="SettingsEnvironments"
           />
@@ -127,8 +130,12 @@ function LocalSettingsRouteScreen() {
 
         <GeneralSettingsSection />
 
-        <SettingsSection title="Appearance">
-          <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
+        <SettingsSection title={t("settings.appearance")}>
+          <SettingsRow
+            icon="paintbrush"
+            label={t("settings.appearance")}
+            target="SettingsAppearance"
+          />
         </SettingsSection>
 
         <LegacySettingsSection />
@@ -161,9 +168,9 @@ function ConfiguredSettingsRouteScreen() {
   const connections = useMemo(() => Object.values(savedConnectionsById), [savedConnectionsById]);
   const environmentCount = connections.length;
   const accountLabel = useMemo(() => {
-    if (!isLoaded) return "Checking";
-    if (!isSignedIn) return "Sign in";
-    return user?.primaryEmailAddress?.emailAddress ?? "Signed in";
+    if (!isLoaded) return t("settings.checking");
+    if (!isSignedIn) return t("settings.signIn");
+    return user?.primaryEmailAddress?.emailAddress ?? t("settings.signedIn");
   }, [isLoaded, isSignedIn, user?.primaryEmailAddress?.emailAddress]);
 
   const refreshNotifications = useCallback(async () => {
@@ -457,23 +464,23 @@ function ConfiguredSettingsRouteScreen() {
         }}
       >
         <View className="gap-3">
-          <SettingsSection title="Account">
+          <SettingsSection title={t("settings.account")}>
             <SettingsRow
               icon="person.crop.circle"
-              label="T3 Account"
+              label={t("settings.t3Account")}
               value={accountLabel}
               onPress={openAccount}
             />
           </SettingsSection>
           <Text className="px-2 text-sm text-foreground-muted">
-            T3 Code works locally without signing in. Cloud features are optional.
+            {t("settings.localCloudOptional")}
           </Text>
         </View>
 
-        <SettingsSection title="Configuration">
+        <SettingsSection title={t("settings.configuration")}>
           <SettingsRow
             icon="desktopcomputer"
-            label="Environments"
+            label={t("settings.environments")}
             value={`${environmentCount}`}
             target="SettingsEnvironments"
           />
@@ -515,8 +522,12 @@ function ConfiguredSettingsRouteScreen() {
 
         <GeneralSettingsSection />
 
-        <SettingsSection title="Appearance">
-          <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
+        <SettingsSection title={t("settings.appearance")}>
+          <SettingsRow
+            icon="paintbrush"
+            label={t("settings.appearance")}
+            target="SettingsAppearance"
+          />
         </SettingsSection>
 
         <LegacySettingsSection />

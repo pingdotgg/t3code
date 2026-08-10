@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import { createHash } from "node:crypto";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -16,6 +17,7 @@ import {
   type AuthEnvironmentScope,
   AuthSessionId,
   CommandId,
+  ControlStatusError,
   type DiscoveredLocalServerList,
   EventId,
   type OrchestrationCommand,
@@ -50,6 +52,7 @@ import {
   AssetWorkspaceContextResolutionError,
   RpcClientId,
   EnvironmentAuthorizationError,
+  MessageId,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -395,6 +398,10 @@ const makeWsRpcLayer = (
         ),
       );
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const currentClient = yield* serverAuth.listClientSessions(currentSessionId).pipe(
+        Effect.map((sessions) => sessions.find((session) => session.current)?.client),
+        Effect.orElseSucceed(() => undefined),
+      );
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map(
@@ -483,6 +490,49 @@ const makeWsRpcLayer = (
       const serverEventId = randomUUID.pipe(Effect.map(EventId.make));
       const serverCommandId = (tag: string) =>
         randomUUID.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
+      const serverMessageId = (tag: string) =>
+        randomUUID.pipe(Effect.map((uuid) => MessageId.make(`server:${tag}:${uuid}`)));
+
+      const auditControlEffect = <A, E, R>(
+        method: string,
+        target: Readonly<Record<string, unknown>>,
+        effect: Effect.Effect<A, E, R>,
+      ) =>
+        crypto.randomUUIDv4.pipe(
+          Effect.orElseSucceed(() => "trace-id-unavailable"),
+          Effect.flatMap((traceId) => DateTime.now.pipe(Effect.map((now) => ({ traceId, now })))),
+          Effect.flatMap(({ traceId, now }) => {
+            const base = {
+              event: "selfhost.control.audit",
+              method,
+              traceId,
+              timestamp: DateTime.formatIso(now),
+              subject: currentSession.subject,
+              sessionId: currentSessionId,
+              client: currentClient,
+              allowed: currentSession.scopes.includes(requiredScopeForRpcMethod(method)),
+              ...target,
+            };
+            return observeRpcEffect(method, effect, {
+              "rpc.aggregate": "control",
+              "control.trace_id": traceId,
+            }).pipe(
+              Effect.tap(() =>
+                Effect.logInfo("Self-hosted control request completed", {
+                  ...base,
+                  result: "accepted",
+                }),
+              ),
+              Effect.tapError((error) =>
+                Effect.logWarning("Self-hosted control request failed", {
+                  ...base,
+                  result: "rejected",
+                  error: error instanceof Error ? error.message : String(error),
+                }),
+              ),
+            );
+          }),
+        );
 
       const loadAuthAccessSnapshot = () =>
         Effect.all({
@@ -1428,6 +1478,98 @@ const makeWsRpcLayer = (
             }),
             { "rpc.aggregate": "orchestration" },
           ),
+        [WS_METHODS.controlPing]: (input) =>
+          auditControlEffect(
+            WS_METHODS.controlPing,
+            { commandType: "control.ping" },
+            nowIso.pipe(
+              Effect.map((serverTime) => ({
+                ok: true as const,
+                serverTime,
+                ...(input.nonce === undefined ? {} : { nonce: input.nonce }),
+              })),
+            ),
+          ),
+        [WS_METHODS.controlRequestStatus]: (_input) =>
+          auditControlEffect(
+            WS_METHODS.controlRequestStatus,
+            { commandType: "control.requestStatus" },
+            Effect.all({
+              serverTime: nowIso,
+              environmentId: serverEnvironment.getEnvironmentId,
+              counts: projectionSnapshotQuery.getCounts(),
+              sessions: serverAuth.listClientSessions(currentSessionId),
+            }).pipe(
+              Effect.map(({ serverTime, environmentId, counts, sessions }) => ({
+                serverTime,
+                environmentId,
+                runtimeMode: config.mode,
+                session: {
+                  sessionId: currentSessionId,
+                  subject: currentSession.subject,
+                },
+                onlineClients: sessions.filter((session) => session.connected).length,
+                projects: counts.projectCount,
+                threads: counts.threadCount,
+              })),
+              Effect.mapError(
+                (error) =>
+                  new ControlStatusError({
+                    message:
+                      error instanceof Error ? error.message : "Failed to read server status.",
+                  }),
+              ),
+            ),
+          ),
+        [WS_METHODS.controlSendText]: (input) => {
+          const normalizedSummary = input.text.replace(/\s+/g, " ").trim().slice(0, 80);
+          const textHash = createHash("sha256").update(input.text, "utf8").digest("hex");
+          return auditControlEffect(
+            WS_METHODS.controlSendText,
+            {
+              commandType: "thread.turn.start",
+              targetThreadId: input.threadId,
+              textLength: input.text.length,
+              textSha256: textHash,
+              textSummary: normalizedSummary,
+            },
+            Effect.all({
+              commandId: serverCommandId("control-send-text"),
+              messageId: serverMessageId("control-send-text"),
+              createdAt: nowIso,
+            }).pipe(
+              Effect.flatMap(({ commandId, messageId, createdAt }) =>
+                orchestrationEngine
+                  .dispatch({
+                    type: "thread.turn.start",
+                    commandId,
+                    threadId: input.threadId,
+                    message: {
+                      messageId,
+                      role: "user",
+                      text: input.text,
+                      attachments: [],
+                    },
+                    runtimeMode: input.runtimeMode,
+                    interactionMode: input.interactionMode,
+                    createdAt,
+                  })
+                  .pipe(
+                    Effect.mapError((cause) =>
+                      toDispatchCommandError(cause, "Failed to dispatch self-hosted text command."),
+                    ),
+                    Effect.map((result) => ({
+                      accepted: true as const,
+                      commandId,
+                      threadId: input.threadId,
+                      sequence: result.sequence,
+                      createdAt,
+                    })),
+                  ),
+              ),
+            ),
+          );
+        },
         [WS_METHODS.serverProbe]: (_input) =>
           observeRpcEffect(WS_METHODS.serverProbe, Effect.succeed({}), {
             "rpc.aggregate": "server",

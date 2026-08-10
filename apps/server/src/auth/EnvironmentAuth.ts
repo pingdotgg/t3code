@@ -456,6 +456,7 @@ export class EnvironmentAuth extends Context.Service<
       readonly subject?: string;
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
       readonly label?: string;
+      readonly client?: AuthClientMetadata;
     }) => Effect.Effect<IssuedBearerSession, ServerAuthInternalError>;
     readonly listSessions: () => Effect.Effect<
       ReadonlyArray<AuthClientSession>,
@@ -820,7 +821,7 @@ export const make = Effect.gen(function* () {
         subject: input?.subject ?? DEFAULT_SESSION_SUBJECT,
         method: "bearer-access-token",
         scopes: input?.scopes ?? AuthAdministrativeScopes,
-        client: {
+        client: input?.client ?? {
           ...(input?.label ? { label: input.label } : {}),
           deviceType: "bot",
         },

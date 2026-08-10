@@ -139,6 +139,13 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  selfHostedAccountsFile: Config.string("T3CODE_SELFHOST_ACCOUNTS_FILE").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  selfHostedRequireSecureTransport: Config.boolean("T3CODE_SELFHOST_REQUIRE_SECURE_TRANSPORT").pipe(
+    Config.withDefault(false),
+  ),
 });
 
 export interface CliServerFlags {
@@ -386,6 +393,8 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      selfHostedAccountsFile: env.selfHostedAccountsFile,
+      selfHostedRequireSecureTransport: env.selfHostedRequireSecureTransport,
     };
 
     return config;
