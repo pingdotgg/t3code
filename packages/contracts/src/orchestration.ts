@@ -290,10 +290,27 @@ export const OrchestrationProposedPlan = Schema.Struct({
 });
 export type OrchestrationProposedPlan = typeof OrchestrationProposedPlan.Type;
 
-const SourceProposedPlanReference = Schema.Struct({
+export const SourceProposedPlanKind = Schema.Literals(["implementation", "review"]);
+export type SourceProposedPlanKind = typeof SourceProposedPlanKind.Type;
+
+export const SourceProposedPlanReference = Schema.Struct({
   threadId: ThreadId,
   planId: OrchestrationProposedPlanId,
+  // Existing plan-start links meant implementation. Keep that interpretation
+  // when decoding old events while allowing background review threads to be
+  // linked without marking their source plan as implemented.
+  kind: SourceProposedPlanKind.pipe(
+    Schema.withDecodingDefault(Effect.succeed("implementation" as const)),
+  ),
 });
+export type SourceProposedPlanReference = typeof SourceProposedPlanReference.Type;
+
+export const OrchestrationProposedPlanReview = Schema.Struct({
+  sourcePlanId: OrchestrationProposedPlanId,
+  reviewThreadId: ThreadId,
+  startedAt: IsoDateTime,
+});
+export type OrchestrationProposedPlanReview = typeof OrchestrationProposedPlanReview.Type;
 
 export const OrchestrationSessionStatus = Schema.Literals([
   "idle",
@@ -427,6 +444,11 @@ export const OrchestrationThread = Schema.Struct({
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  // Derived from review-kind turns, rather than stored on the provider-owned
+  // plan object. That keeps a later provider plan upsert from erasing reviews.
+  proposedPlanReviews: Schema.Array(OrchestrationProposedPlanReview).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   activities: Schema.Array(OrchestrationThreadActivity),

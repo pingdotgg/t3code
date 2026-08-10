@@ -212,6 +212,7 @@ describe("environment entity projections", () => {
       proposedPlans: [],
       activities: [],
       checkpoints: [],
+      proposedPlanReviews: [],
     } satisfies OrchestrationThread & { readonly environmentId: EnvironmentId };
     const shell = {
       ...THREAD_SHELL,
@@ -327,6 +328,7 @@ describe("environment entity projections", () => {
       proposedPlans: [],
       activities: [],
       checkpoints: [],
+      proposedPlanReviews: [],
     } satisfies OrchestrationThread;
 
     harness.registry.set(

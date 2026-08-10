@@ -91,6 +91,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     session: null,
     messages: [],
     proposedPlans: [],
+    proposedPlanReviews: [],
     activities: [],
     checkpoints: [],
     createdAt: now,

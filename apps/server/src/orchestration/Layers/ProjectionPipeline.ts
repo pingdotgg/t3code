@@ -1161,6 +1161,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             messageId: event.payload.messageId,
             sourceProposedPlanThreadId: event.payload.sourceProposedPlan?.threadId ?? null,
             sourceProposedPlanId: event.payload.sourceProposedPlan?.planId ?? null,
+            sourceProposedPlanKind: event.payload.sourceProposedPlan?.kind ?? null,
             requestedAt: event.payload.createdAt,
           });
           return;
@@ -1257,6 +1258,11 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                 (Option.isSome(pendingTurnStart)
                   ? pendingTurnStart.value.sourceProposedPlanId
                   : null),
+              sourceProposedPlanKind:
+                existingTurn.value.sourceProposedPlanKind ??
+                (Option.isSome(pendingTurnStart)
+                  ? pendingTurnStart.value.sourceProposedPlanKind
+                  : null),
               startedAt:
                 existingTurn.value.startedAt ??
                 (Option.isSome(pendingTurnStart)
@@ -1280,6 +1286,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                 : null,
               sourceProposedPlanId: Option.isSome(pendingTurnStart)
                 ? pendingTurnStart.value.sourceProposedPlanId
+                : null,
+              sourceProposedPlanKind: Option.isSome(pendingTurnStart)
+                ? pendingTurnStart.value.sourceProposedPlanKind
                 : null,
               assistantMessageId: null,
               state: "running",
@@ -1349,6 +1358,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pendingMessageId: null,
             sourceProposedPlanThreadId: null,
             sourceProposedPlanId: null,
+            sourceProposedPlanKind: null,
             assistantMessageId: event.payload.messageId,
             state: settlesTurn ? "completed" : "running",
             requestedAt: event.payload.createdAt,
@@ -1386,6 +1396,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pendingMessageId: null,
             sourceProposedPlanThreadId: null,
             sourceProposedPlanId: null,
+            sourceProposedPlanKind: null,
             assistantMessageId: null,
             state: "interrupted",
             requestedAt: event.payload.createdAt,
@@ -1441,6 +1452,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pendingMessageId: null,
             sourceProposedPlanThreadId: null,
             sourceProposedPlanId: null,
+            sourceProposedPlanKind: null,
             assistantMessageId: event.payload.assistantMessageId,
             state: turnStillRunning ? "running" : nextState,
             requestedAt: event.payload.completedAt,

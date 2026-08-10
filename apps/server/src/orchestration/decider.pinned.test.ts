@@ -49,6 +49,7 @@ function makeReadModel(input: {
         deletedAt: null,
         messages: [],
         proposedPlans: [],
+        proposedPlanReviews: [],
         activities: [],
         checkpoints: [],
         session: null,
