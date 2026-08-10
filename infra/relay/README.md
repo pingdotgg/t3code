@@ -12,6 +12,9 @@ regular API and WebSocket traffic goes directly between that client and the sele
 See the [T3 Connect architecture overview](../../docs/internals/t3-code-connect-auth-flow.html) for the larger system
 design.
 
+This directory holds the hosted relay. A second, self-hosted implementation of the same contract
+lives in `apps/relay-selfhost`. See [T3 Relay Self](../../docs/internals/t3-relay-self.md).
+
 ## Responsibilities
 
 The relay currently owns:
