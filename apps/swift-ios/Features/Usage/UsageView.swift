@@ -58,7 +58,9 @@ public struct UsageView: View {
                     } description: {
                         Text("Connect an environment to see usage.")
                     }
-                } else if !environments.contains(where: { $0.summary != nil }) {
+                } else if !environments.contains(where: {
+                    $0.summary?.contractVersion == usageContractVersion
+                }) {
                     ContentUnavailableView {
                         Label("Couldn’t load usage", systemImage: "exclamationmark.circle")
                     } description: {
