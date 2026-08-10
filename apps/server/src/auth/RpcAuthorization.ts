@@ -1,6 +1,5 @@
 import {
   AuthAccessReadScope,
-  AuthAccessWriteScope,
   AuthMirrorSyncScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -99,7 +98,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.previewAutomationConnect]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationRespond]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationFocusHost]: AuthOrchestrationOperateScope,
-  [WS_METHODS.mirrorCreatePeerCredential]: AuthAccessWriteScope,
+  // Minting a peer credential is part of mirror setup, not access
+  // administration: the issued token is scoped to mirror:sync only, so a
+  // standard-paired client that can already run agents may create it.
+  [WS_METHODS.mirrorCreatePeerCredential]: AuthOrchestrationOperateScope,
   [WS_METHODS.mirrorAttach]: AuthOrchestrationOperateScope,
   [WS_METHODS.mirrorDetach]: AuthOrchestrationOperateScope,
   [WS_METHODS.mirrorConnect]: AuthMirrorSyncScope,
