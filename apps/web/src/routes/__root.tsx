@@ -1,5 +1,9 @@
-import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
-import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { type ServerLifecycleWelcomePayload, type ScopedThreadRef } from "@t3tools/contracts";
+import {
+  scopedProjectKey,
+  scopedThreadKey,
+  scopeProjectRef,
+} from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   Outlet,
@@ -8,7 +12,7 @@ import {
   useLocation,
   useNavigate,
 } from "@tanstack/react-router";
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { play } from "cuelume";
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL } from "../branding";
@@ -55,14 +59,11 @@ import {
   readProject,
   setActiveEnvironmentId,
   useActiveEnvironmentId,
-  useThreadShells,
+  useThreadRefs,
+  useThreadShell,
 } from "../state/entities";
 import {
-  captureThreadSoundState,
-  captureThreadSoundStatePreservingUnobserved,
-  captureThreadSoundStateWhileSettingsHydrating,
-  deriveInteractionSoundCues,
-  selectLiveThreadShells,
+  observeThreadSoundState,
   shouldPlayInteractionSound,
   type ThreadSoundStateByKey,
 } from "@t3tools/client-runtime/interaction-sounds";
@@ -209,15 +210,11 @@ function FontAppearanceSync() {
 }
 
 function InteractionSoundCoordinator() {
-  const threads = useThreadShells();
+  const threadRefs = useThreadRefs();
   const liveEnvironmentIds = useAtomValue(liveEnvironmentIdsAtom);
   const completionSoundEnabled = useClientSettings((settings) => settings.enableCompletionSounds);
   const settingsHydrated = useClientSettingsHydrated();
-  const previousStateRef = useRef<ThreadSoundStateByKey | null>(null);
-  const liveThreads = useMemo(
-    () => selectLiveThreadShells(threads, liveEnvironmentIds),
-    [liveEnvironmentIds, threads],
-  );
+  const previouslyLiveEnvironmentIdsRef = useRef(new Set<ScopedThreadRef["environmentId"]>());
 
   useEffect(() => {
     const cleanup = () => {
@@ -241,28 +238,63 @@ function InteractionSoundCoordinator() {
   }, []);
 
   useEffect(() => {
-    if (!settingsHydrated) {
-      previousStateRef.current = captureThreadSoundStateWhileSettingsHydrating(
-        previousStateRef.current,
-        liveThreads,
-      );
+    for (const environmentId of liveEnvironmentIds) {
+      previouslyLiveEnvironmentIdsRef.current.add(environmentId);
+    }
+  }, [liveEnvironmentIds]);
+
+  return threadRefs.map((threadRef) => (
+    <InteractionSoundThreadCoordinator
+      key={scopedThreadKey(threadRef)}
+      threadRef={threadRef}
+      environmentLive={liveEnvironmentIds.has(threadRef.environmentId)}
+      environmentPreviouslyLive={previouslyLiveEnvironmentIdsRef.current.has(
+        threadRef.environmentId,
+      )}
+      completionSoundEnabled={completionSoundEnabled}
+      settingsHydrated={settingsHydrated}
+    />
+  ));
+}
+
+function InteractionSoundThreadCoordinator({
+  threadRef,
+  environmentLive,
+  environmentPreviouslyLive,
+  completionSoundEnabled,
+  settingsHydrated,
+}: {
+  readonly threadRef: ScopedThreadRef;
+  readonly environmentLive: boolean;
+  readonly environmentPreviouslyLive: boolean;
+  readonly completionSoundEnabled: boolean;
+  readonly settingsHydrated: boolean;
+}) {
+  const thread = useThreadShell(threadRef);
+  const previousStateRef = useRef<ThreadSoundStateByKey | null>(null);
+
+  useEffect(() => {
+    if (thread === null) {
       return;
     }
-
-    const previous = previousStateRef.current;
-    if (previous !== null) {
-      for (const cue of deriveInteractionSoundCues(previous, liveThreads)) {
-        if (!shouldPlayInteractionSound(cue, completionSoundEnabled)) {
-          continue;
-        }
+    const observation = observeThreadSoundState(previousStateRef.current, thread, {
+      environmentLive,
+      environmentPreviouslyLive,
+      settingsHydrated,
+    });
+    previousStateRef.current = observation.state;
+    for (const cue of observation.cues) {
+      if (shouldPlayInteractionSound(cue, completionSoundEnabled)) {
         play(cue);
       }
     }
-    previousStateRef.current =
-      previous === null
-        ? captureThreadSoundState(liveThreads)
-        : captureThreadSoundStatePreservingUnobserved(previous, liveThreads, threads);
-  }, [completionSoundEnabled, liveThreads, settingsHydrated, threads]);
+  }, [
+    completionSoundEnabled,
+    environmentLive,
+    environmentPreviouslyLive,
+    settingsHydrated,
+    thread,
+  ]);
 
   return null;
 }

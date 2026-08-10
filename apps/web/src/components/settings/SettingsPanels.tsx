@@ -1871,7 +1871,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Completion sound"
+          {...searchableSetting("completion-sound")}
           description="Play a sound when a turn completes."
           resetAction={
             settings.enableCompletionSounds !== DEFAULT_UNIFIED_SETTINGS.enableCompletionSounds ? (

@@ -7,8 +7,9 @@ mobile:
   is open.
 - **Input required:** a bloom cue plays when a thread begins waiting for your input or approval.
 
-Sounds do not play for cached startup state, unchanged state, or background provider work that was
-not started by a user message.
+Completion sounds do not play for cached startup state, unchanged state, or background provider
+work that was not started by a user message. Input-required sounds can still play for background
+work so you know when an agent is blocked on your response.
 
 ## Completion Sound Setting
 

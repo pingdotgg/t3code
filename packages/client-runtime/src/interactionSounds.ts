@@ -18,13 +18,6 @@ export function shouldPlayInteractionSound(
   return cue !== "success" || completionSoundEnabled;
 }
 
-export function selectLiveThreadShells(
-  threads: ReadonlyArray<EnvironmentThreadShell>,
-  liveEnvironmentIds: ReadonlySet<EnvironmentThreadShell["environmentId"]>,
-): ReadonlyArray<EnvironmentThreadShell> {
-  return threads.filter((thread) => liveEnvironmentIds.has(thread.environmentId));
-}
-
 function threadKey(thread: EnvironmentThreadShell): string {
   return `${thread.environmentId}:${thread.id}`;
 }
@@ -91,46 +84,6 @@ export function captureThreadSoundState(
   );
 }
 
-/**
- * Update state for currently live threads while retaining the last trustworthy
- * baseline for threads that still exist but are temporarily synchronizing.
- */
-export function captureThreadSoundStatePreservingUnobserved(
-  previous: ThreadSoundStateByKey,
-  liveThreads: ReadonlyArray<EnvironmentThreadShell>,
-  threads: ReadonlyArray<EnvironmentThreadShell>,
-): ThreadSoundStateByKey {
-  const existingThreadKeys = new Set(threads.map(threadKey));
-  const next = new Map([...previous].filter(([key]) => existingThreadKeys.has(key)));
-  for (const [key, state] of captureThreadSoundState(liveThreads)) {
-    next.set(key, state);
-  }
-  return next;
-}
-
-/**
- * While client settings are still hydrating, keep a sound baseline without
- * advancing known thread state. Newly seen threads are admitted so later
- * transitions can still produce cues once hydration completes.
- */
-export function captureThreadSoundStateWhileSettingsHydrating(
-  previous: ThreadSoundStateByKey | null,
-  threads: ReadonlyArray<EnvironmentThreadShell>,
-): ThreadSoundStateByKey {
-  const next = captureThreadSoundState(threads);
-  if (previous === null) {
-    return next;
-  }
-
-  const merged = new Map(previous);
-  for (const [key, state] of next) {
-    if (!merged.has(key)) {
-      merged.set(key, state);
-    }
-  }
-  return merged;
-}
-
 export function deriveInteractionSoundCues(
   previous: ThreadSoundStateByKey,
   threads: ReadonlyArray<EnvironmentThreadShell>,
@@ -160,4 +113,49 @@ export function deriveInteractionSoundCues(
   }
 
   return cues;
+}
+
+export interface ThreadSoundObservation {
+  readonly state: ThreadSoundStateByKey;
+  readonly cues: ReadonlyArray<InteractionSoundCue>;
+}
+
+/**
+ * Advance one thread's sound state. Coordinators subscribe to individual
+ * thread atoms so streaming updates only revisit the thread that changed.
+ */
+export function observeThreadSoundState(
+  previous: ThreadSoundStateByKey | null,
+  thread: EnvironmentThreadShell,
+  options: {
+    readonly environmentLive: boolean;
+    readonly environmentPreviouslyLive: boolean;
+    readonly settingsHydrated: boolean;
+  },
+): ThreadSoundObservation {
+  const current = [thread];
+  const baseline =
+    previous ??
+    (options.environmentPreviouslyLive
+      ? new Map([
+          [
+            threadKey(thread),
+            {
+              completedTurn: null,
+              userInitiatedTurn: null,
+              hasPendingUserInput: false,
+              hasPendingApprovals: false,
+            },
+          ],
+        ])
+      : captureThreadSoundState(current));
+
+  if (!options.environmentLive || !options.settingsHydrated) {
+    return { state: baseline, cues: [] };
+  }
+
+  return {
+    state: captureThreadSoundState(current),
+    cues: deriveInteractionSoundCues(baseline, current),
+  };
 }
