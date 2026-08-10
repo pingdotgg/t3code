@@ -1209,7 +1209,14 @@ export const makeCodexSessionRuntime = (
           const rootProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
           const senderIsChild =
             rootProviderThreadId !== undefined && item.senderThreadId !== rootProviderThreadId;
-          const spawnTurnId = TurnId.make(notification.params.turnId);
+          const senderChildState = senderIsChild
+            ? (yield* Ref.get(collabChildAgentsRef)).get(item.senderThreadId)
+            : undefined;
+          // Nested children belong to the same fleet as their sender. The
+          // provider's notification turn id is the nested child's own turn,
+          // not the root coordinator turn used by the Agents panel.
+          const spawnTurnId =
+            senderChildState?.spawnTurnId ?? TurnId.make(notification.params.turnId);
           let nextSpawnIndex: number | undefined;
           if (item.tool === "spawnAgent") {
             const currentChildren = yield* Ref.get(collabChildAgentsRef);
@@ -1668,7 +1675,9 @@ export const makeCodexSessionRuntime = (
     yield* client.handleServerNotification("turn/started", (payload) =>
       currentSessionProviderThreadId.pipe(
         Effect.flatMap((providerThreadId) => {
-          if (providerThreadId && payload.threadId !== providerThreadId) {
+          // Do not let an early child notification claim the root session
+          // before thread/start has stored the provider thread id.
+          if (!providerThreadId || payload.threadId !== providerThreadId) {
             return Effect.void;
           }
           return updateSession(sessionRef, {

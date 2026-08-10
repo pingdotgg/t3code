@@ -177,14 +177,16 @@ function buildOutOfOrderNamingScript() {
       {
         method: "item/completed",
         params: {
-          threadId: ROOT,
-          turnId: rootTurnId,
+          // A nested spawn reports the child agent's own turn id. It must
+          // still join the root fleet's naming batch.
+          threadId: CHILD_A,
+          turnId: `${CHILD_A}-nested-turn`,
           item: {
             type: "collabAgentToolCall",
-            id: "call_direct_spawn_ordered_second",
+            id: "call_nested_spawn_ordered",
             tool: "spawnAgent",
             status: "completed",
-            senderThreadId: ROOT,
+            senderThreadId: CHILD_A,
             receiverThreadIds: [CHILD_C, CHILD_D],
             prompt: "Return one concise result.",
             agentsStates: {
@@ -240,6 +242,13 @@ function buildUnscopedExistingChildScript() {
   return {
     rootThreadId: ROOT,
     preTurnNotifications: [
+      {
+        // Establish the root identity before replaying early child traffic;
+        // this models the provider's root thread notification and prevents
+        // the fixture from racing the runtime's initial session setup.
+        method: "thread/started",
+        params: { thread: wireFixture.responses.threadStart.thread },
+      },
       {
         method: "turn/started",
         params: {
