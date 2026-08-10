@@ -189,15 +189,362 @@ struct DailyUXModelPickerTests {
             ]
         )
 
-        let summary = DailyUXModelOptions.reasoningSummary(
-            for: model,
-            selections: [
-                .init(id: "reasoningEffort", value: .string("xhigh")),
+        #expect(DailyUXModelOptions.reasoningDescriptor(for: model)?.id == "reasoningEffort")
+    }
+
+    @Test
+    func composerReasoningSelectionMaterializesInheritedThreadModel() throws {
+        let inherited = FeatureSelection(
+            providerID: "codex",
+            modelID: "gpt-5.6-sol",
+            options: [
+                .init(id: "reasoningEffort", value: .string("medium")),
                 .init(id: "fast", value: .boolean(true)),
             ]
         )
+        let providers = [
+            FeatureProvider(
+                id: "codex",
+                name: "Codex",
+                models: [
+                    FeatureModel(
+                        id: "gpt-5.6-sol",
+                        name: "Sol",
+                        options: [
+                            .init(
+                                id: "reasoningEffort",
+                                label: "Reasoning",
+                                kind: .select,
+                                choices: [
+                                    .init(id: "medium", label: "Medium", isDefault: true),
+                                    .init(id: "high", label: "High"),
+                                ]
+                            ),
+                            .init(id: "fast", label: "Fast", kind: .boolean),
+                        ]
+                    ),
+                ]
+            ),
+        ]
 
-        #expect(summary == "Extra high")
+        let updated = try #require(
+            FeatureComposerReasoningSelection.updating(
+                explicit: nil,
+                inherited: inherited,
+                providers: providers,
+                materializesDefaultSelection: false,
+                value: .string("high")
+            )
+        )
+
+        #expect(updated.providerID == inherited.providerID)
+        #expect(updated.modelID == inherited.modelID)
+        #expect(updated.options.count == 2)
+        #expect(updated.options.first { $0.id == "fast" }?.value == .boolean(true))
+        #expect(
+            updated.options.first { $0.id == "reasoningEffort" }?.value == .string("high")
+        )
+    }
+
+    @Test
+    func composerReasoningSelectionUsesDisplayedDefaultForNewTask() throws {
+        let providers = [
+            FeatureProvider(
+                id: "codex",
+                name: "Codex",
+                models: [
+                    FeatureModel(
+                        id: "gpt-5.6-sol",
+                        name: "Sol",
+                        isDefault: true,
+                        options: [
+                            .init(
+                                id: "effort",
+                                label: "Reasoning effort",
+                                kind: .select,
+                                choices: [
+                                    .init(id: "medium", label: "Medium", isDefault: true),
+                                    .init(id: "high", label: "High"),
+                                ]
+                            ),
+                        ]
+                    ),
+                ]
+            ),
+        ]
+
+        let context = try #require(
+            FeatureComposerReasoningSelection.context(
+                explicit: nil,
+                inherited: nil,
+                providers: providers,
+                materializesDefaultSelection: true
+            )
+        )
+
+        #expect(context.summary == "Medium")
+        #expect(context.value == .string("medium"))
+    }
+
+    @Test
+    func composerReasoningSelectionKeepsBooleanControlVisibleWhenOff() throws {
+        let selection = FeatureSelection(
+            providerID: "cursor",
+            modelID: "cursor-model",
+            options: [.init(id: "thinking", value: .boolean(false))]
+        )
+        let providers = [
+            FeatureProvider(
+                id: "cursor",
+                name: "Cursor",
+                models: [
+                    FeatureModel(
+                        id: "cursor-model",
+                        name: "Cursor Model",
+                        options: [
+                            .init(id: "thinking", label: "Thinking", kind: .boolean),
+                        ]
+                    ),
+                ]
+            ),
+        ]
+
+        let context = try #require(
+            FeatureComposerReasoningSelection.context(
+                explicit: selection,
+                inherited: selection,
+                providers: providers,
+                materializesDefaultSelection: false
+            )
+        )
+
+        #expect(context.summary == "Thinking: Off")
+        #expect(context.value == .boolean(false))
+        #expect(
+            FeatureComposerReasoningSelection.updating(
+                explicit: selection,
+                inherited: selection,
+                providers: providers,
+                materializesDefaultSelection: false,
+                value: .boolean(true)
+            )?.options.first?.value == .boolean(true)
+        )
+    }
+
+    @Test
+    func composerReasoningSelectionAllowsServerHandledPromptInjectedChoice() {
+        let selection = FeatureSelection(
+            providerID: "claude",
+            modelID: "opus",
+            options: [.init(id: "effort", value: .string("medium"))]
+        )
+        let providers = [
+            FeatureProvider(
+                id: "claude",
+                name: "Claude",
+                models: [
+                    FeatureModel(
+                        id: "opus",
+                        name: "Opus",
+                        options: [
+                            .init(
+                                id: "effort",
+                                label: "Reasoning effort",
+                                kind: .select,
+                                choices: [
+                                    .init(id: "medium", label: "Medium"),
+                                    .init(id: "ultrathink", label: "Ultrathink"),
+                                ]
+                            ),
+                        ]
+                    ),
+                ]
+            ),
+        ]
+
+        let context = FeatureComposerReasoningSelection.context(
+            explicit: selection,
+            inherited: selection,
+            providers: providers,
+            materializesDefaultSelection: false
+        )
+
+        #expect(context?.choices.map(\.id) == ["medium", "ultrathink"])
+        var unsupported = selection
+        unsupported.options = [.init(id: "effort", value: .string("ultrathink"))]
+        let injectedContext = FeatureComposerReasoningSelection.context(
+            explicit: unsupported,
+            inherited: unsupported,
+            providers: providers,
+            materializesDefaultSelection: false
+        )
+        #expect(injectedContext?.summary == "Ultrathink")
+    }
+
+    @Test
+    func composerReasoningSelectionHidesStaleSelectValue() {
+        let staleSelection = FeatureSelection(
+            providerID: "claude",
+            modelID: "opus",
+            options: [.init(id: "effort", value: .string("removed-level"))]
+        )
+        let providers = [
+            FeatureProvider(
+                id: "claude",
+                name: "Claude",
+                models: [
+                    FeatureModel(
+                        id: "opus",
+                        name: "Opus",
+                        options: [
+                            .init(
+                                id: "effort",
+                                label: "Reasoning effort",
+                                kind: .select,
+                                choices: [.init(id: "medium", label: "Medium")]
+                            ),
+                        ]
+                    ),
+                ]
+            ),
+        ]
+
+        #expect(
+            FeatureComposerReasoningSelection.context(
+                explicit: staleSelection,
+                inherited: staleSelection,
+                providers: providers,
+                materializesDefaultSelection: false
+            ) == nil
+        )
+    }
+
+    @Test
+    func composerReasoningSelectionPreservesNewTaskSiblingOptions() throws {
+        let providers = [
+            FeatureProvider(
+                id: "codex",
+                name: "Codex",
+                models: [
+                    FeatureModel(
+                        id: "sol",
+                        name: "Sol",
+                        isDefault: true,
+                        options: [
+                            .init(
+                                id: "reasoningEffort",
+                                label: "Reasoning",
+                                kind: .select,
+                                choices: [
+                                    .init(id: "medium", label: "Medium", isDefault: true),
+                                    .init(id: "high", label: "High"),
+                                ]
+                            ),
+                            .init(
+                                id: "fast",
+                                label: "Fast",
+                                kind: .boolean,
+                                defaultValue: .boolean(true)
+                            ),
+                        ]
+                    ),
+                ]
+            ),
+        ]
+
+        let updated = try #require(
+            FeatureComposerReasoningSelection.updating(
+                explicit: nil,
+                inherited: nil,
+                providers: providers,
+                materializesDefaultSelection: true,
+                value: .string("high")
+            )
+        )
+
+        #expect(updated.options.first { $0.id == "fast" }?.value == .boolean(true))
+        #expect(
+            updated.options.first { $0.id == "reasoningEffort" }?.value == .string("high")
+        )
+    }
+
+    @Test
+    func composerReasoningSelectionLeavesExplicitSelectionWithoutDescriptorUnchanged() {
+        let selection = FeatureSelection(providerID: "plain", modelID: "plain-model")
+        let providers = [
+            FeatureProvider(
+                id: "plain",
+                name: "Plain",
+                models: [.init(id: "plain-model", name: "Plain Model")]
+            ),
+        ]
+
+        #expect(
+            FeatureComposerReasoningSelection.updating(
+                explicit: selection,
+                inherited: selection,
+                providers: providers,
+                materializesDefaultSelection: false,
+                value: .string("high")
+            ) == selection
+        )
+    }
+
+    @Test
+    func composerReasoningSelectionRejectsMismatchedOptionKinds() {
+        let selection = FeatureSelection(
+            providerID: "codex",
+            modelID: "sol",
+            options: [.init(id: "effort", value: .boolean(true))]
+        )
+        let providers = [
+            FeatureProvider(
+                id: "codex",
+                name: "Codex",
+                models: [
+                    FeatureModel(
+                        id: "sol",
+                        name: "Sol",
+                        options: [
+                            .init(
+                                id: "effort",
+                                label: "Reasoning",
+                                kind: .select,
+                                choices: [.init(id: "high", label: "High")]
+                            ),
+                        ]
+                    ),
+                ]
+            ),
+        ]
+
+        #expect(
+            FeatureComposerReasoningSelection.context(
+                explicit: selection,
+                inherited: selection,
+                providers: providers,
+                materializesDefaultSelection: false
+            ) == nil
+        )
+    }
+
+    @Test
+    func composerReasoningSelectionPrefersLevelOverBooleanThinkingToggle() {
+        let model = FeatureModel(
+            id: "cursor-model",
+            name: "Cursor Model",
+            options: [
+                .init(id: "thinking", label: "Thinking", kind: .boolean),
+                .init(
+                    id: "reasoning",
+                    label: "Reasoning",
+                    kind: .select,
+                    choices: [.init(id: "high", label: "High")]
+                ),
+            ]
+        )
+
+        #expect(DailyUXModelOptions.reasoningDescriptor(for: model)?.id == "reasoning")
     }
 
     @Test

@@ -854,28 +854,22 @@ enum DailyUXModelOptions {
         return labels.isEmpty ? nil : labels.joined(separator: " · ")
     }
 
-    /// The compact composer gives reasoning its own non-compressible label so
-    /// a long model name cannot hide the setting users change most often.
-    static func reasoningSummary(
-        for model: FeatureModel,
-        selections: [FeatureModelOptionSelection]
-    ) -> String? {
-        guard let descriptor = model.options.first(where: { descriptor in
-            let searchable = "\(descriptor.id) \(descriptor.label)".lowercased()
-            return searchable.contains("reason")
-                || searchable.contains("effort")
-                || searchable.contains("thinking")
-                || searchable.contains("thought")
-        }), let value = value(for: descriptor, in: selections) else {
-            return nil
-        }
+    /// Prefer the provider's level selector over a separate boolean thinking
+    /// toggle when both describe reasoning for the same model.
+    static func reasoningDescriptor(
+        for model: FeatureModel
+    ) -> FeatureModelOptionDescriptor? {
+        model.options.first {
+            $0.kind == .select && isReasoningDescriptor($0)
+        } ?? model.options.first(where: isReasoningDescriptor)
+    }
 
-        switch value {
-        case let .string(choiceID):
-            return descriptor.choices.first(where: { $0.id == choiceID })?.label
-        case let .boolean(isEnabled):
-            return isEnabled ? descriptor.label : nil
-        }
+    static func isReasoningDescriptor(_ descriptor: FeatureModelOptionDescriptor) -> Bool {
+        let searchable = "\(descriptor.id) \(descriptor.label)".lowercased()
+        return searchable.contains("reason")
+            || searchable.contains("effort")
+            || searchable.contains("thinking")
+            || searchable.contains("thought")
     }
 
     static func supportsImages(

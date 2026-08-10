@@ -101,13 +101,11 @@ public struct ProviderModelPicker: View {
     }
 
     private var resolvedSelection: FeatureSelection? {
-        if materializesDefaultSelection {
-            return ProviderModelSelectionResolver.materialized(selection, in: normalizedProviders)
-        }
-        return ThreadComposerModelSelectionPolicy.resolvedSelection(
+        ProviderModelSelectionResolver.resolved(
             explicit: selection,
             inherited: threadSelection,
-            providers: normalizedProviders
+            providers: normalizedProviders,
+            materializesDefaultSelection: materializesDefaultSelection
         )
     }
 
@@ -367,13 +365,11 @@ private struct ModelPickerSheet: View {
     }
 
     private var resolvedSelection: FeatureSelection? {
-        if materializesDefaultSelection {
-            return ProviderModelSelectionResolver.materialized(selection, in: providers)
-        }
-        return ThreadComposerModelSelectionPolicy.resolvedSelection(
+        ProviderModelSelectionResolver.resolved(
             explicit: selection,
             inherited: threadSelection,
-            providers: providers
+            providers: providers,
+            materializesDefaultSelection: materializesDefaultSelection
         )
     }
 
@@ -474,6 +470,21 @@ private final class ModelPickerCatalogCache {
 /// selection becomes the environment's concrete preferred model as soon as the
 /// catalog is available.
 enum ProviderModelSelectionResolver {
+    static func resolved(
+        explicit: FeatureSelection?,
+        inherited: FeatureSelection?,
+        providers: [FeatureProvider],
+        materializesDefaultSelection: Bool
+    ) -> FeatureSelection? {
+        materializesDefaultSelection
+            ? materialized(explicit, in: providers)
+            : ThreadComposerModelSelectionPolicy.resolvedSelection(
+                explicit: explicit,
+                inherited: inherited,
+                providers: providers
+            )
+    }
+
     static func validated(
         _ selection: FeatureSelection?,
         in providers: [FeatureProvider]
