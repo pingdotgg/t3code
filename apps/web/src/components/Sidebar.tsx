@@ -233,6 +233,27 @@ function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
 }
 
+/**
+ * The driver logo alone cannot distinguish two configured instances of the
+ * same driver (e.g. `claudeAgent` + `claude_work`). Mirror the model picker:
+ * surface the accent badge when the instance has an accent color, or when
+ * its driver has more than one configured instance so the ambiguity is at
+ * least visible (hover reveals the instance name).
+ */
+function shouldShowInstanceBadge(
+  entry: ProviderInstanceEntry,
+  entries: ReadonlyMap<string, ProviderInstanceEntry>,
+): boolean {
+  if (entry.accentColor) return true;
+  let driverInstanceCount = 0;
+  for (const candidate of entries.values()) {
+    if (candidate.driverKind !== entry.driverKind) continue;
+    driverInstanceCount += 1;
+    if (driverInstanceCount > 1) return true;
+  }
+  return false;
+}
+
 function SidebarThreadTooltip({
   thread,
   projectTitle,
@@ -242,6 +263,9 @@ function SidebarThreadTooltip({
   driverKind,
   modelInstanceId,
   modelLabel,
+  instanceDisplayName,
+  instanceAccentColor,
+  showInstanceBadge,
   branchMismatch,
   terminalStatus,
   terminalProcessCount,
@@ -254,6 +278,9 @@ function SidebarThreadTooltip({
   driverKind: ProviderInstanceEntry["driverKind"] | null;
   modelInstanceId: string;
   modelLabel: string;
+  instanceDisplayName: string | null;
+  instanceAccentColor: string | undefined;
+  showInstanceBadge: boolean;
   branchMismatch: {
     threadBranch: string;
     currentBranch: string;
@@ -309,10 +336,17 @@ function SidebarThreadTooltip({
             <div className="flex min-w-0 items-center gap-2">
               <ProviderInstanceIcon
                 driverKind={driverKind}
-                displayName={thread.session?.providerName ?? modelInstanceId}
+                displayName={instanceDisplayName ?? thread.session?.providerName ?? modelInstanceId}
+                accentColor={instanceAccentColor}
+                showBadge={showInstanceBadge}
+                badgeContent="none"
                 iconClassName="size-3 shrink-0 grayscale opacity-60"
+                badgeClassName="-right-0.5 -bottom-0.5 h-1.5 min-w-1.5 px-0"
+                indicatorBackground="var(--popover)"
               />
-              <div className="min-w-0 truncate text-foreground/75">{modelLabel}</div>
+              <div className="min-w-0 truncate text-foreground/75">
+                {instanceDisplayName ? `${instanceDisplayName} · ${modelLabel}` : modelLabel}
+              </div>
             </div>
           ) : null}
           {terminalStatus ? (
@@ -857,6 +891,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const modelLabel = selectedModel
     ? getTriggerDisplayModelLabel(selectedModel)
     : thread.modelSelection.model;
+  const instanceDisplayName = providerEntry?.displayName ?? thread.session?.providerName ?? null;
+  const instanceAccentColor = providerEntry?.accentColor;
+  const showInstanceBadge = providerEntry
+    ? shouldShowInstanceBadge(providerEntry, props.providerEntryByInstanceId)
+    : false;
 
   const isRemote =
     props.currentEnvironmentId !== null && thread.environmentId !== props.currentEnvironmentId;
@@ -871,6 +910,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       driverKind={driverKind}
       modelInstanceId={modelInstanceId}
       modelLabel={modelLabel}
+      instanceDisplayName={instanceDisplayName}
+      instanceAccentColor={instanceAccentColor}
+      showInstanceBadge={showInstanceBadge}
       branchMismatch={branchMismatch}
       terminalStatus={terminalStatus}
       terminalProcessCount={terminalProcessCount}
@@ -1438,11 +1480,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   </span>
                 ) : null}
                 {driverKind ? (
-                  <span className="inline-flex shrink-0 items-center opacity-60">
+                  <span className="inline-flex shrink-0 items-center">
                     <ProviderInstanceIcon
                       driverKind={driverKind}
-                      displayName={thread.session?.providerName ?? modelInstanceId}
-                      iconClassName="size-3.5"
+                      displayName={
+                        instanceDisplayName ?? thread.session?.providerName ?? modelInstanceId
+                      }
+                      accentColor={instanceAccentColor}
+                      showBadge={showInstanceBadge}
+                      badgeContent="none"
+                      iconClassName="size-3.5 opacity-60"
+                      badgeClassName="-right-0.5 -bottom-0.5 h-1.5 min-w-1.5 px-0"
+                      indicatorBackground="var(--sidebar)"
                     />
                   </span>
                 ) : null}
@@ -1506,6 +1555,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   const modelLabel = selectedModel
     ? getTriggerDisplayModelLabel(selectedModel)
     : thread.modelSelection.model;
+  const instanceDisplayName = providerEntry?.displayName ?? thread.session?.providerName ?? null;
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: thread.environmentId,
     threadId: thread.id,
@@ -1560,6 +1610,13 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           driverKind={driverKind}
           modelInstanceId={modelInstanceId}
           modelLabel={modelLabel}
+          instanceDisplayName={instanceDisplayName}
+          instanceAccentColor={providerEntry?.accentColor}
+          showInstanceBadge={
+            providerEntry
+              ? shouldShowInstanceBadge(providerEntry, props.providerEntryByInstanceId)
+              : false
+          }
           branchMismatch={branchMismatch}
           terminalStatus={terminalStatus}
           terminalProcessCount={runningTerminalIds.length}
