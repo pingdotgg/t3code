@@ -1,8 +1,8 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { useCallback, useMemo, useRef, useState } from "react";
 
-import type { DailyTotals } from "../../usage/usageMerge";
-import { formatDayShort, formatTokens, formatUsd } from "../../usage/usageFormat";
+import type { DailyTotals } from "@t3tools/shared/usageMerge";
+import { formatDayShort, formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
 import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_MARK, PROVIDER_ORDER } from "./usageProviders";
 
 const VIEW_WIDTH = 960;
