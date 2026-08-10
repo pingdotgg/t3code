@@ -187,6 +187,7 @@ import {
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
+import { isPreviewFocused } from "../lib/previewFocus";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { preventRepeatedTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
@@ -282,6 +283,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
   buildLoadingThreadFromShell,
+  buildRunningThreadTurnInterruptInput,
   buildThreadTurnInterruptInput,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
@@ -2742,11 +2744,15 @@ function ChatViewContent(props: ChatViewProps) {
     [activeServerThread, draftId, routeThreadKey, routeThreadRef],
   );
 
+  const interruptContextRef = useRef({ activeThread, phase, setThreadError });
+  interruptContextRef.current = { activeThread, phase, setThreadError };
   const onInterrupt = useCallback(async () => {
-    if (!activeThread) return;
+    const { activeThread, phase, setThreadError } = interruptContextRef.current;
+    const input = buildRunningThreadTurnInterruptInput(activeThread, phase);
+    if (!activeThread || input === null) return;
     const result = await interruptThreadTurn({
-      environmentId,
-      input: buildThreadTurnInterruptInput(activeThread),
+      environmentId: activeThread.environmentId,
+      input,
     });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
@@ -2755,7 +2761,11 @@ function ChatViewContent(props: ChatViewProps) {
         error instanceof Error ? error.message : "Failed to interrupt the current turn.",
       );
     }
-  }, [activeThread, environmentId, interruptThreadTurn, setThreadError]);
+  }, [interruptThreadTurn]);
+  const canInterruptActiveTurn =
+    phase === "running" &&
+    activeThread?.session?.status === "running" &&
+    activeThread.session.activeTurnId !== null;
 
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
@@ -4651,6 +4661,8 @@ function ChatViewContent(props: ChatViewProps) {
       const shortcutContext = {
         terminalFocus: terminalFocusOwner !== null,
         terminalOpen: Boolean(terminalUiState.terminalOpen),
+        previewFocus: isPreviewFocused(),
+        previewOpen: previewPanelOpen,
         modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
       };
 
@@ -4754,6 +4766,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       if (command === "thread.stop") {
+        if (event.repeat || !canInterruptActiveTurn) return;
         event.preventDefault();
         event.stopPropagation();
         void onInterrupt();
@@ -4774,6 +4787,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeProject,
     activeRightPanelSurface,
     addTerminalSurface,
+    canInterruptActiveTurn,
     terminalUiState.terminalOpen,
     terminalUiState.activeTerminalId,
     activeThreadId,
@@ -4787,6 +4801,7 @@ function ChatViewContent(props: ChatViewProps) {
     keybindings,
     onInterrupt,
     onToggleDiff,
+    previewPanelOpen,
     toggleRightPanel,
     toggleTerminalVisibility,
     composerRef,

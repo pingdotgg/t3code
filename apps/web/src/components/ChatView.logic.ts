@@ -149,6 +149,20 @@ export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "sessi
   };
 }
 
+export function buildRunningThreadTurnInterruptInput(
+  thread: Pick<Thread, "id" | "session"> | null | undefined,
+  phase: SessionPhase,
+): { threadId: ThreadId; turnId: TurnId } | null {
+  if (
+    phase !== "running" ||
+    thread?.session?.status !== "running" ||
+    thread.session.activeTurnId === null
+  ) {
+    return null;
+  }
+  return { threadId: thread.id, turnId: thread.session.activeTurnId };
+}
+
 export function reconcileMountedTerminalThreadIds(input: {
   currentThreadIds: ReadonlyArray<string>;
   openThreadIds: ReadonlyArray<string>;
