@@ -68,7 +68,15 @@ export interface AcpSessionRuntimeOptions {
     readonly name: string;
     readonly version: string;
   };
-  readonly authMethodId: string;
+  /**
+   * Auth method advertised by the agent in its `initialize` response.
+   *
+   * Omit it for agents that advertise no `authMethods` and do not implement
+   * `authenticate` at all (kiro-cli answers `-32601` for it): the startup
+   * sequence then skips the call instead of failing on it. Agents that do
+   * gate session creation behind `authenticate` pass their method id here.
+   */
+  readonly authMethodId?: string | undefined;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
@@ -541,15 +549,19 @@ export const make = (
         acp.agent.initialize(initializePayload),
       );
 
-      const authenticatePayload = {
-        methodId: options.authMethodId,
-      } satisfies EffectAcpSchema.AuthenticateRequest;
+      // Agents that advertise no auth methods (kiro-cli) do not implement
+      // `authenticate`; calling it would fail startup with "method not found".
+      if (options.authMethodId !== undefined) {
+        const authenticatePayload = {
+          methodId: options.authMethodId,
+        } satisfies EffectAcpSchema.AuthenticateRequest;
 
-      yield* runLoggedRequest(
-        "authenticate",
-        authenticatePayload,
-        acp.agent.authenticate(authenticatePayload),
-      );
+        yield* runLoggedRequest(
+          "authenticate",
+          authenticatePayload,
+          acp.agent.authenticate(authenticatePayload),
+        );
+      }
 
       let sessionId: string;
       let sessionSetupResult:
