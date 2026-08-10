@@ -256,7 +256,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     });
   }
 
-  const skills = yield* discoverGrokSkills(cwd);
+  const skills = yield* discoverGrokSkills(cwd, environment);
   const discoveryExit = yield* discoverGrokModelsViaAcp(
     grokSettings,
     environment,

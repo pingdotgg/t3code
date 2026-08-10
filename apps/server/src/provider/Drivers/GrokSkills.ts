@@ -9,13 +9,21 @@ import { discoverSkillsFromRoots } from "./ProviderSkills.ts";
 
 export const discoverGrokSkills = Effect.fn("discoverGrokSkills")(function* (
   cwd?: string,
+  environment: NodeJS.ProcessEnv = process.env,
   homeDirectory = NodeOS.homedir(),
 ): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
   const path = yield* Path.Path;
+  const environmentGrokHome = environment.GROK_HOME?.trim() ?? "";
+  const grokHome =
+    environmentGrokHome.length > 0
+      ? cwd
+        ? path.resolve(cwd, environmentGrokHome)
+        : path.resolve(environmentGrokHome)
+      : path.join(homeDirectory, ".grok");
 
   return yield* discoverSkillsFromRoots([
     { directory: path.join(homeDirectory, ".agents", "skills"), scope: "user" },
-    { directory: path.join(homeDirectory, ".grok", "skills"), scope: "user" },
+    { directory: path.join(grokHome, "skills"), scope: "user" },
     ...(cwd
       ? [
           { directory: path.join(cwd, ".agents", "skills"), scope: "project" },

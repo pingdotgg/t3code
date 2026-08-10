@@ -44,7 +44,7 @@ it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
       yield* writeSkill(roots[2]!, "agents-project", "From project agents.");
       yield* writeSkill(roots[3]!, "grok-project", "From project Grok.");
 
-      const skills = yield* discoverGrokSkills(cwd, homeDirectory);
+      const skills = yield* discoverGrokSkills(cwd, {}, homeDirectory);
 
       assert.deepEqual(
         skills.map(({ name, scope, description }) => ({ name, scope, description })),
