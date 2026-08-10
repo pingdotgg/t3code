@@ -82,7 +82,7 @@ export function UsagePage() {
               COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
             )}
           >
-            <h1 className="text-xs font-medium tracking-wide text-muted-foreground/70">Usage</h1>
+            <h1 className="text-sm font-medium text-foreground">Usage</h1>
           </div>
         )}
 
