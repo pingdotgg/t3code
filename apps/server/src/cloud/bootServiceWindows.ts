@@ -68,8 +68,6 @@ const STOP_REQUEST_TIMEOUT = Duration.seconds(30);
 /** Windows only. How often the CLI re-checks whether the launcher has gone. */
 const STOP_REQUEST_ACK_POLL = Duration.millis(250);
 const POWERSHELL_TIMEOUT = Duration.seconds(30);
-/** Windows only. Must match the launcher's own staleness rule for its pid record. */
-const PID_RECORD_STALE_AFTER_MS = 90_000;
 
 /**
  * Windows only. The absolute interpreter path, rather than trusting PATH.
@@ -434,6 +432,11 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
    * stopped, and the install would then rewrite the runtime underneath it and
    * start a second server on the same database.
    */
+  const pidRecordMtime = fs.stat(pidPath).pipe(
+    Effect.map((info) => Option.map(info.mtime, (mtime) => mtime.getTime())),
+    Effect.orElseSucceed(() => Option.none<number>()),
+  );
+
   const requestStop = Effect.gen(function* () {
     // Only a confirmed absence means no launcher. A transient read error, say a
     // sharing violation while the launcher rewrites its record, must not be
@@ -451,17 +454,14 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
     // Only trust the process id while the record is from this boot. Ids are
     // recycled across reboots, so an old file can name an unrelated live
     // process, and waiting on that would never finish.
-    const recordAge = yield* fs.stat(pidPath).pipe(
-      Effect.map((info) => Option.map(info.mtime, (mtime) => mtime.getTime())),
-      Effect.orElseSucceed(() => Option.none<number>()),
-    );
-    const nowMs = yield* DateTime.now.pipe(Effect.map(DateTime.toEpochMillis));
-    const refreshedRecently =
-      Option.isSome(recordAge) && nowMs - recordAge.value <= PID_RECORD_STALE_AFTER_MS;
+    // An old timestamp is not evidence of death. A laptop that slept wakes with
+    // a live launcher whose last heartbeat is ancient, and clearing its record
+    // would start a second server on one database. So this only asks whether the
+    // holder could be ours; the wait below settles whether it really is.
+    const recordMtimeBefore = yield* pidRecordMtime;
     const live =
       presence !== undefined &&
       serviceLauncherPresenceIsFromThisBoot(presence, yield* currentBootTimeMs) &&
-      refreshedRecently &&
       (yield* processIsAlive(presence.pid));
     if (!live || presence === undefined) {
       // No launcher is listening. Clear the request too: leaving one behind
@@ -487,8 +487,20 @@ export const make = Effect.fn("cloud.boot_service_windows.make")(function* (
       const stillRunning = yield* fs.exists(pidPath).pipe(Effect.orElseSucceed(() => true));
       if (!stillRunning) return true;
     }
-    // Refusing here is the whole point. Carrying on would write over a launcher
-    // we could not confirm dead.
+    // Nothing stopped. The wait was longer than several heartbeats, so a record
+    // that never moved belongs to a process that is not our launcher at all,
+    // which happens when the operating system recycles the id. Clear it and let
+    // the caller proceed. A record that did move is a launcher that is alive and
+    // simply will not stop, and writing over that one must not happen.
+    const recordMtimeAfter = yield* pidRecordMtime;
+    const neverRefreshed =
+      Option.isNone(recordMtimeAfter) ||
+      (Option.isSome(recordMtimeBefore) && recordMtimeBefore.value === recordMtimeAfter.value);
+    if (neverRefreshed) {
+      yield* fs.remove(pidPath, { force: true }).pipe(Effect.ignore);
+      yield* fs.remove(stopRequestPath, { force: true }).pipe(Effect.ignore);
+      return false;
+    }
     return yield* new BootService.BootServiceCommandError({
       step: "stopping the running service",
       pid,

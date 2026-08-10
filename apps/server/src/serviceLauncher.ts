@@ -338,14 +338,34 @@ const stopRequestPath = (baseDir: string) =>
 /** Windows only. Present exactly while a self-supervising launcher is running. */
 const pidFilePath = (baseDir: string) => NodePath.join(baseDir, "runtime", SERVICE_PID_FILE);
 
-/** Windows only. A record nobody has refreshed lately belongs to a dead launcher. */
-async function pidRecordIsStale(target: string): Promise<boolean> {
+const pidRecordMtime = async (target: string): Promise<number | undefined> => {
   try {
-    const stats = await NodeFSP.stat(target);
-    return Date.now() - stats.mtimeMs > PID_RECORD_STALE_AFTER_MS;
+    return (await NodeFSP.stat(target)).mtimeMs;
   } catch {
-    return true;
+    return undefined;
   }
+};
+
+/**
+ * Windows only. Whether a launcher is still refreshing its record.
+ *
+ * An old modification time on its own proves nothing. A laptop that slept for
+ * an hour wakes with a perfectly live launcher whose last heartbeat is ancient,
+ * and treating that as dead would start a second server on one database. So an
+ * old timestamp only makes the answer unknown, and the unknown case is settled
+ * by watching for the next heartbeat rather than guessing.
+ */
+export async function pidRecordIsBeingRefreshed(
+  target: string,
+  probeMs: number = PID_HEARTBEAT_MS * 2,
+): Promise<boolean> {
+  const first = await pidRecordMtime(target);
+  if (first === undefined) return false;
+  if (Date.now() - first <= PID_RECORD_STALE_AFTER_MS) return true;
+
+  await new Promise((resolve) => setTimeout(resolve, probeMs));
+  const second = await pidRecordMtime(target);
+  return second !== undefined && second !== first;
 }
 
 export interface LauncherOptions {
@@ -357,6 +377,8 @@ export interface LauncherOptions {
   readonly selfSupervise?: boolean;
   /** Overridable so tests do not sit through the real wait. */
   readonly restartDelayMs?: number;
+  /** Overridable for the same reason: how long to watch for a heartbeat. */
+  readonly heartbeatProbeMs?: number;
 }
 
 export class Launcher {
@@ -364,6 +386,7 @@ export class Launcher {
   readonly #statePath: string;
   readonly #selfSupervise: boolean;
   readonly #restartDelayMs: number;
+  readonly #heartbeatProbeMs: number;
   #state: ServiceState;
   #child: ManagedChild | null = null;
   #timer: NodeJS.Timeout | undefined;
@@ -396,6 +419,7 @@ export class Launcher {
     this.#state = state;
     this.#selfSupervise = options?.selfSupervise ?? isSelfSupervising();
     this.#restartDelayMs = options?.restartDelayMs ?? RESTART_DELAY_MS;
+    this.#heartbeatProbeMs = options?.heartbeatProbeMs ?? PID_HEARTBEAT_MS * 2;
   }
 
   async run(): Promise<void> {
@@ -464,6 +488,8 @@ export class Launcher {
     try {
       // Re-check under the takeover: the previous holder may have revived.
       if (await this.#pidFileHolderIsAlive()) return false;
+      // Whoever left this record may have left its server running too.
+      await this.#terminateOrphanedChild(await this.#readPidFile());
       await NodeFSP.rm(target, { force: true });
       return await this.#writePidFileExclusive(target);
     } finally {
@@ -520,13 +546,7 @@ export class Launcher {
     try {
       const handle = await NodeFSP.open(target, "wx", 0o600);
       try {
-        await handle.writeFile(
-          encodeServiceLauncherPresence({
-            pid: process.pid,
-            bootTimeMs: currentBootTimeMs(),
-          }),
-          "utf8",
-        );
+        await handle.writeFile(this.#presenceRecord(), "utf8");
         await handle.sync();
       } finally {
         await handle.close();
@@ -535,6 +555,46 @@ export class Launcher {
     } catch (cause) {
       if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
       return false;
+    }
+  }
+
+  #presenceRecord(): string {
+    const childPid = this.#child?.process.pid;
+    return encodeServiceLauncherPresence({
+      pid: process.pid,
+      bootTimeMs: currentBootTimeMs(),
+      ...(childPid === undefined ? {} : { childPid }),
+    });
+  }
+
+  /**
+   * Windows only. Rewrites the record so it names the current child, and so its
+   * modification time proves this launcher is still here. Doubling as the
+   * heartbeat keeps one writer for one file.
+   */
+  async #refreshPidFile(): Promise<void> {
+    if (!this.#selfSupervise) return;
+    await NodeFSP.writeFile(pidFilePath(this.#baseDir), this.#presenceRecord(), {
+      mode: 0o600,
+    }).catch(() => undefined);
+  }
+
+  /**
+   * Windows only. Puts down a server left behind by a launcher that died
+   * without taking it with it. Linux gets this from KillMode=mixed.
+   */
+  async #terminateOrphanedChild(owner: ServiceLauncherPresence | undefined): Promise<void> {
+    const childPid = owner?.childPid;
+    if (childPid === undefined || childPid === process.pid) return;
+    if (owner !== undefined && !serviceLauncherPresenceIsFromThisBoot(owner, currentBootTimeMs())) {
+      return;
+    }
+    if (!processIsAlive(childPid)) return;
+    try {
+      process.kill(childPid, "SIGKILL");
+      process.stderr.write(`[service-launcher] ended an orphaned server (pid ${childPid})\n`);
+    } catch {
+      // It exited between the check and the signal, which is the good outcome.
     }
   }
 
@@ -549,14 +609,13 @@ export class Launcher {
     if (owner === undefined) return false;
     if (!serviceLauncherPresenceIsFromThisBoot(owner, currentBootTimeMs())) return false;
     if (!processIsAlive(owner.pid)) return false;
-    return !(await pidRecordIsStale(pidFilePath(this.#baseDir)));
+    return await pidRecordIsBeingRefreshed(pidFilePath(this.#baseDir), this.#heartbeatProbeMs);
   }
 
   /** Windows only. Keeps this launcher's record demonstrably fresh. */
   #startPidHeartbeat(): void {
-    const target = pidFilePath(this.#baseDir);
     this.#pidHeartbeat = setInterval(() => {
-      void NodeFSP.utimes(target, new Date(), new Date()).catch(() => undefined);
+      void this.#refreshPidFile();
     }, PID_HEARTBEAT_MS);
     this.#pidHeartbeat.unref();
   }
@@ -640,6 +699,41 @@ export class Launcher {
     });
   }
 
+  /**
+   * Windows only. Retries the active child until the burst is spent. Returns
+   * false once it is, so the caller can fail the way Linux already does.
+   */
+  async #restartActiveChild(): Promise<boolean> {
+    while (this.#selfSupervise && this.#recordRestartAttempt()) {
+      await this.#waitBeforeRestart();
+      if (this.#stopping || this.#done || this.#stopRequested) return true;
+      try {
+        await this.#startChild(this.#state.activeVersion, "active", this.#state.update);
+        return true;
+      } catch {
+        // A start can fail transiently, and letting that escape would reach
+        // #fatal and kill the launcher outright. Spend another attempt from the
+        // same burst instead, so the supervisor survives what it exists for.
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Windows only. The very first start needs the same treatment. A transient
+   * failure at sign-in would otherwise leave the service down until the next
+   * one, which is not what Restart=always does.
+   */
+  async #startActiveChildWithRetry(update?: ServiceUpdateRecord): Promise<void> {
+    try {
+      await this.#startChild(this.#state.activeVersion, "active", update);
+      return;
+    } catch (cause) {
+      if (!this.#selfSupervise) throw cause;
+      if (!(await this.#restartActiveChild())) throw cause;
+    }
+  }
+
   /** Windows only. False once the burst limit is reached inside the window. */
   #recordRestartAttempt(): boolean {
     const now = Date.now();
@@ -716,7 +810,7 @@ export class Launcher {
       if (update !== undefined) {
         await discardDatabaseBackup(this.#baseDir, update.id).catch(() => undefined);
       }
-      await this.#startChild(this.#state.activeVersion, "active", update);
+      await this.#startActiveChildWithRetry(update);
       return;
     }
     if (await databaseRestorePending(this.#baseDir, update)) {
@@ -781,6 +875,7 @@ export class Launcher {
       process: child,
     };
     this.#child = managed;
+    await this.#refreshPidFile();
     child.on("message", (value) => {
       const message = decodeServiceLauncherChildMessage(value);
       if (message !== undefined) this.#enqueue(() => this.#handleMessage(managed, message));
@@ -933,18 +1028,7 @@ export class Launcher {
     // Windows only. Nothing supervises a Startup folder entry, so the launcher
     // does what Restart=always does on Linux, and gives up on the same terms.
     // Without the flag this still throws, so the Linux path is unchanged.
-    while (this.#selfSupervise && this.#recordRestartAttempt()) {
-      await this.#waitBeforeRestart();
-      if (this.#stopping || this.#done || this.#stopRequested) return;
-      try {
-        await this.#startChild(this.#state.activeVersion, "active", this.#state.update);
-        return;
-      } catch {
-        // A start can fail transiently, and letting that escape would reach
-        // #fatal and kill the launcher outright. Spend another attempt from the
-        // same burst instead, so the supervisor survives what it exists for.
-      }
-    }
+    if (await this.#restartActiveChild()) return;
     throw new Error(`Active child exited unexpectedly (${String(code ?? signal ?? "unknown")}).`);
   }
 

@@ -36,22 +36,34 @@ export const SERVICE_PID_FILE = ".service-pid";
 export interface ServiceLauncherPresence {
   readonly pid: number;
   readonly bootTimeMs: number;
+  /**
+   * The server the launcher is currently running, when it has one.
+   *
+   * Windows has no equivalent of `KillMode=mixed`, so a launcher killed
+   * outright leaves its server behind. Recording the child means whoever takes
+   * the record over can put that orphan down before starting its own, instead
+   * of quietly ending up with two servers on one database.
+   */
+  readonly childPid?: number;
 }
 
 /** Boot time is derived from uptime, which drifts by a little between reads. */
 export const SAME_BOOT_TOLERANCE_MS = 60_000;
 
 export function encodeServiceLauncherPresence(presence: ServiceLauncherPresence): string {
-  return `${presence.pid} ${presence.bootTimeMs}\n`;
+  const child = presence.childPid === undefined ? "" : ` ${presence.childPid}`;
+  return `${presence.pid} ${presence.bootTimeMs}${child}\n`;
 }
 
 export function decodeServiceLauncherPresence(text: string): ServiceLauncherPresence | undefined {
-  const [rawPid, rawBoot] = text.trim().split(/\s+/);
+  const [rawPid, rawBoot, rawChild] = text.trim().split(/\s+/);
   const pid = Number(rawPid);
   const bootTimeMs = Number(rawBoot);
-  return Number.isInteger(pid) && pid > 0 && Number.isFinite(bootTimeMs)
-    ? { pid, bootTimeMs }
-    : undefined;
+  if (!Number.isInteger(pid) || pid <= 0 || !Number.isFinite(bootTimeMs)) return undefined;
+  const childPid = rawChild === undefined ? Number.NaN : Number(rawChild);
+  return Number.isInteger(childPid) && childPid > 0
+    ? { pid, bootTimeMs, childPid }
+    : { pid, bootTimeMs };
 }
 
 /** False when the file predates this boot, whatever process now holds that id. */

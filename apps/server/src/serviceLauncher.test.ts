@@ -2,7 +2,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as NodeOS from "node:os";
+
 import * as Path from "effect/Path";
+import * as DateTime from "effect/DateTime";
 import * as TestClock from "effect/testing/TestClock";
 
 import { Launcher, readServiceState, writeServiceState } from "./serviceLauncher.ts";
@@ -631,6 +634,103 @@ it.layer(NodeServices.layer)("abandoned takeover recovery", (it) => {
 
       // It exited without touching the other launcher's takeover.
       assert.isTrue(yield* fs.exists(`${pidPath}.takeover`));
+    }).pipe(TestClock.withLive),
+  );
+});
+
+const nowMillis = DateTime.now.pipe(Effect.map(DateTime.toEpochMillis));
+
+it.layer(NodeServices.layer)("liveness of a quiet pid record", (it) => {
+  const seed = Effect.fn("test.seed_quiet_runtime")(function* (root: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const statePath = path.join(root, "runtime", "service-state.json");
+    const versionDir = path.join(root, "runtime", "versions", "1.0.0");
+    const entryPath = path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs");
+    yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
+    yield* fs.writeFileString(entryPath, "setInterval(() => {}, 1_000);\n");
+    yield* fs.writeFileString(path.join(versionDir, ".install-complete"), "1.0.0\n");
+    yield* Effect.promise(() =>
+      writeServiceState(statePath, {
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        activeVersion: "1.0.0",
+      }),
+    );
+    return statePath;
+  });
+
+  it.effect("stands down when an old record starts moving again", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launcher-sleepy-" });
+      const statePath = yield* seed(root);
+      const pidPath = path.join(root, "runtime", SERVICE_PID_FILE);
+      // A live launcher that slept through its heartbeat: this process id is
+      // real and from this boot, but the record looks ancient. Treating that as
+      // dead would put a second server on one database.
+      yield* fs.writeFileString(
+        pidPath,
+        encodeServiceLauncherPresence({
+          pid: process.pid,
+          bootTimeMs: (yield* nowMillis) - NodeOS.uptime() * 1_000,
+        }),
+      );
+      const longAgoSeconds = 1_577_836_800; // 2020-01-01, in seconds
+      yield* fs.utimes(pidPath, longAgoSeconds, longAgoSeconds);
+
+      // It wakes and refreshes while the probe is watching.
+      yield* Effect.forkScoped(
+        Effect.sleep("60 millis").pipe(
+          Effect.flatMap(() => fs.writeFileString(pidPath, "refreshed by the live launcher\n")),
+        ),
+      );
+
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        { selfSupervise: true, restartDelayMs: 5, heartbeatProbeMs: 200 },
+      );
+      yield* Effect.promise(() => launcher.run());
+
+      // It exited rather than claiming, and left the record alone.
+      assert.equal(yield* fs.readFileString(pidPath), "refreshed by the live launcher\n");
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("takes over a record that never moves again", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launcher-recycled-" });
+      const statePath = yield* seed(root);
+      const pidPath = path.join(root, "runtime", SERVICE_PID_FILE);
+      // Same shape, but nothing ever refreshes it. That is a process id the
+      // system handed to somebody else, so the record is not a launcher at all.
+      yield* fs.writeFileString(
+        pidPath,
+        encodeServiceLauncherPresence({
+          pid: process.pid,
+          bootTimeMs: (yield* nowMillis) - NodeOS.uptime() * 1_000,
+        }),
+      );
+      const longAgoSeconds = 1_577_836_800; // 2020-01-01, in seconds
+      yield* fs.utimes(pidPath, longAgoSeconds, longAgoSeconds);
+
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        { selfSupervise: true, restartDelayMs: 5, heartbeatProbeMs: 200 },
+      );
+      const running = launcher.run();
+      yield* Effect.sleep("600 millis");
+
+      const claimed = decodeServiceLauncherPresence(yield* fs.readFileString(pidPath));
+      assert.equal(claimed?.pid, process.pid);
+      assert.isDefined(claimed?.childPid);
+
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      yield* Effect.promise(() => running);
     }).pipe(TestClock.withLive),
   );
 });

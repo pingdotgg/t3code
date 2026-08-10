@@ -161,6 +161,10 @@ const makeHarness = Effect.fn("test.make_windows_boot_service_harness")(function
     failCommand: undefined as string | undefined,
     /** Set to false to model a launcher that never answers the stop request. */
     launcherStopsOnRequest: true,
+    /** Set to false to model a record whose process id was recycled. */
+    launcherRefreshesRecord: true,
+    /** Rewritten by the stand-in launcher to prove it is still alive. */
+    presence: "",
     /** What the fake shortcut currently points at, so drift can be modelled. */
     shortcutTarget: powershell,
     shortcutArguments: expectedArguments,
@@ -179,10 +183,8 @@ const makeHarness = Effect.fn("test.make_windows_boot_service_harness")(function
           // boot stamp matters, since a record from an earlier boot is ignored.
           const bootTimeMs = DateTime.toEpochMillis(yield* DateTime.now) - NodeOS.uptime() * 1_000;
           yield* fs.makeDirectory(runtimeDir, { recursive: true });
-          yield* fs.writeFileString(
-            pidPath,
-            encodeServiceLauncherPresence({ pid: process.pid, bootTimeMs }),
-          );
+          control.presence = encodeServiceLauncherPresence({ pid: process.pid, bootTimeMs });
+          yield* fs.writeFileString(pidPath, control.presence);
         }
         if (command.includes("service-shortcut")) {
           if (action === "Install") {
@@ -237,8 +239,17 @@ const makeHarness = Effect.fn("test.make_windows_boot_service_harness")(function
     Effect.gen(function* () {
       while (true) {
         yield* Effect.sleep(Duration.millis(5));
-        if (!control.launcherStopsOnRequest) continue;
         const asked = yield* fs.exists(stopRequestPath).pipe(Effect.orElseSucceed(() => false));
+        if (!control.launcherStopsOnRequest) {
+          // A launcher that will not stop is still alive, and a live one keeps
+          // refreshing its record. Without that it would look like a process id
+          // the system recycled, which is a different case entirely.
+          const present = yield* fs.exists(pidPath).pipe(Effect.orElseSucceed(() => false));
+          if (control.launcherRefreshesRecord && present) {
+            yield* fs.writeFileString(pidPath, control.presence).pipe(Effect.ignore);
+          }
+          continue;
+        }
         if (!asked) continue;
         yield* fs.remove(stopRequestPath, { force: true }).pipe(Effect.ignore);
         yield* fs.remove(pidPath, { force: true }).pipe(Effect.ignore);
@@ -452,10 +463,11 @@ it.layer(NodeServices.layer)("windows boot service", (it) => {
     Effect.gen(function* () {
       const { service, fs, pidPath, control } = yield* makeHarness();
       yield* service.install;
-      // Nothing answers a stop request now, so if the record were judged live
-      // this install would wait and then fail. That is what makes the assertion
-      // below mean something.
+      // Nothing answers a stop request now, and nothing refreshes the record
+      // either. That pair is what a recycled process id looks like, and it is
+      // what makes the assertion below mean something.
       control.launcherStopsOnRequest = false;
+      control.launcherRefreshesRecord = false;
       // Same boot and a live process id, but the launcher stopped refreshing
       // it. Within one boot that is the only way to tell a recycled id apart.
       // Seconds, not milliseconds: utimes reads a bare number as seconds.
