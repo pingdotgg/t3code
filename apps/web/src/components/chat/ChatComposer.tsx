@@ -2398,6 +2398,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       void addComposerImages(prepared.imageFiles);
     }
     if (prepared.unresolvedNames.length > 0) {
+      handled = true;
       toastManager.add({
         type: "error",
         title: "Unable to add files",
