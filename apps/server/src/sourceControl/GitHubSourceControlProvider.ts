@@ -112,6 +112,7 @@ export const make = Effect.gen(function* () {
     try {
       const parsed = new URL(context.remoteUrl);
       const [owner, name, ...rest] = parsed.pathname
+        .replace(/\/+$/, "")
         .replace(/\.git$/i, "")
         .split("/")
         .filter((part) => part.length > 0);

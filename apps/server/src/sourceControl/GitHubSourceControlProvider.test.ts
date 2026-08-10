@@ -193,6 +193,31 @@ it.effect("targets the upstream repository when listing open pull requests for a
   }),
 );
 
+it.effect("normalizes a trailing slash after an upstream Git URL suffix", () =>
+  Effect.gen(function* () {
+    let repository: string | undefined;
+    const provider = yield* makeProvider({
+      listOpenPullRequests: (input) => {
+        repository = input.repository;
+        return Effect.succeed([]);
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: {
+        provider: { kind: "github", name: "github.com", baseUrl: "https://github.com" },
+        remoteName: "upstream",
+        remoteUrl: "https://github.com/T3Tools/t3code.git/",
+      },
+      headSelector: "contributor:feature/fork-pr",
+      state: "open",
+    });
+
+    assert.strictEqual(repository, "T3Tools/t3code");
+  }),
+);
+
 it.effect("preserves a GitHub Enterprise host in upstream repository coordinates", () =>
   Effect.gen(function* () {
     let repository: string | undefined;
