@@ -22,6 +22,7 @@ describe("isPrivateHost", () => {
 
   it("detects private IPv4 ranges", () => {
     for (const host of [
+      "0.0.0.0",
       "10.0.0.1",
       "10.255.255.255",
       "127.0.0.1",
