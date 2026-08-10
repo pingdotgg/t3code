@@ -287,11 +287,21 @@ enum PlatformDeepLinkParser {
         _ route: PlatformRoute,
         knownEnvironmentIDs: Set<String>
     ) throws -> PlatformRoute {
-        guard case let .thread(environmentID?, _) = route,
-              knownEnvironmentIDs.contains(environmentID) else {
+        switch route {
+        case let .thread(environmentID?, _):
+            guard knownEnvironmentIDs.contains(environmentID) else {
+                throw PlatformDeepLinkError.unsupportedURL
+            }
+            return route
+        case let .thread(nil, threadID):
+            guard knownEnvironmentIDs.count == 1,
+                  let environmentID = knownEnvironmentIDs.first else {
+                throw PlatformDeepLinkError.unsupportedURL
+            }
+            return .thread(environmentID: environmentID, threadID: threadID)
+        default:
             throw PlatformDeepLinkError.unsupportedURL
         }
-        return route
     }
 
     private static func isLoopbackHost(_ host: String) -> Bool {

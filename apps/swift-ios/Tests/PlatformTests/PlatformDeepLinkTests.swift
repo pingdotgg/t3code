@@ -82,6 +82,16 @@ struct PlatformDeepLinkTests {
     }
 
     @Test
+    func resolvesEnvironmentlessNativeThreadLinkWhenOnlyOneEnvironmentIsKnown() throws {
+        #expect(
+            try PlatformDeepLinkParser.parseInAppLink(
+                "t3code-swiftui://threads?thread=thread-7",
+                knownEnvironmentIDs: ["environment-1"]
+            ) == .thread(environmentID: "environment-1", threadID: "thread-7")
+        )
+    }
+
+    @Test
     func leavesOrdinaryWebLinksForTheSystem() {
         for value in [
             "https://example.com/environment/thread",
