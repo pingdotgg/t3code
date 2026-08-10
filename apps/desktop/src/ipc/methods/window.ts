@@ -220,19 +220,6 @@ export const pickFolder = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const confirm = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.CONFIRM_CHANNEL,
-  payload: Schema.String,
-  result: Schema.Boolean,
-  handler: Effect.fn("desktop.ipc.window.confirm")(function* (message) {
-    const dialog = yield* ElectronDialog.ElectronDialog;
-    const electronWindow = yield* ElectronWindow.ElectronWindow;
-    return yield* electronWindow.focusedMainOrFirst.pipe(
-      Effect.flatMap((owner) => dialog.confirm({ owner, message })),
-    );
-  }),
-});
-
 export const setTheme = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.SET_THEME_CHANNEL,
   payload: DesktopThemeSchema,
