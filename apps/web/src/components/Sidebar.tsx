@@ -81,6 +81,7 @@ import {
   threadTraversalDirectionFromCommand,
 } from "../keybindings";
 import { useShortcutModifierState } from "../shortcutModifierState";
+import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -126,6 +127,7 @@ import {
   orderItemsByPreferredIds,
   planPinnedReorder,
   resolveAdjacentThreadId,
+  resolveThreadRenameTargetKey,
   resolveSettledTimestamp,
   resolveSidebarThreadStatus,
   searchSidebarThreadsByTitle,
@@ -3069,6 +3071,7 @@ export default function Sidebar() {
         context: {
           terminalFocus: isTerminalFocused(),
           terminalOpen: routeTerminalOpen,
+          previewFocus: isPreviewFocused(),
           modelPickerOpen: isModelPickerOpen(),
         },
       });
@@ -3081,6 +3084,22 @@ export default function Sidebar() {
         navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
         return true;
       };
+      if (command === "thread.rename") {
+        event.preventDefault();
+        event.stopPropagation();
+        const targetThreadKey = resolveThreadRenameTargetKey({
+          selectedThreadKeys: useThreadSelectionStore.getState().selectedThreadKeys,
+          activeThreadKey: routeThreadKey,
+        });
+        if (!targetThreadKey) return;
+        const targetThread = threadByKey.get(targetThreadKey);
+        if (!targetThread) return;
+        startThreadRename(
+          scopeThreadRef(targetThread.environmentId, targetThread.id),
+          targetThread.title,
+        );
+        return;
+      }
       const traversalDirection = threadTraversalDirectionFromCommand(command);
       if (traversalDirection !== null) {
         navigateToThreadKey(
@@ -3104,6 +3123,7 @@ export default function Sidebar() {
     orderedThreadKeys,
     routeTerminalOpen,
     routeThreadKey,
+    startThreadRename,
     threadByKey,
   ]);
 

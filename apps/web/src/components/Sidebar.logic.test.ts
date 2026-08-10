@@ -7,6 +7,7 @@ import {
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
+  resolveThreadRenameTargetKey,
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
@@ -50,6 +51,35 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("resolveThreadRenameTargetKey", () => {
+  it("prefers the one selected thread over the active thread", () => {
+    expect(
+      resolveThreadRenameTargetKey({
+        selectedThreadKeys: new Set(["selected"]),
+        activeThreadKey: "active",
+      }),
+    ).toBe("selected");
+  });
+
+  it("uses the active thread when there is no sidebar selection", () => {
+    expect(
+      resolveThreadRenameTargetKey({
+        selectedThreadKeys: new Set(),
+        activeThreadKey: "active",
+      }),
+    ).toBe("active");
+  });
+
+  it("does not choose arbitrarily from a multi-selection", () => {
+    expect(
+      resolveThreadRenameTargetKey({
+        selectedThreadKeys: new Set(["one", "two"]),
+        activeThreadKey: "active",
+      }),
+    ).toBeNull();
+  });
+});
 
 describe("shouldNavigateAfterProjectRemoval", () => {
   const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];

@@ -50,6 +50,14 @@ type LogicalSidebarProject = SidebarProject & {
 
 export type ThreadTraversalDirection = "previous" | "next";
 
+export function resolveThreadRenameTargetKey(input: {
+  selectedThreadKeys: ReadonlySet<string>;
+  activeThreadKey: string | null;
+}): string | null {
+  if (input.selectedThreadKeys.size > 1) return null;
+  return input.selectedThreadKeys.values().next().value ?? input.activeThreadKey;
+}
+
 export async function archiveSelectedThreadEntries<
   TEntry extends { readonly threadKey: string },
   TResult extends { readonly _tag: "Success" | "Failure" },

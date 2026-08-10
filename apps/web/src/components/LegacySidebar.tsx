@@ -74,6 +74,7 @@ import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { isElectron } from "../env";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
+import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isMacPlatform } from "../lib/utils";
 import {
@@ -176,6 +177,7 @@ import {
   isContextMenuPointerDown,
   isTrailingDoubleClick,
   resolveProjectStatusIndicator,
+  resolveThreadRenameTargetKey,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
@@ -225,6 +227,11 @@ const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> =
 };
 const SIDEBAR_ICON_ACTION_BUTTON_CLASS =
   "inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-icon-muted hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring";
+
+interface ThreadRenameRequest {
+  id: number;
+  threadKey: string;
+}
 
 function SidebarThreadDetailPrewarmer({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
   useEnvironmentThread(threadRef.environmentId, threadRef.threadId);
@@ -1051,6 +1058,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
 
 interface SidebarProjectItemProps {
   project: SidebarProjectSnapshot;
+  threadRenameRequest: ThreadRenameRequest | null;
   isThreadListExpanded: boolean;
   activeRouteThreadKey: string | null;
   newThreadShortcutLabel: string | null;
@@ -1071,6 +1079,7 @@ interface SidebarProjectItemProps {
 const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjectItemProps) {
   const {
     project,
+    threadRenameRequest,
     isThreadListExpanded,
     activeRouteThreadKey,
     newThreadShortcutLabel,
@@ -1205,6 +1214,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   >("inherit");
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
+  const handledThreadRenameRequestIdRef = useRef<number | null>(null);
   const confirmArchiveButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const memberProjectByScopedKey = useMemo(
     () =>
@@ -1973,6 +1983,21 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     setRenamingTitle(title);
     renamingCommittedRef.current = false;
   }, []);
+
+  useEffect(() => {
+    if (
+      !threadRenameRequest ||
+      handledThreadRenameRequestIdRef.current === threadRenameRequest.id
+    ) {
+      return;
+    }
+    const thread = sidebarThreadByKeyRef.current.get(threadRenameRequest.threadKey);
+    if (!thread) {
+      return;
+    }
+    handledThreadRenameRequestIdRef.current = threadRenameRequest.id;
+    startThreadRename(threadRenameRequest.threadKey, thread.title);
+  }, [startThreadRename, threadRenameRequest]);
 
   const commitRename = useCallback(
     async (threadRef: ScopedThreadRef, newTitle: string, originalTitle: string) => {
@@ -2746,6 +2771,7 @@ interface SidebarProjectsContentProps {
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   sortedProjects: readonly SidebarProjectSnapshot[];
+  threadRenameRequest: ThreadRenameRequest | null;
   expandedThreadListsByProject: ReadonlySet<string>;
   activeRouteProjectKey: string | null;
   routeThreadKey: string | null;
@@ -2786,6 +2812,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     archiveThread,
     deleteThread,
     sortedProjects,
+    threadRenameRequest,
     expandedThreadListsByProject,
     activeRouteProjectKey,
     routeThreadKey,
@@ -2925,6 +2952,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                     {(dragHandleProps) => (
                       <SidebarProjectItem
                         project={project}
+                        threadRenameRequest={threadRenameRequest}
                         isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
                         activeRouteThreadKey={
                           activeRouteProjectKey === project.projectKey ? routeThreadKey : null
@@ -2957,6 +2985,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
               <SidebarProjectListRow
                 key={project.projectKey}
                 project={project}
+                threadRenameRequest={threadRenameRequest}
                 isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
                 activeRouteThreadKey={
                   activeRouteProjectKey === project.projectKey ? routeThreadKey : null
@@ -3027,6 +3056,8 @@ export default function LegacySidebar() {
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
     ReadonlySet<string>
   >(() => new Set());
+  const [threadRenameRequest, setThreadRenameRequest] = useState<ThreadRenameRequest | null>(null);
+  const threadRenameRequestIdRef = useRef(0);
   const { showThreadJumpHints, updateThreadJumpHintsVisibility } = useThreadJumpHintVisibility();
   const dragInProgressRef = useRef(false);
   const suppressProjectClickAfterDragRef = useRef(false);
@@ -3155,6 +3186,7 @@ export default function LegacySidebar() {
     () => ({
       terminalFocus: isTerminalFocused(),
       terminalOpen: routeTerminalOpen,
+      previewFocus: isPreviewFocused(),
       modelPickerOpen: isModelPickerOpen(),
     }),
     [routeTerminalOpen],
@@ -3413,6 +3445,23 @@ export default function LegacySidebar() {
         platform,
         context: shortcutContext,
       });
+      if (command === "thread.rename") {
+        event.preventDefault();
+        event.stopPropagation();
+        const targetThreadKey = resolveThreadRenameTargetKey({
+          selectedThreadKeys: useThreadSelectionStore.getState().selectedThreadKeys,
+          activeThreadKey: routeThreadKey,
+        });
+        if (!targetThreadKey) return;
+        const targetThread = sidebarThreadByKey.get(targetThreadKey);
+        if (!targetThread) return;
+        threadRenameRequestIdRef.current += 1;
+        setThreadRenameRequest({
+          id: threadRenameRequestIdRef.current,
+          threadKey: targetThreadKey,
+        });
+        return;
+      }
       const traversalDirection = threadTraversalDirectionFromCommand(command);
       if (traversalDirection !== null) {
         const targetThreadKey = resolveAdjacentThreadId({
@@ -3610,6 +3659,7 @@ export default function LegacySidebar() {
         archiveThread={archiveThread}
         deleteThread={deleteThread}
         sortedProjects={sortedProjects}
+        threadRenameRequest={threadRenameRequest}
         expandedThreadListsByProject={expandedThreadListsByProject}
         activeRouteProjectKey={activeRouteProjectKey}
         routeThreadKey={routeThreadKey}
