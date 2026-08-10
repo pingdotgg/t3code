@@ -296,7 +296,7 @@ struct PlatformRootView: View {
                 navigationRequest = FeatureWorkspaceNavigationRequest(
                     destination: .sharedThread(
                         id: thread.id,
-                        draft: imported.sharedContent
+                        importDraft: imported.sharedContent
                     )
                 )
             }

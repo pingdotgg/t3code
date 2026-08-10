@@ -23,6 +23,26 @@ public struct FeatureComposerDraft: Sendable, Equatable {
     }
 }
 
+public struct FeatureComposerDraftSnapshot: Sendable, Equatable {
+    public let draft: FeatureComposerDraft?
+    public let importedShareIDs: Set<String>
+
+    public init(draft: FeatureComposerDraft?, importedShareIDs: Set<String>) {
+        self.draft = draft
+        self.importedShareIDs = importedShareIDs
+    }
+}
+
+public struct FeatureComposerIncomingShareDraft: Sendable, Equatable {
+    public let shareID: String
+    public let draft: FeatureComposerDraft
+
+    public init(shareID: String, draft: FeatureComposerDraft) {
+        self.shareID = shareID
+        self.draft = draft
+    }
+}
+
 public struct FeatureComposerWorkspaceDraft: Sendable, Equatable {
     public var mode: FeatureWorkspaceMode
     public var branch: String?
@@ -175,9 +195,18 @@ public actor FeatureComposerDraftStore {
     }
 
     public func draft(for key: String) throws -> FeatureComposerDraft? {
-        guard let draft = try loadIfNeeded()[key]?.featureValue,
-              !draft.isEmpty else { return nil }
-        return draft
+        try snapshot(for: key).draft
+    }
+
+    public func snapshot(for key: String) throws -> FeatureComposerDraftSnapshot {
+        guard let persisted = try loadIfNeeded()[key] else {
+            return FeatureComposerDraftSnapshot(draft: nil, importedShareIDs: [])
+        }
+        let draft = persisted.featureValue
+        return FeatureComposerDraftSnapshot(
+            draft: draft.isEmpty ? nil : draft,
+            importedShareIDs: Set(persisted.importedShareIDs ?? [])
+        )
     }
 
     public func setDraft(_ draft: FeatureComposerDraft, for key: String) throws {

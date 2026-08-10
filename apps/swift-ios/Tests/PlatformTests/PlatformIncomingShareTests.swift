@@ -266,6 +266,68 @@ struct PlatformIncomingShareTests {
     }
 
     @Test
+    func replayAfterInboxRemovalFailureStillReturnsTheShareIdentityAndDelta() async throws {
+        let recorder = IncomingShareTestRecorder()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        let envelope = Self.envelope(text: "Shared once")
+        let thread = FeatureThread(
+            id: "thread:environment:thread",
+            wireID: "thread",
+            projectID: "project",
+            environmentID: "environment",
+            title: "Thread"
+        )
+        let pipeline = PlatformIncomingSharePipeline(
+            source: PlatformIncomingShareSource(
+                loadAll: { [envelope] },
+                data: { _ in Data() },
+                remove: { id in
+                    await recorder.record("remove:\(id)")
+                    if await recorder.events.count == 1 {
+                        throw IncomingShareTestError.removeFailed
+                    }
+                }
+            ),
+            drafts: PlatformIncomingShareDraftRepository(
+                importContent: { shareID, text, attachments, key, maximumCount in
+                    let result = try await store.importSharedContentResult(
+                        shareID: shareID,
+                        text: text,
+                        attachments: attachments,
+                        for: key,
+                        maximumAttachmentCount: maximumCount
+                    )
+                    return PlatformIncomingShareDraftImport(
+                        draft: result.draft,
+                        didImport: result.didImport
+                    )
+                }
+            )
+        )
+
+        do {
+            _ = try await pipeline.importEnvelope(envelope, into: thread)
+            Issue.record("Expected inbox removal to fail")
+        } catch {
+            #expect(error as? IncomingShareTestError == .removeFailed)
+        }
+
+        let replay = try await pipeline.importEnvelope(envelope, into: thread)
+        let snapshot = try await store.snapshot(for: FeatureComposerDraftStore.threadKey(thread))
+
+        #expect(replay.sharedContent.shareID == envelope.id)
+        #expect(replay.sharedContent.draft.text == "Shared once")
+        #expect(snapshot.draft?.text == "Shared once")
+        #expect(snapshot.importedShareIDs == [envelope.id])
+        #expect(await recorder.events.count == 2)
+    }
+
+    @Test
     func existingThreadImportUsesItsDraftAndRepresentsVideoAsAContactSheet() async throws {
         let recorder = IncomingShareTestRecorder()
         let videoID = "12345678-1234-1234-1234-123456789abc"
@@ -314,8 +376,11 @@ struct PlatformIncomingShareTests {
 
         #expect(captured?.key == FeatureComposerDraftStore.threadKey(thread))
         #expect(imported.draft.text.contains("Review this"))
-        #expect(imported.sharedContent?.text.contains("Shared video: reference.mov") == true)
-        #expect(imported.sharedContent?.attachments.first?.id.uuidString.lowercased() == videoID)
+        #expect(imported.sharedContent.shareID == envelope.id)
+        #expect(imported.sharedContent.draft.text.contains("Shared video: reference.mov"))
+        #expect(
+            imported.sharedContent.draft.attachments.first?.id.uuidString.lowercased() == videoID
+        )
         #expect(await recorder.events == [
             "video:\(videoID)",
             "import:\(envelope.id)",
@@ -545,6 +610,7 @@ struct PlatformIncomingShareTests {
 
 private enum IncomingShareTestError: Error, Equatable {
     case imageFailed
+    case removeFailed
     case saveFailed
 }
 

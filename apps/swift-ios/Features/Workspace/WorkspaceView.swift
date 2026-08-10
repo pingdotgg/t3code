@@ -4,7 +4,7 @@ import UIKit
 struct FeatureWorkspaceNavigationRequest: Equatable, Sendable {
     enum Destination: Equatable, Sendable {
         case thread(id: String)
-        case sharedThread(id: String, draft: FeatureComposerDraft?)
+        case sharedThread(id: String, importDraft: FeatureComposerIncomingShareDraft)
         case project(id: String)
         case newTask(projectID: String?)
         case sharedNewTask(shareID: String)
@@ -43,7 +43,7 @@ public struct WorkspaceView: View {
     @State private var newTaskIncomingShareID: String?
     @State private var dismissingNewTaskContext: NewTaskDismissalContext?
     @State private var threadDetailPresentationRevision = 0
-    @State private var sharedThreadDraft: FeatureComposerDraft?
+    @State private var sharedThreadImports: [FeatureComposerIncomingShareDraft] = []
     @State private var showingAddProject = false
     @State private var showingSettings = false
     @State private var renamingThread: FeatureThread?
@@ -284,7 +284,7 @@ public struct WorkspaceView: View {
                 model: model,
                 thread: thread,
                 composerDraftReloadRevision: threadDetailPresentationRevision,
-                composerDraftReloadDraft: sharedThreadDraft,
+                composerDraftReloadImports: sharedThreadImports,
                 submitMessage: submitMessage,
                 onNavigateBack: closeSelectedThread
             )
@@ -601,11 +601,12 @@ public struct WorkspaceView: View {
             guard model.snapshot.threads.contains(where: { $0.id == id }) else { return }
             dismissTransientPresentations()
             openThread(id)
-        case let .sharedThread(id, draft):
+        case let .sharedThread(id, importDraft):
             guard model.snapshot.threads.contains(where: { $0.id == id }) else { return }
             dismissTransientPresentations()
-            if selectedThreadID == id, let draft {
-                sharedThreadDraft = draft
+            if selectedThreadID == id {
+                sharedThreadImports.removeAll { $0.shareID == importDraft.shareID }
+                sharedThreadImports.append(importDraft)
                 threadDetailPresentationRevision &+= 1
             }
             openThread(id)

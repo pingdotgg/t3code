@@ -278,20 +278,49 @@ struct ComposerDraftStoreTests {
         #expect(result.attachmentOverflowCount == 1)
     }
 
-    @Test func importDuringInitialRestoreIsConsumedExactlyOnceByRestoration() {
-        let baseline = FeatureComposerDraft(text: "Before")
-        let persistedImport = FeatureComposerDraft(text: "Before\n\nShared")
-
-        #expect(!FeatureComposerDraftReloadPolicy.shouldMergeIntoLiveComposer(
-            didRestoreDraft: false
-        ))
-        let restored = FeatureComposerDraftRestoration.merge(
-            saved: persistedImport,
-            baseline: baseline,
-            current: baseline
+    @Test func draftSnapshotReportsWhichShareImportsRestorationConsumed() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        let key = "environment:one:thread:one"
+        _ = try await store.importSharedContent(
+            shareID: "share-one",
+            text: "Shared",
+            attachments: [],
+            for: key
         )
 
-        #expect(restored.text == "Before\n\nShared")
+        let snapshot = try await store.snapshot(for: key)
+
+        #expect(snapshot.draft?.text == "Shared")
+        #expect(snapshot.importedShareIDs == ["share-one"])
+    }
+
+    @Test func reloadPolicyRetainsEveryShareNotConsumedByInitialRestoration() {
+        let imports = [
+            FeatureComposerIncomingShareDraft(
+                shareID: "already-restored",
+                draft: FeatureComposerDraft(text: "First")
+            ),
+            FeatureComposerIncomingShareDraft(
+                shareID: "pending-one",
+                draft: FeatureComposerDraft(text: "Second")
+            ),
+            FeatureComposerIncomingShareDraft(
+                shareID: "pending-two",
+                draft: FeatureComposerDraft(text: "Third")
+            ),
+        ]
+
+        let pending = FeatureComposerIncomingShareReloadPolicy.pendingImports(
+            imports,
+            restoredShareIDs: ["already-restored"]
+        )
+
+        #expect(pending.map(\.shareID) == ["pending-one", "pending-two"])
     }
 
     @Test func successfulSubmissionFenceWaitsForCancelledDraftWrites() async {
@@ -338,16 +367,20 @@ struct ComposerDraftStoreTests {
     }
 
     @Test func sharedThreadNavigationRequestsAComposerReload() {
+        let importDraft = FeatureComposerIncomingShareDraft(
+            shareID: "share-1",
+            draft: FeatureComposerDraft(text: "Shared")
+        )
         let request = FeatureWorkspaceNavigationRequest(
             destination: .sharedThread(
                 id: "thread-1",
-                draft: FeatureComposerDraft(text: "Shared")
+                importDraft: importDraft
             )
         )
 
         #expect(request.destination == .sharedThread(
             id: "thread-1",
-            draft: FeatureComposerDraft(text: "Shared")
+            importDraft: importDraft
         ))
         #expect(request.destination != .thread(id: "thread-1"))
     }
