@@ -86,11 +86,9 @@ enum PlatformDeepLinkParser {
     private static let t3Schemes: Set<String> = [
         "t3", "t3code", "t3code-dev", "t3code-swiftui", "t3code-swiftui-dev",
     ]
-    private static let trustedWebHosts: Set<String> = [
-        "app.t3.codes",
-        "t3.codes",
-        "www.t3.codes",
-    ]
+    private static let appWebHost = "app.t3.codes"
+    private static let marketingWebHosts: Set<String> = ["t3.codes", "www.t3.codes"]
+    private static let trustedWebHosts = marketingWebHosts.union([appWebHost])
 
     static func parse(_ url: URL) throws -> PlatformRoute {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
@@ -178,13 +176,16 @@ enum PlatformDeepLinkParser {
         throw PlatformDeepLinkError.unsupportedURL
     }
 
-    static func claimsInAppURL(_ url: URL) -> Bool {
+    /// Whether a failed in-app parse belongs exclusively to T3 Code and must
+    /// not fall through to the system. Marketing-host failures remain normal
+    /// web links; valid thread routes have already succeeded before this runs.
+    static func shouldDiscardFailedInAppURL(_ url: URL) -> Bool {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               let scheme = components.scheme?.lowercased() else { return false }
         if t3Schemes.contains(scheme) { return true }
         guard ["http", "https"].contains(scheme),
               let host = components.host?.lowercased() else { return false }
-        return trustedWebHosts.contains(host) || isLoopbackHost(host)
+        return isLoopbackHost(host) || host == appWebHost
     }
 
     static func parseInAppLink(

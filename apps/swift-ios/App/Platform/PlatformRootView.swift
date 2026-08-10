@@ -38,7 +38,7 @@ struct PlatformRootView: View {
                 handle(route)
                 return .handled
             } catch {
-                return PlatformDeepLinkParser.claimsInAppURL(url)
+                return PlatformDeepLinkParser.shouldDiscardFailedInAppURL(url)
                     ? .discarded
                     : .systemAction(url)
             }

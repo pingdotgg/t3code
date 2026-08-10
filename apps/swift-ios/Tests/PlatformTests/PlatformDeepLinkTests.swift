@@ -104,6 +104,21 @@ struct PlatformDeepLinkTests {
                 )
             }
         }
+        #expect(!PlatformDeepLinkParser.shouldDiscardFailedInAppURL(
+            URL(string: "https://t3.codes/privacy")!
+        ))
+        #expect(!PlatformDeepLinkParser.shouldDiscardFailedInAppURL(
+            URL(string: "https://www.t3.codes/docs")!
+        ))
+        #expect(!PlatformDeepLinkParser.shouldDiscardFailedInAppURL(
+            URL(string: "https://t3.codes/docs/getting-started")!
+        ))
+        #expect(!PlatformDeepLinkParser.shouldDiscardFailedInAppURL(
+            URL(string: "https://www.t3.codes/connect?endpoint=https://example.com")!
+        ))
+        #expect(PlatformDeepLinkParser.shouldDiscardFailedInAppURL(
+            URL(string: "https://app.t3.codes/environment/thread")!
+        ))
     }
 
     @Test
@@ -120,13 +135,13 @@ struct PlatformDeepLinkTests {
                 )
             }
         }
-        #expect(PlatformDeepLinkParser.claimsInAppURL(
+        #expect(PlatformDeepLinkParser.shouldDiscardFailedInAppURL(
             URL(string: "t3code-swiftui://connect?endpoint=https://attacker.example")!
         ))
-        #expect(PlatformDeepLinkParser.claimsInAppURL(
+        #expect(PlatformDeepLinkParser.shouldDiscardFailedInAppURL(
             URL(string: "https://app.t3.codes/connect?endpoint=https://attacker.example")!
         ))
-        #expect(!PlatformDeepLinkParser.claimsInAppURL(
+        #expect(!PlatformDeepLinkParser.shouldDiscardFailedInAppURL(
             URL(string: "https://example.com/connect")!
         ))
     }
