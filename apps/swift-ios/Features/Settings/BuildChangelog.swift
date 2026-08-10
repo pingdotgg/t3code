@@ -20,6 +20,8 @@ struct BuildChangelog: Codable, Equatable, Sendable {
     let generatedBy: String
     let entries: [Entry]
 
+    static let embedded = load(info: Bundle.main.infoDictionary)
+
     static func load(info: [String: Any]?) -> BuildChangelog? {
         guard let encoded = info?["T3BuildChangelog"] as? String,
               !encoded.isEmpty,

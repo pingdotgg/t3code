@@ -76,10 +76,16 @@ fi
 build_settings=(
   "DEVELOPMENT_TEAM=${DEVELOPMENT_TEAM}"
 )
+CHANGELOG_FILE=""
+DEVICE_JSON=""
+cleanup() {
+  [[ -z "${CHANGELOG_FILE}" ]] || rm -f -- "${CHANGELOG_FILE}"
+  [[ -z "${DEVICE_JSON}" ]] || rm -f -- "${DEVICE_JSON}"
+}
+trap cleanup EXIT
 
 if [[ "${CONFIGURATION}" == "Debug" ]]; then
   CHANGELOG_FILE="$(mktemp -t t3-swift-changelog.XXXXXX)"
-  trap 'unlink "${CHANGELOG_FILE:-}" "${DEVICE_JSON:-}" 2>/dev/null || true' EXIT
   CHANGELOG_BASE_REF="${T3_SWIFT_CHANGELOG_BASE_REF:-upstream/t3code/rebuild-mobile-app-swift}"
   xcrun swift "${SCRIPT_DIR}/generate-build-changelog.swift" \
     "${APP_DIR}/../.." "${CHANGELOG_BASE_REF}" "${CHANGELOG_FILE}"
@@ -87,7 +93,6 @@ if [[ "${CONFIGURATION}" == "Debug" ]]; then
   build_settings+=("T3_BUILD_CHANGELOG=${BUILD_CHANGELOG}")
 fi
 DEVICE_JSON="$(mktemp -t t3-swift-devices.XXXXXX)"
-trap 'unlink "${CHANGELOG_FILE:-}" "${DEVICE_JSON:-}" 2>/dev/null || true' EXIT
 xcrun devicectl list devices --json-output "${DEVICE_JSON}" --quiet >/dev/null
 DESTINATION_ID="$(
   xcrun swift "${SCRIPT_DIR}/resolve-device-udid.swift" "${DEVICE_JSON}" "${DEVICE_ID}"

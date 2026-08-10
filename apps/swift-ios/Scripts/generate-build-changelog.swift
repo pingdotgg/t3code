@@ -30,7 +30,7 @@ func git(_ arguments: [String], repository: String, required: Bool = true) -> St
     process.arguments = ["-C", repository] + arguments
     let output = Pipe()
     process.standardOutput = output
-    process.standardError = FileHandle.standardError
+    process.standardError = required ? FileHandle.standardError : Pipe()
     do { try process.run() } catch { fail("could not launch git: \(error)") }
     let data = output.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
@@ -51,7 +51,7 @@ let repository = arguments[1]
 let baseRef = arguments[2]
 let outputURL = URL(fileURLWithPath: arguments[3])
 let revision = git(["rev-parse", "HEAD"], repository: repository)!
-let baseRevision = git(["rev-parse", baseRef], repository: repository)!
+let baseRevision = git(["rev-parse", baseRef], repository: repository, required: false)
 let rawRepositoryURL = git(
     ["remote", "get-url", "upstream"], repository: repository, required: false
 ) ?? git(["remote", "get-url", "origin"], repository: repository, required: false)
@@ -67,12 +67,20 @@ let repositoryURL: String? = {
 }()
 let fieldSeparator = Character("\u{1f}")
 let recordSeparator = Character("\u{1e}")
-let log = git([
-    "log", "--reverse", "--date=iso-strict",
-    "--format=%H%x1f%s%x1f%b%x1f%cI%x1e", "\(baseRef)..HEAD",
-], repository: repository)!
+let log: String
+if baseRevision == nil {
+    FileHandle.standardError.write(
+        Data("[swift-ios-changelog] warning: base ref \(baseRef) is unavailable; embedding an empty changelog\n".utf8)
+    )
+    log = ""
+} else {
+    log = git([
+        "log", "--reverse", "--date=iso-strict",
+        "--format=%H%x1f%s%x1f%b%x1f%cI%x1e", "\(baseRef)..HEAD",
+    ], repository: repository)!
+}
 let pullRequestPattern = try! NSRegularExpression(pattern: #"\(#(\d+)\)$"#)
-let entries = log.split(separator: recordSeparator).compactMap { record -> Entry? in
+var entries = log.split(separator: recordSeparator).compactMap { record -> Entry? in
     let fields = record.split(separator: fieldSeparator, omittingEmptySubsequences: false)
     guard fields.count >= 4 else { return nil }
     let commit = String(fields[0]).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -95,19 +103,29 @@ let entries = log.split(separator: recordSeparator).compactMap { record -> Entry
     )
 }
 
-let changelog = Changelog(
-    revision: revision,
-    baseRevision: baseRevision,
-    repositoryURL: repositoryURL,
-    generatedBy: "Git history",
-    entries: entries
-)
 let encoder = JSONEncoder()
 encoder.outputFormatting = [.sortedKeys]
 do {
-    let data = try encoder.encode(changelog)
-    guard data.count <= 49_152 else {
-        fail("changelog exceeds the 48 KiB build-setting limit")
+    var omittedCount = 0
+    var data: Data
+    repeat {
+        let generatedBy = omittedCount == 0
+            ? "Git history"
+            : "Git history · \(omittedCount) older changes omitted"
+        data = try encoder.encode(Changelog(
+            revision: revision,
+            baseRevision: baseRevision,
+            repositoryURL: repositoryURL,
+            generatedBy: generatedBy,
+            entries: entries
+        ))
+        guard data.base64EncodedString().utf8.count > 49_152,
+              !entries.isEmpty else { break }
+        entries.removeFirst()
+        omittedCount += 1
+    } while true
+    guard data.base64EncodedString().utf8.count <= 49_152 else {
+        fail("changelog metadata exceeds the 48 KiB encoded build-setting limit")
     }
     try data.write(to: outputURL, options: .atomic)
 } catch {

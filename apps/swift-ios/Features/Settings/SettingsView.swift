@@ -14,7 +14,7 @@ public struct SettingsView: View {
         _settings = State(initialValue: model.snapshot.settings)
         let info = Bundle.main.infoDictionary
         appVersionLabel = SettingsAboutMetadata.appVersionLabel(info: info)
-        buildChangelog = BuildChangelog.load(info: info)
+        buildChangelog = BuildChangelog.embedded
     }
 
     public var body: some View {
