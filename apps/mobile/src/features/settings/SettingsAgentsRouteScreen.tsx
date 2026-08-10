@@ -35,7 +35,7 @@ import {
   resolveProfileBaselineForSave,
   type AgentProfileDraft,
 } from "./agentProfile.logic";
-import { agentSettingsContextKey } from "./agentSettings.logic";
+import { agentSettingsContextKey, resolveAgentSettingsEnvironmentId } from "./agentSettings.logic";
 import {
   buildAgentRuleDocument,
   draftFromRule,
@@ -71,7 +71,7 @@ export function SettingsAgentsRouteScreen() {
   const [ruleCommandPending, setRuleCommandPending] = useState(false);
   const profileCommandInFlight = useRef(false);
   const ruleCommandInFlight = useRef(false);
-  const resolvedEnvironmentId = environmentId ?? environments[0]?.environmentId ?? null;
+  const resolvedEnvironmentId = environmentId;
   const projectOptions = projects.filter(
     (project) => project.environmentId === resolvedEnvironmentId,
   );
@@ -120,12 +120,14 @@ export function SettingsAgentsRouteScreen() {
   const restoreRule = useAtomCommand(agentEnvironment.restoreRule, { reportFailure: false });
 
   useEffect(() => {
-    if (
-      environmentId !== null &&
-      !environments.some((environment) => environment.environmentId === environmentId)
-    ) {
+    const nextEnvironmentId = resolveAgentSettingsEnvironmentId(
+      environmentId,
+      environments.map((environment) => environment.environmentId),
+    );
+    if (nextEnvironmentId === environmentId) return;
+
+    if (environmentId !== null) {
       setContextGeneration((generation) => generation + 1);
-      setEnvironmentId(null);
       setProjectId(null);
       setSelectedKey(null);
       setSelectedRuleKey(null);
@@ -138,6 +140,7 @@ export function SettingsAgentsRouteScreen() {
       setRuleNotice(null);
       setRuleError(null);
     }
+    setEnvironmentId(nextEnvironmentId);
   }, [environmentId, environments]);
 
   useEffect(() => {

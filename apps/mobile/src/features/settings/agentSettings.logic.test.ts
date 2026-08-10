@@ -1,6 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { agentSettingsContextKey, parseRequiredNumber } from "./agentSettings.logic";
+import {
+  agentSettingsContextKey,
+  parseRequiredNumber,
+  resolveAgentSettingsEnvironmentId,
+} from "./agentSettings.logic";
 
 describe("mobile agent settings numeric fields", () => {
   it("trims input before parsing it once", () => {
@@ -23,5 +27,16 @@ describe("mobile agent settings numeric fields", () => {
     expect(agentSettingsContextKey({ ...context, generation: 1 })).not.toBe(
       agentSettingsContextKey({ ...context, generation: 2 }),
     );
+  });
+
+  it("pins the implicit environment when connection ordering changes", () => {
+    const initial = resolveAgentSettingsEnvironmentId(null, ["alpha", "beta"]);
+    expect(initial).toBe("alpha");
+    expect(resolveAgentSettingsEnvironmentId(initial, ["beta", "alpha"])).toBe("alpha");
+  });
+
+  it("moves to the next environment only when the pinned one disappears", () => {
+    expect(resolveAgentSettingsEnvironmentId("alpha", ["beta"])).toBe("beta");
+    expect(resolveAgentSettingsEnvironmentId("alpha", [])).toBeNull();
   });
 });
