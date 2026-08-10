@@ -29,6 +29,25 @@ struct FeatureToolStateTests {
     }
 
     @Test
+    func fileEntryFindsItsContainingDirectory() {
+        #expect(
+            FeatureFileEntry(
+                path: "Sources/App/RootView.swift",
+                name: "RootView.swift",
+                kind: .file
+            ).containingDirectoryPath == "Sources/App"
+        )
+        #expect(
+            FeatureFileEntry(path: "README.md", name: "README.md", kind: .file)
+                .containingDirectoryPath == nil
+        )
+        #expect(
+            FeatureFileEntry(path: "/README.md", name: "README.md", kind: .file)
+                .containingDirectoryPath == nil
+        )
+    }
+
+    @Test
     func workspaceFileLinksResolveRelativeAndContainedAbsolutePaths() throws {
         let relative = try #require(URL(string: "docs/My%20Notes.txt#L12"))
         #expect(

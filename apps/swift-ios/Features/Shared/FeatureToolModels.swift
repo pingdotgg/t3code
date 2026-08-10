@@ -48,6 +48,14 @@ public struct FeatureFileEntry: Identifiable, Sendable, Equatable, Hashable, Cod
     }
 }
 
+public extension FeatureFileEntry {
+    var containingDirectoryPath: String? {
+        guard let separator = path.lastIndex(of: "/") else { return nil }
+        let directory = path[..<separator]
+        return directory.isEmpty ? nil : String(directory)
+    }
+}
+
 public extension Array where Element == FeatureFileEntry {
     func featureFiltered(by query: String, includesHidden: Bool) -> [FeatureFileEntry] {
         let visible = includesHidden ? self : filter { !$0.isHidden }

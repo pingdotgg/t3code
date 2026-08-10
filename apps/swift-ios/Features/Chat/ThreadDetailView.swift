@@ -84,7 +84,11 @@ public struct ThreadDetailView: View {
             NavigationStack {
                 switch surface {
                 case .files:
-                    FeatureFilesView(client: model.client, threadID: thread.id)
+                    FeatureFilesView(
+                        client: model.client,
+                        threadID: thread.id,
+                        workspaceRoot: workspaceRoot
+                    )
                 case .review:
                     FeatureReviewView(client: model.client, threadID: thread.id)
                 case .sourceControl:
@@ -104,18 +108,13 @@ public struct ThreadDetailView: View {
             .presentationDragIndicator(.visible)
         }
         .sheet(item: $linkedFile) { link in
-            NavigationStack {
-                FeatureFilePreviewView(
-                    client: model.client,
-                    threadID: thread.id,
-                    entry: link.entry
-                )
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Done") { linkedFile = nil }
-                    }
-                }
-            }
+            FeatureLinkedFileSheet(
+                client: model.client,
+                threadID: thread.id,
+                workspaceRoot: workspaceRoot,
+                entry: link.entry,
+                onDone: { linkedFile = nil }
+            )
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
@@ -588,6 +587,44 @@ public struct ThreadDetailView: View {
         )
     }
 
+}
+
+private struct FeatureLinkedFileSheet: View {
+    let client: any FeatureClient
+    let threadID: String
+    let workspaceRoot: String?
+    let entry: FeatureFileEntry
+    let onDone: () -> Void
+
+    @State private var showsContainingDirectory = false
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if showsContainingDirectory {
+                    FeatureFilesView(
+                        client: client,
+                        threadID: threadID,
+                        workspaceRoot: workspaceRoot,
+                        initialPath: entry.containingDirectoryPath
+                    )
+                } else {
+                    FeatureFilePreviewView(
+                        client: client,
+                        threadID: threadID,
+                        workspaceRoot: workspaceRoot,
+                        entry: entry,
+                        onShowInFiles: { showsContainingDirectory = true }
+                    )
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done", action: onDone)
+                }
+            }
+        }
+    }
 }
 
 private struct FeatureThreadOpeningView: View {

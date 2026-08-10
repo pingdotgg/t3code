@@ -5,14 +5,29 @@ import UIKit
 public struct FeatureFilesView: View {
     let client: any FeatureClient
     let threadID: String
+    let workspaceRoot: String?
+    let initialPath: String?
 
-    public init(client: any FeatureClient, threadID: String) {
+    public init(
+        client: any FeatureClient,
+        threadID: String,
+        workspaceRoot: String? = nil,
+        initialPath: String? = nil
+    ) {
         self.client = client
         self.threadID = threadID
+        self.workspaceRoot = workspaceRoot
+        self.initialPath = initialPath
     }
 
     public var body: some View {
-        FeatureFileDirectoryView(client: client, threadID: threadID, path: nil, title: "Files")
+        FeatureFileDirectoryView(
+            client: client,
+            threadID: threadID,
+            workspaceRoot: workspaceRoot,
+            path: initialPath,
+            title: initialPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Files"
+        )
             .background(T3Colors.background)
     }
 }
@@ -20,6 +35,7 @@ public struct FeatureFilesView: View {
 private struct FeatureFileDirectoryView: View {
     let client: any FeatureClient
     let threadID: String
+    let workspaceRoot: String?
     let path: String?
     let title: String
 
@@ -87,11 +103,17 @@ private struct FeatureFileDirectoryView: View {
             FeatureFileDirectoryView(
                 client: client,
                 threadID: threadID,
+                workspaceRoot: workspaceRoot,
                 path: entry.path,
                 title: entry.name
             )
         } else {
-            FeatureFilePreviewView(client: client, threadID: threadID, entry: entry)
+            FeatureFilePreviewView(
+                client: client,
+                threadID: threadID,
+                workspaceRoot: workspaceRoot,
+                entry: entry
+            )
         }
     }
 
@@ -152,7 +174,9 @@ private struct FeatureFileRow: View {
 struct FeatureFilePreviewView: View {
     let client: any FeatureClient
     let threadID: String
+    let workspaceRoot: String?
     let entry: FeatureFileEntry
+    var onShowInFiles: (() -> Void)? = nil
 
     @State private var content: FeatureFileContent?
     @State private var sourceLines: [FeatureSourceLine] = []
@@ -160,6 +184,9 @@ struct FeatureFilePreviewView: View {
     @State private var assetURL: URL?
     @State private var errorMessage: String?
     @State private var isLoading = true
+    @State private var linkedFile: FeatureWorkspaceFileLink?
+    @State private var linkFailureMessage: String?
+    @State private var showsInfo = false
 
     private var previewKind: FeatureFilePreviewKind {
         FeatureFilePreviewKind.infer(path: entry.path, language: content?.language)
@@ -187,7 +214,7 @@ struct FeatureFilePreviewView: View {
                     switch previewKind {
                     case .markdown:
                         ScrollView {
-                            MarkdownMessageView(content.text)
+                            MarkdownMessageView(content.text, onOpenURL: openURL)
                                 .frame(maxWidth: T3Metrics.readingWidth, alignment: .leading)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 18)
@@ -212,7 +239,32 @@ struct FeatureFilePreviewView: View {
         .navigationTitle(entry.name)
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("workspace-file-preview")
+        .navigationDestination(item: $linkedFile) { link in
+            FeatureFilePreviewView(
+                client: client,
+                threadID: threadID,
+                workspaceRoot: workspaceRoot,
+                entry: link.entry
+            )
+        }
         .toolbar {
+            if let onShowInFiles {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: onShowInFiles) {
+                        Label("Files", systemImage: "chevron.backward")
+                    }
+                    .accessibilityIdentifier("workspace-file-show-in-files")
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showsInfo = true
+                } label: {
+                    Image(systemName: "info.circle")
+                }
+                .accessibilityLabel("File info")
+                .accessibilityIdentifier("workspace-file-info")
+            }
             if let assetURL {
                 ToolbarItem(placement: .topBarTrailing) {
                     ShareLink(item: assetURL) {
@@ -229,7 +281,42 @@ struct FeatureFilePreviewView: View {
                 }
             }
         }
+        .sheet(isPresented: $showsInfo) {
+            NavigationStack {
+                FeatureFileInfoView(entry: entry, content: content)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showsInfo = false }
+                        }
+                    }
+            }
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+        }
+        .alert(
+            "File link unavailable",
+            isPresented: Binding(
+                get: { linkFailureMessage != nil },
+                set: { if !$0 { linkFailureMessage = nil } }
+            )
+        ) {
+            Button("OK") { linkFailureMessage = nil }
+        } message: {
+            Text(linkFailureMessage ?? "This file is not inside the active workspace.")
+        }
         .task { await load() }
+    }
+
+    private func openURL(_ url: URL) -> Bool {
+        guard let link = FeatureWorkspaceFileLink(url: url, workspaceRoot: workspaceRoot) else {
+            guard FeatureWorkspaceFileLink.isWorkspaceDestination(url) else { return false }
+            linkFailureMessage = workspaceRoot == nil
+                ? "The active workspace is not available for this thread."
+                : "This file is not inside the active workspace."
+            return true
+        }
+        linkedFile = link
+        return true
     }
 
     private func load() async {
@@ -299,6 +386,48 @@ struct FeatureFilePreviewView: View {
         } catch {
             guard !Task.isCancelled else { return }
             errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct FeatureFileInfoView: View {
+    let entry: FeatureFileEntry
+    let content: FeatureFileContent?
+
+    var body: some View {
+        List {
+            LabeledContent("Name", value: entry.name)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Path")
+                    .foregroundStyle(T3Colors.textSecondary)
+                Text(entry.path)
+                    .font(T3Typography.code)
+                    .textSelection(.enabled)
+            }
+            LabeledContent("Kind", value: kindLabel)
+            if let byteCount = content?.totalBytes ?? entry.sizeBytes {
+                LabeledContent(
+                    "Size",
+                    value: ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file)
+                )
+            }
+            if let language = content?.language, !language.isEmpty {
+                LabeledContent("Language", value: language)
+            }
+            if content?.isTruncated == true {
+                LabeledContent("Preview", value: "Partial")
+            }
+        }
+        .navigationTitle("File Info")
+        .navigationBarTitleDisplayMode(.inline)
+        .accessibilityIdentifier("workspace-file-info-view")
+    }
+
+    private var kindLabel: String {
+        switch entry.kind {
+        case .file: "File"
+        case .directory: "Folder"
+        case .symbolicLink: "Symbolic Link"
         }
     }
 }
