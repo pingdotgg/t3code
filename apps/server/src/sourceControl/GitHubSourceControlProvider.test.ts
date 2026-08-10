@@ -193,6 +193,35 @@ it.effect("targets the upstream repository when listing open pull requests for a
   }),
 );
 
+it.effect("preserves a GitHub Enterprise host in upstream repository coordinates", () =>
+  Effect.gen(function* () {
+    let repository: string | undefined;
+    const provider = yield* makeProvider({
+      listOpenPullRequests: (input) => {
+        repository = input.repository;
+        return Effect.succeed([]);
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "github",
+          name: "github.example.com",
+          baseUrl: "https://github.example.com",
+        },
+        remoteName: "upstream",
+        remoteUrl: "git@github.example.com:platform/t3code.git",
+      },
+      headSelector: "contributor:feature/fork-pr",
+      state: "open",
+    });
+
+    assert.strictEqual(repository, "github.example.com/platform/t3code");
+  }),
+);
+
 it.effect("treats empty non-open change request listing output as no results", () =>
   Effect.gen(function* () {
     const provider = yield* makeProvider({
@@ -207,6 +236,55 @@ it.effect("treats empty non-open change request listing output as no results", (
     });
 
     assert.deepStrictEqual(changeRequests, []);
+  }),
+);
+
+it.effect("filters qualified fork heads for non-open listings without gh head syntax", () =>
+  Effect.gen(function* () {
+    let args: ReadonlyArray<string> = [];
+    const provider = yield* makeProvider({
+      execute: (input) => {
+        args = input.args;
+        return Effect.succeed(
+          processResult(
+            JSON.stringify([
+              {
+                number: 51,
+                title: "Other owner",
+                url: "https://github.com/pingdotgg/t3code/pull/51",
+                baseRefName: "main",
+                headRefName: "feature/shared",
+                state: "CLOSED",
+                headRepositoryOwner: { login: "other" },
+              },
+              {
+                number: 52,
+                title: "Requested owner",
+                url: "https://github.com/pingdotgg/t3code/pull/52",
+                baseRefName: "main",
+                headRefName: "feature/shared",
+                state: "CLOSED",
+                headRepositoryOwner: { login: "octocat" },
+              },
+            ]),
+          ),
+        );
+      },
+    });
+
+    const changeRequests = yield* provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: "octocat:feature/shared",
+      state: "all",
+      limit: 1,
+    });
+
+    assert.deepStrictEqual(
+      changeRequests.map((changeRequest) => changeRequest.number),
+      [52],
+    );
+    assert.include(args.join(" "), "--head feature/shared");
+    assert.include(args.join(" "), "--limit 100");
   }),
 );
 

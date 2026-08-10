@@ -9,6 +9,7 @@ import {
   type SourceControlProviderDiscoveryItem,
 } from "@t3tools/contracts";
 import type { SourceControlProviderKind } from "@t3tools/contracts";
+import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
@@ -142,12 +143,28 @@ function selectProviderContext(
   }
 
   const origin = candidates.find((candidate) => candidate.remoteName === "origin");
-  const conventionalGitHubUpstream = candidates.find(
-    (candidate) =>
-      candidate.remoteName === "upstream" &&
-      candidate.provider.kind === "github" &&
-      origin?.provider.kind === "github",
-  );
+  const repositoryCoordinate = (remoteUrl: string) => {
+    const [host, owner, name, ...rest] = normalizeGitRemoteUrl(remoteUrl).split("/");
+    return host && owner && name && rest.length === 0 ? { host, owner, name } : null;
+  };
+  const conventionalGitHubUpstream = candidates.find((candidate) => {
+    if (
+      candidate.remoteName !== "upstream" ||
+      candidate.provider.kind !== "github" ||
+      origin?.provider.kind !== "github"
+    ) {
+      return false;
+    }
+    const originRepository = repositoryCoordinate(origin.remoteUrl);
+    const upstreamRepository = repositoryCoordinate(candidate.remoteUrl);
+    return (
+      originRepository !== null &&
+      upstreamRepository !== null &&
+      originRepository.host === upstreamRepository.host &&
+      originRepository.name === upstreamRepository.name &&
+      originRepository.owner !== upstreamRepository.owner
+    );
+  });
 
   return (
     conventionalGitHubUpstream ??

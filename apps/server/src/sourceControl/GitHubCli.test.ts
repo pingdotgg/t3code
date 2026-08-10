@@ -282,11 +282,66 @@ describe("GitHubCli.layer", () => {
           "base=main",
           "-F",
           "body=@/tmp/pr-body.md",
+          "-F",
+          "maintainer_can_modify=true",
           "--silent",
         ],
         cwd: "/repo",
         timeoutMs: 30_000,
       });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("filters qualified fork heads after listing the target repository", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 44,
+                title: "Other fork",
+                url: "https://github.com/pingdotgg/t3code/pull/44",
+                baseRefName: "main",
+                headRefName: "feature/shared",
+                state: "OPEN",
+                headRepositoryOwner: { login: "other" },
+              },
+              {
+                number: 45,
+                title: "Requested fork",
+                url: "https://github.com/pingdotgg/t3code/pull/45",
+                baseRefName: "main",
+                headRefName: "feature/shared",
+                state: "OPEN",
+                headRepositoryOwner: { login: "octocat" },
+              },
+            ]),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const pullRequests = yield* gh.listOpenPullRequests({
+        cwd: "/repo",
+        headSelector: "octocat:feature/shared",
+        repository: "pingdotgg/t3code",
+        limit: 1,
+      });
+
+      assert.deepStrictEqual(
+        pullRequests.map((pullRequest) => pullRequest.number),
+        [45],
+      );
+      expect(mockRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          args: expect.arrayContaining(["--head", "feature/shared"]),
+        }),
+      );
+      expect(mockRun).toHaveBeenCalledWith(
+        expect.objectContaining({ args: expect.arrayContaining(["--limit", "100"]) }),
+      );
     }).pipe(Effect.provide(layer)),
   );
 

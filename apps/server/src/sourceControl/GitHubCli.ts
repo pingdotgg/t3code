@@ -448,18 +448,20 @@ export const make = Effect.gen(function* () {
 
   return GitHubCli.of({
     execute,
-    listOpenPullRequests: (input) =>
-      execute({
+    listOpenPullRequests: (input) => {
+      const qualifiedHead = /^([^:/\s]+):(.+)$/u.exec(input.headSelector);
+      const requestedLimit = input.limit ?? 1;
+      return execute({
         cwd: input.cwd,
         args: [
           "pr",
           "list",
           "--head",
-          input.headSelector,
+          qualifiedHead?.[2] ?? input.headSelector,
           "--state",
           "open",
           "--limit",
-          String(input.limit ?? 1),
+          String(qualifiedHead ? Math.max(requestedLimit, 100) : requestedLimit),
           ...(input.repository ? ["--repo", input.repository] : []),
           "--json",
           "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
@@ -481,13 +483,24 @@ export const make = Effect.gen(function* () {
                     );
                   }
 
+                  const matches = qualifiedHead
+                    ? decoded.success.filter(
+                        (pullRequest) =>
+                          pullRequest.headRefName === qualifiedHead[2] &&
+                          pullRequest.headRepositoryOwnerLogin?.toLowerCase() ===
+                            qualifiedHead[1]?.toLowerCase(),
+                      )
+                    : decoded.success;
                   return Effect.succeed(
-                    decoded.success.map(({ updatedAt: _updatedAt, ...summary }) => summary),
+                    matches
+                      .slice(0, requestedLimit)
+                      .map(({ updatedAt: _updatedAt, ...summary }) => summary),
                   );
                 }),
               ),
         ),
-      ),
+      );
+    },
     getPullRequest: (input) =>
       execute({
         cwd: input.cwd,
@@ -583,6 +596,8 @@ export const make = Effect.gen(function* () {
                 `base=${input.baseBranch}`,
                 "-F",
                 `body=@${input.bodyFile}`,
+                "-F",
+                "maintainer_can_modify=true",
                 "--silent",
               ],
             });

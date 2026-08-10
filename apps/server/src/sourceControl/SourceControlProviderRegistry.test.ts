@@ -301,3 +301,26 @@ it.effect("does not let an unrelated upstream remote override origin", () =>
     assert.strictEqual(provider.kind, "github");
   }),
 );
+
+it.effect("does not target an unrelated GitHub upstream repository", () =>
+  Effect.gen(function* () {
+    let repository: string | undefined;
+    const registry = yield* makeRegistry({
+      remotes: [
+        { name: "origin", url: "git@github.com:contributor/t3code.git" },
+        { name: "upstream", url: "git@github.com:someone/other-project.git" },
+      ],
+      github: {
+        getDefaultBranch: (input) => {
+          repository = input.repository;
+          return Effect.succeed("main");
+        },
+      },
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+    yield* provider.getDefaultBranch({ cwd: "/repo" });
+
+    assert.strictEqual(repository, undefined);
+  }),
+);

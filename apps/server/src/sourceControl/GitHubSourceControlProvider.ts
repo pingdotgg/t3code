@@ -7,7 +7,6 @@ import {
   type ChangeRequest,
   type ChangeRequestState,
 } from "@t3tools/contracts";
-import { parseGitHubRepositoryNameWithOwnerFromRemoteUrl } from "@t3tools/shared/git";
 
 import * as GitHubCli from "./GitHubCli.ts";
 import { findAuthenticatedGitHubAccount, parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
@@ -99,10 +98,28 @@ export const make = Effect.gen(function* () {
   const github = yield* GitHubCli.GitHubCli;
   const repositoryFromContext = (
     context: SourceControlProvider.SourceControlProviderContext | undefined,
-  ) =>
-    context?.remoteName === "upstream"
-      ? (parseGitHubRepositoryNameWithOwnerFromRemoteUrl(context.remoteUrl) ?? undefined)
-      : undefined;
+  ) => {
+    if (context?.remoteName !== "upstream") return undefined;
+    const scpStyle = /^git@([^:/\s]+):([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i.exec(context.remoteUrl);
+    if (scpStyle?.[1] && scpStyle[2] && scpStyle[3]) {
+      return scpStyle[1].toLowerCase() === "github.com"
+        ? `${scpStyle[2]}/${scpStyle[3]}`
+        : `${scpStyle[1]}/${scpStyle[2]}/${scpStyle[3]}`;
+    }
+    try {
+      const parsed = new URL(context.remoteUrl);
+      const [owner, name, ...rest] = parsed.pathname
+        .replace(/\.git$/i, "")
+        .split("/")
+        .filter((part) => part.length > 0);
+      if (!owner || !name || rest.length > 0) return undefined;
+      return parsed.hostname.toLowerCase() === "github.com"
+        ? `${owner}/${name}`
+        : `${parsed.hostname}/${owner}/${name}`;
+    } catch {
+      return undefined;
+    }
+  };
   const withRepositoryFromContext = <Input extends object>(
     input: Input,
     context: SourceControlProvider.SourceControlProviderContext | undefined,
@@ -142,6 +159,8 @@ export const make = Effect.gen(function* () {
       }
 
       const stateArg: ChangeRequestState | "all" = input.state;
+      const qualifiedHead = /^([^:/\s]+):(.+)$/u.exec(input.headSelector);
+      const requestedLimit = input.limit ?? 20;
       return github
         .execute({
           cwd: input.cwd,
@@ -149,11 +168,11 @@ export const make = Effect.gen(function* () {
             "pr",
             "list",
             "--head",
-            input.headSelector,
+            qualifiedHead?.[2] ?? input.headSelector,
             "--state",
             stateArg,
             "--limit",
-            String(input.limit ?? 20),
+            String(qualifiedHead ? Math.max(requestedLimit, 100) : requestedLimit),
             ...(repository ? ["--repo", repository] : []),
             "--json",
             "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
@@ -169,10 +188,20 @@ export const make = Effect.gen(function* () {
               Effect.flatMap((decoded) =>
                 Result.isSuccess(decoded)
                   ? Effect.succeed(
-                      decoded.success.map((item) => ({
-                        ...toChangeRequest(item),
-                        updatedAt: item.updatedAt,
-                      })),
+                      (qualifiedHead
+                        ? decoded.success.filter(
+                            (item) =>
+                              item.headRefName === qualifiedHead[2] &&
+                              item.headRepositoryOwnerLogin?.toLowerCase() ===
+                                qualifiedHead[1]?.toLowerCase(),
+                          )
+                        : decoded.success
+                      )
+                        .slice(0, requestedLimit)
+                        .map((item) => ({
+                          ...toChangeRequest(item),
+                          updatedAt: item.updatedAt,
+                        })),
                     )
                   : Effect.fail(
                       new GitHubCli.GitHubChangeRequestListDecodeError({
