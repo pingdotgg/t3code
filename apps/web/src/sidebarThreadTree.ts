@@ -394,26 +394,39 @@ export function buildSidebarThreadRows(
 /**
  * Trims flattened rows to a root-thread window, counting only root threads
  * against the limit so expanded children of visible roots stay attached.
- * `requiredThreadKey` widens the window so the active thread always renders,
- * even when it sits below the window.
+ *
+ * `requiredThreadKey` must stay rendered even when it sorts below the window,
+ * but widening the limit to its ordinal would defeat the window entirely:
+ * opening a thread at position 500 would mount 500 roots and every expanded
+ * child, and each mounted row installs hooks and store subscriptions. So the
+ * limit is fixed and the required thread's root subtree is appended on its
+ * own, leaving the number of mounted rows bounded by `rootLimit` plus that one
+ * subtree regardless of how deep the thread sits.
  */
 export function selectVisibleThreadRows(input: {
   rowViews: readonly SidebarThreadRowView[];
   rootLimit: number;
   requiredThreadKey?: string | null;
 }): { rows: readonly SidebarThreadRowView[]; hasOverflow: boolean } {
+  const rootLimit = Math.max(input.rootLimit, 0);
   let rootCount = 0;
-  let requiredRootCount = 0;
-  for (const row of input.rowViews) {
+  // Where the required thread's own root subtree starts, which is the row
+  // itself when it is a root and its ancestor root otherwise.
+  let requiredRootStart = -1;
+  let requiredRootOrdinal = 0;
+  let lastRootStart = -1;
+  for (let index = 0; index < input.rowViews.length; index += 1) {
+    const row = input.rowViews[index]!;
     if (row.depth === 0) {
       rootCount += 1;
+      lastRootStart = index;
     }
     if (input.requiredThreadKey != null && row.threadKey === input.requiredThreadKey) {
-      requiredRootCount = rootCount;
+      requiredRootStart = lastRootStart;
+      requiredRootOrdinal = rootCount;
     }
   }
 
-  const rootLimit = Math.max(input.rootLimit, requiredRootCount);
   if (rootCount <= rootLimit) {
     return { rows: input.rowViews, hasOverflow: false };
   }
@@ -429,5 +442,16 @@ export function selectVisibleThreadRows(input: {
     }
     rows.push(row);
   }
+
+  if (requiredRootStart >= 0 && requiredRootOrdinal > rootLimit) {
+    for (let index = requiredRootStart; index < input.rowViews.length; index += 1) {
+      const row = input.rowViews[index]!;
+      if (index > requiredRootStart && row.depth === 0) {
+        break;
+      }
+      rows.push(row);
+    }
+  }
+
   return { rows, hasOverflow: true };
 }

@@ -18,16 +18,19 @@ import {
 import { Skeleton } from "~/components/ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useIsMobile } from "~/hooks/useMediaQuery";
+import { isElectron } from "~/env";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { Schema } from "effect";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_OPEN_STORAGE_KEY = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
-const SIDEBAR_WIDTH = "16rem";
+/* 14rem, not 16rem: thread titles truncate long before the extra 32px pays for
+   itself, and the narrower rail buys that width back for the chat. */
+const SIDEBAR_WIDTH = "14rem";
 const SIDEBAR_WIDTH_MOBILE = "calc(100vw - var(--spacing(3)))";
 const SIDEBAR_WIDTH_ICON = "3rem";
-const SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH = 16 * 16;
+const SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH = 14 * 16;
 
 function readStoredSidebarOpen(defaultOpen: boolean): boolean {
   if (typeof window === "undefined") {
@@ -382,6 +385,21 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       <span className="sr-only">{isOpen ? "Collapse sidebar" : "Expand sidebar"}</span>
     </Button>
   );
+}
+
+/**
+ * Re-exposes the collapse control in content chrome only while the sidebar's
+ * own trigger is hidden, so the two never render at once. Both sidebars host a
+ * trigger in the desktop app's title-bar header on every Electron platform; on
+ * web that header is hidden at `md` and up, so the content header keeps
+ * ownership there. Adding a third sidebar means giving it a title-bar trigger
+ * too, or this yields to one that does not exist.
+ */
+function SidebarCollapsedTrigger({ className, ...props }: React.ComponentProps<typeof Button>) {
+  const { open, isMobile } = useSidebar();
+  const sidebarHostsTrigger = isElectron && !isMobile && open;
+  if (sidebarHostsTrigger) return null;
+  return <SidebarTrigger className={className} {...props} />;
 }
 
 function clampSidebarWidth(width: number, options: SidebarResolvedResizableOptions): number {
@@ -1037,6 +1055,7 @@ export {
   SidebarGroup,
   SidebarGroupAction,
   SidebarGroupContent,
+  SidebarCollapsedTrigger,
   SidebarGroupLabel,
   SidebarHeader,
   SidebarInput,

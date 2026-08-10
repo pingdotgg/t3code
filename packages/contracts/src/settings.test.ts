@@ -13,6 +13,8 @@ import {
   DEFAULT_SIDEBAR_ROW_SPACING,
   DEFAULT_SIDEBAR_TRANSLUCENCY,
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_UI_DENSITY,
+  RECOMMENDED_FONT_SIZES_BY_UI_DENSITY,
   ServerSettings,
   ServerSettingsPatch,
 } from "./settings.ts";
@@ -268,5 +270,38 @@ describe("ServerSettingsPatch.providerInstances", () => {
     });
     const ollamaId = ProviderInstanceId.make("ollama_local");
     expect(patch.providerInstances?.[ollamaId]?.driver).toBe("ollama");
+  });
+});
+
+describe("RECOMMENDED_FONT_SIZES_BY_UI_DENSITY", () => {
+  it("matches the shipped defaults at the default density", () => {
+    // The defaults are what a fresh install renders, so the density that ships
+    // by default must not silently disagree with them.
+    const recommended = RECOMMENDED_FONT_SIZES_BY_UI_DENSITY[DEFAULT_UI_DENSITY];
+    for (const [key, size] of Object.entries(recommended)) {
+      expect(DEFAULT_CLIENT_SETTINGS[key as keyof typeof recommended], key).toBe(size);
+    }
+  });
+
+  it("increases monotonically from compact through spacious", () => {
+    const order = ["compact", "default", "comfortable", "spacious"] as const;
+    const keys = Object.keys(RECOMMENDED_FONT_SIZES_BY_UI_DENSITY.default) as ReadonlyArray<
+      keyof (typeof RECOMMENDED_FONT_SIZES_BY_UI_DENSITY)["default"]
+    >;
+    for (const key of keys) {
+      for (let index = 1; index < order.length; index += 1) {
+        const previous = RECOMMENDED_FONT_SIZES_BY_UI_DENSITY[order[index - 1]!][key];
+        const current = RECOMMENDED_FONT_SIZES_BY_UI_DENSITY[order[index]!][key];
+        expect(current, `${key}: ${order[index - 1]!} -> ${order[index]!}`).toBeGreaterThan(
+          previous,
+        );
+      }
+    }
+  });
+
+  it("keeps sidebar metadata a step below the sidebar title at every density", () => {
+    for (const sizes of Object.values(RECOMMENDED_FONT_SIZES_BY_UI_DENSITY)) {
+      expect(sizes.sidebarMetaFontSize).toBeLessThan(sizes.sidebarFontSize);
+    }
   });
 });

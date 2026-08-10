@@ -6,8 +6,12 @@
 
 @theme inline {
   /* One title-bar row height shared by the sidebar chrome and every pane header
-     so window controls, navigation, titles, and actions sit on a single line. */
-  --spacing-titlebar: 52px;
+     so window controls, navigation, titles, and actions sit on a single line.
+     Kept just tall enough to clear the 12px macOS traffic lights and a 24px
+     control with breathing room; anything more reads as a second toolbar.
+     Changing this requires moving `trafficLightPosition.y` in the desktop main
+     process by the same amount, or the window controls fall off the row. */
+  --spacing-titlebar: 44px;
   --animate-skeleton: skeleton 2s -1s infinite linear;
   --animate-status-pulse: status-pulse 2s infinite;
   /* Opacity-only, 3s cadence — cheap to composite and matches the Working badge. */
@@ -145,16 +149,16 @@
     "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace, monospace;
   --app-code-font-size: 12px;
   --app-chat-font-size: 14px;
-  --app-sidebar-font-size: 12px;
+  --app-sidebar-font-size: 11px;
   /* The thread title is the row's anchor, so it scales just above the sidebar
      font-size knob rather than relying on metadata shrinking alone — at the
-     12px default there is too little headroom below to build the step from
+     11px default there is too little headroom below to build the step from
      one side only. */
   --app-sidebar-title-font-size: calc(var(--app-sidebar-font-size) + 1px);
   /* Secondary sidebar text (project, worktree, branch, PR, timestamps). Its own
      setting rather than a derived size so metadata can stay visibly quieter
      than chat titles at any sidebar font size. */
-  --app-sidebar-meta-font-size: 11px;
+  --app-sidebar-meta-font-size: 10px;
   /* Sidebar row rhythm, driven by the Sidebar row spacing setting. The gap
      between rows must beat the gap between a row's own lines or three-line
      cards read as one loose list instead of discrete threads. */

@@ -227,6 +227,17 @@ const SIDEBAR_LIST_ANIMATION_OPTIONS = {
 } as const;
 const EMPTY_THREAD_JUMP_LABELS = new Map<string, string>();
 
+/**
+ * Sidebar popup menus must match sidebar row typography. `MenuItem`'s defaults
+ * include `sm:` variants, which tailwind-merge cannot strip with unprefixed
+ * utilities, so the breakpoint size has to be restated. Icons carry an explicit
+ * size for the same reason: it stops the default `:not([class*='size-'])` rule
+ * from matching at all, rather than relying on specificity ties.
+ */
+const SIDEBAR_MENU_ITEM_CLASS =
+  "min-h-7 gap-2 text-[length:var(--app-sidebar-font-size)] sm:min-h-7 sm:text-[length:var(--app-sidebar-font-size)]";
+const SIDEBAR_MENU_ICON_CLASS = "size-3.5";
+
 /** Root threads mounted per project before the tail sentinel grows the window. */
 const SIDEBAR_THREAD_WINDOW_SIZE = 30;
 
@@ -467,10 +478,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     virtualAgentRun?.status === "running" ||
     isThreadActivelyWorking(thread.latestTurn, thread.session);
   const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isThreadRunning;
-  // At-rest markers yield the slot to the hover cluster so time and actions
-  // never reflow the row.
-  const threadMetaClassName =
-    "pointer-events-none transition-opacity duration-150 group-hover/menu-sub-item:opacity-0 group-focus-within/menu-sub-item:opacity-0 max-sm:opacity-0";
+  const threadTimeClassName = isHighlighted
+    ? "text-foreground/72 dark:text-foreground/82"
+    : "text-muted-foreground/50";
   const clearConfirmingArchive = useCallback(() => {
     setConfirmingArchiveThreadKey((current) => (current === threadKey ? null : current));
   }, [setConfirmingArchiveThreadKey, threadKey]);
@@ -633,12 +643,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     },
     [confirmArchiveButtonRefs, threadKey],
   );
-  const stopPropagationOnPointerDown = useCallback(
-    (event: React.PointerEvent<HTMLButtonElement>) => {
-      event.stopPropagation();
-    },
-    [],
-  );
+  // Typed on HTMLElement so the same guard can sit on a wrapper as well as a
+  // button. Only stops propagation: preventing default here would suppress the
+  // press handling the wrapped control still needs.
+  const stopPropagationOnPointerDown = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    event.stopPropagation();
+  }, []);
   const handleConfirmArchiveClick = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       event.preventDefault();
@@ -716,30 +726,24 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       </MenuTrigger>
       <MenuPopup align="end" side="bottom" className="min-w-40">
         {virtualAgentRun ? null : (
-          <MenuItem
-            className="text-[length:var(--app-sidebar-font-size)]"
-            onClick={handleTogglePinnedSelected}
-          >
-            <PinIcon className={isPinned ? "fill-current" : undefined} />
+          <MenuItem className={SIDEBAR_MENU_ITEM_CLASS} onClick={handleTogglePinnedSelected}>
+            <PinIcon className={`${SIDEBAR_MENU_ICON_CLASS}${isPinned ? " fill-current" : ""}`} />
             {isPinned ? "Unpin" : "Pin"}
           </MenuItem>
         )}
         {prStatus ? (
-          <MenuItem
-            className="text-[length:var(--app-sidebar-font-size)]"
-            onClick={handleOpenPrSelected}
-          >
-            <GitPullRequestIcon />
+          <MenuItem className={SIDEBAR_MENU_ITEM_CLASS} onClick={handleOpenPrSelected}>
+            <GitPullRequestIcon className={SIDEBAR_MENU_ICON_CLASS} />
             Open pull request #{prStatus.number}
           </MenuItem>
         ) : null}
         {canArchive ? (
           <MenuItem
-            className="text-[length:var(--app-sidebar-font-size)]"
+            className={SIDEBAR_MENU_ITEM_CLASS}
             data-testid={`thread-archive-${thread.id}`}
             onClick={virtualAgentRun ? handleDismissAgentRunSelected : handleArchiveSelected}
           >
-            <ArchiveIcon />
+            <ArchiveIcon className={SIDEBAR_MENU_ICON_CLASS} />
             {virtualAgentRun ? "Archive run" : "Archive"}
           </MenuItem>
         ) : null}
@@ -769,7 +773,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         className={`${resolveThreadRowClassName({
           isActive,
           isSelected,
-        })} relative isolate`}
+        })} relative isolate px-1.5`}
         onClick={handleRowClick}
         onKeyDown={handleRowKeyDown}
         onContextMenu={handleRowContextMenu}
@@ -853,7 +857,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               title={`${props.isExpanded ? "Collapse" : "Expand"} ${props.childCount} nested chat${
                 props.childCount === 1 ? "" : "s"
               }`}
-              className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground/60 transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+              // Collapsed rows keep the chevron out of the resting composition
+              // but never out of the layout, so revealing it cannot shift the
+              // title. Expanded rows always show it: it is the only marker of
+              // that state.
+              className={`inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground/60 transition-colors transition-opacity duration-150 hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring ${
+                props.isExpanded
+                  ? ""
+                  : "opacity-0 group-focus-within/menu-sub-item:opacity-100 group-hover/menu-sub-item:opacity-100 max-sm:opacity-100"
+              }`}
               onPointerDown={stopPropagationOnPointerDown}
               onClick={handleToggleThreadExpandedClick}
             >
@@ -865,12 +877,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </button>
           ) : null}
         </span>
-        {/* One right-hand slot, two states stacked in the same grid cell: the
-            row is quiet at rest and only reveals time plus actions under the
-            pointer. Stacking (rather than a fixed width) lets the slot size to
-            its widest state, so nothing reflows on hover and the parent's
-            `truncate` on the last child cannot clip the time label. */}
-        <span className="ml-auto grid h-5 shrink-0 items-center justify-items-end">
+        {/* One right-hand slot on a single row. The time is always legible —
+            that is what makes the list scannable at rest — and the actions
+            reserve their space permanently (`opacity-0`, not conditional
+            rendering) so revealing them on hover cannot reflow the row.
+            Opacity rather than `invisible`/`hidden`: the trigger has to stay
+            focusable for keyboard users. */}
+        <span className="ml-auto flex h-5 shrink-0 items-center gap-1">
           {isConfirmingArchive ? (
             <button
               ref={handleConfirmArchiveRef}
@@ -886,35 +899,38 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </button>
           ) : (
             <>
-              <span className={`col-start-1 row-start-1 flex items-center ${threadMetaClassName}`}>
-                {jumpLabel ? (
-                  <span
-                    className="inline-flex h-5 items-center rounded-full border border-border/80 bg-background/90 px-1.5 font-mono text-[length:var(--app-sidebar-font-size)] font-medium tracking-tight text-foreground shadow-sm"
-                    title={jumpLabel}
-                  >
-                    {jumpLabel}
-                  </span>
-                ) : isPinned ? (
-                  <PinIcon className="size-3 fill-current text-primary" />
-                ) : null}
-              </span>
-              <span className="pointer-events-none col-start-1 row-start-1 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100 max-sm:pointer-events-auto max-sm:opacity-100">
+              {jumpLabel ? (
                 <span
-                  className={
-                    isHighlighted
-                      ? "text-foreground/72 dark:text-foreground/82"
-                      : "text-muted-foreground/50"
-                  }
-                  style={{ fontSize: "var(--app-sidebar-meta-font-size)" }}
+                  className="inline-flex h-5 items-center rounded-full border border-border/80 bg-background/90 px-1.5 text-[length:var(--app-sidebar-meta-font-size)] font-medium tracking-tight text-foreground shadow-sm"
+                  title={jumpLabel}
                 >
-                  {compactSidebarTimeLabel(
-                    formatRelativeTimeLabel(
-                      thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
-                    ),
-                  )}
+                  {jumpLabel}
                 </span>
-                {overflowMenu}
+              ) : null}
+              {isPinned ? <PinIcon className="size-3 fill-current text-primary" /> : null}
+              <span
+                className={threadTimeClassName}
+                style={{ fontSize: "var(--app-sidebar-meta-font-size)" }}
+              >
+                {compactSidebarTimeLabel(
+                  formatRelativeTimeLabel(
+                    thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
+                  ),
+                )}
               </span>
+              {overflowMenu ? (
+                <span
+                  // Pinned rows spread dnd-kit's drag listeners on the parent
+                  // <li>, so an unguarded pointer-down here starts a drag on
+                  // the slightest movement instead of opening the menu. The
+                  // guard sits on the wrapper rather than the trigger because
+                  // Base UI's MenuTrigger opens on pointer-down itself.
+                  className="flex items-center opacity-0 transition-opacity duration-150 group-focus-within/menu-sub-item:opacity-100 group-hover/menu-sub-item:opacity-100 max-sm:opacity-100"
+                  onPointerDown={stopPropagationOnPointerDown}
+                >
+                  {overflowMenu}
+                </span>
+              ) : null}
             </>
           )}
         </span>
@@ -1161,9 +1177,10 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
   const content = (
     <SidebarMenuSub
       className={`my-0 mx-0 w-full translate-x-0 gap-0.5 overflow-hidden border-l-0 py-0 ${
-        // One project-chevron slot (icon + gap) of indent, so a thread's status
-        // dot lands under the project favicon instead of a third left edge.
-        indented ? "ps-[calc(var(--spacing)*5.5)] pe-0" : "px-0"
+        // Half a project-chevron slot of indent: enough to read threads as
+        // nested under the project, without pushing titles into the middle of
+        // the sidebar the way a full icon-width inset did.
+        indented ? "ps-3 pe-0" : "px-0"
       }`}
       style={{ animation: "none", transition: "none" }}
     >
@@ -2641,13 +2658,13 @@ const ProjectFilterMenu = memo(function ProjectFilterMenu({
       <MenuTrigger
         aria-label="Filter threads by project"
         data-testid="sidebar-project-filter-trigger"
-        className="flex h-7 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 font-medium text-[length:var(--app-sidebar-font-size)] text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
+        className="flex h-6 min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-1.5 font-medium text-[length:var(--app-sidebar-meta-font-size)] text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
       >
-        <FolderIcon className="size-3.5 shrink-0" />
+        <FolderIcon className="size-3 shrink-0" />
         <span className="min-w-0 flex-1 truncate text-left">
           {activeProject?.displayName ?? ALL_PROJECTS_FILTER_LABEL}
         </span>
-        <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
+        <ChevronDownIcon className="size-3 shrink-0 opacity-60" />
       </MenuTrigger>
       <MenuPopup align="start" side="bottom" className="min-w-56">
         <MenuRadioGroup
@@ -2870,9 +2887,11 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
   const canGoBack = router.history.canGoBack();
   const canGoForward = historyIndex < router.history.length - 1;
   const wordmark = (
-    <div className="flex w-full items-center gap-2">
-      {/* Mobile sheet open/close; desktop collapse uses content-header SidebarTrigger icons. */}
-      <SidebarTrigger className="no-drag shrink-0 md:hidden" />
+    <div className="flex w-full items-center gap-1">
+      {/* Primary collapse control lives beside the traffic lights, matching the
+          window chrome it belongs to; the content header only re-exposes it
+          once the sidebar is collapsed and this one is gone. */}
+      <SidebarTrigger className="no-drag size-6 shrink-0" />
       <div
         aria-label="Chat navigation history"
         className="ml-auto flex items-center gap-0.5"
@@ -2905,14 +2924,16 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
   return isElectron ? (
     <SidebarHeader
       className={cn(
-        "drag-region flex-row items-center gap-3 py-0 pr-3 pl-[90px] sm:gap-2.5 sm:pr-4 wco:pl-[calc(env(titlebar-area-x)+1em)]",
+        // The traffic lights end at 68px (x:16 plus three 12px controls), so
+        // the inset only has to clear them, not sit a whole control away.
+        "drag-region flex-row items-center gap-2 py-0 pr-2 pl-[80px] wco:pl-[calc(env(titlebar-area-x)+1em)]",
         TITLEBAR_ROW_CLASS,
       )}
     >
       {wordmark}
     </SidebarHeader>
   ) : (
-    <SidebarHeader className="gap-2 px-2 py-0 sm:px-2 md:hidden">{wordmark}</SidebarHeader>
+    <SidebarHeader className="gap-2 px-2 py-0 md:hidden">{wordmark}</SidebarHeader>
   );
 });
 

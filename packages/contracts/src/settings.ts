@@ -30,10 +30,10 @@ export const DEFAULT_CODE_FONT_SIZE: FontSize = 12 as FontSize;
 export const DEFAULT_CHAT_FONT_SIZE: FontSize = 14 as FontSize;
 export const DEFAULT_STATUS_LINE_FONT_SIZE: FontSize = 14 as FontSize;
 export const DEFAULT_TOOL_FONT_SIZE: FontSize = 12 as FontSize;
-export const DEFAULT_SIDEBAR_FONT_SIZE: FontSize = 12 as FontSize;
+export const DEFAULT_SIDEBAR_FONT_SIZE: FontSize = 11 as FontSize;
 /** Sidebar metadata (project, worktree, branch, PR, timestamps) sits a deliberate step
     below the thread title so the title stays the row's anchor. */
-export const DEFAULT_SIDEBAR_META_FONT_SIZE: FontSize = 11 as FontSize;
+export const DEFAULT_SIDEBAR_META_FONT_SIZE: FontSize = 10 as FontSize;
 export const DEFAULT_INPUT_FONT_SIZE: FontSize = 14 as FontSize;
 
 export const SidebarRowSpacing = Schema.Literals(["compact", "default", "relaxed"]);
@@ -43,6 +43,65 @@ export const DEFAULT_SIDEBAR_ROW_SPACING: SidebarRowSpacing = "default";
 export const UiDensity = Schema.Literals(["compact", "default", "comfortable", "spacious"]);
 export type UiDensity = typeof UiDensity.Type;
 export const DEFAULT_UI_DENSITY: UiDensity = "default";
+
+/** Every font size the UI density knob is allowed to drive. */
+export interface DensityFontSizes {
+  readonly chatFontSize: FontSize;
+  readonly codeFontSize: FontSize;
+  readonly inputFontSize: FontSize;
+  readonly sidebarFontSize: FontSize;
+  readonly sidebarMetaFontSize: FontSize;
+  readonly statusLineFontSize: FontSize;
+  readonly toolFontSize: FontSize;
+}
+
+/**
+ * Recommended type scale per density. Density already scales spacing, but
+ * spacing alone cannot make a dense layout read as dense: text has to come with
+ * it. These are the sizes a density is designed around, and the values the
+ * settings UI offers as "recommended".
+ *
+ * `default` must stay in sync with the DEFAULT_*_FONT_SIZE constants above so
+ * that the shipped defaults and the recommended values agree.
+ */
+export const RECOMMENDED_FONT_SIZES_BY_UI_DENSITY: Readonly<Record<UiDensity, DensityFontSizes>> = {
+  compact: {
+    chatFontSize: 13 as FontSize,
+    codeFontSize: 11 as FontSize,
+    inputFontSize: 13 as FontSize,
+    sidebarFontSize: 10 as FontSize,
+    sidebarMetaFontSize: 9 as FontSize,
+    statusLineFontSize: 12 as FontSize,
+    toolFontSize: 11 as FontSize,
+  },
+  default: {
+    chatFontSize: DEFAULT_CHAT_FONT_SIZE,
+    codeFontSize: DEFAULT_CODE_FONT_SIZE,
+    inputFontSize: DEFAULT_INPUT_FONT_SIZE,
+    sidebarFontSize: DEFAULT_SIDEBAR_FONT_SIZE,
+    sidebarMetaFontSize: DEFAULT_SIDEBAR_META_FONT_SIZE,
+    statusLineFontSize: DEFAULT_STATUS_LINE_FONT_SIZE,
+    toolFontSize: DEFAULT_TOOL_FONT_SIZE,
+  },
+  comfortable: {
+    chatFontSize: 15 as FontSize,
+    codeFontSize: 13 as FontSize,
+    inputFontSize: 15 as FontSize,
+    sidebarFontSize: 12 as FontSize,
+    sidebarMetaFontSize: 11 as FontSize,
+    statusLineFontSize: 15 as FontSize,
+    toolFontSize: 13 as FontSize,
+  },
+  spacious: {
+    chatFontSize: 16 as FontSize,
+    codeFontSize: 14 as FontSize,
+    inputFontSize: 16 as FontSize,
+    sidebarFontSize: 13 as FontSize,
+    sidebarMetaFontSize: 12 as FontSize,
+    statusLineFontSize: 16 as FontSize,
+    toolFontSize: 14 as FontSize,
+  },
+};
 
 export const SidebarTranslucency = Schema.Literals([
   "off",

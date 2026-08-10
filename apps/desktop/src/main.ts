@@ -2047,9 +2047,9 @@ function getWindowTitleBarOptions(): WindowTitleBarOptions {
     return {
       titleBarStyle: "hiddenInset",
       // Centers the 12px traffic lights on the renderer's shared title-bar row
-      // (--spacing-titlebar: 52px), so window controls, sidebar navigation, and
-      // pane headers share one baseline.
-      trafficLightPosition: { x: 16, y: 20 },
+      // (--spacing-titlebar: 44px), so window controls, sidebar navigation, and
+      // pane headers share one baseline. y = (44 - 12) / 2.
+      trafficLightPosition: { x: 16, y: 16 },
     };
   }
 

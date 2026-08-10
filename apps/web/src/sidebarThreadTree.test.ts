@@ -432,18 +432,58 @@ describe("selectVisibleThreadRows", () => {
     expect(result.rows.map((row) => row.thread.id)).toEqual([parent.id, child.id]);
   });
 
-  it("widens the window so the required thread always renders", () => {
+  it("renders the required thread without dragging in the roots above it", () => {
     const threads = [thread("thread-1"), thread("thread-2"), thread("thread-3")];
     const rowViews = rowsForThreads(threads);
-    const lastRow = rowViews.at(-1);
+    const lastRow = rowViews.at(-1)!;
 
     const result = selectVisibleThreadRows({
       rowViews,
       rootLimit: 1,
-      requiredThreadKey: lastRow ? key(lastRow.thread.id) : null,
+      requiredThreadKey: key(lastRow.thread.id),
     });
 
-    expect(result.hasOverflow).toBe(false);
-    expect(result.rows).toBe(rowViews);
+    expect(result.hasOverflow).toBe(true);
+    expect(result.rows.map((row) => row.thread.id)).toEqual([
+      rowViews[0]!.thread.id,
+      lastRow.thread.id,
+    ]);
+  });
+
+  it("keeps the mounted row count bounded when the required thread sits deep", () => {
+    // The window exists because every mounted row installs hooks and store
+    // subscriptions, so routing to an old thread must not mount its prefix.
+    const threads = Array.from({ length: 200 }, (_, index) => thread(`thread-${index + 1}`));
+    const rowViews = rowsForThreads(threads);
+    const lastRow = rowViews.at(-1)!;
+
+    const result = selectVisibleThreadRows({
+      rowViews,
+      rootLimit: 10,
+      requiredThreadKey: key(lastRow.thread.id),
+    });
+
+    expect(result.hasOverflow).toBe(true);
+    expect(result.rows).toHaveLength(11);
+    expect(result.rows.at(-1)!.thread.id).toBe(lastRow.thread.id);
+  });
+
+  it("keeps a required child attached to its own root subtree", () => {
+    const olderRoot = thread("thread-1");
+    const olderChild = thread("thread-2", { parentThreadId: olderRoot.id });
+    const rowViews = rowsForThreads([olderRoot, olderChild, thread("thread-9")]);
+
+    const result = selectVisibleThreadRows({
+      rowViews,
+      rootLimit: 1,
+      requiredThreadKey: key(olderChild.id),
+    });
+
+    expect(result.hasOverflow).toBe(true);
+    expect(result.rows.map((row) => row.thread.id)).toEqual([
+      "thread-9",
+      olderRoot.id,
+      olderChild.id,
+    ]);
   });
 });

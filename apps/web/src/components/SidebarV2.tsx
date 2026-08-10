@@ -76,7 +76,13 @@ import { SidebarV2Row, type SidebarV2RowProps } from "./SidebarV2Row";
 import { SidebarHoverThreadPrewarmer } from "./SidebarThreadPrewarmer";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { SidebarContent, SidebarGroup, SidebarHeader, SidebarMenu } from "./ui/sidebar";
+import {
+  SidebarContent,
+  SidebarGroup,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarTrigger,
+} from "./ui/sidebar";
 import { SidebarTopActions } from "./SidebarTopActions";
 import { TITLEBAR_ROW_CLASS } from "../lib/titlebar";
 import { cn } from "../lib/utils";
@@ -710,8 +716,23 @@ export default function SidebarV2() {
 
   return (
     <>
-      {hasMacSidebarChrome ? (
-        <SidebarHeader aria-hidden className={cn("drag-region shrink-0 p-0", TITLEBAR_ROW_CLASS)} />
+      {/* The desktop app hides the OS title bar, so this row is the only place
+          a collapse control can live beside the window controls. It has to
+          exist on every Electron platform, not just the ones that reserve
+          space for traffic lights, or collapsing the sidebar becomes
+          unreachable once content headers yield the trigger to it. */}
+      {isElectron ? (
+        <SidebarHeader
+          className={cn(
+            "drag-region shrink-0 flex-row items-center gap-2 py-0 pr-2",
+            hasMacSidebarChrome
+              ? "pl-[80px] wco:pl-[calc(env(titlebar-area-x)+1em)]"
+              : "pl-2 wco:pl-[calc(env(titlebar-area-x)+1em)]",
+            TITLEBAR_ROW_CLASS,
+          )}
+        >
+          <SidebarTrigger className="no-drag size-6 shrink-0" />
+        </SidebarHeader>
       ) : null}
       <SidebarHoverThreadPrewarmer />
       <SidebarContent className="gap-1 pt-1">
