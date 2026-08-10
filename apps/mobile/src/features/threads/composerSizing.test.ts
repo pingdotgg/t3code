@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  COMPOSER_EDITOR_EXPANDED_CONTENT_INSET_VERTICAL,
   COMPOSER_EDITOR_MAX_HEIGHT,
   COMPOSER_EDITOR_MIN_HEIGHT,
   deriveComposerEditorSizing,
@@ -17,6 +18,21 @@ describe("deriveComposerEditorSizing", () => {
       scrollEnabled: false,
     });
     expect(deriveComposerEditorSizing(240)).toEqual({
+      height: COMPOSER_EDITOR_MAX_HEIGHT,
+      scrollEnabled: true,
+    });
+  });
+
+  it("keeps inset-inclusive content unscrolled through the maximum height", () => {
+    const textHeight =
+      COMPOSER_EDITOR_MAX_HEIGHT - COMPOSER_EDITOR_EXPANDED_CONTENT_INSET_VERTICAL * 2;
+    const nativeContentHeight = textHeight + COMPOSER_EDITOR_EXPANDED_CONTENT_INSET_VERTICAL * 2;
+
+    expect(deriveComposerEditorSizing(nativeContentHeight)).toEqual({
+      height: COMPOSER_EDITOR_MAX_HEIGHT,
+      scrollEnabled: false,
+    });
+    expect(deriveComposerEditorSizing(nativeContentHeight + 1)).toEqual({
       height: COMPOSER_EDITOR_MAX_HEIGHT,
       scrollEnabled: true,
     });

@@ -66,6 +66,7 @@ import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
 import {
+  COMPOSER_EDITOR_EXPANDED_CONTENT_INSET_VERTICAL,
   COMPOSER_EDITOR_MAX_HEIGHT,
   COMPOSER_EDITOR_MIN_HEIGHT,
   deriveComposerEditorSizing,
@@ -731,7 +732,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               // Android: collapsed single line centers natively (gravity) in
               // a pill-height box matching the send button; iOS keeps insets.
               singleLineCentered={!isExpanded}
-              contentInsetVertical={isExpanded || Platform.OS === "android" ? 0 : 6}
+              contentInsetVertical={
+                isExpanded
+                  ? COMPOSER_EDITOR_EXPANDED_CONTENT_INSET_VERTICAL
+                  : Platform.OS === "android"
+                    ? 0
+                    : 6
+              }
               style={
                 isExpanded
                   ? {
@@ -739,7 +746,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                       minHeight: COMPOSER_EDITOR_MIN_HEIGHT,
                       maxHeight: COMPOSER_EDITOR_MAX_HEIGHT,
                       paddingHorizontal: 4,
-                      paddingVertical: 4,
                     }
                   : {
                       height: 36,
