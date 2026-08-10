@@ -75,8 +75,8 @@ const LANGUAGE_EXTENSION_ALIASES: Record<string, string> = {
 };
 
 export function basenameOfPath(pathValue: string): string {
-  const slashIndex = pathValue.lastIndexOf("/");
-  return slashIndex === -1 ? pathValue : pathValue.slice(slashIndex + 1);
+  const separatorIndex = Math.max(pathValue.lastIndexOf("/"), pathValue.lastIndexOf("\\"));
+  return separatorIndex === -1 ? pathValue : pathValue.slice(separatorIndex + 1);
 }
 
 export function inferEntryKindFromPath(pathValue: string): "file" | "directory" {
