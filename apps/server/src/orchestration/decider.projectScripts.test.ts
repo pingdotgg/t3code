@@ -95,7 +95,49 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
     }),
   );
 
-  it.effect("allows project.create on a workspace root another active project uses", () =>
+  it.effect("propagates a project favicon path in project.meta.update", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      const readModel = yield* projectEvent(createEmptyReadModel(now), {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-favicon"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-favicon"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-project-create-favicon"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-project-create-favicon"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-favicon"),
+          title: "Favicon",
+          workspaceRoot: "/tmp/favicon",
+          defaultModelSelection: null,
+          scripts: [],
+          additionalFolders: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "project.meta.update",
+          commandId: CommandId.make("cmd-project-update-favicon"),
+          projectId: asProjectId("project-favicon"),
+          faviconPath: "brand/icon.svg",
+        },
+        readModel,
+      });
+
+      const event = Array.isArray(result) ? result[0] : result;
+      expect(event.type).toBe("project.meta-updated");
+      expect((event.payload as { faviconPath?: string }).faviconPath).toBe("brand/icon.svg");
+    }),
+  );
+
+  it.effect("rejects project.create for an active workspace root that already exists", () =>
     Effect.gen(function* () {
       const now = "2026-01-01T00:00:00.000Z";
       const initial = createEmptyReadModel(now);
@@ -114,34 +156,35 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           projectId: asProjectId("project-existing"),
           title: "Project",
           workspaceRoot: "/tmp/project",
-          additionalFolders: [],
           defaultModelSelection: null,
           scripts: [],
+          additionalFolders: [],
           createdAt: now,
           updatedAt: now,
         },
       });
 
-      // Folders are shareable across projects: several projects may span the
-      // same code with different folder sets or different scopes.
-      const result = yield* decideOrchestrationCommand({
-        command: {
-          type: "project.create",
-          commandId: CommandId.make("cmd-project-create-duplicate-root"),
-          projectId: asProjectId("project-duplicate-root"),
-          title: "Duplicate Project",
-          workspaceRoot: "/tmp/project/",
-          createdAt: now,
-        },
-        readModel,
-      });
+      const failure = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "project.create",
+            commandId: CommandId.make("cmd-project-create-duplicate-root"),
+            projectId: asProjectId("project-duplicate-root"),
+            title: "Duplicate Project",
+            workspaceRoot: "/tmp/project/",
+            createdAt: now,
+          },
+          readModel,
+        }),
+      );
 
-      const event = Array.isArray(result) ? result[0] : result;
-      expect(event.type).toBe("project.created");
+      expect(failure.message).toContain(
+        "Active project 'project-existing' already exists for workspace root '/tmp/project'.",
+      );
     }),
   );
 
-  it.effect("allows project.meta.update to move onto another active workspace root", () =>
+  it.effect("rejects project.meta.update when moving onto another active workspace root", () =>
     Effect.gen(function* () {
       const now = "2026-01-01T00:00:00.000Z";
       const initial = createEmptyReadModel(now);
@@ -160,9 +203,9 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           projectId: asProjectId("project-first"),
           title: "First",
           workspaceRoot: "/tmp/project-first",
-          additionalFolders: [],
           defaultModelSelection: null,
           scripts: [],
+          additionalFolders: [],
           createdAt: now,
           updatedAt: now,
         },
@@ -182,26 +225,29 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           projectId: asProjectId("project-second"),
           title: "Second",
           workspaceRoot: "/tmp/project-second",
-          additionalFolders: [],
           defaultModelSelection: null,
           scripts: [],
+          additionalFolders: [],
           createdAt: now,
           updatedAt: now,
         },
       });
 
-      const result = yield* decideOrchestrationCommand({
-        command: {
-          type: "project.meta.update",
-          commandId: CommandId.make("cmd-project-update-duplicate-root"),
-          projectId: asProjectId("project-second"),
-          workspaceRoot: "/tmp/project-first",
-        },
-        readModel,
-      });
+      const failure = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "project.meta.update",
+            commandId: CommandId.make("cmd-project-update-duplicate-root"),
+            projectId: asProjectId("project-second"),
+            workspaceRoot: "/tmp/project-first",
+          },
+          readModel,
+        }),
+      );
 
-      const event = Array.isArray(result) ? result[0] : result;
-      expect(event.type).toBe("project.meta-updated");
+      expect(failure.message).toContain(
+        "Active project 'project-first' already exists for workspace root '/tmp/project-first'.",
+      );
     }),
   );
 

@@ -52,7 +52,7 @@ const electronAppLayer = Layer.succeed(ElectronApp.ElectronApp, {
 
 const electronDialogLayer = Layer.succeed(ElectronDialog.ElectronDialog, {
   pickFolder: () => Effect.succeed(Option.none()),
-  confirm: () => Effect.succeed(false),
+  pickFiles: () => Effect.succeed([]),
   showMessageBox: () => Effect.succeed({ response: 0, checkboxChecked: false }),
   showErrorBox: () => Effect.void,
 } satisfies ElectronDialog.ElectronDialog["Service"]);
@@ -80,6 +80,8 @@ const makeDesktopWindowLayer = (selectedAction: Deferred.Deferred<string>) =>
     handleBackendNotReady: Effect.void,
     flushMainWindowBounds: Effect.void,
     dispatchMenuAction: (action) => Deferred.succeed(selectedAction, action).pipe(Effect.asVoid),
+    zoomMain: (direction) =>
+      Deferred.succeed(selectedAction, `zoom-${direction}`).pipe(Effect.asVoid),
     syncAppearance: Effect.void,
   } satisfies DesktopWindow.DesktopWindow["Service"]);
 
@@ -93,6 +95,30 @@ const makeElectronMenuLayer = (
     showContextMenu: () => Effect.succeed(Option.none()),
   } satisfies ElectronMenu.ElectronMenu["Service"]);
 
+const configureMenu = (
+  selectedAction: Deferred.Deferred<string>,
+  applicationMenuTemplate: Deferred.Deferred<readonly Electron.MenuItemConstructorOptions[]>,
+) =>
+  Effect.gen(function* () {
+    const menu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
+    yield* menu.configure;
+  }).pipe(
+    Effect.provide(
+      DesktopApplicationMenu.layer.pipe(
+        Layer.provideMerge(makeElectronMenuLayer(applicationMenuTemplate)),
+        Layer.provideMerge(makeDesktopWindowLayer(selectedAction)),
+        Layer.provideMerge(desktopUpdatesLayer),
+        Layer.provideMerge(electronDialogLayer),
+        Layer.provideMerge(electronAppLayer),
+        Layer.provideMerge(
+          DesktopEnvironment.layer(environmentInput).pipe(
+            Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({}))),
+          ),
+        ),
+      ),
+    ),
+  );
+
 describe("DesktopApplicationMenu", () => {
   it.effect("installs the native menu and routes Settings through DesktopWindow", () =>
     Effect.gen(function* () {
@@ -100,25 +126,7 @@ describe("DesktopApplicationMenu", () => {
       const applicationMenuTemplate =
         yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
 
-      yield* Effect.gen(function* () {
-        const menu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
-        yield* menu.configure;
-      }).pipe(
-        Effect.provide(
-          DesktopApplicationMenu.layer.pipe(
-            Layer.provideMerge(makeElectronMenuLayer(applicationMenuTemplate)),
-            Layer.provideMerge(makeDesktopWindowLayer(selectedAction)),
-            Layer.provideMerge(desktopUpdatesLayer),
-            Layer.provideMerge(electronDialogLayer),
-            Layer.provideMerge(electronAppLayer),
-            Layer.provideMerge(
-              DesktopEnvironment.layer(environmentInput).pipe(
-                Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({}))),
-              ),
-            ),
-          ),
-        ),
-      );
+      yield* configureMenu(selectedAction, applicationMenuTemplate);
 
       const template = yield* Deferred.await(applicationMenuTemplate);
       const fileMenu = template.find((item) => item.label === "File");
@@ -135,6 +143,40 @@ describe("DesktopApplicationMenu", () => {
 
       settingsClick({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
       assert.equal(yield* Deferred.await(selectedAction), "open-settings");
+    }),
+  );
+
+  // Zoom must route through DesktopWindow.zoomMain instead of the Electron
+  // zoom roles: the roles zoom whichever webContents has focus, which breaks
+  // app zoom while an embedded preview WebContentsView holds focus.
+  it.effect("routes View menu zoom to the main window instead of zoom roles", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+
+      yield* configureMenu(selectedAction, applicationMenuTemplate);
+
+      const template = yield* Deferred.await(applicationMenuTemplate);
+      const viewMenu = template.find((item) => item.label === "View");
+      assert.isDefined(viewMenu);
+      if (!Array.isArray(viewMenu.submenu)) {
+        throw new Error("Expected View menu submenu to be an array.");
+      }
+
+      assert.isUndefined(
+        viewMenu.submenu.find((item) => item.role?.toLowerCase().includes("zoom")),
+      );
+
+      const zoomIn = viewMenu.submenu.find((item) => item.label === "Zoom In");
+      assert.isDefined(zoomIn);
+      assert.equal(zoomIn.accelerator, "CmdOrCtrl+=");
+      if (typeof zoomIn.click !== "function") {
+        throw new Error("Expected Zoom In menu item to have a click handler.");
+      }
+
+      zoomIn.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
+      assert.equal(yield* Deferred.await(selectedAction), "zoom-in");
     }),
   );
 });
