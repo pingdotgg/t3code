@@ -195,7 +195,9 @@ jobs:
         run: |
           message="$(git log -1 --pretty=%s | head -c 120) ($(git rev-parse --short=9 HEAD))"
           for platform in ios android; do
-            hash="$(eas fingerprint:generate --platform "$platform" --environment production --json --non-interactive | jq -r '.hash')"
+            # eas-cli prints an environment-loaded notice to stdout before the
+            # JSON even with --json, so discard everything before the document.
+            hash="$(eas fingerprint:generate --platform "$platform" --environment production --json --non-interactive | sed -n '/^{/,$p' | jq -er '.hash | select(type == "string" and length > 0)')"
             matching="$(eas build:list --platform "$platform" --build-profile production --status finished --fingerprint-hash "$hash" --limit 1 --json --non-interactive | jq 'length')"
             if [ "$matching" -gt 0 ]; then
               eas update \
