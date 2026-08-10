@@ -29,6 +29,11 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import {
+  mcpEnvRecord,
+  mcpHeaderRecord,
+  resolveSessionMcpServers,
+} from "../../mcp/resolveSessionMcpServers.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
   ProviderAdapterProcessError,
@@ -1217,20 +1222,42 @@ export function makeOpenCodeAdapter(
                 ...(server.external && serverPassword ? { serverPassword } : {}),
               });
               const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-              if (mcpSession && !server.external) {
-                yield* runOpenCodeSdk("mcp.add", () =>
-                  client.mcp.add({
-                    name: "t3-code",
-                    config: {
-                      type: "remote",
-                      url: mcpSession.endpoint,
-                      headers: {
-                        Authorization: mcpSession.authorizationHeader,
+              if (!server.external) {
+                if (mcpSession) {
+                  yield* runOpenCodeSdk("mcp.add", () =>
+                    client.mcp.add({
+                      name: "t3-code",
+                      config: {
+                        type: "remote",
+                        url: mcpSession.endpoint,
+                        headers: {
+                          Authorization: mcpSession.authorizationHeader,
+                        },
+                        oauth: false,
                       },
-                      oauth: false,
-                    },
-                  }),
-                );
+                    }),
+                  );
+                }
+                for (const { key, config } of resolveSessionMcpServers()) {
+                  yield* runOpenCodeSdk("mcp.add", () =>
+                    client.mcp.add({
+                      name: key,
+                      config:
+                        config.transport.type === "stdio"
+                          ? {
+                              type: "local",
+                              command: [config.transport.command, ...config.transport.args],
+                              environment: mcpEnvRecord(config.transport.env),
+                            }
+                          : {
+                              type: "remote",
+                              url: config.transport.url,
+                              headers: mcpHeaderRecord(config.transport.headers),
+                              oauth: false,
+                            },
+                    }),
+                  );
+                }
               }
               // Resume: re-adopt the session named by the durable cursor —
               // OpenCode scopes history by session id. The probe recovers only

@@ -12,6 +12,7 @@ export * from "./provider.ts";
 export * from "./providerInstance.ts";
 export * from "./threadFailure.ts";
 export * from "./providerRuntime.ts";
+export * from "./mcpServers.ts";
 export * from "./model.ts";
 export * from "./keybindings.ts";
 export * from "./server.ts";

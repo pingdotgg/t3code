@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  McpServerId,
   ProviderDriverKind,
   ProviderInstanceId,
   ServerSettings,
@@ -688,6 +689,65 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.equal(
         roundTripped.providerInstances[instanceId]?.environment?.[0]?.value,
         "sk-or-secret",
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("stores sensitive MCP server env/header values outside settings.json", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverId = McpServerId.make("my-server");
+
+      const next = yield* serverSettings.updateSettings({
+        mcpServers: {
+          [serverId]: {
+            name: "My Server",
+            enabled: true,
+            transport: {
+              type: "stdio",
+              command: "npx",
+              args: ["-y", "some-mcp-server"],
+              env: [{ name: "API_KEY", value: "secret-value", sensitive: true }],
+            },
+          },
+        },
+      });
+
+      assert.deepEqual(next.mcpServers[serverId]?.transport, {
+        type: "stdio",
+        command: "npx",
+        args: ["-y", "some-mcp-server"],
+        env: [{ name: "API_KEY", value: "secret-value", sensitive: true, valueRedacted: true }],
+      });
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(raw, "secret-value");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      assert.deepEqual(JSON.parse(raw).mcpServers["my-server"].transport.env, [
+        { name: "API_KEY", value: "", sensitive: true, valueRedacted: true },
+      ]);
+
+      const roundTripped = yield* serverSettings.updateSettings({
+        mcpServers: {
+          [serverId]: {
+            name: "My Server",
+            enabled: true,
+            transport: {
+              type: "stdio",
+              command: "npx",
+              args: ["-y", "some-mcp-server"],
+              env: [{ name: "API_KEY", value: "", sensitive: true, valueRedacted: true }],
+            },
+          },
+        },
+      });
+
+      const roundTrippedTransport = roundTripped.mcpServers[serverId]?.transport;
+      assert.equal(
+        roundTrippedTransport?.type === "stdio" ? roundTrippedTransport.env?.[0]?.value : undefined,
+        "secret-value",
       );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );

@@ -4,6 +4,7 @@ export type SettingsPath =
   | "/settings/keybindings"
   | "/settings/providers"
   | "/settings/source-control"
+  | "/settings/mcp-servers"
   | "/settings/connections"
   | "/settings/archived";
 
@@ -24,6 +25,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
   "/settings/source-control": "Source Control",
+  "/settings/mcp-servers": "MCP Servers",
   "/settings/connections": "Connections",
   "/settings/archived": "Archive",
 };
@@ -198,6 +200,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "source-control",
     title: "Source control",
     to: "/settings/source-control",
+  },
+  {
+    id: "mcp-servers",
+    title: "MCP servers",
+    to: "/settings/mcp-servers",
   },
   {
     id: "code-review-agent",

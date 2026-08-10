@@ -155,6 +155,15 @@ import {
   ResourceTelemetryRetryResult,
   ResourceTelemetrySnapshot,
 } from "./resourceTelemetry.ts";
+import {
+  McpServerRegistryError,
+  McpServerRemoveInput,
+  McpServerTestConnectionInput,
+  McpServerTestConnectionResult,
+  McpServerUpsertInput,
+  McpServerUpsertResult,
+  McpServersListResult,
+} from "./mcpServers.ts";
 import { UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
 import {
@@ -264,6 +273,12 @@ export const WS_METHODS = {
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
   sourceControlListChangeRequests: "sourceControl.listChangeRequests",
+
+  // MCP server registry methods
+  mcpServersList: "mcpServers.list",
+  mcpServersUpsert: "mcpServers.upsert",
+  mcpServersRemove: "mcpServers.remove",
+  mcpServersTestConnection: "mcpServers.testConnection",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -456,6 +471,30 @@ export const WsSourceControlPublishRepositoryRpc = Rpc.make(
     error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
   },
 );
+
+export const WsMcpServersListRpc = Rpc.make(WS_METHODS.mcpServersList, {
+  payload: Schema.Struct({}),
+  success: McpServersListResult,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsMcpServersUpsertRpc = Rpc.make(WS_METHODS.mcpServersUpsert, {
+  payload: McpServerUpsertInput,
+  success: McpServerUpsertResult,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsMcpServersRemoveRpc = Rpc.make(WS_METHODS.mcpServersRemove, {
+  payload: McpServerRemoveInput,
+  success: Schema.Void,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsMcpServersTestConnectionRpc = Rpc.make(WS_METHODS.mcpServersTestConnection, {
+  payload: McpServerTestConnectionInput,
+  success: McpServerTestConnectionResult,
+  error: Schema.Union([McpServerRegistryError, ServerSettingsError, EnvironmentAuthorizationError]),
+});
 
 export const WsSourceControlListChangeRequestsRpc = Rpc.make(
   WS_METHODS.sourceControlListChangeRequests,
@@ -871,6 +910,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
+  WsMcpServersListRpc,
+  WsMcpServersUpsertRpc,
+  WsMcpServersRemoveRpc,
+  WsMcpServersTestConnectionRpc,
   WsSourceControlListChangeRequestsRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,

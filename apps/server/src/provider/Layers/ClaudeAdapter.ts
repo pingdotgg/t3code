@@ -75,6 +75,11 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import {
+  mcpEnvRecord,
+  mcpHeaderRecord,
+  resolveSessionMcpServers,
+} from "../../mcp/resolveSessionMcpServers.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
@@ -4096,6 +4101,37 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...new Set([...(input.cwd ? [input.cwd] : []), ...(input.additionalDirectories ?? [])]),
       ];
       const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+      const userMcpServers = resolveSessionMcpServers();
+      const claudeMcpServers: NonNullable<ClaudeQueryOptions["mcpServers"]> = {
+        ...(mcpSession
+          ? {
+              "t3-code": {
+                type: "http" as const,
+                url: mcpSession.endpoint,
+                headers: {
+                  Authorization: mcpSession.authorizationHeader,
+                },
+              },
+            }
+          : {}),
+        ...Object.fromEntries(
+          userMcpServers.map(({ key, config }) => [
+            key,
+            config.transport.type === "stdio"
+              ? {
+                  type: "stdio" as const,
+                  command: config.transport.command,
+                  args: [...config.transport.args],
+                  env: mcpEnvRecord(config.transport.env),
+                }
+              : {
+                  type: config.transport.type,
+                  url: config.transport.url,
+                  headers: mcpHeaderRecord(config.transport.headers),
+                },
+          ]),
+        ),
+      };
       // The attachments dir grant lets the agent Read/copy pasted images at
       // the paths ProviderService injects into the turn text, without an
       // approval prompt. It is a leaf directory holding only attachment
@@ -4128,19 +4164,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         env: claudeEnvironment,
         ...(additionalDirectories.length > 0 ? { additionalDirectories } : {}),
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
-        ...(mcpSession
-          ? {
-              mcpServers: {
-                "t3-code": {
-                  type: "http",
-                  url: mcpSession.endpoint,
-                  headers: {
-                    Authorization: mcpSession.authorizationHeader,
-                  },
-                },
-              },
-            }
-          : {}),
+        ...(Object.keys(claudeMcpServers).length > 0 ? { mcpServers: claudeMcpServers } : {}),
       };
 
       yield* Effect.annotateCurrentSpan({
