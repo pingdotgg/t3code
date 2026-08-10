@@ -1,4 +1,10 @@
-import { ArchiveIcon, ArchiveX, ChevronRightIcon, LoaderIcon, SettingsIcon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArchiveX,
+  ChevronRightIcon,
+  LoaderIcon,
+  SettingsIcon,
+} from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -38,7 +44,11 @@ import { createModelSelection } from "@t3tools/shared/model";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
-import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
+import {
+  APP_VERSION,
+  HOSTED_APP_CHANNEL,
+  HOSTED_APP_CHANNEL_LABEL,
+} from "../../branding";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -53,7 +63,10 @@ import {
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
 import { isElectron } from "../../env";
-import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
+import {
+  buildHostedChannelSelectionUrl,
+  type HostedAppChannel,
+} from "../../hostedPairing";
 import { useCustomThemes } from "../../hooks/useCustomThemes";
 import {
   readAppearanceModePreference,
@@ -62,7 +75,10 @@ import {
   useTheme,
 } from "../../hooks/useTheme";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import {
+  usePrimarySettings,
+  useUpdatePrimarySettings,
+} from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
@@ -76,12 +92,19 @@ import {
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { isMacPlatform } from "../../lib/utils";
-import { primaryServerObservabilityAtom, primaryServerProvidersAtom } from "../../state/server";
+import {
+  primaryServerObservabilityAtom,
+  primaryServerProvidersAtom,
+} from "../../state/server";
 import { useProjects } from "../../state/entities";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
-import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
+import {
+  Collapsible,
+  CollapsiblePanel,
+  CollapsibleTrigger,
+} from "../ui/collapsible";
 import {
   Dialog,
   DialogDescription,
@@ -103,8 +126,16 @@ import {
   resolveTerminalFontSizePreference,
   TYPOGRAPHY_ADVANCED_STORAGE_KEY,
 } from "../../appearanceFonts";
-import { CodeFontPreview, PromptFontPreview, TerminalFontPreview } from "./SettingsFontPreviews";
-import { discoverInstalledFonts, FontFamilyPicker, useFontEnumeration } from "./FontFamilyPicker";
+import {
+  CodeFontPreview,
+  PromptFontPreview,
+  TerminalFontPreview,
+} from "./SettingsFontPreviews";
+import {
+  discoverInstalledFonts,
+  FontFamilyPicker,
+  useFontEnumeration,
+} from "./FontFamilyPicker";
 import {
   NumberField,
   NumberFieldDecrement,
@@ -112,7 +143,13 @@ import {
   NumberFieldIncrement,
   NumberFieldInput,
 } from "../ui/number-field";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -142,7 +179,10 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 
-const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
+const ENVIRONMENT_IDENTIFICATION_LABELS: Record<
+  EnvironmentIdentificationMode,
+  string
+> = {
   artwork: "Artwork",
   pill: "Version pill",
   none: "None",
@@ -154,7 +194,10 @@ const TIMESTAMP_FORMAT_LABELS = {
   "24-hour": "24-hour",
 } as const;
 
-const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<BackgroundActivityProfile, string> = {
+const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<
+  BackgroundActivityProfile,
+  string
+> = {
   balanced: "Balanced",
   performance: "Performance",
   "battery-saver": "Battery saver",
@@ -162,16 +205,24 @@ const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<BackgroundActivityProfile, stri
 
 type BackgroundActivityProfileOption = BackgroundActivityProfile | "advanced";
 
-const BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS: Record<BackgroundActivityProfileOption, string> = {
+const BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS: Record<
+  BackgroundActivityProfileOption,
+  string
+> = {
   ...BACKGROUND_ACTIVITY_PROFILE_LABELS,
   advanced: "Advanced",
 };
 
-const BACKGROUND_ACTIVITY_PROFILE_DESCRIPTIONS: Record<BackgroundActivityProfile, string> = {
+const BACKGROUND_ACTIVITY_PROFILE_DESCRIPTIONS: Record<
+  BackgroundActivityProfile,
+  string
+> = {
   balanced:
     "Pauses background probes when clients are idle, the host is locked, or low power mode is active.",
-  performance: "Allows scoped background probes while any subscribed client remains connected.",
-  "battery-saver": "Also pauses background probes when the host or client is on battery.",
+  performance:
+    "Allows scoped background probes while any subscribed client remains connected.",
+  "battery-saver":
+    "Also pauses background probes when the host or client is on battery.",
 };
 
 const ADVANCED_BACKGROUND_ACTIVITY_DESCRIPTION =
@@ -212,7 +263,9 @@ function AboutVersionTitle() {
   return (
     <span className="inline-flex items-center gap-2">
       <span>Version</span>
-      <code className="text-[11px] font-medium text-muted-foreground">{APP_VERSION}</code>
+      <code className="text-[11px] font-medium text-muted-foreground">
+        {APP_VERSION}
+      </code>
     </span>
   );
 }
@@ -222,7 +275,8 @@ function AboutVersionSection() {
   const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
   const [isUpdateActionPending, setIsUpdateActionPending] = useState(false);
 
-  const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
+  const hasDesktopBridge =
+    typeof window !== "undefined" && Boolean(window.desktopBridge);
   const selectedUpdateChannel = updateState?.channel ?? "latest";
   const selectedHostedAppChannel = hasDesktopBridge ? null : HOSTED_APP_CHANNEL;
 
@@ -245,7 +299,10 @@ function AboutVersionSection() {
             stackedThreadToast({
               type: "error",
               title: "Could not change update track",
-              description: error instanceof Error ? error.message : "Update track change failed.",
+              description:
+                error instanceof Error
+                  ? error.message
+                  : "Update track change failed.",
             }),
           );
         })
@@ -260,7 +317,9 @@ function AboutVersionSection() {
     const bridge = window.desktopBridge;
     if (!bridge) return;
 
-    const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
+    const action = updateState
+      ? resolveDesktopUpdateButtonAction(updateState)
+      : "none";
 
     if (action === "download") {
       void bridge.downloadUpdate().catch((error: unknown) => {
@@ -268,7 +327,8 @@ function AboutVersionSection() {
           stackedThreadToast({
             type: "error",
             title: "Could not download update",
-            description: error instanceof Error ? error.message : "Download failed.",
+            description:
+              error instanceof Error ? error.message : "Download failed.",
           }),
         );
       });
@@ -292,7 +352,10 @@ function AboutVersionSection() {
           stackedThreadToast({
             type: "error",
             title: "Could not confirm update",
-            description: error instanceof Error ? error.message : "Update confirmation failed.",
+            description:
+              error instanceof Error
+                ? error.message
+                : "Update confirmation failed.",
           }),
         );
         return;
@@ -308,7 +371,8 @@ function AboutVersionSection() {
             stackedThreadToast({
               type: "error",
               title: "Could not install update",
-              description: error instanceof Error ? error.message : "Install failed.",
+              description:
+                error instanceof Error ? error.message : "Install failed.",
             }),
           );
         })
@@ -326,7 +390,8 @@ function AboutVersionSection() {
               type: "error",
               title: "Could not check for updates",
               description:
-                result.state.message ?? "Automatic updates are not available in this build.",
+                result.state.message ??
+                "Automatic updates are not available in this build.",
             }),
           );
         }
@@ -336,27 +401,37 @@ function AboutVersionSection() {
           stackedThreadToast({
             type: "error",
             title: "Could not check for updates",
-            description: error instanceof Error ? error.message : "Update check failed.",
+            description:
+              error instanceof Error ? error.message : "Update check failed.",
           }),
         );
       });
   }, [isUpdateActionPending, updateState]);
 
-  const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
-  const buttonTooltip = updateState ? getDesktopUpdateButtonTooltip(updateState) : null;
+  const action = updateState
+    ? resolveDesktopUpdateButtonAction(updateState)
+    : "none";
+  const buttonTooltip = updateState
+    ? getDesktopUpdateButtonTooltip(updateState)
+    : null;
   const buttonDisabled =
     action === "none"
       ? !canCheckForUpdate(updateState)
       : isDesktopUpdateButtonDisabled(updateState);
 
-  const actionLabel: Record<string, string> = { download: "Download", install: "Install" };
+  const actionLabel: Record<string, string> = {
+    download: "Download",
+    install: "Install",
+  };
   const statusLabel: Record<string, string> = {
     checking: "Checking…",
     downloading: "Downloading…",
     "up-to-date": "Up to Date",
   };
   const buttonLabel =
-    actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? "Check for Updates";
+    actionLabel[action] ??
+    statusLabel[updateState?.status ?? ""] ??
+    "Check for Updates";
   const description =
     action === "download" || action === "install"
       ? "Update available."
@@ -381,7 +456,9 @@ function AboutVersionSection() {
                 </Button>
               }
             />
-            {buttonTooltip ? <TooltipPopup>{buttonTooltip}</TooltipPopup> : null}
+            {buttonTooltip ? (
+              <TooltipPopup>{buttonTooltip}</TooltipPopup>
+            ) : null}
           </Tooltip>
         }
       />
@@ -426,11 +503,16 @@ function AboutVersionSection() {
               onValueChange={(value) => {
                 if (value === selectedHostedAppChannel) return;
                 window.location.assign(
-                  buildHostedChannelSelectionUrl({ channel: value as HostedAppChannel }),
+                  buildHostedChannelSelectionUrl({
+                    channel: value as HostedAppChannel,
+                  }),
                 );
               }}
             >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Update track">
+              <SelectTrigger
+                className="w-full sm:w-40"
+                aria-label="Update track"
+              >
                 <SelectValue>{HOSTED_APP_CHANNEL_LABEL}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -466,22 +548,30 @@ export function useSettingsRestore(onRestored?: () => void) {
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
-  const isBackgroundActivityDirty = hasChangedBackgroundActivitySettings(settings);
+  const isBackgroundActivityDirty =
+    hasChangedBackgroundActivitySettings(settings);
 
   const changedSettingLabels = useMemo(
     () => [
       ...(theme !== "system" ? ["Theme"] : []),
       ...(!followSystem ? ["Follow system"] : []),
       ...(themeHalves !== null ? ["Theme mix"] : []),
-      ...(settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? ["Glass opacity"] : []),
+      ...(settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity
+        ? ["Glass opacity"]
+        : []),
       ...(settings.environmentIdentificationMode !==
       DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode
         ? ["Environment identification"]
         : []),
+      ...(settings.windowsTerminalShell !==
+      DEFAULT_UNIFIED_SETTINGS.windowsTerminalShell
+        ? ["Terminal shell"]
+        : []),
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
-      ...(settings.sidebarThreadPreviewCount !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount
+      ...(settings.sidebarThreadPreviewCount !==
+      DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount
         ? ["Visible threads"]
         : []),
       ...(settings.sidebarProjectGroupingMode !==
@@ -492,18 +582,25 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
         ? ["Auto-settle inactive threads"]
         : []),
-      ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
+      ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap
+        ? ["Word wrap"]
+        : []),
       ...(settings.fontFamilySans !== DEFAULT_UNIFIED_SETTINGS.fontFamilySans
         ? ["Interface font"]
         : []),
-      ...(settings.fontFamilyComposer !== DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer
+      ...(settings.fontFamilyComposer !==
+      DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer
         ? ["Prompt font"]
         : []),
-      ...(settings.fontFamilyCode !== DEFAULT_UNIFIED_SETTINGS.fontFamilyCode ? ["Code font"] : []),
-      ...(settings.fontFamilyTerminal !== DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal
+      ...(settings.fontFamilyCode !== DEFAULT_UNIFIED_SETTINGS.fontFamilyCode
+        ? ["Code font"]
+        : []),
+      ...(settings.fontFamilyTerminal !==
+      DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal
         ? ["Terminal font"]
         : []),
-      ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
+      ...(settings.diffIgnoreWhitespace !==
+      DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
         ? ["Diff whitespace changes"]
         : []),
       ...(settings.enableLegacyTokenStreaming !==
@@ -515,20 +612,24 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Provider update checks"]
         : []),
       ...(isBackgroundActivityDirty ? ["Background activity"] : []),
-      ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
+      ...(settings.defaultThreadEnvMode !==
+      DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
         : []),
       ...(settings.newWorktreesStartFromOrigin !==
       DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin
         ? ["New worktrees start from origin"]
         : []),
-      ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
+      ...(settings.addProjectBaseDirectory !==
+      DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
-      ...(settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
+      ...(settings.confirmThreadArchive !==
+      DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
         ? ["Archive confirmation"]
         : []),
-      ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
+      ...(settings.confirmThreadDelete !==
+      DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
         ? ["Delete confirmation"]
         : []),
       ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
@@ -569,9 +670,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     if (changedSettingLabels.length === 0) return;
     const api = readLocalApi();
     const confirmed = await (api ?? ensureLocalApi()).dialogs.confirm(
-      ["Restore default settings?", `This will reset: ${changedSettingLabels.join(", ")}.`].join(
-        "\n",
-      ),
+      [
+        "Restore default settings?",
+        `This will reset: ${changedSettingLabels.join(", ")}.`,
+      ].join("\n"),
       { variant: "destructive" },
     );
     if (!confirmed) return;
@@ -594,7 +696,8 @@ export function useSettingsRestore(onRestored?: () => void) {
     const needsMixReset = liveHalves !== null;
     // Same for the appearance mode: trusting the render-time value would skip
     // the reset and report success while a non-system mode stayed in storage.
-    const needsFollowSystemReset = readAppearanceModePreference(previousTheme) !== "system";
+    const needsFollowSystemReset =
+      readAppearanceModePreference(previousTheme) !== "system";
     const notifyThemeRestoreFailure = () => {
       toastManager.add(
         stackedThreadToast({
@@ -630,24 +733,36 @@ export function useSettingsRestore(onRestored?: () => void) {
     updateSettings({
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
+      windowsTerminalShell: DEFAULT_UNIFIED_SETTINGS.windowsTerminalShell,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
-      environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
+      environmentIdentificationMode:
+        DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
-      sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
-      sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
-      sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
-      enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
-      enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+      sidebarThreadPreviewCount:
+        DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
+      sidebarProjectGroupingMode:
+        DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
+      sidebarAutoSettleAfterDays:
+        DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
+      enableLegacyTokenStreaming:
+        DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
+      enableProviderUpdateChecks:
+        DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
-      backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
-      automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
-      providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
+      backgroundActivityProfile:
+        DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
+      automaticGitFetchInterval:
+        DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
+      providerHealthRefreshInterval:
+        DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
-      newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
+      newWorktreesStartFromOrigin:
+        DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
-      textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
+      textGenerationModelSelection:
+        DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
       fontFamilyCode: DEFAULT_UNIFIED_SETTINGS.fontFamilyCode,
@@ -681,7 +796,8 @@ function BackgroundActivityAdvancedDialog({
 }) {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
-  const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
+  const resolvedBackgroundActivity =
+    resolveServerBackgroundActivitySettings(settings);
   const activeProfile = resolvedBackgroundActivity.profile;
   const automaticGitFetchIntervalSeconds = durationToSeconds(
     resolvedBackgroundActivity.automaticGitFetchInterval,
@@ -702,7 +818,8 @@ function BackgroundActivityAdvancedDialog({
         <DialogHeader>
           <DialogTitle>Background Activity</DialogTitle>
           <DialogDescription>
-            Tune the shared power policy and the background intervals that feed it.
+            Tune the shared power policy and the background intervals that feed
+            it.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-0 px-6 pb-5">
@@ -711,7 +828,8 @@ function BackgroundActivityAdvancedDialog({
               <div className="min-w-0 space-y-1">
                 <div className="text-sm font-medium">Shared policy</div>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  Controls whether background work may run after a subscribed interval fires.
+                  Controls whether background work may run after a subscribed
+                  interval fires.
                 </p>
               </div>
               <Select
@@ -723,13 +841,19 @@ function BackgroundActivityAdvancedDialog({
                     value === "battery-saver"
                   ) {
                     updateSettings({
-                      backgroundActivity: backgroundActivitySharedPolicySettings(settings, value),
+                      backgroundActivity:
+                        backgroundActivitySharedPolicySettings(settings, value),
                     });
                   }
                 }}
               >
-                <SelectTrigger className="w-full sm:w-40" aria-label="Shared background policy">
-                  <SelectValue>{BACKGROUND_ACTIVITY_PROFILE_LABELS[activeProfile]}</SelectValue>
+                <SelectTrigger
+                  className="w-full sm:w-40"
+                  aria-label="Shared background policy"
+                >
+                  <SelectValue>
+                    {BACKGROUND_ACTIVITY_PROFILE_LABELS[activeProfile]}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
                   <SelectItem hideIndicator value="balanced">
@@ -785,9 +909,12 @@ function BackgroundActivityAdvancedDialog({
 
             <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0 space-y-1">
-                <div className="text-sm font-medium">Provider health interval</div>
+                <div className="text-sm font-medium">
+                  Provider health interval
+                </div>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  Refresh provider availability, versions, auth state, and model metadata.
+                  Refresh provider availability, versions, auth state, and model
+                  metadata.
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
@@ -957,7 +1084,8 @@ export function AppearanceSettingsPanel() {
   const showEnvironmentIdentification =
     resolveEnvironmentIdentificationPillLabel(environmentStageLabel) !== null;
   const glassOpacityRatio =
-    (settings.glassOpacity - MIN_GLASS_OPACITY) / (MAX_GLASS_OPACITY - MIN_GLASS_OPACITY);
+    (settings.glassOpacity - MIN_GLASS_OPACITY) /
+    (MAX_GLASS_OPACITY - MIN_GLASS_OPACITY);
   const glassOpacitySliderStyle = {
     "--settings-slider-progress": `${glassOpacityRatio * 100}%`,
     "--settings-slider-fill-offset": `${0.5 - glassOpacityRatio}rem`,
@@ -990,7 +1118,9 @@ export function AppearanceSettingsPanel() {
               <SettingResetButton
                 label="glass opacity"
                 onClick={() =>
-                  updateSettings({ glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity })
+                  updateSettings({
+                    glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
+                  })
                 }
               />
             ) : null
@@ -1033,12 +1163,14 @@ export function AppearanceSettingsPanel() {
             {...searchableSetting("environment-identification")}
             description="Choose how Dev and Nightly environments are identified."
             resetAction={
-              settings.environmentIdentificationMode !== DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE ? (
+              settings.environmentIdentificationMode !==
+              DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE ? (
                 <SettingResetButton
                   label="environment identification"
                   onClick={() =>
                     updateSettings({
-                      environmentIdentificationMode: DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
+                      environmentIdentificationMode:
+                        DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
                     })
                   }
                 />
@@ -1048,22 +1180,35 @@ export function AppearanceSettingsPanel() {
               <Select
                 value={settings.environmentIdentificationMode}
                 onValueChange={(value) => {
-                  if (value === "artwork" || value === "pill" || value === "none") {
+                  if (
+                    value === "artwork" ||
+                    value === "pill" ||
+                    value === "none"
+                  ) {
                     updateSettings({ environmentIdentificationMode: value });
                   }
                 }}
               >
-                <SelectTrigger className="w-full sm:w-40" aria-label="Environment identification">
+                <SelectTrigger
+                  className="w-full sm:w-40"
+                  aria-label="Environment identification"
+                >
                   <SelectValue>
-                    {ENVIRONMENT_IDENTIFICATION_LABELS[settings.environmentIdentificationMode]}
+                    {
+                      ENVIRONMENT_IDENTIFICATION_LABELS[
+                        settings.environmentIdentificationMode
+                      ]
+                    }
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  {Object.entries(ENVIRONMENT_IDENTIFICATION_LABELS).map(([value, label]) => (
-                    <SelectItem hideIndicator key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
+                  {Object.entries(ENVIRONMENT_IDENTIFICATION_LABELS).map(
+                    ([value, label]) => (
+                      <SelectItem hideIndicator key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ),
+                  )}
                 </SelectPopup>
               </Select>
             }
@@ -1083,8 +1228,11 @@ function useFontDefaultFamilies() {
   // hardcoded.
   const defaults = useMemo(
     () => ({
-      sans: resolveDefaultFamilyLabel(DEFAULT_SANS_FONT_STACK) ?? "System default",
-      code: resolveDefaultFamilyLabel(DEFAULT_CODE_FONT_STACK) ?? "System monospace",
+      sans:
+        resolveDefaultFamilyLabel(DEFAULT_SANS_FONT_STACK) ?? "System default",
+      code:
+        resolveDefaultFamilyLabel(DEFAULT_CODE_FONT_STACK) ??
+        "System monospace",
     }),
     [],
   );
@@ -1129,7 +1277,9 @@ function PromptFontRow() {
       description="Only the box you write prompts in. Mono works well here."
       defaultFamily={defaults.interfaceFamily}
       value={settings.fontFamilyComposer}
-      onValueChange={(fontFamilyComposer) => updateSettings({ fontFamilyComposer })}
+      onValueChange={(fontFamilyComposer) =>
+        updateSettings({ fontFamilyComposer })
+      }
       size={{
         label: "Prompt font size",
         min: MIN_PROMPT_FONT_SIZE,
@@ -1185,7 +1335,9 @@ function TerminalFontRow() {
       description="Terminal output, independent from code blocks and diffs."
       defaultFamily={defaults.code}
       value={settings.fontFamilyTerminal}
-      onValueChange={(fontFamilyTerminal) => updateSettings({ fontFamilyTerminal })}
+      onValueChange={(fontFamilyTerminal) =>
+        updateSettings({ fontFamilyTerminal })
+      }
       requireMonospace
       size={{
         label: "Terminal font size",
@@ -1221,7 +1373,9 @@ function FontSmoothingRow() {
           <SettingResetButton
             label="font smoothing"
             onClick={() =>
-              updateSettings({ fontSmoothing: DEFAULT_UNIFIED_SETTINGS.fontSmoothing })
+              updateSettings({
+                fontSmoothing: DEFAULT_UNIFIED_SETTINGS.fontSmoothing,
+              })
             }
           />
         ) : null
@@ -1229,7 +1383,9 @@ function FontSmoothingRow() {
       control={
         <Switch
           checked={settings.fontSmoothing}
-          onCheckedChange={(checked) => updateSettings({ fontSmoothing: Boolean(checked) })}
+          onCheckedChange={(checked) =>
+            updateSettings({ fontSmoothing: Boolean(checked) })
+          }
           aria-label="Font smoothing"
         />
       }
@@ -1248,14 +1404,18 @@ function WordWrapRow() {
         settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? (
           <SettingResetButton
             label="word wrapping"
-            onClick={() => updateSettings({ wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap })}
+            onClick={() =>
+              updateSettings({ wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap })
+            }
           />
         ) : null
       }
       control={
         <Switch
           checked={settings.wordWrap}
-          onCheckedChange={(checked) => updateSettings({ wordWrap: Boolean(checked) })}
+          onCheckedChange={(checked) =>
+            updateSettings({ wordWrap: Boolean(checked) })
+          }
           aria-label="Wrap code, tables, diffs, and file previews by default"
         />
       }
@@ -1339,7 +1499,11 @@ function TypographySection() {
   // the still-set target immediately re-expanding the section.
   const lastExpandedTargetRef = useRef<string | null>(null);
   useEffect(() => {
-    if (searchTargetId === null || !ADVANCED_TYPOGRAPHY_TARGET_IDS.has(searchTargetId)) return;
+    if (
+      searchTargetId === null ||
+      !ADVANCED_TYPOGRAPHY_TARGET_IDS.has(searchTargetId)
+    )
+      return;
     if (lastExpandedTargetRef.current === searchTargetId) return;
     lastExpandedTargetRef.current = searchTargetId;
     setAdvanced(true);
@@ -1384,7 +1548,13 @@ function FontFamilySettingsRow({
   value: string;
   onValueChange: (value: string) => void;
   requireMonospace?: boolean;
-  size: { label: string; min: number; max: number; value: number; onChange: (v: number) => void };
+  size: {
+    label: string;
+    min: number;
+    max: number;
+    value: number;
+    onChange: (v: number) => void;
+  };
 }) {
   const trimmed = value.trim();
   // The fallback input edits a draft; the preference only commits once typing
@@ -1407,12 +1577,14 @@ function FontFamilySettingsRow({
   }
   useEffect(
     () => () => {
-      if (commitTimerRef.current !== null) window.clearTimeout(commitTimerRef.current);
+      if (commitTimerRef.current !== null)
+        window.clearTimeout(commitTimerRef.current);
     },
     [],
   );
   const acceptsFamily = (candidate: string) =>
-    isFontFamilyAvailable(candidate) && (!requireMonospace || isMonospaceFamily(candidate));
+    isFontFamilyAvailable(candidate) &&
+    (!requireMonospace || isMonospaceFamily(candidate));
   const commitDraft = (next: string) => {
     setDraftSettled(true);
     // A rejected name stays in the field, flagged: the terminal would silently
@@ -1430,7 +1602,8 @@ function FontFamilySettingsRow({
   const draftTrimmed = draft.trim();
   // Flag an unknown name only once typing pauses, and never for an empty
   // field - that is the starting state, not a rejected entry.
-  const draftPending = draftSettled && draftTrimmed.length > 0 && draftTrimmed !== trimmed;
+  const draftPending =
+    draftSettled && draftTrimmed.length > 0 && draftTrimmed !== trimmed;
   const resetAction =
     trimmed.length > 0 ? (
       <SettingResetButton
@@ -1510,7 +1683,11 @@ function FontFamilySettingsRow({
         onValueChange={(next) => {
           if (typeof next !== "string") return;
           const parsed = Number(next);
-          if (Number.isInteger(parsed) && parsed >= size.min && parsed <= size.max) {
+          if (
+            Number.isInteger(parsed) &&
+            parsed >= size.min &&
+            parsed <= size.max
+          ) {
             size.onChange(parsed);
           }
         }}
@@ -1519,13 +1696,14 @@ function FontFamilySettingsRow({
           <SelectValue>{size.value} px</SelectValue>
         </SelectTrigger>
         <SelectPopup align="end" alignItemWithTrigger={false}>
-          {Array.from({ length: size.max - size.min + 1 }, (_, index) => size.min + index).map(
-            (px) => (
-              <SelectItem hideIndicator key={px} value={String(px)}>
-                {px} px
-              </SelectItem>
-            ),
-          )}
+          {Array.from(
+            { length: size.max - size.min + 1 },
+            (_, index) => size.min + index,
+          ).map((px) => (
+            <SelectItem hideIndicator key={px} value={String(px)}>
+              {px} px
+            </SelectItem>
+          ))}
         </SelectPopup>
       </Select>
     </div>
@@ -1543,7 +1721,8 @@ function FontFamilySettingsRow({
   );
 }
 
-const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
+const AUTO_SETTLE_DEFAULT_DAYS =
+  DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
 
 function AutoSettleDaysInput({
   value,
@@ -1657,13 +1836,16 @@ function LegacyFeaturesSection() {
                     }
                     void (async () => {
                       const api = readLocalApi();
-                      const confirmed = await (api ?? ensureLocalApi()).dialogs.confirm(
+                      const confirmed = await (
+                        api ?? ensureLocalApi()
+                      ).dialogs.confirm(
                         [
                           "Turn on token-by-token output?",
                           "It is significantly slower than the default buffered output and hurts the reading experience. This switch exists only for backwards compatibility.",
                         ].join("\n"),
                       );
-                      if (confirmed) updateSettings({ enableLegacyTokenStreaming: true });
+                      if (confirmed)
+                        updateSettings({ enableLegacyTokenStreaming: true });
                     })();
                   }}
                   aria-label="Stream token by token (legacy)"
@@ -1689,11 +1871,77 @@ function LegacyFeaturesSection() {
     </section>
   );
 }
+const TERMINAL_SHELL_OPTIONS = [
+  { value: "", label: "Default" },
+  { value: "pwsh.exe", label: "PowerShell" },
+  { value: "powershell.exe", label: "Windows PowerShell" },
+  { value: "cmd.exe", label: "Command Prompt" },
+  { value: "bash.exe", label: "Git Bash" },
+  { value: "wsl.exe", label: "WSL" },
+];
+
+function WindowsTerminalShellRow() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+
+  if (
+    typeof navigator !== "undefined" &&
+    !isWindowsPlatform(navigator.platform)
+  ) {
+    return null;
+  }
+
+  return (
+    <SettingsRow
+      {...searchableSetting("windows-terminal-shell")}
+      title="Terminal shell"
+      description="Select the default shell for the integrated terminal on Windows."
+      resetAction={
+        settings.windowsTerminalShell !==
+        DEFAULT_UNIFIED_SETTINGS.windowsTerminalShell ? (
+          <SettingResetButton
+            label="terminal shell"
+            onClick={() =>
+              updateSettings({
+                windowsTerminalShell:
+                  DEFAULT_UNIFIED_SETTINGS.windowsTerminalShell,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Select
+          value={settings.windowsTerminalShell || ""}
+          onValueChange={(value) =>
+            updateSettings({ windowsTerminalShell: value })
+          }
+        >
+          <SelectTrigger className="w-full sm:w-48" aria-label="Terminal shell">
+            <SelectValue>
+              {TERMINAL_SHELL_OPTIONS.find(
+                (opt) => opt.value === (settings.windowsTerminalShell || ""),
+              )?.label ?? "Default"}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {TERMINAL_SHELL_OPTIONS.map((opt) => (
+              <SelectItem key={opt.value} hideIndicator value={opt.value}>
+                {opt.label}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      }
+    />
+  );
+}
 
 export function GeneralSettingsPanel() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
-  const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
+  const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] =
+    useState(false);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
   );
@@ -1707,12 +1955,18 @@ export function GeneralSettingsPanel() {
     otlpMetricsUrl: observability?.otlpMetricsUrl,
   });
 
-  const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
+  const textGenerationModelSelection = resolveAppModelSelectionState(
+    settings,
+    serverProviders,
+  );
   const textGenInstanceId = textGenerationModelSelection.instanceId;
   const textGenModel = textGenerationModelSelection.model;
   const textGenModelOptions = textGenerationModelSelection.options;
   const textGenerationModelInstanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
+    applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(serverProviders),
+      settings,
+    ),
   );
   const textGenInstanceEntry = textGenerationModelInstanceEntries.find(
     (entry) => entry.instanceId === textGenInstanceId,
@@ -1729,15 +1983,19 @@ export function GeneralSettingsPanel() {
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
-  const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
+  const resolvedBackgroundActivity =
+    resolveServerBackgroundActivitySettings(settings);
   const activeBackgroundActivityProfile = resolvedBackgroundActivity.profile;
-  const backgroundActivityProfileOption = resolveBackgroundActivityProfileOption(settings);
+  const backgroundActivityProfileOption =
+    resolveBackgroundActivityProfileOption(settings);
   const backgroundActivityDescription =
     backgroundActivityProfileOption === "advanced"
       ? `${ADVANCED_BACKGROUND_ACTIVITY_DESCRIPTION} Current shared policy: ${
           BACKGROUND_ACTIVITY_PROFILE_LABELS[activeBackgroundActivityProfile]
         }.`
-      : BACKGROUND_ACTIVITY_PROFILE_DESCRIPTIONS[resolvedBackgroundActivity.profile];
+      : BACKGROUND_ACTIVITY_PROFILE_DESCRIPTIONS[
+          resolvedBackgroundActivity.profile
+        ];
   const canResetBackgroundActivity = !Equal.equals(
     settings.backgroundActivity,
     DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
@@ -1756,7 +2014,8 @@ export function GeneralSettingsPanel() {
                 label="project grouping"
                 onClick={() =>
                   updateSettings({
-                    sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
+                    sidebarProjectGroupingMode:
+                      DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
                   })
                 }
               />
@@ -1764,11 +2023,19 @@ export function GeneralSettingsPanel() {
           }
           control={
             <Switch
-              checked={isProjectGroupingEnabled(settings.sidebarProjectGroupingMode)}
+              checked={isProjectGroupingEnabled(
+                settings.sidebarProjectGroupingMode,
+              )}
               onCheckedChange={(checked) => {
-                if (!checked && settings.sidebarProjectGroupingMode !== "separate") {
-                  lastEnabledProjectGroupingMode.current = settings.sidebarProjectGroupingMode;
-                  rememberEnabledProjectGroupingMode(settings.sidebarProjectGroupingMode);
+                if (
+                  !checked &&
+                  settings.sidebarProjectGroupingMode !== "separate"
+                ) {
+                  lastEnabledProjectGroupingMode.current =
+                    settings.sidebarProjectGroupingMode;
+                  rememberEnabledProjectGroupingMode(
+                    settings.sidebarProjectGroupingMode,
+                  );
                 }
                 updateSettings({
                   sidebarProjectGroupingMode: projectGroupingModeFromToggle(
@@ -1792,7 +2059,8 @@ export function GeneralSettingsPanel() {
                 label="auto-settle"
                 onClick={() =>
                   updateSettings({
-                    sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
+                    sidebarAutoSettleAfterDays:
+                      DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
                   })
                 }
               />
@@ -1803,7 +2071,9 @@ export function GeneralSettingsPanel() {
               checked={settings.sidebarAutoSettleAfterDays !== null}
               onCheckedChange={(checked) =>
                 updateSettings({
-                  sidebarAutoSettleAfterDays: checked ? AUTO_SETTLE_DEFAULT_DAYS : null,
+                  sidebarAutoSettleAfterDays: checked
+                    ? AUTO_SETTLE_DEFAULT_DAYS
+                    : null,
                 })
               }
               aria-label="Auto-settle inactive threads"
@@ -1817,17 +2087,21 @@ export function GeneralSettingsPanel() {
             control={
               <AutoSettleDaysInput
                 value={settings.sidebarAutoSettleAfterDays}
-                onCommit={(days) => updateSettings({ sidebarAutoSettleAfterDays: days })}
+                onCommit={(days) =>
+                  updateSettings({ sidebarAutoSettleAfterDays: days })
+                }
               />
             }
           />
         ) : null}
 
+        <WindowsTerminalShellRow />
         <SettingsRow
           {...searchableSetting("time-format")}
           description="System default follows your browser or OS clock preference."
           resetAction={
-            settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat ? (
+            settings.timestampFormat !==
+            DEFAULT_UNIFIED_SETTINGS.timestampFormat ? (
               <SettingResetButton
                 label="time format"
                 onClick={() =>
@@ -1842,13 +2116,22 @@ export function GeneralSettingsPanel() {
             <Select
               value={settings.timestampFormat}
               onValueChange={(value) => {
-                if (value === "locale" || value === "12-hour" || value === "24-hour") {
+                if (
+                  value === "locale" ||
+                  value === "12-hour" ||
+                  value === "24-hour"
+                ) {
                   updateSettings({ timestampFormat: value });
                 }
               }}
             >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Timestamp format">
-                <SelectValue>{TIMESTAMP_FORMAT_LABELS[settings.timestampFormat]}</SelectValue>
+              <SelectTrigger
+                className="w-full sm:w-40"
+                aria-label="Timestamp format"
+              >
+                <SelectValue>
+                  {TIMESTAMP_FORMAT_LABELS[settings.timestampFormat]}
+                </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 <SelectItem hideIndicator value="locale">
@@ -1869,12 +2152,14 @@ export function GeneralSettingsPanel() {
           {...searchableSetting("hide-whitespace-changes")}
           description="Set whether the diff panel ignores whitespace-only edits by default."
           resetAction={
-            settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace ? (
+            settings.diffIgnoreWhitespace !==
+            DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace ? (
               <SettingResetButton
                 label="diff whitespace changes"
                 onClick={() =>
                   updateSettings({
-                    diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
+                    diffIgnoreWhitespace:
+                      DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
                   })
                 }
               />
@@ -1901,7 +2186,8 @@ export function GeneralSettingsPanel() {
                 label="provider update checks"
                 onClick={() =>
                   updateSettings({
-                    enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+                    enableProviderUpdateChecks:
+                      DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
                   })
                 }
               />
@@ -1923,8 +2209,9 @@ export function GeneralSettingsPanel() {
             <span className="inline-flex items-center gap-1.5">
               Background activity
               <PolicyTooltip>
-                This shared policy gates background work such as Git refreshes and provider health
-                probes after their individual intervals elapse.
+                This shared policy gates background work such as Git refreshes
+                and provider health probes after their individual intervals
+                elapse.
               </PolicyTooltip>
             </span>
           }
@@ -1933,7 +2220,9 @@ export function GeneralSettingsPanel() {
             canResetBackgroundActivity ? (
               <SettingResetButton
                 label="background activity"
-                onClick={() => updateSettings(resetBackgroundActivitySettings())}
+                onClick={() =>
+                  updateSettings(resetBackgroundActivitySettings())
+                }
               />
             ) : null
           }
@@ -1955,9 +2244,16 @@ export function GeneralSettingsPanel() {
                   }
                 }}
               >
-                <SelectTrigger className="w-full sm:w-40" aria-label="Background activity profile">
+                <SelectTrigger
+                  className="w-full sm:w-40"
+                  aria-label="Background activity profile"
+                >
                   <SelectValue>
-                    {BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS[backgroundActivityProfileOption]}
+                    {
+                      BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS[
+                        backgroundActivityProfileOption
+                      ]
+                    }
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -1989,7 +2285,9 @@ export function GeneralSettingsPanel() {
                       </Button>
                     }
                   />
-                  <TooltipPopup side="top">Configure background activity</TooltipPopup>
+                  <TooltipPopup side="top">
+                    Configure background activity
+                  </TooltipPopup>
                 </Tooltip>
               ) : null}
               <BackgroundActivityAdvancedDialog
@@ -2004,14 +2302,16 @@ export function GeneralSettingsPanel() {
           {...searchableSetting("new-threads")}
           description="Pick the default workspace mode for newly created draft threads."
           resetAction={
-            settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode ||
+            settings.defaultThreadEnvMode !==
+              DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode ||
             settings.newWorktreesStartFromOrigin !==
               DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin ? (
               <SettingResetButton
                 label="new threads"
                 onClick={() =>
                   updateSettings({
-                    defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
+                    defaultThreadEnvMode:
+                      DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
                     newWorktreesStartFromOrigin:
                       DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
                   })
@@ -2028,9 +2328,14 @@ export function GeneralSettingsPanel() {
                 }
               }}
             >
-              <SelectTrigger className="w-full sm:w-44" aria-label="Default thread mode">
+              <SelectTrigger
+                className="w-full sm:w-44"
+                aria-label="Default thread mode"
+              >
                 <SelectValue>
-                  {settings.defaultThreadEnvMode === "worktree" ? "New worktree" : "Local"}
+                  {settings.defaultThreadEnvMode === "worktree"
+                    ? "New worktree"
+                    : "Local"}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -2068,7 +2373,9 @@ export function GeneralSettingsPanel() {
               <Switch
                 checked={settings.newWorktreesStartFromOrigin}
                 onCheckedChange={(checked) =>
-                  updateSettings({ newWorktreesStartFromOrigin: Boolean(checked) })
+                  updateSettings({
+                    newWorktreesStartFromOrigin: Boolean(checked),
+                  })
                 }
                 aria-label="Start new worktrees from origin by default"
               />
@@ -2086,7 +2393,8 @@ export function GeneralSettingsPanel() {
                 label="add project base directory"
                 onClick={() =>
                   updateSettings({
-                    addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
+                    addProjectBaseDirectory:
+                      DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
                   })
                 }
               />
@@ -2096,7 +2404,9 @@ export function GeneralSettingsPanel() {
             <DraftInput
               className="w-full sm:w-72"
               value={settings.addProjectBaseDirectory}
-              onCommit={(next) => updateSettings({ addProjectBaseDirectory: next })}
+              onCommit={(next) =>
+                updateSettings({ addProjectBaseDirectory: next })
+              }
               placeholder="~/"
               spellCheck={false}
               aria-label="Add project base directory"
@@ -2108,12 +2418,14 @@ export function GeneralSettingsPanel() {
           {...searchableSetting("archive-confirmation")}
           description="Require a second click on the inline archive action before a thread is archived."
           resetAction={
-            settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive ? (
+            settings.confirmThreadArchive !==
+            DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive ? (
               <SettingResetButton
                 label="archive confirmation"
                 onClick={() =>
                   updateSettings({
-                    confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
+                    confirmThreadArchive:
+                      DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
                   })
                 }
               />
@@ -2134,12 +2446,14 @@ export function GeneralSettingsPanel() {
           {...searchableSetting("delete-confirmation")}
           description="Ask before deleting a thread and its chat history."
           resetAction={
-            settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete ? (
+            settings.confirmThreadDelete !==
+            DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete ? (
               <SettingResetButton
                 label="delete confirmation"
                 onClick={() =>
                   updateSettings({
-                    confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
+                    confirmThreadDelete:
+                      DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
                   })
                 }
               />
@@ -2187,7 +2501,10 @@ export function GeneralSettingsPanel() {
                     textGenerationModelSelection: resolveAppModelSelectionState(
                       {
                         ...settings,
-                        textGenerationModelSelection: createModelSelection(instanceId, model),
+                        textGenerationModelSelection: createModelSelection(
+                          instanceId,
+                          model,
+                        ),
                       },
                       serverProviders,
                     ),
@@ -2244,7 +2561,11 @@ export function GeneralSettingsPanel() {
           {...searchableSetting("diagnostics")}
           description={diagnosticsDescription}
           control={
-            <Button render={<Link to="/settings/diagnostics" />} size="xs" variant="outline">
+            <Button
+              render={<Link to="/settings/diagnostics" />}
+              size="xs"
+              variant="outline"
+            >
               View diagnostics
             </Button>
           }
@@ -2303,7 +2624,10 @@ export function ArchivedThreadsPanel() {
     for (const project of archivedProjects) {
       const projectThreads: Array<(typeof threads)[number]> = [];
       for (const thread of threads) {
-        if (thread.projectId === project.id && thread.environmentId === project.environmentId) {
+        if (
+          thread.projectId === project.id &&
+          thread.environmentId === project.environmentId
+        ) {
           projectThreads.push(thread);
         }
       }
@@ -2313,7 +2637,9 @@ export function ArchivedThreadsPanel() {
           threads: projectThreads.toSorted((left, right) => {
             const leftKey = left.archivedAt ?? left.createdAt;
             const rightKey = right.archivedAt ?? right.createdAt;
-            return rightKey.localeCompare(leftKey) || right.id.localeCompare(left.id);
+            return (
+              rightKey.localeCompare(leftKey) || right.id.localeCompare(left.id)
+            );
           }),
         });
       }
@@ -2343,7 +2669,8 @@ export function ArchivedThreadsPanel() {
             stackedThreadToast({
               type: "error",
               title: "Failed to unarchive thread",
-              description: error instanceof Error ? error.message : "An error occurred.",
+              description:
+                error instanceof Error ? error.message : "An error occurred.",
             }),
           );
         }
@@ -2360,7 +2687,8 @@ export function ArchivedThreadsPanel() {
             stackedThreadToast({
               type: "error",
               title: "Failed to delete thread",
-              description: error instanceof Error ? error.message : "An error occurred.",
+              description:
+                error instanceof Error ? error.message : "An error occurred.",
             }),
           );
         }
@@ -2434,7 +2762,9 @@ export function ArchivedThreadsPanel() {
                           type: "error",
                           title: "Archived thread action failed",
                           description:
-                            error instanceof Error ? error.message : "An error occurred.",
+                            error instanceof Error
+                              ? error.message
+                              : "An error occurred.",
                         }),
                       );
                     }
@@ -2443,7 +2773,10 @@ export function ArchivedThreadsPanel() {
                 title={thread.title}
                 description={
                   <>
-                    Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
+                    Archived{" "}
+                    {formatRelativeTimeLabel(
+                      thread.archivedAt ?? thread.createdAt,
+                    )}
                     {" \u00b7 Created "}
                     {formatRelativeTimeLabel(thread.createdAt)}
                   </>
@@ -2470,7 +2803,9 @@ export function ArchivedThreadsPanel() {
                               type: "error",
                               title: "Failed to unarchive thread",
                               description:
-                                error instanceof Error ? error.message : "An error occurred.",
+                                error instanceof Error
+                                  ? error.message
+                                  : "An error occurred.",
                             }),
                           );
                         }
