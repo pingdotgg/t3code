@@ -25,6 +25,8 @@ function optimisticFileAtom(environmentId: EnvironmentId, cwd: string, relativeP
 interface ProjectQueryState<A> {
   readonly data: A | null;
   readonly error: string | null;
+  /** Lets callers branch on a specific failure instead of matching on `error`. */
+  readonly errorFailure: string | null;
   readonly isPending: boolean;
   readonly refresh: () => void;
 }
@@ -115,10 +117,30 @@ export function clearProjectFileQueryData(
   appAtomRegistry.set(optimisticFileAtom(environmentId, cwd, relativePath), null);
 }
 
-function errorMessage<A>(result: AsyncResult.AsyncResult<A, unknown>): string | null {
+interface ProjectQueryError {
+  readonly message: string;
+  /**
+   * Structured `failure` carried by the project error contracts. The server
+   * folds its typed workspace errors into one error per operation, so this is
+   * the only thing that distinguishes, say, an unreadable file from a binary
+   * one without matching on prose.
+   */
+  readonly failure: string | null;
+}
+
+function queryError<A>(result: AsyncResult.AsyncResult<A, unknown>): ProjectQueryError | null {
   if (result._tag !== "Failure") return null;
   const cause = Cause.squash(result.cause);
-  return cause instanceof Error ? cause.message : "Workspace query failed.";
+  return {
+    message: cause instanceof Error ? cause.message : "Workspace query failed.",
+    failure:
+      typeof cause === "object" &&
+      cause !== null &&
+      "failure" in cause &&
+      typeof cause.failure === "string"
+        ? cause.failure
+        : null,
+  };
 }
 
 export function useProjectEntriesQuery(
@@ -129,9 +151,11 @@ export function useProjectEntriesQuery(
   const result = useAtomValue(atom);
   const refreshAtom = useAtomRefresh(atom);
   const refresh = useCallback(() => refreshAtom(), [refreshAtom]);
+  const error = queryError(result);
   return {
     data: Option.getOrNull(AsyncResult.value(result)),
-    error: errorMessage(result),
+    error: error?.message ?? null,
+    errorFailure: error?.failure ?? null,
     isPending: result.waiting,
     refresh,
   };
@@ -189,10 +213,12 @@ export function useProjectFileQuery(
     optimisticFileAtom(environmentId, cwd, relativePath ?? EMPTY_PROJECT_FILE_PATH),
   );
   const optimisticFile = relativePath === null ? null : optimisticResult;
+  const error = queryError(result);
 
   return {
     data: optimisticFile?.data ?? data,
-    error: errorMessage(result),
+    error: error?.message ?? null,
+    errorFailure: error?.failure ?? null,
     isPending: result.waiting,
     refresh,
   };

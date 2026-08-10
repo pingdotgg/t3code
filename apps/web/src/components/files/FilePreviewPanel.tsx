@@ -12,7 +12,17 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { ChevronRight, Code2, Eye, FolderTree, Globe2, LoaderCircle } from "lucide-react";
+import {
+  Check,
+  ChevronRight,
+  Code2,
+  Copy,
+  Eye,
+  FileQuestion,
+  FolderTree,
+  Globe2,
+  LoaderCircle,
+} from "lucide-react";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -23,11 +33,20 @@ import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
+import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 import { resolvePathLinkTarget } from "~/terminal-links";
+import { Button } from "~/components/ui/button";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyMedia,
+  EmptyTitle,
+} from "~/components/ui/empty";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Toggle } from "~/components/ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -56,7 +75,12 @@ import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
 import { fileBreadcrumbs } from "./filePath";
-import { isMarkdownPreviewFile, setMarkdownTaskChecked } from "./filePreviewMode";
+import {
+  binaryFilePreviewDescription,
+  isBinaryFilePreviewError,
+  isMarkdownPreviewFile,
+  setMarkdownTaskChecked,
+} from "./filePreviewMode";
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
 import {
   confirmProjectFileQueryData,
@@ -162,6 +186,54 @@ function WorkspaceImagePreview(props: {
     <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
       <LoaderCircle className="size-5 animate-spin" />
     </div>
+  );
+}
+
+/**
+ * Agents routinely link build artifacts — installers, archives, recordings —
+ * that the text preview cannot render. Surfacing the raw server error left the
+ * panel a dead end, so name the file and hand back its path instead.
+ */
+function BinaryFilePreview({
+  relativePath,
+  absolutePath,
+}: {
+  readonly relativePath: string;
+  readonly absolutePath: string | null;
+}) {
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: "path",
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy path",
+          description: error.message,
+        }),
+      );
+    },
+  });
+
+  return (
+    <Empty>
+      <EmptyMedia variant="icon">
+        <FileQuestion className="size-4.5 text-muted-foreground" />
+      </EmptyMedia>
+      <EmptyTitle>Can't preview this file</EmptyTitle>
+      <EmptyDescription>{binaryFilePreviewDescription(relativePath)}</EmptyDescription>
+      {absolutePath ? (
+        <EmptyContent>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => copyToClipboard(absolutePath, undefined)}
+          >
+            {isCopied ? <Check /> : <Copy />}
+            {isCopied ? "Copied" : "Copy path"}
+          </Button>
+        </EmptyContent>
+      ) : null}
+    </Empty>
   );
 }
 
@@ -1003,9 +1075,13 @@ export default function FilePreviewPanel({
               alt={relativePath}
             />
           ) : relativePath && file.error && file.data === null ? (
-            <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
-              {file.error}
-            </div>
+            isBinaryFilePreviewError(file.errorFailure) ? (
+              <BinaryFilePreview relativePath={relativePath} absolutePath={absolutePath} />
+            ) : (
+              <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
+                {file.error}
+              </div>
+            )
           ) : relativePath && file.data === null ? (
             <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
               <LoaderCircle className="size-5 animate-spin" />
