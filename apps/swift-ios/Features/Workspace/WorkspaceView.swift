@@ -43,7 +43,7 @@ public struct WorkspaceView: View {
     @State private var newTaskIncomingShareID: String?
     @State private var dismissingNewTaskContext: NewTaskDismissalContext?
     @State private var threadDetailPresentationRevision = 0
-    @State private var sharedThreadImports: [FeatureComposerIncomingShareDraft] = []
+    @State private var sharedThreadImports: [String: [FeatureComposerIncomingShareDraft]] = [:]
     @State private var showingAddProject = false
     @State private var showingSettings = false
     @State private var renamingThread: FeatureThread?
@@ -284,7 +284,7 @@ public struct WorkspaceView: View {
                 model: model,
                 thread: thread,
                 composerDraftReloadRevision: threadDetailPresentationRevision,
-                composerDraftReloadImports: sharedThreadImports,
+                composerDraftReloadImports: sharedThreadImports[id] ?? [],
                 submitMessage: submitMessage,
                 onNavigateBack: closeSelectedThread
             )
@@ -605,8 +605,10 @@ public struct WorkspaceView: View {
             guard model.snapshot.threads.contains(where: { $0.id == id }) else { return }
             dismissTransientPresentations()
             if selectedThreadID == id {
-                sharedThreadImports.removeAll { $0.shareID == importDraft.shareID }
-                sharedThreadImports.append(importDraft)
+                sharedThreadImports[id] = FeatureComposerIncomingShareReloadPolicy.appending(
+                    importDraft,
+                    to: sharedThreadImports[id] ?? []
+                )
                 threadDetailPresentationRevision &+= 1
             }
             openThread(id)

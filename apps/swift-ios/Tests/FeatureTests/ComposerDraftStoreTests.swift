@@ -323,6 +323,32 @@ struct ComposerDraftStoreTests {
         #expect(pending.map(\.shareID) == ["pending-one", "pending-two"])
     }
 
+    @Test func reloadQueueMatchesThePersistedLedgerWindowAndDeduplicatesReplays() {
+        var imports: [FeatureComposerIncomingShareDraft] = []
+        for index in 0..<34 {
+            imports = FeatureComposerIncomingShareReloadPolicy.appending(
+                FeatureComposerIncomingShareDraft(
+                    shareID: "share-\(index)",
+                    draft: FeatureComposerDraft(text: "Shared \(index)")
+                ),
+                to: imports
+            )
+        }
+        imports = FeatureComposerIncomingShareReloadPolicy.appending(
+            FeatureComposerIncomingShareDraft(
+                shareID: "share-33",
+                draft: FeatureComposerDraft(text: "Replayed 33")
+            ),
+            to: imports
+        )
+
+        #expect(imports.count == 32)
+        #expect(imports.first?.shareID == "share-2")
+        #expect(imports.last?.shareID == "share-33")
+        #expect(imports.last?.draft.text == "Replayed 33")
+        #expect(imports.filter { $0.shareID == "share-33" }.count == 1)
+    }
+
     @Test func successfulSubmissionFenceWaitsForCancelledDraftWrites() async {
         let started = AsyncStream<Void>.makeStream()
         let release = AsyncStream<Void>.makeStream()

@@ -739,6 +739,15 @@ struct FeatureComposerIncomingShareMergeResult {
 }
 
 enum FeatureComposerIncomingShareReloadPolicy {
+    static func appending(
+        _ imported: FeatureComposerIncomingShareDraft,
+        to imports: [FeatureComposerIncomingShareDraft],
+        maximumCount: Int = 32
+    ) -> [FeatureComposerIncomingShareDraft] {
+        let deduplicated = imports.filter { $0.shareID != imported.shareID }
+        return Array((deduplicated + [imported]).suffix(maximumCount))
+    }
+
     static func pendingImports(
         _ imports: [FeatureComposerIncomingShareDraft],
         restoredShareIDs: Set<String>
