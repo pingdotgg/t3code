@@ -1212,6 +1212,7 @@ export function makeOpenCodeAdapter(
               const client = openCodeRuntime.createOpenCodeSdkClient({
                 baseUrl: server.url,
                 directory,
+                external: server.external,
                 ...(server.external && serverPassword ? { serverPassword } : {}),
               });
               const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);

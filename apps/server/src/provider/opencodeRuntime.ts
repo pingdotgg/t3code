@@ -140,11 +140,7 @@ export interface OpenCodeRuntimeShape {
     readonly args: ReadonlyArray<string>;
     readonly environment?: NodeJS.ProcessEnv;
   }) => Effect.Effect<OpenCodeCommandResult, OpenCodeRuntimeError>;
-  readonly createOpenCodeSdkClient: (input: {
-    readonly baseUrl: string;
-    readonly directory: string;
-    readonly serverPassword?: string;
-  }) => OpencodeClient;
+  readonly createOpenCodeSdkClient: (input: OpenCodeSdkClientInput) => OpencodeClient;
   readonly loadOpenCodeInventory: (
     client: OpencodeClient,
   ) => Effect.Effect<OpenCodeInventory, OpenCodeRuntimeError>;
@@ -152,6 +148,51 @@ export interface OpenCodeRuntimeShape {
     readonly binaryPath: string;
     readonly environment?: NodeJS.ProcessEnv;
   }) => Effect.Effect<OpenCodeInventory, OpenCodeRuntimeError>;
+}
+
+export interface OpenCodeSdkClientInput {
+  readonly baseUrl: string;
+  readonly directory: string;
+  readonly external?: boolean;
+  readonly serverPassword?: string;
+}
+
+// An externally-configured server can live on another machine, where a local path means
+// nothing: a Windows directory reaching a Linux host produced "Invalid path
+// /var/log/C:\Users\...". A loopback URL is still this machine, so its directory stays
+// meaningful — "external" is not the same thing as "remote". An unparseable URL keeps the
+// directory too, so a malformed setting cannot quietly change what the server receives.
+function isLoopbackBaseUrl(baseUrl: string): boolean {
+  let hostname: string;
+  try {
+    hostname = new URL(baseUrl).hostname;
+  } catch {
+    return true;
+  }
+
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/gu, "");
+  return (
+    normalized === "localhost" ||
+    normalized === "::1" ||
+    normalized === "0.0.0.0" ||
+    normalized.startsWith("127.")
+  );
+}
+
+export function buildOpenCodeSdkClientConfig(input: OpenCodeSdkClientInput) {
+  const sendDirectory = input.external !== true || isLoopbackBaseUrl(input.baseUrl);
+  return {
+    baseUrl: input.baseUrl,
+    ...(sendDirectory ? { directory: input.directory } : {}),
+    ...(input.serverPassword
+      ? {
+          headers: {
+            Authorization: `Basic ${Buffer.from(`opencode:${input.serverPassword}`, "utf8").toString("base64")}`,
+          },
+        }
+      : {}),
+    throwOnError: true as const,
+  };
 }
 
 function parseServerUrlFromOutput(output: string): string | null {
@@ -621,18 +662,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
   };
 
   const createOpenCodeSdkClient: OpenCodeRuntimeShape["createOpenCodeSdkClient"] = (input) =>
-    createOpencodeClient({
-      baseUrl: input.baseUrl,
-      directory: input.directory,
-      ...(input.serverPassword
-        ? {
-            headers: {
-              Authorization: `Basic ${Buffer.from(`opencode:${input.serverPassword}`, "utf8").toString("base64")}`,
-            },
-          }
-        : {}),
-      throwOnError: true,
-    });
+    createOpencodeClient(buildOpenCodeSdkClientConfig(input));
 
   const loadProviders = (client: OpencodeClient) =>
     runOpenCodeSdk("provider.list", () => client.provider.list()).pipe(
