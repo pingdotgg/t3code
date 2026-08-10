@@ -1,3 +1,4 @@
+export * from "./acpRegistry.ts";
 export * from "./baseSchemas.ts";
 export * from "./background.ts";
 export * from "./auth.ts";

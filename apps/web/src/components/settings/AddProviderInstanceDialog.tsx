@@ -4,6 +4,8 @@ import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { CheckIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
+  ACP_FEATURED_AGENTS,
+  type AcpRegistryCatalogIconKey,
   ProviderInstanceId,
   ProviderDriverKind,
   type EnvironmentId,
@@ -27,11 +29,15 @@ import { Badge } from "../ui/badge";
 import { Input } from "../ui/input";
 import { RadioGroup } from "../ui/radio-group";
 import { toastManager } from "../ui/toast";
-import { DRIVER_OPTION_BY_VALUE, DRIVER_OPTIONS } from "./providerDriverMeta";
+import { DRIVER_OPTION_BY_VALUE, NATIVE_DRIVER_OPTIONS } from "./providerDriverMeta";
 import { ProviderSettingsForm, deriveProviderSettingsFields } from "./ProviderSettingsForm";
 import { AnimatedHeight } from "../AnimatedHeight";
 import {
+  ACP_REGISTRY_DRIVER,
   ADD_PROVIDER_WIZARD_STEPS,
+  acpPickerValue,
+  configDraftForFeaturedAgent,
+  parseAddProviderPickerValue,
   resolveWizardNavigation,
   type WizardNavigation,
 } from "./AddProviderInstanceDialog.logic";
@@ -69,36 +75,15 @@ function deriveInstanceId(driver: ProviderDriverKind, label: string): string {
 
 const INSTANCE_ID_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
-const DEFAULT_DRIVER_OPTION = DRIVER_OPTIONS[0]!;
+const DEFAULT_DRIVER_OPTION = NATIVE_DRIVER_OPTIONS[0]!;
 const EMPTY_CONFIG_DRAFT: Record<string, unknown> = {};
-interface ComingSoonDriverOption {
-  readonly value: ProviderDriverKind;
-  readonly label: string;
-  readonly icon: Icon;
-}
 
-const COMING_SOON_DRIVER_OPTIONS: readonly ComingSoonDriverOption[] = [
-  {
-    value: ProviderDriverKind.make("githubCopilot"),
-    label: "Github Copilot",
-    icon: GithubCopilotIcon,
-  },
-  {
-    value: ProviderDriverKind.make("gemini"),
-    label: "Gemini",
-    icon: Gemini,
-  },
-  {
-    value: ProviderDriverKind.make("acpRegistry"),
-    label: "ACP Registry",
-    icon: ACPRegistryIcon,
-  },
-  {
-    value: ProviderDriverKind.make("piAgent"),
-    label: "Pi Agent",
-    icon: PiAgentIcon,
-  },
-];
+function iconForCatalogKey(iconKey: AcpRegistryCatalogIconKey): Icon {
+  if (iconKey === "gemini") return Gemini;
+  if (iconKey === "githubCopilot") return GithubCopilotIcon;
+  if (iconKey === "piAgent") return PiAgentIcon;
+  return ACPRegistryIcon;
+}
 
 /**
  * Validate an instance id against the same slug rules the server applies in
@@ -133,6 +118,7 @@ export function AddProviderInstanceDialog({
 
   const [wizardStep, setWizardStep] = useState(0);
   const [driver, setDriver] = useState<ProviderDriverKind>(DEFAULT_DRIVER_KIND);
+  const [catalogId, setCatalogId] = useState<string | undefined>(undefined);
   const [label, setLabel] = useState("");
   const [accentColor, setAccentColor] = useState<string>("");
   const [instanceIdOverride, setInstanceIdOverride] = useState<string | null>(null);
@@ -149,6 +135,10 @@ export function AddProviderInstanceDialog({
   );
 
   const driverOption = DRIVER_OPTION_BY_VALUE[driver] ?? DEFAULT_DRIVER_OPTION;
+  const featuredAgent = catalogId
+    ? ACP_FEATURED_AGENTS.find((agent) => agent.id === catalogId)
+    : undefined;
+  const pickerLabel = featuredAgent?.label ?? driverOption.label;
   const instanceId = instanceIdOverride ?? deriveInstanceId(driver, label);
   const driverSettingsFields = useMemo(
     () => deriveProviderSettingsFields(driverOption),
@@ -156,8 +146,9 @@ export function AddProviderInstanceDialog({
   );
   const instanceIdError = validateInstanceId(instanceId, existingIds);
   const showInstanceIdError = hasAttemptedSubmit && instanceIdError !== null;
-  const previewLabel = label.trim() || `${driverOption.label} Workspace`;
-  const wizardStepSummaries = [driverOption.label, previewLabel, null] as const;
+  const previewLabel = label.trim() || `${pickerLabel} Workspace`;
+  const wizardStepSummaries = [pickerLabel, previewLabel, null] as const;
+  const pickerValue = catalogId ? acpPickerValue(catalogId) : driver;
 
   const configDraft = configByDriver[driver] ?? EMPTY_CONFIG_DRAFT;
   const setConfigDraft = (config: Record<string, unknown> | undefined) => {
@@ -216,7 +207,7 @@ export function AddProviderInstanceDialog({
       toastManager.add({
         type: "success",
         title: "Provider instance added",
-        description: `${driverOption.label} instance '${instanceId}' was added.`,
+        description: `${pickerLabel} instance '${instanceId}' was added.`,
       });
       onOpenChange(false);
     } catch (error) {
@@ -235,8 +226,8 @@ export function AddProviderInstanceDialog({
           <DialogHeader>
             <DialogTitle>Add provider instance</DialogTitle>
             <DialogDescription>
-              Configure an additional provider instance on {environmentLabel} — for example, a
-              second Codex install pointed at a different workspace.
+              Configure an additional provider instance on {environmentLabel} — native drivers, or
+              any ACP-speaking CLI such as Gemini, Copilot, or Pi.
             </DialogDescription>
             <AddProviderInstanceWizardSteps
               currentStep={wizardStep}
@@ -256,12 +247,36 @@ export function AddProviderInstanceDialog({
                   Driver
                 </div>
                 <RadioGroup
-                  value={driver}
-                  onValueChange={(value) => setDriver(ProviderDriverKind.make(value))}
+                  value={pickerValue}
+                  onValueChange={(value) => {
+                    const parsed = parseAddProviderPickerValue(value);
+                    setDriver(parsed.driver);
+                    setCatalogId(parsed.catalogId);
+                    if (parsed.catalogId) {
+                      const agent = ACP_FEATURED_AGENTS.find(
+                        (entry) => entry.id === parsed.catalogId,
+                      );
+                      setLabel(agent?.label ?? "");
+                      const nextConfig = configDraftForFeaturedAgent(parsed.catalogId);
+                      setConfigByDriver((existing) => {
+                        const next = { ...existing };
+                        if (Object.keys(nextConfig).length === 0) {
+                          delete next[parsed.driver];
+                        } else {
+                          next[parsed.driver] = nextConfig;
+                        }
+                        return next;
+                      });
+                      return;
+                    }
+                    if (parsed.driver !== ACP_REGISTRY_DRIVER) {
+                      setLabel("");
+                    }
+                  }}
                   aria-labelledby="add-instance-driver-label"
                   className="grid grid-cols-1 gap-2 sm:grid-cols-2"
                 >
-                  {DRIVER_OPTIONS.map((option) => {
+                  {NATIVE_DRIVER_OPTIONS.map((option) => {
                     const IconComponent = option.icon;
                     return (
                       <RadioPrimitive.Root
@@ -287,26 +302,26 @@ export function AddProviderInstanceDialog({
                       </RadioPrimitive.Root>
                     );
                   })}
-                  {COMING_SOON_DRIVER_OPTIONS.map((option) => {
-                    const IconComponent = option.icon;
+                  {ACP_FEATURED_AGENTS.map((agent) => {
+                    const IconComponent = iconForCatalogKey(agent.iconKey);
                     return (
                       <RadioPrimitive.Root
-                        key={option.value}
-                        value={option.value}
-                        disabled
-                        className={cn(
-                          "relative flex cursor-not-allowed items-center gap-3 rounded-lg bg-card/60 px-3 py-3 text-left opacity-55 outline-none ring-1 ring-black/5 dark:bg-white/2 dark:ring-white/5",
-                        )}
+                        key={agent.id}
+                        value={acpPickerValue(agent.id)}
+                        className="relative flex cursor-pointer items-center gap-3 rounded-lg bg-card px-3 py-3 text-left text-muted-foreground outline-none ring-1 ring-black/5 hover:bg-zinc-50 focus-visible:ring-2 focus-visible:ring-ring data-checked:bg-primary/8 data-checked:text-foreground data-checked:ring-2 data-checked:ring-primary data-checked:hover:bg-primary/8 dark:bg-white/3 dark:ring-white/5 dark:hover:bg-white/5 dark:data-checked:bg-primary/15 dark:data-checked:ring-primary dark:data-checked:hover:bg-primary/15"
                       >
-                        <IconComponent
-                          className="size-4 shrink-0 text-muted-foreground"
-                          aria-hidden
-                        />
+                        <IconComponent className="size-4 shrink-0" aria-hidden />
                         <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-                          {option.label}
+                          {agent.label}
                         </span>
+                        <RadioPrimitive.Indicator
+                          className="grid size-5 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground"
+                          aria-hidden
+                        >
+                          <CheckIcon className="size-3.5 shrink-0" />
+                        </RadioPrimitive.Indicator>
                         <Badge variant="warning" size="sm">
-                          Coming Soon
+                          ACP
                         </Badge>
                       </RadioPrimitive.Root>
                     );

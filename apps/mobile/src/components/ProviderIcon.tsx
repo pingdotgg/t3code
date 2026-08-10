@@ -58,6 +58,17 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
+  if (props.provider === "acpRegistry") {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <Path
+          fill={mono}
+          d="M20.5 8.2 17.2 2.6A3.2 3.2 0 0 0 14.4 1h-.1A3.2 3.2 0 0 0 11.6 2.6L8.8 7.4 6.2 2.8A3.2 3.2 0 0 0 3.4 1H3.3A3.2 3.2 0 0 0 .5 2.8L.1 3.5 3.4 9.1c.4.7 1.2 1.1 2 1.1h3.2L6.4 14c-.3.5-.3 1.1 0 1.6.3.5.8.8 1.4.8h3.4l-.4.7c-.2.3-.2.7 0 1 .2.3.5.5.9.5h1.2c.4 0 .7-.2.9-.5l.6-1 4.3 0c.8 0 1.6-.4 2-1.1.6-1.1.6-2.4 0-3.4L20.5 8.2Z"
+        />
+      </Svg>
+    );
+  }
+
   // codex (and unknown drivers)
   return (
     <Svg width={size} height={size} viewBox="0 0 256 260" fill="none">
