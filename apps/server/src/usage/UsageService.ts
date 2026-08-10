@@ -475,12 +475,18 @@ export const make = Effect.gen(function* () {
         const files = yield* Effect.promise(() => listTranscriptFiles(dir, windowStartMs));
         let scannedFiles = 0;
         let skippedFiles = 0;
+        let readFailed = false;
         const sessionIds = new Set<string>();
 
         for (const file of files) {
           livePaths.add(file.path);
           const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
-          if (records === null || records.length === 0) {
+          if (records === null) {
+            readFailed = true;
+            skippedFiles += 1;
+            continue;
+          }
+          if (records.length === 0) {
             skippedFiles += 1;
             continue;
           }
@@ -488,14 +494,15 @@ export const make = Effect.gen(function* () {
           ingestRecords(aggregator, records, sessionIds);
         }
 
+        const status = readFailed ? (scannedFiles > 0 ? "partial" : "failed") : "ok";
         sources.push({
           fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-          status: "ok",
+          status,
           scannedFiles,
           skippedFiles,
           malformedRecords: 0,
           distinctSessions: sessionIds.size,
-          message: null,
+          message: readFailed ? "Some transcript files could not be read." : null,
         });
         continue;
       }
@@ -622,13 +629,15 @@ export const make = Effect.gen(function* () {
 
         sources.push({
           fingerprint: { hostId, provider, resolvedHomePath: dataDir, volumeId },
-          status: readFailed ? "failed" : "ok",
+          status: readFailed ? (scannedFiles > 0 ? "partial" : "failed") : "ok",
           scannedFiles,
           skippedFiles,
           malformedRecords: 0,
           distinctSessions: sessionIds.size,
           message: readFailed
-            ? "OpenCode database could not be read."
+            ? scannedFiles > 0
+              ? "Some OpenCode databases could not be read."
+              : "OpenCode database could not be read."
             : databases.length === 0
               ? "No OpenCode database files found."
               : null,
