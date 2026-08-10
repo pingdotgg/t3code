@@ -554,6 +554,8 @@ function toolDetailTextLooksLikeFailure(text: string): boolean {
     normalized.includes("command not found") ||
     (normalized.includes("cannot find path") && normalized.includes("because it does not exist")) ||
     (normalized.includes("is not recognized") && normalized.includes("the term '")) ||
+    normalized.includes("is not recognized as the name of a cmdlet") ||
+    normalized.includes("a parameter cannot be found that matches parameter name") ||
     /<exited with exit code\s+[1-9]\d*\s*>/i.test(text) ||
     /exit(?:ed)? with exit code\s+[1-9]\d*/i.test(text) ||
     /exit code\s*[:\s]\s*[1-9]\d*\b/i.test(text)

@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  applyThemeColorPreview,
+  applyThemePalette,
   getThemeColorsForMode,
   getThemeDefinition,
   getThemeModes,
+  getThemePreviewSidebarArtwork,
   getThemePreferenceMode,
   isKnownThemePreference,
   getCustomThemes,
@@ -15,6 +18,7 @@ import {
   resolveDesktopTheme,
   resolveThemeAppearance,
   serializeThemeFile,
+  subscribeToThemePreview,
   subscribeToCustomThemes,
   T3_CHAT_THEME,
   EMBER_THEME,
@@ -109,6 +113,8 @@ describe("theme files", () => {
       expect(contrastRatio(colors.text, colors.canvas)).toBeGreaterThanOrEqual(7);
       expect(contrastRatio(colors.textMuted, colors.canvas)).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(colors.textMuted, colors.canvas)).toBeLessThan(5.5);
+      expect(contrastRatio(colors.mutedForeground, colors.muted)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(colors.placeholder, colors.surfaceRaised)).toBeGreaterThanOrEqual(4.5);
       expect(colors.secondaryLabel).toBe(colors.textMuted);
       expect(contrastRatio(colors.accentForeground, colors.accent)).toBeGreaterThanOrEqual(4.5);
       expect(
@@ -165,7 +171,7 @@ describe("theme files", () => {
       colors: {
         canvas: "#07152f",
         accent: "#67c2ff",
-        placeholder: "#8f8699",
+        placeholder: "#968d9f",
       },
     });
   });
@@ -198,6 +204,49 @@ describe("theme files", () => {
       name: T3_CHAT_THEME.label,
       appearance: "light",
     });
+  });
+
+  it("keeps sidebar artwork opt-in through theme files", () => {
+    const withoutArtwork = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "Plain sidebar",
+      appearance: "light",
+      colors: { accent: "#5b6cff" },
+    });
+    const withArtwork = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "Art sidebar",
+      appearance: "light",
+      colors: { accent: "#5b6cff" },
+      sidebarArtwork: true,
+    });
+
+    expect(withoutArtwork.sidebarArtwork).toBeUndefined();
+    expect(withArtwork.sidebarArtwork).toBe(true);
+    expect(JSON.parse(serializeThemeFile(withArtwork)).sidebarArtwork).toBe(true);
+  });
+
+  it("publishes sidebar artwork changes from the live theme preview", () => {
+    const listener = vi.fn();
+    const unsubscribe = subscribeToThemePreview(listener);
+    vi.stubGlobal("document", {
+      documentElement: {
+        classList: { toggle: vi.fn() },
+        dataset: {},
+        style: { removeProperty: vi.fn(), setProperty: vi.fn() },
+      },
+    });
+
+    applyThemeColorPreview(T3_CHAT_THEME.colors, "light", true);
+    expect(getThemePreviewSidebarArtwork()).toBe(true);
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    applyThemePalette("system");
+    expect(getThemePreviewSidebarArtwork()).toBeNull();
+    expect(listener).toHaveBeenCalledTimes(2);
+
+    unsubscribe();
+    vi.unstubAllGlobals();
   });
 
   it("keeps optional light and dark palettes under one theme id", () => {
@@ -268,9 +317,7 @@ describe("theme files", () => {
         4.5,
       );
       expect(contrastRatio(colors.sidebarForeground, colors.sidebar)).toBeGreaterThanOrEqual(4.5);
-      // The live light primary is intended for filled controls and clears the
-      // non-text UI-component threshold rather than normal-text AA.
-      expect(contrastRatio(colors.accentForeground, colors.accent)).toBeGreaterThanOrEqual(3);
+      expect(contrastRatio(colors.accentForeground, colors.accent)).toBeGreaterThanOrEqual(4.5);
     }
   });
 
@@ -293,9 +340,7 @@ describe("theme files", () => {
             1,
           );
         }
-        expect(contrastRatio(colors!.accentForeground, colors!.accent)).toBeGreaterThanOrEqual(
-          theme === T3_CHAT_THEME ? 3 : 4.5,
-        );
+        expect(contrastRatio(colors!.accentForeground, colors!.accent)).toBeGreaterThanOrEqual(4.5);
         expect(
           contrastRatio(colors!.toolbarControlForeground, colors!.toolbarControl),
         ).toBeGreaterThanOrEqual(4.5);
@@ -304,7 +349,14 @@ describe("theme files", () => {
         ).toBeGreaterThanOrEqual(4.5);
         expect(
           contrastRatio(colors!.messageActionForeground, colors!.messageAction),
-        ).toBeGreaterThanOrEqual(theme === T3_CHAT_THEME ? 3 : 4.5);
+        ).toBeGreaterThanOrEqual(4.5);
+        expect(
+          contrastRatio(colors!.messageActionForeground, colors!.messageActionHover),
+        ).toBeGreaterThanOrEqual(4.5);
+        expect(contrastRatio(colors!.mutedForeground, colors!.muted)).toBeGreaterThanOrEqual(4.5);
+        expect(contrastRatio(colors!.placeholder, colors!.surfaceRaised)).toBeGreaterThanOrEqual(
+          4.5,
+        );
       }
     }
   });
@@ -387,6 +439,7 @@ describe("theme files", () => {
         name: "Aurora",
         appearance: "light",
         colors: { canvas: "#f8fbff", accent: "#5b6cff" },
+        sidebarArtwork: true,
       }),
     );
     const updatedTheme = updateCustomTheme({
@@ -395,11 +448,17 @@ describe("theme files", () => {
       colors: { ...createdTheme.colors, accent: "#7c3aed" },
     });
 
-    expect(updatedTheme).toMatchObject({ id: "aurora", label: "Aurora Night" });
+    expect(updatedTheme).toMatchObject({
+      id: "aurora",
+      label: "Aurora Night",
+      sidebarArtwork: true,
+    });
+    invalidateCustomThemes();
     expect(getCustomThemes()).toEqual([updatedTheme]);
     expect(JSON.parse(stored.get(CUSTOM_THEMES_STORAGE_KEY) ?? "[]")[0]).toMatchObject({
       id: "aurora",
       label: "Aurora Night",
+      sidebarArtwork: true,
     });
 
     vi.unstubAllGlobals();
