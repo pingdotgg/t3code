@@ -240,7 +240,7 @@ export const ChatHeader = memo(function ChatHeader({
                     faviconPath={activeProjectFaviconPath}
                     className="size-3.5"
                   />
-                  <span className="max-w-40 truncate text-sm font-medium">{activeProjectName}</span>
+                  <span className="max-w-40 truncate">{activeProjectName}</span>
                 </TooltipTrigger>
                 <TooltipPopup side="top">New thread in {activeProjectName}</TooltipPopup>
               </Tooltip>
@@ -276,9 +276,7 @@ export const ChatHeader = memo(function ChatHeader({
                   />
                 }
               >
-                <h2 className="min-w-0 truncate text-sm font-medium text-foreground">
-                  {activeThreadTitle}
-                </h2>
+                <h2 className="min-w-0 truncate">{activeThreadTitle}</h2>
                 <ChevronDownIcon
                   aria-hidden
                   className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/thread-title:opacity-100 group-focus-visible/thread-title:opacity-100"
@@ -290,10 +288,7 @@ export const ChatHeader = memo(function ChatHeader({
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <h2
-                    aria-label={activeThreadTitle}
-                    className="min-w-0 flex-1 truncate text-sm font-medium text-foreground"
-                  >
+                  <h2 aria-label={activeThreadTitle} className="min-w-0 flex-1 truncate">
                     {activeThreadTitle}
                   </h2>
                 }

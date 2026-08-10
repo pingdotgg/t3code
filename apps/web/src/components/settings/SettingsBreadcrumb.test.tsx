@@ -25,13 +25,13 @@ describe("SettingsBreadcrumb", () => {
     expect(markup).toContain('aria-label="Settings breadcrumb"');
     expect(markup).toContain("Settings");
     expect(markup).toContain("Source Control");
-    expect(markup).toContain(">/</span>");
+    expect(markup).toContain(">/</li>");
   });
 
   it("renders settings as the current page at the root", () => {
     const markup = renderToStaticMarkup(<SettingsBreadcrumb pathname="/settings" />);
 
     expect(markup).toContain("Settings");
-    expect(markup).not.toContain(">/</span>");
+    expect(markup).not.toContain(">/</li>");
   });
 });

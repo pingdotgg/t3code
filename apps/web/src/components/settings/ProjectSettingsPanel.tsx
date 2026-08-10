@@ -231,7 +231,7 @@ function ProjectSettingsBreadcrumb({ projectKey }: { projectKey: string }) {
             </SelectPopup>
           </Select>
         ) : (
-          <span className="truncate text-sm text-muted-foreground">Unavailable project</span>
+          <span className="truncate text-muted-foreground">Unavailable project</span>
         )}
       </WorkspaceBreadcrumbItem>
     </WorkspaceBreadcrumb>

@@ -20,9 +20,11 @@ describe("WorkspaceBreadcrumb", () => {
     );
 
     expect(markup).toContain('aria-label="Project breadcrumb"');
+    expect(markup).toContain("<ol");
     expect(markup).toContain("Projects");
-    expect(markup).toContain(">/</span>");
+    expect(markup).toContain(">/</li>");
     expect(markup).toContain('aria-current="page"');
     expect(markup).toContain('<button type="button">Switch project</button>');
+    expect(markup).not.toContain("webkit-app-region:no-drag");
   });
 });
