@@ -22,8 +22,11 @@ machine-verifiable baseline.
   access, collection, price, or download without verified publication inputs.
 - The issue #5 Marketing identity-routing and physical organization-database foundation in
   `packages/auldric-marketing-domain`. It is fail-closed behind an injected request-authority seam;
-  issue #6 still owns the T3 server composition and role mapping, and issue #8 owns canonical
-  Marketing content persistence.
+  issue #6 still owns the T3 server composition and role mapping.
+- The issue #8 canonical Marketing persistence foundation in the same package: organization-local
+  heads and immutable revisions for sources, workflow instances, plans, artifacts, saved outputs,
+  reviews, decisions, and next actions, with expected-version conflicts, idempotency, typed lineage,
+  registered-view isolation, canonical read-back, and strict organization schema v2 migration.
 - This reviewed Marketing-domain authority and requirements spine.
 
 ## Capability status
@@ -32,7 +35,7 @@ machine-verifiable baseline.
 | --------------------------------------------------- | -------- | -------------------------------------------------------------- |
 | Explicit `dev \| marketing` product-domain seam     | #4       | Boundary implemented; #21 UI pending                           |
 | Marketing identities and authorization              | #5, #6   | #5 storage boundary implemented; #6 server composition pending |
-| Canonical organization-owned Marketing persistence  | #8       | Not implemented                                                |
+| Canonical organization-owned Marketing persistence  | #8       | Store/read-back foundation implemented; composition pending    |
 | Bounded Marketing evidence context                  | #9       | Not implemented                                                |
 | Marketing continuity and immutable provenance       | #7, #11  | Not implemented                                                |
 | Day 0, Marketing Strategy, GTM, and typed artifacts | #18, #19 | Not implemented                                                |

@@ -57,6 +57,26 @@ export const MarketingReviewId = makeMarketingIdentifier("mrev_").pipe(
 );
 export type MarketingReviewId = typeof MarketingReviewId.Type;
 
+export const MarketingSavedOutputId = makeMarketingIdentifier("mout_").pipe(
+  Schema.brand("MarketingSavedOutputId"),
+);
+export type MarketingSavedOutputId = typeof MarketingSavedOutputId.Type;
+
+export const MarketingDecisionId = makeMarketingIdentifier("mdec_").pipe(
+  Schema.brand("MarketingDecisionId"),
+);
+export type MarketingDecisionId = typeof MarketingDecisionId.Type;
+
+export const MarketingNextActionId = makeMarketingIdentifier("mnxt_").pipe(
+  Schema.brand("MarketingNextActionId"),
+);
+export type MarketingNextActionId = typeof MarketingNextActionId.Type;
+
+export const MarketingCanonicalRevisionId = makeMarketingIdentifier("mcrv_").pipe(
+  Schema.brand("MarketingCanonicalRevisionId"),
+);
+export type MarketingCanonicalRevisionId = typeof MarketingCanonicalRevisionId.Type;
+
 export const MarketingT3ReferenceBindingId = makeMarketingIdentifier("mt3r_").pipe(
   Schema.brand("MarketingT3ReferenceBindingId"),
 );

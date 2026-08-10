@@ -1035,7 +1035,7 @@ describe("organization Marketing workspace store", () => {
       }),
   );
 
-  it.effect("treats an empty organization database as v0 and repeats exact v1 safely", () =>
+  it.effect("treats an empty organization database as v0 and repeats exact v2 safely", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(now.epochMilliseconds);
       const root = makeRoot();
@@ -1063,7 +1063,7 @@ describe("organization Marketing workspace store", () => {
         .get() as unknown as { readonly count: number };
       organization.close();
       assert.equal(controlMigrations.count, 1);
-      assert.equal(organizationMigrations.count, 1);
+      assert.equal(organizationMigrations.count, 2);
     }),
   );
 

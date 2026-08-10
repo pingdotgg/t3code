@@ -6,11 +6,15 @@ import * as Schema from "effect/Schema";
 import {
   MarketingActorId,
   MarketingArtifactId,
+  MarketingCanonicalRevisionId,
+  MarketingDecisionId,
+  MarketingNextActionId,
   MarketingOrganizationId,
   MarketingPlanId,
   MarketingProjectId,
   MarketingReferenceTarget,
   MarketingReviewId,
+  MarketingSavedOutputId,
   MarketingSourceId,
   MarketingT3ReferenceLifecycle,
   MarketingWorkflowInstanceId,
@@ -20,10 +24,14 @@ import {
 const uuid = "123e4567-e89b-42d3-a456-426614174000";
 const decodeActorId = Schema.decodeUnknownSync(MarketingActorId);
 const decodeArtifactId = Schema.decodeUnknownSync(MarketingArtifactId);
+const decodeCanonicalRevisionId = Schema.decodeUnknownSync(MarketingCanonicalRevisionId);
+const decodeDecisionId = Schema.decodeUnknownSync(MarketingDecisionId);
+const decodeNextActionId = Schema.decodeUnknownSync(MarketingNextActionId);
 const decodeOrganizationId = Schema.decodeUnknownSync(MarketingOrganizationId);
 const decodePlanId = Schema.decodeUnknownSync(MarketingPlanId);
 const decodeProjectId = Schema.decodeUnknownSync(MarketingProjectId);
 const decodeReviewId = Schema.decodeUnknownSync(MarketingReviewId);
+const decodeSavedOutputId = Schema.decodeUnknownSync(MarketingSavedOutputId);
 const decodeSourceId = Schema.decodeUnknownSync(MarketingSourceId);
 const decodeT3ReferenceLifecycle = Schema.decodeUnknownSync(MarketingT3ReferenceLifecycle);
 const decodeWorkflowId = Schema.decodeUnknownSync(MarketingWorkflowInstanceId);
@@ -42,6 +50,10 @@ describe("Marketing identity contracts", () => {
     const artifactId = decodeArtifactId(`mart_${uuid}`);
     const planId = decodePlanId(`mpln_${uuid}`);
     const reviewId = decodeReviewId(`mrev_${uuid}`);
+    const savedOutputId = decodeSavedOutputId(`mout_${uuid}`);
+    const decisionId = decodeDecisionId(`mdec_${uuid}`);
+    const nextActionId = decodeNextActionId(`mnxt_${uuid}`);
+    const revisionId = decodeCanonicalRevisionId(`mcrv_${uuid}`);
 
     assert.equal(organizationId, `morg_${uuid}`);
     assert.equal(projectId, `mprj_${uuid}`);
@@ -51,6 +63,10 @@ describe("Marketing identity contracts", () => {
     assert.equal(artifactId, `mart_${uuid}`);
     assert.equal(planId, `mpln_${uuid}`);
     assert.equal(reviewId, `mrev_${uuid}`);
+    assert.equal(savedOutputId, `mout_${uuid}`);
+    assert.equal(decisionId, `mdec_${uuid}`);
+    assert.equal(nextActionId, `mnxt_${uuid}`);
+    assert.equal(revisionId, `mcrv_${uuid}`);
 
     assert.isFalse(isMarketingOrganizationId(projectId));
     assert.isFalse(isMarketingWorkspaceId(ThreadId.make("thread-upstream")));

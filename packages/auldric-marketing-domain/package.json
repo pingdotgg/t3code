@@ -15,6 +15,18 @@
       "types": "./src/errors.ts",
       "import": "./src/errors.ts"
     },
+    "./canonical": {
+      "types": "./src/canonical.ts",
+      "import": "./src/canonical.ts"
+    },
+    "./canonical-errors": {
+      "types": "./src/canonicalErrors.ts",
+      "import": "./src/canonicalErrors.ts"
+    },
+    "./canonical-store": {
+      "types": "./src/canonicalStore.ts",
+      "import": "./src/canonicalStore.ts"
+    },
     "./workspace-store": {
       "types": "./src/workspaceStore.ts",
       "import": "./src/workspaceStore.ts"

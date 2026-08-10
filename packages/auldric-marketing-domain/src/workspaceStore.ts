@@ -34,7 +34,7 @@ import {
 } from "./identity.ts";
 
 const CONTROL_SCHEMA_VERSION = 1;
-const ORGANIZATION_SCHEMA_VERSION = 1;
+const ORGANIZATION_SCHEMA_VERSION = 2;
 const CONTROL_DATABASE_FILENAME = "control.sqlite";
 const ORGANIZATION_DATABASE_FILENAME = "workspace.sqlite";
 const decodeT3ActorIssuer = Schema.decodeUnknownSync(T3ActorIssuer);
@@ -294,6 +294,18 @@ function userTableNames(database: NodeSqlite.DatabaseSync): ReadonlyArray<string
       .prepare(
         `SELECT name FROM sqlite_master
          WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+         ORDER BY name`,
+      )
+      .all() as unknown as ReadonlyArray<{ readonly name: string }>
+  ).map((row) => row.name);
+}
+
+function userTriggerNames(database: NodeSqlite.DatabaseSync): ReadonlyArray<string> {
+  return (
+    database
+      .prepare(
+        `SELECT name FROM sqlite_master
+         WHERE type = 'trigger' AND name NOT LIKE 'sqlite_%'
          ORDER BY name`,
       )
       .all() as unknown as ReadonlyArray<{ readonly name: string }>
@@ -597,7 +609,7 @@ function verifyOrganizationSchemaV1(database: NodeSqlite.DatabaseSync): void {
   const versions = database
     .prepare("SELECT version FROM auldric_organization_schema_migrations ORDER BY version")
     .all() as unknown as ReadonlyArray<SchemaVersionRow>;
-  if (versions.length !== 1 || versions[0]?.version !== ORGANIZATION_SCHEMA_VERSION) {
+  if (versions.length !== 1 || versions[0]?.version !== 1) {
     throw new MarketingWorkspaceUnavailableError({
       reason: "workspace_database_schema_stale",
     });
@@ -653,8 +665,389 @@ function createManagedOrganizationSchemaV1(
       .prepare(
         "INSERT INTO auldric_organization_schema_migrations(version, applied_at) VALUES (?, ?)",
       )
-      .run(ORGANIZATION_SCHEMA_VERSION, "schema-v1");
+      .run(1, "schema-v1");
     verifyOrganizationSchemaV1(database);
+  });
+}
+
+const organizationSchemaV2Columns = {
+  ...organizationSchemaV1Columns,
+  auldric_canonical_objects: [
+    "object_id",
+    "object_kind",
+    "organization_id",
+    "project_id",
+    "workspace_id",
+    "canonical_key",
+    "current_version",
+    "head_revision_id",
+    "created_at",
+    "updated_at",
+  ],
+  auldric_canonical_revisions: [
+    "revision_id",
+    "object_id",
+    "object_kind",
+    "version",
+    "environment_id",
+    "schema_key",
+    "schema_version",
+    "definition_key",
+    "definition_version",
+    "workflow_instance_id",
+    "workflow_revision_id",
+    "workflow_revision_version",
+    "stage_key",
+    "step_key",
+    "renderer_key",
+    "renderer_version",
+    "projection_source_object_id",
+    "projection_source_revision_id",
+    "projection_source_version",
+    "payload_json",
+    "payload_sha256",
+    "actor_id",
+    "idempotency_key",
+    "created_at",
+  ],
+  auldric_canonical_revision_references: [
+    "revision_id",
+    "reference_kind",
+    "ordinal",
+    "target_object_id",
+    "target_revision_id",
+    "target_version",
+  ],
+  auldric_canonical_projection_facts: ["revision_id", "fact_key", "value_json", "value_sha256"],
+  auldric_canonical_idempotency: [
+    "idempotency_key",
+    "operation",
+    "payload_hash",
+    "object_id",
+    "revision_id",
+    "result_version",
+    "created_at",
+  ],
+} as const;
+
+const organizationSchemaV2Triggers = [
+  "auldric_canonical_idempotency_immutable_delete",
+  "auldric_canonical_idempotency_immutable_update",
+  "auldric_canonical_projection_facts_immutable_delete",
+  "auldric_canonical_projection_facts_immutable_update",
+  "auldric_canonical_references_immutable_delete",
+  "auldric_canonical_references_immutable_update",
+  "auldric_canonical_revisions_immutable_delete",
+  "auldric_canonical_revisions_immutable_update",
+] as const;
+
+interface SqliteSchemaDefinitionRow {
+  readonly type: string;
+  readonly name: string;
+  readonly tableName: string;
+  readonly sql: string;
+}
+
+function normalizeSchemaSql(sql: string): string {
+  return sql.replace(/\s+/gu, " ").trim().replace(/;$/u, "");
+}
+
+function canonicalSchemaDefinitions(
+  database: NodeSqlite.DatabaseSync,
+): ReadonlyArray<SqliteSchemaDefinitionRow> {
+  return (
+    database
+      .prepare(
+        `SELECT type, name, tbl_name AS tableName, sql
+         FROM sqlite_master
+         WHERE sql IS NOT NULL
+           AND (name GLOB 'auldric_canonical_*' OR tbl_name GLOB 'auldric_canonical_*')
+         ORDER BY type, name`,
+      )
+      .all() as unknown as ReadonlyArray<SqliteSchemaDefinitionRow>
+  ).map((row) => ({ ...row, sql: normalizeSchemaSql(row.sql) }));
+}
+
+let expectedCanonicalSchemaDefinitions: ReadonlyArray<SqliteSchemaDefinitionRow> | undefined;
+
+function getExpectedCanonicalSchemaDefinitions(): ReadonlyArray<SqliteSchemaDefinitionRow> {
+  if (expectedCanonicalSchemaDefinitions !== undefined) {
+    return expectedCanonicalSchemaDefinitions;
+  }
+  const database = new NodeSqlite.DatabaseSync(":memory:");
+  try {
+    createOrganizationSchemaV2Objects(database);
+    expectedCanonicalSchemaDefinitions = canonicalSchemaDefinitions(database);
+    return expectedCanonicalSchemaDefinitions;
+  } finally {
+    database.close();
+  }
+}
+
+function verifyOrganizationSchemaV2(database: NodeSqlite.DatabaseSync): void {
+  const actualTables = userTableNames(database);
+  const expectedTables = Object.keys(organizationSchemaV2Columns).sort();
+  if (
+    actualTables.length !== expectedTables.length ||
+    expectedTables.some((table, index) => actualTables[index] !== table)
+  ) {
+    throw new MarketingWorkspaceUnavailableError({
+      reason: "workspace_database_schema_stale",
+    });
+  }
+  for (const [table, columns] of Object.entries(organizationSchemaV2Columns)) {
+    if (!actualTables.includes(table) || !hasExactRequiredColumns(database, table, columns)) {
+      throw new MarketingWorkspaceUnavailableError({
+        reason: "workspace_database_schema_stale",
+      });
+    }
+  }
+  const actualTriggers = userTriggerNames(database);
+  if (organizationSchemaV2Triggers.some((trigger) => !actualTriggers.includes(trigger))) {
+    throw new MarketingWorkspaceUnavailableError({
+      reason: "workspace_database_schema_stale",
+    });
+  }
+  const actualDefinitions = canonicalSchemaDefinitions(database);
+  const expectedDefinitions = getExpectedCanonicalSchemaDefinitions();
+  if (
+    actualDefinitions.length !== expectedDefinitions.length ||
+    actualDefinitions.some((definition, index) => {
+      const expected = expectedDefinitions[index];
+      return (
+        expected === undefined ||
+        definition.type !== expected.type ||
+        definition.name !== expected.name ||
+        definition.tableName !== expected.tableName ||
+        definition.sql !== expected.sql
+      );
+    })
+  ) {
+    throw new MarketingWorkspaceUnavailableError({
+      reason: "workspace_database_schema_stale",
+    });
+  }
+  const versions = database
+    .prepare("SELECT version FROM auldric_organization_schema_migrations ORDER BY version")
+    .all() as unknown as ReadonlyArray<SchemaVersionRow>;
+  if (
+    versions.length !== ORGANIZATION_SCHEMA_VERSION ||
+    versions.some((row, index) => row.version !== index + 1)
+  ) {
+    throw new MarketingWorkspaceUnavailableError({
+      reason: "workspace_database_schema_stale",
+    });
+  }
+}
+
+function createOrganizationSchemaV2Objects(database: NodeSqlite.DatabaseSync): void {
+  database.exec(`
+      CREATE TABLE auldric_canonical_objects (
+        object_id TEXT PRIMARY KEY,
+        object_kind TEXT NOT NULL CHECK (
+          object_kind IN (
+            'source', 'workflow-instance', 'plan', 'artifact',
+            'saved-output', 'review', 'decision', 'next-action'
+          )
+        ),
+        organization_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        canonical_key TEXT NOT NULL,
+        current_version INTEGER NOT NULL CHECK (current_version > 0),
+        head_revision_id TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (workspace_id, object_kind, canonical_key),
+        FOREIGN KEY (object_id, head_revision_id, current_version)
+          REFERENCES auldric_canonical_revisions(object_id, revision_id, version)
+          DEFERRABLE INITIALLY DEFERRED
+      );
+
+      CREATE TABLE auldric_canonical_revisions (
+        revision_id TEXT PRIMARY KEY,
+        object_id TEXT NOT NULL REFERENCES auldric_canonical_objects(object_id),
+        object_kind TEXT NOT NULL CHECK (
+          object_kind IN (
+            'source', 'workflow-instance', 'plan', 'artifact',
+            'saved-output', 'review', 'decision', 'next-action'
+          )
+        ),
+        version INTEGER NOT NULL CHECK (version > 0),
+        environment_id TEXT,
+        schema_key TEXT NOT NULL,
+        schema_version INTEGER NOT NULL CHECK (schema_version > 0),
+        definition_key TEXT,
+        definition_version INTEGER CHECK (definition_version > 0),
+        workflow_instance_id TEXT,
+        workflow_revision_id TEXT,
+        workflow_revision_version INTEGER CHECK (workflow_revision_version > 0),
+        stage_key TEXT,
+        step_key TEXT,
+        renderer_key TEXT,
+        renderer_version INTEGER CHECK (renderer_version > 0),
+        projection_source_object_id TEXT,
+        projection_source_revision_id TEXT,
+        projection_source_version INTEGER CHECK (projection_source_version > 0),
+        payload_json TEXT NOT NULL,
+        payload_sha256 TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        UNIQUE (object_id, version),
+        UNIQUE (object_id, revision_id, version),
+        CHECK (
+          (definition_key IS NULL AND definition_version IS NULL)
+          OR (definition_key IS NOT NULL AND definition_version IS NOT NULL)
+        ),
+        CHECK (
+          (stage_key IS NULL AND step_key IS NULL)
+          OR workflow_instance_id IS NOT NULL
+        ),
+        CHECK (
+          (workflow_instance_id IS NULL
+            AND workflow_revision_id IS NULL
+            AND workflow_revision_version IS NULL)
+          OR
+          (workflow_instance_id IS NOT NULL
+            AND workflow_revision_id IS NOT NULL
+            AND workflow_revision_version IS NOT NULL)
+        ),
+        CHECK (
+          (object_kind = 'saved-output'
+            AND renderer_key IS NOT NULL
+            AND renderer_version IS NOT NULL
+            AND projection_source_object_id IS NOT NULL
+            AND projection_source_revision_id IS NOT NULL
+            AND projection_source_version IS NOT NULL)
+          OR
+          (object_kind <> 'saved-output'
+            AND renderer_key IS NULL
+            AND renderer_version IS NULL
+            AND projection_source_object_id IS NULL
+            AND projection_source_revision_id IS NULL
+            AND projection_source_version IS NULL)
+        ),
+        FOREIGN KEY (
+          workflow_instance_id,
+          workflow_revision_id,
+          workflow_revision_version
+        ) REFERENCES auldric_canonical_revisions(object_id, revision_id, version),
+        FOREIGN KEY (
+          projection_source_object_id,
+          projection_source_revision_id,
+          projection_source_version
+        ) REFERENCES auldric_canonical_revisions(object_id, revision_id, version)
+      );
+
+      CREATE TABLE auldric_canonical_revision_references (
+        revision_id TEXT NOT NULL REFERENCES auldric_canonical_revisions(revision_id),
+        reference_kind TEXT NOT NULL CHECK (reference_kind IN ('source', 'review', 'decision')),
+        ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+        target_object_id TEXT NOT NULL,
+        target_revision_id TEXT NOT NULL,
+        target_version INTEGER NOT NULL CHECK (target_version > 0),
+        PRIMARY KEY (revision_id, reference_kind, ordinal),
+        UNIQUE (revision_id, reference_kind, target_revision_id),
+        FOREIGN KEY (target_object_id, target_revision_id, target_version)
+          REFERENCES auldric_canonical_revisions(object_id, revision_id, version)
+      );
+
+      CREATE TABLE auldric_canonical_projection_facts (
+        revision_id TEXT NOT NULL REFERENCES auldric_canonical_revisions(revision_id),
+        fact_key TEXT NOT NULL,
+        value_json TEXT NOT NULL,
+        value_sha256 TEXT NOT NULL,
+        PRIMARY KEY (revision_id, fact_key)
+      );
+
+      CREATE TABLE auldric_canonical_idempotency (
+        idempotency_key TEXT PRIMARY KEY,
+        operation TEXT NOT NULL,
+        payload_hash TEXT NOT NULL,
+        object_id TEXT NOT NULL,
+        revision_id TEXT NOT NULL,
+        result_version INTEGER NOT NULL CHECK (result_version > 0),
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (object_id, revision_id, result_version)
+          REFERENCES auldric_canonical_revisions(object_id, revision_id, version)
+      );
+
+      CREATE INDEX auldric_canonical_objects_inventory
+        ON auldric_canonical_objects(workspace_id, object_kind, canonical_key);
+      CREATE INDEX auldric_canonical_revision_actor
+        ON auldric_canonical_revisions(actor_id, created_at);
+      CREATE INDEX auldric_canonical_revision_workflow
+        ON auldric_canonical_revisions(
+          workflow_instance_id, workflow_revision_version, stage_key, step_key
+        );
+      CREATE INDEX auldric_canonical_reference_target
+        ON auldric_canonical_revision_references(
+          reference_kind, target_object_id, target_version
+        );
+      CREATE INDEX auldric_canonical_projection_fact_query
+        ON auldric_canonical_projection_facts(fact_key, revision_id);
+
+      CREATE TRIGGER auldric_canonical_revisions_immutable_update
+      BEFORE UPDATE ON auldric_canonical_revisions
+      BEGIN
+        SELECT RAISE(ABORT, 'canonical revisions are immutable');
+      END;
+
+      CREATE TRIGGER auldric_canonical_revisions_immutable_delete
+      BEFORE DELETE ON auldric_canonical_revisions
+      BEGIN
+        SELECT RAISE(ABORT, 'canonical revisions are immutable');
+      END;
+
+      CREATE TRIGGER auldric_canonical_references_immutable_update
+      BEFORE UPDATE ON auldric_canonical_revision_references
+      BEGIN
+        SELECT RAISE(ABORT, 'canonical revision references are immutable');
+      END;
+
+      CREATE TRIGGER auldric_canonical_references_immutable_delete
+      BEFORE DELETE ON auldric_canonical_revision_references
+      BEGIN
+        SELECT RAISE(ABORT, 'canonical revision references are immutable');
+      END;
+
+      CREATE TRIGGER auldric_canonical_projection_facts_immutable_update
+      BEFORE UPDATE ON auldric_canonical_projection_facts
+      BEGIN
+        SELECT RAISE(ABORT, 'canonical projection facts are immutable');
+      END;
+
+      CREATE TRIGGER auldric_canonical_projection_facts_immutable_delete
+      BEFORE DELETE ON auldric_canonical_projection_facts
+      BEGIN
+        SELECT RAISE(ABORT, 'canonical projection facts are immutable');
+      END;
+
+      CREATE TRIGGER auldric_canonical_idempotency_immutable_update
+      BEFORE UPDATE ON auldric_canonical_idempotency
+      BEGIN
+        SELECT RAISE(ABORT, 'canonical idempotency receipts are immutable');
+      END;
+
+      CREATE TRIGGER auldric_canonical_idempotency_immutable_delete
+      BEFORE DELETE ON auldric_canonical_idempotency
+      BEGIN
+        SELECT RAISE(ABORT, 'canonical idempotency receipts are immutable');
+      END;
+  `);
+}
+
+function migrateOrganizationSchemaV1ToV2(database: NodeSqlite.DatabaseSync): void {
+  runTransaction(database, () => {
+    verifyOrganizationSchemaV1(database);
+    createOrganizationSchemaV2Objects(database);
+    database
+      .prepare(
+        "INSERT INTO auldric_organization_schema_migrations(version, applied_at) VALUES (?, ?)",
+      )
+      .run(ORGANIZATION_SCHEMA_VERSION, "schema-v2-canonical-content");
+    verifyOrganizationSchemaV2(database);
   });
 }
 
@@ -664,9 +1057,15 @@ function migrateManagedOrganizationDatabase(
 ): void {
   if (userTableNames(database).length === 0) {
     createManagedOrganizationSchemaV1(database, input);
-    return;
   }
-  verifyOrganizationSchemaV1(database);
+  const versions = database
+    .prepare("SELECT version FROM auldric_organization_schema_migrations ORDER BY version")
+    .all() as unknown as ReadonlyArray<SchemaVersionRow>;
+  if (versions.length === 1 && versions[0]?.version === 1) {
+    migrateOrganizationSchemaV1ToV2(database);
+  } else {
+    verifyOrganizationSchemaV2(database);
+  }
   verifyOrganizationDatabaseIdentity(database, input);
 }
 
@@ -713,21 +1112,6 @@ function verifyOrganizationDatabaseIdentity(
     workspace.projectId !== input.selection.projectId
   ) {
     throw new MarketingWorkspaceUnavailableError({ reason: "workspace_registry_stale" });
-  }
-}
-
-function verifyOrganizationDatabase(
-  database: NodeSqlite.DatabaseSync,
-  input: { readonly selection: MarketingWorkspaceSelection; readonly databaseKey: string },
-): void {
-  try {
-    verifyOrganizationSchemaV1(database);
-    verifyOrganizationDatabaseIdentity(database, input);
-  } catch (cause) {
-    if (isMarketingWorkspaceDomainError(cause)) throw cause;
-    throw new MarketingWorkspaceUnavailableError({
-      reason: "workspace_database_schema_stale",
-    });
   }
 }
 
@@ -1288,7 +1672,7 @@ export function makeOrganizationWorkspaceStore<RequestAuthority>(
             yield* withDatabase(databasePath, "verify_completed_provision", (database) =>
               Effect.try({
                 try: () =>
-                  verifyOrganizationDatabase(database, {
+                  migrateManagedOrganizationDatabase(database, {
                     selection: input.selection,
                     databaseKey: prepared.databaseKey,
                   }),
@@ -1329,14 +1713,14 @@ export function makeOrganizationWorkspaceStore<RequestAuthority>(
                   ),
                 )
               : existedBefore
-                ? withDatabase(databasePath, "verify_backfill_database", (database) =>
+                ? withDatabase(databasePath, "migrate_backfill_database", (database) =>
                     Effect.try({
                       try: () =>
-                        verifyOrganizationDatabase(database, {
+                        migrateManagedOrganizationDatabase(database, {
                           selection: input.selection,
                           databaseKey: prepared.databaseKey,
                         }),
-                      catch: (cause) => mapStoreCause("verify_backfill_database", cause),
+                      catch: (cause) => mapStoreCause("migrate_backfill_database", cause),
                     }),
                   )
                 : Effect.fail(
@@ -1455,7 +1839,7 @@ export function makeOrganizationWorkspaceStore<RequestAuthority>(
         yield* withDatabase(databasePath, "verify_join_workspace", (database) =>
           Effect.try({
             try: () =>
-              verifyOrganizationDatabase(database, {
+              migrateManagedOrganizationDatabase(database, {
                 selection: input.selection,
                 databaseKey,
               }),
@@ -1637,7 +2021,7 @@ export function makeOrganizationWorkspaceStore<RequestAuthority>(
         return yield* withDatabase(databasePath, "open_workspace_database", (database) =>
           Effect.try({
             try: () =>
-              verifyOrganizationDatabase(database, {
+              migrateManagedOrganizationDatabase(database, {
                 selection: input.selection,
                 databaseKey: resolved.databaseKey,
               }),

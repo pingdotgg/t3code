@@ -1,7 +1,8 @@
-# Auldric Marketing domain storage boundary
+# Auldric Marketing organization storage boundary
 
-This package owns the issue #5 identity-routing and physical organization-database foundation. It
-does not authenticate a request and cannot decode or mint a T3 actor.
+This package owns the issue #5 identity-routing and physical organization-database foundation and
+the issue #8 canonical Marketing content store. It does not authenticate a request and cannot
+decode or mint a T3 actor.
 
 The server composition root must instantiate `makeOrganizationWorkspaceStore` with an
 `authorize(requestAuthority, requirement)` adapter. `requestAuthority` is generic so the adapter
@@ -24,14 +25,35 @@ The store asks for one explicit permission per lifecycle operation:
 - `backfill-workspace`
 - `rollback-provisioning`
 
+Those lifecycle permissions remain unchanged by issue #8. `makeMarketingCanonicalStore` composes
+over an already constructed organization store and asks a separate injected authorizer for an exact
+content operation. The requirement carries the resolved Marketing actor, organization selection,
+typed object identity, and canonical claim where relevant. The server's issue #6 role adapter owns
+that decision; wire credentials and caller-created actor IDs are never accepted by this package.
+
+The canonical content store persists source, workflow-instance, plan, artifact, saved-output,
+review, decision, and next-action heads in the resolved physical organization database. Every write
+requires an expected version and idempotency key, creates an immutable revision, records the acting
+Marketing actor and typed schema/definition references, normalizes source/review/decision revision
+edges, and returns a database read-back. Registered outputs use their own identity and a registry-
+accepted renderer reference; they cannot target or overwrite an artifact head. The schema and
+renderer registry is injected so issue #8 does not invent issue #19's definition catalog.
+
+The injected registry also derives a narrow set of typed projection facts from each validated
+payload. Those facts are stored with, and made immutable by, the exact revision that produced them.
+Authorized queries read only facts on current canonical heads from the resolved organization
+database; revision history retains older facts. Callers cannot submit arbitrary fact keys or use
+facts to mutate canonical heads. Issue #19 owns the concrete fact keys and rollup semantics.
+
 Bootstrap is public only for a genuinely new organization. It generates or resolves the Marketing
 actor ID inside the transaction and atomically rejects an existing organization before inserting
 an actor or membership. Joining an existing organization is a separate operation and requires the
 server to authorize an invitation or equivalent role capability.
 
 Each organization database has a hashed physical path and self-identifying schema. Migration is
-strict: an empty database is v0, v0 advances once to v1, exact v1 is repeatable, and forward,
-partial, or unidentified schemas fail closed. Resolution holds a scoped lease around the open
+strict: an empty database is v0, v0 advances through v1 to v2, exact v1 upgrades transactionally,
+exact v2 is repeatable, and forward, partial, or unidentified schemas fail closed. Resolution holds
+a scoped lease around the open
 SQLite handle. All store factories for the same resolved state root share one process-local
 coordinator, so initialization, leases, and deletion locks cannot diverge when the composition root
 creates multiple adapters. Deletion first records `deleting`, blocks new leases, drains existing
@@ -50,3 +72,9 @@ roots; it is not an inter-process filesystem lock. Operators must never point tw
 processes at the same Auldric state root. Coordinators remain registered for the process lifetime;
 that set is bounded by the server's configured Auldric state roots. They are not evicted because a
 factory has no scoped shutdown signal that could prove every older adapter and lease is gone.
+
+Issue #6 still owns the production request-authority and role adapter. Issue #11 owns the full
+consequential audit model, and issue #19 owns exact workflow/artifact families, payload schemas,
+renderers, and rollup semantics. This package supplies their fail-closed persistence seam without
+claiming those layers are implemented. Content never falls back to T3 `state.sqlite`, browser state,
+another organization, or documentation.
