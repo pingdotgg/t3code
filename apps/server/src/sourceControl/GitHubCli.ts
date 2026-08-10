@@ -486,7 +486,7 @@ export const make = Effect.gen(function* () {
               ? [pullRequest].map(({ updatedAt: _updatedAt, ...summary }) => summary)
               : [],
           ),
-          Effect.catchTag("GitHubPullRequestNotFoundError", () => Effect.succeed([])),
+          Effect.catchTags({ GitHubPullRequestNotFoundError: () => Effect.succeed([]) }),
         );
       }
       return execute({
