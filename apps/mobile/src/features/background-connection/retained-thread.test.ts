@@ -43,6 +43,32 @@ beforeEach(() => {
 });
 
 describe("background retained thread", () => {
+  it("retries a transient cold-load failure", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    persistence.load.mockRejectedValueOnce(new Error("storage unavailable"));
+    persistence.load.mockResolvedValueOnce(firstThread);
+    const retained = await import("./retained-thread");
+
+    try {
+      await expect(retained.ensureBackgroundConnectionRetainedThreadLoaded()).resolves.toBeNull();
+      expect(retained.getBackgroundConnectionRetainedThreadSnapshot()).toEqual({
+        loaded: false,
+        thread: null,
+      });
+
+      await expect(retained.ensureBackgroundConnectionRetainedThreadLoaded()).resolves.toEqual(
+        firstThread,
+      );
+      expect(persistence.load).toHaveBeenCalledTimes(2);
+      expect(retained.getBackgroundConnectionRetainedThreadSnapshot()).toEqual({
+        loaded: true,
+        thread: firstThread,
+      });
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
   it("does not let a cold load replace a thread saved during startup", async () => {
     const coldLoad = deferred<typeof firstThread | null>();
     persistence.load.mockReturnValueOnce(coldLoad.promise);

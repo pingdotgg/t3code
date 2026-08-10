@@ -79,9 +79,9 @@ export function ensureBackgroundConnectionRetainedThreadLoaded(): Promise<Scoped
     })
     .catch((error) => {
       console.warn("[background-connection] failed to load the retained thread", error);
-      if (revision === loadRevision) {
-        publish({ loaded: true, thread: null });
-      }
+      // Keep a cold snapshot retryable. A transient secure-storage/runtime
+      // failure must not suppress the persisted retained thread for the rest
+      // of this JS process.
       return snapshot.thread;
     })
     .finally(() => {
