@@ -283,6 +283,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
   buildLoadingThreadFromShell,
+  buildRunningThreadTurnInterruptInput,
   buildThreadTurnInterruptInput,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
@@ -2747,8 +2748,8 @@ function ChatViewContent(props: ChatViewProps) {
   interruptContextRef.current = { activeThread, phase, setThreadError };
   const onInterrupt = useCallback(async () => {
     const { activeThread, phase, setThreadError } = interruptContextRef.current;
-    if (phase !== "running" || activeThread?.session?.status !== "running") return;
-    const input = buildThreadTurnInterruptInput(activeThread);
+    const input = buildRunningThreadTurnInterruptInput(activeThread, phase);
+    if (!input || !activeThread) return;
     const result = await interruptThreadTurn({
       environmentId: activeThread.environmentId,
       input,
@@ -2761,10 +2762,8 @@ function ChatViewContent(props: ChatViewProps) {
       );
     }
   }, [interruptThreadTurn]);
-  const canInterruptActiveTurn =
-    phase === "running" &&
-    activeThread?.session?.status === "running" &&
-    activeThread.session.activeTurnId !== null;
+  const canInterruptRunningThread =
+    buildRunningThreadTurnInterruptInput(activeThread, phase) !== null;
 
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
@@ -4765,7 +4764,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       if (command === "thread.stop") {
-        if (event.repeat || !canInterruptActiveTurn) return;
+        if (event.repeat || !canInterruptRunningThread) return;
         event.preventDefault();
         event.stopPropagation();
         void onInterrupt();
@@ -4786,7 +4785,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeProject,
     activeRightPanelSurface,
     addTerminalSurface,
-    canInterruptActiveTurn,
+    canInterruptRunningThread,
     terminalUiState.terminalOpen,
     terminalUiState.activeTerminalId,
     activeThreadId,
