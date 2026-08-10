@@ -149,6 +149,24 @@ export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "sessi
   };
 }
 
+export type TerminalFocusTarget = "panel" | "drawer" | "open-drawer";
+
+/**
+ * Picks which terminal surface `terminal.focus` should focus. The drawer wins
+ * while both surfaces are visible; a maximized right panel hides the chat
+ * column (and the drawer with it), so the panel terminal wins there.
+ */
+export function resolveTerminalFocusTarget(input: {
+  terminalOpen: boolean;
+  panelTerminalActive: boolean;
+  rightPanelMaximized: boolean;
+}): TerminalFocusTarget {
+  if (input.panelTerminalActive && (input.rightPanelMaximized || !input.terminalOpen)) {
+    return "panel";
+  }
+  return input.terminalOpen ? "drawer" : "open-drawer";
+}
+
 export function reconcileMountedTerminalThreadIds(input: {
   currentThreadIds: ReadonlyArray<string>;
   openThreadIds: ReadonlyArray<string>;

@@ -26,6 +26,7 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveTerminalFocusTarget,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   scheduleEnvironmentReconnectWarning,
@@ -434,6 +435,58 @@ describe("session branch mismatch dismissal", () => {
     expect(isBranchMismatchDismissedForSession("t1:a:b")).toBe(true);
     expect(isBranchMismatchDismissedForSession("t1:a:c")).toBe(false);
     expect(isBranchMismatchDismissedForSession(null)).toBe(false);
+  });
+});
+
+describe("resolveTerminalFocusTarget", () => {
+  it("opens the drawer when no terminal surface is showing", () => {
+    expect(
+      resolveTerminalFocusTarget({
+        terminalOpen: false,
+        panelTerminalActive: false,
+        rightPanelMaximized: false,
+      }),
+    ).toBe("open-drawer");
+  });
+
+  it("targets the panel terminal when the drawer is closed", () => {
+    expect(
+      resolveTerminalFocusTarget({
+        terminalOpen: false,
+        panelTerminalActive: true,
+        rightPanelMaximized: false,
+      }),
+    ).toBe("panel");
+  });
+
+  it("prefers the open drawer over a visible panel terminal", () => {
+    expect(
+      resolveTerminalFocusTarget({
+        terminalOpen: true,
+        panelTerminalActive: true,
+        rightPanelMaximized: false,
+      }),
+    ).toBe("drawer");
+  });
+
+  it("targets the panel terminal when maximizing hides the drawer", () => {
+    expect(
+      resolveTerminalFocusTarget({
+        terminalOpen: true,
+        panelTerminalActive: true,
+        rightPanelMaximized: true,
+      }),
+    ).toBe("panel");
+  });
+
+  it("targets the drawer when the maximized panel shows no terminal", () => {
+    expect(
+      resolveTerminalFocusTarget({
+        terminalOpen: true,
+        panelTerminalActive: false,
+        rightPanelMaximized: true,
+      }),
+    ).toBe("drawer");
   });
 });
 
