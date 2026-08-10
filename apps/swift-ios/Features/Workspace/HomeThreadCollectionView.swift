@@ -60,6 +60,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     let onSettle: (FeatureThread, Bool) -> Void
     let onSnooze: (FeatureThread, Date?) -> Void
     let onPin: (FeatureThread, Bool) -> Void
+    let projectPath: (FeatureThread) -> String?
     let onDelete: (FeatureThread) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -492,6 +493,16 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     actions.append(snooze)
                 }
             }
+
+            let copyItems = ThreadMetadataCopyModel.items(
+                for: thread,
+                projectPath: parent.projectPath(thread)
+            )
+            actions.append(contentsOf: copyItems.map { item in
+                UIAction(title: item.title, image: UIImage(systemName: item.systemImage)) { _ in
+                    ThreadMetadataClipboard.copy(item)
+                }
+            })
 
             actions.append(
                 UIAction(title: "Delete", image: UIImage(systemName: "trash"), attributes: .destructive) {

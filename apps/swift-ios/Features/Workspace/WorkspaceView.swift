@@ -492,6 +492,9 @@ public struct WorkspaceView: View {
                 onPin: { thread, pinned in
                     Task { await model.setPinned(thread.id, pinned: pinned) }
                 },
+                projectPath: { thread in
+                    model.snapshot.projects.first { $0.id == thread.projectID }?.path
+                },
                 onDelete: { thread in
                     deleteConfirmation.present(threadID: thread.id, title: thread.title)
                 }
