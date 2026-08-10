@@ -2,8 +2,10 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   agentSettingsContextKey,
+  hasMatchingAgentSettingsSummary,
   parseRequiredNumber,
   resolveAgentSettingsEnvironmentId,
+  selectAgentSettingsSummary,
 } from "./agentSettings.logic";
 
 describe("mobile agent settings numeric fields", () => {
@@ -38,5 +40,46 @@ describe("mobile agent settings numeric fields", () => {
   it("moves to the next environment only when the pinned one disappears", () => {
     expect(resolveAgentSettingsEnvironmentId("alpha", ["beta"])).toBe("beta");
     expect(resolveAgentSettingsEnvironmentId("alpha", [])).toBeNull();
+  });
+
+  it("keeps a newly saved summary selected while its catalog row is absent", () => {
+    const optimisticSummary = { id: "new", scope: "environment", revision: "new-revision" };
+
+    expect(selectAgentSettingsSummary("environment:new", null, optimisticSummary)).toBe(
+      optimisticSummary,
+    );
+    expect(selectAgentSettingsSummary("environment:other", null, optimisticSummary)).toBeNull();
+    expect(
+      selectAgentSettingsSummary(
+        "environment:new",
+        { id: "new", scope: "environment", revision: "server-revision" },
+        optimisticSummary,
+      ),
+    ).toEqual({ id: "new", scope: "environment", revision: "server-revision" });
+  });
+
+  it("considers an optimistic summary reconciled when its catalog identity returns", () => {
+    const optimisticSummary = { id: "agent", scope: "environment", revision: "revision-2" };
+    expect(
+      hasMatchingAgentSettingsSummary(optimisticSummary, {
+        id: "agent",
+        scope: "environment",
+        revision: "revision-1",
+      }),
+    ).toBe(true);
+    expect(
+      hasMatchingAgentSettingsSummary(optimisticSummary, {
+        id: "agent",
+        scope: "environment",
+        revision: "revision-3",
+      }),
+    ).toBe(true);
+    expect(
+      hasMatchingAgentSettingsSummary(optimisticSummary, {
+        id: "other-agent",
+        scope: "environment",
+        revision: "revision-3",
+      }),
+    ).toBe(false);
   });
 });

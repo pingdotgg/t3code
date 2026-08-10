@@ -29,3 +29,27 @@ export function resolveAgentSettingsEnvironmentId<T extends string>(
   }
   return availableEnvironmentIds[0] ?? null;
 }
+
+/** Keep a just-saved editor addressable while its catalog refresh is in flight. */
+export function selectAgentSettingsSummary<
+  T extends { readonly id: string; readonly scope: string },
+>(selectedKey: string | null, catalogSummary: T | null, optimisticSummary: T | null): T | null {
+  return (
+    catalogSummary ??
+    (optimisticSummary !== null &&
+    `${optimisticSummary.scope}:${optimisticSummary.id}` === selectedKey
+      ? optimisticSummary
+      : null)
+  );
+}
+
+export function hasMatchingAgentSettingsSummary<
+  T extends { readonly id: string; readonly scope: string },
+>(optimisticSummary: T | null, catalogSummary: T | null): boolean {
+  return (
+    optimisticSummary !== null &&
+    catalogSummary !== null &&
+    optimisticSummary.id === catalogSummary.id &&
+    optimisticSummary.scope === catalogSummary.scope
+  );
+}

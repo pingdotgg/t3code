@@ -35,7 +35,12 @@ import {
   resolveProfileBaselineForSave,
   type AgentProfileDraft,
 } from "./agentProfile.logic";
-import { agentSettingsContextKey, resolveAgentSettingsEnvironmentId } from "./agentSettings.logic";
+import {
+  agentSettingsContextKey,
+  hasMatchingAgentSettingsSummary,
+  resolveAgentSettingsEnvironmentId,
+  selectAgentSettingsSummary,
+} from "./agentSettings.logic";
 import {
   buildAgentRuleDocument,
   draftFromRule,
@@ -58,6 +63,9 @@ export function SettingsAgentsRouteScreen() {
   const [projectId, setProjectId] = useState<ProjectId | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [selectedRuleKey, setSelectedRuleKey] = useState<string | null>(null);
+  const [optimisticProfileSummary, setOptimisticProfileSummary] =
+    useState<AgentProfileSummary | null>(null);
+  const [optimisticRuleSummary, setOptimisticRuleSummary] = useState<AgentRuleSummary | null>(null);
   const [contextGeneration, setContextGeneration] = useState(0);
   const [draft, setDraft] = useState<AgentProfileDraft>(() => draftFromProfile());
   const [isNew, setIsNew] = useState(false);
@@ -79,10 +87,20 @@ export function SettingsAgentsRouteScreen() {
   const catalog = useAgentProfileCatalog(resolvedEnvironmentId, projectId, {
     includeArchived: true,
   });
-  const selectedSummary =
+  const catalogProfileSummary =
     catalog.data?.profiles.find((profile) => profileKey(profile) === selectedKey) ?? null;
-  const selectedRuleSummary =
+  const catalogRuleSummary =
     catalog.data?.rules.find((rule) => profileKey(rule) === selectedRuleKey) ?? null;
+  const selectedSummary = selectAgentSettingsSummary(
+    selectedKey,
+    catalogProfileSummary,
+    optimisticProfileSummary,
+  );
+  const selectedRuleSummary = selectAgentSettingsSummary(
+    selectedRuleKey,
+    catalogRuleSummary,
+    optimisticRuleSummary,
+  );
   const profileContextKey = agentSettingsContextKey({
     environmentId: resolvedEnvironmentId,
     projectId: selectedProject?.id?.toString() ?? null,
@@ -131,6 +149,8 @@ export function SettingsAgentsRouteScreen() {
       setProjectId(null);
       setSelectedKey(null);
       setSelectedRuleKey(null);
+      setOptimisticProfileSummary(null);
+      setOptimisticRuleSummary(null);
       setIsNew(false);
       setIsNewRule(false);
       setDraft(draftFromProfile());
@@ -158,6 +178,11 @@ export function SettingsAgentsRouteScreen() {
     selectedProject?.id,
     selectedSummary,
   ]);
+  useEffect(() => {
+    if (hasMatchingAgentSettingsSummary(optimisticProfileSummary, catalogProfileSummary)) {
+      setOptimisticProfileSummary(null);
+    }
+  }, [catalogProfileSummary, optimisticProfileSummary]);
   const ruleQuery = useEnvironmentQuery(
     resolvedEnvironmentId === null || selectedRuleSummary === null
       ? null
@@ -187,11 +212,18 @@ export function SettingsAgentsRouteScreen() {
     selectedRuleSummary,
   ]);
   useEffect(() => {
+    if (hasMatchingAgentSettingsSummary(optimisticRuleSummary, catalogRuleSummary)) {
+      setOptimisticRuleSummary(null);
+    }
+  }, [catalogRuleSummary, optimisticRuleSummary]);
+  useEffect(() => {
     if (projectId !== null && selectedProject === null) {
       setContextGeneration((generation) => generation + 1);
       setProjectId(null);
       setSelectedKey(null);
       setSelectedRuleKey(null);
+      setOptimisticProfileSummary(null);
+      setOptimisticRuleSummary(null);
       setIsNew(false);
       setIsNewRule(false);
       setDraft(draftFromProfile());
@@ -228,6 +260,8 @@ export function SettingsAgentsRouteScreen() {
       setProjectId(null);
       setSelectedKey(null);
       setSelectedRuleKey(null);
+      setOptimisticProfileSummary(null);
+      setOptimisticRuleSummary(null);
       setIsNew(false);
       setIsNewRule(false);
     } else if (event === "project:none") {
@@ -235,6 +269,8 @@ export function SettingsAgentsRouteScreen() {
       setProjectId(null);
       setSelectedKey(null);
       setSelectedRuleKey(null);
+      setOptimisticProfileSummary(null);
+      setOptimisticRuleSummary(null);
       setIsNew(false);
       setIsNewRule(false);
     } else if (event.startsWith("project:")) {
@@ -242,6 +278,8 @@ export function SettingsAgentsRouteScreen() {
       setProjectId(event.slice("project:".length) as ProjectId);
       setSelectedKey(null);
       setSelectedRuleKey(null);
+      setOptimisticProfileSummary(null);
+      setOptimisticRuleSummary(null);
       setIsNew(false);
       setIsNewRule(false);
     }
@@ -257,6 +295,7 @@ export function SettingsAgentsRouteScreen() {
   const startNew = useCallback(() => {
     setContextGeneration((generation) => generation + 1);
     setSelectedKey(null);
+    setOptimisticProfileSummary(null);
     setIsNew(true);
     setDraft(draftFromProfile(null, projectId === null ? "environment" : "project"));
     setError(null);
@@ -265,6 +304,7 @@ export function SettingsAgentsRouteScreen() {
   const startNewRule = useCallback(() => {
     setContextGeneration((generation) => generation + 1);
     setSelectedRuleKey(null);
+    setOptimisticRuleSummary(null);
     setIsNewRule(true);
     setRuleDraft(draftFromRule(null, projectId === null ? "environment" : "project"));
     setRuleError(null);
@@ -316,6 +356,7 @@ export function SettingsAgentsRouteScreen() {
         throw new Error("The rule could not be saved (it may have changed remotely).");
       if (ruleContextKeyRef.current !== saveContextKey) return;
       setSelectedRuleKey(profileKey(result.value.rule));
+      setOptimisticRuleSummary(result.value.rule);
       setIsNewRule(false);
       setRuleNotice("Rule saved.");
       catalog.refresh();
@@ -420,6 +461,7 @@ export function SettingsAgentsRouteScreen() {
       if (AsyncResult.isFailure(result)) throw new Error("The profile could not be saved.");
       if (profileContextKeyRef.current !== saveContextKey) return;
       setSelectedKey(profileKey(result.value.profile));
+      setOptimisticProfileSummary(result.value.profile);
       setIsNew(false);
       setNotice("Profile saved.");
       catalog.refresh();
@@ -586,6 +628,7 @@ export function SettingsAgentsRouteScreen() {
                 onPress={() => {
                   setContextGeneration((generation) => generation + 1);
                   setSelectedKey(profileKey(profile));
+                  setOptimisticProfileSummary(null);
                   setIsNew(false);
                   setError(null);
                   setNotice(null);
@@ -647,6 +690,7 @@ export function SettingsAgentsRouteScreen() {
                 onPress={() => {
                   setContextGeneration((generation) => generation + 1);
                   setSelectedRuleKey(profileKey(rule));
+                  setOptimisticRuleSummary(null);
                   setIsNewRule(false);
                   setRuleError(null);
                   setRuleNotice(null);
