@@ -15,6 +15,8 @@ import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
 import type { UsageTokenTotals } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
 import { totalTokens, type UsageRecord } from "./usageTranscripts.ts";
 
@@ -317,7 +319,11 @@ export function parseCursorUsageCsv(csvText: string): {
 } {
   const rows = parseCsvRows(csvText.replace(/^\uFEFF/, ""));
   if (rows.length === 0) {
-    return { ok: true, records: [], message: null };
+    return {
+      ok: false,
+      records: [],
+      message: "Cursor usage export was not CSV.",
+    };
   }
 
   const header = (rows[0] ?? []).map((cell) => cell.trim());
@@ -387,141 +393,116 @@ export function parseCursorUsageCsv(csvText: string): {
   return { ok: true, records, message: null };
 }
 
-async function refreshAccessToken(refreshToken: string): Promise<string | null> {
-  try {
-    const response = await fetch(REFRESH_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        grant_type: "refresh_token",
-        client_id: CURSOR_OAUTH_CLIENT_ID,
-        refresh_token: refreshToken,
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!response.ok) return null;
-    const body: unknown = await response.json();
-    if (typeof body !== "object" || body === null) return null;
-    const accessToken = (body as Record<string, unknown>)["access_token"];
-    return typeof accessToken === "string" && accessToken.length > 0 ? accessToken : null;
-  } catch {
-    return null;
-  }
-}
+const cursorFetchFailed = (message: string): CursorCsvFetchResult => ({
+  records: [],
+  status: "failed",
+  message,
+});
 
-async function fetchCsvOnce(
+const refreshAccessToken = Effect.fn("usageCursor.refreshAccessToken")(function* (
+  refreshToken: string,
+) {
+  const httpClient = yield* HttpClient.HttpClient;
+  const body = yield* HttpClientRequest.post(REFRESH_URL).pipe(
+    HttpClientRequest.bodyJsonUnsafe({
+      grant_type: "refresh_token",
+      client_id: CURSOR_OAUTH_CLIENT_ID,
+      refresh_token: refreshToken,
+    }),
+    httpClient.execute,
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.flatMap((response) => response.json),
+    Effect.timeout(15_000),
+    Effect.catchCause(() => Effect.succeed(null)),
+  );
+  if (typeof body !== "object" || body === null) return null;
+  const accessToken = (body as Record<string, unknown>)["access_token"];
+  return typeof accessToken === "string" && accessToken.length > 0 ? accessToken : null;
+});
+
+const fetchCsvOnce = Effect.fn("usageCursor.fetchCsvOnce")(function* (
   sessionToken: string,
   sinceMs: number,
   untilMs: number,
-): Promise<Response> {
+) {
+  const httpClient = yield* HttpClient.HttpClient;
   const url = new URL(EXPORT_CSV_URL);
   url.searchParams.set("startDate", String(Math.trunc(sinceMs)));
   url.searchParams.set("endDate", String(Math.trunc(untilMs)));
   url.searchParams.set("strategy", "tokens");
 
-  return fetch(url, {
-    method: "GET",
-    headers: {
+  return yield* HttpClientRequest.get(url.toString()).pipe(
+    HttpClientRequest.setHeaders({
       Cookie: `WorkosCursorSessionToken=${sessionToken}`,
       Accept: "text/csv",
-    },
-    signal: AbortSignal.timeout(30_000),
-  });
-}
+    }),
+    httpClient.execute,
+    Effect.timeout(30_000),
+  );
+});
 
 /**
  * Fetches and parses Cursor usage for `[sinceMs, untilMs]`.
  *
  * On 401/403, refreshes the access token once when a refresh token is present.
+ * Uses Effect's `HttpClient` so the network dependency stays in the environment.
  */
-export async function fetchCursorUsageRecords(input: {
+export const fetchCursorUsageRecords = Effect.fn("fetchCursorUsageRecords")(function* (input: {
   readonly auth: CursorAuthTokens;
   readonly sinceMs: number;
   readonly untilMs: number;
-}): Promise<CursorCsvFetchResult> {
+}): Effect.fn.Return<CursorCsvFetchResult, never, HttpClient.HttpClient> {
   const session = cursorSessionFromAccessToken(input.auth.accessToken);
   if (session === null) {
-    return {
-      records: [],
-      status: "failed",
-      message: "Cursor access token has no usable subject.",
-    };
+    return cursorFetchFailed("Cursor access token has no usable subject.");
   }
 
   let accessToken = input.auth.accessToken;
   let sessionToken = session.sessionToken;
-  let response: Response;
-  try {
-    response = await fetchCsvOnce(sessionToken, input.sinceMs, input.untilMs);
-  } catch {
-    return {
-      records: [],
-      status: "failed",
-      message: "Cursor usage export request failed.",
-    };
+  let response = yield* fetchCsvOnce(sessionToken, input.sinceMs, input.untilMs).pipe(
+    Effect.catchCause(() => Effect.succeed(null)),
+  );
+  if (response === null) {
+    return cursorFetchFailed("Cursor usage export request failed.");
   }
 
   if ((response.status === 401 || response.status === 403) && input.auth.refreshToken !== null) {
-    const refreshed = await refreshAccessToken(input.auth.refreshToken);
+    const refreshed = yield* refreshAccessToken(input.auth.refreshToken);
     if (refreshed !== null) {
       accessToken = refreshed;
       writeStateValue(input.auth.stateDbPath, ACCESS_TOKEN_KEY, refreshed);
       const nextSession = cursorSessionFromAccessToken(accessToken);
       if (nextSession !== null) {
         sessionToken = nextSession.sessionToken;
-        try {
-          response = await fetchCsvOnce(sessionToken, input.sinceMs, input.untilMs);
-        } catch {
-          return {
-            records: [],
-            status: "failed",
-            message: "Cursor usage export request failed after refresh.",
-          };
+        response = yield* fetchCsvOnce(sessionToken, input.sinceMs, input.untilMs).pipe(
+          Effect.catchCause(() => Effect.succeed(null)),
+        );
+        if (response === null) {
+          return cursorFetchFailed("Cursor usage export request failed after refresh.");
         }
       }
     }
   }
 
   if (response.status === 401 || response.status === 403) {
-    return {
-      records: [],
-      status: "failed",
-      message: "Cursor session expired. Sign in via the Cursor app.",
-    };
+    return cursorFetchFailed("Cursor session expired. Sign in via the Cursor app.");
   }
-  if (!response.ok) {
-    return {
-      records: [],
-      status: "failed",
-      message: `Cursor usage export returned HTTP ${response.status}.`,
-    };
+  if (response.status < 200 || response.status >= 300) {
+    return cursorFetchFailed(`Cursor usage export returned HTTP ${response.status}.`);
   }
 
-  let text: string;
-  try {
-    text = await response.text();
-  } catch {
-    return {
-      records: [],
-      status: "failed",
-      message: "Cursor usage export body transfer failed.",
-    };
-  }
-  if (!text.startsWith("Date,") && !text.startsWith("\uFEFFDate,")) {
-    return {
-      records: [],
-      status: "failed",
-      message: "Cursor usage export was not CSV.",
-    };
+  const text = yield* response.text.pipe(
+    Effect.catchCause(() => Effect.succeed(null)),
+  );
+  if (text === null) {
+    return cursorFetchFailed("Cursor usage export body transfer failed.");
   }
 
+  // Validity comes from the parsed header row so quoted CSV headers
+  // (`"Date","Model",...`) are accepted the same as bare `Date,Model,...`.
   const parsed = parseCursorUsageCsv(text);
   if (!parsed.ok) {
-    return {
-      records: [],
-      status: "failed",
-      message: parsed.message ?? "Cursor usage export could not be parsed.",
-    };
+    return cursorFetchFailed(parsed.message ?? "Cursor usage export could not be parsed.");
   }
 
   return {
@@ -529,4 +510,4 @@ export async function fetchCursorUsageRecords(input: {
     status: "ok",
     message: null,
   };
-}
+});

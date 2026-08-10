@@ -74,6 +74,23 @@ describe("parseCursorUsageCsv", () => {
     expect(parsed.records).toHaveLength(0);
   });
 
+  it("accepts quoted CSV headers", () => {
+    const csv = [
+      '"Date","Model","Input (w/ Cache Write)","Input (w/o Cache Write)","Cache Read","Output Tokens"',
+      '"2026-06-17T12:00:00.000Z","auto","0","1","0","1"',
+    ].join("\n");
+    const parsed = parseCursorUsageCsv(csv);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.records).toHaveLength(1);
+    expect(parsed.records[0]?.model).toBe("auto");
+  });
+
+  it("rejects a non-CSV body", () => {
+    const parsed = parseCursorUsageCsv("<html>not csv</html>");
+    expect(parsed.ok).toBe(false);
+    expect(parsed.records).toHaveLength(0);
+  });
+
   it("parses quoted CSV fields with commas", () => {
     const rows = parseCsvRows('a,"b,c",d\n1,"2,3",4\n');
     expect(rows).toEqual([

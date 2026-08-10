@@ -665,13 +665,11 @@ export const make = Effect.gen(function* () {
           cursorResult.cacheKey !== cacheKey ||
           now - cursorResult.fetchedAtMs >= CURSOR_USAGE_CACHE_TTL_MS
         ) {
-          const fetched = yield* Effect.promise(() =>
-            fetchCursorUsageRecords({
-              auth,
-              sinceMs: windowStartMs,
-              untilMs: windowEndMs,
-            }),
-          );
+          const fetched = yield* fetchCursorUsageRecords({
+            auth,
+            sinceMs: windowStartMs,
+            untilMs: windowEndMs,
+          }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
           cursorResult = {
             cacheKey,
             fetchedAtMs: now,
