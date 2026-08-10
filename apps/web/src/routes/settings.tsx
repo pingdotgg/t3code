@@ -10,6 +10,7 @@ import {
 import { useCallback, useEffect, useState } from "react";
 
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
+import { SettingsBreadcrumb } from "../components/settings/SettingsBreadcrumb";
 import { Button } from "../components/ui/button";
 import { SidebarInset } from "../components/ui/sidebar";
 import { isElectron } from "../env";
@@ -79,7 +80,7 @@ function SettingsContentLayout() {
             )}
           >
             <div className="flex w-full items-center gap-2">
-              <span className="text-sm font-medium text-foreground">Settings</span>
+              <SettingsBreadcrumb pathname={location.pathname} />
               {showRestoreDefaults ? (
                 <div className="ms-auto flex items-center gap-2">
                   <RestoreDefaultsButton onRestored={handleRestored} />
@@ -96,14 +97,14 @@ function SettingsContentLayout() {
               COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
             )}
           >
-            <span className="text-xs font-medium tracking-wide text-muted-foreground/70">
-              Settings
-            </span>
-            {showRestoreDefaults ? (
-              <div className="ms-auto flex items-center gap-2">
-                <RestoreDefaultsButton onRestored={handleRestored} />
-              </div>
-            ) : null}
+            <div className="flex w-full items-center gap-2">
+              <SettingsBreadcrumb pathname={location.pathname} />
+              {showRestoreDefaults ? (
+                <div className="ms-auto flex items-center gap-2">
+                  <RestoreDefaultsButton onRestored={handleRestored} />
+                </div>
+              ) : null}
+            </div>
           </div>
         )}
 
