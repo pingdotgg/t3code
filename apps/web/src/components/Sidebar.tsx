@@ -1114,11 +1114,26 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     </span>
   ) : null;
 
+  const sortable = props.sortable;
+
   if (variant === "slim") {
     return (
       <li
         data-thread-item
-        className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]"
+        ref={sortable?.setNodeRef}
+        style={
+          sortable
+            ? {
+                transform: CSS.Translate.toString(sortable.transform),
+                transition: sortable.transition,
+              }
+            : undefined
+        }
+        {...(sortable?.listeners ?? {})}
+        className={cn(
+          "list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]",
+          sortable?.isDragging && "z-20 opacity-80",
+        )}
       >
         <Tooltip>
           <TooltipTrigger
@@ -1248,7 +1263,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
 
   const diff = latestTurnDiff(thread);
 
-  const sortable = props.sortable;
   return (
     <li
       data-thread-item
