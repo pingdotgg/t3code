@@ -14,6 +14,7 @@ import {
   stripPairingTokenFromUrl as stripPairingTokenUrl,
 } from "../../pairingUrl";
 
+import { getDesktopLocalEnvironmentBootstrap } from "./desktopBootstrap";
 import { resolvePrimaryEnvironmentHttpUrl } from "./target";
 import { Data, Predicate } from "effect";
 
@@ -90,7 +91,7 @@ export function takePairingTokenFromUrl(): string | null {
 }
 
 function getDesktopBootstrapCredential(): string | null {
-  const bootstrap = window.desktopBridge?.getLocalEnvironmentBootstrap();
+  const bootstrap = getDesktopLocalEnvironmentBootstrap();
   return typeof bootstrap?.bootstrapToken === "string" && bootstrap.bootstrapToken.length > 0
     ? bootstrap.bootstrapToken
     : null;

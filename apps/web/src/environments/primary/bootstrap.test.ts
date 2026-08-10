@@ -4,6 +4,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import {
   getPrimaryKnownEnvironment,
   resolveInitialPrimaryEnvironmentDescriptor,
+  resolvePrimaryEnvironmentHttpUrl,
   resetPrimaryEnvironmentDescriptorForTests,
   writePrimaryEnvironmentDescriptor,
 } from ".";
@@ -85,6 +86,20 @@ describe("environmentBootstrap", () => {
         wsBaseUrl: "ws://localhost:3773/",
       },
     });
+  });
+
+  it("falls back to the window origin when an older desktop bridge lacks bootstrap support", () => {
+    vi.stubGlobal("window", {
+      location: new URL("http://localhost:3773/"),
+      history: {
+        replaceState: vi.fn(),
+      },
+      desktopBridge: {},
+    });
+
+    expect(resolvePrimaryEnvironmentHttpUrl("/api/auth/session")).toBe(
+      "http://localhost:3773/api/auth/session",
+    );
   });
 
   it("reuses an in-flight descriptor bootstrap request", async () => {

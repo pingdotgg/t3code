@@ -50,7 +50,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     if (typeof result !== "object" || result === null) {
       return null;
     }
-    return result as ReturnType<DesktopBridge["getLocalEnvironmentBootstrap"]>;
+    return result as ReturnType<NonNullable<DesktopBridge["getLocalEnvironmentBootstrap"]>>;
   },
   preview: {
     createTab: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_CREATE_TAB_CHANNEL, { tabId }),

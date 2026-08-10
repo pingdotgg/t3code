@@ -788,7 +788,7 @@ export interface DesktopPreviewBridge {
 
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
-  getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
+  getLocalEnvironmentBootstrap?: () => DesktopEnvironmentBootstrap | null;
   preview?: DesktopPreviewBridge;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;
