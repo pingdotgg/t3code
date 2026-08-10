@@ -721,12 +721,22 @@ export function HomeScreen(props: HomeScreenProps) {
         settledShelfExpanded,
         settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
         snoozeLabelNow: `${nowMinute}:00.000Z`,
-        // Suppressed while searching: no matches is not the same statement
-        // as an empty inbox, and the search states already cover it.
-        emptyInbox: hasSearchQuery ? null : { projectName: v2ScopedProjectGroup?.title ?? null },
+        // Same gate as the tablet sidebar, kept identical on purpose. This
+        // screen also returns a full-page empty state before the list ever
+        // renders, which already covers loading, but the block must not
+        // depend on that guard staying where it is:
+        //   - searching, where no matches is not "you are all caught up"
+        //   - loading, where an empty list means "not yet", not "all done"
+        //   - no projects, where its button would open an empty picker
+        emptyInbox:
+          hasSearchQuery || props.catalogState.isLoadingConnections || props.projects.length === 0
+            ? null
+            : { projectName: v2ScopedProjectGroup?.title ?? null },
       }),
     [
       hasSearchQuery,
+      props.catalogState.isLoadingConnections,
+      props.projects.length,
       settledShelfExpanded,
       snoozedShelfExpanded,
       threadListV2Layout,

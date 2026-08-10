@@ -609,10 +609,18 @@ function ThreadNavigationSidebarPane(
       settledShelfExpanded,
       settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
       snoozeLabelNow: `${nowMinute}:00.000Z`,
-      // Suppressed while searching: no matches is not the same statement as
-      // an empty inbox, and the search states already cover it.
+      // The block makes the list non-empty, which suppresses
+      // ListEmptyComponent below. So it must stay out of every case that
+      // component still owns, or it speaks over them:
+      //   - searching, where no matches is not "you are all caught up"
+      //   - loading, where an empty list means "not yet", not "all done"
+      //   - no projects, where its button would open an empty picker
+      // (The phone screen needs none of this: it returns a full-page empty
+      // state before the list renders at all.)
       emptyInbox:
-        props.searchQuery.trim().length > 0
+        props.searchQuery.trim().length > 0 ||
+        catalogState.isLoadingConnections ||
+        projects.length === 0
           ? null
           : { projectName: selectedProjectScope?.title ?? null },
     });
@@ -625,12 +633,15 @@ function ThreadNavigationSidebarPane(
     }
     return items;
   }, [
+    catalogState.isLoadingConnections,
     listLayout.items,
     nowMinute,
     options.selectedEnvironmentId,
     pendingTasks,
+    projects.length,
     props.searchQuery,
     selectedProjectRefs,
+    selectedProjectScope,
     settledShelfExpanded,
     snoozedShelfExpanded,
     threadListV2Enabled,
