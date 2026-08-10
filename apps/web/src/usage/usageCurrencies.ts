@@ -209,6 +209,14 @@ function writeStoredUsageCurrencyRatesAttempt(fetchedAt: number): void {
   setLocalStorageItem(USAGE_CURRENCY_RATES_ATTEMPT_STORAGE_KEY, fetchedAt, Schema.Number);
 }
 
+function tryWriteStoredUsageCurrencyRatesAttempt(attemptedAt: number): void {
+  try {
+    writeStoredUsageCurrencyRatesAttempt(attemptedAt);
+  } catch (error) {
+    console.error("[usage-currency] Failed to persist the FX refresh attempt.", error);
+  }
+}
+
 export function ratesNeedRefresh(cache: UsageCurrencyRatesCache | null, now = new Date()): boolean {
   if (cache === null) return true;
   return !isWithinRatesTtl(cache.fetchedAt, now);
@@ -309,11 +317,6 @@ export async function refreshUsageCurrencyRatesIfNeeded(
 
   const attemptedAt = now.getTime();
   ratesFetchAttemptedAt = attemptedAt;
-  try {
-    writeStoredUsageCurrencyRatesAttempt(attemptedAt);
-  } catch (error) {
-    console.error("[usage-currency] Failed to persist the FX refresh attempt.", error);
-  }
 
   ratesFetchInFlight = (async () => {
     try {
@@ -321,12 +324,14 @@ export async function refreshUsageCurrencyRatesIfNeeded(
       ratesFetchedInMemory = next;
       try {
         writeStoredUsageCurrencyRates(next);
+        tryWriteStoredUsageCurrencyRatesAttempt(attemptedAt);
       } catch (error) {
         console.error("[usage-currency] Failed to persist FX rates.", error);
       }
       return next;
     } catch (error) {
       console.error("[usage-currency] Failed to refresh FX rates.", error);
+      tryWriteStoredUsageCurrencyRatesAttempt(attemptedAt);
       return null;
     } finally {
       ratesFetchInFlight = null;

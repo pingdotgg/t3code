@@ -1,6 +1,6 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
-import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useMemo, useState } from "react";
 
 import { isElectron } from "../../env";
 import { useUsageCurrency } from "../../hooks/useUsageCurrency";
@@ -27,59 +27,6 @@ const WINDOW_OPTIONS = [
   { days: 30, label: "30 days" },
   { days: 90, label: "90 days" },
 ] as const;
-
-const SUMMARY_WIDTH_TRANSITION_MS = 280;
-/** Matches the previous `20rem` summary column so provider rows keep a stable rail. */
-const SUMMARY_COL_MIN_PX = 320;
-
-/**
- * Measures a `w-max` node and exposes a pixel width that CSS can transition,
- * so currency changes ease the summary/chart split instead of jumping.
- */
-function useAnimatedContentWidth(contentKey: string) {
-  const measureRef = useRef<HTMLElement | null>(null);
-  const widthRef = useRef<number | null>(null);
-  const [width, setWidth] = useState<number | null>(null);
-  const [reduceMotion, setReduceMotion] = useState(false);
-
-  useLayoutEffect(() => {
-    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const sync = () => setReduceMotion(media.matches);
-    sync();
-    media.addEventListener("change", sync);
-    return () => media.removeEventListener("change", sync);
-  }, []);
-
-  useLayoutEffect(() => {
-    const node = measureRef.current;
-    if (node === null) return;
-
-    const next = Math.ceil(node.scrollWidth);
-    const previous = widthRef.current;
-
-    if (previous === null || reduceMotion || previous === next) {
-      widthRef.current = next;
-      setWidth(next);
-      return;
-    }
-
-    // Keep the prior width through this layout pass, then ease to the new size
-    // on the following frame so the browser actually interpolates.
-    let frame = requestAnimationFrame(() => {
-      frame = requestAnimationFrame(() => {
-        widthRef.current = next;
-        setWidth(next);
-      });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [contentKey, reduceMotion]);
-
-  return {
-    measureRef,
-    width,
-    transitionEnabled: width !== null && !reduceMotion,
-  };
-}
 
 export function UsagePage() {
   const [windowDays, setWindowDays] = useState<number>(30);
@@ -122,14 +69,6 @@ export function UsagePage() {
 
   const heroAmount =
     metric === "cost" ? `${formatCost(merged.costUsd)}*` : formatTokens(merged.totalTokens);
-  // Width is driven by the headline amount; ignore provider churn so refreshes
-  // do not re-animate the split.
-  const {
-    measureRef,
-    width: measuredSummaryWidth,
-    transitionEnabled,
-  } = useAnimatedContentWidth(`${currency}:${metric}:${heroAmount}`);
-  const summaryColPx = Math.max(SUMMARY_COL_MIN_PX, measuredSummaryWidth ?? SUMMARY_COL_MIN_PX);
 
   const activeDays = merged.daily.filter((day) => day.totalTokens > 0).length;
   const dailyAverage = activeDays === 0 ? 0 : merged.totalTokens / activeDays;
@@ -216,22 +155,8 @@ export function UsagePage() {
 
                 {/* Cost first: the financial answer, then the provider split.
                 Single-column below lg so the summary stretches with the chart;
-                at lg the measured column width eases when currency changes. */}
-                <section
-                  className={cn(
-                    "grid gap-6 lg:grid-cols-[var(--usage-summary-col)_minmax(0,1fr)]",
-                    transitionEnabled &&
-                      "ease-out max-lg:transition-none lg:transition-[grid-template-columns]",
-                  )}
-                  style={
-                    {
-                      "--usage-summary-col": `${summaryColPx}px`,
-                      transitionDuration: transitionEnabled
-                        ? `${SUMMARY_WIDTH_TRANSITION_MS}ms`
-                        : undefined,
-                    } as CSSProperties
-                  }
-                >
+                at lg the summary column grows with the headline amount. */}
+                <section className="grid gap-6 lg:grid-cols-[minmax(20rem,max-content)_minmax(0,1fr)]">
                   {/* The summary follows the chart toggle, so the headline and the
                   series are always reading the same units. */}
                   <div className="flex min-w-0 flex-col gap-5">
@@ -239,10 +164,7 @@ export function UsagePage() {
                       <span className="text-xs tracking-wide text-muted-foreground uppercase">
                         {metric === "cost" ? "Raw token cost" : "Processed tokens"}
                       </span>
-                      <span
-                        ref={measureRef}
-                        className="w-max max-w-full text-4xl font-semibold whitespace-nowrap text-foreground tabular-nums"
-                      >
+                      <span className="w-max max-w-full text-4xl font-semibold whitespace-nowrap text-foreground tabular-nums">
                         {heroAmount}
                       </span>
                       <span className="text-xs text-muted-foreground">
@@ -615,7 +537,7 @@ const SKELETON_BAR_HEIGHTS = [34, 58, 41, 72, 22, 12, 49, 63, 80, 38, 55, 26, 44
 function UsageSkeleton() {
   return (
     <>
-      <section className="grid gap-6 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+      <section className="grid gap-6 lg:grid-cols-[minmax(20rem,max-content)_minmax(0,1fr)]">
         <div className="flex flex-col gap-5">
           <div className="flex flex-col gap-1">
             <span className="text-xs tracking-wide text-muted-foreground uppercase">

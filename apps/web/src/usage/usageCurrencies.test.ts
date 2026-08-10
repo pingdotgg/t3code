@@ -382,6 +382,37 @@ describe("refreshUsageCurrencyRatesIfNeeded", () => {
     expect(errorSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("does not persist the attempt when the fetched rates fail to persist", async () => {
+    const storage = createStorage();
+    const setItem = storage.setItem.bind(storage);
+    storage.setItem = (key, value) => {
+      if (key === USAGE_CURRENCY_RATES_STORAGE_KEY) throw new Error("quota exceeded");
+      setItem(key, value);
+    };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async () =>
+        Response.json([{ date: "2026-08-08", base: "USD", quote: "EUR", rate: 0.86 }]),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const now = new Date("2026-08-09T12:00:00");
+    const firstModule = await loadUsageCurrencies(storage);
+    await expect(firstModule.refreshUsageCurrencyRatesIfNeeded(now)).resolves.toMatchObject({
+      rates: { USD: 1, EUR: 0.86 },
+    });
+    expect(storage.getItem(USAGE_CURRENCY_RATES_ATTEMPT_STORAGE_KEY)).toBeNull();
+
+    const reloadedModule = await loadUsageCurrencies(storage);
+    await expect(reloadedModule.refreshUsageCurrencyRatesIfNeeded(now)).resolves.toMatchObject({
+      rates: { USD: 1, EUR: 0.86 },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(errorSpy).toHaveBeenCalledTimes(2);
+  });
+
   it("still returns fetched rates when persisting them fails", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const storage = createStorage({
