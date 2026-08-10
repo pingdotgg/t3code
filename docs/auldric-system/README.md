@@ -30,8 +30,9 @@ connection, remote, shell, Git, preview, CI, or release implementation.
 7. [Capabilities and boundaries](./08-capabilities-and-boundaries.md)
 8. [Marketing agent contract](./09-agent-operating-contract.md)
 9. [Legacy donor inventory decision](./10-legacy-donor-inventory.md)
-10. [Architecture](../auldric-architecture.md)
-11. [Launch readiness](../auldric-launch-readiness.md)
+10. [Marketing shell design proposal](./11-marketing-shell-design-proposal.md)
+11. [Architecture](../auldric-architecture.md)
+12. [Launch readiness](../auldric-launch-readiness.md)
 
 The [legacy runtime archive index](../_archive/auldric-runtime/README.md) is provenance only. It is
 not part of this reading order and must not steer implementation.
