@@ -12,7 +12,7 @@ import {
   type VcsError,
 } from "@t3tools/contracts";
 
-import { ServerSettingsService } from "../serverSettings.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import {
   decodeGitHubPullRequestJson,
@@ -438,7 +438,7 @@ function deriveRepositoryCloneUrlsFromCreateOutput(
 
 export const make = Effect.gen(function* () {
   const vcsProcess = yield* VcsProcess.VcsProcess;
-  const settings = yield* ServerSettingsService;
+  const settings = yield* ServerSettings.ServerSettingsService;
 
   const accountSelection = Effect.fn("GitHubCli.accountSelection")(function* (
     input: GitHubAuthTarget & { readonly cwd: string },
