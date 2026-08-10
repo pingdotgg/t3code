@@ -1,0 +1,36 @@
+{
+  "name": "@auldric/marketing-domain",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/identity.ts",
+      "import": "./src/identity.ts"
+    },
+    "./identity": {
+      "types": "./src/identity.ts",
+      "import": "./src/identity.ts"
+    },
+    "./errors": {
+      "types": "./src/errors.ts",
+      "import": "./src/errors.ts"
+    },
+    "./workspace-store": {
+      "types": "./src/workspaceStore.ts",
+      "import": "./src/workspaceStore.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "test": "vp test run"
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
