@@ -93,6 +93,14 @@ public actor T3Client {
         )
     }
 
+    public func usageSummary(_ input: UsageSummaryInput) async throws -> UsageSummary {
+        try await rpc.request(
+            RPCMethod.serverGetUsageSummary.rawValue,
+            payload: try JSONValue.encode(input),
+            as: UsageSummary.self
+        )
+    }
+
     public func serverConfigEvents() async
         -> AsyncThrowingStream<ServerConfigStreamEvent, Error>
     {
@@ -1220,6 +1228,7 @@ public actor EnvironmentRuntime {
 public enum RPCMethod: String, Sendable {
     case serverProbe = "server.probe"
     case serverGetConfig = "server.getConfig"
+    case serverGetUsageSummary = "server.getUsageSummary"
     case dispatchCommand = "orchestration.dispatchCommand"
     case getArchivedShellSnapshot = "orchestration.getArchivedShellSnapshot"
     case subscribeShell = "orchestration.subscribeShell"

@@ -29,6 +29,7 @@ public struct SettingsView: View {
                     LazyVStack(alignment: .leading, spacing: 28) {
                         connectionSection
                         t3ConnectSection
+                        generalSection
                         agentSection
                         preferencesSection
                         aboutSection
@@ -247,6 +248,20 @@ public struct SettingsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+        }
+    }
+
+    private var generalSection: some View {
+        SettingsSection(title: "General") {
+            NavigationLink {
+                UsageView(client: model.client)
+            } label: {
+                SettingsNavigationRow(
+                    title: "Usage",
+                    systemImage: "chart.bar.xaxis"
+                )
+            }
+            .buttonStyle(.plain)
         }
     }
 

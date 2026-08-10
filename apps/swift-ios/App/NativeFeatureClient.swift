@@ -397,6 +397,56 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         await clearActiveEnvironment()
     }
 
+    func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage] {
+        let environments = try await runtime.environments()
+        let runtime = runtime
+        let order = Dictionary(uniqueKeysWithValues: environments.enumerated().map {
+            ($0.element.id, $0.offset)
+        })
+
+        let results = try await withThrowingTaskGroup(
+            of: FeatureEnvironmentUsage.self,
+            returning: [FeatureEnvironmentUsage].self
+        ) { group in
+            for environment in environments {
+                group.addTask {
+                    let probe = await runtime.ephemeralClient(for: environment)
+                    do {
+                        let summary = try await probe.usageSummary(input)
+                        await probe.disconnect()
+                        return FeatureEnvironmentUsage(
+                            environmentID: environment.id,
+                            label: environment.label,
+                            summary: summary,
+                            errorMessage: nil
+                        )
+                    } catch is CancellationError {
+                        await probe.disconnect()
+                        throw CancellationError()
+                    } catch {
+                        await probe.disconnect()
+                        return FeatureEnvironmentUsage(
+                            environmentID: environment.id,
+                            label: environment.label,
+                            summary: nil,
+                            errorMessage: "This environment could not report usage."
+                        )
+                    }
+                }
+            }
+
+            var results: [FeatureEnvironmentUsage] = []
+            results.reserveCapacity(environments.count)
+            for try await result in group {
+                results.append(result)
+            }
+            return results
+        }
+        return results.sorted {
+            order[$0.environmentID, default: .max] < order[$1.environmentID, default: .max]
+        }
+    }
+
     private func adoptEnvironment(
         _ environment: Environment,
         client newClient: T3Client

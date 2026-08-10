@@ -86,6 +86,8 @@ public protocol FeatureClient: AnyObject {
 
     func saveSettings(_ settings: FeatureSettings) async throws
 
+    func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage]
+
     func cachedProjectFavicon(
         environmentID: String,
         workspaceRoot: String
@@ -154,6 +156,9 @@ public extension FeatureClient {
     func removeEnvironment(id: String) async throws {}
     func disconnect() async {}
     func addProject(path: String) async throws {}
+    func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage] {
+        []
+    }
     func cachedProjectFavicon(environmentID: String, workspaceRoot: String) async -> Data? {
         nil
     }
