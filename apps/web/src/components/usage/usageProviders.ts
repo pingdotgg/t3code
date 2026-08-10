@@ -1,6 +1,6 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 
-import { ClaudeAI, type Icon, OpenAI } from "../Icons";
+import { ClaudeAI, GrokIcon, type Icon, OpenAI } from "../Icons";
 
 type UsageProviderPresentation = {
   readonly label: string;
@@ -23,6 +23,12 @@ export const PROVIDER_PRESENTATION = {
     label: "Claude Code",
     color: "#d97757",
     mark: ClaudeAI,
+  },
+  grok: {
+    label: "Grok Build",
+    // Mid zinc so the series stays visible on both light and dark chart surfaces.
+    color: "#a1a1aa",
+    mark: GrokIcon,
   },
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
 
