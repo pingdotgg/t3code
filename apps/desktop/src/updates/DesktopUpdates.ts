@@ -46,10 +46,12 @@ import {
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
 const AUTO_UPDATE_POLL_INTERVAL = "4 minutes";
 // Per-backend budget for a verified stop before an install. Unlike the
-// generic shutdown path, the install path must KNOW the child is gone —
-// a WSL backend that outlives this window still holds 9p handles into the
-// install directory and the NSIS apply would half-fail — so a timeout here
-// aborts the install instead of proceeding.
+// generic shutdown path, the install path must KNOW the child is gone: a
+// surviving Windows backend child runs AS the app executable and reads
+// through app.asar (real Windows file locks that make the NSIS apply
+// half-fail), and a surviving WSL backend can interfere with the install
+// from its side — so a timeout here aborts the install instead of
+// proceeding.
 const INSTALL_BACKEND_STOP_TIMEOUT = Duration.seconds(10);
 
 const AppUpdateYmlConfig = Schema.Record(Schema.String, Schema.String);
@@ -537,11 +539,12 @@ export const make = Effect.gen(function* () {
       }
 
       // A stopped wsl.exe relay does not guarantee the Linux-side server
-      // (or helpers it spawned, e.g. cloudflared) exited with it — and any
-      // Linux process holding cwd/fd/mmap references under /mnt/c/<install
-      // dir> blocks file replacement on the Windows side, which is exactly
-      // how a half-applied update happens. Verify release instead of
-      // assuming it.
+      // (or helpers it spawned, e.g. cloudflared) exited with it. Whether a
+      // lingering Linux holder blocks Windows-side file replacement depends
+      // on the WSL/DrvFs version (on WSL 2.7 mirrored, plain fds and mmaps
+      // measurably do NOT block it) — but a backend that is still alive can
+      // also rewrite state mid-install, so verify release defensively
+      // instead of assuming the relay kill was enough.
       if (environment.isPackaged && environment.platform === "win32") {
         const installDir = environment.path.dirname(environment.resourcesPath);
         for (const result of stopResults) {

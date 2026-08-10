@@ -128,9 +128,10 @@ export class DesktopWslEnvironment extends Context.Service<
     ) => Effect.Effect<Option.Option<WslServerRuntimeState>>;
     // Terminates any Linux-side process still holding files (cwd, exe, open
     // fd, or mapped file) under the given Windows path via /mnt, then
-    // verifies release. Called before an update install: 9p/DrvFs handles
-    // held from WSL block file replacement on the Windows side, which is
-    // how a half-applied update happens.
+    // verifies release. Called before an update install as a defensive
+    // guarantee that nothing WSL-side outlives teardown: whether 9p/DrvFs
+    // handles block Windows-side replacement varies by WSL version, but a
+    // surviving backend can interfere with an install either way.
     readonly ensureWindowsPathReleased: (input: {
       readonly distro: string | null;
       readonly windowsPath: string;
