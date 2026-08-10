@@ -276,6 +276,12 @@ export const GitPreparePullRequestThreadResult = Schema.Struct({
   pullRequest: GitResolvedPullRequest,
   branch: TrimmedNonEmptyStringSchema,
   worktreePath: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
+  /**
+   * False when the checkout could not be brought to the pull request head — a reused worktree
+   * holding local commits or uncommitted changes keeps its own state, so the code being handed
+   * over is older than the pull request.
+   */
+  isOnPullRequestHead: Schema.Boolean,
 });
 export type GitPreparePullRequestThreadResult = typeof GitPreparePullRequestThreadResult.Type;
 

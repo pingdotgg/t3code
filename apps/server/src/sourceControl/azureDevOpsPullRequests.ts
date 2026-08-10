@@ -72,7 +72,12 @@ function encodeAzureDevOpsPathSegment(segment: string): string {
   return encodeURIComponent(segment);
 }
 
-function azureDevOpsOrganizationBaseFromRestApiUrl(
+/**
+ * The organization root a REST url belongs to, which is where a browser url and any further
+ * REST call have to be hung. Exported because the pull requests page derives its own urls from
+ * whatever Azure returned rather than from the local remote, whose shape varies.
+ */
+export function azureDevOpsOrganizationBaseFromRestApiUrl(
   value: string | null | undefined,
 ): string | null {
   const rawUrl = trimOptionalString(value);
@@ -104,29 +109,53 @@ function azureDevOpsOrganizationBaseFromRestApiUrl(
   }
 }
 
-function normalizeAzureDevOpsPullRequestUrl(
-  raw: Schema.Schema.Type<typeof AzureDevOpsPullRequestSchema>,
-): string {
-  const webLink = trimOptionalString(raw._links?.web?.href);
+/**
+ * Where a pull request lives in a browser. Azure answers with a web link when asked for one and
+ * otherwise leaves it to be assembled, so all three routes are tried in the order they can be
+ * trusted. Takes plain fields so both the source control provider and the pull requests page
+ * can share it.
+ */
+export function azureDevOpsPullRequestWebUrl(input: {
+  readonly pullRequestId: number;
+  readonly webLink?: string | null | undefined;
+  readonly repositoryWebUrl?: string | null | undefined;
+  readonly restApiUrl?: string | null | undefined;
+  readonly projectName?: string | null | undefined;
+  readonly repositoryName?: string | null | undefined;
+}): string {
+  const webLink = trimOptionalString(input.webLink);
   if (webLink) {
     return webLink;
   }
 
-  const repositoryWebUrl = trimOptionalString(raw.repository?.webUrl);
+  const repositoryWebUrl = trimOptionalString(input.repositoryWebUrl);
   if (repositoryWebUrl) {
-    return `${repositoryWebUrl.replace(/\/+$/, "")}/pullrequest/${raw.pullRequestId}`;
+    return `${repositoryWebUrl.replace(/\/+$/, "")}/pullrequest/${input.pullRequestId}`;
   }
 
-  const organizationBase = azureDevOpsOrganizationBaseFromRestApiUrl(raw.url);
-  const projectName = trimOptionalString(raw.repository?.project?.name);
-  const repositoryName = trimOptionalString(raw.repository?.name);
+  const organizationBase = azureDevOpsOrganizationBaseFromRestApiUrl(input.restApiUrl);
+  const projectName = trimOptionalString(input.projectName);
+  const repositoryName = trimOptionalString(input.repositoryName);
   if (organizationBase && projectName && repositoryName) {
     const encodedProjectName = encodeAzureDevOpsPathSegment(projectName);
     const encodedRepositoryName = encodeAzureDevOpsPathSegment(repositoryName);
-    return `${organizationBase}/${encodedProjectName}/_git/${encodedRepositoryName}/pullrequest/${raw.pullRequestId}`;
+    return `${organizationBase}/${encodedProjectName}/_git/${encodedRepositoryName}/pullrequest/${input.pullRequestId}`;
   }
 
-  return trimOptionalString(raw.url) ?? "";
+  return trimOptionalString(input.restApiUrl) ?? "";
+}
+
+function normalizeAzureDevOpsPullRequestUrl(
+  raw: Schema.Schema.Type<typeof AzureDevOpsPullRequestSchema>,
+): string {
+  return azureDevOpsPullRequestWebUrl({
+    pullRequestId: raw.pullRequestId,
+    webLink: raw._links?.web?.href,
+    repositoryWebUrl: raw.repository?.webUrl,
+    restApiUrl: raw.url,
+    projectName: raw.repository?.project?.name,
+    repositoryName: raw.repository?.name,
+  });
 }
 
 function normalizeAzureDevOpsPullRequestRecord(

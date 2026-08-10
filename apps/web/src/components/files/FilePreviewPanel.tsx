@@ -52,7 +52,7 @@ import {
 } from "./fileCommentAnnotations";
 import { installFileEditorDismissal } from "./fileEditorDismissal";
 import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
-import { LocalCommentAnnotation } from "./LocalCommentAnnotation";
+import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
 import { fileBreadcrumbs } from "./filePath";
 import { isMarkdownPreviewFile, setMarkdownTaskChecked } from "./filePreviewMode";
@@ -678,7 +678,7 @@ function EditableFileSurface({
             renderAnnotation={(annotation) => (
               <div className="py-1">
                 {annotation.metadata.entries.map((entry) => (
-                  <LocalCommentAnnotation
+                  <DiffCommentAnnotation
                     key={entry.id}
                     kind={entry.kind}
                     rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine)}

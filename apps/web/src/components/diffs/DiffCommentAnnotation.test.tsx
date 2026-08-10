@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { LocalCommentAnnotation } from "./LocalCommentAnnotation";
+import { DiffCommentAnnotation } from "./DiffCommentAnnotation";
 
 const callbacks = {
   onTextChange: vi.fn(),
@@ -10,10 +10,10 @@ const callbacks = {
   onDelete: vi.fn(),
 };
 
-describe("LocalCommentAnnotation", () => {
-  it("renders the draft composer directly in the selected diff", () => {
+describe("DiffCommentAnnotation", () => {
+  it("renders the shared draft composer directly in the selected diff", () => {
     const markup = renderToStaticMarkup(
-      <LocalCommentAnnotation kind="draft" rangeLabel="+78" text="" {...callbacks} />,
+      <DiffCommentAnnotation kind="draft" rangeLabel="+78" text="" {...callbacks} />,
     );
 
     expect(markup).toContain("font-sans");
@@ -31,9 +31,35 @@ describe("LocalCommentAnnotation", () => {
     expect(markup).toContain("cursor-text");
   });
 
+  it("lets a pull-request diff configure actions without replacing the composer", () => {
+    const markup = renderToStaticMarkup(
+      <DiffCommentAnnotation
+        kind="draft"
+        rangeLabel="src/app.ts:4"
+        text=""
+        {...callbacks}
+        submitLabel="Add to review"
+        secondaryAction={{
+          label: "Ask",
+          icon: <span data-test-icon />,
+          allowEmpty: true,
+          onAction: vi.fn(),
+        }}
+      />,
+    );
+
+    expect(markup).toContain("Add a comment…");
+    expect(markup).toContain(">Ask</button>");
+    expect(markup).toContain(">Add to review</button>");
+    expect(markup.match(/<button[^>]*disabled[^>]*>Add to review<\/button>/)).not.toBeNull();
+    const askButton = markup.match(/<button[^>]*>.*?Ask<\/button>/)?.[0];
+    expect(askButton).toBeDefined();
+    expect(askButton).not.toContain(' disabled=""');
+  });
+
   it("renders a saved comment without a nested card or redundant range label", () => {
     const markup = renderToStaticMarkup(
-      <LocalCommentAnnotation
+      <DiffCommentAnnotation
         kind="comment"
         rangeLabel="+78"
         text="Please keep this branch explicit."
@@ -53,7 +79,7 @@ describe("LocalCommentAnnotation", () => {
 
   it("renders draft text owned by the annotation wrapper", () => {
     const markup = renderToStaticMarkup(
-      <LocalCommentAnnotation
+      <DiffCommentAnnotation
         kind="draft"
         rangeLabel="+78"
         text="Keep this unsaved draft"

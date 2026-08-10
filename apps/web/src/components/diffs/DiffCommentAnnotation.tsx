@@ -1,20 +1,34 @@
 import { MessageCircle, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
 
-interface LocalCommentAnnotationProps {
+import { isCommentSubmitShortcut } from "./commentSubmitShortcut";
+
+interface DiffCommentSecondaryAction {
+  readonly label: string;
+  readonly icon?: ReactNode;
+  readonly allowEmpty?: boolean;
+  readonly onAction: (text: string) => void;
+}
+
+interface DiffCommentAnnotationProps {
   kind: "draft" | "comment";
   rangeLabel: string;
   text: string;
   onTextChange?: (text: string) => void;
   onCancel: () => void;
   onComment: (text: string) => void;
-  onDelete: () => void;
+  onDelete?: () => void;
+  placeholder?: string;
+  submitLabel?: string;
+  pending?: boolean;
+  secondaryAction?: DiffCommentSecondaryAction;
 }
 
-export function LocalCommentAnnotation({
+/** The shared inline comment treatment for file previews, thread diffs, and pull-request diffs. */
+export function DiffCommentAnnotation({
   kind,
   rangeLabel,
   text,
@@ -22,36 +36,43 @@ export function LocalCommentAnnotation({
   onCancel,
   onComment,
   onDelete,
-}: LocalCommentAnnotationProps) {
+  placeholder = "Add a comment…",
+  submitLabel = "Comment",
+  pending = false,
+  secondaryAction,
+}: DiffCommentAnnotationProps) {
   const [localDraftText, setLocalDraftText] = useState("");
   const displayedText = kind === "draft" && !onTextChange ? localDraftText : text;
+  const trimmedText = displayedText.trim();
 
   if (kind === "comment") {
     return (
       <div
-        data-file-comment-annotation
+        data-diff-comment-annotation
         className="group/comment flex min-w-0 items-start gap-2.5 border-s-2 border-primary/55 bg-primary/[0.045] px-3 py-2.5 font-sans text-foreground"
         contentEditable={false}
         onPointerDown={(event) => event.stopPropagation()}
       >
         <MessageCircle className="mt-0.5 size-3.5 shrink-0 text-primary/70" aria-hidden="true" />
         <p className="min-w-0 flex-1 whitespace-pre-wrap text-[13px] leading-5">{displayedText}</p>
-        <Button
-          className="-my-1 -mr-1 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/comment:opacity-100 focus-visible:opacity-100 max-sm:opacity-100"
-          variant="ghost"
-          size="icon-xs"
-          aria-label="Delete comment"
-          onClick={onDelete}
-        >
-          <Trash2 className="size-3" />
-        </Button>
+        {onDelete ? (
+          <Button
+            className="-my-1 -mr-1 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/comment:opacity-100 focus-visible:opacity-100 max-sm:opacity-100"
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Delete comment"
+            onClick={onDelete}
+          >
+            <Trash2 className="size-3" />
+          </Button>
+        ) : null}
       </div>
     );
   }
 
   return (
     <div
-      data-file-comment-annotation
+      data-diff-comment-annotation
       className="px-3 py-2 font-sans text-foreground"
       contentEditable={false}
       onPointerDown={(event) => event.stopPropagation()}
@@ -62,7 +83,7 @@ export function LocalCommentAnnotation({
         className="relative inline-flex w-full rounded-md border border-border/50 bg-background/20 font-sans text-foreground transition-colors focus-within:border-border/70 [&_[data-slot=textarea]]:min-h-12 [&_[data-slot=textarea]]:cursor-text [&_[data-slot=textarea]]:px-2.5 [&_[data-slot=textarea]]:py-1.5 [&_[data-slot=textarea]]:font-sans [&_[data-slot=textarea]]:text-xs [&_[data-slot=textarea]]:leading-5 max-sm:[&_[data-slot=textarea]]:min-h-12"
         size="sm"
         value={displayedText}
-        placeholder="Add a comment…"
+        placeholder={placeholder}
         aria-label={`Comment on lines ${rangeLabel}`}
         onChange={(event) => (onTextChange ?? setLocalDraftText)(event.target.value)}
         onFocus={(event) => {
@@ -74,9 +95,9 @@ export function LocalCommentAnnotation({
             event.preventDefault();
             onCancel();
           }
-          if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && displayedText.trim()) {
+          if (isCommentSubmitShortcut(event, trimmedText, pending)) {
             event.preventDefault();
-            onComment(displayedText.trim());
+            onComment(trimmedText);
           }
         }}
       />
@@ -90,12 +111,19 @@ export function LocalCommentAnnotation({
         >
           Cancel
         </Button>
-        <Button
-          size="xs"
-          disabled={!displayedText.trim()}
-          onClick={() => onComment(displayedText.trim())}
-        >
-          Comment
+        {secondaryAction ? (
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={!secondaryAction.allowEmpty && !trimmedText}
+            onClick={() => secondaryAction.onAction(trimmedText)}
+          >
+            {secondaryAction.icon}
+            {secondaryAction.label}
+          </Button>
+        ) : null}
+        <Button size="xs" disabled={pending || !trimmedText} onClick={() => onComment(trimmedText)}>
+          {submitLabel}
         </Button>
       </div>
     </div>
