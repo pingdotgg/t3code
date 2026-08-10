@@ -21,6 +21,7 @@ import type {
 } from "@t3tools/contracts";
 import { resolveEnvModeLabel } from "../BranchToolbar.logic";
 import { createModelSelection } from "@t3tools/shared/model";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { ChevronDownIcon, CopyIcon, PlusIcon, SettingsIcon, Trash2Icon } from "lucide-react";
@@ -59,11 +60,7 @@ import {
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
-import {
-  primaryServerKeybindingsAtom,
-  primaryServerProvidersAtom,
-  serverEnvironment,
-} from "../../state/server";
+import { primaryServerProvidersAtom, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
@@ -293,7 +290,6 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const updateClientSettings = useUpdateClientSettings();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const threads = useThreadShells();
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
@@ -388,10 +384,11 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         toastManager.add({ type: "warning", title: "Project title cannot be empty" });
         return;
       }
+      if (title === group.displayName) return;
       if (group.memberProjects.every((member) => member.title === title)) return;
       await updateAllMembers({ title }, "Failed to rename project");
     },
-    [group.memberProjects, updateAllMembers],
+    [group.displayName, group.memberProjects, updateAllMembers],
   );
 
   // ----- default model -----
@@ -452,6 +449,10 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const selectedCheckout =
     group.memberProjects.find((member) => member.physicalProjectKey === selectedCheckoutKey) ??
     representative;
+  const selectedServerConfig = useAtomValue(
+    serverEnvironment.configValueAtom(selectedCheckout.environmentId),
+  );
+  const keybindings = selectedServerConfig?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS;
   const scripts = selectedCheckout.scripts;
   const [editorRequest, setEditorRequest] = useState<ProjectScriptEditorRequest | null>(null);
   // Script writes replace the whole array, so two overlapping writes computed
