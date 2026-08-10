@@ -71,6 +71,18 @@ struct PlatformFeedbackTests {
         #expect(!records.contains { $0.id == "thread-13" })
     }
 
+    @Test
+    func sharedAppearanceStoreDefaultsToSystemAndRoundTripsDarkMode() throws {
+        let suiteName = "PlatformFeedbackTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = T3SharedAppearanceStore(defaults: defaults)
+
+        #expect(store.appearance() == .system)
+        store.update(.dark)
+        #expect(store.appearance() == .dark)
+    }
+
     private func thread(
         id: String,
         state: FeatureThreadState,

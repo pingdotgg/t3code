@@ -10,6 +10,7 @@ final class T3ShareViewController: UIViewController {
 
         let content = T3ShareExtensionView(
             recentThreads: T3SharedRecentThreadStore.shared.records(),
+            appearance: T3SharedAppearanceStore.shared.appearance(),
             save: { [weak self] destination in
                 let inputItems = self?.extensionContext?.inputItems ?? []
                 let payload = await T3SharePayloadLoader.load(from: inputItems)
@@ -22,17 +23,6 @@ final class T3ShareViewController: UIViewController {
                         warnings: payload.warnings
                     )
                 }.value
-            },
-            open: { [weak self] url in
-                await withCheckedContinuation { continuation in
-                    guard let context = self?.extensionContext else {
-                        continuation.resume(returning: false)
-                        return
-                    }
-                    context.open(url) { success in
-                        continuation.resume(returning: success)
-                    }
-                }
             },
             cancel: { [weak self] in
                 self?.extensionContext?.cancelRequest(withError: CocoaError(.userCancelled))
@@ -66,8 +56,8 @@ struct T3ShareExtensionView: View {
     }
 
     let recentThreads: [T3SharedRecentThreadRecord]
+    let appearance: T3SharedAppearance
     let save: (T3IncomingShareDestination) async throws -> T3IncomingShareEnvelope
-    let open: (URL) async -> Bool
     let cancel: () -> Void
     let complete: () -> Void
 
@@ -121,7 +111,8 @@ struct T3ShareExtensionView: View {
                 }
             }
         }
-        .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+        .preferredColorScheme(preferredColorScheme)
+        .background(T3ShareTheme.background.ignoresSafeArea())
     }
 
     private var isSaving: Bool {
@@ -177,7 +168,7 @@ struct T3ShareExtensionView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(Color(uiColor: .systemBackground))
+        .background(T3ShareTheme.background)
         .searchable(
             text: $searchText,
             placement: .navigationBarDrawer(displayMode: .always),
@@ -269,17 +260,8 @@ struct T3ShareExtensionView: View {
         phase = .saving
         Task {
             do {
-                let envelope = try await save(destination)
-                guard let url = T3IncomingShareStore.hostAppURL(for: envelope.id) else {
-                    throw CocoaError(.fileReadCorruptFile)
-                }
-                if await open(url) {
-                    complete()
-                } else {
-                    phase = .saved(
-                        message: "Your content is saved. Open T3 Code to continue."
-                    )
-                }
+                _ = try await save(destination)
+                phase = .saved(message: completionMessage(for: destination))
             } catch {
                 phase = .failed(
                     message: (error as? LocalizedError)?.errorDescription
@@ -288,4 +270,31 @@ struct T3ShareExtensionView: View {
             }
         }
     }
+
+    private var preferredColorScheme: ColorScheme? {
+        switch appearance {
+        case .system: nil
+        case .light: .light
+        case .dark: .dark
+        }
+    }
+
+    private func completionMessage(for destination: T3IncomingShareDestination) -> String {
+        switch destination.kind {
+        case .newThread:
+            "Tap Done, then open T3 Code. The project picker will open with your content in the composer."
+        case .existingThread:
+            "Tap Done, then open T3 Code. Your content will be waiting in that thread’s composer."
+        }
+    }
+}
+
+private enum T3ShareTheme {
+    static let background = Color(
+        uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 10 / 255, green: 10 / 255, blue: 10 / 255, alpha: 1)
+                : UIColor(red: 242 / 255, green: 242 / 255, blue: 247 / 255, alpha: 1)
+        }
+    )
 }

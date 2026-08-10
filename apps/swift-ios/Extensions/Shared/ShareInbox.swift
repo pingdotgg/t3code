@@ -127,6 +127,41 @@ struct T3SharedRecentThreadRecord: Codable, Equatable, Identifiable, Sendable {
     let updatedAt: Date
 }
 
+enum T3SharedAppearance: String, Codable, Equatable, Sendable {
+    case system
+    case light
+    case dark
+}
+
+final class T3SharedAppearanceStore: @unchecked Sendable {
+    static let shared = T3SharedAppearanceStore()
+
+    private let defaults: UserDefaults?
+    private let key: String
+    private let lock = NSLock()
+
+    init(
+        defaults: UserDefaults? = UserDefaults(suiteName: T3SharedContainer.appGroupID),
+        key: String = "swift-ios.shared-appearance.v1"
+    ) {
+        self.defaults = defaults
+        self.key = key
+    }
+
+    func update(_ appearance: T3SharedAppearance) {
+        lock.withLock {
+            defaults?.set(appearance.rawValue, forKey: key)
+        }
+    }
+
+    func appearance() -> T3SharedAppearance {
+        lock.withLock {
+            guard let rawValue = defaults?.string(forKey: key) else { return .system }
+            return T3SharedAppearance(rawValue: rawValue) ?? .system
+        }
+    }
+}
+
 final class T3SharedRecentThreadStore: @unchecked Sendable {
     static let shared = T3SharedRecentThreadStore()
     static let maximumCount = 100
@@ -164,7 +199,7 @@ enum T3IncomingShareStoreError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .appGroupUnavailable:
-            "T3 Code could not access its shared inbox."
+            "This build of T3 Code does not have access to its shared inbox. Install an App Group-enabled build and try again."
         case .noSupportedContent:
             "This app did not provide text, a URL, or supported media."
         }
