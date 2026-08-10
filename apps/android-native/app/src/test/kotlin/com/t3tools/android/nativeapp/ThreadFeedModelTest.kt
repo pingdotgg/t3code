@@ -10,6 +10,7 @@ import com.t3tools.android.protocol.ThreadSummary
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -184,6 +185,43 @@ class ThreadFeedModelTest {
     ).last() as ThreadFeedItem.Working
 
     assertEquals("Implement UI", working.stepLabel)
+  }
+
+  @Test
+  fun starts_working_without_reusing_the_previous_turn() {
+    val previousTurn = LatestTurn(
+      id = "turn-1",
+      state = "completed",
+      completedAt = "2026-08-09T00:00:20Z",
+      startedAt = "2026-08-09T00:00:01Z",
+    )
+
+    val active = deriveActiveWorkPresentation(
+      previousTurn,
+      ThreadSession("starting", null, null, "2026-08-09T00:01:00Z"),
+    )
+
+    assertEquals("2026-08-09T00:01:00Z", active?.startedAt)
+    assertNull(active?.turn)
+  }
+
+  @Test
+  fun adopts_only_the_turn_matching_the_running_session() {
+    val runningTurn = LatestTurn("turn-2", "running", startedAt = "2026-08-09T00:01:01Z")
+
+    val mismatched = deriveActiveWorkPresentation(
+      runningTurn,
+      ThreadSession("running", "turn-3", null, "2026-08-09T00:02:00Z"),
+    )
+    val matched = deriveActiveWorkPresentation(
+      runningTurn,
+      ThreadSession("running", "turn-2", null, "2026-08-09T00:01:00Z"),
+    )
+
+    assertEquals("2026-08-09T00:02:00Z", mismatched?.startedAt)
+    assertNull(mismatched?.turn)
+    assertEquals("2026-08-09T00:01:01Z", matched?.startedAt)
+    assertEquals(runningTurn, matched?.turn)
   }
 
   @Test

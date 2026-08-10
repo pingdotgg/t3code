@@ -146,6 +146,19 @@ class ChatReducersTest {
   }
 
   @Test
+  fun `thread snapshot exposes older turn pagination without resetting the requested window`() {
+    val state = ThreadState(loadedTurnLimit = 30).reduce(
+      threadSnapshot(page = """{"beforeCursor":"cursor-1","hasMore":true,"snapshotSequence":20}"""),
+    )
+    val page = requireNotNull(state.page)
+
+    assertEquals("cursor-1", page.beforeCursor)
+    assertTrue(page.hasMore)
+    assertFalse(page.loadingOlder)
+    assertEquals(30, state.loadedTurnLimit)
+  }
+
+  @Test
   fun `unknown thread event advances sequence without changing detail`() {
     val initial = ThreadState().reduce(threadSnapshot())
     val updated = initial.reduce(
@@ -199,7 +212,10 @@ class ChatReducersTest {
     assertEquals("Which mode?", state.detail?.userInputs?.single()?.questions?.single()?.question)
   }
 
-  private fun threadSnapshot(activities: String = "[]") = json(
+  private fun threadSnapshot(
+    activities: String = "[]",
+    page: String? = null,
+  ) = json(
     """
     {
       "kind":"snapshot",
@@ -209,7 +225,7 @@ class ChatReducersTest {
           ${threadSummaryJson("Thread").removePrefix("{").removeSuffix("}")},
           "messages":[],
           "activities":$activities
-        }
+        }${page?.let { ",\"page\":$it" }.orEmpty()}
       }
     }
     """,

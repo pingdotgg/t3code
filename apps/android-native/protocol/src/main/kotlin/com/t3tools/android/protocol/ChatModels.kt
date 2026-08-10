@@ -168,7 +168,19 @@ data class ThreadState(
   val sequence: Long = -1,
   val detail: ThreadDetail? = null,
   val synchronized: Boolean = false,
+  val page: ThreadPage? = null,
+  val loadedTurnLimit: Int = INITIAL_THREAD_USER_TURN_LIMIT,
 )
+
+@Serializable
+data class ThreadPage(
+  val beforeCursor: String? = null,
+  val hasMore: Boolean = false,
+  val loadingOlder: Boolean = false,
+)
+
+const val INITIAL_THREAD_USER_TURN_LIMIT = 10
+const val OLDER_THREAD_PAGE_USER_TURN_LIMIT = 20
 
 fun ShellState.awaitingSynchronization() = copy(synchronized = false)
 

@@ -267,6 +267,8 @@ fun threadActionCommand(
       "thread.pin",
       "thread.unpin",
       "thread.pin.reorder",
+      "thread.set-title",
+      "thread.regenerate-title",
     ),
   ) { "Unsupported thread action: $type" }
   val fields = when (type) {
@@ -274,6 +276,8 @@ fun threadActionCommand(
     "thread.snooze" -> arrayOf("snoozedUntil" to JsonPrimitive(requireNotNull(value)))
     "thread.pin", "thread.pin.reorder" -> value?.let { arrayOf("orderKey" to JsonPrimitive(it)) }
       ?: emptyArray()
+    "thread.set-title" -> arrayOf("title" to JsonPrimitive(requireNotNull(value)))
+    "thread.regenerate-title" -> emptyArray()
     else -> emptyArray()
   }
   return timestampedThreadCommand(type, threadId, now, *fields)

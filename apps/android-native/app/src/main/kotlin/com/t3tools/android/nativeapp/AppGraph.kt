@@ -31,6 +31,7 @@ class AppGraph(application: Application) {
   val environmentStore = EnvironmentStore(application, database)
   val draftStore = DraftStore(application)
   val attachmentStore = AttachmentStore(application)
+  val promptStashStore = PromptStashStore(application)
   val incomingShareStore = IncomingShareStore(application)
   val launcherShortcutStore = LauncherShortcutStore(application)
   val connectivity = AndroidConnectivity(application)

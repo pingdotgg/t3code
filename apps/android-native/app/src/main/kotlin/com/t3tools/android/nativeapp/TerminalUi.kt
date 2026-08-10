@@ -22,14 +22,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Keyboard
 import androidx.compose.material.icons.rounded.KeyboardHide
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -347,57 +352,214 @@ private fun TerminalOptionsMenu(
   onRestart: () -> Unit,
   onClose: () -> Unit,
 ) {
-  DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
-    DropdownMenuItem(
-      text = { Text(terminalStatusLabel(state.status, state.hasRunningSubprocess)) },
-      onClick = {},
-      enabled = false,
-    )
-    DropdownMenuItem(
-      text = { Text("Text size  ${"%.1f".format(fontSize)} pt") },
-      onClick = {},
-      trailingIcon = {
-        Row {
-          Text(
-            "A−",
-            modifier = Modifier.clickable(enabled = fontSize > 6f) { onFontSize(fontSize - 0.5f) }
-              .padding(10.dp),
-          )
-          Text(
-            "A+",
-            modifier = Modifier.clickable(enabled = fontSize < 14f) { onFontSize(fontSize + 0.5f) }
-              .padding(10.dp),
+  MaterialTheme(
+    colorScheme = MaterialTheme.colorScheme.copy(
+      surface = Color(0xFF18181B),
+      onSurface = Color.White,
+      onSurfaceVariant = Color(0xFFA1A1AA),
+    ),
+  ) {
+    DropdownMenu(
+      expanded = expanded,
+      onDismissRequest = onDismiss,
+      shape = RoundedCornerShape(16.dp),
+      border = BorderStroke(1.dp, Color(0xFF27272A)),
+      modifier = Modifier
+        .width(280.dp)
+        .background(Color(0xFF18181B)),
+    ) {
+      val statusDotColor = when (state.status) {
+        TerminalStatus.Running -> if (state.hasRunningSubprocess) Color(0xFF38BDF8) else Color(0xFF4ADE80)
+        TerminalStatus.Starting -> Color(0xFFFBBF24)
+        TerminalStatus.Error -> Color(0xFFF87171)
+        else -> Color(0xFFA1A1AA)
+      }
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        Box(
+          modifier = Modifier
+            .size(8.dp)
+            .background(statusDotColor, CircleShape),
+        )
+        Text(
+          text = terminalStatusLabel(state.status, state.hasRunningSubprocess),
+          style = MaterialTheme.typography.labelMedium,
+          fontWeight = FontWeight.SemiBold,
+          color = Color.White,
+        )
+      }
+
+      HorizontalDivider(color = Color(0xFF27272A), thickness = 1.dp)
+
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+      ) {
+        Text(
+          text = "Text size",
+          style = MaterialTheme.typography.bodyMedium,
+          color = Color(0xFFE4E4E7),
+        )
+        Surface(
+          shape = RoundedCornerShape(20.dp),
+          color = Color(0xFF27272A),
+          border = BorderStroke(1.dp, Color(0xFF3F3F46)),
+        ) {
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+          ) {
+            IconButton(
+              onClick = { if (fontSize > 6f) onFontSize(fontSize - 0.5f) },
+              enabled = fontSize > 6f,
+              modifier = Modifier.size(28.dp),
+            ) {
+              Icon(
+                Icons.Rounded.Remove,
+                contentDescription = "Decrease font size",
+                modifier = Modifier.size(14.dp),
+                tint = if (fontSize > 6f) Color.White else Color(0xFF52525B),
+              )
+            }
+            Text(
+              text = "${"%.1f".format(fontSize)}pt",
+              style = MaterialTheme.typography.labelSmall,
+              fontFamily = FontFamily.Monospace,
+              fontWeight = FontWeight.Medium,
+              color = Color.White,
+              modifier = Modifier.padding(horizontal = 6.dp),
+            )
+            IconButton(
+              onClick = { if (fontSize < 14f) onFontSize(fontSize + 0.5f) },
+              enabled = fontSize < 14f,
+              modifier = Modifier.size(28.dp),
+            ) {
+              Icon(
+                Icons.Rounded.Add,
+                contentDescription = "Increase font size",
+                modifier = Modifier.size(14.dp),
+                tint = if (fontSize < 14f) Color.White else Color(0xFF52525B),
+              )
+            }
+          }
+        }
+      }
+
+      HorizontalDivider(color = Color(0xFF27272A), thickness = 1.dp)
+
+      if (state.sessions.isNotEmpty()) {
+        Text(
+          text = "Sessions",
+          style = MaterialTheme.typography.labelSmall,
+          color = Color(0xFFA1A1AA),
+          modifier = Modifier.padding(start = 14.dp, top = 8.dp, bottom = 4.dp),
+        )
+        state.sessions.forEach { session ->
+          val isSelected = session.terminalId == terminalId
+          DropdownMenuItem(
+            text = {
+              Column {
+                Text(
+                  session.label.ifBlank { session.terminalId },
+                  style = MaterialTheme.typography.bodyMedium,
+                  fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                  color = if (isSelected) Color.White else Color(0xFFE4E4E7),
+                )
+                Text(
+                  "${terminalStatusLabel(session.status, session.hasRunningSubprocess)} · ${session.cwd.substringAfterLast('/')}",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = Color(0xFFA1A1AA),
+                )
+              }
+            },
+            onClick = { onSelectTerminal(session.terminalId) },
+            leadingIcon = {
+              if (isSelected) {
+                Icon(
+                  Icons.Rounded.Check,
+                  contentDescription = null,
+                  tint = Color.White,
+                  modifier = Modifier.size(18.dp),
+                )
+              } else {
+                Spacer(Modifier.width(18.dp))
+              }
+            },
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
           )
         }
-      },
-    )
-    HorizontalDivider()
-    state.sessions.forEach { session ->
+      }
+
       DropdownMenuItem(
         text = {
-          Column {
-            Text(session.label.ifBlank { session.terminalId })
-            Text(
-              "${terminalStatusLabel(session.status, session.hasRunningSubprocess)} · ${session.cwd.substringAfterLast('/')}",
-              style = MaterialTheme.typography.labelSmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-          }
+          Text(
+            "Open new terminal",
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color.White,
+          )
         },
-        onClick = { onSelectTerminal(session.terminalId) },
-        leadingIcon = if (session.terminalId == terminalId) {
-          { Icon(Icons.Rounded.Check, contentDescription = null) }
-        } else null,
+        onClick = onNewTerminal,
+        leadingIcon = {
+          Icon(
+            Icons.Rounded.Add,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.size(18.dp),
+          )
+        },
+        modifier = Modifier.padding(horizontal = 6.dp),
+      )
+
+      HorizontalDivider(color = Color(0xFF27272A), thickness = 1.dp)
+
+      DropdownMenuItem(
+        text = {
+          Text(
+            "Restart shell",
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color(0xFFE4E4E7),
+          )
+        },
+        onClick = onRestart,
+        leadingIcon = {
+          Icon(
+            Icons.Rounded.Refresh,
+            contentDescription = null,
+            tint = Color(0xFFA1A1AA),
+            modifier = Modifier.size(18.dp),
+          )
+        },
+        modifier = Modifier.padding(horizontal = 6.dp),
+      )
+
+      DropdownMenuItem(
+        text = {
+          Text(
+            "Close terminal",
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color(0xFFF87171),
+          )
+        },
+        onClick = onClose,
+        leadingIcon = {
+          Icon(
+            Icons.Rounded.Close,
+            contentDescription = null,
+            tint = Color(0xFFF87171),
+            modifier = Modifier.size(18.dp),
+          )
+        },
+        modifier = Modifier.padding(horizontal = 6.dp),
       )
     }
-    DropdownMenuItem(
-      text = { Text("Open new terminal") },
-      onClick = onNewTerminal,
-      leadingIcon = { Icon(Icons.Rounded.Add, contentDescription = null) },
-    )
-    HorizontalDivider()
-    DropdownMenuItem(text = { Text("Restart shell") }, onClick = onRestart)
-    DropdownMenuItem(text = { Text("Close terminal") }, onClick = onClose)
   }
 }
 

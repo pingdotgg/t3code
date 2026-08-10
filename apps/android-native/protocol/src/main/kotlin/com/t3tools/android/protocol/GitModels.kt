@@ -190,8 +190,17 @@ private fun VcsStatus.withRemote(remote: VcsRemoteStatus?) = copy(
 
 internal fun vcsStatusPayload(cwd: String) = buildJsonObject("cwd" to JsonPrimitive(cwd))
 
-internal fun vcsRefsPayload(cwd: String, limit: Int = 100) = buildJsonObject(
+internal fun vcsRefsPayload(
+  cwd: String,
+  query: String? = null,
+  cursor: Int? = null,
+  refresh: Boolean = false,
+  limit: Int = 100,
+) = buildJsonObject(
   "cwd" to JsonPrimitive(cwd),
+  "query" to query?.takeIf(String::isNotBlank)?.let(::JsonPrimitive),
+  "cursor" to cursor?.let(::JsonPrimitive),
+  "refresh" to JsonPrimitive(refresh),
   "limit" to JsonPrimitive(limit),
 )
 

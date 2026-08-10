@@ -71,6 +71,7 @@ class GitModelsTest {
       filePaths = listOf("App.kt", "Git.kt"),
     )
     val worktree = vcsCreateWorktreePayload("/repo", "main", "feature/native")
+    val refs = vcsRefsPayload("/repo", query = "native", cursor = 100, refresh = true)
     val metadata = updateThreadGitContextCommand(
       threadId = "thread-1",
       branch = "feature/native",
@@ -83,6 +84,9 @@ class GitModelsTest {
     assertEquals(listOf("App.kt", "Git.kt"), action["filePaths"]!!.jsonArray.map { it.toString().trim('"') })
     assertEquals(JsonPrimitive(true), action["featureBranch"])
     assertEquals(JsonNull, worktree["path"])
+    assertEquals(JsonPrimitive("native"), refs["query"])
+    assertEquals(JsonPrimitive(100), refs["cursor"])
+    assertEquals(JsonPrimitive(true), refs["refresh"])
     assertEquals(JsonPrimitive("thread.meta.update"), metadata["type"])
     assertEquals(JsonPrimitive("main"), metadata["expectedBranch"])
   }

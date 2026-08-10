@@ -11,8 +11,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -95,9 +97,20 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
+import kotlin.math.abs
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -123,12 +136,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -830,6 +845,79 @@ private fun OAuthButton(
 }
 
 @Composable
+private fun DraftThreadRow(
+  draft: ComposerDraft,
+  onResume: () -> Unit,
+  onDiscard: () -> Unit,
+) {
+  Surface(
+    shape = RoundedCornerShape(16.dp),
+    color = Color(0xFF1C1C1F),
+    border = BorderStroke(1.dp, Color(0xFF3F3F46)),
+    modifier = Modifier
+      .fillMaxWidth()
+      .clickable(onClick = onResume),
+  ) {
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 14.dp, vertical = 12.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+      Box(
+        modifier = Modifier
+          .size(32.dp)
+          .background(Color(0xFF27272A), CircleShape),
+        contentAlignment = Alignment.Center,
+      ) {
+        Text("✏️", fontSize = 14.sp)
+      }
+
+      Column(modifier = Modifier.weight(1f)) {
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          Text(
+            text = "Draft",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF38BDF8),
+          )
+          if (draft.attachments.isNotEmpty()) {
+            Text(
+              text = "• ${draft.attachments.size} image${if (draft.attachments.size == 1) "" else "s"}",
+              style = MaterialTheme.typography.labelSmall,
+              color = Color(0xFFA1A1AA),
+            )
+          }
+        }
+        Text(
+          text = draft.text.ifBlank { "Untitled draft" },
+          style = MaterialTheme.typography.bodyMedium,
+          color = Color.White,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+
+      IconButton(
+        onClick = onDiscard,
+        modifier = Modifier.size(32.dp),
+      ) {
+        Icon(
+          imageVector = Icons.Rounded.Clear,
+          contentDescription = "Discard draft",
+          tint = Color(0xFFA1A1AA),
+          modifier = Modifier.size(16.dp),
+        )
+      }
+    }
+  }
+}
+
+@Composable
 private fun HomeScreen(
   runtime: OnlineChatState,
   dispatchState: DispatchState,
@@ -841,6 +929,13 @@ private fun HomeScreen(
   onAddEnvironment: () -> Unit,
   onSettings: () -> Unit,
 ) {
+  val allDrafts by viewModel.allDrafts.collectAsState()
+  val activeEnvId = runtime.environment?.environmentId
+  val newTaskDraftKey = activeEnvId?.let { DraftStore.newTaskKey(it) }
+  val activeDraft = newTaskDraftKey?.let { allDrafts[it] }?.takeIf {
+    it.text.isNotBlank() || it.attachments.isNotEmpty()
+  }
+
   var search by remember { mutableStateOf("") }
   var filterStatus by remember { mutableStateOf(ThreadFilterStatus.All) }
   var filterProjectId by remember { mutableStateOf<String?>(null) }
@@ -914,7 +1009,19 @@ private fun HomeScreen(
       )
     },
     floatingActionButton = {
-      ExtendedFloatingActionButton(onClick = onNewTask) { Text("New task") }
+      FloatingActionButton(
+        onClick = onNewTask,
+        modifier = Modifier.size(56.dp),
+        shape = CircleShape,
+        containerColor = MaterialTheme.colorScheme.primary,
+        contentColor = MaterialTheme.colorScheme.onPrimary,
+      ) {
+        Icon(
+          painter = painterResource(R.drawable.ic_new_task),
+          contentDescription = "New task",
+          modifier = Modifier.size(22.dp),
+        )
+      }
     },
   ) { padding ->
     Column(Modifier.fillMaxSize().padding(padding)) {
@@ -937,7 +1044,7 @@ private fun HomeScreen(
         )
         IconButton(onClick = { showFilterSheet = true }) {
           Icon(
-            imageVector = if (isFiltered) Icons.Rounded.FilterAlt else Icons.Rounded.FilterList,
+            imageVector = Icons.Rounded.FilterList,
             contentDescription = "Filter threads",
             tint = if (isFiltered) MaterialTheme.colorScheme.primary else Color.White,
           )
@@ -1003,6 +1110,15 @@ private fun HomeScreen(
                 Text("Resume", color = MaterialTheme.colorScheme.primary)
               }
             }
+          }
+        }
+        activeDraft?.let { draft ->
+          item(key = "active-new-task-draft") {
+            DraftThreadRow(
+              draft = draft,
+              onResume = onNewTask,
+              onDiscard = { newTaskDraftKey?.let { viewModel.discardDraft(it) } },
+            )
           }
         }
 
@@ -1992,6 +2108,7 @@ private fun NewTaskDrawer(
           )
         },
         onInterrupt = null,
+        viewModel = viewModel,
       )
     }
   }
@@ -2278,19 +2395,34 @@ private fun ThreadScreen(
   var draft by remember(draftKey) { mutableStateOf(viewModel.loadDraft(draftKey)) }
   LaunchedEffect(draftRevision, draftKey) { draft = viewModel.loadDraft(draftKey) }
 
+  val activeThread = runtime.shell.threads[threadId]
+  val titleText = activeThread?.title ?: detail?.summary?.title ?: "Thread"
+  val branchName = gitState.status?.refName ?: activeThread?.branch ?: "main"
+  val envLabel = runtime.environment?.label ?: "Environment"
+
   Scaffold(
     topBar = {
       TopAppBar(
         title = {
-          Text(
-            detail?.summary?.title ?: "Thread",
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.titleMedium.copy(
-              fontSize = (MaterialTheme.typography.titleMedium.fontSize.value - 0.5f).sp,
-            ),
-            fontWeight = FontWeight.SemiBold,
-          )
+          Column(
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Text(
+              text = titleText,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+              style = MaterialTheme.typography.titleMedium,
+              fontWeight = FontWeight.Bold,
+              color = Color.White,
+            )
+            Text(
+              text = "$branchName · $envLabel",
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+              style = MaterialTheme.typography.labelSmall,
+              color = Color(0xFFA1A1AA),
+            )
+          }
         },
         navigationIcon = {
           IconButton(onClick = onBack) {
@@ -2300,19 +2432,12 @@ private fun ThreadScreen(
         actions = {
           CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 40.dp) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-              TextButton(
+              IconButton(
                 onClick = onGit,
                 enabled = detail != null,
-                modifier = Modifier.height(40.dp),
-                contentPadding = PaddingValues(horizontal = 2.dp),
+                modifier = Modifier.size(40.dp),
               ) {
-                Icon(Icons.Rounded.AccountTree, contentDescription = null)
-                Spacer(Modifier.width(4.dp))
-                Text(
-                  gitState.status?.refName ?: "Git",
-                  maxLines = 1,
-                  overflow = TextOverflow.Ellipsis,
-                )
+                Icon(Icons.Rounded.AccountTree, contentDescription = "Git")
               }
               IconButton(
                 onClick = onFiles,
@@ -2372,6 +2497,7 @@ private fun ThreadScreen(
                 onRemoveAttachment = { viewModel.removeDraftAttachment(draftKey, it) },
                 onSend = { viewModel.sendThreadTurn(threadId, draftKey, draft) },
                 onInterrupt = { viewModel.interrupt(threadId) },
+                viewModel = viewModel,
               )
             }
           }.single().measure(constraints.copy(minHeight = 0))
@@ -2830,15 +2956,26 @@ private fun ThreadActivityRow(
           modifier = Modifier.size(16.dp),
         )
         Spacer(Modifier.width(8.dp))
-        Column(Modifier.weight(1f)) {
-          Text(activity.summary, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(
+          modifier = Modifier.weight(1f),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          Text(
+            text = activity.summary,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
+            maxLines = 1,
+          )
           activity.detail?.takeIf { !expanded }?.let {
             Text(
-              it,
+              text = it,
               style = MaterialTheme.typography.bodySmall,
               color = MaterialTheme.colorScheme.onSurfaceVariant,
               maxLines = 1,
               overflow = TextOverflow.Ellipsis,
+              modifier = Modifier.weight(1f),
             )
           }
         }
@@ -3223,10 +3360,13 @@ private fun ChatComposerArea(
   onRemoveAttachment: (String) -> Unit,
   onSend: () -> Unit,
   onInterrupt: (() -> Unit)?,
+  viewModel: AppViewModel? = null,
 ) {
   var showModelMenu by remember { mutableStateOf(false) }
   var showAccessMenu by remember { mutableStateOf(false) }
   var showTraitsMenu by remember { mutableStateOf(false) }
+  var showStashSheet by remember { mutableStateOf(false) }
+  val stashedEntries by (viewModel?.promptStashEntries ?: MutableStateFlow(emptyList())).collectAsState()
 
   var expandedProviderId by remember { mutableStateOf<String?>(null) }
 
@@ -3673,12 +3813,18 @@ private fun ChatComposerArea(
               }
             }
 
-            // Right side: Stop and Send/Queue
+            // Right side: Stop button slides to the left side of Send/Queue button
+            val canSend = enabled && (draft.text.isNotBlank() || draft.attachments.isNotEmpty()) && !sending
+
             Row(
               horizontalArrangement = Arrangement.spacedBy(6.dp),
               verticalAlignment = Alignment.CenterVertically,
             ) {
-              if (active) {
+              AnimatedVisibility(
+                visible = active,
+                enter = fadeIn(tween(220)) + slideInHorizontally(tween(220)) { -it },
+                exit = fadeOut(tween(220)) + slideOutHorizontally(tween(220)) { -it },
+              ) {
                 IconButton(
                   onClick = { onInterrupt?.invoke() },
                   modifier = Modifier
@@ -3693,8 +3839,7 @@ private fun ChatComposerArea(
                   )
                 }
               }
-              val canSend = enabled &&
-                (draft.text.isNotBlank() || draft.attachments.isNotEmpty()) && !sending
+
               IconButton(
                 onClick = onSend,
                 enabled = canSend,
@@ -3721,11 +3866,33 @@ private fun ChatComposerArea(
           ContextWindowMeter(
             usage = usage,
             modifier = Modifier
-              .align(Alignment.BottomEnd)
-              .height(116.dp)
-              .offset(x = 14.dp),
+              .align(Alignment.CenterEnd)
+              .padding(top = 20.dp, bottom = 20.dp, end = 3.dp)
+              .fillMaxHeight(),
           )
         }
+      }
+      val canStash = plainText.isNotBlank() || draft.attachments.isNotEmpty()
+      if (stashedEntries.isNotEmpty() || canStash) {
+        StashButton(
+          stashedCount = stashedEntries.size,
+          canStash = canStash,
+          onStash = {
+            if (viewModel != null) {
+              val ok = viewModel.stashDraft(
+                text = plainText,
+                attachments = draft.attachments,
+              )
+              if (ok) {
+                onDraftUpdate(draft.copy(text = "", attachments = emptyList()))
+              }
+            }
+          },
+          onOpenStash = { showStashSheet = true },
+          modifier = Modifier
+            .align(Alignment.TopEnd)
+            .offset(x = (-16).dp, y = (-12).dp),
+        )
       }
     }
     if (queuedMessageCount > 0) {
@@ -3736,6 +3903,24 @@ private fun ChatComposerArea(
         modifier = Modifier.padding(start = 6.dp, top = 5.dp),
       )
     }
+    if (showStashSheet && viewModel != null) {
+      StashBottomSheet(
+        entries = stashedEntries,
+        onRestore = { entry ->
+          val item = viewModel.takeStashEntry(entry.id)
+          if (item != null) {
+            onDraftUpdate(
+              draft.copy(
+                text = item.text,
+                attachments = draft.attachments + item.attachments,
+              ),
+            )
+          }
+        },
+        onDelete = { id -> viewModel.deleteStashEntry(id) },
+        onDismiss = { showStashSheet = false },
+      )
+    }
   }
 }
 
@@ -3744,38 +3929,183 @@ private fun ContextWindowMeter(
   usage: ContextWindowUsage,
   modifier: Modifier = Modifier,
 ) {
-  val fillColor = if (usage.usedPercentage > 90f) {
-    MaterialTheme.colorScheme.error
-  } else {
-    Color(0xFFA1A1AA)
-  }
-  Column(
-    modifier = modifier.width(20.dp).padding(vertical = 2.dp),
-    horizontalAlignment = Alignment.CenterHorizontally,
-    verticalArrangement = Arrangement.spacedBy(4.dp),
+  val meterColor = if (usage.usedPercentage > 90f) Color(0xFFF87171) else Color(0xFFE4E4E7)
+  val animatedFraction by animateFloatAsState(
+    targetValue = usage.fraction.coerceIn(0.05f, 1f),
+    animationSpec = tween(durationMillis = 350),
+    label = "context-window-fill",
+  )
+  Box(
+    modifier = modifier
+      .width(3.dp)
+      .clip(CircleShape)
+      .background(Color(0xFF27272A)),
   ) {
     Box(
       modifier = Modifier
-        .weight(1f)
-        .width(3.dp)
-        .clip(RoundedCornerShape(50))
-        .background(Color(0xFF27272A)),
+        .fillMaxWidth()
+        .fillMaxHeight(animatedFraction)
+        .align(Alignment.BottomCenter)
+        .clip(CircleShape)
+        .background(meterColor),
+    )
+  }
+}
+
+@Composable
+private fun StashButton(
+  stashedCount: Int,
+  canStash: Boolean,
+  onStash: () -> Unit,
+  onOpenStash: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val haptic = LocalHapticFeedback.current
+  var totalDragX by remember { mutableFloatStateOf(0f) }
+  var totalDragY by remember { mutableFloatStateOf(0f) }
+
+  Surface(
+    shape = RoundedCornerShape(12.dp),
+    color = Color(0xFF27272A),
+    border = BorderStroke(1.dp, Color(0xFF3F3F46)),
+    modifier = modifier
+      .height(26.dp)
+      .pointerInput(canStash) {
+        detectTapGestures(
+          onTap = { onOpenStash() },
+        )
+      }
+      .pointerInput(canStash) {
+        detectDragGestures(
+          onDragStart = {
+            totalDragX = 0f
+            totalDragY = 0f
+          },
+          onDrag = { change, dragAmount ->
+            change.consume()
+            totalDragX += dragAmount.x
+            totalDragY += dragAmount.y
+          },
+          onDragEnd = {
+            val isFlick = totalDragY < -20f || abs(totalDragX) > 24f
+            if (isFlick && canStash) {
+              haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+              onStash()
+            }
+            totalDragX = 0f
+            totalDragY = 0f
+          },
+        )
+      },
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-      Box(
-        modifier = Modifier
-          .fillMaxWidth()
-          .fillMaxHeight(usage.fraction)
-          .align(Alignment.BottomCenter)
-          .background(fillColor),
+      Text(
+        text = if (stashedCount > 0) "Stash ($stashedCount)" else "Stash",
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.SemiBold,
+        color = Color.White,
       )
     }
-    Text(
-      text = usage.label,
-      color = if (usage.usedPercentage > 90f) fillColor else Color(0xFFA1A1AA),
-      fontSize = 9.sp,
-      lineHeight = 10.sp,
-      maxLines = 1,
-    )
+  }
+}
+
+@Composable
+private fun StashBottomSheet(
+  entries: List<PromptStashEntry>,
+  onRestore: (PromptStashEntry) -> Unit,
+  onDelete: (String) -> Unit,
+  onDismiss: () -> Unit,
+) {
+  val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+  ModalBottomSheet(
+    onDismissRequest = onDismiss,
+    sheetState = sheetState,
+    containerColor = Color(0xFF18181B),
+    dragHandle = { BottomSheetDefaults.DragHandle(color = Color(0xFF3F3F46)) },
+  ) {
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+      Text(
+        text = "Stashed Prompts",
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.Bold,
+        color = Color.White,
+        modifier = Modifier.padding(bottom = 12.dp),
+      )
+
+      if (entries.isEmpty()) {
+        Text(
+          text = "No stashed prompts. Flick the Stash button on the composer to stash your text.",
+          style = MaterialTheme.typography.bodyMedium,
+          color = Color(0xFFA1A1AA),
+          modifier = Modifier.padding(vertical = 16.dp),
+        )
+      } else {
+        LazyColumn(
+          modifier = Modifier.fillMaxWidth(),
+          verticalArrangement = Arrangement.spacedBy(8.dp),
+          contentPadding = PaddingValues(bottom = 24.dp),
+        ) {
+          items(entries, key = { it.id }) { entry ->
+            Surface(
+              shape = RoundedCornerShape(12.dp),
+              color = Color(0xFF27272A),
+              border = BorderStroke(1.dp, Color(0xFF3F3F46)),
+              modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                  onRestore(entry)
+                  onDismiss()
+                },
+            ) {
+              Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+              ) {
+                Column(modifier = Modifier.weight(1f)) {
+                  Text(
+                    text = entry.text.ifBlank { "(${entry.attachments.size} image attachments)" },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                  )
+                  if (entry.attachments.isNotEmpty()) {
+                    Text(
+                      text = "${entry.attachments.size} image${if (entry.attachments.size == 1) "" else "s"}",
+                      style = MaterialTheme.typography.labelSmall,
+                      color = MaterialTheme.colorScheme.primary,
+                      modifier = Modifier.padding(top = 2.dp),
+                    )
+                  }
+                }
+
+                IconButton(
+                  onClick = { onDelete(entry.id) },
+                  modifier = Modifier.size(32.dp),
+                ) {
+                  Icon(
+                    imageVector = Icons.Rounded.Delete,
+                    contentDescription = "Delete stash",
+                    tint = Color(0xFFF87171),
+                    modifier = Modifier.size(18.dp),
+                  )
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }
 

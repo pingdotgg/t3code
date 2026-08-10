@@ -270,8 +270,16 @@ class T3ProtocolClient(
   suspend fun refreshVcsStatus(session: EffectRpcSession, cwd: String) =
     session.unary("vcs.refreshStatus", vcsStatusPayload(cwd)).toVcsStatus()
 
-  suspend fun listVcsRefs(session: EffectRpcSession, cwd: String) =
-    session.unary("vcs.listRefs", vcsRefsPayload(cwd)).toVcsRefs()
+  suspend fun listVcsRefs(
+    session: EffectRpcSession,
+    cwd: String,
+    query: String? = null,
+    cursor: Int? = null,
+    refresh: Boolean = false,
+  ) = session.unary(
+    "vcs.listRefs",
+    vcsRefsPayload(cwd, query, cursor, refresh),
+  ).toVcsRefs()
 
   suspend fun pullVcs(session: EffectRpcSession, cwd: String) =
     session.unary("vcs.pull", vcsStatusPayload(cwd)).toVcsPullResult()

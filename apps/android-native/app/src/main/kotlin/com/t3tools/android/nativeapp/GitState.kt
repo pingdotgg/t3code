@@ -31,12 +31,47 @@ data class GitUiState(
   val projectRoot: String? = null,
   val status: VcsStatus? = null,
   val refs: List<VcsRef> = emptyList(),
+  val refsQuery: String = "",
+  val refsNextCursor: Int? = null,
+  val refsTotalCount: Int = 0,
   val loading: Boolean = false,
   val refsLoading: Boolean = false,
   val operation: String? = null,
   val progress: GitProgressUiState? = null,
   val error: String? = null,
 )
+
+data class BranchSelectionTarget(
+  val checkoutCwd: String,
+  val nextWorktreePath: String?,
+  val reuseExistingWorktree: Boolean,
+)
+
+fun resolveBranchSelectionTarget(
+  projectRoot: String,
+  activeWorktreePath: String?,
+  ref: VcsRef,
+): BranchSelectionTarget {
+  ref.worktreePath?.let { worktreePath ->
+    return BranchSelectionTarget(
+      checkoutCwd = worktreePath,
+      nextWorktreePath = worktreePath.takeIf { it != projectRoot },
+      reuseExistingWorktree = true,
+    )
+  }
+  val nextWorktreePath = if (activeWorktreePath != null && ref.isDefault) null else activeWorktreePath
+  return BranchSelectionTarget(
+    checkoutCwd = nextWorktreePath ?: projectRoot,
+    nextWorktreePath = nextWorktreePath,
+    reuseExistingWorktree = false,
+  )
+}
+
+fun localBranchName(ref: VcsRef): String {
+  if (!ref.isRemote) return ref.name
+  val prefix = ref.remoteName?.let { "$it/" } ?: return ref.name
+  return ref.name.removePrefix(prefix).ifBlank { ref.name }
+}
 
 fun resolveGitQuickAction(status: VcsStatus?, busy: Boolean): GitQuickAction {
   if (busy) return GitQuickAction("Commit", GitQuickActionKind.Hint, hint = "Git action in progress.")

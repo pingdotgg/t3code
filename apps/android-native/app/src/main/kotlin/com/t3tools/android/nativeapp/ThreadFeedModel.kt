@@ -4,6 +4,7 @@ import com.t3tools.android.protocol.ChatMessage
 import com.t3tools.android.protocol.LatestTurn
 import com.t3tools.android.protocol.ThreadActivity
 import com.t3tools.android.protocol.ThreadDetail
+import com.t3tools.android.protocol.ThreadSession
 import java.time.Instant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -74,6 +75,26 @@ internal data class ThreadPlanStep(
   val step: String,
   val status: ThreadPlanStepStatus,
 )
+
+internal data class ActiveWorkPresentation(
+  val startedAt: String,
+  val turn: LatestTurn?,
+)
+
+internal fun deriveActiveWorkPresentation(
+  latestTurn: LatestTurn?,
+  session: ThreadSession?,
+): ActiveWorkPresentation? {
+  if (session?.status != "starting" && session?.status != "running") return null
+  val activeTurn = latestTurn?.takeIf { turn ->
+    session.status == "running" && (
+      session.activeTurnId?.let { it == turn.id }
+        ?: (turn.state == "running" || turn.completedAt == null)
+      )
+  }
+  val startedAt = activeTurn?.startedAt ?: session.updatedAt ?: return null
+  return ActiveWorkPresentation(startedAt, activeTurn)
+}
 
 internal enum class ThreadFeedActivityStatus { Success, Failure, Neutral }
 
@@ -154,6 +175,7 @@ internal fun presentThreadFeed(
   expandedTurnIds: Set<String>,
   expandedWorkGroupIds: Set<String> = emptySet(),
   activeWorkStartedAt: String? = null,
+  activeWorkTurn: LatestTurn? = latestTurn,
 ): List<ThreadFeedItem> {
   val source = feed.filterNot {
     it is ThreadFeedItem.TurnFold || it is ThreadFeedItem.WorkToggle || it is ThreadFeedItem.Working
@@ -165,7 +187,7 @@ internal fun presentThreadFeed(
   val hiddenIds = folds.values
     .filterNot { it.turnId in expandedTurnIds }
     .flatMapTo(mutableSetOf()) { it.hiddenIds }
-  val activeStepLabel = latestTurn?.id?.let { turnId ->
+  val activeStepLabel = activeWorkTurn?.id?.let { turnId ->
     source.filterIsInstance<ThreadFeedItem.Plan>()
       .lastOrNull { it.turnId == turnId }
       ?.currentStepLabel

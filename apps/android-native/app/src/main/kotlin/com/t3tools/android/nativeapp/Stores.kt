@@ -1,6 +1,8 @@
 package com.t3tools.android.nativeapp
 
 import android.content.Context
+import java.time.Instant
+import java.util.UUID
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -91,6 +93,8 @@ class DraftStore(
 
   fun load(key: String): ComposerDraft = read().drafts[key] ?: ComposerDraft()
 
+  fun loadAll(): Map<String, ComposerDraft> = read().drafts
+
   fun save(key: String, draft: ComposerDraft) {
     val current = read()
     write(current.copy(drafts = current.drafts + (key to draft)))
@@ -131,5 +135,64 @@ class DraftStore(
 
     private const val PREFERENCES = "t3_native_drafts"
     private const val KEY = "composer_drafts_v1"
+  }
+}
+
+@Serializable
+data class PromptStashEntry(
+  val id: String = UUID.randomUUID().toString(),
+  val createdAt: String = Instant.now().toString(),
+  val text: String = "",
+  val attachments: List<DraftImageAttachment> = emptyList(),
+)
+
+@Serializable
+private data class PersistedPromptStash(
+  val version: Int = 1,
+  val entries: List<PromptStashEntry> = emptyList(),
+)
+
+class PromptStashStore(
+  context: Context,
+  private val json: Json = Json { ignoreUnknownKeys = true },
+) {
+  private val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+
+  fun loadAll(): List<PromptStashEntry> = read().entries
+
+  fun stash(text: String, attachments: List<DraftImageAttachment> = emptyList()): PromptStashEntry? {
+    if (text.isBlank() && attachments.isEmpty()) return null
+    val newEntry = PromptStashEntry(text = text, attachments = attachments)
+    val current = read()
+    val nextEntries = (listOf(newEntry) + current.entries).take(20)
+    write(current.copy(entries = nextEntries))
+    return newEntry
+  }
+
+  fun take(id: String): PromptStashEntry? {
+    val current = read()
+    val entry = current.entries.firstOrNull { it.id == id } ?: return null
+    write(current.copy(entries = current.entries.filterNot { it.id == id }))
+    return entry
+  }
+
+  fun delete(id: String) {
+    val current = read()
+    write(current.copy(entries = current.entries.filterNot { it.id == id }))
+  }
+
+  private fun read(): PersistedPromptStash = preferences.getString(KEY, null)?.let { value ->
+    runCatching { json.decodeFromString<PersistedPromptStash>(value) }.getOrNull()
+  } ?: PersistedPromptStash()
+
+  private fun write(value: PersistedPromptStash) {
+    preferences.edit()
+      .putString(KEY, json.encodeToString(PersistedPromptStash.serializer(), value))
+      .apply()
+  }
+
+  companion object {
+    private const val PREFERENCES = "t3_native_prompt_stash"
+    private const val KEY = "prompt_stash_v1"
   }
 }

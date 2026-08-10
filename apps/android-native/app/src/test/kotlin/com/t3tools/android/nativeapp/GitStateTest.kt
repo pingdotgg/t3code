@@ -60,4 +60,55 @@ class GitStateTest {
       ),
     )
   }
+
+  @Test
+  fun resolves_branch_targets_across_the_main_checkout_and_worktrees() {
+    val projectRoot = "/repo"
+    val activeWorktree = "/repo/.t3/worktrees/feature-a"
+
+    assertEquals(
+      BranchSelectionTarget("/repo/.t3/worktrees/feature-b", "/repo/.t3/worktrees/feature-b", true),
+      resolveBranchSelectionTarget(
+        projectRoot,
+        activeWorktree,
+        VcsRef("feature-b", false, null, false, false, "/repo/.t3/worktrees/feature-b"),
+      ),
+    )
+    assertEquals(
+      BranchSelectionTarget(projectRoot, null, true),
+      resolveBranchSelectionTarget(
+        projectRoot,
+        activeWorktree,
+        VcsRef("main", false, null, false, true, projectRoot),
+      ),
+    )
+    assertEquals(
+      BranchSelectionTarget(projectRoot, null, false),
+      resolveBranchSelectionTarget(
+        projectRoot,
+        activeWorktree,
+        VcsRef("main", false, null, false, true, null),
+      ),
+    )
+    assertEquals(
+      BranchSelectionTarget(activeWorktree, activeWorktree, false),
+      resolveBranchSelectionTarget(
+        projectRoot,
+        activeWorktree,
+        VcsRef("feature-c", false, null, false, false, null),
+      ),
+    )
+  }
+
+  @Test
+  fun derives_the_local_name_when_checking_out_a_remote_branch() {
+    assertEquals(
+      "feature/demo",
+      localBranchName(VcsRef("origin/feature/demo", true, "origin", false, false, null)),
+    )
+    assertEquals(
+      "feature/local",
+      localBranchName(VcsRef("feature/local", false, null, false, false, null)),
+    )
+  }
 }

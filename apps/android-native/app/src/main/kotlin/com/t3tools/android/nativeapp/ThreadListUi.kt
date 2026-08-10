@@ -29,15 +29,23 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Undo
+import androidx.compose.material.icons.rounded.AccountTree
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Clear
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.EditNote
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.PushPin
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.WbSunny
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -45,8 +53,11 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -70,15 +81,18 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.decode.SvgDecoder
@@ -165,6 +179,8 @@ fun ThreadListV2Row(
   var menuOpen by remember(thread.id) { mutableStateOf(false) }
   var confirmDelete by remember(thread.id) { mutableStateOf(false) }
   var snoozePicker by remember(thread.id) { mutableStateOf(false) }
+  var renameDialog by remember(thread.id) { mutableStateOf(false) }
+  var renameText by remember(thread.id, thread.title) { mutableStateOf(thread.title) }
 
   Box(Modifier.fillMaxWidth()) {
     if (primary == null) {
@@ -235,25 +251,161 @@ fun ThreadListV2Row(
         canMovePinnedDown = canMovePinnedDown,
         onMovePinned = onMovePinned,
         onSnoozePicker = { snoozePicker = true },
+        onRename = {
+          renameText = thread.title
+          renameDialog = true
+        },
         onConfirmDelete = { confirmDelete = true },
       )
     }
   }
 
+  if (renameDialog) {
+    AlertDialog(
+      onDismissRequest = { renameDialog = false },
+      properties = DialogProperties(usePlatformDefaultWidth = false),
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 16.dp),
+      containerColor = Color(0xFF18181B),
+      shape = RoundedCornerShape(24.dp),
+      icon = {
+        Box(
+          modifier = Modifier
+            .size(44.dp)
+            .background(Color(0xFF27272A), CircleShape),
+          contentAlignment = Alignment.Center,
+        ) {
+          Icon(
+            imageVector = Icons.Rounded.EditNote,
+            contentDescription = null,
+            tint = Color(0xFFFAFAFA),
+            modifier = Modifier.size(24.dp),
+          )
+        }
+      },
+      title = {
+        Text(
+          text = "Rename thread",
+          style = MaterialTheme.typography.titleLarge,
+          fontWeight = FontWeight.Bold,
+          color = Color.White,
+        )
+      },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          OutlinedTextField(
+            value = renameText,
+            onValueChange = { renameText = it },
+            label = { Text("Thread title", color = Color(0xFFA1A1AA)) },
+            singleLine = true,
+            shape = RoundedCornerShape(14.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+              focusedContainerColor = Color.Transparent,
+              unfocusedContainerColor = Color.Transparent,
+              disabledContainerColor = Color.Transparent,
+              focusedBorderColor = Color(0xFF52525B),
+              unfocusedBorderColor = Color(0xFF3F3F46),
+              focusedTextColor = Color.White,
+              unfocusedTextColor = Color.White,
+              cursorColor = Color.White,
+            ),
+            trailingIcon = {
+              if (renameText.isNotEmpty()) {
+                IconButton(onClick = { renameText = "" }) {
+                  Icon(
+                    imageVector = Icons.Rounded.Clear,
+                    contentDescription = "Clear text",
+                    tint = Color(0xFFA1A1AA),
+                    modifier = Modifier.size(18.dp),
+                  )
+                }
+              }
+            },
+            modifier = Modifier.fillMaxWidth(),
+          )
+        }
+      },
+      confirmButton = {
+        Button(
+          onClick = {
+            val title = renameText.trim()
+            if (title.isNotEmpty()) {
+              onAction("thread.set-title", title)
+            }
+            renameDialog = false
+          },
+          enabled = renameText.trim().isNotEmpty(),
+          shape = RoundedCornerShape(16.dp),
+          colors = ButtonDefaults.buttonColors(
+            containerColor = Color(0xFF2563EB),
+            contentColor = Color.White,
+            disabledContainerColor = Color(0xFF2563EB).copy(alpha = 0.4f),
+            disabledContentColor = Color.White.copy(alpha = 0.5f),
+          ),
+        ) { Text("Save title", fontWeight = FontWeight.SemiBold) }
+      },
+      dismissButton = {
+        TextButton(onClick = { renameDialog = false }) {
+          Text("Cancel", color = Color(0xFFA1A1AA))
+        }
+      },
+    )
+  }
+
   if (confirmDelete) {
     AlertDialog(
       onDismissRequest = { confirmDelete = false },
-      title = { Text("Delete thread?") },
-      text = { Text("This permanently deletes the thread from the environment.") },
+      containerColor = Color(0xFF18181B),
+      shape = RoundedCornerShape(24.dp),
+      icon = {
+        Box(
+          modifier = Modifier
+            .size(44.dp)
+            .background(Color(0xFF451A1A), CircleShape),
+          contentAlignment = Alignment.Center,
+        ) {
+          Icon(
+            imageVector = Icons.Rounded.Delete,
+            contentDescription = null,
+            tint = Color(0xFFF87171),
+            modifier = Modifier.size(22.dp),
+          )
+        }
+      },
+      title = {
+        Text(
+          text = "Delete thread?",
+          style = MaterialTheme.typography.titleLarge,
+          fontWeight = FontWeight.Bold,
+          color = Color.White,
+        )
+      },
+      text = {
+        Text(
+          text = "This permanently deletes the thread from the environment.",
+          style = MaterialTheme.typography.bodyMedium,
+          color = Color(0xFFA1A1AA),
+        )
+      },
       confirmButton = {
         Button(
           onClick = {
             onAction("thread.delete", null)
             confirmDelete = false
           },
-        ) { Text("Delete") }
+          shape = RoundedCornerShape(16.dp),
+          colors = ButtonDefaults.buttonColors(
+            containerColor = Color(0xFF991B1B),
+            contentColor = Color.White,
+          ),
+        ) { Text("Delete", fontWeight = FontWeight.SemiBold) }
       },
-      dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+      dismissButton = {
+        TextButton(onClick = { confirmDelete = false }) {
+          Text("Cancel", color = Color(0xFFA1A1AA))
+        }
+      },
     )
   }
 
@@ -906,10 +1058,12 @@ private fun ThreadContextMenuBottomSheet(
   canMovePinnedDown: Boolean,
   onMovePinned: (direction: Int) -> Unit,
   onSnoozePicker: () -> Unit,
+  onRename: () -> Unit,
   onConfirmDelete: () -> Unit,
 ) {
   val thread = item.thread
   val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+  val clipboardManager = LocalClipboardManager.current
 
   ModalBottomSheet(
     onDismissRequest = onDismiss,
@@ -1045,7 +1199,56 @@ private fun ThreadContextMenuBottomSheet(
 
       HorizontalDivider(color = Color(0xFF27272A), thickness = 1.dp, modifier = Modifier.padding(vertical = 4.dp))
 
-      // 4. Delete
+      // 4. Edit Actions: Rename & Regenerate Title
+      ContextMenuItemRow(
+        icon = Icons.Rounded.EditNote,
+        label = "Rename thread",
+        onClick = {
+          onDismiss()
+          onRename()
+        },
+      )
+
+      ContextMenuItemRow(
+        icon = Icons.Rounded.AutoAwesome,
+        iconColor = Color(0xFFFBBF24),
+        label = "Regenerate title",
+        onClick = {
+          onDismiss()
+          onAction("thread.regenerate-title", null)
+        },
+      )
+
+      // 5. Branch & Path Copy
+      if (thread.branch != null || thread.worktreePath != null) {
+        HorizontalDivider(color = Color(0xFF27272A), thickness = 1.dp, modifier = Modifier.padding(vertical = 4.dp))
+
+        thread.branch?.let { branch ->
+          ContextMenuItemRow(
+            icon = Icons.Rounded.ContentCopy,
+            label = "Copy branch ($branch)",
+            onClick = {
+              onDismiss()
+              clipboardManager.setText(AnnotatedString(branch))
+            },
+          )
+        }
+
+        thread.worktreePath?.let { path ->
+          ContextMenuItemRow(
+            icon = Icons.Rounded.FolderOpen,
+            label = "Copy workspace path",
+            onClick = {
+              onDismiss()
+              clipboardManager.setText(AnnotatedString(path))
+            },
+          )
+        }
+      }
+
+      HorizontalDivider(color = Color(0xFF27272A), thickness = 1.dp, modifier = Modifier.padding(vertical = 4.dp))
+
+      // 6. Delete
       ContextMenuItemRow(
         icon = Icons.Rounded.Delete,
         iconColor = Color(0xFFF87171),

@@ -14,6 +14,7 @@ import com.t3tools.android.protocol.ConnectedEnvironment
 import com.t3tools.android.protocol.FilesystemBrowseResult
 import com.t3tools.android.protocol.GitActionProgressEvent
 import com.t3tools.android.protocol.GitStackedAction
+import com.t3tools.android.protocol.OLDER_THREAD_PAGE_USER_TURN_LIMIT
 import com.t3tools.android.protocol.ReviewSourceKind
 import com.t3tools.android.protocol.ShellState
 import com.t3tools.android.protocol.StartCommand
@@ -64,6 +65,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -83,6 +85,7 @@ data class ThreadCapabilities(
   val snooze: Boolean = false,
   val pinning: Boolean = false,
   val pinReorder: Boolean = false,
+  val snapshotPagination: Boolean = false,
 )
 
 data class CloudAuthState(
@@ -177,7 +180,7 @@ class OnlineChatRepository(
           if (shell.sequence >= 0) shellSyncPhase = SyncPhase.Cached
           database.loadServerConfig(environment.environmentId)?.let { cached ->
             providerModels = parseProviderModels(cached.config)
-            capabilities = cached.capabilities.toThreadCapabilities()
+            capabilities = cached.capabilities.toThreadCapabilities(cached.config)
           }
         }
       }
@@ -448,6 +451,22 @@ class OnlineChatRepository(
     }
   }
 
+  fun loadOlderTurns() {
+    val runtime = synchronized(lock) {
+      val current = activeRuntimeLocked() ?: return
+      val page = current.thread.page ?: return
+      if (!current.capabilities.snapshotPagination || page.loadingOlder || !page.hasMore) return
+      current.thread = current.thread.copy(
+        synchronized = false,
+        page = page.copy(loadingOlder = true),
+        loadedTurnLimit = current.thread.loadedTurnLimit + OLDER_THREAD_PAGE_USER_TURN_LIMIT,
+      )
+      publishLocked()
+      current
+    }
+    startThreadSubscription(runtime, forceSnapshot = true)
+  }
+
   suspend fun readUsage(window: UsageWindow): List<EnvironmentUsageReport> = coroutineScope {
     val environments = synchronized(lock) {
       runtimes.values.map { runtime ->
@@ -639,9 +658,21 @@ class OnlineChatRepository(
     client.refreshVcsStatus(requireNotNull(runtime.connection).session, cwd)
   }
 
-  suspend fun listVcsRefs(environmentId: String, cwd: String) = withContext(Dispatchers.IO) {
+  suspend fun listVcsRefs(
+    environmentId: String,
+    cwd: String,
+    query: String? = null,
+    cursor: Int? = null,
+    refresh: Boolean = false,
+  ) = withContext(Dispatchers.IO) {
     val runtime = connectedRuntime(environmentId)
-    client.listVcsRefs(requireNotNull(runtime.connection).session, cwd)
+    client.listVcsRefs(
+      requireNotNull(runtime.connection).session,
+      cwd,
+      query,
+      cursor,
+      refresh,
+    )
   }
 
   suspend fun pullVcs(environmentId: String, cwd: String) = withContext(Dispatchers.IO) {
@@ -1045,7 +1076,7 @@ class OnlineChatRepository(
             if (shell.sequence >= 0) shellSyncPhase = SyncPhase.Cached
             database.loadServerConfig(environment.environmentId)?.let { cached ->
               providerModels = parseProviderModels(cached.config)
-              capabilities = cached.capabilities.toThreadCapabilities()
+              capabilities = cached.capabilities.toThreadCapabilities(cached.config)
             }
           }
         }
@@ -1109,7 +1140,7 @@ class OnlineChatRepository(
       runtime.generation += 1
       runtime.shell = runtime.shell.awaitingSynchronization()
       runtime.providerModels = parseProviderModels(connected.config)
-      runtime.capabilities = connected.descriptor.capabilities.toThreadCapabilities()
+      runtime.capabilities = connected.descriptor.capabilities.toThreadCapabilities(connected.config)
       database.saveServerConfig(
         environmentId,
         CachedServerConfig(connected.config, connected.descriptor.capabilities),
@@ -1247,7 +1278,7 @@ class OnlineChatRepository(
           shell = ShellState(),
         ).apply {
           providerModels = parseProviderModels(connected.config)
-          capabilities = connected.descriptor.capabilities.toThreadCapabilities()
+          capabilities = connected.descriptor.capabilities.toThreadCapabilities(connected.config)
         }
         if (previousActiveId == previousEnvironmentId) {
           activeEnvironmentId = replacement.environmentId
@@ -1259,33 +1290,42 @@ class OnlineChatRepository(
     ensureSupervisor(replacement, connected)
   }
 
-  private fun startThreadSubscription(runtime: EnvironmentRuntime) {
+  private fun startThreadSubscription(runtime: EnvironmentRuntime, forceSnapshot: Boolean = false) {
     if (activeEnvironmentId != runtime.environment.environmentId) return
     val threadId = runtime.selectedThreadId ?: return
     val connected = runtime.connection ?: return
     activeThreadJob?.cancel()
     val generation = runtime.generation
-    synchronized(lock) {
+    val pagination = runtime.capabilities.snapshotPagination
+    val dropWindow = !pagination && runtime.thread.page != null
+    val loadingOlder = runtime.thread.page?.loadingOlder == true
+    val epoch = synchronized(lock) {
+      runtime.threadSubscriptionEpoch += 1
+      if (dropWindow) runtime.thread = ThreadState()
       runtime.thread = runtime.thread.awaitingSynchronization()
-      runtime.threadSyncPhase = SyncPhase.Synchronizing
+      if (!loadingOlder) runtime.threadSyncPhase = SyncPhase.Synchronizing
       publishLocked()
+      runtime.threadSubscriptionEpoch
     }
     activeThreadJob = scope.launch {
       runCatching {
         client.thread(
           connected.session,
           threadId,
-          afterSequence = runtime.thread.sequence.takeIf { it >= 0 },
-          turnLimit = 50,
+          afterSequence = runtime.thread.sequence.takeIf { !forceSnapshot && !dropWindow && it >= 0 },
+          turnLimit = runtime.thread.loadedTurnLimit.takeIf { pagination },
         ).collect { item ->
           val stateToPersist = synchronized(lock) {
-            if (runtime.generation != generation || runtime.selectedThreadId != threadId) {
+            if (runtime.generation != generation || runtime.threadSubscriptionEpoch != epoch ||
+              runtime.selectedThreadId != threadId) {
               return@synchronized null
             }
             val wasSynchronized = runtime.thread.synchronized
             runtime.thread = runtime.thread.reduce(item)
             runtime.threadSyncPhase = if (runtime.thread.synchronized) {
               SyncPhase.Synchronized
+            } else if (loadingOlder) {
+              runtime.threadSyncPhase
             } else {
               SyncPhase.Synchronizing
             }
@@ -1306,9 +1346,15 @@ class OnlineChatRepository(
       }.onFailure { error ->
         if (error !is CancellationException) {
           synchronized(lock) {
-            runtime.threadSyncPhase = SyncPhase.Error
-            runtime.error = error.safeMessage()
-            publishLocked()
+            if (runtime.generation == generation && runtime.threadSubscriptionEpoch == epoch &&
+              runtime.selectedThreadId == threadId) {
+              runtime.thread = runtime.thread.copy(
+                page = runtime.thread.page?.copy(loadingOlder = false),
+              )
+              if (!loadingOlder) runtime.threadSyncPhase = SyncPhase.Error
+              runtime.error = error.safeMessage()
+              publishLocked()
+            }
           }
         }
       }
@@ -1587,6 +1633,7 @@ class OnlineChatRepository(
     var error: String? = null,
     var connection: ConnectedEnvironment? = null,
     var generation: Long = 0,
+    var threadSubscriptionEpoch: Long = 0,
   )
 
   private sealed interface SupervisorSignal {
@@ -1619,9 +1666,10 @@ internal fun humanizeAuthError(raw: String): String {
   }
 }
 
-private fun JsonObject.toThreadCapabilities() = ThreadCapabilities(
+private fun JsonObject.toThreadCapabilities(config: JsonObject) = ThreadCapabilities(
   settlement = this["threadSettlement"]?.toString() == "true",
   snooze = this["threadSnooze"]?.toString() == "true",
   pinning = this["threadPinning"]?.toString() == "true",
   pinReorder = this["threadPinReorder"]?.toString() == "true",
+  snapshotPagination = config["threadSnapshotPagination"]?.jsonPrimitive?.booleanOrNull == true,
 )

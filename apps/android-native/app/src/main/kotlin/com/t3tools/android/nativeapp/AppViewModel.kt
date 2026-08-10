@@ -133,6 +133,7 @@ private data class GitTarget(
   val projectRoot: String,
   val branch: String?,
   val worktreePath: String?,
+  val hasSession: Boolean,
 )
 
 private data class ReviewTarget(
@@ -170,6 +171,7 @@ class AppViewModel(
   private val attachmentStore: AttachmentStore,
   private val incomingShareStore: IncomingShareStore,
   private val launcherShortcutStore: LauncherShortcutStore,
+  private val promptStashStore: PromptStashStore,
 ) : ViewModel() {
   val runtime: StateFlow<OnlineChatState> = repository.state
 
@@ -182,8 +184,14 @@ class AppViewModel(
   private val mutableIncomingShares = MutableStateFlow(incomingShareStore.loadAll())
   val incomingShares = mutableIncomingShares.asStateFlow()
 
+  private val mutablePromptStashEntries = MutableStateFlow(promptStashStore.loadAll())
+  val promptStashEntries = mutablePromptStashEntries.asStateFlow()
+
   private val mutableDraftRevision = MutableStateFlow(0)
   val draftRevision = mutableDraftRevision.asStateFlow()
+
+  private val mutableAllDrafts = MutableStateFlow(draftStore.loadAll())
+  val allDrafts = mutableAllDrafts.asStateFlow()
 
   private val mutableAddProjectState = MutableStateFlow(AddProjectUiState())
   val addProjectState = mutableAddProjectState.asStateFlow()
@@ -223,6 +231,7 @@ class AppViewModel(
   private var workspaceSearchJob: Job? = null
   private var workspaceFileJob: Job? = null
   private var gitStatusJob: Job? = null
+  private var gitRefsJob: Job? = null
   private var gitMutationJob: Job? = null
   private var newTaskBranchesJob: Job? = null
   private var terminalMetadataJob: Job? = null
@@ -376,6 +385,23 @@ class AppViewModel(
     }
   }
 
+  fun stashDraft(text: String, attachments: List<DraftImageAttachment>): Boolean {
+    val entry = promptStashStore.stash(text, attachments) ?: return false
+    mutablePromptStashEntries.value = promptStashStore.loadAll()
+    return true
+  }
+
+  fun takeStashEntry(id: String): PromptStashEntry? {
+    val entry = promptStashStore.take(id)
+    mutablePromptStashEntries.value = promptStashStore.loadAll()
+    return entry
+  }
+
+  fun deleteStashEntry(id: String) {
+    promptStashStore.delete(id)
+    mutablePromptStashEntries.value = promptStashStore.loadAll()
+  }
+
   fun pair(host: String, code: String) {
     viewModelScope.launch {
       mutableDispatchState.value = DispatchState.Sending
@@ -453,8 +479,11 @@ class AppViewModel(
   fun clearSelectedThread() {
     repository.clearSelectedThread()
     gitStatusJob?.cancel()
+    gitRefsJob?.cancel()
     if (gitMutationJob?.isActive != true) mutableGitState.value = GitUiState()
   }
+
+  fun loadOlderTurns() = repository.loadOlderTurns()
 
   fun resetAddProject() {
     browseProjectJob?.cancel()
@@ -687,19 +716,52 @@ class AppViewModel(
     }
   }
 
-  fun loadGitRefs() {
+  fun loadGitRefs(query: String = "", append: Boolean = false, refresh: Boolean = false) {
     val target = currentGitTarget() ?: return
-    viewModelScope.launch {
-      mutableGitState.update { it.copy(refsLoading = true, error = null) }
-      runCatching { repository.listVcsRefs(target.environmentId, target.projectRoot) }
+    val normalizedQuery = query.trim()
+    val current = mutableGitState.value
+    val cursor = current.refsNextCursor.takeIf { append && current.refsQuery == normalizedQuery }
+    if (append && cursor == null) return
+    gitRefsJob?.cancel()
+    mutableGitState.update {
+      it.copy(
+        refs = if (append) it.refs else emptyList(),
+        refsQuery = normalizedQuery,
+        refsNextCursor = if (append) it.refsNextCursor else null,
+        refsLoading = true,
+        error = null,
+      )
+    }
+    gitRefsJob = viewModelScope.launch {
+      runCatching {
+        repository.listVcsRefs(
+          environmentId = target.environmentId,
+          cwd = target.cwd,
+          query = normalizedQuery.takeIf(String::isNotBlank),
+          cursor = cursor,
+          refresh = refresh,
+        )
+      }
         .onSuccess { result ->
           mutableGitState.update { current ->
-            if (current.environmentId != target.environmentId || current.threadId != target.threadId) current
-            else current.copy(refs = result.refs.filterNot { it.isRemote }, refsLoading = false)
+            if (current.environmentId != target.environmentId || current.threadId != target.threadId ||
+              current.cwd != target.cwd || current.refsQuery != normalizedQuery) current
+            else current.copy(
+              refs = if (append) (current.refs + result.refs).distinctBy(VcsRef::name) else result.refs,
+              refsNextCursor = result.nextCursor,
+              refsTotalCount = result.totalCount,
+              refsLoading = false,
+            )
           }
         }
         .onFailure { error ->
-          mutableGitState.update { it.copy(refsLoading = false, error = error.safeMessage()) }
+          if (error !is CancellationException) {
+            mutableGitState.update { current ->
+              if (current.environmentId != target.environmentId || current.threadId != target.threadId ||
+                current.cwd != target.cwd || current.refsQuery != normalizedQuery) current
+              else current.copy(refsLoading = false, error = error.safeMessage())
+            }
+          }
         }
     }
   }
@@ -776,19 +838,17 @@ class AppViewModel(
     }
   }
 
-  fun switchGitBranch(refName: String) = launchGitMutation("Switching branch") { target ->
-    val branch = repository.switchVcsRef(target.environmentId, target.cwd, refName) ?: refName
-    repository.dispatch(
-      target.environmentId,
-      updateThreadGitContextCommand(
-        threadId = target.threadId,
-        branch = branch,
-        worktreePath = target.worktreePath,
-        expectedBranch = target.branch,
-      ),
-    )
-    refreshGitStatusNow(target)
-    refreshGitRefsNow(target)
+  fun switchGitBranch(ref: VcsRef) = launchGitMutation("Switching branch") { target ->
+    val selection = resolveBranchSelectionTarget(target.projectRoot, target.worktreePath, ref)
+    val branch = if (selection.reuseExistingWorktree) {
+      ref.name
+    } else {
+      repository.switchVcsRef(target.environmentId, selection.checkoutCwd, ref.name)
+        ?: localBranchName(ref)
+    }
+    val nextTarget = rebindGitTarget(target, branch, selection.nextWorktreePath)
+    startGitStatus(nextTarget)
+    refreshGitRefsNow(nextTarget)
   }
 
   fun createGitWorktree(baseRef: String, rawNewRef: String) {
@@ -800,21 +860,9 @@ class AppViewModel(
         baseRef,
         newRef,
       )
-      repository.dispatch(
-        target.environmentId,
-        updateThreadGitContextCommand(
-          threadId = target.threadId,
-          branch = worktree.refName,
-          worktreePath = worktree.path,
-          expectedBranch = target.branch,
-        ),
-      )
-      startGitStatus(target.copy(
-        cwd = worktree.path,
-        branch = worktree.refName,
-        worktreePath = worktree.path,
-      ))
-      refreshGitRefsNow(target)
+      val nextTarget = rebindGitTarget(target, worktree.refName, worktree.path)
+      startGitStatus(nextTarget)
+      refreshGitRefsNow(nextTarget)
     }
   }
 
@@ -954,6 +1002,32 @@ class AppViewModel(
     }
   }
 
+  private suspend fun rebindGitTarget(
+    target: GitTarget,
+    branch: String,
+    worktreePath: String?,
+  ): GitTarget {
+    val pathChanged = target.worktreePath != worktreePath
+    if (pathChanged && target.hasSession) {
+      repository.dispatch(target.environmentId, stopSessionCommand(target.threadId))
+    }
+    repository.dispatch(
+      target.environmentId,
+      updateThreadGitContextCommand(
+        threadId = target.threadId,
+        branch = branch,
+        worktreePath = worktreePath,
+        expectedBranch = target.branch,
+      ),
+    )
+    return target.copy(
+      cwd = worktreePath ?: target.projectRoot,
+      branch = branch,
+      worktreePath = worktreePath,
+      hasSession = target.hasSession && !pathChanged,
+    )
+  }
+
   private fun launchGitMutation(label: String, block: suspend (GitTarget) -> Unit) {
     if (gitMutationJob?.isActive == true) return
     val target = currentGitTarget() ?: return
@@ -977,6 +1051,7 @@ class AppViewModel(
       projectRoot = project.workspaceRoot,
       branch = summary.branch,
       worktreePath = summary.worktreePath,
+      hasSession = summary.session != null,
     )
   }
 
@@ -992,23 +1067,29 @@ class AppViewModel(
       threadId,
       cwd,
       projectRoot,
-      state.status?.refName ?: summary?.branch,
-      summary?.worktreePath ?: cwd.takeIf { it != projectRoot },
+      summary?.branch,
+      cwd.takeIf { it != projectRoot },
+      summary?.session != null,
     )
   }
 
   private fun startGitStatus(target: GitTarget, retainedStatus: com.t3tools.android.protocol.VcsStatus? = null) {
     gitStatusJob?.cancel()
+    gitRefsJob?.cancel()
     val previous = mutableGitState.value
+    val sameCheckout = previous.environmentId == target.environmentId && previous.cwd == target.cwd
     mutableGitState.value = GitUiState(
       environmentId = target.environmentId,
       threadId = target.threadId,
       cwd = target.cwd,
       projectRoot = target.projectRoot,
       status = retainedStatus,
-      refs = previous.refs,
+      refs = previous.refs.takeIf { sameCheckout }.orEmpty(),
+      refsQuery = previous.refsQuery,
+      refsNextCursor = previous.refsNextCursor.takeIf { sameCheckout },
+      refsTotalCount = previous.refsTotalCount.takeIf { sameCheckout } ?: 0,
       loading = retainedStatus == null,
-      refsLoading = previous.refsLoading,
+      refsLoading = previous.refsLoading && sameCheckout,
       operation = previous.operation,
       progress = previous.progress,
       error = previous.error,
@@ -1038,10 +1119,22 @@ class AppViewModel(
   }
 
   private suspend fun refreshGitRefsNow(target: GitTarget) {
-    val refs = repository.listVcsRefs(target.environmentId, target.projectRoot)
+    val query = mutableGitState.value.refsQuery
+    val refs = repository.listVcsRefs(
+      environmentId = target.environmentId,
+      cwd = target.cwd,
+      query = query.takeIf(String::isNotBlank),
+      refresh = true,
+    )
     mutableGitState.update { current ->
-      if (current.environmentId != target.environmentId || current.threadId != target.threadId) current
-      else current.copy(refs = refs.refs.filterNot { it.isRemote }, refsLoading = false)
+      if (current.environmentId != target.environmentId || current.threadId != target.threadId ||
+        current.cwd != target.cwd || current.refsQuery != query) current
+      else current.copy(
+        refs = refs.refs,
+        refsNextCursor = refs.nextCursor,
+        refsTotalCount = refs.totalCount,
+        refsLoading = false,
+      )
     }
   }
 
@@ -1574,7 +1667,17 @@ class AppViewModel(
 
   fun loadDraft(key: String) = draftStore.load(key)
 
-  fun saveDraft(key: String, draft: ComposerDraft) = draftStore.save(key, draft)
+  fun saveDraft(key: String, draft: ComposerDraft) {
+    draftStore.save(key, draft)
+    mutableDraftRevision.update { it + 1 }
+    mutableAllDrafts.value = draftStore.loadAll()
+  }
+
+  fun discardDraft(key: String) {
+    draftStore.clear(key)
+    mutableDraftRevision.update { it + 1 }
+    mutableAllDrafts.value = draftStore.loadAll()
+  }
 
   fun importDraftAttachments(draftKey: String, uris: List<Uri>) {
     val environmentId = runtime.value.environment?.environmentId ?: return
@@ -1926,6 +2029,7 @@ class AppViewModel(
     retryable = null
     draftStore.clear(draftKey)
     mutableDraftRevision.update { it + 1 }
+    mutableAllDrafts.value = draftStore.loadAll()
     viewModelScope.launch { repository.cleanupAttachments() }
     mutableDispatchState.value = DispatchState.Idle
     repository.selectThread(start.threadId)
@@ -2013,6 +2117,7 @@ class AppViewModel(
         graph.attachmentStore,
         graph.incomingShareStore,
         graph.launcherShortcutStore,
+        graph.promptStashStore,
       ) as T
   }
 }

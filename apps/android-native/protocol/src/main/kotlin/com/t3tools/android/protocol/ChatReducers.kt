@@ -51,6 +51,12 @@ fun ThreadState.reduce(item: JsonObject): ThreadState {
         sequence = snapshot.long("snapshotSequence") ?: sequence,
         detail = detail,
         synchronized = false,
+        page = snapshot.obj("page")?.let { page ->
+          ThreadPage(
+            beforeCursor = page.nullableText("beforeCursor"),
+            hasMore = page.bool("hasMore") == true,
+          )
+        },
       )
     }
     "synchronized" -> copy(synchronized = true)

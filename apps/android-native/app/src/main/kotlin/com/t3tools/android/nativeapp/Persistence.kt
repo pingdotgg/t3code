@@ -476,7 +476,7 @@ class NativeDatabase(
     const val SHELL_ITEM = "current"
     const val SHELL_SCHEMA = 1
     const val THREAD_KIND = "thread"
-    const val THREAD_SCHEMA = 4
+    const val THREAD_SCHEMA = 5
     const val CONFIG_KIND = "server-config"
     const val CONFIG_ITEM = "current"
     const val CONFIG_SCHEMA = 1

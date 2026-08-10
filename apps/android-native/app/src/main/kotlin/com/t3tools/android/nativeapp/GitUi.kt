@@ -69,6 +69,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.t3tools.android.protocol.GitStackedAction
 import com.t3tools.android.protocol.VcsChangedFile
+import kotlinx.coroutines.delay
 
 @Composable
 fun GitOverviewDrawer(
@@ -104,12 +105,13 @@ fun GitOverviewDrawer(
     shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
     scrimColor = Color.Black.copy(alpha = 0.65f),
   ) {
-    Column(Modifier.fillMaxWidth().fillMaxHeight(0.94f)) {
+    Column(Modifier.fillMaxWidth()) {
       DrawerHeader(
         icon = Icons.Rounded.AccountTree,
         title = status?.refName ?: "Repository",
         subtitle = gitStatusSummary(status),
         onDismiss = onDismiss,
+        showCloseButton = false,
       )
       LazyColumn(
         modifier = Modifier.fillMaxWidth().weight(1f),
@@ -342,12 +344,16 @@ fun GitBranchesScreen(
 ) {
   LaunchedEffect(threadId) {
     viewModel.observeGit(threadId)
-    viewModel.loadGitRefs()
   }
   var branchName by remember { mutableStateOf("") }
   var baseBranch by remember(state.status?.refName) { mutableStateOf(state.status?.refName ?: "main") }
   var worktreeBranch by remember { mutableStateOf("") }
+  var branchQuery by remember { mutableStateOf("") }
   val busy = state.operation != null
+  LaunchedEffect(threadId, branchQuery) {
+    if (branchQuery.isNotBlank()) delay(200)
+    viewModel.loadGitRefs(branchQuery)
+  }
 
   Scaffold(topBar = { GitTopBar("Branches & worktrees", onBack) }) { padding ->
     LazyColumn(
@@ -402,9 +408,28 @@ fun GitBranchesScreen(
         Row(verticalAlignment = Alignment.CenterVertically) {
           Text("Branches", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
           if (state.refsLoading) CircularProgressIndicator(modifier = Modifier.width(20.dp))
-          IconButton(onClick = viewModel::loadGitRefs, enabled = !busy) {
+          IconButton(
+            onClick = { viewModel.loadGitRefs(branchQuery, refresh = true) },
+            enabled = !busy,
+          ) {
             Icon(Icons.Rounded.Refresh, contentDescription = "Refresh branches")
           }
+        }
+      }
+      item {
+        CompactInputField(
+          value = branchQuery,
+          onValueChange = { branchQuery = it },
+          placeholder = "Search branches",
+          modifier = Modifier.fillMaxWidth(),
+        )
+      }
+      if (!state.refsLoading && state.refs.isEmpty()) {
+        item {
+          Text(
+            if (branchQuery.isBlank()) "No branches found." else "No matching branches.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
         }
       }
       items(state.refs, key = { it.name }) { ref ->
@@ -421,15 +446,34 @@ fun GitBranchesScreen(
                   "Current".takeIf { ref.current },
                   "Default".takeIf { ref.isDefault },
                   ref.worktreePath?.let { if (it == state.cwd) "This worktree" else "Another worktree" },
+                  "Remote branch".takeIf { ref.isRemote },
                 ).joinToString(" · ").ifBlank { "Local branch" },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
               )
             }
             TextButton(
-              onClick = { viewModel.switchGitBranch(ref.name) },
-              enabled = !ref.current && !checkedOutElsewhere && !busy,
-            ) { Text(if (ref.current) "Current" else "Switch") }
+              onClick = { viewModel.switchGitBranch(ref) },
+              enabled = !ref.current && !busy,
+            ) {
+              Text(when {
+                ref.current -> "Current"
+                checkedOutElsewhere -> "Open"
+                ref.isRemote -> "Checkout"
+                else -> "Switch"
+              })
+            }
+          }
+        }
+      }
+      if (state.refsNextCursor != null) {
+        item {
+          OutlinedButton(
+            onClick = { viewModel.loadGitRefs(branchQuery, append = true) },
+            enabled = !state.refsLoading && !busy,
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Text(if (state.refsLoading) "Loading…" else "Load more (${state.refs.size}/${state.refsTotalCount})")
           }
         }
       }
