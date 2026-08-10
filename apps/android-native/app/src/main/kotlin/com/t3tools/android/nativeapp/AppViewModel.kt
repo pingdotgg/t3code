@@ -203,6 +203,9 @@ class AppViewModel(
   private val mutableReviewState = MutableStateFlow(ReviewUiState())
   val reviewState = mutableReviewState.asStateFlow()
 
+  private val mutableUsageState = MutableStateFlow(UsageUiState())
+  val usageState = mutableUsageState.asStateFlow()
+
   private val mutableAttachmentUrls = MutableStateFlow<Map<String, String>>(emptyMap())
   val attachmentUrls = mutableAttachmentUrls.asStateFlow()
 
@@ -229,6 +232,7 @@ class AppViewModel(
   private var terminalLifecycleJob: Job? = null
   private var reviewPreviewJob: Job? = null
   private var reviewTurnJob: Job? = null
+  private var usageJob: Job? = null
   private var terminalWrites: Channel<String>? = null
   private var terminalBuffer = TerminalBufferState()
   private var terminalMetadata = emptyList<com.t3tools.android.protocol.TerminalSummary>()
@@ -238,6 +242,39 @@ class AppViewModel(
   private val reviewRevealedBySection = mutableMapOf<String, Set<String>>()
 
   private var retryable: RetryableDispatch? = null
+
+  fun loadUsage(days: Int = mutableUsageState.value.windowDays) {
+    val previous = mutableUsageState.value
+    val changingWindow = days != previous.windowDays
+    val window = usageWindow(days)
+    usageJob?.cancel()
+    mutableUsageState.value = previous.copy(
+      windowDays = days,
+      window = window,
+      loading = true,
+      reports = if (changingWindow) emptyList() else previous.reports,
+      merged = if (changingWindow) MergedUsage() else previous.merged,
+      error = null,
+    )
+    usageJob = viewModelScope.launch {
+      runCatching { repository.readUsage(window) }
+        .onSuccess { reports ->
+          mutableUsageState.value = mutableUsageState.value.copy(
+            loading = false,
+            reports = reports,
+            merged = mergeUsage(reports),
+          )
+        }
+        .onFailure { failure ->
+          if (failure !is CancellationException) {
+            mutableUsageState.value = mutableUsageState.value.copy(
+              loading = false,
+              error = failure.safeMessage(),
+            )
+          }
+        }
+    }
+  }
 
   private val restoreJob = viewModelScope.launch { runCatching { repository.restore() } }
 

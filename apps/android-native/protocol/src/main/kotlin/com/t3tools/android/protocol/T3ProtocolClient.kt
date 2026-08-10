@@ -145,6 +145,9 @@ class T3ProtocolClient(
     session.unary("server.probe")
   }
 
+  suspend fun getUsageSummary(session: EffectRpcSession, window: UsageWindow): UsageSummary =
+    session.unary("server.getUsageSummary", usageSummaryPayload(window)).toUsageSummary()
+
   suspend fun createAssetToken(
     session: EffectRpcSession,
     resourceTag: String,

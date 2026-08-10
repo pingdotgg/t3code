@@ -63,10 +63,12 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AccountTree
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Archive
+import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.Close
@@ -181,6 +183,7 @@ private const val INCOMING_SHARE = "share/{shareId}"
 private const val ADD_PROJECT = "add-project"
 private const val SETTINGS = "settings"
 private const val ARCHIVED_THREADS = "settings/archived"
+private const val USAGE = "settings/usage"
 private const val THREAD = "thread/{threadId}"
 private const val THREAD_FILES = "thread/{threadId}/files"
 private const val THREAD_GIT_COMMIT = "thread/{threadId}/git/commit"
@@ -352,6 +355,17 @@ fun T3NativeApp(viewModel: AppViewModel) {
         onAddEnvironment = { navController.navigate(ONBOARDING) },
         onAddProject = { navController.navigate(ADD_PROJECT) },
         onOpenArchivedThreads = { navController.navigate(ARCHIVED_THREADS) },
+        onOpenUsage = { navController.navigate(USAGE) },
+      )
+    }
+    composable(USAGE) {
+      val usageState by viewModel.usageState.collectAsState()
+      LaunchedEffect(Unit) { viewModel.loadUsage() }
+      UsageScreen(
+        state = usageState,
+        onBack = { navController.popBackStack() },
+        onWindowSelected = viewModel::loadUsage,
+        onRefresh = { viewModel.loadUsage() },
       )
     }
     composable(ARCHIVED_THREADS) {
@@ -1477,6 +1491,7 @@ private fun SettingsScreen(
   onAddEnvironment: () -> Unit,
   onAddProject: () -> Unit,
   onOpenArchivedThreads: () -> Unit,
+  onOpenUsage: () -> Unit,
 ) {
   var showEditEnv by remember { mutableStateOf(false) }
   BackHandler(onBack = onBack)
@@ -1551,6 +1566,35 @@ private fun SettingsScreen(
         Icon(Icons.Rounded.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
         Text("Add project")
+      }
+      HorizontalDivider()
+      Text("General", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+      Surface(
+        onClick = onOpenUsage,
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFF111827),
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+          Icon(
+            Icons.Rounded.BarChart,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+          )
+          Column(Modifier.weight(1f)) {
+            Text("Usage", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Text(
+              "Token activity and API-rate estimates",
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              style = MaterialTheme.typography.bodySmall,
+            )
+          }
+          Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
       }
       HorizontalDivider()
       Text("Appearance", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -3933,7 +3977,7 @@ private fun T3TopBar(title: String) {
 }
 
 @Composable
-private fun BackTopBar(title: String, onBack: () -> Unit) {
+internal fun BackTopBar(title: String, onBack: () -> Unit) {
   TopAppBar(
     title = {
       Text(

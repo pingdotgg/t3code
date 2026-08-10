@@ -22,6 +22,7 @@ import com.t3tools.android.protocol.TerminalAttachEvent
 import com.t3tools.android.protocol.TerminalMetadataEvent
 import com.t3tools.android.protocol.TerminalSnapshot
 import com.t3tools.android.protocol.ThreadState
+import com.t3tools.android.protocol.UsageWindow
 import com.t3tools.android.protocol.WorkspaceContentMatches
 import com.t3tools.android.protocol.WorkspaceEntries
 import com.t3tools.android.protocol.WorkspaceFile
@@ -39,6 +40,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -53,6 +56,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -442,6 +446,27 @@ class OnlineChatRepository(
       }
       publishLocked()
     }
+  }
+
+  suspend fun readUsage(window: UsageWindow): List<EnvironmentUsageReport> = coroutineScope {
+    val environments = synchronized(lock) {
+      runtimes.values.map { runtime ->
+        Triple(runtime.environment.environmentId, runtime.environment.label, runtime.connection)
+      }
+    }
+    environments.map { (environmentId, label, connection) ->
+      async(Dispatchers.IO) {
+        if (connection == null) {
+          EnvironmentUsageReport(environmentId, label, error = "Environment is disconnected.")
+        } else {
+          runCatching { client.getUsageSummary(connection.session, window) }
+            .fold(
+              onSuccess = { EnvironmentUsageReport(environmentId, label, summary = it) },
+              onFailure = { EnvironmentUsageReport(environmentId, label, error = it.safeMessage()) },
+            )
+        }
+      }
+    }.awaitAll()
   }
 
   suspend fun dispatch(command: JsonObject): Long = withContext(Dispatchers.IO) {
