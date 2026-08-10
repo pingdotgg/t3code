@@ -122,6 +122,14 @@ const withHarness = <A, E, R>(
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 describe("DesktopBackendConfiguration", () => {
+  it("accepts only normalized SHA-256 archive identities", () => {
+    assert.equal(
+      DesktopBackendConfiguration.parseWslRuntimeArchiveHash(`  ${"A".repeat(64)}\n`),
+      "a".repeat(64),
+    );
+    assert.isNull(DesktopBackendConfiguration.parseWslRuntimeArchiveHash("abc123"));
+  });
+
   it.effect("resolvePrimary produces a stable scoped bootstrap token", () =>
     withHarness(
       Effect.gen(function* () {
@@ -233,10 +241,12 @@ describe("DesktopBackendConfiguration", () => {
         prefix: "t3-desktop-backend-config-test-",
       });
       const archivePath = path.join(baseDir, "wsl-runtime.tar.gz");
+      const archiveHash = "a".repeat(64);
       const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
       yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
       yield* fileSystem.writeFileString(entryPath, "");
       yield* fileSystem.writeFileString(archivePath, "archive");
+      yield* fileSystem.writeFileString(`${archivePath}.sha256`, `${archiveHash}\n`);
 
       const observedArchives: Array<{ windowsArchivePath: string; runtimeId: string }> = [];
       const observedNodePtyRoots: string[] = [];
@@ -279,14 +289,81 @@ describe("DesktopBackendConfiguration", () => {
       assert.deepEqual(observedArchives, [
         {
           windowsArchivePath: archivePath,
-          runtimeId: "1.2.3-x64",
+          runtimeId: `1.2.3-x64-${archiveHash}`,
         },
       ]);
       assert.deepEqual(observedNodePtyRoots, [linuxAppRoot]);
       assert.equal(config.entryPath, entryPath);
       assert.include(config.args, `${linuxAppRoot}/apps/server/dist/bin.mjs`);
-      assert.equal(config.wslRuntimeId, "1.2.3-x64");
+      assert.equal(config.wslRuntimeId, `1.2.3-x64-${archiveHash}`);
       assert.isTrue(Option.isNone(config.preflightFailure));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("resolveWsl changes the runtime cache id when a same-version archive changes", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const archivePath = path.join(baseDir, "wsl-runtime.tar.gz");
+      const hashPath = `${archivePath}.sha256`;
+      const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
+      const firstHash = "a".repeat(64);
+      const secondHash = "b".repeat(64);
+      yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fileSystem.writeFileString(entryPath, "");
+      yield* fileSystem.writeFileString(archivePath, "archive");
+      yield* fileSystem.writeFileString(hashPath, firstHash);
+
+      const observedRuntimeIds: string[] = [];
+      const [first, second, invalidIdentity] = yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const first = yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
+        yield* fileSystem.writeFileString(hashPath, secondHash);
+        const second = yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
+        yield* fileSystem.writeFileString(hashPath, "not-a-sha256");
+        const invalidIdentity = yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
+        return [first, second, invalidIdentity] as const;
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+                windowsToWslPath: () => Option.some("/mnt/c/app.asar.unpacked"),
+                prepareRuntime: (_distro, _archivePath, runtimeId) => {
+                  observedRuntimeIds.push(runtimeId);
+                  return { ok: true, linuxAppRoot: `/runtime/${runtimeId}` };
+                },
+                ensureNodePty: () => ({
+                  ok: true,
+                  nodePath: "/usr/bin/node",
+                  resolvedPath: "/usr/bin:/bin",
+                }),
+                getDistroIp: () => Option.some("172.27.0.99"),
+              }),
+            ),
+            Layer.provideMerge(
+              makeEnvironmentLayer(baseDir, {
+                appPath: baseDir,
+                platform: "win32",
+                resourcesPath: baseDir,
+              }),
+            ),
+          ),
+        ),
+      );
+
+      assert.deepEqual(observedRuntimeIds, [`1.2.3-x64-${firstHash}`, `1.2.3-x64-${secondHash}`]);
+      assert.equal(first.wslRuntimeId, observedRuntimeIds[0]);
+      assert.equal(second.wslRuntimeId, observedRuntimeIds[1]);
+      assert.isUndefined(invalidIdentity.wslRuntimeId);
+      assert.include(invalidIdentity.args, "/mnt/c/app.asar.unpacked/apps/server/dist/bin.mjs");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -298,10 +375,12 @@ describe("DesktopBackendConfiguration", () => {
         prefix: "t3-desktop-backend-config-test-",
       });
       const archivePath = path.join(baseDir, "wsl-runtime.tar.gz");
+      const archiveHash = "b".repeat(64);
       const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
       yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
       yield* fileSystem.writeFileString(entryPath, "");
       yield* fileSystem.writeFileString(archivePath, "corrupt archive");
+      yield* fileSystem.writeFileString(`${archivePath}.sha256`, `${archiveHash}\n`);
 
       const mountedAppRoot = "/mnt/c/app.asar.unpacked";
       const observedNodePtyRoots: string[] = [];

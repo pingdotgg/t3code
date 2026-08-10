@@ -94,6 +94,13 @@ const WSL_FORWARDED_ENV_NAMES = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"] as const
 
 const WSL_SERVER_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const WSL_RUNTIME_ARCHIVE_NAME = "wsl-runtime.tar.gz";
+const WSL_RUNTIME_ARCHIVE_HASH_NAME = `${WSL_RUNTIME_ARCHIVE_NAME}.sha256`;
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/i;
+
+export const parseWslRuntimeArchiveHash = (value: string): string | null => {
+  const trimmed = value.trim();
+  return SHA256_HEX_PATTERN.test(trimmed) ? trimmed.toLowerCase() : null;
+};
 
 const backendChildEnvPatch = (): Record<string, string | undefined> =>
   Object.fromEntries(DESKTOP_BACKEND_ENV_NAMES.map((name) => [name, undefined]));
@@ -242,8 +249,10 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
   readonly distro: string | null;
   readonly windowsEntryPath: string;
   readonly windowsAppRoot: string;
-  readonly windowsRuntimeArchivePath: string | null;
-  readonly runtimeId: string;
+  readonly runtimeArchive: {
+    readonly windowsPath: string;
+    readonly runtimeId: string;
+  } | null;
   readonly allowBuild: boolean;
 }): Effect.fn.Return<
   WslPreflightSuccess | WslPreflightFailure,
@@ -314,15 +323,15 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
 
   let linuxAppRoot = mountedAppRoot.value;
   let runtimeId: string | undefined;
-  if (input.windowsRuntimeArchivePath !== null) {
+  if (input.runtimeArchive !== null) {
     const runtime = yield* wslEnv.prepareRuntime(
       runningDistro,
-      input.windowsRuntimeArchivePath,
-      input.runtimeId,
+      input.runtimeArchive.windowsPath,
+      input.runtimeArchive.runtimeId,
     );
     if (runtime.ok) {
       linuxAppRoot = runtime.linuxAppRoot;
-      runtimeId = input.runtimeId;
+      runtimeId = input.runtimeArchive.runtimeId;
     } else {
       yield* Effect.logWarning(
         "Could not stage the WSL runtime; launching from the mounted application instead.",
@@ -503,15 +512,36 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     environment.resourcesPath,
     WSL_RUNTIME_ARCHIVE_NAME,
   );
+  const wslRuntimeArchiveHashPath = environment.path.join(
+    environment.resourcesPath,
+    WSL_RUNTIME_ARCHIVE_HASH_NAME,
+  );
   const hasWslRuntimeArchive = environment.isPackaged
     ? yield* fileSystem.exists(wslRuntimeArchivePath).pipe(Effect.orElseSucceed(() => false))
     : false;
+  const runtimeArchiveHash = hasWslRuntimeArchive
+    ? yield* fileSystem.readFileString(wslRuntimeArchiveHashPath).pipe(
+        Effect.map(parseWslRuntimeArchiveHash),
+        Effect.orElseSucceed(() => null),
+      )
+    : null;
+  if (hasWslRuntimeArchive && runtimeArchiveHash === null) {
+    yield* Effect.logWarning(
+      "Ignoring the WSL runtime archive because its SHA-256 identity is missing or invalid; launching from the mounted application instead.",
+      { hashPath: wslRuntimeArchiveHashPath },
+    );
+  }
   const preflight = yield* runWslPreflight({
     distro: input.distro,
     windowsEntryPath: wslEntryPath,
     windowsAppRoot: wslAppRoot,
-    windowsRuntimeArchivePath: hasWslRuntimeArchive ? wslRuntimeArchivePath : null,
-    runtimeId: `${environment.appVersion}-${environment.processArch}`,
+    runtimeArchive:
+      runtimeArchiveHash === null
+        ? null
+        : {
+            windowsPath: wslRuntimeArchivePath,
+            runtimeId: `${environment.appVersion}-${environment.processArch}-${runtimeArchiveHash}`,
+          },
     // Packaged builds ship a prebuilt Linux node-pty (built on Linux in CI and
     // attached to the Windows artifact — see build-desktop-artifact.ts), so the
     // WSL backend never needs a compiler, node-gyp, or network on first launch.

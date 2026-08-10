@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import * as NodeModule from "node:module";
+import * as NodeCrypto from "node:crypto";
 
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -635,6 +636,7 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // Shipped beside app.asar through extraResources; excluding the staging copy
   // keeps the compressed WSL runtime from also being embedded inside app.asar.
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz",
+  "!apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
 ] as const;
 // The WSL backend launches the server with plain `wsl.exe -- node`, which
 // cannot read inside an asar archive — and the server bundle externalizes its
@@ -646,10 +648,19 @@ export const DESKTOP_FILE_EXCLUSIONS = [
 // older packages.
 export const WINDOWS_ASAR_UNPACK = ["apps/server/dist/**", "**/node_modules/**"] as const;
 export const WSL_RUNTIME_ARCHIVE_NAME = "wsl-runtime.tar.gz";
+export const WSL_RUNTIME_ARCHIVE_HASH_NAME = `${WSL_RUNTIME_ARCHIVE_NAME}.sha256`;
 export const WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE = {
   from: `apps/desktop/prod-resources/${WSL_RUNTIME_ARCHIVE_NAME}`,
   to: WSL_RUNTIME_ARCHIVE_NAME,
 } as const;
+export const WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE = {
+  from: `apps/desktop/prod-resources/${WSL_RUNTIME_ARCHIVE_HASH_NAME}`,
+  to: WSL_RUNTIME_ARCHIVE_HASH_NAME,
+} as const;
+export const WSL_RUNTIME_EXTRA_RESOURCES = [
+  WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE,
+  WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE,
+] as const;
 export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/resource-monitor",
@@ -1560,7 +1571,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     ...(platform === "win" ? { asarUnpack: [...WINDOWS_ASAR_UNPACK] } : {}),
     extraResources:
       platform === "win"
-        ? [...DESKTOP_EXTRA_RESOURCES, WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE]
+        ? [...DESKTOP_EXTRA_RESOURCES, ...WSL_RUNTIME_EXTRA_RESOURCES]
         : DESKTOP_EXTRA_RESOURCES,
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
@@ -1749,7 +1760,16 @@ const stageWslRuntimeArchive = Effect.fn("stageWslRuntimeArchive")(function* (st
     }),
     { label: "tar WSL runtime", verbose: false },
   );
-  yield* Effect.log(`[desktop-artifact] Staged compressed WSL runtime at ${archivePath}.`);
+  const hash = NodeCrypto.createHash("sha256");
+  yield* fs
+    .stream(archivePath)
+    .pipe(Stream.runForEach((chunk) => Effect.sync(() => hash.update(chunk))));
+  const digest = hash.digest("hex");
+  const hashPath = path.join(stageAppDir, WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE.from);
+  yield* fs.writeFileString(hashPath, `${digest}\n`);
+  yield* Effect.log(
+    `[desktop-artifact] Staged compressed WSL runtime at ${archivePath} (${digest}).`,
+  );
 });
 
 const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
