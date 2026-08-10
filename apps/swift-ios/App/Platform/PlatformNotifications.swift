@@ -192,13 +192,16 @@ final class PlatformNotificationService: NSObject, UNUserNotificationCenterDeleg
 
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse
-    ) async {
-        guard let route = PlatformNotificationPayload.route(
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping @Sendable () -> Void
+    ) {
+        let route = PlatformNotificationPayload.route(
             from: response.notification.request.content.userInfo
-        ) else { return }
-        PlatformRouteMailbox.shared.put(route)
-        await MainActor.run {
+        )
+        DispatchQueue.main.async {
+            defer { completionHandler() }
+            guard let route else { return }
+            PlatformRouteMailbox.shared.put(route)
             NotificationCenter.default.post(
                 name: .platformRouteReceived,
                 object: nil,
