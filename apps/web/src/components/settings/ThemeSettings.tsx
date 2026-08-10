@@ -475,6 +475,14 @@ export function ThemeLibrary({
             activeModes={pickedModesFor(null)}
             isActive={false}
             key={standardTheme.id}
+            onDuplicate={() =>
+              openThemeEditor({
+                editingThemeId: null,
+                seedThemeId: null,
+                seedName: `${standardTheme.label} copy`,
+                initialAppearance,
+              })
+            }
             onUse={() => persistTheme(appearanceMode === "system" ? "system" : appearanceMode)}
             onUseMode={handlePairPick(null)}
             theme={standardTheme}
