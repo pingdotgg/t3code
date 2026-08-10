@@ -198,6 +198,7 @@ public struct WorkspaceView: View {
     @State private var renamingThread: FeatureThread?
     @State private var renameTitle = ""
     @State private var deleteConfirmation = HomeThreadDeleteConfirmation()
+    @State private var titleRegenerationError: String?
     @State private var sidebarBoundaryNow = Date.now
     @State private var preferredCompactColumn = NavigationSplitViewColumn.sidebar
     @State private var homePresentationCache = HomePresentationCache()
@@ -356,6 +357,17 @@ public struct WorkspaceView: View {
         } message: { request in
             Text("“\(request.title)” will be permanently deleted.")
         }
+        .alert(
+            "Couldn’t regenerate title",
+            isPresented: Binding(
+                get: { titleRegenerationError != nil },
+                set: { if !$0 { titleRegenerationError = nil } }
+            )
+        ) {
+            Button("OK") {}
+        } message: {
+            Text(titleRegenerationError ?? "Please try again.")
+        }
     }
 
     private var workspaceLifecycle: some View {
@@ -467,6 +479,21 @@ public struct WorkspaceView: View {
                 onRename: { thread in
                     renameTitle = thread.title
                     renamingThread = thread
+                },
+                regeneratingTitleThreadIDs: model.regeneratingTitleThreadIDs,
+                onRegenerateTitle: { threadID in
+                    Task {
+                        switch await model.regenerateThreadTitle(threadID) {
+                        case .started, .alreadyRunning:
+                            break
+                        case .unavailable:
+                            titleRegenerationError = "Title regeneration is not available for this thread."
+                        case .threadMissing:
+                            titleRegenerationError = "This thread is no longer available."
+                        case let .failed(message):
+                            titleRegenerationError = message
+                        }
+                    }
                 },
                 onArchive: { thread, archived in
                     settleUndo.dismiss(threadID: thread.id)
@@ -1033,6 +1060,7 @@ public struct WorkspaceView: View {
         showingSettings = false
         renamingThread = nil
         threadNewTaskError = nil
+        titleRegenerationError = nil
     }
 
     private func projectMenuTitle(_ project: FeatureProject) -> String {

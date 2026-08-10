@@ -114,6 +114,19 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(unpin["type"]?.stringValue, "thread.unpin")
     }
 
+    func testRegenerateTitleCommandMatchesExistingMetaUpdateContract() {
+        let command = OrchestrationCommands.regenerateTitle(
+            threadID: "thread-1",
+            commandID: "command-1"
+        )
+
+        XCTAssertEqual(command["type"]?.stringValue, "thread.meta.update")
+        XCTAssertEqual(command["commandId"]?.stringValue, "command-1")
+        XCTAssertEqual(command["threadId"]?.stringValue, "thread-1")
+        XCTAssertEqual(command["regenerateTitle"], .bool(true))
+        XCTAssertNil(command["title"])
+    }
+
     func testFirstSendCommandCarriesCanonicalBootstrapMetadata() throws {
         let model = ModelSelection(instanceId: "codex", model: "gpt-5.4")
         let command = try OrchestrationCommands.createThreadAndSend(

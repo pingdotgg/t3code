@@ -335,6 +335,11 @@ public actor T3Client {
     }
 
     @discardableResult
+    public func regenerateTitle(threadID: String) async throws -> DispatchResult {
+        try await dispatch(OrchestrationCommands.regenerateTitle(threadID: threadID))
+    }
+
+    @discardableResult
     public func interrupt(threadID: String, turnID: String? = nil) async throws -> DispatchResult {
         try await dispatch(
             OrchestrationCommands.interrupt(threadID: threadID, turnID: turnID)
@@ -1454,6 +1459,18 @@ public enum OrchestrationCommands {
             "commandId": .string(commandID),
             "threadId": .string(threadID),
             "title": .string(title),
+        ])
+    }
+
+    public static func regenerateTitle(
+        threadID: String,
+        commandID: String = UUID().uuidString
+    ) -> JSONValue {
+        .object([
+            "type": .string("thread.meta.update"),
+            "commandId": .string(commandID),
+            "threadId": .string(threadID),
+            "regenerateTitle": .bool(true),
         ])
     }
 

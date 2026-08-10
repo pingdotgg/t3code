@@ -38,6 +38,23 @@ struct HomeThreadSwipeActionPlan: Equatable, Sendable {
     }
 }
 
+enum ThreadTitleRegenerationMenuState: Equatable {
+    case hidden
+    case available
+    case regenerating
+
+    static func resolve(
+        thread: FeatureThread,
+        isArchived: Bool,
+        regeneratingThreadIDs: Set<String>
+    ) -> Self {
+        guard !isArchived, thread.supportsTitleRegeneration == true else { return .hidden }
+        return regeneratingThreadIDs.contains(thread.id) || thread.isRegeneratingTitle == true
+            ? .regenerating
+            : .available
+    }
+}
+
 /// A recycled, diffable Home surface. SwiftUI still owns the surrounding shell,
 /// while UIKit keeps row creation and updates proportional to visible threads.
 struct HomeThreadCollectionView: UIViewRepresentable {
@@ -58,6 +75,8 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     let newThreadAvailability: (FeatureThread) -> ThreadNewTaskAvailability
     let onNewThreadOnSameBranch: (ThreadNewTaskSeedRequest) -> Void
     let onRename: (FeatureThread) -> Void
+    let regeneratingTitleThreadIDs: Set<String>
+    let onRegenerateTitle: (String) -> Void
     let onArchive: (FeatureThread, Bool) -> Void
     let onSettle: (FeatureThread, Bool) -> Void
     let onSnooze: (FeatureThread, Date?) -> Void
@@ -460,7 +479,27 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 self?.parent.onArchive(thread, !isArchived)
             }
 
-            var actions: [UIMenuElement] = [newThread, rename, archive]
+            var actions: [UIMenuElement] = [newThread, rename]
+            switch ThreadTitleRegenerationMenuState.resolve(
+                thread: thread,
+                isArchived: isArchived,
+                regeneratingThreadIDs: parent.regeneratingTitleThreadIDs
+            ) {
+            case .hidden:
+                break
+            case .available, .regenerating:
+                let isRegenerating = parent.regeneratingTitleThreadIDs.contains(thread.id)
+                    || thread.isRegeneratingTitle == true
+                let regenerate = UIAction(
+                    title: isRegenerating ? "Regenerating…" : "Regenerate title",
+                    image: UIImage(systemName: "arrow.clockwise")
+                ) { [weak self] _ in
+                    self?.parent.onRegenerateTitle(thread.id)
+                }
+                if isRegenerating { regenerate.attributes = .disabled }
+                actions.append(regenerate)
+            }
+            actions.append(archive)
             if !isArchived {
                 if thread.canTogglePin {
                     let isPinned = thread.pinnedAt != nil

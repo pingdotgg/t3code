@@ -1,5 +1,11 @@
 import Foundation
 
+public enum FeatureTitleRegenerationDispatchReceipt: Equatable {
+    case regenerating
+    case completed
+    case refreshUnavailable
+}
+
 /// The app-owned adapter between the native feature layer and T3's WebSocket/Core runtime.
 /// Implementations are main-actor isolated so UI state never depends on locking.
 @MainActor
@@ -55,6 +61,7 @@ public protocol FeatureClient: AnyObject {
         refresh: Bool
     ) async throws -> [FeatureWorkspaceBranch]
     func renameThread(id: String, title: String) async throws
+    func regenerateThreadTitle(id: String) async throws -> FeatureTitleRegenerationDispatchReceipt
     func setThreadArchived(id: String, archived: Bool) async throws
     func setThreadSettled(id: String, settled: Bool) async throws
     func setThreadSnoozed(id: String, until: Date?) async throws
@@ -167,6 +174,9 @@ public extension FeatureClient {
     }
     func releaseThread(id: String) {}
     func resolveUserInput(id: String, answers: [String: FeatureInputAnswer]) async throws {}
+    func regenerateThreadTitle(id: String) async throws -> FeatureTitleRegenerationDispatchReceipt {
+        throw FeatureCapabilityUnavailable("Thread title regeneration")
+    }
 
     /// Keeps simple text-only callers source-compatible while the typed API
     /// preserves multi-select answers as arrays.
