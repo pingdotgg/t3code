@@ -234,13 +234,22 @@ const endorsementRows = [
         <p>Pair once. Control the same live threads from the web, iPhone, iPad, or Android.</p>
         <code>npx t3 pair</code>
       </header>
-      <div class="v2-connect-visual" aria-hidden="true">
+      <div class="v2-connect-visual">
         <div class="v2-connect-screens">
           <div class="v2-connect-desktop">
-            <img src="/mobile-states/ios-thread.png" alt="" loading="lazy" />
+            <iframe
+              src="/sidebar-demo/demo.html#/demo-mac-studio/thread-connect"
+              title="The same T3 Code thread on desktop"
+              loading="lazy"
+              allow="clipboard-write"
+            ></iframe>
           </div>
           <div class="v2-connect-phone">
-            <img src="/mobile-states/ios-thread.png" alt="" loading="lazy" />
+            <img
+              src="/mobile-states/ios-thread.png"
+              alt="The same T3 Code thread on iPhone"
+              loading="lazy"
+            />
           </div>
         </div>
       </div>
@@ -965,14 +974,22 @@ const endorsementRows = [
   }
 
   .v2-connect-desktop {
-    display: grid;
     width: 88%;
     aspect-ratio: 1.62;
-    place-items: center;
     border: 1px solid var(--border-strong);
     border-radius: 18px;
     background: #08080a;
     overflow: hidden;
+  }
+
+  .v2-connect-desktop iframe {
+    display: block;
+    width: 125%;
+    height: 125%;
+    border: 0;
+    background: #08080a;
+    transform: scale(0.8);
+    transform-origin: top left;
   }
 
   .v2-connect-phone {
@@ -988,13 +1005,6 @@ const endorsementRows = [
 
   .v2-connect-phone img {
     width: 100%;
-  }
-
-  .v2-connect-desktop img {
-    width: auto;
-    height: 100%;
-    max-width: 100%;
-    object-fit: contain;
   }
 
   .v2-connect-phone img {
