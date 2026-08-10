@@ -83,6 +83,13 @@ struct PlatformRootView: View {
         .onChange(of: model.snapshot.projects.map(\.id)) { _, _ in
             refreshIncomingShares()
         }
+        .onChange(of: incomingShareConnectionStates) { _, _ in
+            guard incomingShareCoordinator.pendingEnvelope?.destination?.kind == .existingThread,
+                  !incomingShareCoordinator.isImporting else { return }
+            Task { @MainActor in
+                await routePendingIncomingShareIfNeeded()
+            }
+        }
         .sheet(item: presentedIncomingShare, onDismiss: openImportedShareDraft) { envelope in
             PlatformIncomingShareDestinationSheet(
                 envelope: envelope,
@@ -259,9 +266,11 @@ struct PlatformRootView: View {
                     model.errorMessage = "That thread is no longer available. Choose another destination."
                     return
                 }
-                try await incomingShareCoordinator.importPending(into: thread)
+                guard let importedDraft = try await incomingShareCoordinator.importPending(
+                    into: thread
+                ) else { return }
                 navigationRequest = FeatureWorkspaceNavigationRequest(
-                    destination: .sharedThread(id: thread.id)
+                    destination: .sharedThread(id: thread.id, draft: importedDraft)
                 )
             }
             PlatformHapticEngine.shared.emit(
@@ -390,6 +399,11 @@ struct PlatformRootView: View {
         }
         guard !environment.isEnabled else { return true }
         return await model.setEnvironmentEnabled(id, enabled: true)
+    }
+
+    private var incomingShareConnectionStates: [FeatureConnection.State?] {
+        [model.snapshot.connection.state]
+            + model.snapshot.environments.map(\.connectionState)
     }
 
     /// Home revisions are coalesced by FeatureRootModel, so this performs one

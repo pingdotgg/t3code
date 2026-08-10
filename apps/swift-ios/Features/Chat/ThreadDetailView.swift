@@ -9,6 +9,7 @@ public struct ThreadDetailView: View {
     @Bindable var model: FeatureRootModel
     let thread: FeatureThread
     let composerDraftReloadRevision: Int
+    let composerDraftReloadDraft: FeatureComposerDraft?
     let submitMessage: (FeatureMessageSubmission) async -> Bool
     let onNavigateBack: () -> Void
     private let draftStore: FeatureComposerDraftStore
@@ -20,6 +21,7 @@ public struct ThreadDetailView: View {
     @State private var isLoading = true
     @State private var sendFailed = false
     @State private var didRestoreDraft = false
+    @State private var handledComposerDraftReloadRevision: Int
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var toolSurface: FeatureThreadToolSurface?
     @FocusState private var composerFocused: Bool
@@ -28,6 +30,7 @@ public struct ThreadDetailView: View {
         model: FeatureRootModel,
         thread: FeatureThread,
         composerDraftReloadRevision: Int = 0,
+        composerDraftReloadDraft: FeatureComposerDraft? = nil,
         submitMessage: @escaping (FeatureMessageSubmission) async -> Bool,
         onNavigateBack: @escaping () -> Void = {},
         draftStore: FeatureComposerDraftStore = .shared
@@ -35,6 +38,10 @@ public struct ThreadDetailView: View {
         self.model = model
         self.thread = thread
         self.composerDraftReloadRevision = composerDraftReloadRevision
+        self.composerDraftReloadDraft = composerDraftReloadDraft
+        _handledComposerDraftReloadRevision = State(
+            initialValue: composerDraftReloadRevision
+        )
         self.submitMessage = submitMessage
         self.onNavigateBack = onNavigateBack
         self.draftStore = draftStore
@@ -74,8 +81,11 @@ public struct ThreadDetailView: View {
             await restoreDraft(from: restoreBaseline, key: restoreKey)
             isLoading = false
         }
-        .onChange(of: composerDraftReloadRevision) {
-            reloadImportedDraft()
+        .task(id: composerDraftReloadRevision) {
+            guard handledComposerDraftReloadRevision != composerDraftReloadRevision,
+                  let composerDraftReloadDraft else { return }
+            handledComposerDraftReloadRevision = composerDraftReloadRevision
+            await reloadImportedDraft(composerDraftReloadDraft)
         }
         .onChange(of: draft) { scheduleDraftSave() }
         .onChange(of: attachments) { scheduleDraftSave() }
@@ -478,13 +488,20 @@ public struct ThreadDetailView: View {
         FeatureComposerDraftStore.threadKey(currentThread)
     }
 
-    private func reloadImportedDraft() {
-        draftSaveTask?.cancel()
+    @MainActor
+    private func reloadImportedDraft(_ importedDraft: FeatureComposerDraft) async {
         let baseline = composerDraft
         let key = draftKey
-        Task { @MainActor in
-            await restoreDraft(from: baseline, key: key)
-        }
+        let pendingSave = draftSaveTask
+        draftSaveTask = nil
+        pendingSave?.cancel()
+        await pendingSave?.value
+        guard !Task.isCancelled else { return }
+
+        restoreDraft(importedDraft, from: baseline)
+        draftSaveTask?.cancel()
+        draftSaveTask = nil
+        try? await draftStore.setDraft(composerDraft, for: key)
     }
 
     @MainActor
@@ -492,6 +509,11 @@ public struct ThreadDetailView: View {
         let saved = try? await draftStore.draft(for: key)
         guard !Task.isCancelled else { return }
 
+        restoreDraft(saved, from: baseline)
+    }
+
+    @MainActor
+    private func restoreDraft(_ saved: FeatureComposerDraft?, from baseline: FeatureComposerDraft) {
         let liveDraft = composerDraft
         var restored = FeatureComposerDraftRestoration.merge(
             saved: saved,

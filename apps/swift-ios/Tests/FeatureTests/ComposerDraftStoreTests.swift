@@ -267,10 +267,16 @@ struct ComposerDraftStoreTests {
 
     @Test func sharedThreadNavigationRequestsAComposerReload() {
         let request = FeatureWorkspaceNavigationRequest(
-            destination: .sharedThread(id: "thread-1")
+            destination: .sharedThread(
+                id: "thread-1",
+                draft: FeatureComposerDraft(text: "Shared")
+            )
         )
 
-        #expect(request.destination == .sharedThread(id: "thread-1"))
+        #expect(request.destination == .sharedThread(
+            id: "thread-1",
+            draft: FeatureComposerDraft(text: "Shared")
+        ))
         #expect(request.destination != .thread(id: "thread-1"))
     }
 

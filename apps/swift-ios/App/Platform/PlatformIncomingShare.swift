@@ -470,14 +470,15 @@ final class PlatformIncomingShareCoordinator {
         }
     }
 
-    func importPending(into thread: FeatureThread) async throws {
-        guard let pendingEnvelope, !isImporting else { return }
+    func importPending(into thread: FeatureThread) async throws -> FeatureComposerDraft? {
+        guard let pendingEnvelope, !isImporting else { return nil }
         isImporting = true
         do {
-            _ = try await pipeline.importEnvelope(pendingEnvelope, into: thread)
+            let draft = try await pipeline.importEnvelope(pendingEnvelope, into: thread)
             self.pendingEnvelope = nil
             lastNoProjectNoticeID = nil
             isImporting = false
+            return draft
         } catch {
             isImporting = false
             throw error
