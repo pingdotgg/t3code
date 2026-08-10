@@ -9,6 +9,7 @@
 - [Customize a project icon](./user/project-settings.md)
 - [Remote access](./user/remote-access.md)
 - [Keeping app and server in sync](./user/updating.md)
+- [T3 Code and Auldric Marketing](./user/product-identity.md)
 - [Source control integrations](./user/source-control.md)
 - [Background service (Linux)](./user/background-service.md)
 - Providers: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md)
@@ -34,6 +35,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Environment auth](./internals/environment-auth.md)
 - [T3 Connect](./internals/t3-connect.md)
 - [CI gates](./internals/ci.md)
+- [T3 and Auldric identifier ownership](./internals/identifier-ownership.md)
 
 ### Runbooks
 
