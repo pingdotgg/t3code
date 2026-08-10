@@ -75,6 +75,44 @@ spills the whole accumulated text as one delta. The buffer also flushes at inter
 when a request opens (approval) or user input is requested, via
 `flushBufferedAssistantMessagesForTurn`.
 
+### Grok ACP capability negotiation
+
+Grok is driven through its ACP stdio session. The adapter treats the session setup response and
+subsequent standard `session/update` notifications as the source of truth for optional features:
+
+- The provider advertises the Plan/Build control only when the negotiated mode list contains a
+  distinct plan-like mode and a distinct build/default-like mode. T3's persisted
+  `ProviderInteractionMode` is applied immediately before `session/prompt`; native mode-change
+  notifications are retained in the native log and do not overwrite T3 state.
+- A select option whose negotiated category/name identifies reasoning is exposed as the canonical
+  T3 `reasoning` descriptor. Grok builds that advertise `supportsReasoningEffort` instead expose
+  the exact `_meta.reasoningEfforts[].value` list on each model; the adapter applies those values
+  through Grok's verified `session/set_model` `_meta.reasoningEffort` request. Standard ACP
+  `session/set_config_option` remains the fallback for builds that advertise a reasoning option.
+  No model-specific effort list is assumed when neither surface is negotiated.
+- Standard ACP `config_option_update` notifications replace the runtime's negotiated configuration
+  snapshot. Standard `usage_update` notifications become the existing
+  `thread.token-usage.updated` runtime event, preserving the raw ACP notification for diagnostics.
+  Usage does not imply compaction, cost accounting, or automatic compaction behavior.
+
+One ACP runtime projects one root session. Foreign-session notifications remain filtered unless a
+provider supplies an explicit, negotiated lineage decoder through the opt-in foreign-session sink.
+Grok currently has no checked native child-session/task payload in this repository, so Grok native
+subagents and background tasks are intentionally not mapped to T3 `task.*` events. We do not infer
+parentage from session IDs, tool IDs, `_meta`, or text. If a future Grok payload proves explicit
+parent identity and lifecycle, its adapter may use the existing task events and background-liveness
+consumers; it must keep child content off the root transcript and emit terminal stopped events when
+the provider session is torn down.
+
+This feature-detection boundary keeps older or partially capable Grok CLIs working for normal ACP
+prompts, model selection, approvals, and existing plan notifications while leaving unsupported
+controls hidden or rejected before a prompt is sent.
+
+The authenticated Grok CLI payload currently checked into the probe advertises `grok-4.5` reasoning
+metadata and a context size, but no ACP mode pair or config-option list. Consequently its reasoning
+control is available through the model metadata setter, while the Plan/Build toggle remains hidden
+until a setup payload advertises distinct native modes.
+
 [drivers]: ../../apps/server/src/provider/builtInDrivers.ts
 [codex]: ../../apps/server/src/provider/Drivers/CodexDriver.ts
 [claude]: ../../apps/server/src/provider/Drivers/ClaudeDriver.ts

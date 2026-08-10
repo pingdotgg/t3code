@@ -336,6 +336,97 @@ describe("AcpRuntimeModel", () => {
     ]);
   });
 
+  it("projects standard config and usage updates while retaining their raw notification", () => {
+    const configPayload = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "config_option_update",
+        configOptions: [
+          {
+            id: "reasoning",
+            name: "Reasoning",
+            category: "thought_level",
+            type: "select",
+            currentValue: "medium",
+            options: [
+              { value: "low", name: "Low" },
+              { value: "medium", name: "Medium" },
+            ],
+          },
+        ],
+      },
+    } satisfies EffectAcpSchema.SessionNotification;
+    const usagePayload = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        size: 272000,
+        used: 42000,
+      },
+    } satisfies EffectAcpSchema.SessionNotification;
+
+    expect(parseSessionUpdateEvent(configPayload)).toEqual({
+      events: [
+        {
+          _tag: "ConfigOptionsChanged",
+          configOptions: configPayload.update.configOptions,
+          rawPayload: configPayload,
+        },
+      ],
+    });
+    expect(parseSessionUpdateEvent(usagePayload)).toEqual({
+      events: [
+        {
+          _tag: "UsageUpdated",
+          usage: { size: 272000, used: 42000 },
+          rawPayload: usagePayload,
+        },
+      ],
+    });
+  });
+
+  it("ignores malformed or unknown config and usage updates", () => {
+    const malformedConfig = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "config_option_update",
+        configOptions: [{ id: "reasoning", type: "select" }],
+      },
+    } as unknown as EffectAcpSchema.SessionNotification;
+    const malformedUsage = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        size: -1,
+        used: "42000",
+      },
+    } as unknown as EffectAcpSchema.SessionNotification;
+    const malformedGroup = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "config_option_update",
+        configOptions: [
+          {
+            id: "reasoning",
+            name: "Reasoning",
+            type: "select",
+            currentValue: "medium",
+            options: [{ name: "Levels", options: [] }],
+          },
+        ],
+      },
+    } as unknown as EffectAcpSchema.SessionNotification;
+    const unknownUpdate = {
+      sessionId: "session-1",
+      update: { sessionUpdate: "future_update", payload: { value: true } },
+    } as unknown as EffectAcpSchema.SessionNotification;
+
+    expect(parseSessionUpdateEvent(malformedConfig).events).toEqual([]);
+    expect(parseSessionUpdateEvent(malformedUsage).events).toEqual([]);
+    expect(parseSessionUpdateEvent(malformedGroup).events).toEqual([]);
+    expect(parseSessionUpdateEvent(unknownUpdate).events).toEqual([]);
+  });
+
   it("keeps permission request parsing compatible with loose extension payloads", () => {
     const request = parsePermissionRequest({
       sessionId: "session-1",

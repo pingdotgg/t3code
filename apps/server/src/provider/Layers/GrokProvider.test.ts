@@ -6,9 +6,25 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { GrokSettings } from "@t3tools/contracts";
 
-import { buildInitialGrokProviderSnapshot, checkGrokProviderStatus } from "./GrokProvider.ts";
+import {
+  buildGrokCapabilitiesFromConfigOptions,
+  buildGrokCapabilitiesFromModelInfo,
+  buildGrokDiscoveredModelsFromSessionModelState,
+  buildGrokPresentation,
+  buildInitialGrokProviderSnapshot,
+  checkGrokProviderStatus,
+} from "./GrokProvider.ts";
 
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
+
+const fakeGrokExecutableName = process.platform === "win32" ? "grok.cmd" : "grok";
+
+function makeFakeGrokScript(lines: ReadonlyArray<string>): string {
+  if (process.platform === "win32") {
+    return ["@echo off", ...lines.map((line) => line), ""].join("\r\n");
+  }
+  return ["#!/bin/sh", ...lines, ""].join("\n");
+}
 
 describe("buildInitialGrokProviderSnapshot", () => {
   it.effect("returns a disabled snapshot when settings.enabled is false", () =>
@@ -36,6 +52,94 @@ describe("buildInitialGrokProviderSnapshot", () => {
   );
 });
 
+describe("Grok ACP capability discovery", () => {
+  it("builds a reasoning descriptor from the negotiated native values", () => {
+    const capabilities = buildGrokCapabilitiesFromConfigOptions([
+      {
+        id: "native-thought-level",
+        name: "Reasoning",
+        category: "thought_level",
+        type: "select",
+        currentValue: "balanced",
+        options: [
+          { value: "quick", name: "Quick" },
+          { value: "balanced", name: "Balanced" },
+          { value: "deep-native", name: "Deep Native" },
+        ],
+      },
+    ]);
+
+    expect(capabilities.optionDescriptors).toEqual([
+      {
+        id: "reasoning",
+        label: "Reasoning",
+        type: "select",
+        currentValue: "balanced",
+        options: [
+          { id: "quick", label: "Quick" },
+          { id: "balanced", label: "Balanced", isDefault: true },
+          { id: "deep-native", label: "Deep Native" },
+        ],
+      },
+    ]);
+  });
+
+  it("builds a reasoning descriptor from Grok's verified model metadata", () => {
+    const capabilities = buildGrokCapabilitiesFromModelInfo({
+      modelId: "grok-4.5",
+      name: "Grok 4.5",
+      _meta: {
+        totalContextTokens: 500000,
+        supportsReasoningEffort: true,
+        reasoningEffort: "high",
+        reasoningEfforts: [
+          {
+            id: "high",
+            value: "high",
+            label: "High Effort",
+            description: "Highest implementation quality",
+            default: true,
+          },
+          { id: "medium", value: "medium", label: "Medium Effort", default: false },
+        ],
+      },
+    });
+
+    expect(capabilities.optionDescriptors?.[0]).toMatchObject({
+      id: "reasoning",
+      type: "select",
+      currentValue: "high",
+      options: [
+        { id: "high", label: "High Effort", isDefault: true },
+        { id: "medium", label: "Medium Effort" },
+      ],
+    });
+  });
+
+  it("keeps custom models empty and hides Plan until the pair is negotiated", () => {
+    const capabilities = buildGrokCapabilitiesFromConfigOptions([]);
+    const models = buildGrokDiscoveredModelsFromSessionModelState(
+      {
+        currentModelId: "grok-build",
+        availableModels: [{ modelId: "grok-build", name: "Grok Build" }],
+      },
+      capabilities,
+    );
+
+    expect(models[0]?.capabilities).toEqual({ optionDescriptors: [] });
+    expect(buildGrokPresentation(undefined).showInteractionModeToggle).toBe(false);
+    expect(
+      buildGrokPresentation({
+        currentModeId: "code",
+        availableModes: [
+          { id: "architect", name: "Architect" },
+          { id: "code", name: "Code" },
+        ],
+      }).showInteractionModeToggle,
+    ).toBe(true);
+  });
+});
+
 it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
   it.effect("reports the binary as missing when the binary path does not resolve", () =>
     Effect.gen(function* () {
@@ -60,10 +164,14 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-version-" });
-          const grokPath = path.join(dir, "grok");
+          const grokPath = path.join(dir, fakeGrokExecutableName);
           yield* fs.writeFileString(
             grokPath,
-            ["#!/bin/sh", `printf "%s\\n" "${secretStderr}" >&2`, "exit 2", ""].join("\n"),
+            makeFakeGrokScript(
+              process.platform === "win32"
+                ? [`echo ${secretStderr} 1>&2`, "exit /b 2"]
+                : [`printf "%s\\n" "${secretStderr}" >&2`, "exit 2"],
+            ),
           );
           yield* fs.chmod(grokPath, 0o755);
 
@@ -88,10 +196,14 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-success-" });
-          const grokPath = path.join(dir, "grok");
+          const grokPath = path.join(dir, fakeGrokExecutableName);
           yield* fs.writeFileString(
             grokPath,
-            ["#!/bin/sh", 'printf "grok-cli 0.0.99\\n"', "exit 0", ""].join("\n"),
+            makeFakeGrokScript(
+              process.platform === "win32"
+                ? ["echo grok-cli 0.0.99", "exit /b 0"]
+                : ['printf "grok-cli 0.0.99\\n"', "exit 0"],
+            ),
           );
           yield* fs.chmod(grokPath, 0o755);
 

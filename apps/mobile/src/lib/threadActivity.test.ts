@@ -56,6 +56,36 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("keeps context-window telemetry out of the mobile work feed", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-context-telemetry"),
+      projectId: ProjectId.make("project-1"),
+      title: "Context telemetry",
+      activities: [
+        makeActivity({
+          id: EventId.make("context-window"),
+          kind: "context-window.updated",
+          summary: "Context window updated",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          payload: { usedTokens: 42000, maxTokens: 272000 },
+        }),
+        makeActivity({
+          id: EventId.make("task-completed"),
+          kind: "task.completed",
+          summary: "Task completed",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          payload: { taskId: "task-1" },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    const activityIds = feed.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities.map((activity) => activity.id) : [],
+    );
+    expect(activityIds).toEqual(["task-completed"]);
+  });
+
   it("keeps historic work entries attributed to their turns", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-1"),

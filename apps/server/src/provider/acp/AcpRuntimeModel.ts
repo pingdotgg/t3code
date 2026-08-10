@@ -74,6 +74,21 @@ export interface AcpPlanUpdate {
   }>;
 }
 
+export interface AcpConfigOptionsChanged {
+  readonly _tag: "ConfigOptionsChanged";
+  readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+  readonly rawPayload: unknown;
+}
+
+export interface AcpUsageUpdated {
+  readonly _tag: "UsageUpdated";
+  readonly usage: {
+    readonly size: number;
+    readonly used: number;
+  };
+  readonly rawPayload: unknown;
+}
+
 export interface AcpPermissionRequest {
   readonly kind: string | "unknown";
   readonly detail?: string;
@@ -108,7 +123,9 @@ export type AcpParsedSessionEvent =
       readonly itemId?: string;
       readonly text: string;
       readonly rawPayload: unknown;
-    };
+    }
+  | AcpConfigOptionsChanged
+  | AcpUsageUpdated;
 
 type AcpSessionSetupResponse =
   | EffectAcpSchema.LoadSessionResponse
@@ -505,10 +522,118 @@ export function syntheticLoadSessionResponseFromInitialize(
   };
 }
 
+function isSessionConfigSelectOption(
+  value: unknown,
+): value is EffectAcpSchema.SessionConfigSelectOption {
+  return (
+    isRecord(value) &&
+    typeof value.name === "string" &&
+    typeof value.value === "string" &&
+    (value.description === undefined ||
+      value.description === null ||
+      typeof value.description === "string")
+  );
+}
+
+function isSessionConfigSelectGroup(
+  value: unknown,
+): value is EffectAcpSchema.SessionConfigSelectGroup {
+  return (
+    isRecord(value) &&
+    typeof value.group === "string" &&
+    typeof value.name === "string" &&
+    Array.isArray(value.options) &&
+    value.options.every(isSessionConfigSelectOption)
+  );
+}
+
+function isSessionConfigOption(value: unknown): value is EffectAcpSchema.SessionConfigOption {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") {
+    return false;
+  }
+  if (
+    value.category !== undefined &&
+    value.category !== null &&
+    typeof value.category !== "string"
+  ) {
+    return false;
+  }
+  if (
+    value.description !== undefined &&
+    value.description !== null &&
+    typeof value.description !== "string"
+  ) {
+    return false;
+  }
+  if (value.type === "boolean") {
+    return typeof value.currentValue === "boolean";
+  }
+  if (value.type !== "select" || typeof value.currentValue !== "string") {
+    return false;
+  }
+  return (
+    Array.isArray(value.options) &&
+    value.options.every(
+      (entry) => isSessionConfigSelectOption(entry) || isSessionConfigSelectGroup(entry),
+    )
+  );
+}
+
+function parseSessionConfigOptions(
+  value: unknown,
+): ReadonlyArray<EffectAcpSchema.SessionConfigOption> | undefined {
+  if (!Array.isArray(value) || !value.every(isSessionConfigOption)) {
+    return undefined;
+  }
+  return value;
+}
+
+function parseNonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
 export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotification): {
   readonly modeId?: string;
   readonly events: ReadonlyArray<AcpParsedSessionEvent>;
 } {
+  const rawUpdate: unknown = params.update;
+  if (!isRecord(rawUpdate) || typeof rawUpdate.sessionUpdate !== "string") {
+    return { events: [] };
+  }
+
+  // These updates are optional/unstable in ACP. Validate them at the boundary
+  // so malformed or provider-specific notifications never reach adapters as
+  // if they were negotiated standard data.
+  if (rawUpdate.sessionUpdate === "config_option_update") {
+    const configOptions = parseSessionConfigOptions(rawUpdate.configOptions);
+    return configOptions
+      ? {
+          events: [
+            {
+              _tag: "ConfigOptionsChanged",
+              configOptions,
+              rawPayload: params,
+            },
+          ],
+        }
+      : { events: [] };
+  }
+  if (rawUpdate.sessionUpdate === "usage_update") {
+    const size = parseNonNegativeInteger(rawUpdate.size);
+    const used = parseNonNegativeInteger(rawUpdate.used);
+    return size === undefined || used === undefined
+      ? { events: [] }
+      : {
+          events: [
+            {
+              _tag: "UsageUpdated",
+              usage: { size, used },
+              rawPayload: params,
+            },
+          ],
+        };
+  }
+
   const upd = params.update;
   const events: Array<AcpParsedSessionEvent> = [];
   let modeId: string | undefined;

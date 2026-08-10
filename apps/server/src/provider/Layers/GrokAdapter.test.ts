@@ -14,6 +14,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { expect } from "vite-plus/test";
 
 import {
   ApprovalRequestId,
@@ -35,16 +36,28 @@ const mockAgentCommand = process.execPath;
 
 async function makeMockGrokWrapper(extraEnv?: Record<string, string>) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-mock-"));
-  const wrapperPath = NodePath.join(dir, "fake-grok.sh");
-  const envExports = Object.entries(extraEnv ?? {})
-    .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
-    .join("\n");
-  const script = `#!/bin/sh
-${envExports}
+  const values = { T3_ACP_GROK_NATIVE_FIXTURE: "1", ...(extraEnv ?? {}) };
+  const isWindows = process.platform === "win32";
+  const wrapperPath = NodePath.join(dir, isWindows ? "fake-grok.cmd" : "fake-grok.sh");
+  const script = isWindows
+    ? [
+        "@echo off",
+        ...Object.entries(values).map(
+          ([key, value]) => `set "${key}=${value.replaceAll("%", "%%")}"`,
+        ),
+        `"${mockAgentCommand}" "${mockAgentPath}" %*`,
+        "",
+      ].join("\r\n")
+    : `#!/bin/sh
+${Object.entries(values)
+  .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
+  .join("\n")}
 exec ${JSON.stringify(mockAgentCommand)} ${JSON.stringify(mockAgentPath)} "$@"
 `;
   await NodeFSP.writeFile(wrapperPath, script, "utf8");
-  await NodeFSP.chmod(wrapperPath, 0o755);
+  if (!isWindows) {
+    await NodeFSP.chmod(wrapperPath, 0o755);
+  }
   return wrapperPath;
 }
 
@@ -188,6 +201,85 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("applies negotiated Plan mode and reasoning before the prompt", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-negotiated-capabilities");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-capabilities-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          T3_ACP_EMIT_USAGE_UPDATES: "1",
+          T3_ACP_USAGE_SIZE: "272000",
+          T3_ACP_USAGE_USED: "42000",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const turnCompleted = yield* Deferred.make<void>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)).pipe(
+          Effect.andThen(
+            event.type === "turn.completed"
+              ? Deferred.succeed(turnCompleted, undefined)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "use the negotiated capabilities",
+        attachments: [],
+        interactionMode: "plan",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("grok"),
+          model: "grok-build",
+          options: [{ id: "reasoning", value: "high" }],
+        },
+      });
+      yield* Deferred.await(turnCompleted);
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const requestMethods = requests.flatMap((request) =>
+        typeof request.method === "string" ? [request.method] : [],
+      );
+      const reasoningRequestIndex = requests.findIndex(
+        (request) =>
+          request.method === "session/set_config_option" &&
+          (request.params as { configId?: unknown } | undefined)?.configId === "reasoning",
+      );
+      const modeRequestIndex = requests.findIndex(
+        (request) =>
+          request.method === "session/set_config_option" &&
+          (request.params as { configId?: unknown } | undefined)?.configId === "mode",
+      );
+      const promptIndex = requestMethods.indexOf("session/prompt");
+      const turnStarted = runtimeEvents.find((event) => event.type === "turn.started");
+      const usage = runtimeEvents.find((event) => event.type === "thread.token-usage.updated");
+
+      expect(reasoningRequestIndex).toBeGreaterThan(-1);
+      expect(modeRequestIndex).toBeGreaterThan(reasoningRequestIndex);
+      expect(promptIndex).toBeGreaterThan(modeRequestIndex);
+      expect(turnStarted).toMatchObject({ payload: { effort: "high" } });
+      expect(usage).toMatchObject({
+        payload: { usage: { maxTokens: 272000, usedTokens: 42000 } },
+      });
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("closes the ACP child process when a session stops", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-stop-session-close");
@@ -212,6 +304,10 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       });
 
       yield* adapter.stopSession(threadId);
+
+      // The mock observes the Unix signal handler. Windows tears down the
+      // command wrapper without delivering SIGTERM to the Node child.
+      if (process.platform === "win32") return;
 
       const exitLog = yield* waitForFileContent(exitLogPath);
       assert.include(exitLog, "SIGTERM");

@@ -1,0 +1,75 @@
+{
+  "fixture": "grok-acp-0.2.118-authenticated",
+  "notes": "The setup and effort setter fields below were captured from an authenticated Grok ACP session. This CLI advertises reasoning on model metadata, but does not advertise modes or configOptions in session/new. Standard usage/config updates remain deterministic parser fixtures; native child-task fields stay absent until a live payload proves their shape and lineage.",
+  "sessionSetup": {
+    "sessionId": "captured-session",
+    "models": {
+      "currentModelId": "grok-4.5",
+      "availableModels": [
+        {
+          "modelId": "grok-4.5",
+          "name": "Grok 4.5",
+          "description": "SpaceXAI's new frontier model",
+          "_meta": {
+            "totalContextTokens": 500000,
+            "agentType": "grok-build-plan",
+            "supportsReasoningEffort": true,
+            "reasoningEffort": "high",
+            "reasoningEfforts": [
+              {
+                "id": "high",
+                "value": "high",
+                "label": "High Effort",
+                "description": "Highest implementation quality with extensive reasoning",
+                "default": true
+              },
+              {
+                "id": "medium",
+                "value": "medium",
+                "label": "Medium Effort",
+                "description": "Balanced effort with standard reasoning and testing",
+                "default": false
+              },
+              {
+                "id": "low",
+                "value": "low",
+                "label": "Low Effort",
+                "description": "Quick, fast implementations",
+                "default": false
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "verifiedRequests": [
+    {
+      "method": "session/set_model",
+      "params": {
+        "sessionId": "captured-session",
+        "modelId": "grok-4.5",
+        "_meta": { "reasoningEffort": "low" }
+      }
+    }
+  ],
+  "deterministicStandardUpdates": [
+    {
+      "sessionId": "mock-session-1",
+      "update": {
+        "sessionUpdate": "config_option_update",
+        "configOptions": []
+      }
+    },
+    {
+      "sessionId": "mock-session-1",
+      "update": {
+        "sessionUpdate": "usage_update",
+        "size": 272000,
+        "used": 42000
+      }
+    }
+  ],
+  "nativeModes": null,
+  "nativeChildTasks": null
+}

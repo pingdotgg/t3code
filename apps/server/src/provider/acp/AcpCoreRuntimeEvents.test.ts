@@ -8,6 +8,7 @@ import {
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
   makeAcpToolCallEvent,
+  makeAcpUsageUpdatedEvent,
 } from "./AcpCoreRuntimeEvents.ts";
 
 describe("AcpCoreRuntimeEvents", () => {
@@ -189,6 +190,29 @@ describe("AcpCoreRuntimeEvents", () => {
       payload: {
         itemType: "assistant_message",
         status: "inProgress",
+      },
+    });
+  });
+
+  it("maps ACP usage to the canonical context-window event", () => {
+    const event = makeAcpUsageUpdatedEvent({
+      stamp: { eventId: "event-usage" as never, createdAt: "2026-03-27T00:00:00.000Z" },
+      provider: ProviderDriverKind.make("grok"),
+      threadId: "thread-1" as never,
+      turnId: TurnId.make("turn-1"),
+      usage: { size: 272000, used: 42000 },
+      rawPayload: {
+        sessionId: "session-1",
+        update: { sessionUpdate: "usage_update", size: 272000, used: 42000 },
+      },
+    });
+
+    expect(event).toMatchObject({
+      type: "thread.token-usage.updated",
+      payload: { usage: { maxTokens: 272000, usedTokens: 42000 } },
+      raw: {
+        source: "acp.jsonrpc",
+        method: "session/update",
       },
     });
   });

@@ -71,6 +71,15 @@ export interface AcpSessionRuntimeOptions {
   readonly authMethodId: string;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
+  /**
+   * Opt-in sink for notifications belonging to a foreign ACP session.
+   *
+   * The default remains root-session-only routing. Providers may opt in only
+   * after they have negotiated explicit parent/child identity semantics.
+   */
+  readonly foreignSessionUpdateSink?: (
+    notification: EffectAcpSchema.SessionNotification,
+  ) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
     readonly logOutgoing?: boolean;
@@ -226,6 +235,7 @@ export class AcpSessionRuntime extends Context.Service<
      */
     readonly setSessionModel: (
       modelId: string,
+      meta?: Readonly<Record<string, unknown>>,
     ) => Effect.Effect<EffectAcpSchema.SetSessionModelResponse, EffectAcpErrors.AcpError>;
     /**
      * Sends a generic ACP extension request and records it through the request logger.
@@ -385,17 +395,21 @@ export const make = (
           return;
         }
         const startState = yield* Ref.get(startStateRef);
+        if (startState._tag !== "Started") {
+          return;
+        }
         // One runtime projects one root ACP session. Child-session updates need
         // explicit lineage routing and must never be flattened into this stream.
-        if (
-          startState._tag !== "Started" ||
-          notification.sessionId !== startState.result.sessionId
-        ) {
+        if (notification.sessionId !== startState.result.sessionId) {
+          if (options.foreignSessionUpdateSink) {
+            yield* options.foreignSessionUpdateSink(notification);
+          }
           return;
         }
         yield* handleSessionUpdate({
           queue: eventQueue,
           modeStateRef,
+          configOptionsRef,
           toolCallsRef,
           assistantSegmentRef,
           assistantItemRuntimeId,
@@ -777,7 +791,14 @@ export const make = (
             if (modeState?.currentModeId === modeId) {
               return Effect.succeed({} satisfies EffectAcpSchema.SetSessionModeResponse);
             }
-            return setConfigOption("mode", modeId).pipe(
+            return Ref.get(configOptionsRef).pipe(
+              Effect.map(
+                (configOptions) =>
+                  configOptions.find(
+                    (option) => option.category === "mode" || option.id.trim() === "mode",
+                  )?.id ?? "mode",
+              ),
+              Effect.flatMap((modeConfigId) => setConfigOption(modeConfigId, modeId)),
               Effect.tap(() => updateCurrentModeId(modeId)),
               Effect.as({} satisfies EffectAcpSchema.SetSessionModeResponse),
             );
@@ -789,12 +810,13 @@ export const make = (
           Effect.flatMap((started) => setConfigOption(started.modelConfigId ?? "model", model)),
           Effect.asVoid,
         ),
-      setSessionModel: (modelId) =>
+      setSessionModel: (modelId, meta) =>
         getStartedState.pipe(
           Effect.flatMap((started) => {
             const requestPayload = {
               sessionId: started.sessionId,
               modelId,
+              ...(meta ? { _meta: meta } : {}),
             } satisfies EffectAcpSchema.SetSessionModelRequest;
             return runLoggedRequest(
               "session/set_model",
@@ -844,6 +866,7 @@ function configOptionCurrentValueMatches(
 const handleSessionUpdate = ({
   queue,
   modeStateRef,
+  configOptionsRef,
   toolCallsRef,
   assistantSegmentRef,
   assistantItemRuntimeId,
@@ -851,6 +874,7 @@ const handleSessionUpdate = ({
 }: {
   readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
   readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
+  readonly configOptionsRef: Ref.Ref<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
   readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallState>>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
   readonly assistantItemRuntimeId: string;
@@ -864,6 +888,11 @@ const handleSessionUpdate = ({
       );
     }
     for (const event of parsed.events) {
+      if (event._tag === "ConfigOptionsChanged") {
+        yield* Ref.set(configOptionsRef, event.configOptions);
+        yield* Queue.offer(queue, event);
+        continue;
+      }
       if (event._tag === "ToolCallUpdated") {
         yield* closeActiveAssistantSegment({
           queue,
