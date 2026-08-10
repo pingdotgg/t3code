@@ -54,14 +54,14 @@ export type DefaultBranchConfirmableAction =
   | "commit_push"
   | "commit_push_pr";
 
-const GIT_ACTION_SUCCESS_TOAST_VISIBLE_MS = 10_000;
+export const GIT_ACTION_SUCCESS_VISIBLE_MS = 10_000;
 
 export function resolveGitActionResultToastTiming(
   type: "error" | "success",
 ): GitActionResultToastTiming {
   return {
     timeout: 0,
-    dismissAfterVisibleMs: type === "success" ? GIT_ACTION_SUCCESS_TOAST_VISIBLE_MS : null,
+    dismissAfterVisibleMs: type === "success" ? GIT_ACTION_SUCCESS_VISIBLE_MS : null,
   };
 }
 
