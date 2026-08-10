@@ -25,6 +25,7 @@ import type {
   UsageLimitsReport,
   UserInputQuestion,
 } from "@t3tools/contracts";
+import { useFocusEffect } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
 import {
   memo,
@@ -652,9 +653,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const isSplitLayout = layoutVariant === "split";
   const contentMaxWidth = isSplitLayout ? CHAT_CONTENT_MAX_WIDTH : undefined;
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
-  useEffect(() => {
-    markThreadVisited();
-  }, [markThreadVisited]);
+  useFocusEffect(
+    useCallback(() => {
+      markThreadVisited();
+    }, [markThreadVisited]),
+  );
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
   const selectedProviderSkills = useMemo(() => {
     const provider = props.serverConfig?.providers.find(
