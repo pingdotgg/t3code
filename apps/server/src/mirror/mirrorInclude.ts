@@ -20,11 +20,24 @@ const decodeProjectFile = Schema.decodeUnknownOption(Schema.fromJsonString(T3Pro
  * setting is on. Deliberately not a free-text list: it rides the same
  * `git add -f` mechanism as `t3.json`'s `mirror.include`, but as a per-project
  * DB toggle rather than a checked-in, team-shared file.
+ *
+ * `:(glob)**` matches env files at any depth (monorepos keep them in
+ * per-app subfolders, not just the repo root); node_modules is excluded at
+ * add time by {@link MIRROR_INCLUDE_EXCLUDE_PATHSPECS}.
  */
 export const MIRROR_EXTRA_ENV_PATTERNS: ReadonlyArray<string> = [
-  ".env",
-  ".env.local",
-  ".env.*.local",
+  ":(glob)**/.env",
+  ":(glob)**/.env.local",
+  ":(glob)**/.env.*.local",
+];
+
+/**
+ * Exclude pathspecs appended to every include-path force-add: dependency
+ * trees are never synced (they ship their own stray .env files), so matches
+ * under any node_modules are dropped.
+ */
+export const MIRROR_INCLUDE_EXCLUDE_PATHSPECS: ReadonlyArray<string> = [
+  ":(glob,exclude)**/node_modules/**",
 ];
 
 export const readMirrorIncludePaths = (services: {

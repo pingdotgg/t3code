@@ -12,6 +12,7 @@ import * as Scope from "effect/Scope";
 import { describe, expect } from "vite-plus/test";
 
 import * as GitSync from "./GitSync.ts";
+import { MIRROR_EXTRA_ENV_PATTERNS } from "./mirrorInclude.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
 const GitSyncTestLayer = GitSync.layer.pipe(
@@ -276,6 +277,37 @@ it.layer(GitSyncTestLayer)("GitSync", (it) => {
         expect(Option.getOrNull(yield* readOption(NodePath.join(mirror, ".env")))).toBe(
           "SECRET=yes\n",
         );
+        expect(Option.isNone(yield* readOption(NodePath.join(mirror, "ignored.log")))).toBe(true);
+      }),
+    );
+
+    it.effect("env glob patterns sync nested env files but never node_modules", () =>
+      Effect.gen(function* () {
+        const origin = yield* makeTmpDir();
+        const mirror = yield* makeTmpDir();
+        yield* initOriginRepo(origin);
+        // Monorepo layout: the real env files live in per-app subfolders,
+        // and installed dependencies carry stray .env files of their own.
+        yield* write(NodePath.join(origin, ".gitignore"), "ignored.log\n.env*\nnode_modules/\n");
+        yield* write(NodePath.join(origin, "apps/api/.env"), "API_SECRET=yes\n");
+        yield* write(NodePath.join(origin, "node_modules/dep/.env"), "DEP=no\n");
+
+        yield* seedMirror({
+          origin,
+          mirror,
+          syncId: "seed-include-nested",
+          includePaths: MIRROR_EXTRA_ENV_PATTERNS,
+        });
+
+        expect(Option.getOrNull(yield* readOption(NodePath.join(mirror, ".env")))).toBe(
+          "SECRET=yes\n",
+        );
+        expect(Option.getOrNull(yield* readOption(NodePath.join(mirror, "apps/api/.env")))).toBe(
+          "API_SECRET=yes\n",
+        );
+        expect(
+          Option.isNone(yield* readOption(NodePath.join(mirror, "node_modules/dep/.env"))),
+        ).toBe(true);
         expect(Option.isNone(yield* readOption(NodePath.join(mirror, "ignored.log")))).toBe(true);
       }),
     );

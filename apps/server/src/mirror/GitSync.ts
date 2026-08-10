@@ -20,6 +20,7 @@ import * as Schema from "effect/Schema";
 import type { MirrorGitRemote } from "@t3tools/contracts";
 
 import { ProcessRunner, type ProcessRunError } from "../processRunner.ts";
+import { MIRROR_INCLUDE_EXCLUDE_PATHSPECS } from "./mirrorInclude.ts";
 
 export const MIRROR_SNAPSHOT_REF_PREFIX = "refs/t3/mirror/snapshots/";
 /** Where host branches land on the origin when they cannot be fast-forwarded. */
@@ -310,10 +311,19 @@ export const make = Effect.gen(function* () {
             // per invocation: `git add` is fatal on an unmatched pathspec and
             // then adds NONE of its arguments, so a single missing entry in a
             // combined call would silently drop the paths that do exist.
+            // Dependency trees are never synced, so matches under any
+            // node_modules are excluded from every add.
             for (const includePath of input.includePaths) {
               yield* run({
                 root: input.root,
-                args: ["add", "-f", "--ignore-errors", "--", includePath],
+                args: [
+                  "add",
+                  "-f",
+                  "--ignore-errors",
+                  "--",
+                  includePath,
+                  ...MIRROR_INCLUDE_EXCLUDE_PATHSPECS,
+                ],
                 env,
                 allowNonZeroExit: true,
               });

@@ -903,7 +903,7 @@ function ProjectDetail({
           <SettingsRow
             id="project-mirror-include-ignored-files"
             title="Sync gitignored env files"
-            description="Also sync .env, .env.local, and .env.*.local files to the mirror, even though they're gitignored."
+            description="Also sync .env, .env.local, and .env.*.local files anywhere in the project (except node_modules) to the mirror, even though they're gitignored."
             resetAction={
               representative.mirrorIncludeIgnoredFiles != null ? (
                 <SettingResetButton
