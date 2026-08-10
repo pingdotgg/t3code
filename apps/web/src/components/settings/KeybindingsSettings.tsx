@@ -70,6 +70,7 @@ import {
   whenAstToExpression,
 } from "./KeybindingsSettings.logic";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -846,6 +847,7 @@ function KeybindingTableRow({
           </button>
         ) : (
           <Input
+            data-keybinding-capture=""
             autoFocus={isRecording}
             aria-label={`Keybinding for ${commandLabel(row.command)}`}
             value={isRecording ? "" : keyDraft}
@@ -1011,6 +1013,7 @@ function NewKeybindingTableRow({
       </div>
       <div className="flex min-w-0 items-center gap-2 pr-4">
         <Input
+          data-keybinding-capture=""
           aria-label={`Keybinding for ${commandLabelText}`}
           value={isRecording ? "" : keyDraft}
           placeholder={isRecording ? "Press shortcut" : "Unassigned"}
@@ -1228,7 +1231,7 @@ export function KeybindingsSettingsPanel() {
   return (
     <SettingsPageContainer className="max-w-5xl">
       <SettingsSection
-        title="Keybindings"
+        {...searchableSetting("keybindings")}
         headerAction={
           <div className="flex items-center gap-1.5">
             <ExpandableHeaderSearch

@@ -22,6 +22,7 @@ const ElectronWindowCreateOptions = Schema.Struct({
   webPreferences: Schema.Struct({
     preload: Schema.NullOr(Schema.String),
     partition: Schema.NullOr(Schema.String),
+    backgroundThrottling: Schema.NullOr(Schema.Boolean),
     sandbox: Schema.NullOr(Schema.Boolean),
     contextIsolation: Schema.NullOr(Schema.Boolean),
     nodeIntegration: Schema.NullOr(Schema.Boolean),
@@ -179,6 +180,7 @@ export const make = Effect.gen(function* () {
         webPreferences: {
           preload: webPreferences?.preload ?? null,
           partition: webPreferences?.partition ?? null,
+          backgroundThrottling: webPreferences?.backgroundThrottling ?? null,
           sandbox: webPreferences?.sandbox ?? null,
           contextIsolation: webPreferences?.contextIsolation ?? null,
           nodeIntegration: webPreferences?.nodeIntegration ?? null,

@@ -226,11 +226,10 @@ export const formatNodePtyProbeFailureReason = (exitCode: number): string | null
 const NODE_PTY_PROBE_SCRIPT = (
   linuxServerDir: string,
 ) => `printf 'nodePath:%s\\n' "$(command -v node 2>/dev/null)"
-printf 'nodeVersion:%s\\n' "$(node -p 'process.versions.node' 2>/dev/null)"
-printf 'resolvedPath:%s\\n' "$PATH"
 if command -v node >/dev/null 2>&1; then
   _ver="$(node -p 'process.versions.node' 2>/dev/null)"; [ -n "$_ver" ] && printf 'nodeVersion:%s\\n' "$_ver"
 fi
+printf 'resolvedPath:%s\\n' "$PATH"
 cd ${shellQuote(linuxServerDir)} && node <<'NODE' >/dev/null 2>&1
 // The server bundle externalizes its deps to node_modules, and the WSL Node
 // can't read inside app.asar, so confirm those deps are unpacked on the real

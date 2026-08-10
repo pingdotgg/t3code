@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Schema } from "effect"
 import { EmbeddingModel } from "effect/unstable/ai"
 import * as AiError from "effect/unstable/ai/AiError"
 
@@ -16,6 +16,18 @@ const makeLayer = (
   )
 
 describe("EmbeddingModel", () => {
+  it.effect("round trips usage with undefined input tokens through JSON", () =>
+    Effect.gen(function*() {
+      const usage = new EmbeddingModel.EmbeddingUsage({ inputTokens: undefined })
+
+      const encoded = yield* Schema.encodeEffect(EmbeddingModel.EmbeddingUsage)(usage)
+      const json = JSON.parse(JSON.stringify(encoded))
+      const decoded = yield* Schema.decodeUnknownEffect(EmbeddingModel.EmbeddingUsage)(json)
+
+      assert.deepStrictEqual(json, {}, "encoded JSON")
+      assert.deepStrictEqual(decoded, new EmbeddingModel.EmbeddingUsage({}), "decoded usage")
+    }))
+
   it.effect("embed returns a vector", () => {
     const calls: Array<ReadonlyArray<string>> = []
 

@@ -1,0 +1,83 @@
+name: Alchemy
+description: Deploy Alchemy stages for pull requests and the main branch, and destroy pull request stages when closed.
+author: alchemy-run
+branding:
+  icon: upload-cloud
+  color: green
+inputs:
+  working-directory:
+    description: Directory where the Alchemy project should be run.
+    required: false
+    default: .
+  main-branch:
+    description: Branch that deploys as the persistent prod stage and is never destroyed.
+    required: false
+    default: main
+outputs:
+  action:
+    description: "The lifecycle action that ran: deploy, destroy, or skip."
+    value: ${{ steps.resolve.outputs.action }}
+  stage:
+    description: The Alchemy stage name.
+    value: ${{ steps.resolve.outputs.stage }}
+  pull-request:
+    description: The pull request number for PR stages.
+    value: ${{ steps.resolve.outputs.pull-request }}
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      shell: bash
+      env:
+        MAIN_BRANCH: ${{ inputs.main-branch }}
+        EVENT_NAME: ${{ github.event_name }}
+        EVENT_ACTION: ${{ github.event.action }}
+        REF_NAME: ${{ github.ref_name }}
+        PR_NUMBER: ${{ github.event.number }}
+      run: |
+        if [ "$EVENT_NAME" = "pull_request" ]; then
+          echo "stage=staging-$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "pull-request=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+
+          if [ "$EVENT_ACTION" = "closed" ]; then
+            echo "action=destroy" >> "$GITHUB_OUTPUT"
+          else
+            echo "action=deploy" >> "$GITHUB_OUTPUT"
+          fi
+          exit 0
+        fi
+
+        if [ "$REF_NAME" = "$MAIN_BRANCH" ]; then
+          echo "stage=prod" >> "$GITHUB_OUTPUT"
+          echo "pull-request=" >> "$GITHUB_OUTPUT"
+          echo "action=deploy" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        echo "stage=" >> "$GITHUB_OUTPUT"
+        echo "pull-request=" >> "$GITHUB_OUTPUT"
+        echo "action=skip" >> "$GITHUB_OUTPUT"
+
+    - if: ${{ steps.resolve.outputs.action == 'deploy' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        STAGE: ${{ steps.resolve.outputs.stage }}
+        PULL_REQUEST_VALUE: ${{ steps.resolve.outputs.pull-request }}
+      run: |
+        if [ -n "$PULL_REQUEST_VALUE" ]; then
+          export PULL_REQUEST="$PULL_REQUEST_VALUE"
+        fi
+        alchemy deploy --stage "$STAGE" --yes
+
+    - if: ${{ steps.resolve.outputs.action == 'destroy' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        STAGE: ${{ steps.resolve.outputs.stage }}
+        PULL_REQUEST_VALUE: ${{ steps.resolve.outputs.pull-request }}
+      run: |
+        if [ -n "$PULL_REQUEST_VALUE" ]; then
+          export PULL_REQUEST="$PULL_REQUEST_VALUE"
+        fi
+        alchemy destroy --stage "$STAGE" --yes

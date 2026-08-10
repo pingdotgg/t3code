@@ -1,11 +1,114 @@
 import type {
+  BackgroundActivityProfile,
+  BackgroundActivitySettings,
   ProviderDriverKind,
   ProviderInstanceConfig,
   ProviderInstanceId,
   ServerSettings,
+  SidebarProjectGroupingMode,
   UnifiedSettings,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import {
+  getBackgroundActivityBaseProfile,
+  normalizeBackgroundActivitySettings,
+  normalizeServerBackgroundActivitySettings,
+  resolveServerBackgroundActivitySettings,
+} from "@t3tools/shared/backgroundActivitySettings";
+import * as Duration from "effect/Duration";
+import * as Equal from "effect/Equal";
+
+export function isProjectGroupingEnabled(mode: SidebarProjectGroupingMode): boolean {
+  return mode !== "separate";
+}
+
+export function projectGroupingModeFromToggle(
+  enabled: boolean,
+  lastEnabledMode: SidebarProjectGroupingMode = "repository",
+): SidebarProjectGroupingMode {
+  if (!enabled) return "separate";
+  return lastEnabledMode === "repository_path" ? "repository_path" : "repository";
+}
+
+const LAST_ENABLED_PROJECT_GROUPING_MODE_KEY = "t3code:last-enabled-project-grouping-mode";
+
+export function readLastEnabledProjectGroupingMode(): SidebarProjectGroupingMode {
+  try {
+    return localStorage.getItem(LAST_ENABLED_PROJECT_GROUPING_MODE_KEY) === "repository_path"
+      ? "repository_path"
+      : "repository";
+  } catch {
+    return "repository";
+  }
+}
+
+export function rememberEnabledProjectGroupingMode(mode: SidebarProjectGroupingMode): void {
+  if (mode === "separate") return;
+  try {
+    localStorage.setItem(LAST_ENABLED_PROJECT_GROUPING_MODE_KEY, mode);
+  } catch {
+    // Storage can be unavailable in restricted browser contexts.
+  }
+}
+
+export function hasChangedBackgroundActivitySettings(
+  settings: Pick<
+    UnifiedSettings,
+    | "backgroundActivity"
+    | "backgroundActivityProfile"
+    | "automaticGitFetchInterval"
+    | "providerHealthRefreshInterval"
+  >,
+): boolean {
+  return (
+    !Equal.equals(settings.backgroundActivity, DEFAULT_UNIFIED_SETTINGS.backgroundActivity) ||
+    settings.backgroundActivityProfile !== DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile ||
+    !Equal.equals(
+      settings.automaticGitFetchInterval,
+      DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
+    ) ||
+    !Equal.equals(
+      settings.providerHealthRefreshInterval,
+      DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
+    )
+  );
+}
+
+export function resolveBackgroundActivityProfileOption(
+  settings: ServerSettings,
+): BackgroundActivityProfile | "advanced" {
+  const resolved = resolveServerBackgroundActivitySettings(settings);
+  const normalized = normalizeBackgroundActivitySettings({
+    schemaVersion: 1,
+    profile: "custom",
+    baseProfile: resolved.profile,
+    overrides: {
+      automaticGitFetchInterval: resolved.automaticGitFetchInterval,
+      providerHealthRefreshInterval: resolved.providerHealthRefreshInterval,
+      hostPowerMonitorActiveInterval: resolved.hostPowerMonitorActiveInterval,
+      hostPowerMonitorIdleInterval: resolved.hostPowerMonitorIdleInterval,
+      idleClientTtl: resolved.idleClientTtl,
+      pauseWhenHostLocked: resolved.pauseWhenHostLocked,
+      pauseWhenHostLowPower: resolved.pauseWhenHostLowPower,
+      pauseWhenClientLowPower: resolved.pauseWhenClientLowPower,
+      pauseWhenOnBattery: resolved.pauseWhenOnBattery,
+    },
+  });
+  return normalized.profile === "custom" ? "advanced" : normalized.profile;
+}
+
+export function backgroundActivitySharedPolicySettings(
+  settings: ServerSettings,
+  profile: BackgroundActivityProfile,
+): BackgroundActivitySettings {
+  const normalized = normalizeServerBackgroundActivitySettings(settings);
+  return {
+    schemaVersion: 1,
+    profile: "custom",
+    baseProfile: profile,
+    overrides: normalized.profile === "custom" ? normalized.overrides : {},
+  };
+}
 
 function collapseOtelSignalsUrl(input: {
   readonly tracesUrl: string;
@@ -87,5 +190,60 @@ export function buildProviderInstanceUpdatePatch(input: {
     ...(input.textGenerationModelSelection !== undefined
       ? { textGenerationModelSelection: input.textGenerationModelSelection }
       : {}),
+  };
+}
+
+// ── Background-activity interval helpers ─────────────────────────────
+// Shared by the General panel's interval rows and the Providers panel's
+// health-check row.
+
+export const PROVIDER_HEALTH_INTERVAL_STEP_SECONDS = 30;
+
+type BackgroundActivityOverridePatch = Partial<{
+  [K in keyof BackgroundActivitySettings["overrides"]]:
+    | BackgroundActivitySettings["overrides"][K]
+    | undefined;
+}>;
+
+export function durationToSeconds(duration: Duration.Duration): number {
+  return Math.round(Duration.toMillis(duration) / 1_000);
+}
+
+export function normalizeIntervalSeconds(value: number | null, minimum = 0): number {
+  if (value === null || !Number.isFinite(value)) {
+    return minimum;
+  }
+  return Math.max(minimum, Math.round(value));
+}
+
+export function backgroundActivityOverrideSettings(
+  current: BackgroundActivitySettings,
+  resolved: ReturnType<typeof resolveServerBackgroundActivitySettings>,
+  overrides: BackgroundActivityOverridePatch,
+) {
+  const nextOverrides: BackgroundActivityOverridePatch = {
+    automaticGitFetchInterval: resolved.automaticGitFetchInterval,
+    providerHealthRefreshInterval: resolved.providerHealthRefreshInterval,
+    hostPowerMonitorActiveInterval: resolved.hostPowerMonitorActiveInterval,
+    hostPowerMonitorIdleInterval: resolved.hostPowerMonitorIdleInterval,
+    idleClientTtl: resolved.idleClientTtl,
+    pauseWhenHostLocked: resolved.pauseWhenHostLocked,
+    pauseWhenHostLowPower: resolved.pauseWhenHostLowPower,
+    pauseWhenClientLowPower: resolved.pauseWhenClientLowPower,
+    pauseWhenOnBattery: resolved.pauseWhenOnBattery,
+    ...overrides,
+  };
+  for (const [key, value] of Object.entries(nextOverrides)) {
+    if (value === undefined) {
+      delete nextOverrides[key as keyof typeof nextOverrides];
+    }
+  }
+  return {
+    backgroundActivity: {
+      schemaVersion: 1 as const,
+      profile: "custom" as const,
+      baseProfile: getBackgroundActivityBaseProfile(current),
+      overrides: nextOverrides as BackgroundActivitySettings["overrides"],
+    },
   };
 }

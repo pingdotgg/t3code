@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { FileDiffContentsLoader } from "@pierre/diffs";
 import { useParams } from "@tanstack/react-router";
 import {
   isAtomCommandInterrupted,
@@ -11,8 +12,11 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  ChevronsDownUpIcon,
+  ChevronsUpDownIcon,
   Columns2Icon,
   PilcrowIcon,
+  RefreshCwIcon,
   Rows3Icon,
   SearchIcon,
   TextWrapIcon,
@@ -28,17 +32,22 @@ import { useTheme } from "../hooks/useTheme";
 import {
   buildFileDiffRenderKey,
   getDiffCollapseIconClassName,
+  getDiffLineStat,
   getRenderablePatch,
   resolveDiffThemeName,
   resolveFileDiffPath,
+  DIFF_SURFACE_THEME_UNSAFE_CSS,
 } from "../lib/diffRendering";
+import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useProject, useThread } from "../state/entities";
 import { resolveThreadRouteRef } from "../threadRoutes";
 import { useClientSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
+import { DiffStatLabel } from "./chat/DiffStatLabel";
 import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/AnnotatableCodeView";
+import { Button } from "./ui/button";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { Switch } from "./ui/switch";
 import {
@@ -61,12 +70,12 @@ import {
 } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { useEnvironmentQuery } from "../state/query";
+import { useAtomCommand } from "../state/use-atom-command";
 import { serverEnvironment } from "../state/server";
 import { reviewEnvironment } from "../state/review";
 import { vcsEnvironment } from "../state/vcs";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
 
-type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
 
@@ -77,60 +86,171 @@ interface CollapsedDiffFilesState {
 
 const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
 
-const DIFF_PANEL_UNSAFE_CSS = `
-[data-diffs-header],
-[data-diff],
-[data-file],
-[data-error-wrapper],
-[data-virtualizer-buffer] {
-  --diffs-header-font-family: var(--font-sans) !important;
-  --diffs-font-family: var(--font-mono) !important;
-  --diffs-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
-  --diffs-light-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
-  --diffs-dark-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
-  --diffs-token-light-bg: transparent;
-  --diffs-token-dark-bg: transparent;
+const DIFF_PANEL_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
+:is(
+  [data-line],
+  [data-line-annotation],
+  [data-merge-conflict],
+  [data-merge-conflict-actions],
+  [data-no-newline]
+)[data-selected-line] {
+  --diffs-line-bg: light-dark(
+    color-mix(
+      in lab,
+      var(--code-background) 88%,
+      color-mix(in srgb, var(--code-background) 50%, var(--diffs-modified-base))
+    ),
+    color-mix(
+      in lab,
+      var(--code-background) 80%,
+      color-mix(in srgb, var(--code-background) 70%, var(--diffs-modified-base))
+    )
+  ) !important;
+}
 
-  --diffs-bg-context-override: color-mix(in srgb, var(--background) 97%, var(--foreground));
-  --diffs-bg-hover-override: color-mix(in srgb, var(--background) 94%, var(--foreground));
-  --diffs-bg-separator-override: color-mix(in srgb, var(--background) 95%, var(--foreground));
-  --diffs-bg-buffer-override: color-mix(in srgb, var(--background) 90%, var(--foreground));
+:is([data-gutter-buffer], [data-column-number])[data-selected-line] {
+  --diffs-line-bg: light-dark(
+    color-mix(
+      in lab,
+      var(--code-background) 91%,
+      color-mix(in srgb, var(--code-background) 35%, var(--diffs-modified-base))
+    ),
+    color-mix(
+      in lab,
+      var(--code-background) 85%,
+      color-mix(in srgb, var(--code-background) 60%, var(--diffs-modified-base))
+    )
+  ) !important;
+}
 
-  --diffs-bg-addition-override: color-mix(in srgb, var(--background) 92%, var(--success));
-  --diffs-bg-addition-number-override: color-mix(in srgb, var(--background) 88%, var(--success));
-  --diffs-bg-addition-hover-override: color-mix(in srgb, var(--background) 85%, var(--success));
-  --diffs-bg-addition-emphasis-override: color-mix(in srgb, var(--background) 80%, var(--success));
+[data-indicators="bars"]
+  :is([data-column-number], [data-gutter-buffer="annotation"])[data-selected-line] {
+  position: relative;
+}
 
-  --diffs-bg-deletion-override: color-mix(in srgb, var(--background) 92%, var(--destructive));
-  --diffs-bg-deletion-number-override: color-mix(in srgb, var(--background) 88%, var(--destructive));
-  --diffs-bg-deletion-hover-override: color-mix(in srgb, var(--background) 85%, var(--destructive));
-  --diffs-bg-deletion-emphasis-override: color-mix(
-    in srgb,
-    var(--background) 80%,
-    var(--destructive)
-  );
-
-  background-color: var(--diffs-bg) !important;
+[data-indicators="bars"]
+  :is([data-column-number], [data-gutter-buffer="annotation"])[data-selected-line]::before {
+  position: absolute !important;
+  inset-block: 0 !important;
+  inset-inline-start: 0 !important;
+  display: block !important;
+  width: 4px !important;
+  min-width: 4px !important;
+  max-width: 4px !important;
+  height: auto !important;
+  padding: 0 !important;
+  content: "" !important;
+  background-color: var(--diffs-modified-base) !important;
+  background-image: none !important;
 }
 
 [data-file-info] {
-  background-color: color-mix(in srgb, var(--card) 94%, var(--foreground)) !important;
-  border-block-color: var(--border) !important;
-  color: var(--foreground) !important;
+  background-color: var(--code-background) !important;
+  border-block-color: transparent !important;
+  color: var(--code-foreground) !important;
 }
 
 [data-diffs-header] {
   position: sticky !important;
   top: 0;
   z-index: 4;
-  background-color: color-mix(in srgb, var(--card) 94%, var(--foreground)) !important;
-  border-bottom: 1px solid var(--border) !important;
+  background-color: var(--code-background) !important;
+  border-bottom-color: transparent !important;
   align-items: center !important;
   font-family: var(--font-sans) !important;
   font-size: 12px !important;
   line-height: 1 !important;
   min-height: 32px !important;
   padding-block: 6px !important;
+  padding-inline: 8px 12px !important;
+}
+
+[data-diffs-header]:hover {
+  background-color: color-mix(in srgb, var(--code-background) 97%, var(--code-foreground)) !important;
+}
+
+:is([data-separator="line-info"], [data-separator="line-info-basic"]) {
+  height: 24px !important;
+  margin-block: 0 !important;
+  background-color: var(--code-background) !important;
+}
+
+:is([data-separator="line-info"], [data-separator="line-info-basic"])
+  [data-separator-wrapper] {
+  padding-inline: 8px 12px !important;
+  background-color: transparent !important;
+}
+
+:is([data-separator="line-info"], [data-separator="line-info-basic"])
+  [data-separator-content] {
+  gap: 8px;
+  padding-inline: 0 !important;
+  background-color: transparent !important;
+  color: color-mix(in srgb, var(--code-foreground) 52%, var(--code-background)) !important;
+  font-family: var(--font-sans) !important;
+  font-size: 11px !important;
+  text-decoration: none !important;
+}
+
+:is([data-separator="line-info"], [data-separator="line-info-basic"])
+  [data-unmodified-lines] {
+  display: flex !important;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+:is([data-separator="line-info"], [data-separator="line-info-basic"])
+  [data-unmodified-lines]::before,
+:is([data-separator="line-info"], [data-separator="line-info-basic"])
+  [data-unmodified-lines]::after {
+  width: auto;
+  height: 1px;
+  flex: 1 1 auto;
+  content: "";
+  background-color: color-mix(in srgb, var(--code-background) 92%, var(--code-foreground));
+}
+
+:is([data-separator="line-info"], [data-separator="line-info-basic"])[data-expand-index]
+  [data-separator-wrapper] {
+  grid-template-columns: 0 minmax(0, 1fr) !important;
+}
+
+:is([data-separator="line-info"], [data-separator="line-info-basic"])[data-expand-index]
+  [data-separator-content] {
+  grid-column: 2 !important;
+}
+
+:is([data-separator="line-info"], [data-separator="line-info-basic"])
+  [data-expand-button] {
+  display: none !important;
+}
+
+:is([data-separator="line-info"], [data-separator="line-info-basic"]):has(
+    [data-expand-button]
+  )
+  [data-separator-content] {
+  cursor: pointer;
+}
+
+:is([data-separator="line-info"], [data-separator="line-info-basic"]):has(
+    [data-expand-button]
+  ):hover
+  [data-separator-content] {
+  color: color-mix(in srgb, var(--code-foreground) 76%, var(--code-background)) !important;
+}
+
+:is([data-separator="line-info"], [data-separator="line-info-basic"]):has(
+    [data-expand-button]
+  ):hover
+  [data-unmodified-lines]::before,
+:is([data-separator="line-info"], [data-separator="line-info-basic"]):has(
+    [data-expand-button]
+  ):hover
+  [data-unmodified-lines]::after {
+  background-color: color-mix(in srgb, var(--code-background) 84%, var(--code-foreground));
 }
 
 [data-diffs-header] [data-header-content] {
@@ -170,7 +290,7 @@ const DIFF_PANEL_UNSAFE_CSS = `
 }
 
 [data-title]:hover {
-  color: color-mix(in srgb, var(--foreground) 84%, var(--primary)) !important;
+  color: color-mix(in srgb, var(--code-foreground) 84%, var(--primary)) !important;
   text-decoration-color: currentColor;
 }
 `;
@@ -191,7 +311,8 @@ export default function DiffPanel({
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
   const [initialGitScope] = useState(initialGitScopeProp);
-  const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
+  const diffRenderMode = useDiffPanelStore((state) => state.diffRenderMode);
+  const setDiffRenderMode = useDiffPanelStore((state) => state.setDiffRenderMode);
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
   const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
   const [baseRefQuery, setBaseRefQuery] = useState("");
@@ -199,7 +320,12 @@ export default function DiffPanel({
     scopeKey: null,
     fileKeys: EMPTY_COLLAPSED_DIFF_FILE_KEYS,
   }));
+  const [codeViewRevision, setCodeViewRevision] = useState(0);
   const codeViewRef = useRef<AnnotatableCodeViewHandle>(null);
+  const lastCompletedTurnRefreshRef = useRef<{
+    readonly threadKey: string | null;
+    readonly turnId: TurnId | null;
+  } | null>(null);
 
   const routeThreadRef = useParams({
     strict: false,
@@ -224,6 +350,7 @@ export default function DiffPanel({
     activeThread?.environmentId ?? null,
     serverConfig?.availableEditors ?? [],
   );
+  const getDiffFileContents = useAtomCommand(reviewEnvironment.diffFileContents);
   const gitStatusQuery = useEnvironmentQuery(
     activeThread !== null && activeThread !== undefined && activeCwd != null
       ? vcsEnvironment.status({
@@ -292,6 +419,7 @@ export default function DiffPanel({
   const collapseScopeKey = routeThreadRef
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${reviewSectionId}`
     : null;
+  const codeViewMountKey = `${collapseScopeKey ?? reviewSectionId}:${codeViewRevision}`;
   const collapsedDiffFileKeys =
     collapsedDiffFiles.scopeKey === collapseScopeKey
       ? collapsedDiffFiles.fileKeys
@@ -354,9 +482,93 @@ export default function DiffPanel({
   const branchDiffPreview = shouldRetryBranchDiffAtEnvironmentCwd
     ? fallbackBranchDiffPreview
     : primaryBranchDiffPreview;
+  const refreshBranchDiffPreview = branchDiffPreview.refresh;
+  const canRefreshGitDiff =
+    isGitRepo && selectedTurnId === null && activeThread != null && activeCwd != null;
+  const activeThreadRefreshKey = routeThreadRef
+    ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}`
+    : null;
+
+  useEffect(() => {
+    if (!canRefreshGitDiff) return;
+    const refreshOnFocus = () => refreshBranchDiffPreview();
+    window.addEventListener("focus", refreshOnFocus);
+    return () => window.removeEventListener("focus", refreshOnFocus);
+  }, [canRefreshGitDiff, refreshBranchDiffPreview]);
+
+  useEffect(() => {
+    const current = {
+      threadKey: activeThreadRefreshKey,
+      turnId: latestTurn?.turnId ?? null,
+    };
+    const previous = lastCompletedTurnRefreshRef.current;
+    if (!canRefreshGitDiff) {
+      return;
+    }
+    if (previous === null || previous.threadKey !== current.threadKey) {
+      lastCompletedTurnRefreshRef.current = current;
+      return;
+    }
+    if (previous.turnId === current.turnId) return;
+    refreshBranchDiffPreview();
+    lastCompletedTurnRefreshRef.current = current;
+  }, [activeThreadRefreshKey, canRefreshGitDiff, latestTurn?.turnId, refreshBranchDiffPreview]);
+
   const selectedGitSource = branchDiffPreview.data?.sources.find(
     (source) => source.kind === (selectedGitScope === "unstaged" ? "working-tree" : "branch-range"),
   );
+  const loadDiffFiles = useMemo<FileDiffContentsLoader | undefined>(() => {
+    const preview = branchDiffPreview.data;
+    if (selectedTurnId !== null || !activeThread || !preview || !selectedGitSource) {
+      return undefined;
+    }
+
+    const source = selectedGitSource;
+    return async (fileDiff) => {
+      const newPath = resolveFileDiffPath(fileDiff);
+      const oldPath = fileDiff.prevName
+        ? resolveFileDiffPath({ ...fileDiff, name: fileDiff.prevName })
+        : newPath;
+      const result = await getDiffFileContents({
+        environmentId: activeThread.environmentId,
+        input: {
+          cwd: preview.cwd,
+          sourceKind: source.kind,
+          changeType: fileDiff.type,
+          baseRef: source.baseRef,
+          headRef: source.headRef,
+          oldPath,
+          newPath,
+        },
+      });
+      if (result._tag !== "Success") {
+        throw squashAtomCommandFailure(result);
+      }
+
+      const newFile = {
+        name: newPath,
+        contents: result.value.newContents,
+        cacheKey: `${source.diffHash}:new:${newPath}`,
+      };
+      if (fileDiff.type === "rename-pure") {
+        return { oldFile: null, newFile };
+      }
+      return {
+        oldFile: {
+          name: oldPath,
+          contents: result.value.oldContents,
+          cacheKey: `${source.diffHash}:old:${oldPath}`,
+        },
+        newFile,
+      };
+    };
+  }, [
+    activeThread,
+    branchDiffPreview.data,
+    getDiffFileContents,
+    selectedGitSource,
+    selectedTurnId,
+  ]);
   const localBranchRefs = useEnvironmentQuery(
     selectedTurnId === null &&
       selectedGitScope === "branch" &&
@@ -433,10 +645,17 @@ export default function DiffPanel({
       }),
     );
   }, [renderablePatch]);
+  const renderableFileEntries = useMemo(
+    () =>
+      renderableFiles.map((fileDiff) => ({
+        fileDiff,
+        fileKey: buildFileDiffRenderKey(fileDiff),
+      })),
+    [renderableFiles],
+  );
   const codeViewFiles = useMemo(
     () =>
-      renderableFiles.map((fileDiff) => {
-        const fileKey = buildFileDiffRenderKey(fileDiff);
+      renderableFileEntries.map(({ fileDiff, fileKey }) => {
         return {
           fileDiff,
           filePath: resolveFileDiffPath(fileDiff),
@@ -444,15 +663,19 @@ export default function DiffPanel({
           collapsed: collapsedDiffFileKeys.has(fileKey),
         };
       }),
-    [collapsedDiffFileKeys, renderableFiles],
+    [collapsedDiffFileKeys, renderableFileEntries],
   );
+  const diffFileKeys = useMemo(() => codeViewFiles.map((file) => file.fileKey), [codeViewFiles]);
+  const allDiffFilesCollapsed = areAllDiffFilesCollapsed(diffFileKeys, collapsedDiffFileKeys);
+  const diffLineStat = useMemo(() => getDiffLineStat(renderableFiles), [renderableFiles]);
+  const selectedDiffFileKey = selectedFilePath
+    ? (codeViewFiles.find((candidate) => candidate.filePath === selectedFilePath)?.fileKey ?? null)
+    : null;
 
   useEffect(() => {
-    if (!selectedFilePath) return;
-    const file = codeViewFiles.find((candidate) => candidate.filePath === selectedFilePath);
-    if (!file) return;
-    codeViewRef.current?.scrollTo({ type: "item", id: file.fileKey, align: "start" });
-  }, [codeViewFiles, selectedFilePath, selectedFileRevealRequestId]);
+    if (!selectedDiffFileKey) return;
+    codeViewRef.current?.scrollTo({ type: "item", id: selectedDiffFileKey, align: "start" });
+  }, [codeViewMountKey, selectedDiffFileKey, selectedFileRevealRequestId]);
 
   const openDiffFile = useCallback(
     (filePath: string) => {
@@ -496,6 +719,19 @@ export default function DiffPanel({
     [collapseScopeKey],
   );
 
+  const toggleDiffFileCollapse = useCallback(() => {
+    setCodeViewRevision((current) => current + 1);
+    setCollapsedDiffFiles((current) => {
+      const currentKeys =
+        current.scopeKey === collapseScopeKey ? current.fileKeys : EMPTY_COLLAPSED_DIFF_FILE_KEYS;
+
+      return {
+        scopeKey: collapseScopeKey,
+        fileKeys: toggleAllDiffFiles(diffFileKeys, currentKeys),
+      };
+    });
+  }, [collapseScopeKey, diffFileKeys]);
+
   const selectTurn = (turnId: TurnId) => {
     if (!routeThreadRef) return;
     useDiffPanelStore.getState().selectTurn(routeThreadRef, turnId);
@@ -514,34 +750,44 @@ export default function DiffPanel({
       <div className="flex min-w-0 flex-1 items-center gap-3 [-webkit-app-region:no-drag]">
         <DropdownMenu>
           <DropdownMenuTrigger
-            className="inline-flex h-6 max-w-full items-center gap-1 rounded-md bg-muted/70 px-2 text-xs font-medium text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex h-6 max-w-full items-center gap-1 rounded-md bg-accent px-2 text-xs font-medium text-accent-foreground outline-none transition-colors hover:bg-accent/80 focus-visible:ring-2 focus-visible:ring-ring"
             aria-label={`Diff scope: ${selectedScopeLabel}`}
           >
             <span className="truncate">{selectedScopeLabel}</span>
-            <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+            <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-60">
-            <DropdownMenuItem onClick={() => selectGitScope("unstaged")}>
+            <DropdownMenuItem
+              className={
+                selectedTurnId === null && selectedGitScope === "unstaged"
+                  ? "bg-foreground/[0.08]"
+                  : undefined
+              }
+              onClick={() => selectGitScope("unstaged")}
+            >
               <span>Working tree</span>
-              {selectedTurnId === null && selectedGitScope === "unstaged" && (
-                <CheckIcon className="ml-auto" />
-              )}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => selectGitScope("branch")}>
-              <span>Branch changes</span>
-              {selectedTurnId === null && selectedGitScope === "branch" && (
-                <CheckIcon className="ml-auto" />
-              )}
             </DropdownMenuItem>
             <DropdownMenuItem
+              className={
+                selectedTurnId === null && selectedGitScope === "branch"
+                  ? "bg-foreground/[0.08]"
+                  : undefined
+              }
+              onClick={() => selectGitScope("branch")}
+            >
+              <span>Branch changes</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className={
+                selectedTurnId !== null && selectedTurn?.turnId === latestTurn?.turnId
+                  ? "bg-foreground/[0.08]"
+                  : undefined
+              }
               onClick={() => {
                 if (latestTurn) selectTurn(latestTurn.turnId);
               }}
             >
               <span>Latest turn</span>
-              {selectedTurnId !== null && selectedTurn?.turnId === latestTurn?.turnId && (
-                <CheckIcon className="ml-auto" />
-              )}
             </DropdownMenuItem>
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>Turn</DropdownMenuSubTrigger>
@@ -554,13 +800,15 @@ export default function DiffPanel({
                   return (
                     <DropdownMenuItem
                       key={summary.turnId}
+                      className={
+                        summary.turnId === selectedTurn?.turnId ? "bg-foreground/[0.08]" : undefined
+                      }
                       onClick={() => selectTurn(summary.turnId)}
                     >
                       <span>Turn {turnCount}</span>
                       <span className="ml-auto text-xs tabular-nums text-muted-foreground">
                         {formatShortTimestamp(summary.completedAt, settings.timestampFormat)}
                       </span>
-                      {summary.turnId === selectedTurn?.turnId && <CheckIcon className="ml-1" />}
                     </DropdownMenuItem>
                   );
                 })}
@@ -683,10 +931,63 @@ export default function DiffPanel({
         )}
       </div>
       <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
+        {codeViewFiles.length > 0 && (
+          <DiffStatLabel
+            additions={diffLineStat.additions}
+            deletions={diffLineStat.deletions}
+            className="mr-1 text-[11px]"
+            layout="inline"
+          />
+        )}
+        {canRefreshGitDiff && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={branchDiffPreview.isPending ? "Refreshing diff" : "Refresh diff"}
+                  onClick={refreshBranchDiffPreview}
+                />
+              }
+            >
+              <RefreshCwIcon
+                className={cn("size-3.5", branchDiffPreview.isPending && "animate-spin")}
+              />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {branchDiffPreview.isPending ? "Refreshing diff…" : "Refresh diff"}
+            </TooltipPopup>
+          </Tooltip>
+        )}
+        {codeViewFiles.length > 0 && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={allDiffFilesCollapsed ? "Expand all files" : "Collapse all files"}
+                  onClick={toggleDiffFileCollapse}
+                />
+              }
+            >
+              {allDiffFilesCollapsed ? (
+                <ChevronsUpDownIcon className="size-3.5" />
+              ) : (
+                <ChevronsDownUpIcon className="size-3.5" />
+              )}
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {allDiffFilesCollapsed ? "Expand all files" : "Collapse all files"}
+            </TooltipPopup>
+          </Tooltip>
+        )}
         <ToggleGroup
-          className="shrink-0"
-          variant="outline"
-          size="xs"
+          className="shrink-0 gap-1"
+          size="sm"
           value={[diffRenderMode]}
           onValueChange={(value) => {
             const next = value[0];
@@ -695,11 +996,11 @@ export default function DiffPanel({
             }
           }}
         >
-          <Toggle aria-label="Stacked diff view" value="stacked">
-            <Rows3Icon className="size-3" />
+          <Toggle aria-label="Stacked diff view" value="stacked" variant="ghost">
+            <Rows3Icon className="size-3.5" />
           </Toggle>
-          <Toggle aria-label="Split diff view" value="split">
-            <Columns2Icon className="size-3" />
+          <Toggle aria-label="Split diff view" value="split" variant="ghost">
+            <Columns2Icon className="size-3.5" />
           </Toggle>
         </ToggleGroup>
         <Tooltip>
@@ -707,8 +1008,8 @@ export default function DiffPanel({
             render={
               <Toggle
                 aria-label={wordWrap ? "Disable diff line wrapping" : "Enable diff line wrapping"}
-                variant="outline"
-                size="xs"
+                variant="ghost"
+                size="sm"
                 pressed={wordWrap}
                 onPressedChange={(pressed) => {
                   setWordWrap(Boolean(pressed));
@@ -716,7 +1017,7 @@ export default function DiffPanel({
               />
             }
           >
-            <TextWrapIcon className="size-3" />
+            <TextWrapIcon className="size-3.5" />
           </TooltipTrigger>
           <TooltipPopup side="top">
             {wordWrap ? "Disable line wrapping" : "Enable line wrapping"}
@@ -729,8 +1030,8 @@ export default function DiffPanel({
                 aria-label={
                   diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"
                 }
-                variant="outline"
-                size="xs"
+                variant="ghost"
+                size="sm"
                 pressed={diffIgnoreWhitespace}
                 onPressedChange={(pressed) => {
                   setDiffIgnoreWhitespace(Boolean(pressed));
@@ -738,7 +1039,7 @@ export default function DiffPanel({
               />
             }
           >
-            <PilcrowIcon className="size-3" />
+            <PilcrowIcon className="size-3.5" />
           </TooltipTrigger>
           <TooltipPopup side="top">
             {diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"}
@@ -773,7 +1074,7 @@ export default function DiffPanel({
             )}
             {selectedPatchError && !renderablePatch && (
               <div className="px-3">
-                <p className="mb-2 text-[11px] text-red-500/80">{selectedPatchError}</p>
+                <p className="mb-2 text-[11px] text-error/80">{selectedPatchError}</p>
               </div>
             )}
             {!renderablePatch ? (
@@ -810,8 +1111,9 @@ export default function DiffPanel({
                 }}
               >
                 <AnnotatableCodeView
-                  viewerRef={codeViewRef}
                   key={collapseScopeKey ?? reviewSectionId}
+                  viewerRef={codeViewRef}
+                  codeViewKey={codeViewMountKey}
                   className="diff-render-surface h-full min-h-0 overflow-auto"
                   files={codeViewFiles}
                   sectionId={reviewSectionId}
@@ -826,7 +1128,7 @@ export default function DiffPanel({
                             <button
                               type="button"
                               className={cn(
-                                "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 transition-colors hover:bg-foreground/10 focus-visible:outline-hidden",
+                                "-ms-0.5 inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 transition-colors hover:bg-foreground/10 focus-visible:outline-hidden",
                                 getDiffCollapseIconClassName(fileDiff),
                               )}
                               aria-label={collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`}
@@ -858,7 +1160,14 @@ export default function DiffPanel({
                     themeType: resolvedTheme as DiffThemeType,
                     unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
                     stickyHeaders: true,
-                    layout: { paddingTop: 8, paddingBottom: 8, gap: 8 },
+                    ...(loadDiffFiles ? { loadDiffFiles } : {}),
+                    itemMetrics: {
+                      diffHeaderHeight: 32,
+                      hunkSeparatorHeight: 24,
+                      paddingTop: 0,
+                      paddingBottom: 0,
+                    },
+                    layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
                   }}
                 />
               </div>

@@ -278,6 +278,31 @@ export interface ComposerThreadDraftState {
 }
 
 /**
+ * True when the user has invested real content in the draft: typed text or
+ * any attachment/context. Model selection and mode choices alone do not
+ * count — those are ambient defaults, not work in progress. Used by the
+ * sidebar draft rows (which draft sessions deserve a row) and by new-thread
+ * resurrection (a draft with content keeps its settings instead of being
+ * reset to defaults).
+ */
+export function composerDraftHasUserContent(
+  draft: ComposerThreadDraftState | null | undefined,
+): boolean {
+  if (!draft) {
+    return false;
+  }
+  return (
+    draft.prompt.trim().length > 0 ||
+    draft.images.length > 0 ||
+    draft.persistedAttachments.length > 0 ||
+    draft.terminalContexts.length > 0 ||
+    draft.elementContexts.length > 0 ||
+    draft.previewAnnotations.length > 0 ||
+    draft.reviewComments.length > 0
+  );
+}
+
+/**
  * Mutable routing and execution context for a pre-thread draft session.
  *
  * Unlike a real server thread, a draft session can still change target
@@ -406,6 +431,15 @@ interface ComposerDraftStoreState {
   setModelSelection: (
     threadRef: ComposerThreadTarget,
     modelSelection: ModelSelection | null | undefined,
+    opts?: {
+      /**
+       * Replace the stored entry outright instead of preserving its
+       * existing options when the incoming selection has none. Used when
+       * the selection is a complete snapshot (e.g. carried from another
+       * thread) rather than a model-only change.
+       */
+      replaceOptions?: boolean;
+    },
   ) => void;
   /** Replace the model options for one or more providers in the draft. */
   setModelOptions: (
@@ -486,6 +520,13 @@ interface ComposerDraftStoreState {
     attachments: PersistedComposerImageAttachment[],
   ) => void;
   clearComposerContent: (threadRef: ComposerThreadTarget) => void;
+  /**
+   * Clears only the prompt text and image attachments, preserving terminal /
+   * element contexts, preview annotations, and review comments. Used by the
+   * prompt stash, which can only round-trip text + images: clearing the
+   * session-bound contexts would destroy state nothing can restore.
+   */
+  clearComposerPromptAndImages: (threadRef: ComposerThreadTarget) => void;
 }
 
 export interface EffectiveComposerModelState {
@@ -1324,6 +1365,10 @@ function createDraftThreadState(
     interactionMode?: ProviderInteractionMode;
   },
 ): DraftThreadState {
+  // A project change (including switching environments within a logical
+  // project) invalidates machine-specific context: the branch may not exist
+  // there and the worktree path certainly doesn't. The user's *intent* —
+  // env mode and start-from-origin — is machine-independent and carries.
   const projectChanged =
     existingThread !== undefined &&
     (existingThread.environmentId !== projectRef.environmentId ||
@@ -1342,9 +1387,7 @@ function createDraftThreadState(
       : (options.branch ?? null);
   const nextStartFromOrigin =
     options?.startFromOrigin === undefined
-      ? projectChanged
-        ? false
-        : (existingThread?.startFromOrigin ?? false)
+      ? (existingThread?.startFromOrigin ?? false)
       : options.startFromOrigin;
   return {
     threadId,
@@ -1358,12 +1401,7 @@ function createDraftThreadState(
     branch: nextBranch,
     worktreePath: nextWorktreePath,
     envMode:
-      options?.envMode ??
-      (nextWorktreePath
-        ? "worktree"
-        : projectChanged
-          ? "local"
-          : (existingThread?.envMode ?? "local")),
+      options?.envMode ?? (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
     startFromOrigin: nextStartFromOrigin,
     promotedTo: null,
   };
@@ -1818,11 +1856,34 @@ function migratePersistedComposerDraftStoreState(
 function partializeComposerDraftStoreState(
   state: ComposerDraftStoreState,
 ): PersistedComposerDraftStoreState {
+  // Draft sessions worth persisting: mapped (a new-thread flow targets
+  // them), promoting (mid-send), or holding real user content (they back a
+  // sidebar row). Everything else is a zombie — and its composer blob must
+  // be dropped WITH it, or model/mode-only entries would persist forever
+  // keyed to a session that no longer exists.
+  const mappedDraftKeys = new Set(
+    Object.values(state.logicalProjectDraftThreadKeyByLogicalProjectKey),
+  );
+  const keptSessionKeys = new Set(
+    Object.entries(state.draftThreadsByThreadKey)
+      .filter(
+        ([threadKey, draftThread]) =>
+          mappedDraftKeys.has(threadKey) ||
+          isDraftThreadPromoting(draftThread) ||
+          composerDraftHasUserContent(state.draftsByThreadKey[threadKey]),
+      )
+      .map(([threadKey]) => threadKey),
+  );
   const persistedDraftsByThreadKey: DeepMutable<
     PersistedComposerDraftStoreState["draftsByThreadKey"]
   > = {};
   for (const [threadKey, draft] of Object.entries(state.draftsByThreadKey)) {
     if (typeof threadKey !== "string" || threadKey.length === 0) {
+      continue;
+    }
+    // Composer content keyed to a dropped draft session goes with it.
+    // Server-thread keys have no session entry and are unaffected.
+    if (state.draftThreadsByThreadKey[threadKey] !== undefined && !keptSessionKeys.has(threadKey)) {
       continue;
     }
     const hasModelData =
@@ -1898,9 +1959,18 @@ function partializeComposerDraftStoreState(
     };
     persistedDraftsByThreadKey[threadKey] = persistedDraft;
   }
+  const persistedDraftThreadsByThreadKey: DeepMutable<
+    PersistedComposerDraftStoreState["draftThreadsByThreadKey"]
+  > = {};
+  for (const [threadKey, draftThread] of Object.entries(state.draftThreadsByThreadKey)) {
+    if (!keptSessionKeys.has(threadKey)) {
+      continue;
+    }
+    persistedDraftThreadsByThreadKey[threadKey] = draftThread;
+  }
   return {
     draftsByThreadKey: persistedDraftsByThreadKey,
-    draftThreadsByThreadKey: state.draftThreadsByThreadKey,
+    draftThreadsByThreadKey: persistedDraftThreadsByThreadKey,
     logicalProjectDraftThreadKeyByLogicalProjectKey:
       state.logicalProjectDraftThreadKeyByLogicalProjectKey,
     stickyModelSelectionByProvider: compactModelSelectionByProvider(
@@ -2082,7 +2152,7 @@ function hydratePersistedComposerImageAttachment(
   }
 }
 
-function hydrateImagesFromPersisted(
+export function hydrateImagesFromPersisted(
   attachments: ReadonlyArray<PersistedComposerImageAttachment>,
 ): ComposerImageAttachment[] {
   return attachments.flatMap((attachment) => {
@@ -2201,7 +2271,25 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           return get().getDraftSessionByProjectRef(projectRef);
         },
         getDraftSessionByProjectRef: (projectRef) => {
-          for (const [draftId, draftThread] of Object.entries(get().draftThreadsByThreadKey)) {
+          const state = get();
+          // Mapped drafts win: a project can also own older unmapped drafts
+          // (invested ones left behind by a remap), but "the" draft for a
+          // project is the one new-thread flows currently target.
+          for (const draftId of Object.values(
+            state.logicalProjectDraftThreadKeyByLogicalProjectKey,
+          )) {
+            const draftThread = state.draftThreadsByThreadKey[draftId];
+            if (!draftThread || isDraftThreadPromoting(draftThread)) {
+              continue;
+            }
+            if (
+              draftThread.projectId === projectRef.projectId &&
+              draftThread.environmentId === projectRef.environmentId
+            ) {
+              return toProjectDraftSession(DraftId.make(draftId), draftThread);
+            }
+          }
+          for (const [draftId, draftThread] of Object.entries(state.draftThreadsByThreadKey)) {
             if (isDraftThreadPromoting(draftThread)) {
               continue;
             }
@@ -2276,6 +2364,11 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               previousThreadKeyForLogicalProject === undefined
                 ? undefined
                 : nextDraftThreadsByThreadKey[previousThreadKeyForLogicalProject];
+            // A remap only garbage-collects the previous draft when the user
+            // never invested content in it. A draft with typed text or
+            // attachments stays alive unmapped — the sidebar draft rows list
+            // every such session, so "new thread" can mint a fresh draft
+            // without destroying the one the user walked away from.
             if (
               previousThreadKeyForLogicalProject &&
               previousThreadKeyForLogicalProject !== draftId &&
@@ -2283,7 +2376,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 nextLogicalProjectDraftThreadKeyByLogicalProjectKey,
                 previousThreadKeyForLogicalProject,
               ) &&
-              !isDraftThreadPromoting(previousDraftThread)
+              !isDraftThreadPromoting(previousDraftThread) &&
+              !composerDraftHasUserContent(
+                state.draftsByThreadKey[previousThreadKeyForLogicalProject],
+              )
             ) {
               delete nextDraftThreadsByThreadKey[previousThreadKeyForLogicalProject];
               if (state.draftsByThreadKey[previousThreadKeyForLogicalProject] !== undefined) {
@@ -2327,6 +2423,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             ) {
               return state;
             }
+            // Mirrors createDraftThreadState: a project/environment change
+            // drops machine-specific context (branch, worktree path) but
+            // keeps the user's env mode and start-from-origin intent.
             const projectChanged =
               nextProjectRef.environmentId !== existing.environmentId ||
               nextProjectRef.projectId !== existing.projectId;
@@ -2344,9 +2443,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 : (options.branch ?? null);
             const nextStartFromOrigin =
               options.startFromOrigin === undefined
-                ? projectChanged
-                  ? false
-                  : existing.startFromOrigin
+                ? existing.startFromOrigin
                 : options.startFromOrigin;
             const nextDraftThread: DraftThreadState = {
               threadId: existing.threadId,
@@ -2362,12 +2459,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               branch: nextBranch,
               worktreePath: nextWorktreePath,
               envMode:
-                options.envMode ??
-                (nextWorktreePath
-                  ? "worktree"
-                  : projectChanged
-                    ? "local"
-                    : (existing.envMode ?? "local")),
+                options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
               startFromOrigin: nextStartFromOrigin,
               promotedTo: existing.promotedTo ?? null,
             };
@@ -2396,15 +2488,30 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
         },
         clearProjectDraftThreadId: (projectRef) => {
           set((state) => {
-            const matchingThreadEntry = Object.entries(state.draftThreadsByThreadKey).find(
-              ([, draftThread]) =>
-                draftThread.projectId === projectRef.projectId &&
-                draftThread.environmentId === projectRef.environmentId,
-            );
-            if (!matchingThreadEntry) {
+            // A project can own several sessions (invested drafts survive
+            // remaps unmapped), so project removal must sweep them all — a
+            // leftover would render a sidebar row for a project that no
+            // longer exists.
+            const matchingThreadKeys = Object.entries(state.draftThreadsByThreadKey)
+              .filter(
+                ([, draftThread]) =>
+                  draftThread.projectId === projectRef.projectId &&
+                  draftThread.environmentId === projectRef.environmentId,
+              )
+              .map(([threadKey]) => threadKey);
+            if (matchingThreadKeys.length === 0) {
               return state;
             }
-            return removeDraftThreadReferences(state, matchingThreadEntry[0]);
+            let nextState = {
+              draftsByThreadKey: state.draftsByThreadKey,
+              draftThreadsByThreadKey: state.draftThreadsByThreadKey,
+              logicalProjectDraftThreadKeyByLogicalProjectKey:
+                state.logicalProjectDraftThreadKeyByLogicalProjectKey,
+            };
+            for (const threadKey of matchingThreadKeys) {
+              nextState = removeDraftThreadReferences(nextState, threadKey);
+            }
+            return nextState;
           });
         },
         clearProjectDraftThreadById: (projectRef, threadRef) => {
@@ -2594,7 +2701,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
-        setModelSelection: (threadRef, modelSelection) => {
+        setModelSelection: (threadRef, modelSelection, opts) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
             return;
@@ -2609,8 +2716,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const nextMap = { ...base.modelSelectionByProvider };
             if (normalized) {
               const current = nextMap[normalized.instanceId];
-              if (normalized.options !== undefined) {
-                // Explicit options provided → use them
+              if (normalized.options !== undefined || opts?.replaceOptions) {
+                // Explicit options provided (or the caller passed a complete
+                // snapshot whose absent options mean "no options") → use the
+                // selection as-is.
                 nextMap[normalized.instanceId] = normalized as ModelSelection;
               } else {
                 // No options in selection → preserve existing options, update provider+model
@@ -3326,6 +3435,35 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               elementContexts: [],
               previewAnnotations: [],
               reviewComments: [],
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        clearComposerPromptAndImages: (threadRef) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) {
+            return;
+          }
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey];
+            if (!current) {
+              return state;
+            }
+            for (const image of current.images) {
+              revokeObjectPreviewUrl(image.previewUrl);
+            }
+            const nextDraft: ComposerThreadDraftState = {
+              ...current,
+              prompt: ensureInlineTerminalContextPlaceholders("", current.terminalContexts.length),
+              images: [],
+              nonPersistedImageIds: [],
+              persistedAttachments: [],
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {

@@ -141,7 +141,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
     >
       <div
         ref={listRef}
-        className="relative w-full overflow-hidden rounded-[20px] border border-border/80 bg-popover/96 shadow-lg/8 backdrop-blur-xs"
+        className="dropdown-glass relative w-full overflow-hidden rounded-[20px] **:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4"
       >
         {props.items.length > 0 ? (
           <CommandList className="max-h-72">
@@ -150,7 +150,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                 {groupIndex > 0 ? <CommandSeparator className="my-0.5" /> : null}
                 <CommandGroup>
                   {group.label ? (
-                    <CommandGroupLabel className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/55">
+                    <CommandGroupLabel className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-secondary-label">
                       {group.label}
                     </CommandGroupLabel>
                   ) : null}
@@ -172,10 +172,10 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
           <div className="px-5 py-3.5">
             {props.triggerKind === "skill" ? (
               <CommandGroup>
-                <CommandGroupLabel className="px-0 pt-0 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/55">
+                <CommandGroupLabel className="px-0 pt-0 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-secondary-label">
                   Skills
                 </CommandGroupLabel>
-                <p className="text-muted-foreground/70 text-xs">
+                <p className="text-secondary-label text-xs">
                   {props.isLoading
                     ? "Searching workspace skills..."
                     : (props.emptyStateText ??
@@ -183,7 +183,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                 </p>
               </CommandGroup>
             ) : (
-              <p className="text-muted-foreground/70 text-xs">
+              <p className="text-secondary-label text-xs">
                 {props.isLoading
                   ? "Searching workspace files..."
                   : (props.emptyStateText ??
@@ -235,26 +235,26 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         />
       ) : null}
       {props.item.type === "slash-command" ? (
-        <BotIcon className="size-4 shrink-0 text-muted-foreground/80" />
+        <BotIcon className="size-4 shrink-0 text-icon-muted" />
       ) : null}
       {props.item.type === "provider-slash-command" ? (
-        <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/80">
+        <span className="inline-flex size-4 shrink-0 items-center justify-center text-icon-muted">
           <SkillGlyph className="size-3.5" />
         </span>
       ) : null}
       {props.item.type === "skill" ? (
-        <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/80">
+        <span className="inline-flex size-4 shrink-0 items-center justify-center text-icon-muted">
           <SkillGlyph className="size-3.5" />
         </span>
       ) : null}
       <span className="flex min-w-0 flex-1 items-center gap-2">
         <span className="shrink-0">{props.item.label}</span>
-        <span className="min-w-0 flex-1 truncate text-muted-foreground/70 text-xs">
+        <span className="min-w-0 flex-1 truncate text-secondary-label text-xs">
           {props.item.description}
         </span>
       </span>
       {skillSourceLabel ? (
-        <span className="shrink-0 pl-2 text-muted-foreground/70 text-xs">{skillSourceLabel}</span>
+        <span className="shrink-0 pl-2 text-secondary-label text-xs">{skillSourceLabel}</span>
       ) : null}
     </CommandItem>
   );

@@ -2,7 +2,8 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { useFocusEffect } from "@react-navigation/native";
 import {
   NavigationContext,
@@ -22,6 +23,7 @@ import {
 } from "react";
 import { useWindowDimensions, View } from "react-native";
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
+import { AsyncResult } from "effect/unstable/reactivity";
 
 import {
   deriveFileInspectorPaneLayout,
@@ -34,6 +36,11 @@ import {
 } from "../../lib/layout";
 import { resolveThreadSelectionNavigationAction } from "../../lib/adaptive-navigation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { mobilePreferencesAtom } from "../../state/preferences";
+import {
+  DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS,
+  resolveMobileProjectGroupingSettings,
+} from "../../state/project-grouping";
 import {
   parseActiveThreadPath,
   useHardwareKeyboardCommand,
@@ -184,6 +191,33 @@ export function AdaptiveWorkspaceLayout(props: {
   readonly children: ReactNode;
   readonly pathname: string;
 }) {
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  if (!AsyncResult.isSuccess(preferencesResult)) {
+    return AsyncResult.isFailure(preferencesResult) ? (
+      <AdaptiveWorkspaceLayoutContent
+        {...props}
+        projectGroupingMode={DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS.sidebarProjectGroupingMode}
+      />
+    ) : null;
+  }
+  const groupingSettings = resolveMobileProjectGroupingSettings(preferencesResult.value);
+  return (
+    <AdaptiveWorkspaceLayoutContent
+      {...props}
+      projectGroupingMode={groupingSettings.sidebarProjectGroupingMode}
+    />
+  );
+}
+
+function AdaptiveWorkspaceLayoutContent(
+  props: {
+    readonly children: ReactNode;
+    readonly pathname: string;
+  } & {
+    readonly projectGroupingMode: SidebarProjectGroupingMode;
+  },
+) {
+  const projectGroupingMode = props.projectGroupingMode;
   const { width, height } = useWindowDimensions();
   const pathname = props.pathname;
   const navigation = useNavigation();
@@ -474,7 +508,7 @@ export function AdaptiveWorkspaceLayout(props: {
   );
 
   return (
-    <HomeListOptionsProvider>
+    <HomeListOptionsProvider projectGroupingMode={projectGroupingMode}>
       <AdaptiveWorkspaceContext.Provider value={contextValue}>
         <View testID="adaptive-workspace-layout" className="flex-1 flex-row">
           {shouldRenderPrimarySidebar && layout.listPaneWidth !== null ? (

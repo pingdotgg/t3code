@@ -1,25 +1,11 @@
 /**
- * The `Argument` module defines typed positional command-line arguments for
- * Effect CLI applications. Arguments consume ordered values after a command name
- * and its flags, then parse them into the types your command handler expects.
+ * Defines typed positional arguments for Effect CLI applications.
  *
- * Use this module for required inputs such as file paths, directories, numbers,
- * dates, choices, secrets, and structured configuration files. Arguments can be
- * made optional, variadic, validated with Schema, transformed with pure or
- * effectful functions, and supplied from defaults, config, or prompts when
- * missing.
- *
- * **Gotchas**
- *
- * - Positional arguments are order-sensitive; compose them in the same order the
- *   user should type them.
- * - `variadic` arguments can consume more than one value, so place them where
- *   the remaining positional input belongs.
- * - Use {@link withDescription} and {@link withMetavar} to keep generated help
- *   text clear, especially when the parser name differs from the value users
- *   should provide.
- * - Boolean positional arguments are intentionally not provided. Prefer boolean
- *   flags, or use {@link choice} for explicit `"true"` / `"false"` values.
+ * Arguments consume ordered values after a command name and its flags, then
+ * parse them into the types a command handler expects. This module includes
+ * constructors for common argument shapes, plus helpers for optional or
+ * variadic arguments, schema validation, transformations, defaults, config
+ * fallbacks, and prompts for missing values.
  *
  * @since 4.0.0
  */
@@ -31,6 +17,7 @@ import type * as Redacted from "../../Redacted.ts"
 import type * as Result from "../../Result.ts"
 import type * as Schema from "../../Schema.ts"
 import type * as CliError from "./CliError.ts"
+import type { Environment } from "./Command.ts"
 import * as Param from "./Param.ts"
 import type * as Primitive from "./Primitive.ts"
 
@@ -275,7 +262,7 @@ export const fileParse = (
  */
 export const fileSchema = <A>(
   name: string,
-  schema: Schema.Decoder<A>,
+  schema: Schema.ConstraintDecoder<A, Environment>,
   options?: Primitive.FileSchemaOptions | undefined
 ): Argument<A> => Param.fileSchema(Param.argumentKind, name, schema, options)
 
@@ -353,11 +340,11 @@ export const withDescription: {
  */
 export const withDefault: {
   <const B>(
-    defaultValue: B | Effect.Effect<B, CliError.CliError, Param.Environment>
+    defaultValue: B | Effect.Effect<B, CliError.CliError, Environment>
   ): <A>(self: Argument<A>) => Argument<A | B>
   <A, const B>(
     self: Argument<A>,
-    defaultValue: B | Effect.Effect<B, CliError.CliError, Param.Environment>
+    defaultValue: B | Effect.Effect<B, CliError.CliError, Environment>
   ): Argument<A | B>
 } = Param.withDefault
 
@@ -485,15 +472,15 @@ export const map: {
  */
 export const mapEffect: {
   <A, B>(
-    f: (a: A) => Effect.Effect<B, CliError.CliError, Param.Environment>
+    f: (a: A) => Effect.Effect<B, CliError.CliError, Environment>
   ): (self: Argument<A>) => Argument<B>
   <A, B>(
     self: Argument<A>,
-    f: (a: A) => Effect.Effect<B, CliError.CliError, Param.Environment>
+    f: (a: A) => Effect.Effect<B, CliError.CliError, Environment>
   ): Argument<B>
 } = dual(2, <A, B>(
   self: Argument<A>,
-  f: (a: A) => Effect.Effect<B, CliError.CliError, Param.Environment>
+  f: (a: A) => Effect.Effect<B, CliError.CliError, Environment>
 ) => Param.mapEffect(self, f))
 
 /**
@@ -603,9 +590,13 @@ export const between: {
  * @since 4.0.0
  */
 export const withSchema: {
-  <A, B>(schema: Schema.Codec<B, A>): (self: Argument<A>) => Argument<B>
-  <A, B>(self: Argument<A>, schema: Schema.Codec<B, A>): Argument<B>
-} = dual(2, <A, B>(self: Argument<A>, schema: Schema.Codec<B, A>) => Param.withSchema(self, schema))
+  <A, B>(schema: Schema.ConstraintCodec<B, A, Environment, unknown>): (self: Argument<A>) => Argument<B>
+  <A, B>(self: Argument<A>, schema: Schema.ConstraintCodec<B, A, Environment, unknown>): Argument<B>
+} = dual(
+  2,
+  <A, B>(self: Argument<A>, schema: Schema.ConstraintCodec<B, A, Environment, unknown>): Argument<B> =>
+    Param.withSchema(self, schema)
+)
 
 /**
  * Creates a positional choice argument with custom value mapping.

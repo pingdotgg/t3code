@@ -1,55 +1,10 @@
 /**
- * The `Iterable` module works with any JavaScript value that implements
- * `[Symbol.iterator]`, including arrays, strings, generators, sets, and custom
- * lazy sequences. It provides constructors, transformations, searches, grouping,
- * and folding helpers that can be used without converting to an array first.
+ * Works with JavaScript values that implement `[Symbol.iterator]`.
  *
- * **Mental model**
- *
- * - An `Iterable<A>` creates an `Iterator<A>` when it is consumed.
- * - Transformations such as {@link map}, {@link filter}, {@link flatMap},
- *   {@link take}, and {@link drop} return new iterables and usually do no work
- *   until the result is iterated.
- * - Consumers such as {@link reduce}, {@link size}, {@link head},
- *   {@link findFirst}, and `Array.from` pull values from an iterator.
- * - Constructors such as {@link range}, {@link makeBy}, {@link repeat},
- *   {@link forever}, and {@link unfold} can represent unbounded sequences.
- *
- * **Common tasks**
- *
- * - Create sequences: {@link empty}, {@link of}, {@link range}, {@link makeBy},
- *   {@link replicate}, {@link unfold}
- * - Transform values: {@link map}, {@link flatMap}, {@link flatten},
- *   {@link filter}, {@link filterMap}
- * - Slice and search: {@link take}, {@link drop}, {@link takeWhile},
- *   {@link findFirst}, {@link findLast}, {@link contains}
- * - Combine and group: {@link appendAll}, {@link zipWith}, {@link chunksOf},
- *   {@link groupBy}, {@link cartesian}
- * - Fold or collect: {@link reduce}, {@link scan}, {@link countBy},
- *   `Array.from`
- *
- * **Gotchas**
- *
- * - Laziness depends on the operation. Functions such as {@link size} and
- *   {@link reduce} consume the iterable immediately.
- * - Some JavaScript iterables are single-use iterators. Reusing the same value
- *   after it has been consumed may produce no elements.
- * - Unbounded iterables must be limited before full collection, for example
- *   with {@link take}.
- *
- * **Example** (Building a lazy pipeline)
- *
- * ```ts
- * import { Iterable } from "effect"
- *
- * const naturals = Iterable.range(1)
- * const squares = Iterable.map(naturals, (n) => n * n)
- * const evenSquares = Iterable.filter(squares, (n) => n % 2 === 0)
- * const firstFive = Iterable.take(evenSquares, 5)
- *
- * console.log(Array.from(firstFive))
- * // [4, 16, 36, 64, 100]
- * ```
+ * Iterables include arrays, strings, generators, sets, and custom lazy
+ * sequences. The helpers in this module let code transform, search, group, and
+ * fold iterable values while preserving the input as an iterable instead of
+ * forcing an array first.
  *
  * @since 2.0.0
  */
@@ -57,6 +12,7 @@
 import type { NonEmptyArray } from "./Array.ts"
 import * as Equal from "./Equal.ts"
 import { dual } from "./Function.ts"
+import * as InternalRecord from "./internal/record.ts"
 import type { Option } from "./Option.ts"
 import * as O from "./Option.ts"
 import { isBoolean } from "./Predicate.ts"
@@ -260,7 +216,7 @@ export const fromRecord = <K extends string, A>(self: Readonly<Record<K, A>>): I
  * console.log(Array.from(withZ)) // ["z", "a", "b", "c"]
  * ```
  *
- * @category concatenating
+ * @category combining
  * @since 2.0.0
  */
 export const prepend: {
@@ -283,7 +239,7 @@ export const prepend: {
  * )
  * ```
  *
- * @category concatenating
+ * @category combining
  * @since 2.0.0
  */
 export const prependAll: {
@@ -332,7 +288,7 @@ export const prependAll: {
  * @see {@link prepend} for adding one element before the existing elements
  * @see {@link appendAll} for appending all elements from another iterable
  *
- * @category concatenating
+ * @category combining
  * @since 2.0.0
  */
 export const append: {
@@ -383,7 +339,7 @@ export const append: {
  * @see {@link append} for appending one value instead of another iterable
  * @see {@link prependAll} for yielding another iterable before `self`
  *
- * @category concatenating
+ * @category combining
  * @since 2.0.0
  */
 export const appendAll: {
@@ -555,7 +511,16 @@ export const head = <A>(self: Iterable<A>): Option<A> => {
 }
 
 /**
- * Gets the first element of a `Iterable`, or throw an error if the `Iterable` is empty.
+ * Gets the first element of an `Iterable` without returning an `Option`.
+ *
+ * **When to use**
+ *
+ * Use when the `Iterable` is known to be non-empty and direct access to the
+ * first element is preferred over handling `Option.none`.
+ *
+ * **Gotchas**
+ *
+ * Throws if the `Iterable` is empty.
  *
  * **Example** (Getting the first element unsafely)
  *
@@ -1029,7 +994,7 @@ export const zipWith: {
  * console.log(Array.from(css).join("")) // "color: red; font-size: 14px; margin: 10px"
  * ```
  *
- * @category concatenating
+ * @category combining
  * @since 2.0.0
  */
 export const intersperse: {
@@ -1402,7 +1367,7 @@ export const groupBy: {
     if (Object.hasOwn(out, k)) {
       out[k].push(a)
     } else {
-      out[k] = [a]
+      InternalRecord.assignProperty(out, k, [a])
     }
   }
   return out
@@ -1424,8 +1389,8 @@ const constEmptyIterator: Iterator<never> = {
  *
  * **When to use**
  *
- * Use as a base case for operations or when you
- * need to represent "no data" in a type-safe way.
+ * Use when you need an empty iterable as a typed "no data" value or a base
+ * case for iterable operations.
  *
  * **Example** (Creating an empty iterable)
  *
@@ -1492,7 +1457,7 @@ export const of = <A>(a: A): Iterable<A> => [a]
  *
  * This is one of the most fundamental operations for working with iterables.
  * It applies a transformation function to each element, creating a new iterable
- * with the transformed values. The operation is lazy - elements are only
+ * with the transformed values. The operation is lazy, so elements are only
  * transformed when the iterable is consumed.
  *
  * **Example** (Mapping elements)
@@ -1544,7 +1509,7 @@ export const map: {
 /**
  * Applies a function to each element in an Iterable and returns a new Iterable containing the concatenated mapped elements.
  *
- * **Example** (FlatMapping iterables)
+ * **Example** (Flat mapping iterables)
  *
  * ```ts
  * import { Iterable } from "effect"
@@ -1650,8 +1615,9 @@ export const flatten = <A>(self: Iterable<Iterable<A>>): Iterable<A> => ({
  *
  * **Details**
  *
- * This combines mapping and filtering in a single operation - the function is applied to each element,
- * and only elements that result in `Result.succeed` are included in the result.
+ * This combines mapping and filtering in a single operation. The function is
+ * applied to each element, and only elements that result in `Result.succeed`
+ * are included in the result.
  *
  * **Example** (Filtering and transforming Result values)
  *
@@ -1985,7 +1951,7 @@ export const filter: {
  * Use when working with APIs or functions that return nullable values,
  * providing a clean way to filter out null or undefined while transforming.
  *
- * **Example** (FlatMapping nullable results)
+ * **Example** (Flat mapping nullable results)
  *
  * ```ts
  * import { Iterable } from "effect"
@@ -2428,8 +2394,38 @@ export const cartesianWith: {
   <A, B, C>(self: Iterable<A>, that: Iterable<B>, f: (a: A, b: B) => C): Iterable<C>
 } = dual(
   3,
-  <A, B, C>(self: Iterable<A>, that: Iterable<B>, f: (a: A, b: B) => C): Iterable<C> =>
-    flatMap(self, (a) => map(that, (b) => f(a, b)))
+  <A, B, C>(self: Iterable<A>, that: Iterable<B>, f: (a: A, b: B) => C): Iterable<C> => ({
+    [Symbol.iterator]() {
+      const cache: Array<B> = []
+      let iterator: Iterator<B> | undefined
+      let done = false
+      const replay: Iterable<B> = {
+        [Symbol.iterator]() {
+          let index = 0
+          return {
+            next(): IteratorResult<B> {
+              if (index < cache.length) {
+                return { done: false, value: cache[index++] }
+              }
+              if (done) {
+                return { done: true, value: undefined }
+              }
+              iterator ??= that[Symbol.iterator]()
+              const result = iterator.next()
+              if (result.done) {
+                done = true
+                return { done: true, value: undefined }
+              }
+              cache.push(result.value)
+              index++
+              return result
+            }
+          }
+        }
+      }
+      return flatMap(self, (a) => map(replay, (b) => f(a, b)))[Symbol.iterator]()
+    }
+  })
 )
 
 /**

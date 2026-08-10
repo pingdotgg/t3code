@@ -1,5 +1,6 @@
 import * as rds from "@distilled.cloud/aws/rds";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
@@ -30,10 +31,25 @@ export interface DBClusterParameterGroup extends Resource<
   "AWS.RDS.DBClusterParameterGroup",
   DBClusterParameterGroupProps,
   {
+    /**
+     * Name of the cluster parameter group.
+     */
     dbClusterParameterGroupName: string;
+    /**
+     * ARN of the cluster parameter group.
+     */
     dbClusterParameterGroupArn: string | undefined;
+    /**
+     * Parameter group family (e.g. `aurora-postgresql16`).
+     */
     family: string;
+    /**
+     * Description of the parameter group.
+     */
     description: string | undefined;
+    /**
+     * Tags on the parameter group.
+     */
     tags: Record<string, string>;
   },
   never,
@@ -41,7 +57,28 @@ export interface DBClusterParameterGroup extends Resource<
 > {}
 
 /**
- * An Aurora cluster parameter group.
+ * An Aurora cluster parameter group — cluster-wide engine settings shared by
+ * every instance in a `DBCluster`.
+ *
+ * Name, family, and description changes force a replacement (RDS has no
+ * modify API for these); tags update in place.
+ * @resource
+ * @section Creating a Cluster Parameter Group
+ * @example Parameter Group for Aurora Postgres 16
+ * ```typescript
+ * const clusterParams = yield* DBClusterParameterGroup("ClusterParams", {
+ *   family: "aurora-postgresql16",
+ *   description: "Cluster-wide settings for the app database",
+ * });
+ * ```
+ *
+ * @example Attach to a Cluster
+ * ```typescript
+ * const cluster = yield* DBCluster("Cluster", {
+ *   engine: "aurora-postgresql",
+ *   dbClusterParameterGroupName: clusterParams.dbClusterParameterGroupName,
+ * });
+ * ```
  */
 export const DBClusterParameterGroup = Resource<DBClusterParameterGroup>(
   "AWS.RDS.DBClusterParameterGroup",
@@ -71,6 +108,41 @@ export const DBClusterParameterGroupProvider = () =>
 
       return {
         stables: ["dbClusterParameterGroupArn", "dbClusterParameterGroupName"],
+        list: () =>
+          // AWS account/region collection (pattern (a)): exhaustively paginate
+          // describeDBClusterParameterGroups and map each group to the exact
+          // `read` Attributes shape. `read` derives `tags` from the cached
+          // output (the describe response does not surface tags), so list
+          // returns `tags: {}` to match — a future read/delete can hydrate
+          // them via listTagsForResource. Per-item not-found
+          // (DBParameterGroupNotFoundFault) cannot occur here: enumeration
+          // passes no name, so the describe never targets a single group.
+          rds.describeDBClusterParameterGroups.pages({}).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.DBClusterParameterGroups ?? [])
+                  .filter(
+                    (
+                      g,
+                    ): g is rds.DBClusterParameterGroup & {
+                      DBClusterParameterGroupName: string;
+                    } =>
+                      g.DBClusterParameterGroupName != null &&
+                      // AWS-managed `default.*` groups cannot be deleted
+                      // (InvalidDBParameterGroupStateFault) — don't enumerate.
+                      !g.DBClusterParameterGroupName.startsWith("default."),
+                  )
+                  .map((g) => ({
+                    dbClusterParameterGroupName: g.DBClusterParameterGroupName,
+                    dbClusterParameterGroupArn: g.DBClusterParameterGroupArn,
+                    family: g.DBParameterGroupFamily ?? "",
+                    description: g.Description,
+                    tags: {} as Record<string, string>,
+                  })),
+              ),
+            ),
+          ),
         diff: Effect.fn(function* ({ id, olds, news }) {
           if (!isResolved(news)) return;
           if (

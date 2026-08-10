@@ -49,6 +49,23 @@ describe("buildCommitMessagePrompt", () => {
 
     expect(result.prompt).toContain("Branch: (detached)");
   });
+
+  it("includes policy instructions", () => {
+    const result = buildCommitMessagePrompt({
+      branch: "main",
+      stagedSummary: "M a.ts",
+      stagedPatch: "diff",
+      includeBranch: false,
+      policy: {
+        kind: "custom",
+        commitInstructions: "Use a terse repository-specific subject.",
+        inferRepositoryConventions: false,
+      },
+    });
+
+    expect(result.prompt).toContain("Additional instructions:");
+    expect(result.prompt).toContain("Use a terse repository-specific subject.");
+  });
 });
 
 describe("buildPrContentPrompt", () => {
@@ -69,6 +86,30 @@ describe("buildPrContentPrompt", () => {
     expect(result.prompt).toContain("3 files changed");
     expect(result.prompt).toContain("Diff patch:");
     expect(result.prompt).toContain("export function login()");
+    expect(result.prompt).toContain("include headings '## Summary' and '## Testing'");
+  });
+
+  it("follows a repository PR template instead of the default body headings", () => {
+    const result = buildPrContentPrompt({
+      baseBranch: "main",
+      headBranch: "feature/auth",
+      commitSummary: "feat: add login page",
+      diffSummary: "3 files changed",
+      diffPatch: "diff",
+      changeRequestTemplate: "<!-- remove me -->\n## What changed\n\n## Verification",
+      policy: {
+        kind: "custom",
+        changeRequestInstructions: "Keep the title in sentence case.",
+        inferRepositoryConventions: false,
+      },
+    });
+
+    expect(result.prompt).toContain("Keep the title in sentence case.");
+    expect(result.prompt).toContain("follow the repository change request template structure");
+    expect(result.prompt).toContain("drop HTML comments from the template");
+    expect(result.prompt).toContain("Repository change request template:");
+    expect(result.prompt).toContain("<!-- remove me -->\n## What changed\n\n## Verification");
+    expect(result.prompt).not.toContain("include headings '## Summary' and '## Testing'");
   });
 });
 
@@ -113,6 +154,18 @@ describe("buildThreadTitlePrompt", () => {
     expect(result.prompt).toContain("User message:");
     expect(result.prompt).toContain("Investigate reconnect regressions after session restore");
     expect(result.prompt).not.toContain("Attachment metadata:");
+    expect(result.prompt).toContain(
+      "Generate a title that will help the user recognize this T3 Code thread weeks later.",
+    );
+    expect(result.prompt).toContain(
+      "Title the subject and outcome. Discard incidental instructions.",
+    );
+    expect(result.prompt).toContain(
+      "Name the product change, not the mock, plan, report, branch, or PR used to produce it.",
+    );
+    expect(result.prompt).not.toContain(
+      "Title should summarize the user's request, not restate it verbatim.",
+    );
   });
 
   it("includes attachment metadata when attachments are provided", () => {
@@ -133,6 +186,53 @@ describe("buildThreadTitlePrompt", () => {
     expect(result.prompt).toContain("thread.png");
     expect(result.prompt).toContain("image/png");
     expect(result.prompt).toContain("67890 bytes");
+  });
+
+  it("regenerates from recent thread contents and identifies the previous title", () => {
+    const result = buildThreadTitlePrompt({
+      message: `USER:\nInvestigate reconnect regressions\n\nASSISTANT:\nThe remaining issue is stale session state`,
+      previousTitle: "Investigate reconnect regressions",
+    });
+
+    expect(result.prompt).toContain(
+      "Regenerate the title for an existing T3 Code thread so the user can recognize it weeks later.",
+    );
+    expect(result.prompt).toContain('The previous title was "Investigate reconnect regressions".');
+    expect(result.prompt).toContain(
+      "Read the USER messages first. Identify the latest explicit durable goal.",
+    );
+    expect(result.prompt).toContain(
+      "Do not promote one assistant finding into the thread subject unless the user adopts it as a new goal.",
+    );
+    expect(result.prompt).toContain(
+      'A subagent-monitoring review that finds a Codex roster bug remains "Review Subagent Monitoring Risks,"',
+    );
+    expect(result.prompt).toContain("Thread contents:");
+    expect(result.prompt).toContain("The remaining issue is stale session state");
+  });
+
+  it("keeps the latest thread contents when regeneration context is truncated", () => {
+    const result = buildThreadTitlePrompt({
+      message: `${"old context ".repeat(1_000)}\n\nASSISTANT:\nCurrent thread state`,
+      previousTitle: "Old title",
+    });
+
+    expect(result.prompt).toContain("[Earlier content truncated]");
+    expect(result.prompt).toContain("Current thread state");
+    expect(result.prompt).not.toContain("[truncated]");
+  });
+
+  it("does not truncate an already-marked regeneration context twice", () => {
+    const retainedContext = "x".repeat(7_998);
+    const result = buildThreadTitlePrompt({
+      message: `[Earlier content truncated]\n\n${retainedContext}`,
+      previousTitle: "Old title",
+    });
+
+    expect(result.prompt).toContain(
+      `Thread contents:\n[Earlier content truncated]\n\n${retainedContext}`,
+    );
+    expect(result.prompt.match(/\[Earlier content truncated\]/g)).toHaveLength(1);
   });
 });
 

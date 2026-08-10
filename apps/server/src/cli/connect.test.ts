@@ -10,15 +10,16 @@ import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Terminal from "effect/Terminal";
 
+import * as BootService from "../cloud/bootService.ts";
 import {
   acquireRelayClientForLink,
   formatHeadlessAuthorizationPrompt,
   formatRelayClientReady,
   headlessSessionConfig,
   isPublishAgentActivityEnabledValue,
-  recoverBootServiceOffer,
   reportCloudDisconnectResults,
 } from "./connect.ts";
+import { recoverServiceOnboardingOffer } from "./service.ts";
 
 it("explains how to complete headless authorization", () => {
   assert.equal(
@@ -58,7 +59,16 @@ it.effect("detects headless operation from individual SSH config values", () =>
 
 it.effect("treats cancelling optional background setup as a successful skip", () =>
   Effect.gen(function* () {
-    const result = yield* recoverBootServiceOffer(Effect.fail(new Terminal.QuitError({})));
+    const result = yield* recoverServiceOnboardingOffer(Effect.fail(new Terminal.QuitError({})));
+    assert.isFalse(result);
+  }),
+);
+
+it.effect("keeps a successful connection when a remote service update is pending", () =>
+  Effect.gen(function* () {
+    const result = yield* recoverServiceOnboardingOffer(
+      Effect.fail(new BootService.BootServiceUpdatePendingError()),
+    );
     assert.isFalse(result);
   }),
 );

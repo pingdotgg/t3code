@@ -337,7 +337,9 @@ const dispatchLiveOrchestrationCommand = (
 
 const getOfflineSnapshot = Effect.fn("getOfflineSnapshot")(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  return yield* projectionSnapshotQuery.getSnapshot();
+  // Project commands only read the project list, so use the lightweight
+  // command read model instead of hydrating every thread body in the database.
+  return yield* projectionSnapshotQuery.getCommandReadModel();
 });
 
 const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecutionMode")(
@@ -493,6 +495,10 @@ const projectRemoveCommand = Command.make("remove", {
   project: Argument.string("project").pipe(
     Argument.withDescription("Project id or workspace root to remove."),
   ),
+  force: Flag.boolean("force").pipe(
+    Flag.withDescription("Delete the project and all of its threads."),
+    Flag.withDefault(false),
+  ),
 }).pipe(
   Command.withDescription("Remove a project."),
   Command.withHandler((flags) =>
@@ -515,6 +521,7 @@ const projectRemoveCommand = Command.make("remove", {
           type: "project.delete",
           commandId: CommandId.make(yield* projectCommandUuid),
           projectId: project.id,
+          force: flags.force,
         });
         return `Removed project ${project.id} (${project.title}).`;
       }),

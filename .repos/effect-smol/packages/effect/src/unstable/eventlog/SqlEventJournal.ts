@@ -6,32 +6,6 @@
  * tables, giving event-log programs a durable journal that can be replayed after
  * restart and synchronized with remote journals.
  *
- * **Mental model**
- *
- * The entry table is the append-only history used by `entries`, local writes,
- * and remote imports. The remotes table records which entries are associated
- * with a remote id and sequence number, so the journal can compute the next
- * sequence to read from a remote and the local entries a remote has not yet
- * seen. `changes` is a process-local stream of entries written by this service.
- *
- * **Common tasks**
- *
- * - Provide a persistent `EventJournal` with `layer`.
- * - Customize entry and remotes table names when sharing a database.
- * - Replay `entries` to rebuild projections after process restart.
- * - Import remote entries and detect duplicates or conflicts during
- *   synchronization.
- *
- * **Gotchas**
- *
- * Construction runs only minimal `CREATE TABLE IF NOT EXISTS` statements with
- * dialect-specific UUID, binary, and timestamp column types; indexes,
- * migrations, retention, and table-name changes remain application
- * responsibilities. Payloads must stay compatible with the schemas that decode
- * historical entries. Duplicate remote imports are ignored by primary key, and
- * conflict lookup compares event name, primary key, and the timestamp derived
- * from the UUID v7 entry id.
- *
  * @since 4.0.0
  */
 import * as Uuid from "uuid"
@@ -345,7 +319,7 @@ const EntryRow = Schema.Struct({
   event: Schema.String,
   primary_key: Schema.String,
   payload: Schema.Uint8Array,
-  timestamp: Schema.Number
+  timestamp: Schema.Int
 })
 
 const EntryRowArray = Schema.Array(EntryRow)
@@ -371,7 +345,7 @@ const toEntryRow = (entry: EventJournal.Entry): EntryRow => ({
 const RemoteRow = Schema.Struct({
   remote_id: EventJournal.RemoteId,
   entry_id: EventJournal.EntryId,
-  sequence: Schema.Number
+  sequence: Schema.Natural
 })
 
 const RemoteRowArray = Schema.Array(RemoteRow)

@@ -212,6 +212,58 @@ describe("OpenAiLanguageModel", () => {
         ])
       }))
 
+    it.effect("normalizes empty assistant message content to an empty string", () =>
+      Effect.gen(function*() {
+        let capturedRequest: HttpClientRequest.HttpClientRequest | undefined
+
+        const layer = OpenAiClient.layer({ apiKey: Redacted.make("sk-test-key") }).pipe(
+          Layer.provide(Layer.succeed(
+            HttpClient.HttpClient,
+            makeHttpClient((request) => {
+              capturedRequest = request
+              return Effect.succeed(jsonResponse(
+                request,
+                makeChatCompletion({
+                  choices: [{
+                    index: 0,
+                    finish_reason: "stop",
+                    message: {
+                      role: "assistant",
+                      content: "done"
+                    }
+                  }]
+                })
+              ))
+            })
+          ))
+        )
+
+        yield* LanguageModel.generateText({
+          prompt: Prompt.make([
+            { role: "user", content: "hello" },
+            {
+              role: "assistant",
+              content: [Prompt.textPart({ text: "" })]
+            },
+            { role: "user", content: "continue" }
+          ])
+        }).pipe(
+          Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")),
+          Effect.provide(layer)
+        )
+
+        assert.isDefined(capturedRequest)
+        if (capturedRequest === undefined) {
+          return
+        }
+
+        const requestBody = yield* getRequestBody(capturedRequest)
+        const assistantMessage = requestBody.messages.find((message: any) => message.role === "assistant")
+        assert.isDefined(assistantMessage)
+        assert.strictEqual(assistantMessage.content, "")
+        assert.isUndefined(assistantMessage.tool_calls)
+      }))
+
     it.effect("maps function_call output to tool-call part and sends function tool schema", () =>
       Effect.gen(function*() {
         let capturedRequest: HttpClientRequest.HttpClientRequest | undefined
@@ -486,6 +538,82 @@ describe("OpenAiLanguageModel", () => {
           reasoning: 0
         })
       }))
+
+    it.effect("surfaces reasoning from non-streaming responses", () =>
+      Effect.gen(function*() {
+        const layer = OpenAiClient.layer({ apiKey: Redacted.make("sk-test-key") }).pipe(
+          Layer.provide(Layer.succeed(
+            HttpClient.HttpClient,
+            makeHttpClient((request) =>
+              Effect.succeed(jsonResponse(
+                request,
+                makeChatCompletion({
+                  choices: [{
+                    index: 0,
+                    finish_reason: "stop",
+                    message: {
+                      role: "assistant",
+                      reasoning: "I should greet the user.",
+                      content: "Hello!"
+                    }
+                  }]
+                })
+              ))
+            )
+          ))
+        )
+
+        const result = yield* LanguageModel.generateText({ prompt: "hello" }).pipe(
+          Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")),
+          Effect.provide(layer)
+        )
+
+        const reasoning = result.content.find((part) => part.type === "reasoning")
+        assert.isDefined(reasoning)
+        if (reasoning?.type !== "reasoning") {
+          return
+        }
+        assert.strictEqual(reasoning.text, "I should greet the user.")
+        assert.strictEqual(result.text, "Hello!")
+      }))
+
+    it.effect("surfaces reasoning_content from non-streaming responses", () =>
+      Effect.gen(function*() {
+        const layer = OpenAiClient.layer({ apiKey: Redacted.make("sk-test-key") }).pipe(
+          Layer.provide(Layer.succeed(
+            HttpClient.HttpClient,
+            makeHttpClient((request) =>
+              Effect.succeed(jsonResponse(
+                request,
+                makeChatCompletion({
+                  choices: [{
+                    index: 0,
+                    finish_reason: "stop",
+                    message: {
+                      role: "assistant",
+                      reasoning_content: "I should greet the user.",
+                      content: "Hello!"
+                    }
+                  }]
+                })
+              ))
+            )
+          ))
+        )
+
+        const result = yield* LanguageModel.generateText({ prompt: "hello" }).pipe(
+          Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")),
+          Effect.provide(layer)
+        )
+
+        const reasoning = result.content.find((part) => part.type === "reasoning")
+        assert.isDefined(reasoning)
+        if (reasoning?.type !== "reasoning") {
+          return
+        }
+        assert.strictEqual(reasoning.text, "I should greet the user.")
+        assert.strictEqual(result.text, "Hello!")
+      }))
   })
 
   describe("generateObject", () => {
@@ -730,6 +858,7 @@ describe("OpenAiLanguageModel", () => {
           item.role === "assistant" && item.tool_calls?.[0]?.function?.name === "local_shell"
         )
         assert.isDefined(localShellCall)
+        assert.strictEqual(localShellCall.content, null)
         assert.strictEqual(localShellCall.tool_calls[0].id, toolCall.id)
 
         const localShellOutput = followUpBody.messages.find((item: any) => item.role === "tool")
@@ -1025,6 +1154,213 @@ describe("OpenAiLanguageModel", () => {
         const requestBody = yield* getRequestBody(capturedRequest)
         assert.strictEqual(requestBody.stream, true)
         assert.isTrue(capturedRequest.url.endsWith("/chat/completions"))
+      }))
+
+    it.effect("assembles streamed tool args when continuation fragments have function.name: null", () =>
+      Effect.gen(function*() {
+        // Some OpenAI-compatible providers (e.g. Fireworks) only send the tool
+        // name on the first fragment and `function.name: null` on every
+        // continuation. The argument fragments live on those continuations, so
+        // they must not be dropped during chunk validation.
+        const chunk = (fnDelta: Record<string, unknown>) => ({
+          id: "chatcmpl_null_name_1",
+          object: "chat.completion.chunk",
+          model: "gpt-4o-mini",
+          created: 1,
+          choices: [{
+            index: 0,
+            delta: { tool_calls: [{ index: 0, id: "call_1", type: "function", function: fnDelta }] }
+          }]
+        })
+
+        const layer = OpenAiClient.layer({ apiKey: Redacted.make("sk-test-key") }).pipe(
+          Layer.provide(Layer.succeed(
+            HttpClient.HttpClient,
+            makeHttpClient((request) =>
+              Effect.succeed(sseResponse(request, [
+                chunk({ name: "TestTool", arguments: "" }),
+                chunk({ name: null, arguments: "{\"in" }),
+                chunk({ name: null, arguments: "put\":\"hel" }),
+                chunk({ name: null, arguments: "lo\"}" }),
+                {
+                  id: "chatcmpl_null_name_1",
+                  object: "chat.completion.chunk",
+                  model: "gpt-4o-mini",
+                  created: 1,
+                  choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }]
+                },
+                "[DONE]"
+              ]))
+            )
+          ))
+        )
+
+        const partsChunk = yield* LanguageModel.streamText({
+          prompt: "use the tool",
+          toolkit: TestToolkit,
+          disableToolCallResolution: true
+        }).pipe(
+          Stream.runCollect,
+          Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")),
+          Effect.provide(TestToolkitLayer),
+          Effect.provide(layer)
+        )
+
+        const parts = globalThis.Array.from(partsChunk)
+        const paramsDeltas = parts.filter((part) => part.type === "tool-params-delta")
+        assert.isAbove(paramsDeltas.length, 0)
+
+        const toolCall = parts.find((part) => part.type === "tool-call")
+        assert.isDefined(toolCall)
+        if (toolCall?.type !== "tool-call") {
+          return
+        }
+        assert.strictEqual(toolCall.name, "TestTool")
+        assert.deepStrictEqual(toolCall.params, { input: "hello" })
+      }))
+
+    it.effect("emits reasoning lifecycle parts for delta.reasoning", () =>
+      Effect.gen(function*() {
+        const chunk = (delta: Record<string, unknown>, finishReason: string | null = null) => ({
+          id: "chatcmpl_reasoning_1",
+          object: "chat.completion.chunk",
+          model: "gpt-4o-mini",
+          created: 1,
+          choices: [{ index: 0, delta, finish_reason: finishReason }]
+        })
+
+        const layer = OpenAiClient.layer({ apiKey: Redacted.make("sk-test-key") }).pipe(
+          Layer.provide(Layer.succeed(
+            HttpClient.HttpClient,
+            makeHttpClient((request) =>
+              Effect.succeed(sseResponse(request, [
+                chunk({ reasoning: "Let me think" }),
+                chunk({ reasoning: " about this." }),
+                chunk({ content: "Hello" }),
+                chunk({ content: " there" }, "stop"),
+                "[DONE]"
+              ]))
+            )
+          ))
+        )
+
+        const partsChunk = yield* LanguageModel.streamText({ prompt: "test" }).pipe(
+          Stream.runCollect,
+          Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")),
+          Effect.provide(layer)
+        )
+
+        const parts = globalThis.Array.from(partsChunk)
+        assert.deepStrictEqual(parts.map((part) => part.type), [
+          "response-metadata",
+          "reasoning-start",
+          "reasoning-delta",
+          "reasoning-delta",
+          "reasoning-end",
+          "text-start",
+          "text-delta",
+          "text-delta",
+          "text-end",
+          "finish"
+        ])
+
+        const reasoningText = parts
+          .flatMap((part) => part.type === "reasoning-delta" ? [part.delta] : [])
+          .join("")
+        assert.strictEqual(reasoningText, "Let me think about this.")
+
+        const reasoningIds = parts.flatMap((part) =>
+          part.type === "reasoning-start" || part.type === "reasoning-delta" || part.type === "reasoning-end"
+            ? [part.id]
+            : []
+        )
+        assert.strictEqual(new Set(reasoningIds).size, 1)
+
+        const textIds = parts.flatMap((part) => part.type === "text-start" ? [part.id] : [])
+        assert.notStrictEqual(reasoningIds[0], textIds[0])
+      }))
+
+    it.effect("emits reasoning lifecycle parts for delta.reasoning_content", () =>
+      Effect.gen(function*() {
+        const chunk = (delta: Record<string, unknown>, finishReason: string | null = null) => ({
+          id: "chatcmpl_reasoning_2",
+          object: "chat.completion.chunk",
+          model: "gpt-4o-mini",
+          created: 1,
+          choices: [{ index: 0, delta, finish_reason: finishReason }]
+        })
+
+        const layer = OpenAiClient.layer({ apiKey: Redacted.make("sk-test-key") }).pipe(
+          Layer.provide(Layer.succeed(
+            HttpClient.HttpClient,
+            makeHttpClient((request) =>
+              Effect.succeed(sseResponse(request, [
+                chunk({ reasoning_content: "Thinking..." }),
+                chunk({ content: "Answer." }, "stop"),
+                "[DONE]"
+              ]))
+            )
+          ))
+        )
+
+        const partsChunk = yield* LanguageModel.streamText({ prompt: "test" }).pipe(
+          Stream.runCollect,
+          Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")),
+          Effect.provide(layer)
+        )
+
+        const parts = globalThis.Array.from(partsChunk)
+        assert.deepStrictEqual(parts.map((part) => part.type), [
+          "response-metadata",
+          "reasoning-start",
+          "reasoning-delta",
+          "reasoning-end",
+          "text-start",
+          "text-delta",
+          "text-end",
+          "finish"
+        ])
+
+        const reasoningText = parts
+          .flatMap((part) => part.type === "reasoning-delta" ? [part.delta] : [])
+          .join("")
+        assert.strictEqual(reasoningText, "Thinking...")
+      }))
+
+    it.effect("closes an open reasoning part at stream end", () =>
+      Effect.gen(function*() {
+        const layer = OpenAiClient.layer({ apiKey: Redacted.make("sk-test-key") }).pipe(
+          Layer.provide(Layer.succeed(
+            HttpClient.HttpClient,
+            makeHttpClient((request) =>
+              Effect.succeed(sseResponse(request, [
+                {
+                  id: "chatcmpl_reasoning_3",
+                  object: "chat.completion.chunk",
+                  model: "gpt-4o-mini",
+                  created: 1,
+                  choices: [{ index: 0, delta: { reasoning: "Only thoughts." }, finish_reason: "stop" }]
+                },
+                "[DONE]"
+              ]))
+            )
+          ))
+        )
+
+        const partsChunk = yield* LanguageModel.streamText({ prompt: "test" }).pipe(
+          Stream.runCollect,
+          Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")),
+          Effect.provide(layer)
+        )
+
+        const parts = globalThis.Array.from(partsChunk)
+        assert.deepStrictEqual(parts.map((part) => part.type), [
+          "response-metadata",
+          "reasoning-start",
+          "reasoning-delta",
+          "reasoning-end",
+          "finish"
+        ])
       }))
   })
 

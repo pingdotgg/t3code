@@ -1,8 +1,6 @@
 import * as sns from "@distilled.cloud/aws/sns";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { Subscription } from "./Subscription.ts";
 
 export interface SetSubscriptionAttributesRequest extends Omit<
@@ -10,8 +8,33 @@ export interface SetSubscriptionAttributesRequest extends Omit<
   "SubscriptionArn"
 > {}
 
-export class SetSubscriptionAttributes extends Binding.Service<
+/**
+ * Runtime binding for `sns:SetSubscriptionAttributes`.
+ *
+ * Bind this operation to a {@link Subscription} inside a function runtime to
+ * set a single subscription attribute by name (e.g. `FilterPolicy`,
+ * `RawMessageDelivery`). The binding grants the host function
+ * `sns:SetSubscriptionAttributes` on the subscription. Provide the
+ * `SetSubscriptionAttributesHttp` layer on the Function to implement the
+ * binding.
+ * @binding
+ * @section Updating Subscription Attributes
+ * @example Set a Filter Policy
+ * ```typescript
+ * // init (provide SNS.SetSubscriptionAttributesHttp on the Function)
+ * const setSubscriptionAttributes =
+ *   yield* SNS.SetSubscriptionAttributes(subscription);
+ *
+ * // runtime
+ * yield* setSubscriptionAttributes({
+ *   AttributeName: "FilterPolicy",
+ *   AttributeValue: JSON.stringify({ type: ["order"] }),
+ * });
+ * ```
+ */
+export interface SetSubscriptionAttributes extends Binding.Service<
   SetSubscriptionAttributes,
+  "AWS.SNS.SetSubscriptionAttributes",
   (
     subscription: Subscription,
   ) => Effect.Effect<
@@ -22,51 +45,8 @@ export class SetSubscriptionAttributes extends Binding.Service<
       sns.SetSubscriptionAttributesError
     >
   >
->()("AWS.SNS.SetSubscriptionAttributes") {}
-
-export const SetSubscriptionAttributesLive = Layer.effect(
-  SetSubscriptionAttributes,
-  Effect.gen(function* () {
-    const Policy = yield* SetSubscriptionAttributesPolicy;
-    const setSubscriptionAttributes = yield* sns.setSubscriptionAttributes;
-
-    return Effect.fn(function* (subscription: Subscription) {
-      const SubscriptionArn = yield* subscription.subscriptionArn;
-      yield* Policy(subscription);
-      return Effect.fn(function* (request: SetSubscriptionAttributesRequest) {
-        return yield* setSubscriptionAttributes({
-          ...request,
-          SubscriptionArn: yield* SubscriptionArn,
-        });
-      });
-    });
-  }),
-);
-
-export class SetSubscriptionAttributesPolicy extends Binding.Policy<
-  SetSubscriptionAttributesPolicy,
-  (subscription: Subscription) => Effect.Effect<void>
->()("AWS.SNS.SetSubscriptionAttributes") {}
-
-export const SetSubscriptionAttributesPolicyLive =
-  SetSubscriptionAttributesPolicy.layer.succeed(
-    Effect.fn(function* (host, subscription) {
-      if (isFunction(host)) {
-        yield* host.bind`Allow(${host}, AWS.SNS.SetSubscriptionAttributes(${subscription}))`(
-          {
-            policyStatements: [
-              {
-                Effect: "Allow",
-                Action: ["sns:SetSubscriptionAttributes"],
-                Resource: [subscription.topicArn],
-              },
-            ],
-          },
-        );
-      } else {
-        return yield* Effect.die(
-          `SetSubscriptionAttributesPolicy does not support runtime '${host.Type}'`,
-        );
-      }
-    }),
+> {}
+export const SetSubscriptionAttributes =
+  Binding.Service<SetSubscriptionAttributes>(
+    "AWS.SNS.SetSubscriptionAttributes",
   );
