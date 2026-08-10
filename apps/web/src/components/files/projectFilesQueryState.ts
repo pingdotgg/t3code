@@ -130,10 +130,16 @@ function errorMessage<A>(result: AsyncResult.AsyncResult<A, unknown>): string | 
 
 export function retainProjectEntriesWhilePending(
   current: ProjectListEntriesResult | null,
-  settled: ProjectListEntriesResult | null,
+  settled: {
+    readonly includeIgnored: boolean;
+    readonly data: ProjectListEntriesResult;
+  } | null,
   isPending: boolean,
+  includeIgnored: boolean,
 ): ProjectListEntriesResult | null {
-  return current ?? (isPending ? settled : null);
+  const canRetainSettled =
+    settled !== null && (includeIgnored || settled.includeIgnored === includeIgnored);
+  return current ?? (isPending && canRetainSettled ? settled.data : null);
 }
 
 export function useProjectEntriesQuery(
@@ -149,16 +155,24 @@ export function useProjectEntriesQuery(
   const settledRef = useRef<{
     readonly environmentId: EnvironmentId;
     readonly cwd: string;
+    readonly includeIgnored: boolean;
     readonly data: ProjectListEntriesResult;
   } | null>(null);
   useEffect(() => {
-    if (currentData !== null) settledRef.current = { environmentId, cwd, data: currentData };
-  }, [currentData, cwd, environmentId]);
+    if (currentData !== null) {
+      settledRef.current = { environmentId, cwd, includeIgnored, data: currentData };
+    }
+  }, [currentData, cwd, environmentId, includeIgnored]);
   const settled = settledRef.current;
   const settledData =
-    settled?.environmentId === environmentId && settled.cwd === cwd ? settled.data : null;
+    settled?.environmentId === environmentId && settled.cwd === cwd ? settled : null;
   return {
-    data: retainProjectEntriesWhilePending(currentData, settledData, result.waiting),
+    data: retainProjectEntriesWhilePending(
+      currentData,
+      settledData,
+      result.waiting,
+      includeIgnored,
+    ),
     error: errorMessage(result),
     isPending: result.waiting,
     refresh,

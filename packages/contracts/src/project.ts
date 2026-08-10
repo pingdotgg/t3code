@@ -93,6 +93,7 @@ export const ProjectEntriesFailure = Schema.Literals([
   "search_index_search_failed",
   "ignored_entries_read_failed",
   "ignored_entries_classification_failed",
+  "vcs_detection_failed",
 ]);
 export type ProjectEntriesFailure = typeof ProjectEntriesFailure.Type;
 

@@ -60,8 +60,14 @@ describe("project files queries", () => {
       truncated: false,
     };
 
-    expect(retainProjectEntriesWhilePending(null, settled, true)).toBe(settled);
-    expect(retainProjectEntriesWhilePending(replacement, settled, true)).toBe(replacement);
-    expect(retainProjectEntriesWhilePending(null, settled, false)).toBeNull();
+    const normalSnapshot = { data: settled, includeIgnored: false };
+    const ignoredSnapshot = { data: replacement, includeIgnored: true };
+
+    expect(retainProjectEntriesWhilePending(null, normalSnapshot, true, true)).toBe(settled);
+    expect(retainProjectEntriesWhilePending(replacement, normalSnapshot, true, true)).toBe(
+      replacement,
+    );
+    expect(retainProjectEntriesWhilePending(null, ignoredSnapshot, true, false)).toBeNull();
+    expect(retainProjectEntriesWhilePending(null, normalSnapshot, false, true)).toBeNull();
   });
 });

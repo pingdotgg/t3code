@@ -94,6 +94,18 @@ export class WorkspaceEntriesIgnoreClassificationError extends Schema.TaggedErro
   }
 }
 
+export class WorkspaceEntriesVcsDetectionError extends Schema.TaggedErrorClass<WorkspaceEntriesVcsDetectionError>()(
+  "WorkspaceEntriesVcsDetectionError",
+  {
+    cwd: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to detect version control while listing ignored entries in '${this.cwd}'.`;
+  }
+}
+
 export const WorkspaceEntriesBrowseError = Schema.Union([
   WorkspaceEntriesWindowsPathUnsupportedError,
   WorkspaceEntriesCurrentProjectRequiredError,
@@ -111,6 +123,7 @@ export const WorkspaceEntriesError = Schema.Union([
   WorkspaceSearchIndex.WorkspaceSearchIndexSearchFailed,
   WorkspaceEntriesIgnoredDirectoryReadError,
   WorkspaceEntriesIgnoreClassificationError,
+  WorkspaceEntriesVcsDetectionError,
 ]);
 export type WorkspaceEntriesError = typeof WorkspaceEntriesError.Type;
 
@@ -311,11 +324,7 @@ export const make = Effect.gen(function* () {
     const candidates: ProjectEntry[] = [];
     const vcs = yield* vcsDriverRegistry
       .detect({ cwd })
-      .pipe(
-        Effect.mapError(
-          (cause) => new WorkspaceEntriesIgnoreClassificationError({ cwd, pathCount: 0, cause }),
-        ),
-      );
+      .pipe(Effect.mapError((cause) => new WorkspaceEntriesVcsDetectionError({ cwd, cause })));
 
     // Without a VCS ignore classifier, entries omitted by a truncated index
     // cannot be distinguished from ordinary entries beyond the index limit.

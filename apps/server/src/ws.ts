@@ -210,6 +210,11 @@ function projectEntriesFailureContext(error: WorkspaceEntries.WorkspaceEntriesEr
         normalizedCwd: error.cwd,
         detail: String(error.pathCount),
       };
+    case "WorkspaceEntriesVcsDetectionError":
+      return {
+        failure: "vcs_detection_failed",
+        normalizedCwd: error.cwd,
+      };
     default:
       return unexpectedCompatibilityError(error);
   }
