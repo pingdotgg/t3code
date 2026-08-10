@@ -4,6 +4,19 @@ import { Button } from "../ui/button";
 import { CircleAlertIcon, XIcon } from "lucide-react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
+export function getThreadErrorBannerKey(threadKey: string, error: string | null): string | null {
+  return error === null ? null : `${threadKey}\u0000${error}`;
+}
+
+export function shouldShowThreadErrorBanner(
+  threadKey: string,
+  error: string | null,
+  dismissedBannerKey: string | null,
+): boolean {
+  const bannerKey = getThreadErrorBannerKey(threadKey, error);
+  return bannerKey !== null && bannerKey !== dismissedBannerKey;
+}
+
 export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   error,
   onDismiss,

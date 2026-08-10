@@ -1,9 +1,35 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ThreadErrorBanner } from "./ThreadErrorBanner";
+import {
+  getThreadErrorBannerKey,
+  shouldShowThreadErrorBanner,
+  ThreadErrorBanner,
+} from "./ThreadErrorBanner";
 
 describe("ThreadErrorBanner", () => {
+  it("stays hidden after its current error is dismissed", () => {
+    const dismissedKey = getThreadErrorBannerKey("env:thread", "Aborted");
+
+    expect(shouldShowThreadErrorBanner("env:thread", "Aborted", null)).toBe(true);
+    expect(shouldShowThreadErrorBanner("env:thread", "Aborted", dismissedKey)).toBe(false);
+  });
+
+  it("reappears when a new error arrives on the same thread", () => {
+    const dismissedKey = getThreadErrorBannerKey("env:thread", "Aborted");
+
+    expect(shouldShowThreadErrorBanner("env:thread", "Turn failed", dismissedKey)).toBe(true);
+  });
+
+  it("scopes dismissals to the thread that dismissed them", () => {
+    const dismissedKey = getThreadErrorBannerKey("env:thread", "Aborted");
+
+    expect(shouldShowThreadErrorBanner("env:other-thread", "Aborted", dismissedKey)).toBe(true);
+  });
+
+  it("never shows a null error", () => {
+    expect(shouldShowThreadErrorBanner("env:thread", null, null)).toBe(false);
+  });
   it("aligns the warning and dismiss icons with the first line of a multi-line error", () => {
     const markup = renderToStaticMarkup(
       <ThreadErrorBanner
