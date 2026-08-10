@@ -237,7 +237,7 @@ describe("resolveWorktreeBranchPrefixUpdate", () => {
     });
   });
 
-  it.each(["", "team/feature", "team.prefix", "a".repeat(65)])(
+  it.each(["", "-team", "team/feature", "team.prefix", "a".repeat(65)])(
     "does not create a settings update for invalid prefix %j",
     (value) => {
       expect(resolveWorktreeBranchPrefixUpdate(value)).toBeNull();

@@ -182,7 +182,14 @@ describe("ServerSettings worktree defaults", () => {
     ).toBe("team_42-dev");
   });
 
-  it.each(["", "   ", "team/feature", "team.prefix", "a".repeat(65)])(
+  it.each(["a", "7", "_"])("accepts one-character worktree branch prefix %j", (value) => {
+    expect(decodeServerSettings({ worktreeBranchPrefix: value }).worktreeBranchPrefix).toBe(value);
+    expect(decodeServerSettingsPatch({ worktreeBranchPrefix: value }).worktreeBranchPrefix).toBe(
+      value,
+    );
+  });
+
+  it.each(["", "   ", "-team", "team/feature", "team.prefix", "a".repeat(65)])(
     "rejects invalid worktree branch prefix %j",
     (worktreeBranchPrefix) => {
       expect(() => decodeServerSettings({ worktreeBranchPrefix })).toThrow();

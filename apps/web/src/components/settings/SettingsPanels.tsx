@@ -1704,6 +1704,7 @@ export function GeneralSettingsPanel() {
     settings.worktreeBranchPrefix,
   );
   const [worktreeBranchPrefixInvalid, setWorktreeBranchPrefixInvalid] = useState(false);
+  const isWorktreeBranchPrefixFocused = useRef(false);
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
@@ -1754,6 +1755,9 @@ export function GeneralSettingsPanel() {
     DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
   );
   useEffect(() => {
+    if (isWorktreeBranchPrefixFocused.current) {
+      return;
+    }
     setWorktreeBranchPrefixDraft(settings.worktreeBranchPrefix);
     setWorktreeBranchPrefixInvalid(false);
   }, [settings.worktreeBranchPrefix]);
@@ -2074,11 +2078,12 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("worktree-branch-prefix")}
-          description="New worktree branches use this prefix. Use up to 64 lowercase letters, digits, hyphens, or underscores."
+          description="New worktree branches use this prefix. Use up to 64 lowercase letters, digits, hyphens, or underscores, starting with a letter, digit, or underscore."
           status={
             worktreeBranchPrefixInvalid ? (
               <span id="worktree-branch-prefix-error" role="alert">
-                Use one non-empty segment with letters, digits, hyphens, or underscores.
+                Start with a letter, digit, or underscore, then use letters, digits, hyphens, or
+                underscores.
               </span>
             ) : undefined
           }
@@ -2108,7 +2113,13 @@ export function GeneralSettingsPanel() {
                 maxLength={64}
                 spellCheck={false}
                 value={worktreeBranchPrefixDraft}
-                onBlur={commitWorktreeBranchPrefix}
+                onFocus={() => {
+                  isWorktreeBranchPrefixFocused.current = true;
+                }}
+                onBlur={() => {
+                  isWorktreeBranchPrefixFocused.current = false;
+                  commitWorktreeBranchPrefix();
+                }}
                 onChange={(event) => {
                   setWorktreeBranchPrefixDraft(event.currentTarget.value);
                   setWorktreeBranchPrefixInvalid(false);

@@ -113,7 +113,7 @@ export const WorktreeBranchPrefix = TrimmedNonEmptyString.pipe(
       encode: (value) => Effect.succeed(value.toLowerCase()),
     }),
   ),
-  Schema.check(Schema.isMaxLength(64), Schema.isPattern(/^[a-z0-9_-]+$/)),
+  Schema.check(Schema.isMaxLength(64), Schema.isPattern(/^[a-z0-9_][a-z0-9_-]*$/)),
 );
 export type WorktreeBranchPrefix = typeof WorktreeBranchPrefix.Type;
 

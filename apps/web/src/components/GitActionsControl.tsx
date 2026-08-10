@@ -1125,14 +1125,14 @@ export default function GitActionsControl({
     activeDraftThread.worktreePath === null;
 
   useEffect(() => {
-    if (isGitActionRunning || isSelectingWorktreeBase || activeServerThread) {
+    if (!serverConfig || isGitActionRunning || isSelectingWorktreeBase || activeServerThread) {
       return;
     }
 
     const branchUpdate = resolveLiveThreadBranchUpdate({
       threadBranch: activeDraftThread?.branch ?? null,
       gitStatus: gitStatusForActions,
-      ...(serverConfig ? { worktreeBranchPrefix: serverConfig.settings.worktreeBranchPrefix } : {}),
+      worktreeBranchPrefix: serverConfig.settings.worktreeBranchPrefix,
     });
     if (!branchUpdate) {
       return;

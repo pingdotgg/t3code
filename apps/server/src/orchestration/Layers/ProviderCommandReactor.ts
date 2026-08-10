@@ -805,15 +805,16 @@ const make = Effect.gen(function* () {
     if (!input.branch || !input.worktreePath) {
       return;
     }
-    const settings = yield* serverSettingsService.getSettings;
-    if (!isTemporaryWorktreeBranch(input.branch, settings.worktreeBranchPrefix)) {
-      return;
-    }
 
     const oldBranch = input.branch;
     const cwd = input.worktreePath;
     const attachments = input.attachments ?? [];
     yield* Effect.gen(function* () {
+      const settings = yield* serverSettingsService.getSettings;
+      if (!isTemporaryWorktreeBranch(oldBranch, settings.worktreeBranchPrefix)) {
+        return;
+      }
+
       const modelSelection =
         settings.sourceControlWriterModelSelection === null
           ? settings.textGenerationModelSelection
