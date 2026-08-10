@@ -10,7 +10,7 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { ConfirmDialogOptions, ScopedThreadRef } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   type AtomCommandResult,
@@ -279,23 +279,28 @@ export function ArchivedThreadsPanel() {
     setSort((current) => nextArchivedThreadSortState(current, field));
   }, []);
 
-  const confirmArchivedAction = useCallback(async (message: string) => {
-    const localApi = readLocalApi();
-    if (!localApi) return true;
-    const confirmationResult = await settlePromise(() => localApi.dialogs.confirm(message));
-    if (confirmationResult._tag === "Failure") {
-      const error = squashAtomCommandFailure(confirmationResult);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Archived thread confirmation failed",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
+  const confirmArchivedAction = useCallback(
+    async (message: string, options?: ConfirmDialogOptions) => {
+      const localApi = readLocalApi();
+      if (!localApi) return true;
+      const confirmationResult = await settlePromise(() =>
+        localApi.dialogs.confirm(message, options),
       );
-      return false;
-    }
-    return confirmationResult.value;
-  }, []);
+      if (confirmationResult._tag === "Failure") {
+        const error = squashAtomCommandFailure(confirmationResult);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Archived thread confirmation failed",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+        return false;
+      }
+      return confirmationResult.value;
+    },
+    [],
+  );
 
   const showArchivedActionFailure = useCallback(
     (title: string, result: AtomCommandResult<unknown, unknown>) => {
@@ -364,6 +369,7 @@ export function ArchivedThreadsPanel() {
               `Delete archived conversation "${title}"?`,
               "This permanently clears conversation history for this thread.",
             ].join("\n"),
+            { variant: "destructive" },
           );
           if (!confirmed) return;
         }
@@ -452,6 +458,7 @@ export function ArchivedThreadsPanel() {
               `Delete ${scopeLabel} in "${projectName}"?`,
               `This permanently clears conversation history for ${threads.length} conversation${threads.length === 1 ? "" : "s"}.`,
             ].join("\n"),
+            { variant: "destructive" },
           );
           if (!confirmed) return;
         }
