@@ -29,6 +29,15 @@ struct PlatformRootView: View {
         .onOpenURL { url in
             handle(url: url, letOnboardingConfirmConnection: true)
         }
+        .environment(\.openURL, OpenURLAction { url in
+            do {
+                let route = try PlatformDeepLinkParser.parseInAppLink(url)
+                handle(route)
+                return .handled
+            } catch {
+                return .systemAction(url)
+            }
+        })
         .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
             guard let url = activity.webpageURL else { return }
             handle(url: url, letOnboardingConfirmConnection: false)

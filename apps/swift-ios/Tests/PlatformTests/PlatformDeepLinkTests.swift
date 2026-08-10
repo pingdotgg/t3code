@@ -48,6 +48,47 @@ struct PlatformDeepLinkTests {
     }
 
     @Test
+    func resolvesLoopbackWebThreadLinksTappedInApp() throws {
+        for value in [
+            "http://127.0.0.1:3773/environment-1/thread-7",
+            "http://127.12.34.56:3773/environment-1/thread-7",
+            "http://localhost:3773/environment-1/thread-7",
+            "http://[::1]:3773/environment-1/thread-7",
+        ] {
+            #expect(
+                try PlatformDeepLinkParser.parseInAppLink(try #require(URL(string: value)))
+                    == .thread(environmentID: "environment-1", threadID: "thread-7")
+            )
+        }
+    }
+
+    @Test
+    func resolvesElectronThreadLinksTappedInApp() throws {
+        #expect(
+            try PlatformDeepLinkParser.parseInAppLink(
+                try #require(URL(string: "t3code://app/environment-1/thread-7"))
+            ) == .thread(environmentID: "environment-1", threadID: "thread-7")
+        )
+        #expect(
+            try PlatformDeepLinkParser.parseInAppLink(
+                try #require(URL(string: "t3code-dev://app/environment-1/thread-7"))
+            ) == .thread(environmentID: "environment-1", threadID: "thread-7")
+        )
+    }
+
+    @Test
+    func leavesOrdinaryWebLinksForTheSystem() {
+        for value in [
+            "https://example.com/environment/thread",
+            "http://127.example.com/environment/thread",
+        ] {
+            #expect(throws: PlatformDeepLinkError.unsupportedURL) {
+                try PlatformDeepLinkParser.parseInAppLink(value)
+            }
+        }
+    }
+
+    @Test
     func rejectsUntrustedWebNavigationRoute() {
         #expect(throws: PlatformDeepLinkError.unsupportedURL) {
             try PlatformDeepLinkParser.parse("https://malicious.example/threads/env/thread")
