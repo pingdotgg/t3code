@@ -256,6 +256,29 @@ it.layer(GitSyncTestLayer)("GitSync", (it) => {
         expect(Option.isNone(yield* readOption(NodePath.join(mirror, "ignored.log")))).toBe(true);
       }),
     );
+
+    it.effect("include paths that match nothing don't drop the ones that do", () =>
+      Effect.gen(function* () {
+        const origin = yield* makeTmpDir();
+        const mirror = yield* makeTmpDir();
+        yield* initOriginRepo(origin);
+
+        // `git add` is fatal on an unmatched pathspec and then adds none of
+        // its arguments; the missing .env.local/.env.*.local entries must
+        // not stop the existing .env from syncing.
+        yield* seedMirror({
+          origin,
+          mirror,
+          syncId: "seed-include-missing",
+          includePaths: [".env", ".env.local", ".env.*.local"],
+        });
+
+        expect(Option.getOrNull(yield* readOption(NodePath.join(mirror, ".env")))).toBe(
+          "SECRET=yes\n",
+        );
+        expect(Option.isNone(yield* readOption(NodePath.join(mirror, "ignored.log")))).toBe(true);
+      }),
+    );
   });
 
   describe("incremental sync", () => {

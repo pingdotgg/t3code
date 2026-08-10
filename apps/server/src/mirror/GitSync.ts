@@ -306,14 +306,18 @@ export const make = Effect.gen(function* () {
           }
           yield* run({ root: input.root, args: ["add", "-A", "--", "."], env });
           if (input.includePaths !== undefined && input.includePaths.length > 0) {
-            // Force-add the mirror.include allowlist (.env and friends).
-            // Missing paths are tolerated; everything else is an error.
-            yield* run({
-              root: input.root,
-              args: ["add", "-f", "--ignore-errors", "--", ...input.includePaths],
-              env,
-              allowNonZeroExit: true,
-            });
+            // Force-add the include allowlist (.env and friends), one path
+            // per invocation: `git add` is fatal on an unmatched pathspec and
+            // then adds NONE of its arguments, so a single missing entry in a
+            // combined call would silently drop the paths that do exist.
+            for (const includePath of input.includePaths) {
+              yield* run({
+                root: input.root,
+                args: ["add", "-f", "--ignore-errors", "--", includePath],
+                env,
+                allowNonZeroExit: true,
+              });
+            }
           }
           const writeTree = yield* run({ root: input.root, args: ["write-tree"], env });
           const treeOid = writeTree.stdout.trim();
