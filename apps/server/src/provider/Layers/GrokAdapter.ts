@@ -35,6 +35,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { resolveSessionMcpServers } from "../../mcp/resolveSessionMcpServers.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -177,6 +178,32 @@ function parseGrokResume(raw: unknown): { sessionId: string } | undefined {
   if (raw.schemaVersion !== GROK_RESUME_VERSION) return undefined;
   if (typeof raw.sessionId !== "string" || !raw.sessionId.trim()) return undefined;
   return { sessionId: raw.sessionId.trim() };
+}
+
+/** Maps enabled user-configured MCP servers into ACP's `McpServer` wire shape. */
+function resolveUserAcpMcpServers(): ReadonlyArray<EffectAcpSchema.McpServer> {
+  return resolveSessionMcpServers().map(({ key, config }): EffectAcpSchema.McpServer => {
+    if (config.transport.type === "stdio") {
+      return {
+        name: key,
+        command: config.transport.command,
+        args: [...config.transport.args],
+        env: (config.transport.env ?? []).map((variable) => ({
+          name: variable.name,
+          value: variable.value,
+        })),
+      };
+    }
+    return {
+      type: config.transport.type,
+      name: key,
+      url: config.transport.url,
+      headers: (config.transport.headers ?? []).map((header) => ({
+        name: header.name,
+        value: header.value,
+      })),
+    };
+  });
 }
 
 function selectPermissionOptionId(
@@ -572,6 +599,24 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           });
 
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+          const grokMcpServers: EffectAcpSchema.McpServer[] = [
+            ...(mcpSession
+              ? [
+                  {
+                    type: "http" as const,
+                    name: "t3-code",
+                    url: mcpSession.endpoint,
+                    headers: [
+                      {
+                        name: "Authorization",
+                        value: mcpSession.authorizationHeader,
+                      },
+                    ],
+                  },
+                ]
+              : []),
+            ...resolveUserAcpMcpServers(),
+          ];
           const acp = yield* makeGrokAcpRuntime({
             grokSettings,
             ...(options?.environment ? { environment: options.environment } : {}),
@@ -579,23 +624,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
-            ...(mcpSession
-              ? {
-                  mcpServers: [
-                    {
-                      type: "http" as const,
-                      name: "t3-code",
-                      url: mcpSession.endpoint,
-                      headers: [
-                        {
-                          name: "Authorization",
-                          value: mcpSession.authorizationHeader,
-                        },
-                      ],
-                    },
-                  ],
-                }
-              : {}),
+            ...(grokMcpServers.length > 0 ? { mcpServers: grokMcpServers } : {}),
             ...acpNativeLoggers,
           }).pipe(
             Effect.provideService(Crypto.Crypto, crypto),

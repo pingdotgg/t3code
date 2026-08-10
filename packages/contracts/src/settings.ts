@@ -10,6 +10,7 @@ import {
 } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
+import { McpServerConfig, McpServerId } from "./mcpServers.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -608,6 +609,11 @@ export const ServerSettings = Schema.Struct({
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  // User-configured MCP servers, merged into every underlying agent CLI's
+  // session alongside T3's own built-in MCP server. See mcpServers.ts.
+  mcpServers: Schema.Record(McpServerId, McpServerConfig).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
@@ -634,6 +640,8 @@ export class ServerSettingsError extends Schema.TaggedErrorClass<ServerSettingsE
     operation: ServerSettingsOperation,
     providerInstanceId: Schema.optional(Schema.String),
     environmentVariable: Schema.optional(Schema.String),
+    mcpServerId: Schema.optional(Schema.String),
+    mcpServerField: Schema.optional(Schema.String),
     cause: Schema.Defect(),
   },
 ) {
@@ -644,7 +652,9 @@ export class ServerSettingsError extends Schema.TaggedErrorClass<ServerSettingsE
       this.environmentVariable === undefined
         ? ""
         : ` and environment variable ${this.environmentVariable}`;
-    return `Server settings ${this.operation} failed${provider}${variable} at ${this.settingsPath}.`;
+    const mcpServer = this.mcpServerId === undefined ? "" : ` for MCP server ${this.mcpServerId}`;
+    const mcpField = this.mcpServerField === undefined ? "" : ` and field ${this.mcpServerField}`;
+    return `Server settings ${this.operation} failed${provider}${variable}${mcpServer}${mcpField} at ${this.settingsPath}.`;
   }
 }
 
@@ -749,6 +759,9 @@ export const ServerSettingsPatch = Schema.Struct({
   // patches risk leaving driver-specific config in a half-merged state.
   // The web UI sends a fully-formed map every time it edits this field.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
+  // Whole-map replacement, same rationale as `providerInstances` above:
+  // McpServerRegistry always sends the full map so removals take effect.
+  mcpServers: Schema.optionalKey(Schema.Record(McpServerId, McpServerConfig)),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 

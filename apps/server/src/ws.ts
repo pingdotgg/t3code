@@ -85,6 +85,7 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
+import * as McpServerRegistry from "./mcp/McpServerRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
@@ -407,6 +408,7 @@ const makeWsRpcLayer = (
       );
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const mcpServerRegistry = yield* McpServerRegistry.McpServerRegistry;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
@@ -1622,6 +1624,26 @@ const makeWsRpcLayer = (
               .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             {
               "rpc.aggregate": "source-control",
+            },
+          ),
+        [WS_METHODS.mcpServersList]: (_input) =>
+          observeRpcEffect(WS_METHODS.mcpServersList, mcpServerRegistry.list, {
+            "rpc.aggregate": "mcp-servers",
+          }),
+        [WS_METHODS.mcpServersUpsert]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpServersUpsert, mcpServerRegistry.upsert(input), {
+            "rpc.aggregate": "mcp-servers",
+          }),
+        [WS_METHODS.mcpServersRemove]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpServersRemove, mcpServerRegistry.remove(input), {
+            "rpc.aggregate": "mcp-servers",
+          }),
+        [WS_METHODS.mcpServersTestConnection]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpServersTestConnection,
+            mcpServerRegistry.testConnection(input),
+            {
+              "rpc.aggregate": "mcp-servers",
             },
           ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
