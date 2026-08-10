@@ -6070,6 +6070,7 @@ function ChatViewContent(props: ChatViewProps) {
         threadRef={activeThreadRef}
         activityId={activeRightPanelSurface.activityId}
         name={activeRightPanelSurface.name}
+        loadRequestId={activeRightPanelSurface.loadRequestId}
       />
     ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
       activeProject &&

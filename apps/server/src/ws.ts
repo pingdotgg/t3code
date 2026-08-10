@@ -89,7 +89,6 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
-import { findGeneratedImagePath } from "./assets/GeneratedImageResolver.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -1834,8 +1833,8 @@ const makeWsRpcLayer = (
               }
               if (input.resource._tag === "generated-image") {
                 const resource = input.resource;
-                const thread = yield* projectionSnapshotQuery
-                  .getThreadDetailById(resource.threadId)
+                const generatedImagePath = yield* projectionSnapshotQuery
+                  .getGeneratedImagePath(resource.threadId, resource.activityId)
                   .pipe(
                     Effect.mapError(
                       (cause) =>
@@ -1845,13 +1844,13 @@ const makeWsRpcLayer = (
                         }),
                     ),
                   );
-                const generatedImagePath = Option.isSome(thread)
-                  ? findGeneratedImagePath(thread.value.activities, resource.activityId)
-                  : null;
-                if (!generatedImagePath) {
+                if (Option.isNone(generatedImagePath)) {
                   return yield* new AssetGeneratedImageNotFoundError({ resource });
                 }
-                return yield* issueAssetUrl({ resource, generatedImagePath });
+                return yield* issueAssetUrl({
+                  resource,
+                  generatedImagePath: generatedImagePath.value,
+                });
               }
               if (input.resource._tag === "project-favicon") {
                 const project = yield* projectionSnapshotQuery

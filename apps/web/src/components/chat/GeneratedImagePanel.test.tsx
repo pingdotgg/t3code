@@ -35,12 +35,35 @@ describe("GeneratedImagePanel", () => {
         threadRef={threadRef}
         activityId={EventId.make("activity-generated-image")}
         name="generated.png"
+        loadRequestId={1}
       />,
     );
 
     expect(markup).toContain('alt="generated.png"');
     expect(markup).toContain(
-      'src="https://environment.example/api/assets/generated-image/generated.png"',
+      'src="https://environment.example/api/assets/generated-image/generated.png?t3LoadRequest=1"',
     );
+  });
+
+  it("bypasses cached image bytes when the panel is reopened", () => {
+    const firstMarkup = renderToStaticMarkup(
+      <GeneratedImagePanel
+        threadRef={threadRef}
+        activityId={EventId.make("activity-generated-image")}
+        name="generated.png"
+        loadRequestId={1}
+      />,
+    );
+    const reopenedMarkup = renderToStaticMarkup(
+      <GeneratedImagePanel
+        threadRef={threadRef}
+        activityId={EventId.make("activity-generated-image")}
+        name="generated.png"
+        loadRequestId={2}
+      />,
+    );
+
+    expect(firstMarkup).toContain("t3LoadRequest=1");
+    expect(reopenedMarkup).toContain("t3LoadRequest=2");
   });
 });

@@ -8,6 +8,7 @@
  */
 import type {
   CheckpointRef,
+  EventId,
   OrchestrationCheckpointSummary,
   OrchestrationProject,
   OrchestrationProjectShell,
@@ -162,6 +163,15 @@ export interface ProjectionSnapshotQueryShape {
   readonly getThreadShellById: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThreadShell>, ProjectionRepositoryError>;
+
+  /**
+   * Read the saved path for one completed generated-image activity without
+   * hydrating the thread's messages or other activity payloads.
+   */
+  readonly getGeneratedImagePath: (
+    threadId: ThreadId,
+    activityId: EventId,
+  ) => Effect.Effect<Option.Option<string>, ProjectionRepositoryError>;
 
   /**
    * Read a single active thread detail snapshot by id.
