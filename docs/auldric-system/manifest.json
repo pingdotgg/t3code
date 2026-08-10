@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "authorityDocument": "docs/auldric-system/README.md",
+  "guidanceDocuments": ["AGENTS.md"],
+  "activeDocuments": [
+    "docs/auldric-system/README.md",
+    "docs/auldric-system/00-current-state.md",
+    "docs/auldric-system/02-desktop-operating-model.md",
+    "docs/auldric-system/03-marketing-data-and-evidence.md",
+    "docs/auldric-system/04-marketing-workflows-and-artifacts.md",
+    "docs/auldric-system/05-marketing-review-and-claims.md",
+    "docs/auldric-system/08-capabilities-and-boundaries.md",
+    "docs/auldric-system/09-agent-operating-contract.md",
+    "docs/auldric-architecture.md",
+    "docs/auldric-launch-readiness.md",
+    "docs/auldric-upstream-overlays.md",
+    "docs/auldric-migration-matrix.md"
+  ],
+  "supersededDocuments": ["docs/auldric-hard-fork-launch-plan.md"],
+  "historicalDocuments": ["docs/_archive/auldric-runtime/README.md"]
+}

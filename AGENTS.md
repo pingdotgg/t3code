@@ -4,6 +4,29 @@ T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provid
 
 You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.
 
+## Auldric downstream authority
+
+This repository keeps T3 authoritative for Dev and shared platform infrastructure. Auldric owns
+only an isolated Marketing/Strategy domain beside native T3 Dev.
+
+- Dev uses native T3 modes, instructions, tools, agents, provider and session logic, transport,
+  shell, Git, terminal, preview, Connect, collaboration, remote, CI, and release behaviour.
+- Auldric compilation and evidence may run only after explicit Marketing-domain selection. A
+  missing or unknown product domain resolves to native Dev.
+- Marketing owns its sources, evidence, Day 0 packet, Marketing Strategy and GTM workflows,
+  artifacts, decisions, reviews, and explicitly approved implementation briefs.
+- A Marketing failure must remain inside Marketing. It must not inject fallback context into Dev or
+  change T3 interaction-mode, package, protocol, storage, authentication, connection, or runtime
+  identities.
+- Missing generic platform capability is an upstream dependency or parked work, not permission to
+  add a downstream runtime fork.
+
+The legacy `AuldricAI/Auldric` repository is read-only donor evidence. Never merge its history or
+preserve its platform implementation. Issue #14 must classify a Marketing requirement before any
+bounded rebuild begins. Start product work with the canonical
+[Marketing-domain documentation spine](docs/auldric-system/README.md). Issue #3 separately owns
+outward identity and distribution decisions.
+
 ## What makes T3 Code special?
 
 We have over 100,000 users who love T3 Code. It's important we maintain the things they love as we continue to iterate on the product. Here's a brief list of the things we can never compromise on.
