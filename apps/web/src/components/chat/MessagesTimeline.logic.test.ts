@@ -222,6 +222,17 @@ describe("resolveTimelineToolPresentation", () => {
     });
   });
 
+  it("pretty prints Grok ACP T3 MCP tool names", () => {
+    expect(resolveTimelineToolPresentation("t3-code__t3_thread_start")).toEqual({
+      displayName: "Start a T3 thread",
+      logo: "t3-code",
+    });
+    expect(resolveTimelineToolPresentation("t3-code__delegate_task")).toEqual({
+      displayName: "Delegate a child task",
+      logo: "t3-code",
+    });
+  });
+
   it("pretty prints bare T3 MCP toolkit names", () => {
     expect(resolveTimelineToolPresentation("list_scheduled_tasks")).toEqual({
       displayName: "List scheduled tasks",
