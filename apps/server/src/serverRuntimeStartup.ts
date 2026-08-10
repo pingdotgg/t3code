@@ -30,6 +30,7 @@ import * as EffectWorker from "./orchestration-v2/EffectWorker.ts";
 import * as LegacyV1ThreadImporter from "./orchestration-v2/LegacyV1ThreadImporter.ts";
 import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
 import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
+import * as ThreadHandoffService from "./orchestration-v2/ThreadHandoffService.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
@@ -342,6 +343,8 @@ export function runOrderedV2StartupPhases<
   readonly verify: Effect.Effect<Verification, VerifyError, VerifyContext>;
   readonly rebuild: Effect.Effect<RebuildVerification, RebuildError, RebuildContext>;
   readonly recover: Effect.Effect<Recovery, RecoveryError, RecoveryContext>;
+  /** Number of handoffs that were still applying when this server last stopped. */
+  readonly recoverHandoffs: Effect.Effect<number, never, RecoveryContext>;
   readonly startEffectWorker: Effect.Effect<void, WorkerError, WorkerContext>;
   readonly autoBootstrap: Effect.Effect<Bootstrap, BootstrapError, BootstrapContext>;
 }) {
@@ -357,9 +360,10 @@ export function runOrderedV2StartupPhases<
       }
     }
     const recovery = yield* input.recover;
+    const interruptedHandoffs = yield* input.recoverHandoffs;
     yield* input.startEffectWorker;
     const bootstrap = yield* input.autoBootstrap;
-    return { recovery, bootstrap } as const;
+    return { recovery, interruptedHandoffs, bootstrap } as const;
   });
 }
 
@@ -370,6 +374,7 @@ export const make = (options?: StartupOptions) =>
     const projectionMaintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
     const legacyV1ThreadImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
     const providerRuntimeRecovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+    const threadHandoff = yield* ThreadHandoffService.ThreadHandoffService;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
     const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
@@ -488,6 +493,14 @@ export const make = (options?: StartupOptions) =>
           projectionMaintenance.rebuild,
         ),
         recover: runStartupPhase("orchestration-v2.recovery", providerRuntimeRecovery.recover),
+        // A hop left in `applying` is the only state in which this
+        // environment's repository can have been written to by a transfer
+        // that never finished, so it is failed here rather than left to
+        // look in-flight forever.
+        recoverHandoffs: runStartupPhase(
+          "orchestration-v2.handoff.recovery",
+          threadHandoff.recoverInterrupted(),
+        ),
         startEffectWorker: runStartupPhase(
           "orchestration-v2.effect-worker.start",
           startEffectWorkerWithRelay({

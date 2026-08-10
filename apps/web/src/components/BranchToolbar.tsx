@@ -59,6 +59,7 @@ interface BranchToolbarProps {
   onComposerFocusRequest?: () => void;
   availableEnvironments?: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  onMoveThread?: (environmentId: EnvironmentId) => void;
 }
 
 interface MobileRunContextSelectorProps {
@@ -327,6 +328,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   onComposerFocusRequest,
   availableEnvironments,
   onEnvironmentChange,
+  onMoveThread,
 }: BranchToolbarProps) {
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -469,6 +471,7 @@ export const BranchToolbar = memo(function BranchToolbar({
                 environmentId={environmentId}
                 availableEnvironments={availableEnvironments}
                 {...(showEnvironmentPicker && onEnvironmentChange ? { onEnvironmentChange } : {})}
+                {...(onMoveThread ? { onMoveThread } : {})}
               />
               {showGitControls ? (
                 <Separator orientation="vertical" className="mx-0.5 h-3.5!" />

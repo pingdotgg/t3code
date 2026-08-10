@@ -18,6 +18,7 @@ import type {
   TimestampFormat,
 } from "@t3tools/contracts";
 import {
+  CloudIcon,
   AlarmClockIcon,
   AlarmClockOffIcon,
   CheckIcon,
@@ -97,6 +98,10 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
+import {
+  setPendingHandoffNavigation,
+  usePendingHandoffNavigation,
+} from "../state/handoffNavigation";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
@@ -792,6 +797,26 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         #{pr.number}
       </button>
     ) : null;
+  // A thread that is one side of a handoff carries where its work lives:
+  // `away` recedes (the work is elsewhere), `here` is quietly affirmative.
+  const handoffLink = thread.handoff ?? null;
+  const handoffBadge = handoffLink ? (
+    <span
+      role="img"
+      aria-label={
+        handoffLink.presence === "away"
+          ? `Running on ${handoffLink.peerLabel ?? "another device"}`
+          : "Moved to this device"
+      }
+      data-testid={`sidebar-v2-handoff-${handoffLink.presence}-${thread.id}`}
+      className={cn(
+        "inline-flex shrink-0 items-center justify-center",
+        handoffLink.presence === "away" ? "text-muted-foreground/60" : "text-primary/80",
+      )}
+    >
+      <CloudIcon className="size-3.5" />
+    </span>
+  ) : null;
   const terminalStatusIcon = terminalStatus ? (
     <span
       role="img"
@@ -843,6 +868,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
             </span>
             {title}
             {terminalStatusIcon}
+            {handoffBadge}
             {isRegeneratingTitle ? (
               <span role="status" className="sr-only">
                 Regenerating title
@@ -1059,6 +1085,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 <span className="flex-1" />
               )}
               {terminalStatusIcon}
+              {handoffBadge}
               {prBadge}
               {diff ? (
                 <span className="shrink-0 font-mono">
@@ -1209,6 +1236,26 @@ export default function SidebarV2() {
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const router = useRouter();
+  // Follow a moved thread once its shell lands. Lives here because the
+  // sidebar survives the route churn a departure causes; the thread view
+  // that started the move does not.
+  const pendingHandoffNavigation = usePendingHandoffNavigation();
+  useEffect(() => {
+    if (pendingHandoffNavigation === null) return;
+    const arrived = threads.some(
+      (thread) =>
+        thread.environmentId === pendingHandoffNavigation.environmentId &&
+        thread.id === pendingHandoffNavigation.threadId,
+    );
+    if (!arrived) return;
+    setPendingHandoffNavigation(null);
+    void router.navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(
+        scopeThreadRef(pendingHandoffNavigation.environmentId, pendingHandoffNavigation.threadId),
+      ),
+    });
+  }, [pendingHandoffNavigation, threads, router]);
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);

@@ -4,6 +4,7 @@ import {
   type ApplicationStoredEvent,
   CommandId,
   ContextTransferId,
+  EnvironmentId,
   EventId,
   MessageId,
   type ModelSelection,
@@ -12,6 +13,7 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   RunId,
+  ThreadHandoffId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -50,6 +52,7 @@ import { OrchestrationV2EventSinkLayerLive, OrchestrationV2LayerLive } from "./r
 import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { ThreadManagementService } from "./ThreadManagementService.ts";
+import { userFacingDispatchErrorMessage } from "./UserFacingErrors.ts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-orchestration-v2-runtime-layer-",
@@ -704,6 +707,91 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal(projection.thread.modelSelection.model, "gpt-5.5");
       assert.isNotNull(projection.thread.archivedAt);
       assert.isNotNull(projection.thread.deletedAt);
+    }),
+  );
+
+  it.effect("departs, completes and releases a thread handoff", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const threadManagement = yield* ThreadManagementService;
+      const threadId = ThreadId.make("runtime-layer-handoff-thread");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-handoff-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-handoff-project"),
+        title: "Handoff thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "feat/handoff",
+        worktreePath: null,
+      });
+
+      yield* threadManagement.dispatch({
+        type: "thread.handoff.depart",
+        commandId: CommandId.make("runtime-layer-handoff-depart"),
+        threadId,
+        handoffId: ThreadHandoffId.make("handoff-runtime-1"),
+        peerEnvironmentId: EnvironmentId.make("environment-staging"),
+        peerLabel: "calendaty-staging",
+        previousHandoffId: null,
+        hopCount: 0,
+      });
+      const departed = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(departed.thread.handoff?.presence, "away");
+      assert.equal(departed.thread.handoff?.peerLabel, "calendaty-staging");
+
+      // A departed thread refuses a second departure.
+      const second = yield* threadManagement
+        .dispatch({
+          type: "thread.handoff.depart",
+          commandId: CommandId.make("runtime-layer-handoff-depart-2"),
+          threadId,
+          handoffId: ThreadHandoffId.make("handoff-runtime-2"),
+          peerEnvironmentId: EnvironmentId.make("environment-other"),
+          peerLabel: null,
+          previousHandoffId: null,
+          hopCount: 0,
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(second, OrchestratorDispatchError);
+      // The refusal must carry a reason a user can act on, not the generic
+      // dispatch failure — the dialog shows exactly this string.
+      const detail = userFacingDispatchErrorMessage(second);
+      assert.isDefined(detail);
+      assert.include(detail ?? "", "already handed off");
+
+      yield* threadManagement.dispatch({
+        type: "thread.handoff.complete",
+        commandId: CommandId.make("runtime-layer-handoff-complete"),
+        threadId,
+        handoffId: ThreadHandoffId.make("handoff-runtime-1"),
+        peerThreadId: ThreadId.make("thread-on-staging"),
+      });
+      const completed = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(completed.thread.handoff?.peerThreadId, "thread-on-staging");
+      // The residual copy stays unarchived: the sidebar's one-row rule hides
+      // it while the live peer is visible, and it must remain reachable as
+      // the return target and the offline-peer safety net.
+      assert.isNull(completed.thread.archivedAt);
+
+      // A completed handoff can no longer be aborted: releasing here would
+      // make this side live again while the peer thread is running.
+      const lateAbort = yield* threadManagement
+        .dispatch({
+          type: "thread.handoff.abort",
+          commandId: CommandId.make("runtime-layer-handoff-abort"),
+          threadId,
+          handoffId: ThreadHandoffId.make("handoff-runtime-1"),
+          reason: "test release",
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(lateAbort, OrchestratorDispatchError);
+      const stillAway = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(stillAway.thread.handoff?.peerThreadId, "thread-on-staging");
     }),
   );
 

@@ -1,3 +1,4 @@
+import type { ThreadHandoffId, ThreadId } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import { Atom } from "effect/unstable/reactivity";
 
@@ -58,6 +59,7 @@ import {
   updateThreadMetadata,
   visitThread,
 } from "../operations/commands.ts";
+import { abortThreadHandoff } from "../operations/threadHandoff.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
 export type {
@@ -110,6 +112,17 @@ export function createThreadEnvironmentAtoms<R, E>(
     delete: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:delete",
       execute: (input: DeleteThreadInput) => deleteThread(input),
+      scheduler,
+      concurrency,
+    }),
+    releaseHandoff: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:handoff:release",
+      execute: (input: { readonly threadId: ThreadId; readonly handoffId: ThreadHandoffId }) =>
+        abortThreadHandoff({
+          threadId: input.threadId,
+          handoffId: input.handoffId,
+          reason: "released by user",
+        }),
       scheduler,
       concurrency,
     }),

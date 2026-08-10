@@ -59,6 +59,10 @@ import Migration0043 from "./Migrations/043_ApplicationEventSource.ts";
 import Migration0044 from "./Migrations/044_OrchestrationV2EffectCancellation.ts";
 import Migration0045 from "./Migrations/045_ScheduledTasks.ts";
 import Migration0046 from "./Migrations/046_LegacyV1ImportState.ts";
+import Migration0047 from "./Migrations/047_OrchestrationV2ThreadHandoffs.ts";
+import Migration0048 from "./Migrations/048_OrchestrationV2ThreadHandoffApplyCwd.ts";
+import Migration0049 from "./Migrations/049_OrchestrationV2ThreadHandoffRootStash.ts";
+import Migration0050 from "./Migrations/050_OrchestrationV2ThreadHandoffCreatedWorktree.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -117,6 +121,10 @@ export const migrationEntries = [
   [44, "OrchestrationV2EffectCancellation", Migration0044],
   [45, "ScheduledTasks", Migration0045],
   [46, "LegacyV1ImportState", Migration0046],
+  [47, "OrchestrationV2ThreadHandoffs", Migration0047],
+  [48, "OrchestrationV2ThreadHandoffApplyCwd", Migration0048],
+  [49, "OrchestrationV2ThreadHandoffRootStash", Migration0049],
+  [50, "OrchestrationV2ThreadHandoffCreatedWorktree", Migration0050],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

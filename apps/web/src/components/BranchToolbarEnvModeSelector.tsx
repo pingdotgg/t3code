@@ -156,7 +156,9 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
             <SelectValue />
           </span>
           {displayMode === "panel" ? (
-            <span className="shrink-0 text-[10px] font-normal text-muted-foreground/70">
+            // flex-1 absorbs the row's slack so the chevron and its divider
+            // park at the right edge, like every other panel row.
+            <span className="min-w-0 flex-1 truncate text-left text-[10px] font-normal text-muted-foreground/70">
               {effectiveEnvMode === "worktree" && !activeWorktreePath ? "Create" : workspaceKind}
             </span>
           ) : null}

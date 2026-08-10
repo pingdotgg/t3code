@@ -72,6 +72,7 @@ import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
+import * as ThreadHandoffService from "./orchestration-v2/ThreadHandoffService.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import {
@@ -415,6 +416,7 @@ const makeWsRpcLayer = (
           ),
       );
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
+      const threadHandoff = yield* ThreadHandoffService.ThreadHandoffService;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const projectService = yield* ProjectService.ProjectService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
@@ -1177,6 +1179,63 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "orchestration",
               "orchestration_v2.command_id": input.commandId,
+              "orchestration_v2.project_id": input.projectId,
+            },
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.prepareThreadHandoff]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.prepareThreadHandoff,
+            threadHandoff
+              .prepare({
+                threadId: input.threadId,
+                peerEnvironmentId: input.peerEnvironmentId,
+                peerBranchTip: input.peerBranchTip,
+                fullHistory: input.fullHistory ?? false,
+                previousHandoffId: input.previousHandoffId,
+                hopCount: input.hopCount,
+              })
+              .pipe(
+                Effect.map((preparation) => ({
+                  bundle: preparation.bundle,
+                  totalBytes: preparation.totalBytes,
+                  // "refuse" never reaches a client: prepare fails with
+                  // payload_too_large instead of returning a verdict nobody
+                  // can act on.
+                  verdict:
+                    preparation.verdict === "refuse" ? ("warn" as const) : preparation.verdict,
+                  dirtyFileCount: preparation.dirtyFileCount,
+                  untrackedFileCount: preparation.untrackedFileCount,
+                })),
+              ),
+            {
+              "rpc.aggregate": "orchestration",
+              "orchestration_v2.thread_id": input.threadId,
+            },
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.receiveThreadHandoff]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.receiveThreadHandoff,
+            threadHandoff
+              .receive({
+                bundle: input.bundle,
+                projectId: input.projectId,
+                cloneWorkspaceRoot: input.cloneWorkspaceRoot,
+                returningThreadId: input.returningThreadId,
+              })
+              .pipe(
+                Effect.map((application) => ({
+                  threadId: application.threadId,
+                  projectId: application.projectId,
+                  // A diverged or unrelated hop fails rather than returning,
+                  // so only the two outcomes that wrote anything get here.
+                  classification:
+                    application.classification === "absorb"
+                      ? ("absorb" as const)
+                      : ("advance" as const),
+                })),
+              ),
+            {
+              "rpc.aggregate": "orchestration",
               "orchestration_v2.project_id": input.projectId,
             },
           ),

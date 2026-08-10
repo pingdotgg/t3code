@@ -214,6 +214,10 @@ export function applyToProjection(
     case "thread.interaction-mode-updated":
     case "thread.model-selection-updated":
     case "thread.provider-switched":
+    case "thread.handoff-departed":
+    case "thread.handoff-arrived":
+    case "thread.handoff-returned":
+    case "thread.handoff-failed":
       return {
         ...base,
         thread: event.payload,
@@ -916,6 +920,7 @@ export function threadShellFromProjection(
     pinnedAt: projection.thread.pinnedAt ?? null,
     lastVisitedAt: projection.thread.lastVisitedAt,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
+    handoff: projection.thread.handoff ?? null,
     deletedAt: projection.thread.deletedAt,
   };
 }
@@ -1100,6 +1105,7 @@ function shellFromState(input: {
     pinnedAt: input.state.thread.pinnedAt ?? null,
     lastVisitedAt: input.state.thread.lastVisitedAt,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
+    handoff: input.state.thread.handoff ?? null,
     deletedAt: input.state.thread.deletedAt,
   };
 }
@@ -1128,7 +1134,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           case "thread.runtime-mode-updated":
           case "thread.interaction-mode-updated":
           case "thread.model-selection-updated":
-          case "thread.provider-switched": {
+          case "thread.provider-switched":
+          case "thread.handoff-departed":
+          case "thread.handoff-arrived":
+          case "thread.handoff-returned":
+          case "thread.handoff-failed": {
             const payloadJson = yield* encodeThreadPayload(event.payload);
             const payload = parseEncodedPayload(payloadJson);
             yield* sql`
