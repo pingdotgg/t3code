@@ -38,6 +38,7 @@ public struct WorkspaceView: View {
     @State private var newTaskInitialProjectID: String?
     @State private var showingAddProject = false
     @State private var showingSettings = false
+    @State private var showingCommandPalette = false
     @State private var renamingThread: FeatureThread?
     @State private var renameTitle = ""
     @State private var sidebarBoundaryNow = Date.now
@@ -142,6 +143,13 @@ public struct WorkspaceView: View {
         .sheet(isPresented: $showingSettings) {
             SettingsView(model: model)
         }
+        .sheet(isPresented: $showingCommandPalette) {
+            FeatureCommandPaletteView(
+                model: model,
+                activeProjectID: commandPaletteActiveProjectID,
+                onSelect: handleCommandPaletteAction
+            )
+        }
         .alert(
             "Rename thread",
             isPresented: Binding(
@@ -186,6 +194,7 @@ public struct WorkspaceView: View {
                 return
             }
         }
+        .highPriorityGesture(commandPaletteGesture)
     }
 
     private var sidebar: some View {
@@ -510,6 +519,26 @@ public struct WorkspaceView: View {
         DailyUXCreationContext.projects(in: model.snapshot)
     }
 
+    private var commandPaletteActiveProjectID: String? {
+        if let selectedProjectID {
+            return selectedProjectID
+        }
+        if let selectedThreadID,
+           let selectedThread = model.snapshot.threads.first(where: {
+               $0.id == selectedThreadID
+           }) {
+            return selectedThread.projectID
+        }
+        return creationProjects.first?.id
+    }
+
+    private var connectionEnvironmentName: String {
+        model.snapshot.connection.environmentName
+            ?? model.snapshot.environments.first(where: \.isActive)?.name
+            ?? model.snapshot.environments.first?.name
+            ?? "Server"
+    }
+
     private var unreachableEnvironments: [FeatureEnvironment] {
         model.snapshot.environments.filter {
             $0.isEnabled && $0.connectionState == .disconnected
@@ -574,6 +603,41 @@ public struct WorkspaceView: View {
             newTaskInitialProjectID = initialProjectID
             showingNewTask = true
         }
+    }
+
+    private func handleCommandPaletteAction(_ action: FeatureCommandPaletteAction) {
+        Task { @MainActor in
+            await Task.yield()
+            switch action {
+            case let .newTask(projectID):
+                openNewTaskOrProjectCreation(initialProjectID: projectID)
+            case .addProject:
+                showingAddProject = true
+            case .settings:
+                showingSettings = true
+            case let .openThread(id):
+                openThread(id)
+            case let .openProject(id):
+                selectedProjectID = id
+                closeSelectedThread()
+            case .chooseNewTaskProject:
+                break
+            }
+        }
+    }
+
+    private var commandPaletteGesture: some Gesture {
+        DragGesture(minimumDistance: 24, coordinateSpace: .global)
+            .onEnded { value in
+                guard FeatureCommandPaletteGesture.shouldPresent(
+                    startY: value.startLocation.y,
+                    translation: value.translation
+                ) else {
+                    return
+                }
+                isSearchFocused = false
+                showingCommandPalette = true
+            }
     }
 
     private func consumeNavigationRequest() {
