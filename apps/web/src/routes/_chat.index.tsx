@@ -12,9 +12,10 @@ import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import {
   useAllEnvironmentShellsBootstrapped,
   useProjects,
+  useServerConfigs,
   useThreadShells,
 } from "../state/entities";
-import { useEnvironments } from "../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { APP_DISPLAY_NAME } from "~/branding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { cn } from "~/lib/utils";
@@ -41,6 +42,8 @@ function IndexDraftLanding() {
   const threads = useThreadShells();
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const handleNewThread = useNewThreadHandler();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const serverConfigs = useServerConfigs();
   const startingRef = useRef(false);
   const [startState, setStartState] = useState({ failed: false, retryRequest: 0 });
 
@@ -80,7 +83,19 @@ function IndexDraftLanding() {
       />
     ) : null;
   }
-  return <NoProjectsHero />;
+  return (
+    <NoProjectsHero
+      onStartWithoutProject={
+        primaryEnvironmentId && serverConfigs.get(primaryEnvironmentId)?.projectlessThreads === true
+          ? () =>
+              handleNewThread(
+                { environmentId: primaryEnvironmentId, projectId: null },
+                { replace: true },
+              )
+          : null
+      }
+    />
+  );
 }
 
 function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
@@ -104,7 +119,11 @@ function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
   );
 }
 
-function NoProjectsHero() {
+function NoProjectsHero({
+  onStartWithoutProject,
+}: {
+  readonly onStartWithoutProject: (() => Promise<void>) | null;
+}) {
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
 
   return (
@@ -117,13 +136,18 @@ function NoProjectsHero() {
                 What should we work on?
               </EmptyTitle>
               <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
-                Add a project to start your first thread.
+                Add a project, or start a thread without one.
               </EmptyDescription>
-              <div className="mt-6 flex justify-center">
+              <div className="mt-6 flex flex-wrap justify-center gap-2">
                 <Button size="sm" onClick={openAddProject}>
                   <PlusIcon className="size-4" />
                   Add project
                 </Button>
+                {onStartWithoutProject ? (
+                  <Button size="sm" variant="outline" onClick={() => void onStartWithoutProject()}>
+                    Start without a project
+                  </Button>
+                ) : null}
               </div>
             </EmptyHeader>
           </div>

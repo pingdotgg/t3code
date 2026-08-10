@@ -11,7 +11,8 @@ import { cn } from "../../lib/cn";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
-import { useProjects } from "../../state/entities";
+import { useProjects, useServerConfigs } from "../../state/entities";
+import { useEnvironments } from "../../state/environments";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import { useWorkspaceState } from "../../state/workspace";
 import { scopedProjectKey } from "../../lib/scopedEntities";
@@ -80,6 +81,8 @@ function deriveProjectEmptyState(catalogState: WorkspaceState): {
 
 export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRouteParams | undefined>) {
   const projects = useProjects();
+  const serverConfigs = useServerConfigs();
+  const { environments } = useEnvironments();
   const { projectScopes } = useNewTaskFlow();
   const { state: catalogState } = useWorkspaceState();
   const navigation = useNavigation();
@@ -103,6 +106,9 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     : null;
   const screenTitle = incomingShare ? "Start a task" : "Choose project";
   const projectEmptyState = deriveProjectEmptyState(catalogState);
+  const projectlessEnvironment = environments.find(
+    (environment) => serverConfigs.get(environment.environmentId)?.projectlessThreads === true,
+  );
   const resumedDestinationKeyRef = useRef<string | null>(null);
   const reservedDestinationProject = incomingShare?.destination
     ? (projects.find(
@@ -133,6 +139,18 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         projectId: project.id,
         title: project.title,
         incomingShareId: incomingShare?.id,
+      },
+    });
+  }
+
+  function selectProjectless(): void {
+    if (!projectlessEnvironment) return;
+    navigation.navigate("NewTaskSheet", {
+      screen: "NewTaskDraft",
+      params: {
+        environmentId: projectlessEnvironment.environmentId,
+        title: "No project",
+        projectless: "true",
       },
     });
   }
@@ -242,6 +260,27 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
           paddingTop: 8,
         }}
       >
+        {!incomingShare && projectlessEnvironment ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Don't work in a project"
+            onPress={selectProjectless}
+            className="flex-row items-center gap-3 rounded-[24px] bg-card px-4 py-3.5 active:opacity-70"
+          >
+            <View className="h-7 w-7 items-center justify-center">
+              <SymbolView name="xmark" size={18} tintColor={accentColor} />
+            </View>
+            <View className="min-w-0 flex-1">
+              <Text className="text-base leading-snug font-t3-bold">
+                Don&apos;t work in a project
+              </Text>
+              <Text className="text-xs leading-snug text-foreground-muted">
+                Start in {projectlessEnvironment.label}
+              </Text>
+            </View>
+            <SymbolView name="chevron.right" size={14} tintColor={chevronColor} />
+          </Pressable>
+        ) : null}
         {projectScopes.length === 0 ? (
           <View collapsable={false} className="items-center gap-3 rounded-[24px] bg-card px-6 py-8">
             {projectEmptyState.loading ? <ActivityIndicator color={accentColor} /> : null}

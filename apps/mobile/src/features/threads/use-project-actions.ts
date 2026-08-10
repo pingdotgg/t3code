@@ -27,7 +27,8 @@ export function useCreateProjectThread() {
 
   return useCallback(
     async (input: {
-      readonly project: EnvironmentProject;
+      readonly project: EnvironmentProject | null;
+      readonly environmentId: EnvironmentProject["environmentId"];
       readonly modelSelection: ModelSelection;
       readonly envMode: "local" | "worktree";
       readonly branch: string | null;
@@ -44,23 +45,27 @@ export function useCreateProjectThread() {
       const threadId = ThreadId.make(metadata.threadId);
       const initialMessageText = input.initialMessageText.trim();
 
-      const validationError = validateProjectThreadCreation({
-        environmentId: input.project.environmentId,
-        projectId: input.project.id,
-        environmentMode: input.envMode,
-        branch: input.branch,
-        initialMessageText,
-      });
+      const validationError = input.project
+        ? validateProjectThreadCreation({
+            environmentId: input.project.environmentId,
+            projectId: input.project.id,
+            environmentMode: input.envMode,
+            branch: input.branch,
+            initialMessageText,
+          })
+        : initialMessageText.length === 0
+          ? new Error("Enter a task before starting the thread.")
+          : null;
       if (validationError !== null) {
         setPendingConnectionError(validationError.message);
         return AsyncResult.failure(Cause.fail(validationError));
       }
 
       const result = await startTurn({
-        environmentId: input.project.environmentId,
+        environmentId: input.environmentId,
         input: buildProjectThreadStartTurnInput({
-          projectId: input.project.id,
-          projectCwd: input.project.workspaceRoot,
+          projectId: input.project?.id ?? null,
+          projectCwd: input.project?.workspaceRoot ?? null,
           threadId: metadata.threadId,
           commandId: metadata.commandId,
           messageId: metadata.messageId,
@@ -70,9 +75,9 @@ export function useCreateProjectThread() {
           modelSelection: input.modelSelection,
           runtimeMode: input.runtimeMode,
           interactionMode: input.interactionMode,
-          workspaceMode: input.envMode,
-          branch: input.branch,
-          worktreePath: input.worktreePath,
+          workspaceMode: input.project ? input.envMode : "local",
+          branch: input.project ? input.branch : null,
+          worktreePath: input.project ? input.worktreePath : null,
           startFromOrigin: input.startFromOrigin ?? false,
           worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
         }),
@@ -86,9 +91,7 @@ export function useCreateProjectThread() {
       }
       setPendingConnectionError(null);
 
-      return mapAtomCommandResult(result, () =>
-        scopeThreadRef(input.project.environmentId, threadId),
-      );
+      return mapAtomCommandResult(result, () => scopeThreadRef(input.environmentId, threadId));
     },
     [startTurn],
   );

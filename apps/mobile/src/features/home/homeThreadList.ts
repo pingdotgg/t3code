@@ -20,6 +20,7 @@ import type {
   SidebarProjectSortOrder,
   SidebarThreadSortOrder,
 } from "@t3tools/contracts";
+import { ProjectId } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
@@ -98,6 +99,7 @@ export function sortHomeProjectScopes(input: {
 
   for (const thread of input.threads) {
     if (thread.archivedAt !== null) continue;
+    if (thread.projectId === null) continue;
     recordActivity(
       scopeKeyByProjectRef.get(scopedProjectKey(thread.environmentId, thread.projectId)),
       getThreadSortTimestamp(thread, input.projectSortOrder),
@@ -281,6 +283,32 @@ export function buildHomeThreadGroups(input: {
       continue;
     }
 
+    if (thread.projectId === null) {
+      const groupKey = `projectless:${thread.environmentId}`;
+      if (!groups.has(groupKey)) {
+        groupTitleByKey.set(groupKey, "No project");
+        groups.set(groupKey, {
+          key: groupKey,
+          projects: [
+            {
+              environmentId: thread.environmentId,
+              id: ProjectId.make(`projectless-${thread.environmentId}`),
+              title: "No project",
+              workspaceRoot: thread.workspaceRoot ?? "",
+              repositoryIdentity: null,
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: thread.createdAt,
+              updatedAt: thread.updatedAt,
+            },
+          ],
+          pendingTasks: [],
+          threads: [],
+        });
+      }
+      groups.get(groupKey)?.threads.push(thread);
+      continue;
+    }
     const physicalKey = scopedProjectKey(thread.environmentId, thread.projectId);
     const groupKey = groupKeyByProjectKey.get(physicalKey);
     if (!groupKey) {
@@ -363,9 +391,10 @@ export function buildHomeThreadGroups(input: {
       pendingTasks: matchingPendingTasks,
       threads: sortedThreads,
       recentThreads,
-      newThreadTarget: group.key.startsWith("pending-project:")
-        ? null
-        : (lastActiveProject ?? representative),
+      newThreadTarget:
+        group.key.startsWith("pending-project:") || group.key.startsWith("projectless:")
+          ? null
+          : (lastActiveProject ?? representative),
     });
   }
 

@@ -16,13 +16,13 @@ export function useSelectedThreadGitState() {
   const selectedThreadGitTarget = useMemo(
     () => ({
       environmentId: selectedThread?.environmentId ?? null,
-      cwd: selectedThreadCwd,
+      cwd: selectedThreadProject === null ? null : selectedThreadCwd,
     }),
-    [selectedThread?.environmentId, selectedThreadCwd],
+    [selectedThread?.environmentId, selectedThreadCwd, selectedThreadProject],
   );
   const gitActionState = useVcsActionState(selectedThreadGitTarget);
   const sourceControlDiscovery = useEnvironmentQuery(
-    selectedThread === null
+    selectedThread === null || selectedThreadProject === null
       ? null
       : sourceControlEnvironment.discovery({
           environmentId: selectedThread.environmentId,

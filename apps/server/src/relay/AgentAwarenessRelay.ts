@@ -234,7 +234,7 @@ export function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly thread: Option.Option<OrchestrationThreadShell>;
-  readonly project: Option.Option<OrchestrationProjectShell>;
+  readonly project: Option.Option<Pick<OrchestrationProjectShell, "title">>;
 }): {
   readonly projectId: string | null;
   readonly state: RelayAgentActivityState | null;
@@ -248,6 +248,19 @@ export function resolveAgentAwarenessRelayPublishSnapshot(input: {
     };
   }
   if (Option.isNone(input.project)) {
+    if (input.thread.value.projectId === null) {
+      return {
+        projectId: null,
+        state: sanitizeRelayAgentActivityState(
+          projectThreadAwareness({
+            environmentId: input.environmentId,
+            project: { title: "No project" },
+            thread: input.thread.value,
+          }),
+        ),
+        reason: "snapshot",
+      };
+    }
     return {
       projectId: input.thread.value.projectId,
       state: null,
@@ -275,7 +288,8 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
   const projectById = new Map(input.projects.map((project) => [project.id, project]));
   return input.threads
     .filter((thread) => {
-      const project = projectById.get(thread.projectId);
+      const project =
+        thread.projectId === null ? { title: "No project" } : projectById.get(thread.projectId);
       if (!project) {
         return false;
       }
@@ -405,9 +419,10 @@ export const make = Effect.gen(function* () {
       });
 
     const thread = yield* snapshotQuery.getThreadShellById(threadId);
-    const project = Option.isSome(thread)
-      ? yield* snapshotQuery.getProjectShellById(thread.value.projectId)
-      : Option.none<OrchestrationProjectShell>();
+    const project =
+      Option.isSome(thread) && thread.value.projectId !== null
+        ? yield* snapshotQuery.getProjectShellById(thread.value.projectId)
+        : Option.none<OrchestrationProjectShell>();
     const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
       threadId,

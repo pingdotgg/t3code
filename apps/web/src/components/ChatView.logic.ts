@@ -5,13 +5,13 @@ import {
   type ModelSelection,
   type ProviderDriverKind,
   type ServerProvider,
-  type ScopedProjectRef,
   type ScopedThreadRef,
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadShell } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
+import type { DraftThreadTargetRef } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
@@ -42,13 +42,28 @@ export function hasEnvironmentReconnectWarningGraceElapsed(
 }
 
 export function startNewThreadForProject(
-  projectRef: ScopedProjectRef | null,
-  handleNewThread: (projectRef: ScopedProjectRef) => Promise<void>,
+  projectRef: DraftThreadTargetRef | null,
+  handleNewThread: (projectRef: DraftThreadTargetRef) => Promise<void>,
 ): boolean {
   if (projectRef === null) return false;
   void handleNewThread(projectRef);
 
   return true;
+}
+
+export function resolveThreadWorkspaceRoot(input: {
+  readonly worktreePath: string | null | undefined;
+  readonly projectCwd: string | null | undefined;
+  readonly threadWorkspaceRoot: string | null | undefined;
+  readonly environmentCwd?: string | null | undefined;
+}): string | undefined {
+  return (
+    input.worktreePath ??
+    input.projectCwd ??
+    input.threadWorkspaceRoot ??
+    input.environmentCwd ??
+    undefined
+  );
 }
 
 export function resolveThreadMetadataUpdateForNextTurn(input: {
@@ -87,6 +102,7 @@ export function buildLocalDraftThread(
     id: threadId,
     environmentId: draftThread.environmentId,
     projectId: draftThread.projectId,
+    workspaceRoot: null,
     title: "New thread",
     modelSelection: fallbackModelSelection,
     runtimeMode: draftThread.runtimeMode,

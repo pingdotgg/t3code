@@ -177,10 +177,12 @@ export function useThreadActionMenu(input: {
         };
         switch (action) {
           case "new-thread-on-branch": {
+            if (thread.projectId === null) return;
+            const projectId = thread.projectId;
             // Explicit branch carry-over: reuse the thread's worktree when it
             // has one, otherwise its branch on the local checkout.
             const result = await settlePromise(() =>
-              handleNewThread(scopeProjectRef(threadRef.environmentId, thread.projectId), {
+              handleNewThread(scopeProjectRef(threadRef.environmentId, projectId), {
                 branch: thread.branch,
                 worktreePath: thread.worktreePath,
                 envMode: thread.worktreePath ? "worktree" : "local",

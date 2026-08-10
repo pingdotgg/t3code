@@ -62,6 +62,10 @@ at. To keep a worktree, use the explicit "new thread in this worktree" action in
 toolbar. The only difference between the two commands: with the current sidebar and more than one
 project, `chat.new` opens a project chooser first.
 
+The new-thread picker and Command Palette also offer **Don't work in a project**. This creates an
+environment-scoped thread with no project association; the provider runs from that environment's
+default working directory.
+
 ## `when` Conditions
 
 A `when` expression is evaluated against context keys describing the current UI state. The keys

@@ -434,7 +434,8 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const resolveProject = Effect.fnUntraced(function* (projectId: ProjectId) {
+  const resolveProject = Effect.fnUntraced(function* (projectId: ProjectId | null) {
+    if (projectId === null) return undefined;
     return yield* projectionSnapshotQuery
       .getProjectShellById(projectId)
       .pipe(Effect.map(Option.getOrUndefined));

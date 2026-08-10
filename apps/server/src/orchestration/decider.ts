@@ -350,11 +350,18 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.create": {
-      yield* requireProject({
-        readModel,
-        command,
-        projectId: command.projectId,
-      });
+      const hasProject = command.projectId !== null;
+      const hasProjectlessRoot = command.workspaceRoot != null;
+      if (hasProject === hasProjectlessRoot) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail:
+            "A thread must target either a project or an environment workspace root, but not both.",
+        });
+      }
+      if (command.projectId !== null) {
+        yield* requireProject({ readModel, command, projectId: command.projectId });
+      }
       yield* requireThreadAbsent({
         readModel,
         command,
@@ -371,6 +378,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           projectId: command.projectId,
+          workspaceRoot: command.workspaceRoot,
           title: command.title,
           modelSelection: command.modelSelection,
           runtimeMode: command.runtimeMode,

@@ -26,6 +26,7 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveThreadWorkspaceRoot,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   scheduleEnvironmentReconnectWarning,
@@ -38,6 +39,37 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("resolveThreadWorkspaceRoot", () => {
+  it("prefers worktrees and project roots for project-backed threads", () => {
+    expect(
+      resolveThreadWorkspaceRoot({
+        worktreePath: "/repo/worktree",
+        projectCwd: "/repo",
+        threadWorkspaceRoot: null,
+      }),
+    ).toBe("/repo/worktree");
+  });
+
+  it("falls back to the durable projectless root and then the environment cwd", () => {
+    expect(
+      resolveThreadWorkspaceRoot({
+        worktreePath: null,
+        projectCwd: null,
+        threadWorkspaceRoot: "/durable/root",
+        environmentCwd: "/environment/root",
+      }),
+    ).toBe("/durable/root");
+    expect(
+      resolveThreadWorkspaceRoot({
+        worktreePath: null,
+        projectCwd: null,
+        threadWorkspaceRoot: null,
+        environmentCwd: "/environment/root",
+      }),
+    ).toBe("/environment/root");
+  });
+});
 
 describe("environment reconnect warning grace", () => {
   afterEach(() => vi.useRealTimers());
@@ -538,7 +570,7 @@ describe("shouldWriteThreadErrorToCurrentServerThread", () => {
 
 describe("startNewThreadForProject", () => {
   it("starts a thread through the supplied shared handler for the active project", () => {
-    const calls: Array<{ environmentId: EnvironmentId; projectId: ProjectId }> = [];
+    const calls: Array<{ environmentId: EnvironmentId; projectId: ProjectId | null }> = [];
     const projectRef = { environmentId, projectId };
 
     expect(

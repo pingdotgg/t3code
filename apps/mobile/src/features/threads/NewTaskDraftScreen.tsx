@@ -71,6 +71,7 @@ export function NewTaskDraftScreen(props: {
   readonly pendingTaskId?: string;
   /** Durable native share inbox item to merge into this project draft. */
   readonly incomingShareId?: string;
+  readonly projectless?: boolean;
 }) {
   const projects = useProjects();
   const createProjectThread = useCreateProjectThread();
@@ -87,15 +88,13 @@ export function NewTaskDraftScreen(props: {
   const colorScheme = useColorScheme();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const controlsBottomPadding = isKeyboardVisible ? 8 : Math.max(insets.bottom, 10);
-  const { projectScopes, selectedProject, selectedProjectKey, setProject } = flow;
+  const { projectScopes, selectedProject, selectedProjectKey, setProject, setProjectless } = flow;
   const { connectedEnvironments } = useRemoteConnectionStatus();
-  const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
-    selectedProject?.environmentId ?? null,
-  );
+  const selectedEnvironmentServerConfig = useEnvironmentServerConfig(flow.selectedEnvironmentId);
   const environmentConnected =
-    selectedProject !== null &&
+    flow.selectedEnvironmentId !== null &&
     connectedEnvironments.find(
-      (environment) => environment.environmentId === selectedProject.environmentId,
+      (environment) => environment.environmentId === flow.selectedEnvironmentId,
     )?.connectionState === "connected";
   const promptInputRef = useRef<ComposerEditorHandle>(null);
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
@@ -244,6 +243,15 @@ export function NewTaskDraftScreen(props: {
       appliedInitialProjectKeyRef.current = null;
     }
     const initialEnvironmentId = props.initialProjectRef?.environmentId;
+    if (props.projectless && initialEnvironmentId) {
+      const projectlessKey = `projectless:${initialEnvironmentId}`;
+      if (appliedInitialProjectKeyRef.current === projectlessKey) {
+        return;
+      }
+      appliedInitialProjectKeyRef.current = projectlessKey;
+      setProjectless(EnvironmentId.make(initialEnvironmentId));
+      return;
+    }
     const initialProjectId = props.initialProjectRef?.projectId;
     if (initialEnvironmentId && initialProjectId) {
       const directProject =
@@ -295,10 +303,12 @@ export function NewTaskDraftScreen(props: {
     props.initialProjectRef,
     props.incomingShareId,
     props.pendingTaskId,
+    props.projectless,
     navigation,
     selectedProject,
     selectedProjectKey,
     setProject,
+    setProjectless,
   ]);
 
   useEffect(() => {
@@ -516,7 +526,7 @@ export function NewTaskDraftScreen(props: {
   useEffect(() => {
     // Android starts with the collapsed composer pill (like an open thread)
     // and only expands/focuses when tapped.
-    if (!selectedProject || Platform.OS === "android") {
+    if ((!selectedProject && !flow.isProjectless) || Platform.OS === "android") {
       return;
     }
 
@@ -540,6 +550,7 @@ export function NewTaskDraftScreen(props: {
       }
     };
   }, [
+    flow.isProjectless,
     selectedProject,
     settingsSheetPresentation.isActiveRef,
     settingsSheetPresentation.restoreFocusAfterSave,
@@ -710,8 +721,9 @@ export function NewTaskDraftScreen(props: {
 
   async function handleStart(): Promise<void> {
     const selectedProject = flow.selectedProject;
+    const selectedEnvironmentId = flow.selectedEnvironmentId;
     const draftKey = flow.draftKey;
-    if (!selectedProject || !draftKey) {
+    if ((!selectedProject && !flow.isProjectless) || !selectedEnvironmentId || !draftKey) {
       return;
     }
     const draft = getComposerDraftSnapshot(draftKey);
@@ -744,6 +756,13 @@ export function NewTaskDraftScreen(props: {
     const editingPendingTask = flow.editingPendingTask;
 
     if (!environmentConnected) {
+      if (flow.isProjectless) {
+        Alert.alert(
+          "Environment unavailable",
+          "Connect to the environment before starting a thread without a project.",
+        );
+        return;
+      }
       // Offline: park the task in the outbox; the drain sends it when the
       // environment reconnects. Editing an existing pending task re-queues it
       // under its original identifiers.
@@ -790,14 +809,15 @@ export function NewTaskDraftScreen(props: {
     // finds no work and ends the card within seconds.
     armAgentAwarenessLiveActivityForLocalWork({
       threadTitle: deriveThreadTitleFromPrompt(initialMessageText),
-      projectTitle: selectedProject.title,
+      projectTitle: selectedProject?.title ?? "No project",
     });
     const result = await createProjectThread({
       project: selectedProject,
+      environmentId: selectedEnvironmentId,
       modelSelection,
-      envMode: workspaceMode,
-      branch: selectedBranchName,
-      worktreePath: workspaceMode === "worktree" ? null : selectedWorktreePath,
+      envMode: selectedProject ? workspaceMode : "local",
+      branch: selectedProject ? selectedBranchName : null,
+      worktreePath: selectedProject && workspaceMode !== "worktree" ? selectedWorktreePath : null,
       startFromOrigin,
       runtimeMode,
       interactionMode,
@@ -845,7 +865,7 @@ export function NewTaskDraftScreen(props: {
     );
   }
 
-  if (!selectedProject) {
+  if (!selectedProject && !flow.isProjectless) {
     return (
       <View className="flex-1 bg-sheet">
         {Platform.OS === "android" ? (
@@ -868,13 +888,15 @@ export function NewTaskDraftScreen(props: {
   // draft composer expanded through the blur (mirrors ThreadComposer).
   const isExpanded = !isAndroid || isComposerFocused || settingsSheetPresentation.isActive;
   const canStart =
-    Boolean(flow.selectedProject) &&
+    Boolean(flow.selectedProject || flow.isProjectless) &&
     Boolean(flow.selectedModel) &&
     flow.prompt.trim().length > 0 &&
     isIncomingShareReady &&
     !isImportingShare &&
     !flow.submitting &&
-    !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
+    (!flow.isProjectless || environmentConnected) &&
+    !(!flow.isProjectless && flow.workspaceMode === "worktree" && !flow.selectedBranchName);
+  const targetTitle = selectedProject?.title ?? "No project";
   const promptEditor = (
     <ComposerEditor
       ref={promptInputRef}
@@ -892,7 +914,9 @@ export function NewTaskDraftScreen(props: {
       onFocus={() => setIsComposerFocused(true)}
       onBlur={() => setIsComposerFocused(false)}
       onPasteImages={(uris) => void handleNativePasteImages(uris)}
-      placeholder={`Describe a coding task in ${selectedProject.title}`}
+      placeholder={
+        flow.isProjectless ? "Describe a coding task" : `Describe a coding task in ${targetTitle}`
+      }
       // Same collapsed centering as ThreadComposer: native vertical gravity
       // in a pill-height box.
       singleLineCentered={!isExpanded}
@@ -939,17 +963,19 @@ export function NewTaskDraftScreen(props: {
           label={selectedEnvironmentLabel}
         />
       </ControlPillMenu>
-      <ControlPillMenu
-        actions={workspaceMenuActions}
-        onPressAction={({ nativeEvent }) => handleWorkspaceMenuAction(nativeEvent.event)}
-      >
-        <ComposerToolbarTrigger
-          accessibilityLabel="Workspace"
-          disabled={isIncomingShareTransferPending}
-          icon="point.topleft.down.curvedto.point.bottomright.up"
-          label={workspaceLabel}
-        />
-      </ControlPillMenu>
+      {!flow.isProjectless ? (
+        <ControlPillMenu
+          actions={workspaceMenuActions}
+          onPressAction={({ nativeEvent }) => handleWorkspaceMenuAction(nativeEvent.event)}
+        >
+          <ComposerToolbarTrigger
+            accessibilityLabel="Workspace"
+            disabled={isIncomingShareTransferPending}
+            icon="point.topleft.down.curvedto.point.bottomright.up"
+            label={workspaceLabel}
+          />
+        </ControlPillMenu>
+      ) : null}
     </>
   );
 
@@ -971,9 +997,15 @@ export function NewTaskDraftScreen(props: {
   const startButton = (
     <ComposerToolbarButton
       accessibilityLabel={
-        flow.submitting ? "Starting task" : environmentConnected ? "Start task" : "Queue task"
+        flow.submitting
+          ? "Starting task"
+          : environmentConnected
+            ? "Start task"
+            : flow.isProjectless
+              ? "Environment unavailable"
+              : "Queue task"
       }
-      icon={environmentConnected ? "arrow.up" : "tray.and.arrow.up"}
+      icon={environmentConnected || flow.isProjectless ? "arrow.up" : "tray.and.arrow.up"}
       onPress={() => void handleStart()}
       variant="primary"
       showChevron={false}
@@ -1064,7 +1096,7 @@ export function NewTaskDraftScreen(props: {
 
   return (
     <View className="flex-1 bg-sheet">
-      <NativeStackScreenOptions options={{ title: selectedProject.title }} />
+      <NativeStackScreenOptions options={{ title: targetTitle }} />
 
       <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
         <View className="min-h-0 flex-1 px-5 pt-2">{promptEditor}</View>

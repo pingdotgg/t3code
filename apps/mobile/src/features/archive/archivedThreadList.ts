@@ -5,7 +5,7 @@ import {
   type EnvironmentProject,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { ProjectId, type EnvironmentId } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
@@ -45,12 +45,18 @@ export function buildArchivedThreadGroups(input: {
 
     const environmentLabel = input.environmentLabels[entry.environmentId] ?? null;
     const threadsByProjectId = new Map<string, EnvironmentThreadShell[]>();
+    const projectlessThreads: EnvironmentThreadShell[] = [];
     for (const thread of entry.snapshot.threads) {
       if (thread.archivedAt === null) {
         continue;
       }
+      const scopedThread = scopeThreadShell(entry.environmentId, thread);
+      if (thread.projectId === null) {
+        projectlessThreads.push(scopedThread);
+        continue;
+      }
       const threads = threadsByProjectId.get(thread.projectId) ?? [];
-      threads.push(scopeThreadShell(entry.environmentId, thread));
+      threads.push(scopedThread);
       threadsByProjectId.set(thread.projectId, threads);
     }
 
@@ -80,6 +86,45 @@ export function buildArchivedThreadGroups(input: {
           matchingThreads,
           Order.mapInput(
             Order.Struct({ timestamp: timestampOrder, title: Order.String, id: Order.String }),
+            (thread: EnvironmentThreadShell) => ({
+              timestamp: archiveTimestamp(thread),
+              title: thread.title,
+              id: thread.id,
+            }),
+          ),
+        ),
+      });
+    }
+    const matchingProjectlessThreads =
+      query.length === 0 ||
+      matchesQuery("No project", query) ||
+      matchesQuery(environmentLabel, query)
+        ? projectlessThreads
+        : projectlessThreads.filter((thread) => matchesQuery(thread.title, query));
+    const firstProjectlessThread = matchingProjectlessThreads[0];
+    if (firstProjectlessThread) {
+      const project = {
+        environmentId: entry.environmentId,
+        id: ProjectId.make(`projectless-${entry.environmentId}`),
+        title: "No project",
+        workspaceRoot: firstProjectlessThread.workspaceRoot ?? "",
+        repositoryIdentity: null,
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: firstProjectlessThread.createdAt,
+        updatedAt: firstProjectlessThread.updatedAt,
+      } satisfies EnvironmentProject;
+      groups.push({
+        key: `projectless:${entry.environmentId}`,
+        project,
+        threads: Arr.sort(
+          matchingProjectlessThreads,
+          Order.mapInput(
+            Order.Struct({
+              timestamp: input.sortOrder === "newest" ? Order.flip(Order.Number) : Order.Number,
+              title: Order.String,
+              id: Order.String,
+            }),
             (thread: EnvironmentThreadShell) => ({
               timestamp: archiveTimestamp(thread),
               title: thread.title,

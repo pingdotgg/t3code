@@ -348,8 +348,10 @@ export function HomeScreen(props: HomeScreenProps) {
     () =>
       selectedProjectRefKeys === null
         ? props.threads
-        : props.threads.filter((thread) =>
-            selectedProjectRefKeys.has(scopedProjectKey(thread.environmentId, thread.projectId)),
+        : props.threads.filter(
+            (thread) =>
+              thread.projectId !== null &&
+              selectedProjectRefKeys.has(scopedProjectKey(thread.environmentId, thread.projectId)),
           ),
     [props.threads, selectedProjectRefKeys],
   );
@@ -782,11 +784,17 @@ export function HomeScreen(props: HomeScreenProps) {
           snoozeWakeLabelText={item.snoozeWakeLabelText}
           showTrailingDivider={showTrailingDivider}
           project={
-            projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ?? null
+            thread.projectId === null
+              ? null
+              : (projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ?? null)
           }
-          projectTitle={v2ProjectTitleByProjectKey.get(
-            scopedProjectKey(thread.environmentId, thread.projectId),
-          )}
+          projectTitle={
+            thread.projectId === null
+              ? "No project"
+              : v2ProjectTitleByProjectKey.get(
+                  scopedProjectKey(thread.environmentId, thread.projectId),
+                )
+          }
           providerDriver={
             serverConfigs
               .get(thread.environmentId)
@@ -829,7 +837,10 @@ export function HomeScreen(props: HomeScreenProps) {
           onMovePinnedThread={handleMovePinnedThread}
           onChangeRequestState={handleChangeRequestState}
           projectCwd={
-            projectCwdByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ?? null
+            thread.projectId === null
+              ? (thread.workspaceRoot ?? null)
+              : (projectCwdByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ??
+                null)
           }
           onSwipeableClose={handleSwipeableClose}
           onSwipeableWillOpen={handleSwipeableWillOpen}
@@ -954,8 +965,11 @@ export function HomeScreen(props: HomeScreenProps) {
                 props.savedConnectionsById[thread.environmentId]?.environmentLabel ?? null
               }
               projectCwd={
-                projectCwdByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ??
-                null
+                thread.projectId === null
+                  ? (thread.workspaceRoot ?? null)
+                  : (projectCwdByKey.get(
+                      scopedProjectKey(thread.environmentId, thread.projectId),
+                    ) ?? null)
               }
               isLast={item.isLast}
               searchMatch={threadSearchMatchByKey.get(

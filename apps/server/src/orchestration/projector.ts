@@ -291,6 +291,7 @@ export function projectEvent(
           {
             id: payload.threadId,
             projectId: payload.projectId,
+            workspaceRoot: payload.workspaceRoot ?? null,
             title: payload.title,
             modelSelection: payload.modelSelection,
             runtimeMode: payload.runtimeMode,

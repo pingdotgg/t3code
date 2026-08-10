@@ -21,8 +21,8 @@ export function deriveThreadTitleFromPrompt(value: string): string {
 }
 
 export interface ProjectThreadStartTurnSpec {
-  readonly projectId: ProjectId;
-  readonly projectCwd: string;
+  readonly projectId: ProjectId | null;
+  readonly projectCwd: string | null;
   readonly threadId: string;
   readonly commandId: string;
   readonly messageId: string;
@@ -47,7 +47,7 @@ export interface ProjectThreadStartTurnSpec {
  */
 export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpec) {
   const title = deriveThreadTitleFromPrompt(spec.text);
-  const isWorktree = spec.workspaceMode === "worktree";
+  const isWorktree = spec.projectId !== null && spec.workspaceMode === "worktree";
   return {
     commandId: CommandId.make(spec.commandId),
     threadId: ThreadId.make(spec.threadId),
@@ -64,18 +64,19 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
     bootstrap: {
       createThread: {
         projectId: spec.projectId,
+        workspaceRoot: null,
         title,
         modelSelection: spec.modelSelection,
         runtimeMode: spec.runtimeMode,
         interactionMode: spec.interactionMode,
-        branch: spec.branch,
-        worktreePath: isWorktree ? null : spec.worktreePath,
+        branch: spec.projectId === null ? null : spec.branch,
+        worktreePath: spec.projectId === null || isWorktree ? null : spec.worktreePath,
         createdAt: spec.createdAt,
       },
       ...(isWorktree
         ? {
             prepareWorktree: {
-              projectCwd: spec.projectCwd,
+              projectCwd: spec.projectCwd!,
               baseBranch: spec.branch!,
               branch: spec.worktreeBranchName,
               ...(spec.startFromOrigin ? { startFromOrigin: true } : {}),

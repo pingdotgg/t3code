@@ -207,7 +207,7 @@ type LegacyPersistedComposerDraftStoreState = PersistedComposerDraftStoreState &
 const PersistedDraftThreadState = Schema.Struct({
   threadId: ThreadId,
   environmentId: Schema.String,
-  projectId: ProjectId,
+  projectId: Schema.NullOr(ProjectId),
   logicalProjectKey: Schema.optionalKey(Schema.String),
   createdAt: Schema.String,
   runtimeMode: RuntimeMode,
@@ -311,7 +311,7 @@ export function composerDraftHasUserContent(
 export interface DraftSessionState {
   threadId: ThreadId;
   environmentId: EnvironmentId;
-  projectId: ProjectId;
+  projectId: ProjectId | null;
   logicalProjectKey: string;
   createdAt: string;
   runtimeMode: RuntimeMode;
@@ -324,6 +324,12 @@ export interface DraftSessionState {
 }
 
 export type DraftThreadState = DraftSessionState;
+
+/** The environment and optional project a draft will run in on first send. */
+export interface DraftThreadTargetRef {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId | null;
+}
 
 /**
  * Draft session metadata paired with its stable draft-session identity.
@@ -373,7 +379,7 @@ interface ComposerDraftStoreState {
   /** Creates or updates the draft session tracked for a logical project. */
   setLogicalProjectDraftThreadId: (
     logicalProjectKey: string,
-    projectRef: ScopedProjectRef,
+    projectRef: DraftThreadTargetRef,
     draftId: DraftId,
     options?: {
       threadId?: ThreadId;
@@ -407,7 +413,7 @@ interface ComposerDraftStoreState {
     options: {
       branch?: string | null;
       worktreePath?: string | null;
-      projectRef?: ScopedProjectRef;
+      projectRef?: DraftThreadTargetRef;
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
@@ -1225,6 +1231,17 @@ function projectDraftKey(projectRef: ScopedProjectRef): string {
   return scopedProjectKey(projectRef);
 }
 
+export function projectlessDraftKey(environmentId: EnvironmentId): string {
+  return `environment:${environmentId}:projectless`;
+}
+
+function logicalDraftEnvironmentId(logicalKey: string): EnvironmentId | null {
+  const projectRef = parseScopedProjectKey(logicalKey);
+  if (projectRef) return projectRef.environmentId;
+  const match = /^environment:(.+):projectless$/.exec(logicalKey);
+  return match?.[1] ? (match[1] as EnvironmentId) : null;
+}
+
 function logicalProjectDraftKey(logicalProjectKey: string): string {
   return logicalProjectKey.trim();
 }
@@ -1350,7 +1367,7 @@ function toProjectDraftSession(
 }
 
 function createDraftThreadState(
-  projectRef: ScopedProjectRef,
+  projectRef: DraftThreadTargetRef,
   threadId: ThreadId,
   logicalProjectKey: string,
   existingThread: DraftThreadState | undefined,
@@ -1547,21 +1564,26 @@ function normalizePersistedDraftThreads(
               promotedToRecord.threadId as ThreadId,
             )
           : null;
-      if (typeof projectId !== "string" || projectId.length === 0 || environmentId === undefined) {
+      if (
+        (projectId !== null && (typeof projectId !== "string" || projectId.length === 0)) ||
+        environmentId === undefined
+      ) {
         continue;
       }
       const normalizedEnvironmentId = environmentId as EnvironmentId;
       draftThreadsByThreadKey[threadKey] = {
         threadId,
         environmentId: normalizedEnvironmentId,
-        projectId: projectId as ProjectId,
+        projectId: projectId === null ? null : (projectId as ProjectId),
         logicalProjectKey:
           typeof candidateDraftThread.logicalProjectKey === "string" &&
           candidateDraftThread.logicalProjectKey.length > 0
             ? candidateDraftThread.logicalProjectKey
-            : parsedThreadRef
+            : parsedThreadRef && projectId !== null
               ? projectDraftKey(scopeProjectRef(normalizedEnvironmentId, projectId as ProjectId))
-              : threadKeyOrId,
+              : projectId === null
+                ? projectlessDraftKey(normalizedEnvironmentId)
+                : threadKeyOrId,
         createdAt:
           typeof createdAt === "string" && createdAt.length > 0
             ? createdAt
@@ -2214,12 +2236,14 @@ function toHydratedDraftThreadState(
     projectId: persistedDraftThread.projectId,
     logicalProjectKey:
       persistedDraftThread.logicalProjectKey ??
-      projectDraftKey(
-        scopeProjectRef(
-          persistedDraftThread.environmentId as EnvironmentId,
-          persistedDraftThread.projectId,
-        ),
-      ),
+      (persistedDraftThread.projectId === null
+        ? projectlessDraftKey(persistedDraftThread.environmentId as EnvironmentId)
+        : projectDraftKey(
+            scopeProjectRef(
+              persistedDraftThread.environmentId as EnvironmentId,
+              persistedDraftThread.projectId,
+            ),
+          )),
     createdAt: persistedDraftThread.createdAt,
     runtimeMode: persistedDraftThread.runtimeMode,
     interactionMode: persistedDraftThread.interactionMode,
@@ -2418,7 +2442,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               projectId: existing.projectId,
             };
             if (
-              nextProjectRef.projectId.length === 0 ||
+              (nextProjectRef.projectId !== null && nextProjectRef.projectId.length === 0) ||
               nextProjectRef.environmentId.length === 0
             ) {
               return state;
@@ -3529,7 +3553,7 @@ export function clearComposerDraftsEnvironment(environmentId: EnvironmentId): vo
     for (const [logicalProjectKey, threadKey] of Object.entries(
       state.logicalProjectDraftThreadKeyByLogicalProjectKey,
     )) {
-      if (parseScopedProjectKey(logicalProjectKey)?.environmentId === environmentId) {
+      if (logicalDraftEnvironmentId(logicalProjectKey) === environmentId) {
         removedThreadKeys.add(threadKey);
       }
     }
@@ -3537,7 +3561,7 @@ export function clearComposerDraftsEnvironment(environmentId: EnvironmentId): vo
     const nextLogicalMappings = Object.fromEntries(
       Object.entries(state.logicalProjectDraftThreadKeyByLogicalProjectKey).filter(
         ([logicalProjectKey, threadKey]) =>
-          parseScopedProjectKey(logicalProjectKey)?.environmentId !== environmentId &&
+          logicalDraftEnvironmentId(logicalProjectKey) !== environmentId &&
           !removedThreadKeys.has(threadKey),
       ),
     ) as Record<string, string>;

@@ -10,6 +10,8 @@ import { useCallback, useMemo } from "react";
 import {
   composerDraftHasUserContent,
   markPromotedDraftThreadByRef,
+  projectlessDraftKey,
+  type DraftThreadTargetRef,
   type DraftThreadEnvMode,
   type DraftThreadState,
   useComposerDraftStore,
@@ -66,7 +68,7 @@ export function useNewThreadHandler() {
 
   return useCallback(
     (
-      projectRef: ScopedProjectRef,
+      projectRef: DraftThreadTargetRef,
       options?: {
         branch?: string | null;
         worktreePath?: string | null;
@@ -131,6 +133,7 @@ export function useNewThreadHandler() {
       // skipped entirely when a higher-priority source decides, and its
       // query atom caches per project after the first call.
       const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
+        if (projectRef.projectId === null) return "local";
         const consultProjectFile = project !== undefined && project.defaultThreadEnvMode == null;
         return resolveDefaultThreadEnvMode({
           projectSetting: project?.defaultThreadEnvMode,
@@ -143,9 +146,12 @@ export function useNewThreadHandler() {
           globalDefault: primaryServerSettings.defaultThreadEnvMode,
         });
       };
-      const logicalProjectKey = project
-        ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
-        : scopedProjectKey(projectRef);
+      const logicalProjectKey =
+        projectRef.projectId === null
+          ? projectlessDraftKey(projectRef.environmentId)
+          : project
+            ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
+            : scopedProjectKey(projectRef as ScopedProjectRef);
       const hasBranchOption = options?.branch !== undefined;
       const hasWorktreePathOption = options?.worktreePath !== undefined;
       const hasEnvModeOption = options?.envMode !== undefined;

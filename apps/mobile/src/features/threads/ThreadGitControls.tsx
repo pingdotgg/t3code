@@ -97,6 +97,7 @@ type ThreadGitControlsProps = ThreadGitMenuProps & {
   };
   readonly canOpenTerminal: boolean;
   readonly canOpenFiles: boolean;
+  readonly canOpenGit: boolean;
   readonly projectScripts: ReadonlyArray<ProjectScript>;
   readonly terminalSessions: ReadonlyArray<TerminalMenuSession>;
   readonly showActionControls?: boolean;
@@ -393,16 +394,26 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
 export function useThreadGitRightHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
   return useMemo(
-    () => [actionItems.git, actionItems.files, actionItems.terminal] as HeaderItems,
-    [actionItems],
+    () =>
+      [
+        ...(props.canOpenGit ? [actionItems.git] : []),
+        actionItems.files,
+        actionItems.terminal,
+      ] as HeaderItems,
+    [actionItems, props.canOpenGit],
   );
 }
 
 export function useThreadGitCenterHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
   return useMemo(
-    () => [actionItems.files, actionItems.git, actionItems.terminal] as HeaderItems,
-    [actionItems],
+    () =>
+      [
+        actionItems.files,
+        ...(props.canOpenGit ? [actionItems.git] : []),
+        actionItems.terminal,
+      ] as HeaderItems,
+    [actionItems, props.canOpenGit],
   );
 }
 
@@ -489,7 +500,7 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
           separateBackground
         />
       ) : null}
-      {showActionControls ? <ThreadGitMenu {...props} /> : null}
+      {showActionControls && props.canOpenGit ? <ThreadGitMenu {...props} /> : null}
     </NativeHeaderToolbar>
   );
 }

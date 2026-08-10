@@ -7,6 +7,7 @@ import {
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,
+  shouldOpenNewThreadTargetPicker,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
 
@@ -105,6 +106,42 @@ describe("enumerateCommandPaletteItems", () => {
       "thread.jump.9",
       undefined,
     ]);
+  });
+});
+
+describe("shouldOpenNewThreadTargetPicker", () => {
+  it("opens the picker whenever projectless threads are supported", () => {
+    expect(
+      shouldOpenNewThreadTargetPicker({
+        legacySidebarEnabled: true,
+        projectGroupCount: 0,
+        supportsProjectlessThreads: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldOpenNewThreadTargetPicker({
+        legacySidebarEnabled: false,
+        projectGroupCount: 1,
+        supportsProjectlessThreads: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("preserves the existing multi-project behavior on older servers", () => {
+    expect(
+      shouldOpenNewThreadTargetPicker({
+        legacySidebarEnabled: false,
+        projectGroupCount: 2,
+        supportsProjectlessThreads: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldOpenNewThreadTargetPicker({
+        legacySidebarEnabled: true,
+        projectGroupCount: 2,
+        supportsProjectlessThreads: false,
+      }),
+    ).toBe(false);
   });
 });
 

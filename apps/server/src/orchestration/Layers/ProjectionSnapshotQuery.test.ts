@@ -295,6 +295,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         {
           id: ThreadId.make("thread-1"),
           projectId: asProjectId("project-1"),
+          workspaceRoot: null,
           title: "Thread 1",
           modelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
@@ -414,6 +415,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         {
           id: ThreadId.make("thread-1"),
           projectId: asProjectId("project-1"),
+          workspaceRoot: null,
           title: "Thread 1",
           modelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
@@ -1184,6 +1186,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         INSERT INTO projection_threads (
           thread_id,
           project_id,
+          workspace_root,
           title,
           model_selection_json,
           runtime_mode,
@@ -1202,7 +1205,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         )
         VALUES (
           'thread-1',
-          'project-1',
+          NULL,
+          '/tmp/projectless',
           'Thread 1',
           '{"provider":"codex","model":"gpt-5-codex"}',
           'full-access',
@@ -1276,6 +1280,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       const threadShell = yield* snapshotQuery.getThreadShellById(ThreadId.make("thread-1"));
       assert.equal(threadShell._tag, "Some");
       if (threadShell._tag === "Some") {
+        assert.equal(threadShell.value.projectId, null);
+        assert.equal(threadShell.value.workspaceRoot, "/tmp/projectless");
         assert.equal(threadShell.value.latestTurn?.turnId, asTurnId("turn-running"));
         assert.equal(threadShell.value.latestTurn?.state, "running");
         assert.equal(threadShell.value.latestTurn?.startedAt, "2026-04-02T00:00:30.000Z");
@@ -1284,6 +1290,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       const threadDetail = yield* snapshotQuery.getThreadDetailById(ThreadId.make("thread-1"));
       assert.equal(threadDetail._tag, "Some");
       if (threadDetail._tag === "Some") {
+        assert.equal(threadDetail.value.projectId, null);
+        assert.equal(threadDetail.value.workspaceRoot, "/tmp/projectless");
         assert.equal(threadDetail.value.latestTurn?.turnId, asTurnId("turn-running"));
         assert.equal(threadDetail.value.latestTurn?.state, "running");
         assert.equal(threadDetail.value.latestTurn?.startedAt, "2026-04-02T00:00:30.000Z");
@@ -1681,6 +1689,25 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             '2026-05-01T00:00:07.000Z',
             '2026-05-01T00:00:08.000Z',
             NULL
+          ),
+          (
+            'thread-orphaned',
+            'project-missing',
+            'Orphaned search',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            0,
+            0,
+            0,
+            '2026-05-01T00:00:09.000Z',
+            '2026-05-01T00:00:10.000Z',
+            NULL,
+            NULL
           )
       `;
 
@@ -1765,6 +1792,16 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             0,
             '2026-05-01T00:00:16.000Z',
             '2026-05-01T00:00:16.000Z'
+          ),
+          (
+            'message-orphaned',
+            'thread-orphaned',
+            NULL,
+            'user',
+            'Orphaned needle must not be searchable.',
+            0,
+            '2026-05-01T00:00:17.000Z',
+            '2026-05-01T00:00:17.000Z'
           )
       `;
 
@@ -1822,6 +1859,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       );
       assert.deepStrictEqual(
         (yield* snapshotQuery.searchThreads({ query: "hidden needle" })).matches,
+        [],
+      );
+      assert.deepStrictEqual(
+        (yield* snapshotQuery.searchThreads({ query: "orphaned needle" })).matches,
         [],
       );
       yield* sql`

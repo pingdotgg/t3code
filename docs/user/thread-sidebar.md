@@ -4,6 +4,12 @@ Pin a thread from its context menu to keep it in the pinned section above your a
 Pinned threads are shown independently of their project, including when you connect to more than
 one environment.
 
+## Start without a project
+
+Choose **Don't work in a project** from the new-thread project picker to start a thread in the
+selected environment's default working directory. These threads appear under **No project** and
+do not offer project-only branch, worktree, checkpoint, or source-control controls.
+
 On web and desktop, drag a pinned thread to change its position. On mobile, open the thread's menu
 and choose **Move up** or **Move down**. The order is stored by the server and appears on your
 other connected devices.

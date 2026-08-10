@@ -100,8 +100,26 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       } satisfies OrchestrationCommand;
     }
 
+    if (canonicalCommand.type === "thread.create") {
+      return {
+        ...canonicalCommand,
+        workspaceRoot: canonicalCommand.projectId === null ? serverConfig.cwd : null,
+        ...(canonicalCommand.projectId === null ? { branch: null, worktreePath: null } : {}),
+      } satisfies OrchestrationCommand;
+    }
+
     if (canonicalCommand.type !== "thread.turn.start") {
       return canonicalCommand as OrchestrationCommand;
+    }
+
+    const bootstrap = canonicalCommand.bootstrap;
+    if (
+      bootstrap?.createThread?.projectId === null &&
+      (bootstrap.prepareWorktree !== undefined || bootstrap.runSetupScript === true)
+    ) {
+      return yield* new OrchestrationDispatchCommandError({
+        message: "Projectless threads cannot create worktrees or run project setup scripts.",
+      });
     }
 
     const normalizedAttachments = yield* Effect.forEach(
@@ -169,8 +187,22 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       { concurrency: 1 },
     );
 
+    const normalizedBootstrap = bootstrap?.createThread
+      ? {
+          ...bootstrap,
+          createThread: {
+            ...bootstrap.createThread,
+            workspaceRoot: bootstrap.createThread.projectId === null ? serverConfig.cwd : null,
+            ...(bootstrap.createThread.projectId === null
+              ? { branch: null, worktreePath: null }
+              : {}),
+          },
+        }
+      : bootstrap;
+
     return {
       ...canonicalCommand,
+      ...(normalizedBootstrap ? { bootstrap: normalizedBootstrap } : {}),
       message: {
         ...canonicalCommand.message,
         attachments: normalizedAttachments,

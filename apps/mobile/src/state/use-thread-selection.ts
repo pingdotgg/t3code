@@ -105,7 +105,7 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
   );
   const selectedProjectRef = useMemo<ScopedProjectRef | null>(
     () =>
-      selectedThread === null
+      selectedThread === null || selectedThread.projectId === null
         ? null
         : {
             environmentId: selectedThread.environmentId,

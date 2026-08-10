@@ -1,15 +1,15 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@t3tools/contracts";
-import type { DraftThreadEnvMode } from "../composerDraftStore";
+import type { DraftThreadEnvMode, DraftThreadTargetRef } from "../composerDraftStore";
 
 interface ThreadContextLike {
   environmentId: EnvironmentId;
-  projectId: ProjectId;
+  projectId: ProjectId | null;
 }
 
 interface NewThreadHandler {
   (
-    projectRef: ScopedProjectRef,
+    projectRef: DraftThreadTargetRef,
     options?: {
       branch?: string | null;
       worktreePath?: string | null;
@@ -35,15 +35,19 @@ export function resolveNewDraftStartFromOrigin(input: {
 
 export function resolveThreadActionProjectRef(
   context: ChatThreadActionContext,
-): ScopedProjectRef | null {
+): DraftThreadTargetRef | null {
   if (context.activeThread) {
-    return scopeProjectRef(context.activeThread.environmentId, context.activeThread.projectId);
+    return context.activeThread.projectId === null
+      ? { environmentId: context.activeThread.environmentId, projectId: null }
+      : scopeProjectRef(context.activeThread.environmentId, context.activeThread.projectId);
   }
   if (context.activeDraftThread) {
-    return scopeProjectRef(
-      context.activeDraftThread.environmentId,
-      context.activeDraftThread.projectId,
-    );
+    return context.activeDraftThread.projectId === null
+      ? { environmentId: context.activeDraftThread.environmentId, projectId: null }
+      : scopeProjectRef(
+          context.activeDraftThread.environmentId,
+          context.activeDraftThread.projectId,
+        );
   }
   return context.defaultProjectRef;
 }

@@ -25,7 +25,12 @@ import {
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 
-import { useEnvironmentServerConfig, useProjects, useThreadShells } from "../../state/entities";
+import {
+  useEnvironmentServerConfig,
+  useProjects,
+  useServerConfigs,
+  useThreadShells,
+} from "../../state/entities";
 import type { TurnCommandMetadata } from "../../lib/commandMetadata";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
@@ -148,6 +153,7 @@ type NewTaskFlowContextValue = {
     readonly environmentLabel: string;
   }>;
   readonly selectedProject: EnvironmentProject | null;
+  readonly isProjectless: boolean;
   readonly modelOptions: ReadonlyArray<ModelOption>;
   readonly selectedModel: ModelSelection | null;
   readonly selectedModelOption: ModelOption | null;
@@ -156,6 +162,7 @@ type NewTaskFlowContextValue = {
   readonly filteredBranches: ReadonlyArray<VcsRef>;
   readonly reset: () => void;
   readonly setProject: (project: EnvironmentProject) => void;
+  readonly setProjectless: (environmentId: EnvironmentId) => void;
   readonly selectEnvironment: (environmentId: EnvironmentId) => void;
   readonly setSelectedModelKey: (
     key: string | null,
@@ -189,6 +196,7 @@ const NewTaskFlowContext = React.createContext<NewTaskFlowContextValue | null>(n
 export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const projects = useProjects();
   const threads = useThreadShells();
+  const serverConfigs = useServerConfigs();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const groupingSettings = useMobileProjectGroupingSettings();
   const projectScopes = useMemo(
@@ -211,10 +219,14 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   );
   const selectedEnvironmentId =
     selectedEnvironmentIdOverride !== null &&
-    projects.some((project) => project.environmentId === selectedEnvironmentIdOverride)
+    savedConnectionsById[selectedEnvironmentIdOverride] !== undefined
       ? selectedEnvironmentIdOverride
-      : (projects[0]?.environmentId ?? null);
+      : (projects[0]?.environmentId ??
+        (Object.keys(savedConnectionsById)[0] as EnvironmentId | undefined) ??
+        null);
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
+  const isProjectless =
+    selectedEnvironmentId !== null && selectedProjectKey === `projectless:${selectedEnvironmentId}`;
   const [submitting, setSubmitting] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
@@ -284,7 +296,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedProjectKey ===
       scopedProjectKey(editingPendingProject.environmentId, editingPendingProject.id)
       ? editingPendingProject
-      : (projectsForEnvironment[0] ?? null));
+      : isProjectless
+        ? null
+        : (projectsForEnvironment[0] ?? null));
 
   // Only offer machines that actually host the currently selected repository, so
   // switching computers moves the same repo across machines instead of jumping to
@@ -315,6 +329,17 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         (selectedProjectTitle !== null && project.title === selectedProjectTitle)
       );
     };
+    if (isProjectless) {
+      return Object.values(savedConnectionsById)
+        .filter(
+          (environment) =>
+            serverConfigs.get(environment.environmentId)?.projectlessThreads === true,
+        )
+        .map((environment) => ({
+          environmentId: environment.environmentId,
+          environmentLabel: environment.environmentLabel,
+        }));
+    }
     for (const project of projects) {
       if (!hostsSelectedRepository(project)) {
         continue;
@@ -336,21 +361,23 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   }, [
     projects,
     savedConnectionsById,
+    serverConfigs,
     selectedRepositoryKey,
     selectedWorkspaceBasename,
     selectedProjectTitle,
+    isProjectless,
   ]);
 
-  const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
-    selectedProject?.environmentId ?? null,
-  );
+  const selectedEnvironmentServerConfig = useEnvironmentServerConfig(selectedEnvironmentId);
   // While a queued pending task is being edited its draft lives under a key
   // scoped to the queued message, so per-project new-task drafts stay intact.
   const selectedProjectDraftKey = editingPendingTask
     ? pendingTaskDraftKey(editingPendingTask.messageId)
-    : selectedProject
-      ? `new-task:${scopedProjectKey(selectedProject.environmentId, selectedProject.id)}`
-      : null;
+    : isProjectless && selectedEnvironmentId
+      ? `new-task:projectless:${selectedEnvironmentId}`
+      : selectedProject
+        ? `new-task:${scopedProjectKey(selectedProject.environmentId, selectedProject.id)}`
+        : null;
   const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
   const prompt = selectedProjectDraft.text;
   const attachments = selectedProjectDraft.attachments;
@@ -370,11 +397,13 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     if (t3ProjectFileData === null || t3ProjectFileData.truncated) return null;
     return parseT3ProjectFile(t3ProjectFileData.contents)?.defaultThreadEnvMode ?? null;
   }, [t3ProjectFileData]);
-  const defaultWorkspaceMode: WorkspaceMode = resolveDefaultThreadEnvMode({
-    projectSetting: selectedProject?.defaultThreadEnvMode,
-    projectFile: t3ProjectFileDefaultMode,
-    globalDefault: selectedEnvironmentServerConfig?.settings.defaultThreadEnvMode ?? "local",
-  });
+  const defaultWorkspaceMode: WorkspaceMode = isProjectless
+    ? "local"
+    : resolveDefaultThreadEnvMode({
+        projectSetting: selectedProject?.defaultThreadEnvMode,
+        projectFile: t3ProjectFileDefaultMode,
+        globalDefault: selectedEnvironmentServerConfig?.settings.defaultThreadEnvMode ?? "local",
+      });
   // While unsettled the resolved default is provisional. Nothing may write
   // it into the draft during that window (the auto-branch effect does), or
   // the frozen interim value beats the t3.json default once it loads.
@@ -560,8 +589,18 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     setSelectedProjectKey(nextProjectKey);
   }, []);
 
+  const setProjectless = useCallback((environmentId: EnvironmentId) => {
+    setSelectedEnvironmentId(environmentId);
+    setSelectedProjectKey(`projectless:${environmentId}`);
+  }, []);
+
   const selectEnvironment = useCallback(
     (environmentId: EnvironmentId) => {
+      if (isProjectless) {
+        setSelectedEnvironmentId(environmentId);
+        setSelectedProjectKey(`projectless:${environmentId}`);
+        return;
+      }
       const projectsOnTarget = projects.filter(
         (project) => project.environmentId === environmentId,
       );
@@ -588,7 +627,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       setSelectedEnvironmentId(environmentId);
       setSelectedProjectKey(match ? scopedProjectKey(match.environmentId, match.id) : null);
     },
-    [projects, selectedProject],
+    [isProjectless, projects, selectedProject],
   );
 
   const setWorkspaceMode = useCallback(
@@ -791,6 +830,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedEnvironmentServerConfig,
       selectedModel,
       selectedProject,
+      isProjectless,
       selectedProjectDraftKey,
       startFromOrigin,
       workspaceMode,
@@ -910,6 +950,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       expandedProvider,
       environments,
       selectedProject,
+      isProjectless,
       modelOptions,
       selectedModel,
       selectedModelOption,
@@ -918,6 +959,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       filteredBranches,
       reset,
       setProject,
+      setProjectless,
       selectEnvironment,
       setSelectedModelKey,
       setWorkspaceMode,
@@ -971,9 +1013,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedProviderSkills,
       setSelectedModelOptions,
       selectedProject,
+      isProjectless,
       selectedProjectKey,
       selectedWorktreePath,
       setProject,
+      setProjectless,
       selectBranch,
       selectEnvironment,
       setInteractionMode,
