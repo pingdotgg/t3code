@@ -20,6 +20,7 @@ public struct ThreadDetailView: View {
     @State private var isSending = false
     @State private var isLoading = true
     @State private var sendFailed = false
+    @State private var sharedAttachmentOverflowCount = 0
     @State private var didRestoreDraft = false
     @State private var handledComposerDraftReloadRevision: Int
     @State private var draftSaveTask: Task<Void, Never>?
@@ -84,8 +85,18 @@ public struct ThreadDetailView: View {
         .task(id: composerDraftReloadRevision) {
             guard handledComposerDraftReloadRevision != composerDraftReloadRevision,
                   let composerDraftReloadDraft else { return }
-            handledComposerDraftReloadRevision = composerDraftReloadRevision
-            await reloadImportedDraft(composerDraftReloadDraft)
+            guard FeatureComposerDraftReloadPolicy.shouldMergeIntoLiveComposer(
+                didRestoreDraft: didRestoreDraft
+            ) else {
+                // The initial restoration reads the already-imported draft from
+                // the store. Retrying the delta afterward would append its text
+                // a second time.
+                handledComposerDraftReloadRevision = composerDraftReloadRevision
+                return
+            }
+            if await reloadImportedDraft(composerDraftReloadDraft) {
+                handledComposerDraftReloadRevision = composerDraftReloadRevision
+            }
         }
         .onChange(of: draft) { scheduleDraftSave() }
         .onChange(of: attachments) { scheduleDraftSave() }
@@ -121,6 +132,20 @@ public struct ThreadDetailView: View {
             Button("OK") {}
         } message: {
             Text("Your draft is still here. Check your connection and try again.")
+        }
+        .alert(
+            "Remove attachments before sending",
+            isPresented: Binding(
+                get: { sharedAttachmentOverflowCount > 0 },
+                set: { if !$0 { sharedAttachmentOverflowCount = 0 } }
+            )
+        ) {
+            Button("OK") {}
+        } message: {
+            Text(
+                "The shared attachments were kept. Remove "
+                    + "\(sharedAttachmentOverflowCount) before sending this draft."
+            )
         }
         .simultaneousGesture(edgeBackGesture)
     }
@@ -489,19 +514,27 @@ public struct ThreadDetailView: View {
     }
 
     @MainActor
-    private func reloadImportedDraft(_ importedDraft: FeatureComposerDraft) async {
-        let baseline = composerDraft
+    private func reloadImportedDraft(_ importedDraft: FeatureComposerDraft) async -> Bool {
+        guard didRestoreDraft else { return false }
         let key = draftKey
         let pendingSave = draftSaveTask
         draftSaveTask = nil
         pendingSave?.cancel()
         await pendingSave?.value
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled else { return false }
 
-        restoreDraft(importedDraft, from: baseline)
+        let mergeResult = FeatureComposerIncomingShareMerge.merge(
+            current: composerDraft,
+            incoming: importedDraft
+        )
+        let merged = mergeResult.draft
+        draft = merged.text
+        attachments = merged.attachments
+        sharedAttachmentOverflowCount = mergeResult.attachmentOverflowCount
         draftSaveTask?.cancel()
         draftSaveTask = nil
         try? await draftStore.setDraft(composerDraft, for: key)
+        return true
     }
 
     @MainActor
@@ -657,6 +690,53 @@ enum FeatureComposerDraftRestoration {
                 ? saved.startFromOrigin
                 : current.startFromOrigin
         )
+    }
+}
+
+enum FeatureComposerIncomingShareMerge {
+    static func merge(
+        current: FeatureComposerDraft,
+        incoming: FeatureComposerDraft,
+        maximumAttachmentCount: Int = 8
+    ) -> FeatureComposerIncomingShareMergeResult {
+        let incomingText = incoming.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let mergedText: String
+        if incomingText.isEmpty {
+            mergedText = current.text
+        } else if current.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            mergedText = incomingText
+        } else {
+            mergedText = "\(current.text)\n\n\(incomingText)"
+        }
+
+        let currentAttachmentIDs = Set(current.attachments.map(\.id))
+        let uniqueIncomingAttachments = incoming.attachments.filter {
+            !currentAttachmentIDs.contains($0.id)
+        }
+        let mergedAttachments = current.attachments + uniqueIncomingAttachments
+        return FeatureComposerIncomingShareMergeResult(
+            draft: FeatureComposerDraft(
+                text: mergedText,
+                attachments: mergedAttachments,
+                selection: current.selection,
+                workspace: current.workspace
+            ),
+            attachmentOverflowCount: max(
+                0,
+                mergedAttachments.count - maximumAttachmentCount
+            )
+        )
+    }
+}
+
+struct FeatureComposerIncomingShareMergeResult {
+    let draft: FeatureComposerDraft
+    let attachmentOverflowCount: Int
+}
+
+enum FeatureComposerDraftReloadPolicy {
+    static func shouldMergeIntoLiveComposer(didRestoreDraft: Bool) -> Bool {
+        didRestoreDraft
     }
 }
 

@@ -100,6 +100,16 @@ struct PlatformIncomingShareSource: Sendable {
     )
 }
 
+struct PlatformIncomingShareDraftImport: Sendable {
+    let draft: FeatureComposerDraft
+    let didImport: Bool
+}
+
+struct PlatformIncomingShareImport: Sendable {
+    let draft: FeatureComposerDraft
+    let sharedContent: FeatureComposerDraft?
+}
+
 struct PlatformIncomingShareDraftRepository: Sendable {
     var importContent: @Sendable (
         _ shareID: String,
@@ -107,16 +117,20 @@ struct PlatformIncomingShareDraftRepository: Sendable {
         _ attachments: [FeatureDraftAttachment],
         _ key: String,
         _ maximumAttachmentCount: Int
-    ) async throws -> FeatureComposerDraft
+    ) async throws -> PlatformIncomingShareDraftImport
 
     static let live = PlatformIncomingShareDraftRepository(
         importContent: { shareID, text, attachments, key, maximumAttachmentCount in
-            try await FeatureComposerDraftStore.shared.importSharedContent(
+            let result = try await FeatureComposerDraftStore.shared.importSharedContentResult(
                 shareID: shareID,
                 text: text,
                 attachments: attachments,
                 for: key,
                 maximumAttachmentCount: maximumAttachmentCount
+            )
+            return PlatformIncomingShareDraftImport(
+                draft: result.draft,
+                didImport: result.didImport
             )
         }
     )
@@ -177,13 +191,13 @@ struct PlatformIncomingSharePipeline: Sendable {
             envelope,
             draftKey: FeatureComposerDraftStore.newTaskKey(project: project),
             removesEnvelope: true
-        )
+        ).draft
     }
 
     func importEnvelope(
         _ envelope: T3IncomingShareEnvelope,
         into thread: FeatureThread
-    ) async throws -> FeatureComposerDraft {
+    ) async throws -> PlatformIncomingShareImport {
         try await importEnvelope(
             envelope,
             draftKey: FeatureComposerDraftStore.threadKey(thread),
@@ -198,7 +212,7 @@ struct PlatformIncomingSharePipeline: Sendable {
             envelope,
             draftKey: FeatureComposerDraftStore.incomingShareKey(shareID: envelope.id),
             removesEnvelope: false
-        )
+        ).draft
     }
 
     func acknowledgeEnvelope(id: String) async throws {
@@ -216,7 +230,7 @@ struct PlatformIncomingSharePipeline: Sendable {
         _ envelope: T3IncomingShareEnvelope,
         draftKey: String,
         removesEnvelope: Bool
-    ) async throws -> FeatureComposerDraft {
+    ) async throws -> PlatformIncomingShareImport {
         guard UUID(uuidString: envelope.id) != nil else {
             throw PlatformIncomingShareError.invalidEnvelope
         }
@@ -241,9 +255,10 @@ struct PlatformIncomingSharePipeline: Sendable {
             prepared.append(Self.stableAttachment(attachment, for: video))
         }
 
-        let merged = try await drafts.importContent(
+        let sharedText = Self.composerText(for: envelope)
+        let imported = try await drafts.importContent(
             envelope.id,
-            Self.composerText(for: envelope),
+            sharedText,
             prepared,
             draftKey,
             Self.maximumAttachmentCount
@@ -254,7 +269,13 @@ struct PlatformIncomingSharePipeline: Sendable {
         if removesEnvelope {
             try await source.remove(envelope.id)
         }
-        return merged
+        let sharedContent = imported.didImport
+            ? FeatureComposerDraft(text: sharedText, attachments: prepared)
+            : nil
+        return PlatformIncomingShareImport(
+            draft: imported.draft,
+            sharedContent: sharedContent
+        )
     }
 
     private static func composerText(for envelope: T3IncomingShareEnvelope) -> String {
@@ -470,15 +491,15 @@ final class PlatformIncomingShareCoordinator {
         }
     }
 
-    func importPending(into thread: FeatureThread) async throws -> FeatureComposerDraft? {
+    func importPending(into thread: FeatureThread) async throws -> PlatformIncomingShareImport? {
         guard let pendingEnvelope, !isImporting else { return nil }
         isImporting = true
         do {
-            let draft = try await pipeline.importEnvelope(pendingEnvelope, into: thread)
+            let imported = try await pipeline.importEnvelope(pendingEnvelope, into: thread)
             self.pendingEnvelope = nil
             lastNoProjectNoticeID = nil
             isImporting = false
-            return draft
+            return imported
         } catch {
             isImporting = false
             throw error

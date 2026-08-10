@@ -1,5 +1,22 @@
 import SwiftUI
 
+@MainActor
+final class PlatformIncomingShareRoutingGate {
+    private var isRouting = false
+    private var pendingOperation: (@MainActor () async -> Void)?
+
+    func request(_ operation: @escaping @MainActor () async -> Void) async {
+        pendingOperation = operation
+        guard !isRouting else { return }
+        isRouting = true
+        while let operation = pendingOperation {
+            pendingOperation = nil
+            await operation()
+        }
+        isRouting = false
+    }
+}
+
 struct PlatformRootView: View {
     @SwiftUI.Environment(\.scenePhase) private var scenePhase
     @Bindable private var model: FeatureRootModel
@@ -12,6 +29,7 @@ struct PlatformRootView: View {
     @State private var incomingShareNeedsProject = false
     @State private var importedShareProjectID: String?
     @State private var stagedIncomingShareID: String?
+    @State private var incomingShareRoutingGate = PlatformIncomingShareRoutingGate()
     @State private var recentThreadsPersistenceTask: Task<Void, Never>?
 
     init(model: FeatureRootModel) {
@@ -228,6 +246,12 @@ struct PlatformRootView: View {
 
     @MainActor
     private func routePendingIncomingShareIfNeeded() async {
+        await incomingShareRoutingGate.request {
+            await performPendingIncomingShareRoute()
+        }
+    }
+
+    private func performPendingIncomingShareRoute() async {
         guard let envelope = incomingShareCoordinator.pendingEnvelope,
               let destination = envelope.destination,
               stagedIncomingShareID != envelope.id else { return }
@@ -266,11 +290,14 @@ struct PlatformRootView: View {
                     model.errorMessage = "That thread is no longer available. Choose another destination."
                     return
                 }
-                guard let importedDraft = try await incomingShareCoordinator.importPending(
+                guard let imported = try await incomingShareCoordinator.importPending(
                     into: thread
                 ) else { return }
                 navigationRequest = FeatureWorkspaceNavigationRequest(
-                    destination: .sharedThread(id: thread.id, draft: importedDraft)
+                    destination: .sharedThread(
+                        id: thread.id,
+                        draft: imported.sharedContent
+                    )
                 )
             }
             PlatformHapticEngine.shared.emit(

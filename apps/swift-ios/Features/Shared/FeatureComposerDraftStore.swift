@@ -55,6 +55,16 @@ public enum FeatureComposerDraftImportError: LocalizedError, Equatable, Sendable
     }
 }
 
+public struct FeatureComposerDraftImportResult: Equatable, Sendable {
+    public let draft: FeatureComposerDraft
+    public let didImport: Bool
+
+    public init(draft: FeatureComposerDraft, didImport: Bool) {
+        self.draft = draft
+        self.didImport = didImport
+    }
+}
+
 public enum FeatureComposerIncomingShareRoutingResult: Equatable, Sendable {
     case routed(FeatureComposerDraft)
     case alreadyRouted(FeatureComposerDraft?)
@@ -203,10 +213,31 @@ public actor FeatureComposerDraftStore {
         for key: String,
         maximumAttachmentCount: Int = 8
     ) throws -> FeatureComposerDraft {
+        try importSharedContentResult(
+            shareID: shareID,
+            text: text,
+            attachments: attachments,
+            for: key,
+            maximumAttachmentCount: maximumAttachmentCount
+        ).draft
+    }
+
+    public func importSharedContentResult(
+        shareID: String,
+        text: String,
+        attachments: [FeatureDraftAttachment],
+        for key: String,
+        maximumAttachmentCount: Int = 8
+    ) throws -> FeatureComposerDraftImportResult {
         var drafts = try loadIfNeeded()
         var persisted = drafts[key] ?? PersistedDraft(FeatureComposerDraft())
         var importedIDs = persisted.importedShareIDs ?? []
-        guard !importedIDs.contains(shareID) else { return persisted.featureValue }
+        guard !importedIDs.contains(shareID) else {
+            return FeatureComposerDraftImportResult(
+                draft: persisted.featureValue,
+                didImport: false
+            )
+        }
 
         let existingIDs = Set(persisted.attachments.map(\.id))
         let uniqueAttachments = attachments.filter { !existingIDs.contains($0.id) }
@@ -231,7 +262,10 @@ public actor FeatureComposerDraftStore {
         drafts[key] = persisted
         try persist(drafts)
         loadedDrafts = drafts
-        return persisted.featureValue
+        return FeatureComposerDraftImportResult(
+            draft: persisted.featureValue,
+            didImport: true
+        )
     }
 
     /// Atomically moves a share that was staged before project selection into

@@ -4,7 +4,7 @@ import UIKit
 struct FeatureWorkspaceNavigationRequest: Equatable, Sendable {
     enum Destination: Equatable, Sendable {
         case thread(id: String)
-        case sharedThread(id: String, draft: FeatureComposerDraft)
+        case sharedThread(id: String, draft: FeatureComposerDraft?)
         case project(id: String)
         case newTask(projectID: String?)
         case sharedNewTask(shareID: String)
@@ -604,7 +604,7 @@ public struct WorkspaceView: View {
         case let .sharedThread(id, draft):
             guard model.snapshot.threads.contains(where: { $0.id == id }) else { return }
             dismissTransientPresentations()
-            if selectedThreadID == id {
+            if selectedThreadID == id, let draft {
                 sharedThreadDraft = draft
                 threadDetailPresentationRevision &+= 1
             }

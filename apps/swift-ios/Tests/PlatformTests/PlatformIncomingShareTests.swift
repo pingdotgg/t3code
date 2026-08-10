@@ -4,6 +4,33 @@ import Testing
 
 @Suite("Incoming share import")
 struct PlatformIncomingShareTests {
+    @Test @MainActor
+    func routingGateCoalescesARequestThatArrivesWhileRouting() async {
+        let gate = PlatformIncomingShareRoutingGate()
+        let started = AsyncStream<Void>.makeStream()
+        let release = AsyncStream<Void>.makeStream()
+        var runCount = 0
+
+        let first = Task { @MainActor in
+            await gate.request {
+                runCount += 1
+                if runCount == 1 {
+                    started.continuation.yield()
+                    for await _ in release.stream { break }
+                }
+            }
+        }
+        var startedIterator = started.stream.makeAsyncIterator()
+        _ = await startedIterator.next()
+
+        await gate.request { runCount += 1 }
+        await gate.request { runCount += 10 }
+        release.continuation.yield()
+        await first.value
+
+        #expect(runCount == 11)
+    }
+
     @Test
     func persistsMergedDraftBeforeRemovingInboxEnvelope() async throws {
         let recorder = IncomingShareTestRecorder()
@@ -55,7 +82,7 @@ struct PlatformIncomingShareTests {
                     )
                     await recorder.capture(draft: draft, key: key)
                     await recorder.record("import:\(key)")
-                    return draft
+                    return PlatformIncomingShareDraftImport(draft: draft, didImport: true)
                 }
             ),
             prepareImage: { data, ordinal in
@@ -127,7 +154,10 @@ struct PlatformIncomingShareTests {
             drafts: PlatformIncomingShareDraftRepository(
                 importContent: { _, _, _, _, _ in
                     await recorder.record("import")
-                    return FeatureComposerDraft()
+                    return PlatformIncomingShareDraftImport(
+                        draft: FeatureComposerDraft(),
+                        didImport: true
+                    )
                 }
             ),
             prepareImage: { _, _ in Self.attachment(id: UUID(), value: 1) }
@@ -173,13 +203,14 @@ struct PlatformIncomingShareTests {
             drafts: PlatformIncomingShareDraftRepository(
                 importContent: { shareID, text, attachments, key, maximumCount in
                     await recorder.record("import")
-                    return try await store.importSharedContent(
+                    let draft = try await store.importSharedContent(
                         shareID: shareID,
                         text: text,
                         attachments: attachments,
                         for: key,
                         maximumAttachmentCount: maximumCount
                     )
+                    return PlatformIncomingShareDraftImport(draft: draft, didImport: true)
                 }
             ),
             prepareImage: { _, _ in Self.attachment(id: UUID(), value: 1) }
@@ -221,7 +252,7 @@ struct PlatformIncomingShareTests {
         var edited = once
         edited.text += "\nUser edit"
         try await store.setDraft(edited, for: key)
-        let twice = try await store.importSharedContent(
+        let replay = try await store.importSharedContentResult(
             shareID: "share-id",
             text: "Shared",
             attachments: [attachment],
@@ -230,7 +261,8 @@ struct PlatformIncomingShareTests {
 
         #expect(once.text == "Existing\n\nShared")
         #expect(once.attachments == [attachment])
-        #expect(twice == edited)
+        #expect(replay.draft == edited)
+        #expect(!replay.didImport)
     }
 
     @Test
@@ -265,7 +297,10 @@ struct PlatformIncomingShareTests {
                         key: key
                     )
                     await recorder.record("import:\(shareID)")
-                    return FeatureComposerDraft(text: text, attachments: attachments)
+                    return PlatformIncomingShareDraftImport(
+                        draft: FeatureComposerDraft(text: text, attachments: attachments),
+                        didImport: true
+                    )
                 }
             ),
             prepareImage: { _, _ in Self.attachment(id: UUID(), value: 1) },
@@ -278,9 +313,9 @@ struct PlatformIncomingShareTests {
         let captured = await recorder.capturedDraft
 
         #expect(captured?.key == FeatureComposerDraftStore.threadKey(thread))
-        #expect(imported.text.contains("Review this"))
-        #expect(imported.text.contains("Shared video: reference.mov"))
-        #expect(imported.attachments.first?.id.uuidString.lowercased() == videoID)
+        #expect(imported.draft.text.contains("Review this"))
+        #expect(imported.sharedContent?.text.contains("Shared video: reference.mov") == true)
+        #expect(imported.sharedContent?.attachments.first?.id.uuidString.lowercased() == videoID)
         #expect(await recorder.events == [
             "video:\(videoID)",
             "import:\(envelope.id)",
@@ -306,13 +341,14 @@ struct PlatformIncomingShareTests {
             ),
             drafts: PlatformIncomingShareDraftRepository(
                 importContent: { shareID, text, attachments, key, maximumCount in
-                    try await store.importSharedContent(
+                    let draft = try await store.importSharedContent(
                         shareID: shareID,
                         text: text,
                         attachments: attachments,
                         for: key,
                         maximumAttachmentCount: maximumCount
                     )
+                    return PlatformIncomingShareDraftImport(draft: draft, didImport: true)
                 }
             ),
             prepareImage: { _, _ in Self.attachment(id: UUID(), value: 1) }
@@ -371,7 +407,12 @@ struct PlatformIncomingShareTests {
                     remove: { _ in }
                 ),
                 drafts: PlatformIncomingShareDraftRepository(
-                    importContent: { _, _, _, _, _ in FeatureComposerDraft() }
+                    importContent: { _, _, _, _, _ in
+                        PlatformIncomingShareDraftImport(
+                            draft: FeatureComposerDraft(),
+                            didImport: true
+                        )
+                    }
                 ),
                 prepareImage: { _, _ in Self.attachment(id: UUID(), value: 1) }
             )
@@ -397,7 +438,12 @@ struct PlatformIncomingShareTests {
                     updateDestination: { _, _ in }
                 ),
                 drafts: PlatformIncomingShareDraftRepository(
-                    importContent: { _, _, _, _, _ in FeatureComposerDraft() }
+                    importContent: { _, _, _, _, _ in
+                        PlatformIncomingShareDraftImport(
+                            draft: FeatureComposerDraft(),
+                            didImport: true
+                        )
+                    }
                 ),
                 prepareImage: { _, _ in Self.attachment(id: UUID(), value: 1) }
             )
@@ -421,7 +467,12 @@ struct PlatformIncomingShareTests {
                     remove: { _ in }
                 ),
                 drafts: PlatformIncomingShareDraftRepository(
-                    importContent: { _, _, _, _, _ in FeatureComposerDraft() }
+                    importContent: { _, _, _, _, _ in
+                        PlatformIncomingShareDraftImport(
+                            draft: FeatureComposerDraft(),
+                            didImport: true
+                        )
+                    }
                 ),
                 prepareImage: { _, _ in Self.attachment(id: UUID(), value: 1) }
             )

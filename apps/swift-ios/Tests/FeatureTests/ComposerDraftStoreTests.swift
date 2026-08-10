@@ -222,6 +222,78 @@ struct ComposerDraftStoreTests {
         #expect(merged.workspace == fallbackWorkspace)
     }
 
+    @Test func incomingShareAppendsToTheCurrentComposer() {
+        let liveDraft = FeatureComposerDraft(
+            text: "Typed before import",
+            attachments: [FeatureDraftAttachment(
+                data: Data([0x01]),
+                filename: "live.png",
+                mimeType: "image/png"
+            )]
+        )
+        let importedAttachment = FeatureDraftAttachment(
+            data: Data([0x02]),
+            filename: "shared.png",
+            mimeType: "image/png"
+        )
+        let incomingDraft = FeatureComposerDraft(
+            text: "Shared content",
+            attachments: [importedAttachment]
+        )
+
+        let result = FeatureComposerIncomingShareMerge.merge(
+            current: liveDraft,
+            incoming: incomingDraft
+        )
+
+        #expect(result.draft.text == "Typed before import\n\nShared content")
+        #expect(result.draft.attachments == liveDraft.attachments + [importedAttachment])
+        #expect(result.attachmentOverflowCount == 0)
+    }
+
+    @Test func incomingShareMergeKeepsAttachmentsAndReportsTheRequiredRemovalCount() {
+        let currentAttachments = (0..<8).map { value in
+            FeatureDraftAttachment(
+                data: Data([UInt8(value)]),
+                filename: "live-\(value).png",
+                mimeType: "image/png"
+            )
+        }
+        let incoming = FeatureComposerDraft(
+            text: "Shared",
+            attachments: [FeatureDraftAttachment(
+                data: Data([0xFF]),
+                filename: "shared.png",
+                mimeType: "image/png"
+            )]
+        )
+
+        let result = FeatureComposerIncomingShareMerge.merge(
+            current: FeatureComposerDraft(text: "   ", attachments: currentAttachments),
+            incoming: incoming
+        )
+
+        #expect(result.draft.text == "Shared")
+        #expect(result.draft.attachments == currentAttachments + incoming.attachments)
+        #expect(result.attachmentOverflowCount == 1)
+    }
+
+    @Test func importDuringInitialRestoreIsConsumedExactlyOnceByRestoration() {
+        let baseline = FeatureComposerDraft(text: "Before")
+        let persistedImport = FeatureComposerDraft(text: "Before\n\nShared")
+
+        #expect(!FeatureComposerDraftReloadPolicy.shouldMergeIntoLiveComposer(
+            didRestoreDraft: false
+        ))
+        let restored = FeatureComposerDraftRestoration.merge(
+            saved: persistedImport,
+            baseline: baseline,
+            current: baseline
+        )
+
+        #expect(restored.text == "Before\n\nShared")
+    }
+
     @Test func successfulSubmissionFenceWaitsForCancelledDraftWrites() async {
         let started = AsyncStream<Void>.makeStream()
         let release = AsyncStream<Void>.makeStream()
