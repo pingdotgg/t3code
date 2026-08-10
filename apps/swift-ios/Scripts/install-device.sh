@@ -19,8 +19,6 @@ require_cmd() {
 }
 
 require_cmd awk
-require_cmd git
-require_cmd jq
 require_cmd mktemp
 require_cmd plutil
 require_cmd xcodebuild
@@ -88,15 +86,16 @@ DESTINATION_ID="$(
   xcrun swift "${SCRIPT_DIR}/resolve-device-udid.swift" "${DEVICE_JSON}" "${DEVICE_ID}"
 )" || die "could not resolve device '${DEVICE_ID}' to an Xcode destination UDID"
 
-xcrun devicectl device info apps \
+if ! xcrun devicectl device info apps \
   --device "${DESTINATION_ID}" \
   --bundle-id "${BUNDLE_IDENTIFIER}" \
   --json-output "${INSTALLED_APPS_JSON}" \
-  --quiet >/dev/null
+  --quiet >/dev/null; then
+  die "could not query installed apps on device '${DESTINATION_ID}'"
+fi
 INSTALLED_BUILD_NUMBER="$(
-  jq -r --arg bundle "${BUNDLE_IDENTIFIER}" \
-    'first(.result.apps[]? | select(.bundleIdentifier == $bundle) | .bundleVersion) // empty' \
-    "${INSTALLED_APPS_JSON}"
+  xcrun swift "${SCRIPT_DIR}/resolve-installed-build-number.swift" \
+    "${INSTALLED_APPS_JSON}" "${BUNDLE_IDENTIFIER}"
 )"
 "${SCRIPT_DIR}/validate-device-build-number.sh" \
   "${T3_SWIFT_BUILD_NUMBER}" "${INSTALLED_BUILD_NUMBER}"

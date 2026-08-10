@@ -21,6 +21,8 @@ require_cmd awk
 require_cmd xcodebuild
 require_cmd xcrun
 
+"${SCRIPT_DIR}/validate-device-build-number.test.sh"
+
 if [[ -z "${SIMULATOR_ID}" ]]; then
   # simctl groups devices by runtime. Keeping the last available iPhone picks
   # the newest installed iOS runtime without coupling CI to a device model.

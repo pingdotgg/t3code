@@ -1,0 +1,14 @@
+{
+  "result": {
+    "apps": [
+      {
+        "bundleIdentifier": "com.example.other",
+        "bundleVersion": "4"
+      },
+      {
+        "bundleIdentifier": "com.t3tools.t3code.swiftui.dev",
+        "bundleVersion": "21"
+      }
+    ]
+  }
+}

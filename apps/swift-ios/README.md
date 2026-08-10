@@ -125,14 +125,16 @@ Developer account for the requested team.
 ```sh
 T3_SWIFT_DEVICE_ID="DEVICE-IDENTIFIER" \
 T3_SWIFT_DEVELOPMENT_TEAM="TEAMID1234" \
+T3_SWIFT_BUILD_NUMBER="123" \
 ./Scripts/install-device.sh
 ```
 
 The script builds, provisions, installs, and launches the Debug identity by
 default. Set `T3_SWIFT_CONFIGURATION=Release` for the TestFlight identity. It
-accepts the T3 Connect build settings above as environment variables. Optional
-overrides are `T3_SWIFT_DERIVED_DATA_PATH`, `T3_SWIFT_VERSION`, and
-`T3_SWIFT_BUILD_NUMBER`. Run with
+accepts the T3 Connect build settings above as environment variables.
+`T3_SWIFT_BUILD_NUMBER` is required and must be greater than the build already
+installed on the phone. Optional overrides are `T3_SWIFT_DERIVED_DATA_PATH` and
+`T3_SWIFT_VERSION`. Run with
 `T3_SWIFT_VERIFY_BUNDLE_IDENTIFIERS_ONLY=1` to verify the configuration's host
 and extension bundle identifiers without a device build.
 
