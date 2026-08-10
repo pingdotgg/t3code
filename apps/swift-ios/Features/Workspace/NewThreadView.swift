@@ -146,6 +146,7 @@ public struct NewThreadView: View {
             case .project:
                 NewTaskProjectPicker(
                     groups: creationProjectGroups,
+                    recentProjects: DailyUXCreationContext.recentProjects(in: model.snapshot),
                     selectionID: selectedProjectGroup?.id,
                     onSelect: { group in
                         if selectProjectGroup(group) {
@@ -956,13 +957,71 @@ private enum NewTaskPicker: String, Identifiable {
     var id: String { rawValue }
 }
 
+enum NewTaskProjectListSections {
+    static let recentLimit = 3
+
+    static func split(
+        groups: [DailyUXProjectGroup],
+        recentProjects: [DailyUXRecentProject],
+        query: String = "",
+        limit: Int = recentLimit
+    ) -> (recent: [DailyUXProjectGroup], remaining: [DailyUXProjectGroup]) {
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        var seenGroupIDs = Set<String>()
+        let matchingGroups = groups
+            .filter { seenGroupIDs.insert($0.id).inserted }
+            .filter { group in
+                guard !normalizedQuery.isEmpty else { return true }
+                let searchableValues = [group.name]
+                    + group.projects.flatMap { [$0.name, $0.path] }
+                return searchableValues.contains {
+                    $0.localizedCaseInsensitiveContains(normalizedQuery)
+                }
+            }
+            .sorted(by: projectOrder)
+
+        let groupsByID = matchingGroups.reduce(into: [String: DailyUXProjectGroup]()) { groupsByID, group in
+            groupsByID[group.id] = groupsByID[group.id] ?? group
+        }
+        var seenRecentIDs = Set<String>()
+        let recent = recentProjects
+            .prefix(max(0, limit))
+            .compactMap { groupsByID[$0.group.id] }
+            .filter { seenRecentIDs.insert($0.id).inserted }
+        let recentIDs = Set(recent.map(\.id))
+        return (recent, matchingGroups.filter { !recentIDs.contains($0.id) })
+    }
+
+    private static func projectOrder(
+        _ lhs: DailyUXProjectGroup,
+        _ rhs: DailyUXProjectGroup
+    ) -> Bool {
+        let comparison = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
+        if comparison != .orderedSame { return comparison == .orderedAscending }
+        return lhs.id < rhs.id
+    }
+}
+
 private struct NewTaskProjectPicker: View {
     @SwiftUI.Environment(\.dismiss) private var dismiss
     let groups: [DailyUXProjectGroup]
+    let recentProjects: [DailyUXRecentProject]
     let selectionID: String?
     let onSelect: (DailyUXProjectGroup) -> Void
 
+    @State private var query = ""
+
+    private var sections: (recent: [DailyUXProjectGroup], remaining: [DailyUXProjectGroup]) {
+        NewTaskProjectListSections.split(
+            groups: groups,
+            recentProjects: recentProjects,
+            query: query
+        )
+    }
+
     var body: some View {
+        let visibleSections = sections
+
         NavigationStack {
             Group {
                 if groups.isEmpty {
@@ -971,31 +1030,30 @@ private struct NewTaskProjectPicker: View {
                         systemImage: "folder",
                         description: Text("Reconnect an environment or add a project to continue.")
                     )
+                } else if visibleSections.recent.isEmpty, visibleSections.remaining.isEmpty {
+                    ContentUnavailableView(
+                        "No projects found",
+                        systemImage: "magnifyingglass",
+                        description: Text("Try a different search.")
+                    )
                 } else {
-                    List(groups) { group in
-                        Button {
-                            onSelect(group)
-                        } label: {
-                            HStack(spacing: 12) {
-                                Text(group.name)
-                                    .foregroundStyle(T3Colors.textPrimary)
-
-                                Spacer(minLength: 10)
-
-                                if group.id == selectionID {
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundStyle(T3Colors.accent)
+                    List {
+                        if visibleSections.recent.isEmpty {
+                            ForEach(visibleSections.remaining, content: row)
+                        } else {
+                            Section {
+                                ForEach(visibleSections.recent, content: row)
+                            } header: {
+                                sectionHeader("Recent")
+                            }
+                            if !visibleSections.remaining.isEmpty {
+                                Section {
+                                    ForEach(visibleSections.remaining, content: row)
+                                } header: {
+                                    sectionHeader("Other projects")
                                 }
                             }
-                            .frame(minHeight: 34)
-                            .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(
-                            group.id == selectionID ? .isSelected : []
-                        )
-                        .listRowBackground(T3Colors.background)
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
@@ -1004,6 +1062,7 @@ private struct NewTaskProjectPicker: View {
             .background(T3Colors.background)
             .navigationTitle("Project")
             .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $query, prompt: "Search projects")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -1012,6 +1071,37 @@ private struct NewTaskProjectPicker: View {
         }
         .presentationDetents([.medium, .large])
         .presentationBackground(T3Colors.background)
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(T3Typography.supporting)
+            .foregroundStyle(T3Colors.textTertiary)
+            .textCase(nil)
+    }
+
+    private func row(_ group: DailyUXProjectGroup) -> some View {
+        Button {
+            onSelect(group)
+        } label: {
+            HStack(spacing: 12) {
+                Text(group.name)
+                    .foregroundStyle(T3Colors.textPrimary)
+
+                Spacer(minLength: 10)
+
+                if group.id == selectionID {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(T3Colors.accent)
+                }
+            }
+            .frame(minHeight: 34)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(group.id == selectionID ? .isSelected : [])
+        .listRowBackground(T3Colors.background)
     }
 }
 

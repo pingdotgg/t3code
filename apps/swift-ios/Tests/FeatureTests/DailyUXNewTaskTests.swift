@@ -6,6 +6,102 @@ import UIKit
 @Suite("Message-first task creation")
 struct DailyUXNewTaskTests {
     @Test
+    func projectPickerSharesTheDefaultRankingAndLimitsUniqueRecentGroups() {
+        let alpha = rankedProject("alpha", name: "Alpha")
+        let bravo = rankedProject("bravo", name: "Bravo")
+        let charlie = rankedProject("charlie", name: "Charlie")
+        let delta = rankedProject("delta", name: "Delta")
+        let echo = rankedProject("echo", name: "Echo")
+        let value = rankedSnapshot(
+            projects: [echo, delta, charlie, bravo, alpha],
+            threads: [
+                rankedThread("echo-new", projectID: echo.id, activity: 50),
+                rankedThread("echo-old", projectID: echo.id, activity: 10),
+                rankedThread("z-delta", projectID: delta.id, activity: 40),
+                rankedThread("a-charlie", projectID: charlie.id, activity: 40),
+                rankedThread("bravo", projectID: bravo.id, activity: 30),
+            ]
+        )
+        let ranking = DailyUXCreationContext.recentProjects(in: value)
+        let sections = NewTaskProjectListSections.split(
+            groups: DailyUXCreationContext.projectGroups(in: value),
+            recentProjects: ranking
+        )
+
+        #expect(ranking.map(\.project.id) == [echo.id, charlie.id, delta.id, bravo.id])
+        #expect(
+            DailyUXCreationContext.initialProject(in: value, requestedProjectID: nil)?.id
+                == ranking.first?.project.id
+        )
+        #expect(sections.recent.map(\.id) == ranking.prefix(3).map(\.group.id))
+        #expect(sections.remaining.map(\.name) == [alpha.name, bravo.name])
+        #expect(Set(sections.recent.map(\.id)).count == sections.recent.count)
+    }
+
+    @Test
+    func projectPickerSearchesEveryProjectAndReportsNoMatches() {
+        let alpha = rankedProject("alpha", name: "Alpha")
+        let bravo = rankedProject("bravo", name: "Bravo")
+        let aliasedCheckout = FeatureProject(
+            id: "aliased-checkout",
+            environmentID: "environment",
+            name: "Physical Checkout Alias",
+            path: "/aliased-checkout",
+            repositoryIdentity: FeatureRepositoryIdentity(
+                canonicalKey: "repository:aliased",
+                displayName: "Canonical Repository"
+            )
+        )
+        let value = rankedSnapshot(
+            projects: [bravo, aliasedCheckout, alpha],
+            threads: [rankedThread("alpha", projectID: alpha.id, activity: 20)]
+        )
+        let groups = DailyUXCreationContext.projectGroups(in: value)
+        let ranking = DailyUXCreationContext.recentProjects(in: value)
+
+        let recentMatch = NewTaskProjectListSections.split(
+            groups: groups,
+            recentProjects: ranking,
+            query: "ALPHA"
+        )
+        let otherMatch = NewTaskProjectListSections.split(
+            groups: groups,
+            recentProjects: ranking,
+            query: "/bravo"
+        )
+        let physicalProjectNameMatch = NewTaskProjectListSections.split(
+            groups: groups,
+            recentProjects: ranking,
+            query: "checkout alias"
+        )
+        let visibleGroupNameMatch = NewTaskProjectListSections.split(
+            groups: groups,
+            recentProjects: ranking,
+            query: "canonical repository"
+        )
+        let noMatch = NewTaskProjectListSections.split(
+            groups: groups,
+            recentProjects: ranking,
+            query: "missing"
+        )
+        let noProjects = NewTaskProjectListSections.split(
+            groups: [],
+            recentProjects: []
+        )
+
+        #expect(recentMatch.recent.map(\.name) == [alpha.name])
+        #expect(recentMatch.remaining.isEmpty)
+        #expect(otherMatch.recent.isEmpty)
+        #expect(otherMatch.remaining.map(\.name) == [bravo.name])
+        #expect(physicalProjectNameMatch.recent.isEmpty)
+        #expect(physicalProjectNameMatch.remaining.map(\.name) == ["Canonical Repository"])
+        #expect(visibleGroupNameMatch.recent.isEmpty)
+        #expect(visibleGroupNameMatch.remaining.map(\.name) == ["Canonical Repository"])
+        #expect(noMatch.recent.isEmpty && noMatch.remaining.isEmpty)
+        #expect(noProjects.recent.isEmpty && noProjects.remaining.isEmpty)
+    }
+
+    @Test
     func recentProjectRankingDrivesTheDefaultAndKeepsUnusedProjectsOut() {
         let alpha = rankedProject("alpha", name: "Alpha")
         let beta = rankedProject("beta", name: "Beta")
