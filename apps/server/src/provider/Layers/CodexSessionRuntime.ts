@@ -1207,11 +1207,16 @@ export const makeCodexSessionRuntime = (
         ) {
           const item = notification.params.item;
           const rootProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
-          const senderIsChild =
-            rootProviderThreadId !== undefined && item.senderThreadId !== rootProviderThreadId;
-          const senderChildState = senderIsChild
-            ? (yield* Ref.get(collabChildAgentsRef)).get(item.senderThreadId)
-            : undefined;
+          const currentChildren = yield* Ref.get(collabChildAgentsRef);
+          const senderChildState =
+            rootProviderThreadId !== undefined && item.senderThreadId !== rootProviderThreadId
+              ? currentChildren.get(item.senderThreadId)
+              : undefined;
+          // A logical root id can differ from thread/start's id. Treat a
+          // sender as nested only after its parent-side spawn registered it;
+          // otherwise a root collab tool item could be mistaken for child
+          // chatter and disappear from the coordinator timeline.
+          const senderIsChild = senderChildState !== undefined;
           // Nested children belong to the same fleet as their sender. The
           // provider's notification turn id is the nested child's own turn,
           // not the root coordinator turn used by the Agents panel.
@@ -1219,7 +1224,6 @@ export const makeCodexSessionRuntime = (
             senderChildState?.spawnTurnId ?? TurnId.make(notification.params.turnId);
           let nextSpawnIndex: number | undefined;
           if (item.tool === "spawnAgent") {
-            const currentChildren = yield* Ref.get(collabChildAgentsRef);
             nextSpawnIndex =
               Array.from(currentChildren.values())
                 .filter(
@@ -1374,14 +1378,15 @@ export const makeCodexSessionRuntime = (
         if (!child) {
           // A few Codex versions omit both child registration signals and
           // only expose the foreign thread id on its first notification. The
-          // root/foreign distinction is strong enough here: a provider
-          // session's non-root conversation is a collab child. Register it
-          // provisionally so chatter can be dropped and lifecycle can still
-          // populate the Agents surface. Parent-owned methods deliberately
-          // remain on the parent path.
+          // root/foreign distinction is useful for lifecycle chatter, but an
+          // unknown item can still be coordinator content when the provider
+          // uses a logical root id different from thread/start. Keep item
+          // rows on the parent path until a collab spawn identifies them.
           if (
             !foreignConversation ||
-            routeCodexChildNotification(notification.method) === "parent"
+            routeCodexChildNotification(notification.method) === "parent" ||
+            notification.method === "item/started" ||
+            notification.method === "item/completed"
           ) {
             return false;
           }

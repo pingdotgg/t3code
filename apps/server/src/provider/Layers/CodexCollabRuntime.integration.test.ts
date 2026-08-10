@@ -306,6 +306,32 @@ function buildUnscopedExistingChildScript() {
   };
 }
 
+function buildLogicalRootItemScript() {
+  const rootTurnId = "019fcfd6-1806-7de1-8564-de69fd55bffb";
+  const logicalRootId = "019fcfd6-1806-7de1-8564-de69fd55bfff";
+  return {
+    rootThreadId: ROOT,
+    notifications: [
+      {
+        method: "item/completed",
+        params: {
+          // Some provider versions address coordinator items with a logical
+          // root id that differs from the thread/start response id.
+          threadId: logicalRootId,
+          turnId: rootTurnId,
+          item: {
+            type: "agentMessage",
+            id: "logical-root-summary",
+            phase: "final_answer",
+            text: "The coordinator kept the parent timeline intact.",
+          },
+          completedAtMs: 1785898350000,
+        },
+      },
+    ],
+  };
+}
+
 const scriptPath = NodePath.join(import.meta.dirname, "../testFixtures/.collab-script.json");
 const peerPath = NodePath.join(import.meta.dirname, "../testFixtures/codexCollabMockPeer.sh");
 
@@ -679,6 +705,46 @@ describe("CodexSessionRuntime collab integration", () => {
         threadId: ROOT,
         turnId: activeTurnId,
       });
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps logical-root items on the coordinator timeline", () =>
+    Effect.gen(function* () {
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(buildLogicalRootItemScript()), "utf8");
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-logical-root"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      const eventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.method === "item/completed"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "preserve the parent item" });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      assert.include(
+        events.map((event) => event.method),
+        "item/completed",
+      );
+      assert.notInclude(
+        events.map((event) => event.method),
+        "collabAgent/item",
+        "an unknown logical-root item must not become a child-agent event",
+      );
 
       yield* runtime.close;
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
