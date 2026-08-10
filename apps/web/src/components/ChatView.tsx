@@ -149,6 +149,7 @@ import { projectSourceFolders } from "@t3tools/shared/projectFolders";
 import { useGitPanelStore, selectGitPanelFolder } from "~/gitPanelStore";
 import { AgentsPanel } from "./AgentsPanel";
 import { GitPanel, type GitPanelFolder } from "./git/GitPanel";
+import { PullRequestsPanel } from "./pullRequests/PullRequestsPanel";
 import {
   deriveAgentPanelModel,
   foldSubagentActivities,
@@ -3187,6 +3188,34 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "git");
   }, [activeProject, activeThreadRef]);
+  /**
+   * The composer's send context is the only selection guaranteed to name a
+   * real model: a project default or draft thread can carry an empty `model`,
+   * which thread.create rejects.
+   */
+  const resolveReviewModelSelection = useCallback((): ModelSelection | null => {
+    const sendContext = composerRef.current?.getSendContext();
+    return (
+      sendContext?.selectedModelSelection ??
+      activeThread?.modelSelection ??
+      activeProject?.defaultModelSelection ??
+      null
+    );
+  }, [activeProject, activeThread]);
+  const openReviewThread = useCallback(
+    (reviewThreadId: ThreadId) => {
+      if (!activeProject) return;
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: { environmentId: activeProject.environmentId, threadId: reviewThreadId },
+      });
+    },
+    [activeProject, navigate],
+  );
+  const addPullRequestsSurface = useCallback(() => {
+    if (!activeThreadRef || !activeProject || !isGitRepo) return;
+    useRightPanelStore.getState().open(activeThreadRef, "pull-requests");
+  }, [activeProject, activeThreadRef, isGitRepo]);
   const toggleGitSurface = useCallback(() => {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().toggle(activeThreadRef, "git");
@@ -5969,6 +5998,17 @@ function ChatViewContent(props: ChatViewProps) {
         onSelectFolder={selectGitPanelFolderPath}
         onOpenFile={openFileSurface}
       />
+    ) : activeRightPanelSurface?.kind === "pull-requests" ? (
+      <PullRequestsPanel
+        environmentId={activeProject?.environmentId ?? null}
+        cwd={activeProject?.workspaceRoot ?? null}
+        threadId={activeThreadRef?.threadId ?? null}
+        projectId={activeProject?.id ?? null}
+        resolveModelSelection={resolveReviewModelSelection}
+        runtimeMode={runtimeMode}
+        onPrepared={handlePreparedPullRequestThread}
+        onOpenThread={openReviewThread}
+      />
     ) : activeRightPanelSurface?.kind === "agents" ? (
       <AgentsPanel
         model={agentPanelModel}
@@ -6410,10 +6450,12 @@ function ChatViewContent(props: ChatViewProps) {
           onAddFiles={addFilesSurface}
           onAddAgents={addAgentsSurface}
           onAddGit={addGitSurface}
+          onAddPullRequests={addPullRequestsSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
           gitAvailable={activeProject !== null}
+          pullRequestsAvailable={activeProject !== null && isGitRepo}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -6440,10 +6482,12 @@ function ChatViewContent(props: ChatViewProps) {
             onAddFiles={addFilesSurface}
             onAddAgents={addAgentsSurface}
             onAddGit={addGitSurface}
+            onAddPullRequests={addPullRequestsSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
             gitAvailable={activeProject !== null}
+            pullRequestsAvailable={activeProject !== null && isGitRepo}
           >
             {rightPanelContent}
           </RightPanelTabs>
