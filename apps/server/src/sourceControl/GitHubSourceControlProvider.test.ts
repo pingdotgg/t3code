@@ -247,6 +247,35 @@ it.effect("preserves a GitHub Enterprise host in upstream repository coordinates
   }),
 );
 
+it.effect("preserves a custom GitHub Enterprise port in upstream repository coordinates", () =>
+  Effect.gen(function* () {
+    let repository: string | undefined;
+    const provider = yield* makeProvider({
+      listOpenPullRequests: (input) => {
+        repository = input.repository;
+        return Effect.succeed([]);
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "github",
+          name: "github.example.com:8443",
+          baseUrl: "https://github.example.com:8443",
+        },
+        remoteName: "upstream",
+        remoteUrl: "https://github.example.com:8443/platform/t3code.git",
+      },
+      headSelector: "contributor:feature/fork-pr",
+      state: "open",
+    });
+
+    assert.strictEqual(repository, "github.example.com:8443/platform/t3code");
+  }),
+);
+
 it.effect("treats empty non-open change request listing output as no results", () =>
   Effect.gen(function* () {
     const provider = yield* makeProvider({

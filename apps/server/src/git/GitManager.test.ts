@@ -3089,7 +3089,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* configureVisibleRemoteUrlWithLocalRewrite(
         repoDir,
         "fork-seed",
-        "git@github.com:octocat/codething-mvp.git",
+        "https://github.com/octocat/codething-mvp.git/",
         forkDir,
       );
 

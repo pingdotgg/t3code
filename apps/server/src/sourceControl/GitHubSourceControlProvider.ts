@@ -117,9 +117,9 @@ export const make = Effect.gen(function* () {
         .split("/")
         .filter((part) => part.length > 0);
       if (!owner || !name || rest.length > 0) return undefined;
-      return parsed.hostname.toLowerCase() === "github.com"
+      return parsed.host.toLowerCase() === "github.com"
         ? `${owner}/${name}`
-        : `${parsed.hostname}/${owner}/${name}`;
+        : `${parsed.host}/${owner}/${name}`;
     } catch {
       return undefined;
     }
