@@ -183,6 +183,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         if (!isSettingsRoute) {
           void navigate({ to: "/settings" });
         }
+      } else if (action === "toggle-terminal") {
+        window.dispatchEvent(new CustomEvent("t3-action:toggle-terminal"));
       }
     });
 
