@@ -53,6 +53,7 @@ import {
   type Icon,
 } from "../Icons";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { CodeReviewSettingsSection } from "./CodeReviewSettings";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import { SettingResetButton, SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -588,6 +589,7 @@ export function SourceControlSettingsPanel() {
       )}
 
       {environmentId !== null ? <SourceControlWritingSettingsSection /> : null}
+      {environmentId !== null ? <CodeReviewSettingsSection /> : null}
     </SettingsPageContainer>
   );
 }

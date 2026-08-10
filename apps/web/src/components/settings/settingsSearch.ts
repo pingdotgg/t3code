@@ -190,6 +190,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/source-control",
   },
   {
+    id: "code-review-agent",
+    title: "Default code review agent",
+    to: "/settings/source-control",
+  },
+  {
+    id: "code-review-instructions",
+    title: "Review instructions",
+    to: "/settings/source-control",
+  },
+  {
     id: "remote-environments",
     title: "Remote environments",
     to: "/settings/connections",

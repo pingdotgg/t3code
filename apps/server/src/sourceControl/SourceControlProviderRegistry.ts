@@ -73,6 +73,13 @@ function unsupportedProvider(
         cwd: input.cwd,
         detail: `No ${kind} source control provider is registered.`,
       }),
+    listRepositoryChangeRequests: (input) =>
+      new SourceControlProviderError({
+        provider: kind,
+        operation: "listRepositoryChangeRequests",
+        cwd: input.cwd,
+        detail: `No ${kind} source control provider is registered.`,
+      }),
     getChangeRequest: (input) =>
       new SourceControlProviderError({
         provider: kind,
@@ -161,6 +168,11 @@ function bindProviderContext(
     kind: provider.kind,
     listChangeRequests: (input) =>
       provider.listChangeRequests({
+        ...input,
+        context: input.context ?? context,
+      }),
+    listRepositoryChangeRequests: (input) =>
+      provider.listRepositoryChangeRequests({
         ...input,
         context: input.context ?? context,
       }),

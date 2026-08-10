@@ -498,6 +498,19 @@ export const SourceControlWritingStyleSettings = Schema.Struct({
 });
 export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyleSettings.Type;
 
+/**
+ * Seed instructions for the PR review agent.
+ *
+ * Deliberately opinionated about evidence: a reviewer that reports plausible
+ * but unverified findings is worse than one that reports fewer, because every
+ * false positive costs a human read of the diff.
+ */
+export const DEFAULT_CODE_REVIEW_INSTRUCTIONS = `Review this change for correctness first: logic errors, unhandled edge cases, race conditions, and breaking changes to existing callers.
+
+Then note anything that duplicates existing code in the repository, or that could reuse a helper that is already there.
+
+For every finding, give the file and line, one sentence on what is wrong, and a concrete scenario where it fails. Read the surrounding code before reporting — do not report a finding you have not verified against the actual source. If the change looks correct, say so plainly instead of inventing concerns.`;
+
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
 
@@ -590,6 +603,14 @@ export const ServerSettings = Schema.Struct({
   ),
   sourceControlWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  // Null means "review with whatever model the review thread would use anyway",
+  // matching how sourceControlWriterModelSelection treats null.
+  codeReviewModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  codeReviewInstructions: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CODE_REVIEW_INSTRUCTIONS)),
   ),
 
   // Legacy single-instance-per-driver settings. Continues to be the source
@@ -734,6 +755,8 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  codeReviewModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  codeReviewInstructions: Schema.optionalKey(TrimmedString),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),

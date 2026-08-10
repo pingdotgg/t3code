@@ -27,6 +27,8 @@ function toChangeRequest(summary: NormalizedBitbucketPullRequestRecord): ChangeR
     ...(summary.headRepositoryOwnerLogin !== undefined
       ? { headRepositoryOwnerLogin: summary.headRepositoryOwnerLogin }
       : {}),
+    ...(summary.author !== undefined ? { author: summary.author } : {}),
+    ...(summary.assignees !== undefined ? { assignees: summary.assignees } : {}),
   };
 }
 
@@ -63,6 +65,27 @@ export const make = Effect.gen(function* () {
           ),
         );
     },
+    listRepositoryChangeRequests: (input) =>
+      bitbucket
+        .listRepositoryPullRequests({
+          cwd: input.cwd,
+          ...(input.context ? { context: input.context } : {}),
+          state: input.state,
+          ...(input.limit !== undefined ? { limit: input.limit } : {}),
+        })
+        .pipe(
+          Effect.map((items) => items.map(toChangeRequest)),
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "bitbucket",
+                operation: "listRepositoryChangeRequests",
+                cwd: input.cwd,
+                detail: "Failed to list change requests.",
+                cause: error,
+              }),
+          ),
+        ),
     getChangeRequest: (input) =>
       bitbucket.getPullRequest(input).pipe(
         Effect.map(toChangeRequest),

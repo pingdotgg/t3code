@@ -1,6 +1,8 @@
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -188,6 +190,8 @@ export interface GitHubPullRequestSummary {
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
+  readonly author?: string | null;
+  readonly assignees?: ReadonlyArray<string>;
 }
 
 export interface GitHubRepositoryCloneUrls {
@@ -210,6 +214,15 @@ export class GitHubCli extends Context.Service<
       readonly headSelector: string;
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
+
+    readonly listRepositoryPullRequests: (input: {
+      readonly cwd: string;
+      readonly state: "open" | "closed" | "merged" | "all";
+      readonly limit?: number;
+    }) => Effect.Effect<
+      ReadonlyArray<GitHubPullRequestSummary & { readonly updatedAt: Option.Option<DateTime.Utc> }>,
+      GitHubCliError
+    >;
 
     readonly getPullRequest: (input: {
       readonly cwd: string;
@@ -317,8 +330,43 @@ export const make = Effect.gen(function* () {
       })
       .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
 
+  const listRepositoryPullRequests: GitHubCli["Service"]["listRepositoryPullRequests"] = (input) =>
+    execute({
+      cwd: input.cwd,
+      args: [
+        "pr",
+        "list",
+        "--state",
+        input.state,
+        "--limit",
+        String(input.limit ?? 50),
+        "--json",
+        "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner,author,assignees",
+      ],
+    }).pipe(
+      Effect.map((result) => result.stdout.trim()),
+      Effect.flatMap((raw) =>
+        raw.length === 0
+          ? Effect.succeed([])
+          : Effect.sync(() => decodeGitHubPullRequestListJson(raw)).pipe(
+              Effect.flatMap((decoded) =>
+                Result.isSuccess(decoded)
+                  ? Effect.succeed(decoded.success)
+                  : Effect.fail(
+                      new GitHubChangeRequestListDecodeError({
+                        command: "gh",
+                        cwd: input.cwd,
+                        cause: decoded.failure,
+                      }),
+                    ),
+              ),
+            ),
+      ),
+    );
+
   return GitHubCli.of({
     execute,
+    listRepositoryPullRequests,
     listOpenPullRequests: (input) =>
       execute({
         cwd: input.cwd,
