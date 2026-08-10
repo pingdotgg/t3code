@@ -165,6 +165,7 @@ import {
   ComboboxItem,
   ComboboxList,
   ComboboxPopup,
+  ComboboxTrigger,
   useComboboxFilter,
 } from "./ui/combobox";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
@@ -1811,9 +1812,7 @@ export default function Sidebar() {
       projectScopeItems[0]!,
     [projectScopeItems, projectScopeKey],
   );
-  // Popup anchor: the whole row, not the inner input element, so the list
-  // lines up with the control the user sees.
-  const projectScopeAnchorRef = useRef<HTMLDivElement | null>(null);
+  const [projectScopeQuery, setProjectScopeQuery] = useState("");
   const projectScopeFilter = useComboboxFilter();
   const scopedProjectGroup = useMemo(
     () =>
@@ -3275,7 +3274,6 @@ export default function Sidebar() {
                 <Combobox
                   items={projectScopeItems}
                   autoHighlight
-                  openOnInputClick
                   // "All projects" is a scope reset, not a searchable entry:
                   // hide it while filtering so it can't outrank a project
                   // match under autoHighlight, and so no-hit queries reach
@@ -3289,43 +3287,59 @@ export default function Sidebar() {
                   itemToStringLabel={(item) => item.label}
                   isItemEqualToValue={(a, b) => a.value === b.value}
                   open={projectScopeMenuOpen}
-                  onOpenChange={setProjectScopeMenuOpen}
+                  onOpenChange={(open) => {
+                    setProjectScopeMenuOpen(open);
+                    if (!open) setProjectScopeQuery("");
+                  }}
                   value={selectedProjectScopeItem}
                   onValueChange={(item) => {
                     if (!item) return;
                     setProjectScopeKey(item.value === "all" ? null : item.value);
                   }}
                 >
-                  <div
-                    ref={projectScopeAnchorRef}
-                    className="min-w-0 flex-1 rounded-md transition-colors hover:bg-sidebar-row-hover has-[input:focus-visible]:bg-sidebar-row-hover"
+                  <ComboboxTrigger
+                    render={
+                      <SidebarMenuButton
+                        aria-label="Filter threads by project"
+                        className="min-w-0 flex-1 ps-[calc(var(--sidebar-row-content-inset)-1px)] focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+                      />
+                    }
                   >
-                    <ComboboxInput
-                      aria-label="Filter threads by project"
-                      placeholder="Search projects..."
-                      size="sm"
-                      unstyled
-                      startAddon={
-                        scopedProjectGroup ? (
-                          <ProjectFavicon
-                            environmentId={scopedProjectGroup.environmentId}
-                            cwd={scopedProjectGroup.workspaceRoot}
-                            faviconPath={scopedProjectGroup.faviconPath}
-                            className="size-4 shrink-0"
-                          />
-                        ) : (
-                          <FolderIcon className="size-4 shrink-0 text-sidebar-foreground" />
-                        )
-                      }
-                      className="w-full [&_input]:h-8 [&_input]:ps-9!"
-                      inputClassName="h-8 w-full rounded-md bg-transparent text-sm font-medium text-sidebar-foreground selection:bg-primary selection:text-primary-foreground placeholder:text-sidebar-muted-foreground"
-                    />
-                  </div>
-                  <ComboboxPopup
-                    align="start"
-                    anchor={projectScopeAnchorRef}
-                    className="w-(--anchor-width)"
-                  >
+                    {scopedProjectGroup ? (
+                      <ProjectFavicon
+                        environmentId={scopedProjectGroup.environmentId}
+                        cwd={scopedProjectGroup.workspaceRoot}
+                        faviconPath={scopedProjectGroup.faviconPath}
+                        className="size-4 shrink-0"
+                      />
+                    ) : (
+                      <FolderIcon className="size-4 shrink-0" />
+                    )}
+                    <span className="min-w-0 flex-1 truncate">
+                      {scopedProjectGroup?.displayName ?? "All projects"}
+                    </span>
+                    <ChevronDownIcon className="-mr-px size-4 shrink-0" />
+                  </ComboboxTrigger>
+                  <ComboboxPopup align="start" className="w-(--anchor-width)">
+                    <div className="shrink-0 px-3 pt-2.5">
+                      <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
+                        <SearchIcon
+                          aria-hidden="true"
+                          className="pointer-events-none absolute top-1.5 left-0 size-4 shrink-0 text-muted-foreground/55"
+                        />
+                        <ComboboxInput
+                          aria-label="Search projects"
+                          className="[&_input]:h-6.5 [&_input]:ps-5 [&_input]:font-sans [&_input]:leading-6.5"
+                          inputClassName="rounded-none bg-transparent text-sm"
+                          placeholder="Search projects..."
+                          showTrigger={false}
+                          size="sm"
+                          unstyled
+                          value={projectScopeQuery}
+                          onChange={(event) => setProjectScopeQuery(event.target.value)}
+                        />
+                      </div>
+                    </div>
                     <ComboboxEmpty>No matching projects.</ComboboxEmpty>
                     <ComboboxList>
                       {(item: (typeof projectScopeItems)[number]) => {
