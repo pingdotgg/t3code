@@ -232,7 +232,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 now: .now
             ).map { swipeAction($0, for: thread) }
             let configuration = UISwipeActionsConfiguration(actions: actions)
-            configuration.performsFirstActionWithFullSwipe = false
+            configuration.performsFirstActionWithFullSwipe = true
             return configuration
         }
 
