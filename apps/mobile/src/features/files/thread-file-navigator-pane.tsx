@@ -11,6 +11,7 @@ import {
 } from "react-native-screens";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { cn } from "../../lib/cn";
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { projectEnvironment } from "../../state/projects";
@@ -27,6 +28,7 @@ export function ThreadFileNavigatorPane(props: {
   readonly onSelectFile: (path: string) => void;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [includeIgnored, setIncludeIgnored] = useState(false);
   const colorScheme = useColorScheme();
   const highlightTheme = colorScheme === "dark" ? "dark" : "light";
   const iconColor = String(useThemeColor("--color-icon-muted"));
@@ -36,7 +38,7 @@ export function ThreadFileNavigatorPane(props: {
   const entriesQuery = useEnvironmentQuery(
     projectEnvironment.listEntries({
       environmentId: props.environmentId,
-      input: { cwd: props.cwd },
+      input: { cwd: props.cwd, includeIgnored },
     }),
   );
   const entriesData = entriesQuery.data as ProjectListEntriesResult | null;
@@ -55,6 +57,17 @@ export function ThreadFileNavigatorPane(props: {
     () =>
       [
         {
+          accessibilityLabel: "Show ignored files",
+          icon: { name: includeIgnored ? "eye" : "eye.slash", type: "sfSymbol" as const },
+          identifier: "thread-file-navigator-ignored-files",
+          onPress: () => setIncludeIgnored((current) => !current),
+          selected: includeIgnored,
+          sharesBackground: false,
+          tintColor: foregroundColor,
+          type: "button" as const,
+          width: 44,
+        },
+        {
           accessibilityLabel: "Refresh files",
           icon: { name: "arrow.clockwise", type: "sfSymbol" as const },
           identifier: "thread-file-navigator-refresh",
@@ -65,7 +78,7 @@ export function ThreadFileNavigatorPane(props: {
           width: 44,
         },
       ] as ComponentProps<typeof ScreenStackHeaderConfig>["headerRightBarButtonItems"],
-    [entriesQuery.refresh, foregroundColor],
+    [entriesQuery.refresh, foregroundColor, includeIgnored],
   );
 
   const fileTree = (
@@ -145,6 +158,24 @@ export function ThreadFileNavigatorPane(props: {
               {props.projectName}
             </Text>
           </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Show ignored files"
+            accessibilityState={{ selected: includeIgnored }}
+            hitSlop={8}
+            className={cn(
+              "h-8 w-8 items-center justify-center rounded-full active:bg-subtle",
+              includeIgnored && "bg-subtle-strong",
+            )}
+            onPress={() => setIncludeIgnored((current) => !current)}
+          >
+            <SymbolView
+              name={includeIgnored ? "eye" : "eye.slash"}
+              size={14}
+              tintColor={iconColor}
+              type="monochrome"
+            />
+          </Pressable>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Refresh files"

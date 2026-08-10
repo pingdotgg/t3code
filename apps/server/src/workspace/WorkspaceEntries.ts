@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import type {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
+  ProjectEntry,
   ProjectListEntriesInput,
   ProjectListEntriesResult,
   ProjectSearchContentsInput,
@@ -23,6 +24,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
@@ -140,6 +142,7 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
 
 export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
+  const vcsDriverRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceSearchIndexes = yield* WorkspaceSearchIndex.WorkspaceSearchIndexMap;
 
@@ -272,10 +275,106 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const listIncludingIgnored = Effect.fn("WorkspaceEntries.listIncludingIgnored")(function* (
+    cwd: string,
+    indexed: ProjectListEntriesResult,
+  ): Effect.fn.Return<ProjectListEntriesResult, WorkspaceEntriesError> {
+    const existingPaths = new Set(indexed.entries.map((entry) => entry.path));
+    const candidates: ProjectEntry[] = [];
+    const listFailure = (reason: string, cause: unknown) =>
+      new WorkspaceSearchIndex.WorkspaceSearchIndexSearchFailed({
+        cwd,
+        queryLength: 0,
+        pageSize: indexed.entries.length,
+        reason,
+        cause,
+      });
+    const vcs = yield* vcsDriverRegistry
+      .detect({ cwd })
+      .pipe(
+        Effect.mapError((cause) =>
+          listFailure("Failed to classify ignored workspace entries.", cause),
+        ),
+      );
+
+    // Without a VCS ignore classifier, entries omitted by a truncated index
+    // cannot be distinguished from ordinary entries beyond the index limit.
+    if (indexed.truncated && vcs === null) return indexed;
+
+    const directories = [""];
+    let directoryIndex = 0;
+    let scanIncomplete = false;
+
+    while (directoryIndex < directories.length) {
+      const relativeDirectory = directories[directoryIndex++]!;
+      const absoluteDirectory = relativeDirectory ? path.join(cwd, relativeDirectory) : cwd;
+      const readDirectory = Effect.tryPromise({
+        try: () => NodeFSP.readdir(absoluteDirectory, { withFileTypes: true }),
+        catch: (cause) =>
+          listFailure(
+            `Failed to read '${absoluteDirectory}' while listing ignored workspace entries.`,
+            cause,
+          ),
+      });
+      const dirents = yield* relativeDirectory
+        ? readDirectory.pipe(Effect.orElseSucceed(() => null))
+        : readDirectory;
+      if (dirents === null) {
+        scanIncomplete = true;
+        continue;
+      }
+
+      for (const dirent of dirents.toSorted((left, right) => left.name.localeCompare(right.name))) {
+        // Repository metadata is never a workspace file, even when ignored files are visible.
+        if (dirent.name === ".git") continue;
+
+        const relativePath = relativeDirectory
+          ? `${relativeDirectory}/${dirent.name}`
+          : dirent.name;
+        const kind = dirent.isDirectory()
+          ? "directory"
+          : dirent.isFile() || dirent.isSymbolicLink()
+            ? "file"
+            : null;
+        if (kind === null) continue;
+        if (kind === "directory") directories.push(relativePath);
+        if (existingPaths.has(relativePath)) continue;
+
+        candidates.push({ path: relativePath, kind });
+      }
+    }
+
+    let ignoredCandidates = candidates;
+    if (vcs) {
+      const nonIgnoredPaths = new Set(
+        yield* vcs.driver
+          .filterIgnoredPaths(
+            cwd,
+            candidates.map((entry) => entry.path),
+          )
+          .pipe(
+            Effect.mapError((cause) =>
+              listFailure("Failed to classify ignored workspace entries.", cause),
+            ),
+          ),
+      );
+      ignoredCandidates = candidates.filter((entry) => !nonIgnoredPaths.has(entry.path));
+    }
+    const ignoredEntries: ProjectEntry[] = ignoredCandidates.map((entry) => ({
+      ...entry,
+      ignored: true,
+    }));
+
+    return {
+      entries: [...indexed.entries, ...ignoredEntries],
+      truncated: indexed.truncated || scanIncomplete,
+    };
+  });
+
   const list: WorkspaceEntries["Service"]["list"] = Effect.fn("WorkspaceEntries.list")(
     function* (input) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
-      return yield* Effect.gen(function* () {
+      const indexed = yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.list();
       }).pipe(
@@ -285,6 +384,8 @@ export const make = Effect.gen(function* () {
           ),
         ),
       );
+      if (!input.includeIgnored) return indexed;
+      return yield* listIncludingIgnored(normalizedCwd, indexed);
     },
   );
 

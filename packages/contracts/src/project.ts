@@ -28,6 +28,7 @@ export type ProjectSearchEntriesInput = typeof ProjectSearchEntriesInput.Type;
 export const ProjectEntry = Schema.Struct({
   path: TrimmedNonEmptyString,
   kind: ProjectEntryKind,
+  ignored: Schema.optional(Schema.Literal(true)),
 });
 export type ProjectEntry = typeof ProjectEntry.Type;
 
@@ -72,6 +73,7 @@ export type ProjectSearchContentsResult = typeof ProjectSearchContentsResult.Typ
 
 export const ProjectListEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  includeIgnored: Schema.optional(Schema.Boolean),
 });
 export type ProjectListEntriesInput = typeof ProjectListEntriesInput.Type;
 

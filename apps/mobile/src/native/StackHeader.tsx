@@ -310,6 +310,7 @@ function convertToolbarChild(child: ReactNode): NativeStackHeaderItem | null {
         typeof child.props.onPress === "function"
           ? (child.props.onPress as () => void)
           : () => undefined,
+      selected: typeof child.props.selected === "boolean" ? child.props.selected : undefined,
       sharesBackground: !child.props.separateBackground,
       tintColor: child.props.tintColor as ColorValue | undefined,
       variant: "plain",
@@ -406,6 +407,7 @@ function NativeHeaderToolbarButton(_props: {
   readonly icon?: string;
   readonly label?: string;
   readonly onPress?: () => void;
+  readonly selected?: boolean;
   readonly separateBackground?: boolean;
   readonly tintColor?: ColorValue;
 }) {
