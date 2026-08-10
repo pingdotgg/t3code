@@ -14,6 +14,7 @@ import React, {
   useMemo,
   useRef,
   useState,
+  type AnchorHTMLAttributes,
   type ReactNode,
 } from "react";
 import type { Components } from "react-markdown";
@@ -41,6 +42,7 @@ import { selectSidebarThreadSummaryByRef, useStore } from "../store";
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { readEnvironmentApi } from "~/environmentApi";
 import { getEnvironmentHttpBaseUrl } from "~/environments/runtime";
+import { openUrlInPreview } from "~/components/preview/openUrlInPreview";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -457,6 +459,11 @@ interface MarkdownThreadLinkProps {
   className?: string | undefined;
 }
 
+type MarkdownExternalLinkProps = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"> & {
+  href: string;
+  threadRef?: ScopedThreadRef;
+};
+
 const MARKDOWN_LINK_HREF_PATTERN = /\[[^\]]*]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
 const MARKDOWN_FILE_LINK_CLASS_NAME =
   "chat-markdown-file-link relative top-[2px] max-w-full no-underline";
@@ -520,6 +527,74 @@ const MarkdownThreadLink = memo(function MarkdownThreadLink({
     >
       <MessageSquareIcon className="size-3.5 shrink-0 opacity-70" aria-hidden="true" />
       <span className={cn("truncate", threadTitle ? null : "font-mono")}>{label}</span>
+    </a>
+  );
+});
+
+const MarkdownExternalLink = memo(function MarkdownExternalLink({
+  href,
+  threadRef,
+  children,
+  ...props
+}: MarkdownExternalLinkProps) {
+  const openPreview = useAtomCommand(previewEnvironment.open);
+
+  const handleClick = useCallback(
+    (event: ReactMouseEvent<HTMLAnchorElement>) => {
+      if (
+        !threadRef ||
+        !/^https?:\/\//i.test(href) ||
+        !isPreviewSupportedInRuntime() ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      void openUrlInPreview({ threadRef, url: href, openPreview })
+        .then((result) => {
+          if (result._tag !== "Failure") return;
+
+          const localApi = readLocalApi();
+          if (!localApi) {
+            toastManager.add({
+              type: "error",
+              title: "Unable to open link",
+              description: "The integrated browser is unavailable.",
+            });
+            return;
+          }
+          void localApi.shell.openExternal(href).catch((error: unknown) => {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Unable to open link",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          });
+        })
+        .catch((error: unknown) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Unable to open link",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        });
+    },
+    [href, openPreview, threadRef],
+  );
+
+  return (
+    <a {...props} href={href} target="_blank" rel="noopener noreferrer" onClick={handleClick}>
+      {children}
     </a>
   );
 });
@@ -860,7 +935,13 @@ function ChatMarkdown({ text, cwd, isStreaming = false, threadRef }: ChatMarkdow
       const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
       const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
       if (!fileLinkMeta) {
-        return <a {...props} href={href} target="_blank" rel="noopener noreferrer" />;
+        return (
+          <MarkdownExternalLink
+            href={href ?? ""}
+            {...(threadRef ? { threadRef } : {})}
+            {...props}
+          />
+        );
       }
 
       return (

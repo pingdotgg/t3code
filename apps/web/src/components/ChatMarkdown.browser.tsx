@@ -9,6 +9,7 @@ import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 const {
   createAssetUrlMock,
   openFileInPreviewMock,
+  openBrowserMock,
   openInPreferredEditorMock,
   openPreviewMock,
   navigateMock,
@@ -16,6 +17,7 @@ const {
 } = vi.hoisted(() => ({
   createAssetUrlMock: vi.fn(async () => ({ relativeUrl: "/assets/signed" })),
   openFileInPreviewMock: vi.fn(async () => ({ _tag: "Success", value: undefined })),
+  openBrowserMock: vi.fn(),
   openInPreferredEditorMock: vi.fn(async () => "vscode"),
   openPreviewMock: vi.fn(),
   navigateMock: vi.fn(async () => undefined),
@@ -53,7 +55,9 @@ vi.mock("../environments/runtime", () => ({
 }));
 
 vi.mock("../previewStateStore", () => ({
+  applyPreviewServerSnapshot: vi.fn(),
   isPreviewSupportedInRuntime: vi.fn(() => true),
+  rememberPreviewUrl: vi.fn(),
 }));
 
 vi.mock("../state/use-atom-command", () => ({
@@ -62,6 +66,12 @@ vi.mock("../state/use-atom-command", () => ({
 
 vi.mock("../state/preview", () => ({
   previewEnvironment: { open: {} },
+}));
+
+vi.mock("../rightPanelStore", () => ({
+  useRightPanelStore: {
+    getState: () => ({ openBrowser: openBrowserMock }),
+  },
 }));
 
 vi.mock("../browser/openFileInPreview", () => ({
@@ -247,9 +257,28 @@ describe("ChatMarkdown", () => {
     }
   });
 
-  it("keeps normal web links unchanged", async () => {
+  it("opens normal web links in the integrated browser", async () => {
+    openPreviewMock.mockResolvedValueOnce({
+      _tag: "Success",
+      value: {
+        threadId: threadRef.threadId,
+        tabId: "tab-web-link",
+        navStatus: {
+          _tag: "Loading",
+          url: "https://openai.com/docs",
+          title: "",
+        },
+        canGoBack: false,
+        canGoForward: false,
+        updatedAt: "2026-08-10T00:00:00.000Z",
+      },
+    });
     const screen = await render(
-      <ChatMarkdown text="[OpenAI](https://openai.com/docs)" cwd="/repo/project" />,
+      <ChatMarkdown
+        text="[OpenAI](https://openai.com/docs)"
+        cwd="/repo/project"
+        threadRef={threadRef}
+      />,
     );
 
     try {
@@ -257,6 +286,17 @@ describe("ChatMarkdown", () => {
       await expect.element(link).toBeInTheDocument();
       await expect.element(link).toHaveAttribute("href", "https://openai.com/docs");
       await expect.element(link).toHaveAttribute("target", "_blank");
+      await link.click();
+      await vi.waitFor(() => {
+        expect(openPreviewMock).toHaveBeenCalledWith({
+          environmentId: threadRef.environmentId,
+          input: {
+            threadId: threadRef.threadId,
+            url: "https://openai.com/docs",
+          },
+        });
+        expect(openBrowserMock).toHaveBeenCalledWith(threadRef, "tab-web-link");
+      });
     } finally {
       await screen.unmount();
     }
