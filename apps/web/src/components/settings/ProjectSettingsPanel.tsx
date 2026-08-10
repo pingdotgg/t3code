@@ -13,6 +13,7 @@ import {
   selectProjectGroupingSettings,
 } from "../../logicalProject";
 import type {
+  ContextMenuItem,
   ModelSelection,
   ProviderDriverKind,
   SidebarProjectGroupingMode,
@@ -25,7 +26,14 @@ import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { ChevronDownIcon, CopyIcon, PlusIcon, SettingsIcon, Trash2Icon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { isElectron } from "../../env";
@@ -196,6 +204,30 @@ function ProjectSettingsBreadcrumb({ projectKey }: { projectKey: string }) {
   const groups = useSettingsProjectGroups();
   const navigate = useNavigate();
   const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
+  const openProjectMenu = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      const api = readLocalApi();
+      if (!api) return;
+
+      const rect = event.currentTarget.getBoundingClientRect();
+      const items: ContextMenuItem<string>[] = groups.map((group) => ({
+        id: group.projectKey,
+        label: group.displayName,
+      }));
+      void settlePromise(() =>
+        api.contextMenu.show(items, { x: rect.left, y: rect.bottom + 4 }),
+      ).then((clicked) => {
+        if (clicked._tag === "Failure" || clicked.value === null) return;
+        void navigate({
+          to: "/projects/$projectKey",
+          params: { projectKey: clicked.value },
+          replace: true,
+          hashScrollIntoView: false,
+        });
+      });
+    },
+    [groups, navigate],
+  );
 
   return (
     <WorkspaceBreadcrumb ariaLabel="Project settings breadcrumb">
@@ -203,33 +235,19 @@ function ProjectSettingsBreadcrumb({ projectKey }: { projectKey: string }) {
       <WorkspaceBreadcrumbSeparator />
       <WorkspaceBreadcrumbItem current>
         {selected ? (
-          <Select
-            value={selected.projectKey}
-            onValueChange={(value) =>
-              void navigate({
-                to: "/projects/$projectKey",
-                params: { projectKey: String(value) },
-                replace: true,
-                hashScrollIntoView: false,
-              })
-            }
+          <button
+            type="button"
+            aria-haspopup="menu"
+            aria-label="Switch project"
+            onClick={openProjectMenu}
+            className="group/project-title inline-flex min-w-0 max-w-64 cursor-pointer items-center gap-1 rounded-sm text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <SelectTrigger
-              aria-label="Switch project"
-              className="h-auto min-h-0 min-w-0 max-w-64 gap-1 border-0 px-0 py-0 text-sm font-medium text-foreground sm:h-auto sm:min-h-0 sm:text-sm"
-              size="xs"
-              variant="ghost"
-            >
-              <SelectValue>{selected.displayName}</SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="start" alignItemWithTrigger={false}>
-              {groups.map((candidate) => (
-                <SelectItem key={candidate.projectKey} hideIndicator value={candidate.projectKey}>
-                  {candidate.displayName}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
+            <span className="min-w-0 truncate">{selected.displayName}</span>
+            <ChevronDownIcon
+              aria-hidden
+              className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/project-title:opacity-100 group-focus-visible/project-title:opacity-100"
+            />
+          </button>
         ) : (
           <span className="truncate text-muted-foreground">Unavailable project</span>
         )}
