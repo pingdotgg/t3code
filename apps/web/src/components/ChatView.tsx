@@ -754,6 +754,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   const storeNewTerminal = useTerminalUiStateStore((state) => state.newTerminal);
   const storeSetActiveTerminal = useTerminalUiStateStore((state) => state.setActiveTerminal);
   const storeCloseTerminal = useTerminalUiStateStore((state) => state.closeTerminal);
+  const storeSetTerminalOpen = useTerminalUiStateStore((state) => state.setTerminalOpen);
   const reconcileTerminalIds = useTerminalUiStateStore((state) => state.reconcileTerminalIds);
 
   useEffect(() => {
@@ -950,6 +951,10 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     [onAddTerminalContext, visible],
   );
 
+  const handleHideDrawer = useCallback(() => {
+    storeSetTerminalOpen(threadRef, false);
+  }, [storeSetTerminalOpen, threadRef]);
+
   if (!project || !terminalUiState.terminalOpen || !cwd) {
     return null;
   }
@@ -980,6 +985,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         keybindings={keybindings}
         onActiveTerminalChange={activateTerminal}
         onCloseTerminal={closeTerminal}
+        onHideDrawer={handleHideDrawer}
         onHeightChange={setTerminalHeight}
         onAddTerminalContext={handleAddTerminalContext}
         terminalLabelsById={terminalLabelsById}
