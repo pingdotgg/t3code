@@ -78,12 +78,15 @@ build_settings=(
   "DEVELOPMENT_TEAM=${DEVELOPMENT_TEAM}"
 )
 
-DEVICE_JSON="$(mktemp -t t3-swift-devices.XXXXXX)"
-INSTALLED_APPS_JSON="$(mktemp -t t3-swift-installed-apps.XXXXXX)"
+DEVICE_JSON=""
+INSTALLED_APPS_JSON=""
 cleanup() {
-  rm -f -- "${DEVICE_JSON}" "${INSTALLED_APPS_JSON}"
+  [[ -z "${DEVICE_JSON}" ]] || rm -f -- "${DEVICE_JSON}"
+  [[ -z "${INSTALLED_APPS_JSON}" ]] || rm -f -- "${INSTALLED_APPS_JSON}"
 }
 trap cleanup EXIT
+DEVICE_JSON="$(mktemp -t t3-swift-devices.XXXXXX)"
+INSTALLED_APPS_JSON="$(mktemp -t t3-swift-installed-apps.XXXXXX)"
 xcrun devicectl list devices --json-output "${DEVICE_JSON}" --quiet >/dev/null
 DESTINATION_ID="$(
   xcrun swift "${SCRIPT_DIR}/resolve-device-udid.swift" "${DEVICE_JSON}" "${DEVICE_ID}"
