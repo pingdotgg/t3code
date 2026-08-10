@@ -641,6 +641,13 @@ export function makeClaudeQueryOptions(input: {
   readonly resume: boolean;
   readonly resumeSessionAt?: string;
   readonly cwd: string | null;
+  /**
+   * The attachments dir grant lets the agent Read/copy pasted images at the
+   * paths appended to the turn text, without an approval prompt. It is a leaf
+   * directory holding only attachment files; siblings like secrets/ and
+   * state.sqlite stay ungranted.
+   */
+  readonly attachmentsDir?: string;
   readonly settings?: ClaudeSettings;
   readonly sdkSettings?: string | ClaudeSdkSettings;
   readonly environment?: NodeJS.ProcessEnv;
@@ -704,7 +711,13 @@ export function makeClaudeQueryOptions(input: {
         }),
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
-  return input.cwd === null ? options : { ...options, cwd: input.cwd };
+  const additionalDirectories = [
+    ...(input.cwd === null ? [] : [input.cwd]),
+    ...(input.attachmentsDir === undefined ? [] : [input.attachmentsDir]),
+  ];
+  const withDirectories =
+    additionalDirectories.length === 0 ? options : { ...options, additionalDirectories };
+  return input.cwd === null ? withDirectories : { ...withDirectories, cwd: input.cwd };
 }
 
 export const CLAUDE_T3_MCP_TOOL_WILDCARD = "mcp__t3-code__*";
@@ -1012,9 +1025,25 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
     });
   }
 
+  // The model's tools cannot dereference inlined pixels. Appending the
+  // on-disk path is what lets a turn like "include this screenshot in the
+  // PR" copy the actual file (the query grants attachmentsDir for reads).
+  const attachmentPathLines = input.attachments.flatMap((attachment) => {
+    const attachmentPath = resolveAttachmentPath({
+      attachmentsDir: input.attachmentsDir,
+      attachment,
+    });
+    return attachmentPath === null
+      ? []
+      : [`[Attached ${attachment.type} "${attachment.name}" is saved at: ${attachmentPath}]`];
+  });
+  const textWithAttachmentPaths = [input.text, attachmentPathLines.join("\n")]
+    .filter((part) => part.length > 0)
+    .join("\n\n");
+
   const content: Array<ClaudeUserContentBlock> = [];
-  if (input.text.length > 0) {
-    content.push({ type: "text", text: input.text });
+  if (textWithAttachmentPaths.length > 0) {
+    content.push({ type: "text", text: textWithAttachmentPaths });
   }
 
   for (const attachment of input.attachments) {
@@ -4263,6 +4292,7 @@ export function makeClaudeAdapterV2(
                 resume: shouldResume,
                 ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
                 cwd: turnInput.runtimePolicy.cwd,
+                attachmentsDir,
                 settings: adapterOptions.settings,
                 environment: adapterOptions.environment,
                 tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
