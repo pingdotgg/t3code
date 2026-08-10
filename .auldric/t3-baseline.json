@@ -52,6 +52,7 @@
       "docs/_archive/auldric-runtime/",
       "docs/internals/identifier-ownership.md",
       "docs/user/product-identity.md",
+      "scripts/auldric/check-legacy-donor-inventory.",
       "scripts/complete-feature-docs.",
       "packages/auldric-"
     ],
