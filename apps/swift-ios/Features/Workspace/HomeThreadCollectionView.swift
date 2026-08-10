@@ -1,6 +1,39 @@
 import SwiftUI
 import UIKit
 
+enum HomeThreadSwipeActionKind: Equatable {
+    case delete
+    case restore
+    case unpin
+    case settle
+    case reopen
+    case archive
+}
+
+enum HomeThreadSwipeActions {
+    static func kinds(
+        for thread: FeatureThread,
+        isArchived: Bool,
+        now: Date
+    ) -> [HomeThreadSwipeActionKind] {
+        if isArchived {
+            return [.delete, .restore]
+        }
+
+        var kinds: [HomeThreadSwipeActionKind] = [.delete]
+        if thread.pinnedAt != nil, thread.canTogglePin {
+            kinds.append(.unpin)
+        }
+        if thread.canToggleSettlement {
+            kinds.append(thread.isEffectivelySettled(at: now) ? .reopen : .settle)
+        }
+        if kinds.count == 1 {
+            kinds.append(.archive)
+        }
+        return kinds
+    }
+}
+
 /// A recycled, diffable Home surface. SwiftUI still owns the surrounding shell,
 /// while UIKit keeps row creation and updates proportional to visible threads.
 struct HomeThreadCollectionView: UIViewRepresentable {
@@ -193,55 +226,71 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 return nil
             }
 
-            let delete = UIContextualAction(style: .destructive, title: "Delete") { [weak self] _, _, finish in
-                self?.parent.onDelete(thread)
-                finish(true)
-            }
-            delete.image = UIImage(systemName: "trash")
+            let actions = HomeThreadSwipeActions.kinds(
+                for: thread,
+                isArchived: isArchived,
+                now: .now
+            ).map { swipeAction($0, for: thread) }
+            let configuration = UISwipeActionsConfiguration(actions: actions)
+            configuration.performsFirstActionWithFullSwipe = false
+            return configuration
+        }
 
-            let primaryAction: UIContextualAction
-            if isArchived {
-                primaryAction = UIContextualAction(style: .normal, title: "Restore") {
+        private func swipeAction(
+            _ kind: HomeThreadSwipeActionKind,
+            for thread: FeatureThread
+        ) -> UIContextualAction {
+            switch kind {
+            case .delete:
+                let action = UIContextualAction(style: .destructive, title: "Delete") {
+                    [weak self] _, _, finish in
+                    self?.parent.onDelete(thread)
+                    finish(true)
+                }
+                action.image = UIImage(systemName: "trash")
+                return action
+            case .restore:
+                let action = UIContextualAction(style: .normal, title: "Restore") {
                     [weak self] _, _, finish in
                     self?.parent.onArchive(thread, false)
                     finish(true)
                 }
-                primaryAction.image = UIImage(systemName: "arrow.uturn.backward")
-                primaryAction.backgroundColor = .systemBlue
-            } else if thread.pinnedAt != nil, thread.canTogglePin {
-                primaryAction = UIContextualAction(style: .normal, title: "Unpin") {
+                action.image = UIImage(systemName: "arrow.uturn.backward")
+                action.backgroundColor = .systemBlue
+                return action
+            case .unpin:
+                let action = UIContextualAction(style: .normal, title: "Unpin") {
                     [weak self] _, _, finish in
                     self?.parent.onPin(thread, false)
                     finish(true)
                 }
-                primaryAction.image = UIImage(systemName: "pin.slash")
-                primaryAction.backgroundColor = .systemBlue
-            } else if thread.canToggleSettlement {
-                let isSettled = thread.isEffectivelySettled(at: .now)
-                primaryAction = UIContextualAction(
+                action.image = UIImage(systemName: "pin.slash")
+                action.backgroundColor = .systemBlue
+                return action
+            case .settle, .reopen:
+                let isSettled = kind == .reopen
+                let action = UIContextualAction(
                     style: .normal,
                     title: isSettled ? "Reopen" : "Settle"
                 ) { [weak self] _, _, finish in
                     self?.parent.onSettle(thread, !isSettled)
                     finish(true)
                 }
-                primaryAction.image = UIImage(
+                action.image = UIImage(
                     systemName: isSettled ? "arrow.counterclockwise" : "checkmark"
                 )
-                primaryAction.backgroundColor = isSettled ? .systemBlue : .systemGreen
-            } else {
-                primaryAction = UIContextualAction(style: .normal, title: "Archive") {
+                action.backgroundColor = isSettled ? .systemBlue : .systemGreen
+                return action
+            case .archive:
+                let action = UIContextualAction(style: .normal, title: "Archive") {
                     [weak self] _, _, finish in
                     self?.parent.onArchive(thread, true)
                     finish(true)
                 }
-                primaryAction.image = UIImage(systemName: "archivebox")
-                primaryAction.backgroundColor = .systemGray
+                action.image = UIImage(systemName: "archivebox")
+                action.backgroundColor = .systemGray
+                return action
             }
-
-            let configuration = UISwipeActionsConfiguration(actions: [delete, primaryAction])
-            configuration.performsFirstActionWithFullSwipe = false
-            return configuration
         }
 
         private func configure(

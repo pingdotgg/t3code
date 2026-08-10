@@ -118,6 +118,25 @@ struct DailyUXSidebarTests {
     }
 
     @Test
+    func pinnedThreadSwipeIncludesUnpinAndSettle() {
+        var pinned = thread(
+            id: "pinned",
+            created: -100,
+            updated: -50,
+            state: .idle
+        )
+        pinned.pinnedAt = now
+
+        let actions = HomeThreadSwipeActions.kinds(
+            for: pinned,
+            isArchived: false,
+            now: now
+        )
+
+        #expect(actions == [.delete, .unpin, .settle])
+    }
+
+    @Test
     func pinActionsTolerateMissingCapabilitiesAndKeepPinsReversible() {
         var legacyDescriptor = thread(id: "legacy", created: -20, updated: -10)
         legacyDescriptor.supportsPinning = nil
