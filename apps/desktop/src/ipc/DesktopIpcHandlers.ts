@@ -31,13 +31,13 @@ import {
   setUpdateChannel,
 } from "./methods/updates.ts";
 import {
-  confirm,
   getAppBranding,
   getLocalEnvironmentBootstraps,
   getLocalEnvironmentBearerToken,
   getWindowFullscreenState,
   openExternal,
   pickFolder,
+  pickThemeFiles,
   setChromeBackgroundColor,
   setTheme,
   showContextMenu,
@@ -80,7 +80,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(setWslOnly);
 
   yield* ipc.handle(pickFolder);
-  yield* ipc.handle(confirm);
+  yield* ipc.handle(pickThemeFiles);
   yield* ipc.handle(setTheme);
   yield* ipc.handle(setChromeBackgroundColor);
   yield* ipc.handle(showContextMenu);

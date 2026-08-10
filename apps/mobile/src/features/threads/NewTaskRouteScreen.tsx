@@ -235,10 +235,9 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
         className="flex-1"
-        contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
         contentContainerStyle={{
           gap: 12,
-          paddingBottom: 8,
+          paddingBottom: Math.max(insets.bottom, 18) + 18,
           paddingHorizontal: 20,
           paddingTop: 8,
         }}
@@ -297,6 +296,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                     <View className="h-7 w-7 items-center justify-center">
                       <ProjectFavicon
                         environmentId={scope.representative.environmentId}
+                        faviconPath={scope.representative.faviconPath}
                         size={20}
                         projectTitle={scope.title}
                         workspaceRoot={scope.representative.workspaceRoot}
@@ -331,6 +331,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                         >
                           <ProjectFavicon
                             environmentId={project.environmentId}
+                            faviconPath={project.faviconPath}
                             size={18}
                             projectTitle={project.title}
                             workspaceRoot={project.workspaceRoot}

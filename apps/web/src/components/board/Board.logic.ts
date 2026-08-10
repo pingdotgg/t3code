@@ -5,7 +5,7 @@ import {
   effectiveSnoozed,
 } from "@t3tools/client-runtime/state/thread-settled";
 
-import { resolveThreadStatusPill, sortThreadsForSidebarV2 } from "../Sidebar.logic";
+import { resolveThreadStatusPill, sortThreadsForSidebar } from "../Sidebar.logic";
 import type { SidebarThreadSummary } from "../../types";
 
 /**
@@ -98,7 +98,7 @@ export function resolveBoardColumn(
 /**
  * The active split. A failed session outranks the pill because the pill has
  * no error state and would report a stale Working for a thread whose
- * background fleet outlived the crash — same rule as resolveSidebarV2Status.
+ * background fleet outlived the crash — same rule as resolveSidebarThreadStatus.
  */
 export function resolveActiveBoardColumn(
   thread: SidebarThreadSummary,
@@ -174,7 +174,7 @@ function sortBoardColumnThreads(
       (left, right) => snoozeWakeMs(left) - snoozeWakeMs(right) || left.id.localeCompare(right.id),
     );
   }
-  const ordered = sortThreadsForSidebarV2(threads);
+  const ordered = sortThreadsForSidebar(threads);
   return ordered.toSorted((left, right) => pinRank(left) - pinRank(right));
 }
 
