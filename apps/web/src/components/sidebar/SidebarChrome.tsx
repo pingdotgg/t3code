@@ -164,19 +164,19 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
       <SidebarProviderUpdatePill />
       <SidebarUpdatePill />
       <SidebarMenu>
-        {pullRequestsSupported ? (
+        {currentFooterPage === "pull-requests" ? (
           <SidebarMenuItem>
-            {currentFooterPage === "pull-requests" ? (
-              <SidebarMenuButton onClick={handleBackClick}>
-                <ArrowLeftIcon />
-                <span>Back</span>
-              </SidebarMenuButton>
-            ) : (
-              <SidebarMenuButton onClick={handlePullRequestsClick}>
-                <GitPullRequestIcon />
-                <span>Pull Requests</span>
-              </SidebarMenuButton>
-            )}
+            <SidebarMenuButton onClick={handleBackClick}>
+              <ArrowLeftIcon />
+              <span>Back</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        ) : pullRequestsSupported ? (
+          <SidebarMenuItem>
+            <SidebarMenuButton onClick={handlePullRequestsClick}>
+              <GitPullRequestIcon />
+              <span>Pull Requests</span>
+            </SidebarMenuButton>
           </SidebarMenuItem>
         ) : null}
         {currentFooterPage === "usage" ? (
