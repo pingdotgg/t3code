@@ -1,8 +1,70 @@
+import SwiftUI
 import Testing
 @testable import T3Code
 
 @Suite("Composer power features")
 struct FeatureComposerPowerTests {
+    @MainActor
+    @Test
+    func composerTextInputGrowsBeyondThreeLinesWithoutANumericCap() {
+        #expect(FeatureComposerGrowingTextInput.maximumLineCount == nil)
+
+        let threeLineHeight = composerHeight(lineCount: 3)
+        let tenLineHeight = composerHeight(lineCount: 10)
+        let elevenLineHeight = composerHeight(lineCount: 11)
+        let thirtyLineHeight = composerHeight(lineCount: 30)
+        let measuredLineHeight = elevenLineHeight - tenLineHeight
+
+        #expect(thirtyLineHeight > threeLineHeight + (measuredLineHeight * 20))
+    }
+
+    @MainActor
+    @Test
+    func composerTextInputYieldsToTheAvailableViewportForVeryTallDrafts() {
+        let viewportHeight: CGFloat = 500
+
+        #expect(composerHeight(lineCount: 100, maximumHeight: viewportHeight) <= viewportHeight)
+    }
+
+    @MainActor
+    private func composerHeight(
+        lineCount: Int,
+        maximumHeight: CGFloat = .greatestFiniteMagnitude
+    ) -> CGFloat {
+        let text = Array(repeating: "A full visible prompt line", count: lineCount)
+            .joined(separator: "\n")
+        let controller = UIHostingController(
+            rootView: ComposerHarness(text: text)
+                .frame(width: 320)
+        )
+
+        return controller.sizeThatFits(
+            in: CGSize(width: 320, height: maximumHeight)
+        ).height
+    }
+
+    private struct ComposerHarness: View {
+        let text: String
+
+        @FocusState private var focused: Bool
+
+        var body: some View {
+            FeatureComposerView(
+                text: .constant(text),
+                selection: .constant(nil),
+                attachments: .constant([]),
+                providers: [],
+                threadSelection: nil,
+                isSending: false,
+                isWorking: false,
+                focused: $focused,
+                onSend: {},
+                onStop: {},
+                forceExpanded: true
+            )
+        }
+    }
+
     @Test
     func detectsCommandsModelsSkillsAndPathsAtTheCursor() {
         #expect(
