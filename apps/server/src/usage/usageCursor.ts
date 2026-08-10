@@ -182,15 +182,15 @@ function parseCsvInt(raw: string | undefined): number | null {
 function parseCsvDateMs(raw: string): number | null {
   const trimmed = raw.trim();
   if (trimmed.length === 0) return null;
-  const parsed = Date.parse(trimmed);
-  if (!Number.isNaN(parsed)) return parsed;
-  // `yyyy-MM-dd HH:mm:ss` without timezone — treat as UTC.
+  // Timezone-less Cursor export forms must be treated as UTC before `Date.parse`,
+  // which otherwise interprets them in the server's local zone.
   const match = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})$/.exec(trimmed);
   if (match) {
     const iso = Date.parse(`${match[1]}T${match[2]}Z`);
     return Number.isNaN(iso) ? null : iso;
   }
-  return null;
+  const parsed = Date.parse(trimmed);
+  return Number.isNaN(parsed) ? null : parsed;
 }
 
 /** Minimal RFC4180-ish CSV row splitter (quoted fields, escaped quotes). */
@@ -306,15 +306,35 @@ const REQUIRED_COLUMNS = [
  *
  * Cost columns are ignored: dollars are imputed later via LiteLLM (same as
  * OpenUsage's token-strategy export path).
+ *
+ * Distinguishes a valid empty export from a schema/parse failure so callers do
+ * not report "ok, zero usage" when the CSV shape changed.
  */
-export function parseCursorUsageCsv(csvText: string): readonly UsageRecord[] {
+export function parseCursorUsageCsv(csvText: string): {
+  readonly ok: boolean;
+  readonly records: readonly UsageRecord[];
+  readonly message: string | null;
+} {
   const rows = parseCsvRows(csvText.replace(/^\uFEFF/, ""));
-  if (rows.length === 0) return [];
+  if (rows.length === 0) {
+    return { ok: true, records: [], message: null };
+  }
 
   const header = (rows[0] ?? []).map((cell) => cell.trim());
   const index = new Map(header.map((name, i) => [name, i]));
   for (const required of REQUIRED_COLUMNS) {
-    if (!index.has(required)) return [];
+    if (!index.has(required)) {
+      return {
+        ok: false,
+        records: [],
+        message: `Cursor usage export missing required column '${required}'.`,
+      };
+    }
+  }
+
+  // Header-only CSV is a valid empty export.
+  if (rows.length === 1) {
+    return { ok: true, records: [], message: null };
   }
 
   const records: UsageRecord[] = [];
@@ -364,7 +384,7 @@ export function parseCursorUsageCsv(csvText: string): readonly UsageRecord[] {
       dedupeKey: `cursor:${rowIndex}:${timestampMs}:${model}:${input}:${cacheRead}:${cacheWrite}:${output}`,
     });
   }
-  return records;
+  return { ok: true, records, message: null };
 }
 
 async function refreshAccessToken(refreshToken: string): Promise<string | null> {
@@ -477,7 +497,16 @@ export async function fetchCursorUsageRecords(input: {
     };
   }
 
-  const text = await response.text();
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    return {
+      records: [],
+      status: "failed",
+      message: "Cursor usage export body transfer failed.",
+    };
+  }
   if (!text.startsWith("Date,") && !text.startsWith("\uFEFFDate,")) {
     return {
       records: [],
@@ -486,8 +515,17 @@ export async function fetchCursorUsageRecords(input: {
     };
   }
 
+  const parsed = parseCursorUsageCsv(text);
+  if (!parsed.ok) {
+    return {
+      records: [],
+      status: "failed",
+      message: parsed.message ?? "Cursor usage export could not be parsed.",
+    };
+  }
+
   return {
-    records: parseCursorUsageCsv(text),
+    records: parsed.records,
     status: "ok",
     message: null,
   };

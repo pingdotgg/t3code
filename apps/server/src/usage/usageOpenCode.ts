@@ -63,7 +63,19 @@ export async function listOpenCodeDatabases(dataDir: string): Promise<readonly O
     const child = NodePath.join(dataDir, entry.name);
     try {
       const stats = await NodeFSP.stat(child);
-      found.push({ path: child, size: stats.size, mtimeMs: stats.mtimeMs });
+      // SQLite often appends to the WAL without touching the main file until a
+      // checkpoint. Fold WAL size/mtime into the cache identity so new usage
+      // invalidates the scan cache.
+      let size = stats.size;
+      let mtimeMs = stats.mtimeMs;
+      try {
+        const walStats = await NodeFSP.stat(`${child}-wal`);
+        size += walStats.size;
+        mtimeMs = Math.max(mtimeMs, walStats.mtimeMs);
+      } catch {
+        // No WAL (or unreadable) — main-file identity is enough.
+      }
+      found.push({ path: child, size, mtimeMs });
     } catch {
       // Vanished between readdir and stat.
     }

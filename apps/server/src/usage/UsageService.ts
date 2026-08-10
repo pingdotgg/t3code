@@ -342,7 +342,7 @@ export const make = Effect.gen(function* () {
     size: number,
     mtimeMs: number,
     provider: UsageProviderKind,
-  ): Effect.Effect<readonly UsageRecord[]> =>
+  ): Effect.Effect<readonly UsageRecord[] | null> =>
     Effect.gen(function* () {
       const cached = fileCache.get(filePath);
       // Provider is part of the identity: if both providers were ever pointed
@@ -359,7 +359,7 @@ export const make = Effect.gen(function* () {
       const parsed = yield* Effect.promise(() => readTranscriptRecords(filePath, provider));
       // A read failure is not an empty transcript: caching it under this
       // (size, mtime) would silently drop the file's usage until it changes.
-      if (parsed === null) return [];
+      if (parsed === null) return null;
       // Stored already de-duplicated within the file, which is 99% of all
       // duplicates. The aggregator still runs the cross-file dedupe pass.
       const records = dedupeWithinFile(parsed);
@@ -373,7 +373,7 @@ export const make = Effect.gen(function* () {
     dbPath: string,
     size: number,
     mtimeMs: number,
-  ): Effect.Effect<readonly UsageRecord[]> =>
+  ): Effect.Effect<readonly UsageRecord[] | null> =>
     Effect.gen(function* () {
       const cached = fileCache.get(dbPath);
       if (
@@ -386,7 +386,7 @@ export const make = Effect.gen(function* () {
       }
 
       const parsed = yield* Effect.sync(() => readOpenCodeDatabaseRecords(dbPath));
-      if (parsed === null) return [];
+      if (parsed === null) return null;
       const records = dedupeWithinFile(parsed);
       fileCache.set(dbPath, { size, mtimeMs, provider: "opencode", records });
       cacheDirty = true;
@@ -433,8 +433,10 @@ export const make = Effect.gen(function* () {
     }
     const windowStartMs = DateTime.toEpochMillis(windowStart.value) - MTIME_SLACK_MS;
     const windowEnd = DateTime.make(`${input.untilDay}T23:59:59.999Z`);
+    // Pad the Cursor API window past UTC day bounds so viewer time zones west of
+    // UTC still include local "untilDay" / "today" when untilDay is UTC-shaped.
     const windowEndMs = Option.isSome(windowEnd)
-      ? DateTime.toEpochMillis(windowEnd.value)
+      ? DateTime.toEpochMillis(windowEnd.value) + MTIME_SLACK_MS
       : startedAtMs;
 
     const aggregator = new UsageAggregator({
@@ -478,7 +480,7 @@ export const make = Effect.gen(function* () {
         for (const file of files) {
           livePaths.add(file.path);
           const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
-          if (records.length === 0) {
+          if (records === null || records.length === 0) {
             skippedFiles += 1;
             continue;
           }
@@ -549,6 +551,18 @@ export const make = Effect.gen(function* () {
         }
 
         const records = yield* readFileRecords(filePath, stats.size, stats.mtimeMs, provider);
+        if (records === null) {
+          sources.push({
+            fingerprint: { hostId, provider, resolvedHomePath: homePath, volumeId },
+            status: "failed",
+            scannedFiles: 0,
+            skippedFiles: 0,
+            malformedRecords: 0,
+            distinctSessions: 0,
+            message: "Grok unified log could not be parsed.",
+          });
+          continue;
+        }
         ingestRecords(aggregator, records, sessionIds);
 
         sources.push({
@@ -587,11 +601,17 @@ export const make = Effect.gen(function* () {
         const databases = yield* Effect.promise(() => listOpenCodeDatabases(dataDir));
         let scannedFiles = 0;
         let skippedFiles = 0;
+        let readFailed = false;
         const sessionIds = new Set<string>();
 
         for (const db of databases) {
           livePaths.add(db.path);
           const records = yield* readOpenCodeCached(db.path, db.size, db.mtimeMs);
+          if (records === null) {
+            readFailed = true;
+            skippedFiles += 1;
+            continue;
+          }
           if (records.length === 0) {
             skippedFiles += 1;
             continue;
@@ -602,12 +622,16 @@ export const make = Effect.gen(function* () {
 
         sources.push({
           fingerprint: { hostId, provider, resolvedHomePath: dataDir, volumeId },
-          status: "ok",
+          status: readFailed ? "failed" : "ok",
           scannedFiles,
           skippedFiles,
           malformedRecords: 0,
           distinctSessions: sessionIds.size,
-          message: databases.length === 0 ? "No OpenCode database files found." : null,
+          message: readFailed
+            ? "OpenCode database could not be read."
+            : databases.length === 0
+              ? "No OpenCode database files found."
+              : null,
         });
         continue;
       }
@@ -655,7 +679,11 @@ export const make = Effect.gen(function* () {
             status: fetched.status === "ok" ? "ok" : "failed",
             message: fetched.message,
           };
-          cursorCache = cursorResult;
+          // Only cache successful fetches: a transient failure must not sit
+          // for the full TTL and hide recovered usage.
+          if (fetched.status === "ok") {
+            cursorCache = cursorResult;
+          }
         }
 
         const sessionIds = new Set<string>();

@@ -38,9 +38,10 @@ describe("parseCursorUsageCsv", () => {
       "2026-06-17 13:00:00,composer-2,0,10,0,5,15,",
     ].join("\n");
 
-    const records = parseCursorUsageCsv(csv);
-    expect(records).toHaveLength(2);
-    expect(records[0]).toMatchObject({
+    const parsed = parseCursorUsageCsv(csv);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.records).toHaveLength(2);
+    expect(parsed.records[0]).toMatchObject({
       provider: "cursor",
       model: "claude-4-sonnet",
       totals: {
@@ -52,12 +53,25 @@ describe("parseCursorUsageCsv", () => {
       },
       reportedCostUsd: null,
     });
-    expect(records[1]?.model).toBe("composer-2");
-    expect(records[1]?.totals.uncachedInputTokens).toBe(10);
+    expect(parsed.records[1]?.model).toBe("composer-2");
+    expect(parsed.records[1]?.totals.uncachedInputTokens).toBe(10);
+    // Timezone-less export timestamps are UTC, not the server local zone.
+    expect(parsed.records[1]?.timestampMs).toBe(Date.parse("2026-06-17T13:00:00Z"));
   });
 
   it("rejects exports missing required columns", () => {
-    expect(parseCursorUsageCsv("Date,Model\n2026-01-01,auto").length).toBe(0);
+    const parsed = parseCursorUsageCsv("Date,Model\n2026-01-01,auto");
+    expect(parsed.ok).toBe(false);
+    expect(parsed.records).toHaveLength(0);
+    expect(parsed.message).toContain("missing required column");
+  });
+
+  it("treats a header-only CSV as a valid empty export", () => {
+    const header =
+      "Date,Model,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Total Tokens,Cost";
+    const parsed = parseCursorUsageCsv(header);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.records).toHaveLength(0);
   });
 
   it("parses quoted CSV fields with commas", () => {
