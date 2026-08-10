@@ -10,6 +10,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -32,6 +33,8 @@ import {
   failedAgentRunRevision,
   hookWorkspaceForRun,
   loadAgentRunForProviderEvent,
+  matchesActiveAgentRunTurn,
+  shouldBindAgentRunTurn,
 } from "./AgentRunReactor.ts";
 
 const occurredAt = "2026-08-07T12:01:00.000Z";
@@ -67,6 +70,7 @@ const run: AgentRun = {
   workspaceMode: "shared",
   requestedAt: "2026-08-07T12:00:00.000Z",
   startedAt: "2026-08-07T12:00:01.000Z",
+  activeTurnId: TurnId.make("completion-turn"),
   finishedAt: null,
   updatedAt: "2026-08-07T12:00:01.000Z",
   usage: undefined,
@@ -263,6 +267,39 @@ it("uses only the persisted failure revision for the same Agent run", () => {
   );
   assert.equal(cancelledAgentRunRevision(run, [failed]), null);
   assert.equal(failedAgentRunRevision(run, []), null);
+});
+
+it("ignores a terminal event from a prior follow-up turn and accepts the current turn", () => {
+  const currentFollowUp = { ...run, activeTurnId: TurnId.make("follow-up-current") };
+
+  assert.isFalse(
+    matchesActiveAgentRunTurn(currentFollowUp, { turnId: TurnId.make("follow-up-prior") }),
+  );
+  assert.isFalse(matchesActiveAgentRunTurn(currentFollowUp, { turnId: undefined }));
+  assert.isTrue(
+    matchesActiveAgentRunTurn(currentFollowUp, { turnId: TurnId.make("follow-up-current") }),
+  );
+});
+
+it("binds a current canonical turn.started event but rejects a stale prior turn", () => {
+  const nextRevision = {
+    ...run,
+    activeTurnId: null,
+    updatedAt: "2026-08-07T12:02:00.000Z",
+  };
+
+  assert.isFalse(
+    shouldBindAgentRunTurn(nextRevision, {
+      turnId: TurnId.make("prior-follow-up-turn"),
+      createdAt: "2026-08-07T12:01:59.999Z",
+    }),
+  );
+  assert.isTrue(
+    shouldBindAgentRunTurn(nextRevision, {
+      turnId: TurnId.make("current-follow-up-turn"),
+      createdAt: "2026-08-07T12:02:00.000Z",
+    }),
+  );
 });
 
 it.effect("validates completion budgets before running afterResult hooks", () =>

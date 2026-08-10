@@ -226,13 +226,13 @@ export const make = Effect.gen(function* () {
         agent_run_id, parent_run_id, root_run_id, parent_thread_id, child_thread_id,
         project_id, profile_scope, profile_id, profile_revision, provider_instance_id,
         model_selection_json, depth, status, revision, workspace_mode, detached,
-        budget_json, result_json, usage_json, consumed_tokens, waiting_for_children,
+        budget_json, result_json, usage_json, consumed_tokens, waiting_for_children, active_turn_id,
         integration_target_thread_id, last_error, created_at, started_at, completed_at, updated_at
       ) VALUES (
         ${run.id}, ${run.parentRunId}, ${run.rootRunId}, ${run.parentThreadId}, ${run.childThreadId},
         ${run.projectId}, ${run.profile.scope}, ${run.profile.id}, ${run.profile.revision}, ${run.instanceId},
         ${modelSelectionJson}, ${run.depth}, ${run.status}, ${run.revision}, ${run.workspaceMode}, ${run.detached ? 1 : 0},
-        ${budgetJson}, ${null}, ${usageJson}, ${run.consumedTokens}, ${run.waitingForChildren ? 1 : 0},
+        ${budgetJson}, ${null}, ${usageJson}, ${run.consumedTokens}, ${run.waitingForChildren ? 1 : 0}, ${run.activeTurnId},
         ${run.integrationTargetThreadId}, ${run.failure ?? null}, ${run.requestedAt}, ${run.startedAt}, ${run.finishedAt}, ${run.updatedAt}
       )
       ON CONFLICT (agent_run_id) DO UPDATE SET
@@ -256,6 +256,7 @@ export const make = Effect.gen(function* () {
         usage_json = excluded.usage_json,
         consumed_tokens = excluded.consumed_tokens,
         waiting_for_children = excluded.waiting_for_children,
+        active_turn_id = excluded.active_turn_id,
         integration_target_thread_id = excluded.integration_target_thread_id,
         last_error = excluded.last_error,
         started_at = excluded.started_at,

@@ -7,6 +7,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -66,7 +67,7 @@ const request = (
 testLayer("AgentRunRepository", (it) => {
   it.effect("appends events and projects the immutable launch snapshot atomically", () =>
     Effect.gen(function* () {
-      yield* runMigrations({ toMigrationInclusive: 39 });
+      yield* runMigrations({ toMigrationInclusive: 41 });
       const repository = yield* Effect.service(AgentRunRepository);
       const sql = yield* SqlClient.SqlClient;
 
@@ -106,12 +107,35 @@ testLayer("AgentRunRepository", (it) => {
         assert.equal(run.value.childThreadId, null);
         assert.deepEqual(run.value.modelSelection, launch.modelSelection);
       }
+
+      yield* repository.dispatch({
+        type: "agent-run.assign-child-thread",
+        runId: id("root"),
+        childThreadId: thread("root-child"),
+        occurredAt: later,
+      });
+      yield* repository.dispatch({
+        type: "agent-run.start",
+        runId: id("root"),
+        occurredAt: later,
+      });
+      yield* repository.dispatch({
+        type: "agent-run.bind-turn",
+        runId: id("root"),
+        turnId: TurnId.make("provider-turn-1"),
+        occurredAt: later,
+      });
+      const activeTurn = yield* sql<{ readonly activeTurnId: string | null }>`
+        SELECT active_turn_id AS "activeTurnId"
+        FROM projection_agent_runs WHERE agent_run_id = ${id("root")}
+      `;
+      assert.deepEqual(activeTurn, [{ activeTurnId: "provider-turn-1" }]);
     }),
   );
 
   it.effect("replays durable events for parent-thread and lineage queries", () =>
     Effect.gen(function* () {
-      yield* runMigrations({ toMigrationInclusive: 39 });
+      yield* runMigrations({ toMigrationInclusive: 41 });
       const repository = yield* Effect.service(AgentRunRepository);
       const lineageLaunch = { ...launch, parentThreadId: thread("lineage-owning-thread") };
       yield* repository.dispatch(request("lineage-root", null, lineageLaunch));
@@ -147,7 +171,7 @@ testLayer("AgentRunRepository", (it) => {
 
   it.effect("does not replay unrelated run histories while dispatching", () =>
     Effect.gen(function* () {
-      yield* runMigrations({ toMigrationInclusive: 39 });
+      yield* runMigrations({ toMigrationInclusive: 41 });
       const repository = yield* Effect.service(AgentRunRepository);
       const sql = yield* SqlClient.SqlClient;
 
@@ -171,7 +195,7 @@ testLayer("AgentRunRepository", (it) => {
     "returns already-advanced revisions without polling and leaves rejected commands unpersisted",
     () =>
       Effect.gen(function* () {
-        yield* runMigrations({ toMigrationInclusive: 39 });
+        yield* runMigrations({ toMigrationInclusive: 41 });
         const repository = yield* Effect.service(AgentRunRepository);
         const sql = yield* SqlClient.SqlClient;
         yield* repository.dispatch(request("wait-root"));

@@ -7,6 +7,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -125,6 +126,60 @@ describe("AgentRun", () => {
         expect(summaryOf(run!).usage).toEqual({ totalTokens: 7, inputTokens: 4 });
         expect(summaryOf(run!).finishedAt).toBe(later);
       }),
+  );
+
+  it.effect("binds only the current provider turn after a follow-up revision", () =>
+    Effect.gen(function* () {
+      const firstTurn = TurnId.make("provider-turn-first");
+      const currentTurn = TurnId.make("provider-turn-current");
+      const followUpAt = "2026-08-07T12:02:00.000Z";
+      const restartedAt = "2026-08-07T12:03:00.000Z";
+      const currentStartedAt = "2026-08-07T12:04:00.000Z";
+      let state = yield* start(
+        yield* transition(emptyAgentRunState(), request("follow-up-root")),
+        "follow-up-root",
+      );
+      state = yield* transition(state, {
+        type: "agent-run.bind-turn",
+        runId: id("follow-up-root"),
+        turnId: firstTurn,
+        occurredAt: later,
+      });
+      state = yield* transition(state, {
+        type: "agent-run.succeed",
+        runId: id("follow-up-root"),
+        occurredAt: later,
+      });
+      state = yield* transition(state, {
+        type: "agent-run.follow-up",
+        runId: id("follow-up-root"),
+        message: "Continue with the next task.",
+        occurredAt: followUpAt,
+      });
+      state = yield* transition(state, {
+        type: "agent-run.start",
+        runId: id("follow-up-root"),
+        occurredAt: restartedAt,
+      });
+
+      const stale = yield* decide(state, {
+        type: "agent-run.bind-turn",
+        runId: id("follow-up-root"),
+        turnId: firstTurn,
+        occurredAt: later,
+      });
+      expect(stale).toEqual([]);
+      state = yield* transition(state, {
+        type: "agent-run.bind-turn",
+        runId: id("follow-up-root"),
+        turnId: currentTurn,
+        occurredAt: currentStartedAt,
+      });
+
+      const run = state.runs.get(id("follow-up-root"));
+      expect(run?.status).toBe("running");
+      expect(run?.activeTurnId).toBe(currentTurn);
+    }),
   );
 
   it.effect(

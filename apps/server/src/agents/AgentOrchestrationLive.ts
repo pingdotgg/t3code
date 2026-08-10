@@ -237,6 +237,29 @@ export const dispatchAgentChildLifecycle = Effect.fn(
   );
 });
 
+/** Starts the durable follow-up revision before handing it to the provider. */
+export const dispatchAgentFollowUpLifecycle = Effect.fn(
+  "AgentOrchestration.dispatchAgentFollowUpLifecycle",
+)(function* (input: {
+  readonly engine: Pick<OrchestrationEngine.OrchestrationEngineShape, "dispatch">;
+  readonly markRunStarted: Effect.Effect<
+    ReadonlyArray<AgentRunDomain.AgentRunEvent>,
+    AgentProfileInvalidError
+  >;
+  readonly startTurn: ThreadTurnStartCommand;
+}) {
+  const started = yield* input.markRunStarted;
+  const dispatch = yield* input.engine.dispatch(input.startTurn).pipe(
+    Effect.mapError((error) =>
+      invalid(`T3 could not start the Agent follow-up turn: ${error.message}`, {
+        operation: "follow-up-turn-dispatch",
+        cause: error,
+      }),
+    ),
+  );
+  return { started, dispatch };
+});
+
 export const agentWorktreeBranchName = (runId: AgentRunId): string => `t3code/agent-${runId}`;
 
 export const requireAgentResultThread = <A>(
@@ -1227,8 +1250,23 @@ export const make = Effect.gen(function* () {
         status: "pending",
         createdAt: occurredAt,
       });
-      const dispatch = yield* engine
-        .dispatch({
+      // Persist running before the provider can emit turn.started. The
+      // runtime event is what durably binds the provider turn id to this
+      // follow-up revision.
+      const lifecycle = yield* dispatchAgentFollowUpLifecycle({
+        engine,
+        markRunStarted: runs
+          .dispatch({ type: "agent-run.start", runId: run.id, occurredAt: yield* nowIso })
+          .pipe(
+            Effect.mapError((error) =>
+              invalid(error.message, {
+                operation: "follow-up-run-start",
+                cause: error,
+                runId: run.id,
+              }),
+            ),
+          ),
+        startTurn: {
           type: "thread.turn.start",
           commandId,
           threadId: run.childThreadId,
@@ -1241,9 +1279,9 @@ export const make = Effect.gen(function* () {
           modelSelection: run.modelSelection,
           ...pinnedRuntimeSettings,
           createdAt: occurredAt,
-        })
-        .pipe(Effect.result);
-      if (Result.isFailure(dispatch)) {
+        },
+      }).pipe(Effect.result);
+      if (Result.isFailure(lifecycle)) {
         const failureOccurredAt = yield* nowIso;
         const failed = yield* runs
           .dispatch({
@@ -1266,47 +1304,7 @@ export const make = Effect.gen(function* () {
         }
         return yield* invalid("T3 could not send the Agent follow-up turn.", {
           operation: "follow-up-turn-dispatch",
-          cause: dispatch.failure,
-          runId: run.id,
-        });
-      }
-      const started = yield* runs
-        .dispatch({ type: "agent-run.start", runId: run.id, occurredAt: yield* nowIso })
-        .pipe(
-          Effect.mapError((error) =>
-            invalid(error.message, {
-              operation: "follow-up-run-start",
-              cause: error,
-              runId: run.id,
-            }),
-          ),
-          Effect.result,
-        );
-      if (Result.isFailure(started)) {
-        yield* providers.stopSession({ threadId: run.childThreadId }).pipe(Effect.ignore);
-        const failureOccurredAt = yield* nowIso;
-        const failed = yield* runs
-          .dispatch({
-            type: "agent-run.fail",
-            runId: run.id,
-            failure: "T3 could not start the Agent follow-up turn.",
-            occurredAt: failureOccurredAt,
-          })
-          .pipe(Effect.result);
-        if (Result.isSuccess(failed)) {
-          const revision = failedAgentRunRevision(run, failed.success);
-          if (revision !== null) {
-            yield* appendAgentRunTaskActivity({
-              engine,
-              run: { ...run, revision },
-              status: "failed",
-              createdAt: failureOccurredAt,
-            });
-          }
-        }
-        return yield* invalid("T3 could not start the Agent follow-up turn.", {
-          operation: "follow-up-run-start",
-          cause: started.failure,
+          cause: lifecycle.failure,
           runId: run.id,
         });
       }
@@ -1314,7 +1312,7 @@ export const make = Effect.gen(function* () {
         engine,
         run: {
           ...run,
-          revision: revisionAfterAgentRunTransition(run, started.success),
+          revision: revisionAfterAgentRunTransition(run, lifecycle.success.started),
         },
         status: "running",
         createdAt: yield* nowIso,

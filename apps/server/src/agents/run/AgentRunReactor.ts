@@ -83,6 +83,24 @@ export const failedAgentRunRevision = (
   return null;
 };
 
+/**
+ * Provider turn lifecycle events must belong to the turn the durable Agent
+ * run observed starting. Runtime errors deliberately remain session-scoped.
+ */
+export const matchesActiveAgentRunTurn = (
+  run: Pick<AgentRun, "activeTurnId">,
+  event: Pick<ProviderRuntimeEvent, "turnId">,
+) => run.activeTurnId !== null && event.turnId === run.activeTurnId;
+
+export const shouldBindAgentRunTurn = (
+  run: Pick<AgentRun, "status" | "activeTurnId" | "updatedAt">,
+  event: Pick<ProviderRuntimeEvent, "turnId" | "createdAt">,
+) =>
+  event.turnId !== undefined &&
+  (run.status === "running" || run.status === "waiting-for-input") &&
+  Date.parse(event.createdAt) >= Date.parse(run.updatedAt) &&
+  (run.activeTurnId === null || run.activeTurnId === event.turnId);
+
 const agentRunTaskActivityDetails = (input: {
   readonly run: Pick<
     AgentRun,
@@ -358,7 +376,22 @@ const make = Effect.gen(function* () {
     if (run === null) return;
 
     switch (event.type) {
+      case "turn.started": {
+        const turnId = event.turnId;
+        if (turnId !== undefined && shouldBindAgentRunTurn(run, event)) {
+          yield* retryDurable(
+            repository.dispatch({
+              type: "agent-run.bind-turn",
+              runId: run.id,
+              turnId,
+              occurredAt: event.createdAt,
+            }),
+          );
+        }
+        return;
+      }
       case "turn.completed": {
+        if (!matchesActiveAgentRunTurn(run, event)) return;
         if (run.status !== "running" && run.status !== "waiting-for-input") return;
         const usage = decodeUsage(event.payload.usage);
         if (event.payload.state === "completed") {
@@ -399,6 +432,7 @@ const make = Effect.gen(function* () {
         return;
       }
       case "turn.aborted":
+        if (!matchesActiveAgentRunTurn(run, event)) return;
         if (run.status === "running" || run.status === "waiting-for-input") {
           yield* runTerminalHook(run, "onError").pipe(Effect.ignore);
           const failed = yield* retryDurable(
@@ -437,6 +471,7 @@ const make = Effect.gen(function* () {
         }
         return;
       case "user-input.requested":
+        if (!matchesActiveAgentRunTurn(run, event)) return;
         if (run.status === "running") {
           const waiting = yield* retryDurable(
             repository.dispatch({
@@ -454,6 +489,7 @@ const make = Effect.gen(function* () {
         }
         return;
       case "user-input.resolved":
+        if (!matchesActiveAgentRunTurn(run, event)) return;
         if (run.status === "waiting-for-input") {
           const resumed = yield* retryDurable(
             repository.dispatch({

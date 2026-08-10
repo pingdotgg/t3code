@@ -40,6 +40,7 @@ export default Effect.gen(function* () {
       usage_json TEXT,
       consumed_tokens INTEGER NOT NULL DEFAULT 0,
       waiting_for_children INTEGER NOT NULL DEFAULT 0,
+      active_turn_id TEXT,
       integration_target_thread_id TEXT,
       last_error TEXT,
       created_at TEXT NOT NULL,

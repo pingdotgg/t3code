@@ -7,6 +7,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -63,6 +64,7 @@ const run: AgentRun = {
   workspaceMode: "shared",
   requestedAt,
   startedAt: requestedAt,
+  activeTurnId: TurnId.make("deadline-turn"),
   finishedAt: null,
   updatedAt: requestedAt,
   usage: undefined,

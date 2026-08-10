@@ -41,6 +41,7 @@ layer("041_AgentRuns", (it) => {
         "revision",
         "usage_json",
         "waiting_for_children",
+        "active_turn_id",
       ]) {
         assert.ok(columnNames.has(expected), `missing ${expected}`);
       }

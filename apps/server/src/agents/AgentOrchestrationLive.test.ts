@@ -1,5 +1,6 @@
 import {
   AgentProfileDocument,
+  AgentProfileInvalidError,
   AgentRunId,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -28,6 +29,7 @@ import {
   applyIsolatedWorktreePatch,
   cleanupCreatedAgentWorktree,
   dispatchAgentChildLifecycle,
+  dispatchAgentFollowUpLifecycle,
   liveAgentProfileLocator,
   minimumBudgets,
   requireAgentResultThread,
@@ -294,6 +296,56 @@ it.effect("preserves the orchestration invariant when the child turn cannot star
       result._tag === "Failure" ? result.failure.detail : "",
       /could not start.*Thread 'child-thread' does not exist/i,
     );
+  }),
+);
+
+it.effect("starts the durable follow-up revision before dispatching its provider turn", () =>
+  Effect.gen(function* () {
+    const order: string[] = [];
+    const result = yield* dispatchAgentFollowUpLifecycle({
+      engine: {
+        dispatch: (command) =>
+          Effect.sync(() => {
+            order.push(command.type);
+            return { sequence: 2 };
+          }),
+      },
+      markRunStarted: Effect.sync(() => {
+        order.push("agent-run.start");
+        return [];
+      }),
+      startTurn,
+    });
+
+    NodeAssert.deepEqual(order, ["agent-run.start", "thread.turn.start"]);
+    NodeAssert.equal(result.dispatch.sequence, 2);
+  }),
+);
+
+it.effect("does not dispatch a provider follow-up turn when its durable start fails", () =>
+  Effect.gen(function* () {
+    const order: string[] = [];
+    const result = yield* Effect.result(
+      dispatchAgentFollowUpLifecycle({
+        engine: {
+          dispatch: (command) =>
+            Effect.sync(() => {
+              order.push(command.type);
+              return { sequence: 2 };
+            }),
+        },
+        markRunStarted: Effect.fail(
+          new AgentProfileInvalidError({
+            detail: "Could not persist the Agent follow-up start transition.",
+            operation: "test",
+          }),
+        ),
+        startTurn,
+      }),
+    );
+
+    NodeAssert.equal(result._tag, "Failure");
+    NodeAssert.deepEqual(order, []);
   }),
 );
 

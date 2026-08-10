@@ -22,8 +22,10 @@ import {
   type ProviderInstanceId as ProviderInstanceIdType,
   RuntimeTaskUsage,
   ThreadId,
+  TurnId,
   type RuntimeTaskUsage as RuntimeTaskUsageType,
   type ThreadId as ThreadIdType,
+  type TurnId as TurnIdType,
 } from "@t3tools/contracts";
 import {
   IsoDateTime,
@@ -68,6 +70,13 @@ const StartedEvent = Schema.Struct({
   runId: AgentRunId,
   revision: NonNegativeInt,
   occurredAt: IsoDateTime,
+});
+const TurnBoundEvent = Schema.Struct({
+  type: Schema.Literal("agent-run.turn-bound"),
+  runId: AgentRunId,
+  revision: NonNegativeInt,
+  occurredAt: IsoDateTime,
+  turnId: TurnId,
 });
 const WaitingEvent = Schema.Struct({
   type: Schema.Literal("agent-run.waiting"),
@@ -136,6 +145,7 @@ export const AgentRunEvent = Schema.Union([
   RequestedEvent,
   ChildThreadAssignedEvent,
   StartedEvent,
+  TurnBoundEvent,
   WaitingEvent,
   ResumedEvent,
   ResultSucceededEvent,
@@ -171,6 +181,12 @@ const AssignChildThreadCommand = Schema.Struct({
 const StartCommand = Schema.Struct({
   type: Schema.Literal("agent-run.start"),
   runId: AgentRunId,
+  occurredAt: IsoDateTime,
+});
+const BindTurnCommand = Schema.Struct({
+  type: Schema.Literal("agent-run.bind-turn"),
+  runId: AgentRunId,
+  turnId: TurnId,
   occurredAt: IsoDateTime,
 });
 const WaitCommand = Schema.Struct({
@@ -230,6 +246,7 @@ export const AgentRunCommand = Schema.Union([
   RequestCommand,
   AssignChildThreadCommand,
   StartCommand,
+  BindTurnCommand,
   WaitCommand,
   ResumeCommand,
   SucceedCommand,
@@ -274,6 +291,8 @@ export interface AgentRun {
   readonly workspaceMode: AgentWorkspaceModeType;
   readonly requestedAt: string;
   readonly startedAt: string | null;
+  /** Provider turn currently authorized to advance this Agent run. */
+  readonly activeTurnId: TurnIdType | null;
   readonly finishedAt: string | null;
   readonly updatedAt: string;
   readonly usage: RuntimeTaskUsageType | undefined;
@@ -353,6 +372,7 @@ export const evolve = (state: AgentRunState, event: AgentRunEvent): AgentRunStat
         workspaceMode: event.workspaceMode,
         requestedAt: event.occurredAt,
         startedAt: null,
+        activeTurnId: null,
         finishedAt: null,
         updatedAt: event.occurredAt,
         usage: undefined,
@@ -386,6 +406,14 @@ export const evolve = (state: AgentRunState, event: AgentRunEvent): AgentRunStat
         waitingForChildren: false,
       });
       break;
+    case "agent-run.turn-bound":
+      runs.set(event.runId, {
+        ...current,
+        activeTurnId: event.turnId,
+        revision: event.revision,
+        updatedAt: event.occurredAt,
+      });
+      break;
     case "agent-run.waiting":
       runs.set(event.runId, {
         ...current,
@@ -408,6 +436,7 @@ export const evolve = (state: AgentRunState, event: AgentRunEvent): AgentRunStat
           current.consumedEstimatedCostUsd + (event.usage?.estimatedCostUsd ?? 0),
         failure: undefined,
         waitingForChildren: false,
+        activeTurnId: null,
       });
       break;
     case "agent-run.result-failed":
@@ -423,6 +452,7 @@ export const evolve = (state: AgentRunState, event: AgentRunEvent): AgentRunStat
           current.consumedEstimatedCostUsd + (event.usage?.estimatedCostUsd ?? 0),
         failure: event.failure,
         waitingForChildren: false,
+        activeTurnId: null,
       });
       break;
     case "agent-run.follow-up-revised":
@@ -436,6 +466,7 @@ export const evolve = (state: AgentRunState, event: AgentRunEvent): AgentRunStat
         failure: undefined,
         waitingForChildren: false,
         integrationTargetThreadId: null,
+        activeTurnId: null,
       });
       break;
     case "agent-run.cancelled":
@@ -446,6 +477,7 @@ export const evolve = (state: AgentRunState, event: AgentRunEvent): AgentRunStat
         updatedAt: event.occurredAt,
         finishedAt: event.occurredAt,
         waitingForChildren: false,
+        activeTurnId: null,
       });
       break;
     case "agent-run.integration-started":
@@ -673,6 +705,24 @@ export const decide = Effect.fn("AgentRun.decide")(function* (
       if (run.status !== "queued" || run.childThreadId === null)
         return yield* invariant(command, "Only an assigned queued run can start.");
       return [nextEvent({ type: "agent-run.started", ...withRevision(run, command.occurredAt) })];
+    }
+    case "agent-run.bind-turn": {
+      const run = yield* requireRun(state, command);
+      if (run.status !== "running" && run.status !== "waiting-for-input") return [];
+      if (Date.parse(command.occurredAt) < Date.parse(run.updatedAt)) return [];
+      if (run.activeTurnId === command.turnId) return [];
+      if (run.activeTurnId !== null)
+        return yield* invariant(
+          command,
+          "A running Agent run is already bound to a different provider turn.",
+        );
+      return [
+        nextEvent({
+          type: "agent-run.turn-bound",
+          ...withRevision(run, command.occurredAt),
+          turnId: command.turnId,
+        }),
+      ];
     }
     case "agent-run.wait": {
       const run = yield* requireRun(state, command);
