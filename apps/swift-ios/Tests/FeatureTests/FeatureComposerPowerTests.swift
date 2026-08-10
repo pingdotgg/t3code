@@ -201,7 +201,7 @@ struct FeatureComposerPowerTests {
             FeatureComposerKeyboardLayout.visibleLineRange(
                 dynamicTypeSize: .large,
                 softwareKeyboardIsVisible: true
-            ) == (1...3)
+            ) == (1...1)
         )
         #expect(
             FeatureComposerKeyboardLayout.visibleLineRange(

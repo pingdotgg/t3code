@@ -98,8 +98,7 @@ struct FeatureComposerView: View {
                 .bottom,
                 FeatureComposerKeyboardLayout.bottomClearance(
                     dynamicTypeSize: dynamicTypeSize,
-                    softwareKeyboardIsVisible: focused.wrappedValue
-                        && dockedSoftwareKeyboardOccupiesScreen
+                    softwareKeyboardIsVisible: dockedSoftwareKeyboardOccupiesScreen
                 )
             )
             .background {
@@ -141,6 +140,22 @@ struct FeatureComposerView: View {
                 )
             ) { notification in
                 updateSoftwareKeyboardState(from: notification, in: composerWindow)
+            }
+            // New Thread autofocus can begin the keyboard transition before this
+            // sheet's composer has subscribed to the "will change" event.
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: UIResponder.keyboardDidShowNotification
+                )
+            ) { notification in
+                updateSoftwareKeyboardState(from: notification, in: composerWindow)
+            }
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: UIResponder.keyboardDidHideNotification
+                )
+            ) { _ in
+                dockedSoftwareKeyboardOccupiesScreen = false
             }
     }
 
@@ -227,8 +242,7 @@ struct FeatureComposerView: View {
                 .lineLimit(
                     FeatureComposerKeyboardLayout.visibleLineRange(
                         dynamicTypeSize: dynamicTypeSize,
-                        softwareKeyboardIsVisible: focused.wrappedValue
-                            && dockedSoftwareKeyboardOccupiesScreen
+                        softwareKeyboardIsVisible: dockedSoftwareKeyboardOccupiesScreen
                     )
                 )
                 .focused(focused)
@@ -516,7 +530,6 @@ struct FeatureComposerView: View {
 
     private var usesAccessibilityKeyboardMetrics: Bool {
         dynamicTypeSize.isAccessibilitySize
-            && focused.wrappedValue
             && dockedSoftwareKeyboardOccupiesScreen
     }
 }
@@ -578,7 +591,10 @@ enum FeatureComposerKeyboardLayout {
         softwareKeyboardIsVisible: Bool
     ) -> ClosedRange<Int> {
         guard softwareKeyboardIsVisible else { return 1...7 }
-        return dynamicTypeSize.isAccessibilitySize ? (1...1) : (1...3)
+        // New Thread's sheet can leave only enough vertical room for one input
+        // line plus the footer. A larger cap lets SwiftUI compress those views
+        // into each other even though the keyboard itself was detected.
+        return 1...1
     }
 
     static func bottomClearance(
