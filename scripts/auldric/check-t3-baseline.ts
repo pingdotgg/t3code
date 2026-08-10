@@ -1,4 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off - Repository governance runs at the Node CLI boundary and accepts an injected clock in tests.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
@@ -18,8 +20,17 @@ interface BaselineConfig {
   readonly classification: {
     readonly additiveMarketingRoots: ReadonlyArray<string>;
     readonly distributionConfigurationPaths: ReadonlyArray<string>;
+    readonly permanentGovernanceFiles: ReadonlyArray<PermanentGovernanceFile>;
     readonly sharedCoreAllowlist: string;
   };
+}
+
+interface PermanentGovernanceFile {
+  readonly path: string;
+  readonly owner: string;
+  readonly reason: string;
+  readonly contentSha256: string;
+  readonly test: string;
 }
 
 interface SharedCoreAllowlistEntry {
@@ -41,6 +52,7 @@ interface GitChange {
 
 export type DriftCategory =
   | "additive-marketing"
+  | "downstream-governance"
   | "distribution-configuration"
   | "temporary-shared-core-seam"
   | "unexpected-shared-core";
@@ -170,6 +182,26 @@ function loadBaselineConfig(repoRoot: string, configPath: string): BaselineConfi
       `${configPath}.classification.distributionConfigurationPaths[${index}]`,
     ),
   );
+  if (!Array.isArray(classification.permanentGovernanceFiles)) {
+    throw new BaselineConfigurationError(
+      `${configPath}.classification.permanentGovernanceFiles must be an array`,
+    );
+  }
+  const permanentGovernanceFiles = classification.permanentGovernanceFiles.map((value, index) => {
+    const label = `${configPath}.classification.permanentGovernanceFiles[${index}]`;
+    const entry = requireRecord(value, label);
+    const contentSha256 = requireString(entry.contentSha256, `${label}.contentSha256`);
+    if (!/^[0-9a-f]{64}$/u.test(contentSha256)) {
+      throw new BaselineConfigurationError(`${label}.contentSha256 must be a lowercase SHA-256`);
+    }
+    return {
+      path: requireRepositoryPath(entry.path, `${label}.path`),
+      owner: requireString(entry.owner, `${label}.owner`),
+      reason: requireString(entry.reason, `${label}.reason`),
+      contentSha256,
+      test: requireString(entry.test, `${label}.test`),
+    };
+  });
   const sharedCoreAllowlist = requireRepositoryPath(
     classification.sharedCoreAllowlist,
     `${configPath}.classification.sharedCoreAllowlist`,
@@ -180,6 +212,7 @@ function loadBaselineConfig(repoRoot: string, configPath: string): BaselineConfi
     classification: {
       additiveMarketingRoots,
       distributionConfigurationPaths,
+      permanentGovernanceFiles,
       sharedCoreAllowlist,
     },
   };
@@ -312,6 +345,7 @@ function classifyChange(
   change: GitChange,
   baselinePaths: ReadonlySet<string>,
   config: BaselineConfig,
+  releaseContentSha256: ReadonlyMap<string, string>,
   allowlist: ReadonlyMap<string, SharedCoreAllowlistEntry>,
 ): ClassifiedChange {
   const distributionPaths = new Set(config.classification.distributionConfigurationPaths);
@@ -327,6 +361,22 @@ function classifyChange(
     )
   ) {
     return { ...change, category: "additive-marketing" };
+  }
+
+  const governanceFiles = new Map(
+    config.classification.permanentGovernanceFiles.map((entry) => [entry.path, entry]),
+  );
+  if (
+    change.paths.every((path) => {
+      const entry = governanceFiles.get(path);
+      return (
+        baselinePaths.has(path) &&
+        entry !== undefined &&
+        releaseContentSha256.get(path) === entry.contentSha256
+      );
+    })
+  ) {
+    return { ...change, category: "downstream-governance" };
   }
 
   if (change.paths.every((path) => baselinePaths.has(path) && allowlist.has(path))) {
@@ -464,6 +514,24 @@ export function inspectBaseline(options: InspectOptions): BaselineReport {
   const baselinePaths = new Set(
     runGit(repoRoot, ["ls-tree", "-r", "--name-only", "-z", baseline]).split("\0").filter(Boolean),
   );
+  const permanentGovernancePaths = new Set<string>();
+  const releaseContentSha256 = new Map<string, string>();
+  for (const entry of config.classification.permanentGovernanceFiles) {
+    if (!baselinePaths.has(entry.path)) {
+      throw new BaselineConfigurationError(
+        `permanent governance file ${entry.path} is not T3-owned at the baseline`,
+      );
+    }
+    if (permanentGovernancePaths.has(entry.path)) {
+      throw new BaselineConfigurationError(`permanent governance file duplicates ${entry.path}`);
+    }
+    permanentGovernancePaths.add(entry.path);
+    const content = runGit(repoRoot, ["show", `${release}:${entry.path}`]);
+    releaseContentSha256.set(
+      entry.path,
+      NodeCrypto.createHash("sha256").update(content).digest("hex"),
+    );
+  }
   for (const entry of allowlist.values()) {
     if (!baselinePaths.has(entry.path)) {
       throw new BaselineConfigurationError(
@@ -482,7 +550,7 @@ export function inspectBaseline(options: InspectOptions): BaselineReport {
       baseline,
       release,
     ]),
-  ).map((change) => classifyChange(change, baselinePaths, config, allowlist));
+  ).map((change) => classifyChange(change, baselinePaths, config, releaseContentSha256, allowlist));
   for (const change of fileDrift) {
     if (change.category === "unexpected-shared-core") {
       violations.push(`unexpected shared-core edit: ${change.paths.join(" -> ")}`);
@@ -532,8 +600,8 @@ function parseCliOptions(args: ReadonlyArray<string>): CliOptions {
       repoRoot = value;
       index += 1;
     } else if (argument === "--help") {
-      console.log(
-        "Usage: node scripts/auldric/check-t3-baseline.ts [--fetch] [--json] [--repo PATH]",
+      process.stdout.write(
+        "Usage: node scripts/auldric/check-t3-baseline.ts [--fetch] [--json] [--repo PATH]\n",
       );
       process.exit(0);
     } else {
@@ -548,12 +616,14 @@ function main(): void {
   try {
     const options = parseCliOptions(process.argv.slice(2));
     const report = inspectBaseline(options);
-    console.log(options.json ? JSON.stringify(report, null, 2) : formatBaselineReport(report));
+    process.stdout.write(
+      `${options.json ? JSON.stringify(report, null, 2) : formatBaselineReport(report)}\n`,
+    );
     if (!report.ok) {
       process.exitCode = 1;
     }
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   }
 }

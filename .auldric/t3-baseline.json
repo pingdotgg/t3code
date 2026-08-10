@@ -44,7 +44,11 @@
     "additiveMarketingRoots": [
       "apps/auldric-marketing/",
       "apps/auldric-site/",
-      "docs/auldric/",
+      "docs/auldric",
+      "docs/_archive/auldric-runtime/",
+      "docs/internals/identifier-ownership.md",
+      "docs/user/product-identity.md",
+      "scripts/complete-feature-docs.",
       "packages/auldric-"
     ],
     "distributionConfigurationPaths": [
@@ -54,6 +58,29 @@
       "docs/operations/auldric-t3-baseline.md",
       "scripts/auldric/check-t3-baseline.test.ts",
       "scripts/auldric/check-t3-baseline.ts"
+    ],
+    "permanentGovernanceFiles": [
+      {
+        "path": "AGENTS.md",
+        "owner": "#17",
+        "reason": "Establish the reviewed T3-Dev and Auldric-Marketing authority contract for this downstream repository.",
+        "contentSha256": "41a2fb3da3279a864a45aa413f3bc6e041cdb0fcd03d8a56df065c0cd7f3517c",
+        "test": "pnpm run complete:feature-docs"
+      },
+      {
+        "path": "docs/README.md",
+        "owner": "#3 and #17",
+        "reason": "Register the canonical Auldric identity and Marketing-domain documentation without changing T3 product behavior.",
+        "contentSha256": "6f2619891e9bbf800ba777c454f09cb4d6ed2cd7e744ea14593be72692e8554a",
+        "test": "pnpm run complete:feature-docs"
+      },
+      {
+        "path": "package.json",
+        "owner": "#17",
+        "reason": "Expose the manifest-backed Auldric documentation authority validation command at the repository root.",
+        "contentSha256": "f405292a96d61d161555bcef9b0b7505bd530143457d85a02433cfcbd59c1325",
+        "test": "pnpm run complete:feature-docs"
+      }
     ],
     "sharedCoreAllowlist": ".auldric/shared-core-allowlist.json"
   }

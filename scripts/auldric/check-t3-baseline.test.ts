@@ -1,5 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off - Tests build real temporary Git repositories and inject a fixed wall-clock date.
 import { assert, it } from "@effect/vitest";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -24,7 +26,16 @@ function commitAll(root: string, message: string): string {
   return git(root, "rev-parse", "HEAD");
 }
 
-function baselineConfiguration(commit: string): string {
+function baselineConfiguration(
+  commit: string,
+  permanentGovernanceFiles: ReadonlyArray<{
+    readonly path: string;
+    readonly owner: string;
+    readonly reason: string;
+    readonly contentSha256: string;
+    readonly test: string;
+  }> = [],
+): string {
   return `${JSON.stringify(
     {
       schemaVersion: 1,
@@ -47,12 +58,17 @@ function baselineConfiguration(commit: string): string {
           ".auldric/shared-core-allowlist.json",
           ".auldric/t3-baseline.json",
         ],
+        permanentGovernanceFiles,
         sharedCoreAllowlist: ".auldric/shared-core-allowlist.json",
       },
     },
     null,
     2,
   )}\n`;
+}
+
+function sha256(value: string): string {
+  return NodeCrypto.createHash("sha256").update(value).digest("hex");
 }
 
 function createRepository(): { readonly root: string; readonly baseline: string } {
@@ -149,6 +165,48 @@ it("fails an unexpected edit to T3-owned code", () => {
 
     assert.equal(report.ok, false);
     assert.deepEqual(report.violations, ["unexpected shared-core edit: apps/web/core.txt"]);
+  } finally {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("accepts only the reviewed content of a permanent governance file", () => {
+  const { root, baseline } = createRepository();
+  try {
+    const reviewedContent = "T3 owns Dev; Auldric owns Marketing.\n";
+    write(
+      root,
+      ".auldric/t3-baseline.json",
+      baselineConfiguration(baseline, [
+        {
+          path: "apps/web/core.txt",
+          owner: "#17",
+          reason: "Fixture authority statement",
+          contentSha256: sha256(reviewedContent),
+          test: "pnpm run complete:feature-docs",
+        },
+      ]),
+    );
+    write(
+      root,
+      ".auldric/shared-core-allowlist.json",
+      `${JSON.stringify({ schemaVersion: 1, entries: [] }, null, 2)}\n`,
+    );
+    write(root, "apps/web/core.txt", reviewedContent);
+    commitAll(root, "record reviewed governance");
+
+    const accepted = inspect(root);
+    assert.equal(accepted.ok, true);
+    assert.equal(
+      accepted.fileDrift.find((entry) => entry.paths.includes("apps/web/core.txt"))?.category,
+      "downstream-governance",
+    );
+
+    write(root, "apps/web/core.txt", "unreviewed extra behavior\n");
+    commitAll(root, "change reviewed governance unexpectedly");
+    const rejected = inspect(root);
+    assert.equal(rejected.ok, false);
+    assert.include(rejected.violations, "unexpected shared-core edit: apps/web/core.txt");
   } finally {
     NodeFS.rmSync(root, { recursive: true, force: true });
   }
