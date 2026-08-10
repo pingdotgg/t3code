@@ -39,6 +39,14 @@ struct PlatformIncomingShareSource: Sendable {
         throw PlatformIncomingShareError.missingVideo(video.fileName)
     }
     var remove: @Sendable (String) async throws -> Void
+    var updateDestination: @Sendable (
+        String,
+        T3IncomingShareDestination?
+    ) async throws -> Void = { id, destination in
+        try await Task.detached(priority: .utility) {
+            try T3IncomingShareStore.updateDestination(id: id, destination: destination)
+        }.value
+    }
 
     static let live = PlatformIncomingShareSource(
         loadAll: {
@@ -195,6 +203,13 @@ struct PlatformIncomingSharePipeline: Sendable {
 
     func acknowledgeEnvelope(id: String) async throws {
         try await source.remove(id)
+    }
+
+    func updateDestination(
+        id: String,
+        destination: T3IncomingShareDestination?
+    ) async throws {
+        try await source.updateDestination(id, destination)
     }
 
     private func importEnvelope(
@@ -434,8 +449,10 @@ final class PlatformIncomingShareCoordinator {
         pendingEnvelope = nil
     }
 
-    func requestAnotherDestination() {
+    func requestAnotherDestination() async throws {
         guard !isImporting else { return }
+        guard let id = pendingEnvelope?.id else { return }
+        try await pipeline.updateDestination(id: id, destination: nil)
         pendingEnvelope?.destination = nil
     }
 

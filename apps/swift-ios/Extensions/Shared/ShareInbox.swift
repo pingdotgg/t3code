@@ -398,6 +398,34 @@ enum T3IncomingShareStore {
         try FileManager.default.removeItem(at: itemURL)
     }
 
+    static func updateDestination(
+        id: String,
+        destination: T3IncomingShareDestination?
+    ) throws {
+        guard let containerURL = T3SharedContainer.rootURL else {
+            throw T3IncomingShareStoreError.appGroupUnavailable
+        }
+        guard UUID(uuidString: id) != nil else {
+            throw T3IncomingShareStoreError.noSupportedContent
+        }
+        let inboxURL = containerURL
+            .appending(path: inboxRelativePath, directoryHint: .isDirectory)
+            .standardizedFileURL
+        let itemURL = inboxURL
+            .appending(path: id, directoryHint: .isDirectory)
+            .standardizedFileURL
+        guard itemURL.deletingLastPathComponent() == inboxURL else {
+            throw T3IncomingShareStoreError.noSupportedContent
+        }
+        let manifestURL = itemURL.appending(path: manifestFileName, directoryHint: .notDirectory)
+        var envelope = try decoder.decode(
+            T3IncomingShareEnvelope.self,
+            from: Data(contentsOf: manifestURL)
+        )
+        envelope.destination = destination
+        try encoder.encode(envelope).write(to: manifestURL, options: .atomic)
+    }
+
     static func fileURL(for image: T3IncomingShareImage) -> URL? {
         fileURL(relativePath: image.relativePath)
     }

@@ -241,7 +241,7 @@ struct PlatformRootView: View {
                           environmentID: destination.environmentID,
                           id: threadID
                       ) else {
-                    incomingShareCoordinator.requestAnotherDestination()
+                    try await incomingShareCoordinator.requestAnotherDestination()
                     model.errorMessage = "That thread is no longer available. Choose another destination."
                     return
                 }

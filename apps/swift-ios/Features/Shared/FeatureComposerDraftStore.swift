@@ -55,6 +55,12 @@ public enum FeatureComposerDraftImportError: LocalizedError, Equatable, Sendable
     }
 }
 
+public enum FeatureComposerIncomingShareRoutingResult: Equatable, Sendable {
+    case routed(FeatureComposerDraft)
+    case alreadyRouted(FeatureComposerDraft?)
+    case sourceMissing
+}
+
 /// Persists composer state independently of view navigation. Draft writes are
 /// atomic, and callers debounce high-frequency text changes before reaching
 /// this actor so image data is not repeatedly encoded for every keystroke.
@@ -236,16 +242,21 @@ public actor FeatureComposerDraftStore {
         shareID: String,
         to key: String,
         maximumAttachmentCount: Int = 8
-    ) throws -> FeatureComposerDraft? {
+    ) throws -> FeatureComposerIncomingShareRoutingResult {
         var drafts = try loadIfNeeded()
         let sourceKey = Self.incomingShareKey(shareID: shareID)
         guard let source = drafts[sourceKey] else {
-            return drafts[key]?.featureValue
+            guard let destination = drafts[key],
+                  destination.importedShareIDs?.contains(shareID) == true else {
+                return .sourceMissing
+            }
+            return .alreadyRouted(destination.featureValue)
         }
 
         var destination = drafts[key] ?? PersistedDraft(FeatureComposerDraft())
         var importedIDs = destination.importedShareIDs ?? []
-        if !importedIDs.contains(shareID) {
+        let wasAlreadyRouted = importedIDs.contains(shareID)
+        if !wasAlreadyRouted {
             let existingIDs = Set(destination.attachments.map(\.id))
             let uniqueAttachments = source.attachments.filter { !existingIDs.contains($0.id) }
             let availableCount = max(0, maximumAttachmentCount - destination.attachments.count)
@@ -271,7 +282,9 @@ public actor FeatureComposerDraftStore {
         drafts.removeValue(forKey: sourceKey)
         try persist(drafts)
         loadedDrafts = drafts
-        return destination.featureValue
+        return wasAlreadyRouted
+            ? .alreadyRouted(destination.featureValue)
+            : .routed(destination.featureValue)
     }
 
     public func removeDraft(for key: String) throws {

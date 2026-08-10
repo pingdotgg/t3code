@@ -329,12 +329,34 @@ struct PlatformIncomingShareTests {
             shareID: envelope.id,
             to: destinationKey
         )
-        #expect(routed?.text == "Choose my project")
+        guard case let .routed(routedDraft) = routed else {
+            Issue.record("Expected the staged share to be routed")
+            return
+        }
+        #expect(routedDraft.text == "Choose my project")
         #expect(try await store.draft(for: transferKey) == nil)
-        #expect(try await store.draft(for: destinationKey) == routed)
+        #expect(try await store.draft(for: destinationKey) == routedDraft)
 
         try await pipeline.acknowledgeEnvelope(id: envelope.id)
         #expect(await recorder.events == ["remove:\(envelope.id)"])
+    }
+
+    @Test
+    func missingStagedShareNeverMasqueradesAsAnExistingDestinationDraft() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(fileURL: directory.appending(path: "drafts.json"))
+        let key = "new-task:project"
+        try await store.setDraft(FeatureComposerDraft(text: "Existing text"), for: key)
+
+        let result = try await store.routeIncomingShare(
+            shareID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            to: key
+        )
+
+        #expect(result == .sourceMissing)
+        #expect(try await store.draft(for: key)?.text == "Existing text")
     }
 
     @Test
@@ -363,7 +385,7 @@ struct PlatformIncomingShareTests {
 
     @Test
     @MainActor
-    func staleThreadDestinationCanFallBackToThePicker() async {
+    func staleThreadDestinationCanFallBackToThePicker() async throws {
         var envelope = Self.envelope(text: "Pending")
         envelope.destination = .existingThread(environmentID: "env", threadID: "deleted")
         let coordinator = PlatformIncomingShareCoordinator(
@@ -371,7 +393,8 @@ struct PlatformIncomingShareTests {
                 source: PlatformIncomingShareSource(
                     loadAll: { [envelope] },
                     data: { _ in Data() },
-                    remove: { _ in }
+                    remove: { _ in },
+                    updateDestination: { _, _ in }
                 ),
                 drafts: PlatformIncomingShareDraftRepository(
                     importContent: { _, _, _, _, _ in FeatureComposerDraft() }
@@ -381,7 +404,7 @@ struct PlatformIncomingShareTests {
         )
 
         _ = await coordinator.refresh(hasProjects: true)
-        coordinator.requestAnotherDestination()
+        try await coordinator.requestAnotherDestination()
 
         #expect(coordinator.pendingEnvelope?.destination == nil)
     }

@@ -32,6 +32,7 @@ public struct NewThreadView: View {
     @State private var immediateDraftSaveTasks: [String: Task<Void, Never>] = [:]
     @State private var submittedSuccessfully = false
     @State private var pendingIncomingShareID: String?
+    @State private var showingDiscardIncomingShare = false
     @FocusState private var promptFocused: Bool
 
     public init(
@@ -169,6 +170,16 @@ public struct NewThreadView: View {
         } message: {
             Text("Check your connection and try again.")
         }
+        .confirmationDialog(
+            "Discard this shared draft?",
+            isPresented: $showingDiscardIncomingShare,
+            titleVisibility: .visible
+        ) {
+            Button("Keep editing", role: .cancel) {}
+            Button("Discard shared draft", role: .destructive) {
+                discardIncomingShare()
+            }
+        }
         .interactiveDismissDisabled(isSubmitting)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
@@ -176,7 +187,13 @@ public struct NewThreadView: View {
 
     private var topBar: some View {
         HStack {
-            Button("Cancel") { dismiss() }
+            Button("Cancel") {
+                if pendingIncomingShareID == nil {
+                    dismiss()
+                } else {
+                    showingDiscardIncomingShare = true
+                }
+            }
                 .font(.body)
                 .foregroundStyle(T3Colors.textSecondary)
                 .disabled(isSubmitting)
@@ -604,6 +621,8 @@ public struct NewThreadView: View {
     private func prepareProjectIfNeeded(_ id: String) {
         guard draftRestoreContext?.projectID != id else { return }
 
+        persistIncomingShareDraftImmediately()
+
         if selectionIsExplicit, let selection {
             preferredSelection = selection
         }
@@ -714,13 +733,29 @@ public struct NewThreadView: View {
             return
         }
         let routedShareID = pendingIncomingShareID
+        if let routedShareID {
+            let sourceKey = FeatureComposerDraftStore.incomingShareKey(shareID: routedShareID)
+            await NewTaskDraftWriteFence.wait(immediateDraftSaveTasks[sourceKey])
+        }
         let saved: FeatureComposerDraft?
+        var shouldAcknowledgeShare = false
         if let routedShareID {
             do {
-                saved = try await draftStore.routeIncomingShare(
+                let result = try await draftStore.routeIncomingShare(
                     shareID: routedShareID,
                     to: key
                 )
+                switch result {
+                case let .routed(draft), let .alreadyRouted(draft?):
+                    saved = draft
+                    shouldAcknowledgeShare = true
+                case .alreadyRouted(nil):
+                    saved = nil
+                    shouldAcknowledgeShare = true
+                case .sourceMissing:
+                    saved = nil
+                    model.errorMessage = "The shared draft is no longer available. Share it again to retry."
+                }
             } catch {
                 saved = nil
                 model.errorMessage = error.localizedDescription
@@ -769,7 +804,7 @@ public struct NewThreadView: View {
         workspaceSelectionIsExplicit = liveWorkspaceSelectionIsExplicit
             || saved?.workspace != nil
         restoredDraftProjectID = requestedProjectID
-        if let routedShareID, saved != nil {
+        if let routedShareID, shouldAcknowledgeShare {
             pendingIncomingShareID = nil
             await acknowledgeIncomingShare(routedShareID)
         }
@@ -830,6 +865,10 @@ public struct NewThreadView: View {
     }
 
     private func scheduleDraftSave() {
+        if projectID.isEmpty, pendingIncomingShareID != nil {
+            scheduleIncomingShareDraftSave()
+            return
+        }
         guard restoredDraftProjectID == projectID,
               !isSubmitting,
               !submittedSuccessfully,
@@ -851,6 +890,53 @@ public struct NewThreadView: View {
             } catch {
                 return
             }
+        }
+    }
+
+    private func scheduleIncomingShareDraftSave() {
+        guard let shareID = pendingIncomingShareID,
+              !isSubmitting,
+              !submittedSuccessfully else { return }
+        let key = FeatureComposerDraftStore.incomingShareKey(shareID: shareID)
+        let previousSave = immediateDraftSaveTasks[key]
+        previousSave?.cancel()
+        let snapshot = composerDraft
+        let task = Task { @MainActor in
+            await NewTaskDraftWriteFence.wait(previousSave)
+            do {
+                try await Task.sleep(for: .milliseconds(220))
+                try Task.checkCancellation()
+                try await draftStore.setDraft(snapshot, for: key)
+            } catch {
+                return
+            }
+        }
+        immediateDraftSaveTasks[key] = task
+    }
+
+    private func persistIncomingShareDraftImmediately() {
+        guard let shareID = pendingIncomingShareID else { return }
+        let key = FeatureComposerDraftStore.incomingShareKey(shareID: shareID)
+        let previousSave = immediateDraftSaveTasks[key]
+        previousSave?.cancel()
+        let snapshot = composerDraft
+        let task = Task { @MainActor in
+            await NewTaskDraftWriteFence.wait(previousSave)
+            guard !Task.isCancelled else { return }
+            try? await draftStore.setDraft(snapshot, for: key)
+        }
+        immediateDraftSaveTasks[key] = task
+    }
+
+    private func discardIncomingShare() {
+        guard let shareID = pendingIncomingShareID else { return }
+        let key = FeatureComposerDraftStore.incomingShareKey(shareID: shareID)
+        Task { @MainActor in
+            immediateDraftSaveTasks[key]?.cancel()
+            try? await draftStore.removeDraft(for: key)
+            await acknowledgeIncomingShare(shareID)
+            pendingIncomingShareID = nil
+            dismiss()
         }
     }
 
