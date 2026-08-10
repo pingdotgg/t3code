@@ -941,6 +941,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
       });
 
       const args = callAt(0).args;
+      expect(callAt(0).repositories).toEqual(["acme/web"]);
       expect(args).toContain("--hostname");
       expect(args).toContain("github.acme.dev");
       expect(args).toContain("owner=acme");

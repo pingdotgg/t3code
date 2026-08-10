@@ -269,12 +269,9 @@ describe("GitHubCli.layer", () => {
         })
         .pipe(Effect.flip);
 
-      assert.equal(error._tag, "GitHubCredentialError");
-      if (error._tag !== "GitHubCredentialError") return;
-      assert.equal(error.reason._tag, "TokenUnavailable");
-      if (error.reason._tag !== "TokenUnavailable") return;
-      assert.equal(error.reason.kind, "env-missing");
-      assert.equal(error.reason.tokenSource, "GITHUB_TOKEN");
+      assert.equal(error._tag, "GitHubTokenEnvironmentUnavailableError");
+      if (error._tag !== "GitHubTokenEnvironmentUnavailableError") return;
+      assert.equal(error.tokenSource, "GITHUB_TOKEN");
     }).pipe(Effect.provide(selectedLayer));
   });
 
@@ -297,12 +294,9 @@ describe("GitHubCli.layer", () => {
         })
         .pipe(Effect.flip);
 
-      assert.equal(error._tag, "GitHubCredentialError");
-      if (error._tag !== "GitHubCredentialError") return;
-      assert.equal(error.reason._tag, "TokenUnavailable");
-      if (error.reason._tag !== "TokenUnavailable") return;
-      assert.equal(error.reason.kind, "empty-output");
-      assert.equal(error.reason.login, "work-user");
+      assert.equal(error._tag, "GitHubTokenOutputEmptyError");
+      if (error._tag !== "GitHubTokenOutputEmptyError") return;
+      assert.equal(error.login, "work-user");
     }).pipe(Effect.provide(selectedLayer));
   });
 
@@ -335,12 +329,10 @@ describe("GitHubCli.layer", () => {
         })
         .pipe(Effect.flip);
 
-      assert.equal(error._tag, "GitHubCredentialError");
-      if (error._tag !== "GitHubCredentialError") return;
+      assert.equal(error._tag, "GitHubAccountSettingsUnavailableError");
+      if (error._tag !== "GitHubAccountSettingsUnavailableError") return;
       assert.equal(error.host, "github.com");
-      assert.equal(error.reason._tag, "SettingsUnavailable");
-      if (error.reason._tag !== "SettingsUnavailable") return;
-      assert.strictEqual(error.reason.cause, cause);
+      assert.strictEqual(error.cause, cause);
     }).pipe(Effect.provide(selectedLayer));
   });
 

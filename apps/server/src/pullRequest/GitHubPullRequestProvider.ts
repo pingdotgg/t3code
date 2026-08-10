@@ -69,7 +69,8 @@ function reasonFor(
   if (error._tag === "GitHubCliUnavailableError") return "missing-tool";
   if (
     error._tag === "GitHubCliAuthenticationError" ||
-    (error._tag === "GitHubCredentialError" && error.reason._tag === "TokenUnavailable")
+    error._tag === "GitHubTokenEnvironmentUnavailableError" ||
+    error._tag === "GitHubTokenOutputEmptyError"
   )
     return "unauthenticated";
   return "failed";

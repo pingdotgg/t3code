@@ -697,15 +697,16 @@ export const make = Effect.gen(function* () {
     readonly privateVariables?: Readonly<Record<string, string>>;
     readonly query: string;
     readonly decode: (raw: string) => Result.Result<A, unknown>;
-  }): Effect.Effect<A, GitHubPullRequestCliError> =>
-    github
+  }): Effect.Effect<A, GitHubPullRequestCliError> => {
+    const repositories =
+      input.repositories ?? (input.repository === undefined ? undefined : [input.repository]);
+    return github
       .execute(
         input.privateVariables === undefined
           ? {
               cwd: input.cwd,
               host: input.host,
-              ...(input.repositories === undefined ? {} : { repositories: input.repositories }),
-              ...(input.repository === undefined ? {} : { repository: input.repository }),
+              ...(repositories === undefined ? {} : { repositories }),
               args: [
                 "api",
                 "graphql",
@@ -719,8 +720,7 @@ export const make = Effect.gen(function* () {
           : {
               cwd: input.cwd,
               host: input.host,
-              ...(input.repositories === undefined ? {} : { repositories: input.repositories }),
-              ...(input.repository === undefined ? {} : { repository: input.repository }),
+              ...(repositories === undefined ? {} : { repositories }),
               args: ["api", "graphql", "--hostname", input.host, "--input", "-"],
               stdin: encodeGraphQlRequestJson({
                 query: input.query,
@@ -743,6 +743,7 @@ export const make = Effect.gen(function* () {
               );
         }),
       );
+  };
 
   /**
    * One page of the patch, read from the files API. GitHub refuses `pr diff` outright past 300

@@ -1,5 +1,4 @@
 import * as Result from "effect/Result";
-import * as Schema from "effect/Schema";
 
 import type { GitHubAccountSelection, ServerSettings } from "@t3tools/contracts";
 
@@ -14,29 +13,16 @@ export interface GitHubCredentialRoute {
   readonly account: GitHubAccountSelection | undefined;
 }
 
-export const GitHubCredentialReason = Schema.Union([
-  Schema.TaggedStruct("SettingsUnavailable", {
-    cause: Schema.Defect(),
-  }),
-  Schema.TaggedStruct("SelectionConflict", {
-    repositories: Schema.Array(Schema.String),
-  }),
-  Schema.TaggedStruct("HostMismatch", {
-    accountHost: Schema.String,
-    login: Schema.String,
-  }),
-  Schema.TaggedStruct("TokenUnavailable", {
-    login: Schema.String,
-    tokenSource: Schema.String,
-    kind: Schema.Literals(["env-missing", "empty-output"]),
-  }),
-]);
-export type GitHubCredentialReason = typeof GitHubCredentialReason.Type;
-
-type GitHubCredentialRoutingReason = Extract<
-  GitHubCredentialReason,
-  { readonly _tag: "SelectionConflict" | "HostMismatch" }
->;
+export type GitHubCredentialRoutingError =
+  | {
+      readonly _tag: "SelectionConflict";
+      readonly repositories: ReadonlyArray<string>;
+    }
+  | {
+      readonly _tag: "HostMismatch";
+      readonly accountHost: string;
+      readonly login: string;
+    };
 
 type GitHubCredentialSettings = Pick<
   ServerSettings,
@@ -51,7 +37,7 @@ export function accountKey(account: GitHubAccountSelection): string {
 export function selectCredentialRoute(
   settings: GitHubCredentialSettings,
   target: GitHubCredentialTarget,
-): Result.Result<GitHubCredentialRoute, GitHubCredentialRoutingReason> {
+): Result.Result<GitHubCredentialRoute, GitHubCredentialRoutingError> {
   const host = (target.host ?? "github.com").toLowerCase();
   const defaults = new Map(
     Object.entries(settings.githubDefaultAccounts).map(([accountHost, account]) => [
