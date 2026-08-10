@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 /**
- * T3-owned Agent runs are independent provider sessions backed by nested
+ * T3-owned agent runs are independent provider sessions backed by nested
  * threads. Prompt/profile bodies live in content-addressed snapshots and are
  * deliberately absent from the hot thread and run projections.
  */

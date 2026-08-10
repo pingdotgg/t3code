@@ -323,6 +323,8 @@ it.effect("cleans only the isolated worktree and branch that a failed spawn crea
               timedOut: false,
               stdoutTruncated: false,
               stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
             };
           }),
       },
@@ -479,6 +481,8 @@ const GitFailureLayer = Layer.mergeAll(
           timedOut: false,
           stdoutTruncated: false,
           stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
         }),
     }),
   ),

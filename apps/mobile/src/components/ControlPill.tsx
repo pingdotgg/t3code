@@ -133,9 +133,25 @@ export function ControlPillMenu(
   }
 
   const { className: _className, ...menuProps } = props;
+  let children = menuProps.children;
+  // In long-press mode the wrapped pressable still receives the touch (the
+  // patched MenuView button is touch-transparent) and RN's Fabric touch
+  // handler is never cancelled by the in-tree UIContextMenuInteraction, so a
+  // bare onPress would fire on finger-up even after the menu opened — and
+  // also on a long press released just under the menu threshold. A dispatched
+  // onLongPress makes Pressability swallow the release, so holds past 350ms
+  // (below the ~500ms context-menu threshold) can only open the menu, never
+  // tap through.
+  if (props.shouldOpenOnLongPress && isValidElement(children)) {
+    const child = children as ReactElement<{ onLongPress?: () => void; delayLongPress?: number }>;
+    children = cloneElement(child, {
+      onLongPress: child.props.onLongPress ?? (() => undefined),
+      delayLongPress: child.props.delayLongPress ?? 350,
+    });
+  }
   return (
     <MenuView {...menuProps} themeVariant={isDarkMode ? "dark" : "light"}>
-      {menuProps.children}
+      {children}
     </MenuView>
   );
 }

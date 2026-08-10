@@ -183,7 +183,7 @@ function ThemeLibraryCard({
                               onDownload();
                             }}
                           >
-                            <DownloadIcon />
+                            <UploadIcon />
                           </Button>
                         }
                       />
@@ -475,6 +475,14 @@ export function ThemeLibrary({
             activeModes={pickedModesFor(null)}
             isActive={false}
             key={standardTheme.id}
+            onDuplicate={() =>
+              openThemeEditor({
+                editingThemeId: null,
+                seedThemeId: null,
+                seedName: `${standardTheme.label} copy`,
+                initialAppearance,
+              })
+            }
             onUse={() => persistTheme(appearanceMode === "system" ? "system" : appearanceMode)}
             onUseMode={handlePairPick(null)}
             theme={standardTheme}
@@ -555,9 +563,8 @@ export function ThemeLibrary({
         <h3 className="text-sm font-medium tracking-[-0.005em] text-foreground">Themes</h3>
         <div className="flex flex-wrap items-center justify-end gap-3">
           <Button
-            className="h-7 rounded-md border border-border/70 bg-muted/30 px-2 text-xs font-medium text-foreground shadow-none hover:bg-accent/40"
             size="xs"
-            variant="ghost"
+            variant="outline"
             onClick={() =>
               openThemeEditor({
                 editingThemeId: null,
@@ -570,8 +577,8 @@ export function ThemeLibrary({
             <PlusIcon />
             Create theme
           </Button>
-          <Button size="xs" variant="ghost" onClick={() => onImportOpenChange(true)}>
-            <UploadIcon />
+          <Button size="xs" variant="outline" onClick={() => onImportOpenChange(true)}>
+            <DownloadIcon />
             Import theme
           </Button>
         </div>
