@@ -141,10 +141,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 @theme inline {
   --color-zinc-25: oklch(99.2% 0 0);
-  --animate-skeleton: skeleton 2s -1s infinite linear;
+  --animate-skeleton: skeleton 2s infinite linear;
   /* Duty-cycled indicator animations: long holds with stepped ramps, so the
      compositor updates discrete frames instead of every vsync. */
   --animate-status-pulse: status-pulse 2s infinite;
+  --animate-ghost-pulse: ghost-pulse 2.4s infinite;
   --animate-status-ping: status-ping 2s infinite;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
@@ -203,8 +204,32 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
   @keyframes skeleton {
-    to {
-      background-position: -200% 0;
+    /* Transform-only so the highlight sweep stays on the compositor, then a
+       long hold with the band parked off-screen instead of a constant shimmer. */
+    0% {
+      transform: translateX(-100%);
+    }
+    60%,
+    100% {
+      transform: translateX(100%);
+    }
+  }
+  @keyframes ghost-pulse {
+    /* The loading ghosts' breath. Stepped like the status indicators, so however many bars a
+       ghost holds, the compositor draws a handful of discrete frames per cycle rather than one
+       per vsync — which on a 120Hz display is the difference between ~14 and ~288 updates. */
+    0%,
+    42% {
+      opacity: 1;
+      animation-timing-function: steps(4);
+    }
+    50%,
+    92% {
+      opacity: 0.55;
+      animation-timing-function: steps(4);
+    }
+    100% {
+      opacity: 1;
     }
   }
   @keyframes status-pulse {
@@ -333,7 +358,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   /* Fade rows themselves as they pass beneath the top chrome. A mask remains
      visible even when the header and timeline share the same background. */
   .chat-timeline-scroll-fade,
-  .settings-page-scroll-fade {
+  .settings-page-scroll-fade,
+  .pull-requests-scroll-fade {
     --topbar-scroll-fade-height: 2.5rem;
     -webkit-mask-image:
       linear-gradient(
@@ -371,6 +397,13 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       100% var(--topbar-scroll-fade-height),
       100% calc(100% - var(--topbar-scroll-fade-height)),
       var(--app-scrollbar-width) 100%;
+  }
+
+  /* The pull request list sits directly under its topbar, so the tall band the chat and
+     settings pages fade under would read as empty padding here. A shorter band keeps the
+     fade while letting the controls start near the chrome. */
+  .pull-requests-scroll-fade {
+    --topbar-scroll-fade-height: 1.5rem;
   }
 
   @keyframes settings-search-target-pulse {
@@ -899,7 +932,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --destructive: var(--error);
   --border: var(--color-zinc-200);
   --input: var(--color-zinc-300);
-  --ring: oklch(0.488 0.217 264);
+  --ring: var(--primary);
   --destructive-foreground: var(--error-foreground);
   --info: var(--color-blue-500);
   --info-foreground: var(--color-blue-700);
@@ -943,7 +976,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --card-foreground: var(--color-neutral-100);
     --popover: color-mix(in srgb, var(--background) 94%, var(--color-white));
     --popover-foreground: var(--color-neutral-100);
-    --primary: oklch(0.588 0.217 264);
+    --primary: oklch(0.571 0.21 264);
     --primary-foreground: var(--color-white);
     --secondary: --alpha(var(--color-white) / 4%);
     --secondary-foreground: var(--color-neutral-100);
@@ -965,7 +998,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --destructive: var(--error);
     --border: --alpha(var(--color-white) / 6%);
     --input: --alpha(var(--color-white) / 8%);
-    --ring: oklch(0.588 0.217 264);
+    --ring: var(--primary);
     --destructive-foreground: var(--error-foreground);
     --info: var(--color-blue-500);
     --info-foreground: var(--color-blue-400);
@@ -1076,7 +1109,7 @@ html.dark[data-theme-id] {
   --secondary: var(--app-theme-secondary);
   --secondary-foreground: var(--app-theme-secondary-foreground);
   --muted: var(--app-theme-muted);
-  --muted-foreground: var(--app-theme-text-muted);
+  --muted-foreground: var(--app-theme-muted-foreground);
   --placeholder: var(--app-theme-placeholder);
   --secondary-label: var(--app-theme-secondary-label);
   --icon-muted: var(--app-theme-icon-muted);
@@ -1326,7 +1359,7 @@ html[data-theme-id] [data-app-sidebar] {
   --accent: var(--app-theme-accent-surface);
   --accent-foreground: var(--app-theme-accent-surface-foreground);
   --muted: var(--app-theme-muted);
-  --muted-foreground: var(--app-theme-text-muted);
+  --muted-foreground: var(--app-theme-muted-foreground);
   --border: var(--app-theme-border);
   --input: var(--app-theme-input);
   --sidebar: var(--app-theme-sidebar);
@@ -1702,6 +1735,12 @@ label:has(> select#reasoning-effort) select {
   vertical-align: middle;
 }
 
+/* Markdown assumes inline images — GitHub comments lay button images out in a row — and the
+   Tailwind preflight's block-level img would stack them one per line. */
+.chat-markdown img {
+  display: inline-block;
+}
+
 .chat-markdown a {
   color: var(--info-foreground);
   text-decoration: none;
@@ -1965,6 +2004,9 @@ label:has(> select#reasoning-effort) select {
 @media (prefers-reduced-motion: reduce) {
   .prompt-stash-count-enter {
     animation: none;
+  }
+  [data-slot="skeleton"]::after {
+    content: none;
   }
 }
 

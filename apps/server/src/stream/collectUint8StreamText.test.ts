@@ -17,6 +17,7 @@ describe("collectUint8StreamText", () => {
         text: "hello world",
         bytes: 11,
         truncated: false,
+        invalidUtf8: false,
       });
     }),
   );
@@ -33,7 +34,24 @@ describe("collectUint8StreamText", () => {
         text: "abcde[truncated]",
         bytes: 5,
         truncated: true,
+        invalidUtf8: false,
       });
+    }),
+  );
+
+  it.effect("reports invalid UTF-8 separately from a literal replacement character", () =>
+    Effect.gen(function* () {
+      const invalid = yield* collectUint8StreamText({
+        stream: Stream.make(new Uint8Array([0x66, 0x80, 0x6f])),
+      });
+      const literal = yield* collectUint8StreamText({
+        stream: Stream.make(encoder.encode("before\uFFFDafter")),
+      });
+
+      assert.strictEqual(invalid.invalidUtf8, true);
+      assert.strictEqual(invalid.text, "f\uFFFDo");
+      assert.strictEqual(literal.invalidUtf8, false);
+      assert.strictEqual(literal.text, "before\uFFFDafter");
     }),
   );
 });
