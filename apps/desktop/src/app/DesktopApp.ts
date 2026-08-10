@@ -24,10 +24,12 @@ import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
+import * as DesktopCuaDriver from "../cua/DesktopCuaDriver.ts";
 
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
 const MAX_TCP_PORT = 65_535;
@@ -139,6 +141,29 @@ const handleFatalStartupError = Effect.fn("desktop.startup.handleFatalStartupErr
 const fatalStartupCause = <E>(stage: string, cause: Cause.Cause<E>) =>
   handleFatalStartupError(stage, Cause.pretty(cause)).pipe(Effect.andThen(Effect.failCause(cause)));
 
+export const restartBackendAfterCuaDriverExit = Effect.fn(
+  "desktop.restartBackendAfterCuaDriverExit",
+)(function* (
+  backend: Pick<DesktopBackendPool.DesktopBackendInstance, "snapshot" | "stop" | "start">,
+  isQuitting: Effect.Effect<boolean>,
+) {
+  const snapshot = yield* backend.snapshot;
+  if (!snapshot.desiredRunning || (yield* isQuitting)) return false;
+
+  yield* backend.stop();
+  if (yield* isQuitting) return false;
+
+  yield* backend.start;
+  return true;
+});
+
+export const reportCuaDriverRecoveryFailure = (cause: Cause.Cause<never>) =>
+  Cause.hasInterruptsOnly(cause)
+    ? Effect.failCause(cause)
+    : logStartupError("failed to remove unavailable cua-driver from desktop backend", {
+        cause,
+      });
+
 const bootstrap = Effect.gen(function* () {
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
   const primaryBackend = yield* pool.primary;
@@ -222,11 +247,14 @@ const startup = Effect.gen(function* () {
   const appIdentity = yield* DesktopAppIdentity.DesktopAppIdentity;
   const applicationMenu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
   const electronApp = yield* ElectronApp.ElectronApp;
+  const electronDialog = yield* ElectronDialog.ElectronDialog;
   const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
   const linuxUrlHandler = yield* DesktopLinuxUrlHandler.DesktopLinuxUrlHandler;
   const clerk = yield* DesktopClerk.DesktopClerk;
   const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const cuaDriver = yield* DesktopCuaDriver.DesktopCuaDriver;
+  const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const preReadyElectronOptions = yield* DesktopPreReadyPlatform.DesktopPreReadyElectronOptions;
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const updates = yield* DesktopUpdates.DesktopUpdates;
@@ -283,6 +311,61 @@ const startup = Effect.gen(function* () {
       backend: Option.getOrElse(selectedBackend, () => "unknown"),
     });
   }
+  const cuaEnabled = Option.match(yield* clientSettings.get, {
+    onNone: () => false,
+    onSome: (settings) => settings.enableCua,
+  });
+  if (cuaEnabled) {
+    const continueWithoutCua = Effect.fn("desktop.continueWithoutCua")(function* (
+      context: Readonly<Record<string, unknown>>,
+    ) {
+      yield* logStartupError("embedded cua-driver failed to start", context);
+      yield* electronDialog
+        .showMessageBox({
+          type: "error",
+          title: "Computer use unavailable",
+          message: "Cua could not start.",
+          detail:
+            "T3 Code will continue without computer use. Check the logs, then restart to try again.",
+          buttons: ["Continue"],
+        })
+        .pipe(Effect.ignore);
+    });
+    const cuaStarted = yield* cuaDriver.start.pipe(
+      Effect.as(true),
+      Effect.catchTags({
+        CuaDriverModuleLoadError: (error) =>
+          continueWithoutCua({ modulePath: error.modulePath, cause: error.cause }).pipe(
+            Effect.as(false),
+          ),
+        CuaDriverNotConfiguredError: () => continueWithoutCua({}).pipe(Effect.as(false)),
+        CuaDriverPermissionError: (error) =>
+          continueWithoutCua({
+            accessibility: error.accessibility,
+            screenRecording: error.screenRecording,
+          }).pipe(Effect.as(false)),
+        CuaDriverStartError: (error) =>
+          continueWithoutCua({ binaryPath: error.binaryPath, cause: error.cause }).pipe(
+            Effect.as(false),
+          ),
+      }),
+    );
+    if (cuaStarted) {
+      const pool = yield* DesktopBackendPool.DesktopBackendPool;
+      const primaryBackend = yield* pool.primary;
+      const state = yield* DesktopState.DesktopState;
+      yield* cuaDriver.awaitUnavailable.pipe(
+        Effect.andThen(restartBackendAfterCuaDriverExit(primaryBackend, Ref.get(state.quitting))),
+        Effect.tap((restarted) =>
+          restarted
+            ? logStartupInfo("desktop backend restarted without unavailable cua-driver")
+            : Effect.void,
+        ),
+        Effect.catchCause(reportCuaDriverRecoveryFailure),
+        Effect.forkScoped,
+      );
+    }
+  }
   yield* appIdentity.configure;
   yield* applicationMenu.configure;
   yield* updates.configure;
@@ -310,6 +393,8 @@ const scopedProgram = Effect.scoped(
         yield* Effect.forEach(instances, (instance) => instance.stop(), {
           concurrency: "unbounded",
         });
+        const cuaDriver = yield* DesktopCuaDriver.DesktopCuaDriver;
+        yield* cuaDriver.stop;
       }).pipe(Effect.ensuring(shutdown.markComplete)),
     );
 

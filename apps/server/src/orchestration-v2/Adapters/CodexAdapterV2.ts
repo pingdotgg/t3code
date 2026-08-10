@@ -60,6 +60,13 @@ import {
 } from "../../provider/Drivers/CodexHomeLayout.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
+import {
+  codexAppServerArgs,
+  readCodexConfigToml,
+  resolveCodexLaunchArgs,
+  T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV,
+  T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV,
+} from "../../provider/Layers/codexLaunchArgs.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
@@ -1261,14 +1268,43 @@ function isSensitiveCodexProtocolKey(key: string): boolean {
   );
 }
 
+const withLiveCodexIntegrationEnvironment = (environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
+  const merged = { ...environment };
+  for (const name of [
+    T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV,
+    T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV,
+  ] as const) {
+    const value = process.env[name];
+    if (value === undefined) {
+      delete merged[name];
+    } else {
+      merged[name] = value;
+    }
+  }
+  return merged;
+};
+
+export const resolveCodexAdapterAppServerArgs = (
+  launchArgs: string | undefined,
+  environment: NodeJS.ProcessEnv,
+  configToml?: string,
+): ReadonlyArray<string> =>
+  codexAppServerArgs(
+    resolveCodexLaunchArgs(launchArgs, withLiveCodexIntegrationEnvironment(environment), {
+      configToml,
+    }),
+  );
+
 export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
   CodexAppServerClientFactory,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | ProviderEventLoggers
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path | ProviderEventLoggers
 > = Layer.effect(
   CodexAppServerClientFactory,
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers;
 
     return CodexAppServerClientFactory.of({
@@ -1279,9 +1315,18 @@ export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
             ...input.environment,
             ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
           };
+          const configToml = yield* readCodexConfigToml(
+            withLiveCodexIntegrationEnvironment(environment),
+            fileSystem,
+            path,
+          );
           const command = yield* makeCodexAppServerSpawnCommand({
             command: input.settings.binaryPath || "codex",
-            args: ["app-server"],
+            args: resolveCodexAdapterAppServerArgs(
+              input.settings.launchArgs,
+              environment,
+              configToml,
+            ),
             env: environment,
           });
           const handle = yield* spawner.spawn(command).pipe(

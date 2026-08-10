@@ -1,0 +1,141 @@
+import { describe, expect, it } from "@effect/vitest";
+
+import * as Effect from "effect/Effect";
+
+import type { EmbeddedDriverExit } from "@trycua/cua-driver/embedded";
+
+import { T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV } from "../provider/Layers/codexLaunchArgs.ts";
+import {
+  buildCodexLaunchArgs,
+  installDesktopCuaDriver,
+  installCodexLaunchArgs,
+  monitorEmbeddedCuaDriverExit,
+} from "./CuaDriverEmbedded.ts";
+
+const connection = {
+  mcp: {
+    command: "/Applications/T3 Code/cua-driver",
+    args: ["mcp", "--embedded", "--socket", "/tmp/t3 code.sock"],
+    environment: [
+      { name: "CUA_DRIVER_EMBEDDED", value: "1" },
+      { name: "CUA_DRIVER_HOST_BUNDLE_ID", value: "com.t3tools.t3code" },
+    ],
+  },
+};
+
+describe("embedded cua-driver Codex configuration", () => {
+  it("quotes MCP launch arguments", () => {
+    expect(buildCodexLaunchArgs(connection)).toBe(
+      '-c "mcp_servers.cua-driver.command=\\"/Applications/T3 Code/cua-driver\\"" -c "mcp_servers.cua-driver.args=[\\"mcp\\",\\"--embedded\\",\\"--socket\\",\\"/tmp/t3 code.sock\\"]" -c "mcp_servers.cua-driver.env={CUA_DRIVER_EMBEDDED=\\"1\\",CUA_DRIVER_HOST_BUNDLE_ID=\\"com.t3tools.t3code\\"}"',
+    );
+  });
+
+  it.effect("reports every unexpected driver exit regardless of its status", () =>
+    Effect.gen(function* () {
+      const exits: ReadonlyArray<EmbeddedDriverExit> = [
+        { generation: "generation-1", code: 9, success: false },
+        { generation: "generation-2", code: 0, success: true },
+      ];
+      const observed: Array<EmbeddedDriverExit> = [];
+
+      for (const exit of exits) {
+        yield* monitorEmbeddedCuaDriverExit(
+          () => Promise.resolve(exit),
+          (value) =>
+            Effect.sync(() => {
+              observed.push(value);
+            }),
+        );
+      }
+
+      expect(observed).toEqual(exits);
+    }),
+  );
+
+  it.effect("does not report an exit when its scope shuts down", () => {
+    let reported = false;
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        yield* monitorEmbeddedCuaDriverExit(
+          () => new Promise<EmbeddedDriverExit>(() => {}),
+          () =>
+            Effect.sync(() => {
+              reported = true;
+            }),
+        ).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+      }),
+    ).pipe(Effect.tap(() => Effect.sync(() => expect(reported).toBe(false))));
+  });
+
+  it.effect("surfaces exit monitor failures", () => {
+    const failure = new Error("wait failed");
+    let reported = false;
+
+    return monitorEmbeddedCuaDriverExit(
+      () => Promise.reject(failure),
+      () =>
+        Effect.sync(() => {
+          reported = true;
+        }),
+    ).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.cause).toBe(failure);
+          expect(reported).toBe(false);
+        }),
+      ),
+    );
+  });
+
+  it.effect("restores prior Codex launch arguments once when Cua becomes unavailable", () => {
+    const original = process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV];
+    process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV] = "--existing";
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const deactivate = yield* installCodexLaunchArgs("--cua");
+        expect(process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV]).toBe("--cua");
+        expect(yield* deactivate()).toBe(true);
+        expect(process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV]).toBe("--existing");
+        expect(yield* deactivate()).toBe(false);
+      }),
+    ).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => expect(process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV]).toBe("--existing")),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (original === undefined) delete process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV];
+          else process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV] = original;
+        }),
+      ),
+    );
+  });
+
+  it.effect("installs an Electron-hosted MCP descriptor without starting another daemon", () => {
+    const original = process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV];
+    delete process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV];
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        yield* installDesktopCuaDriver(connection.mcp);
+        expect(process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV]).toBe(
+          buildCodexLaunchArgs(connection),
+        );
+      }),
+    ).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => expect(process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV]).toBeUndefined()),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (original === undefined) delete process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV];
+          else process.env[T3CODE_CODEX_CUA_LAUNCH_ARGS_ENV] = original;
+        }),
+      ),
+    );
+  });
+});
