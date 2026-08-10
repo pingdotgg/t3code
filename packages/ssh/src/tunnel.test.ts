@@ -27,7 +27,9 @@ import {
   describeReadinessCause,
   issueRemotePairingToken,
   launchOrReuseRemoteServer,
+  REMOTE_LAUNCH_COMMAND_TIMEOUT_MS,
   REMOTE_PICK_PORT_SCRIPT,
+  REMOTE_READY_TIMEOUT_MS,
   SshEnvironmentManager,
   waitForHttpReady,
 } from "./tunnel.ts";
@@ -409,6 +411,12 @@ describe("ssh tunnel scripts", () => {
       buildRemoteLaunchScript().indexOf('DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port'),
       buildRemoteLaunchScript().indexOf('elif [ -n "$REMOTE_PID" ]'),
     );
+  });
+
+  it("allows cold remote package installs to finish before launch times out", () => {
+    assert.equal(REMOTE_READY_TIMEOUT_MS, 180_000);
+    assert.isAbove(REMOTE_LAUNCH_COMMAND_TIMEOUT_MS, REMOTE_READY_TIMEOUT_MS);
+    assert.include(buildRemoteLaunchScript(), `"${REMOTE_READY_TIMEOUT_MS}"`);
   });
 
   it.effect("reuses and normalizes a real managed parent-child runtime across an upgrade", () =>
