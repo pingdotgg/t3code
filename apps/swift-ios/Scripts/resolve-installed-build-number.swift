@@ -26,9 +26,15 @@ do {
         from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
     )
     let bundleIdentifier = CommandLine.arguments[2]
-    if let version = payload.result.apps.first(where: {
+    if let app = payload.result.apps.first(where: {
         $0.bundleIdentifier == bundleIdentifier
-    })?.bundleVersion {
+    }) {
+        guard let version = app.bundleVersion, !version.isEmpty else {
+            FileHandle.standardError.write(
+                Data("Installed app \(bundleIdentifier) has no build number.\n".utf8)
+            )
+            exit(1)
+        }
         print(version)
     }
 } catch {

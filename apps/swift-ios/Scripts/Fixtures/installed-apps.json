@@ -6,6 +6,13 @@
         "bundleVersion": "4"
       },
       {
+        "bundleIdentifier": "com.example.missing-version"
+      },
+      {
+        "bundleIdentifier": "com.example.empty-version",
+        "bundleVersion": ""
+      },
+      {
         "bundleIdentifier": "com.t3tools.t3code.swiftui.dev",
         "bundleVersion": "21"
       }

@@ -44,4 +44,14 @@ missing="$(xcrun swift "$RESOLVE" "$FIXTURE" com.example.missing)"
   exit 1
 }
 
+if xcrun swift "$RESOLVE" "$FIXTURE" com.example.missing-version >/dev/null 2>&1; then
+  printf 'expected an installed app without a build number to fail resolution\n' >&2
+  exit 1
+fi
+
+if xcrun swift "$RESOLVE" "$FIXTURE" com.example.empty-version >/dev/null 2>&1; then
+  printf 'expected an installed app with an empty build number to fail resolution\n' >&2
+  exit 1
+fi
+
 printf 'device build-number validation tests passed\n'
