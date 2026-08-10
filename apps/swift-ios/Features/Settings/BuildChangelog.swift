@@ -12,6 +12,16 @@ struct BuildChangelog: Codable, Equatable, Sendable {
 
         var id: String { commit }
         var shortCommit: String { String(commit.prefix(7)) }
+        var displaySummary: String? {
+            let value = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty,
+                  value.localizedCaseInsensitiveCompare(
+                      title.trimmingCharacters(in: .whitespacesAndNewlines)
+                  ) != .orderedSame else {
+                return nil
+            }
+            return value
+        }
     }
 
     let revision: String
@@ -64,11 +74,23 @@ struct BuildChangelogView: View {
                             isLast: index == earlierEntries.count - 1
                         )
                     }
-                } else {
+                } else if changelog == nil {
                     ContentUnavailableView(
                         "No build changelog",
                         systemImage: "list.bullet.rectangle",
                         description: Text("This build did not include an embedded changelog.")
+                    )
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 48)
+                } else {
+                    ContentUnavailableView(
+                        "No changes in this build",
+                        systemImage: "checkmark.circle",
+                        description: Text(
+                            changelog?.baseRevision == nil
+                                ? "This build did not configure a base revision for comparison."
+                                : "No commits were found between this build and its configured base revision."
+                        )
                     )
                     .frame(maxWidth: .infinity)
                     .padding(.top, 48)
@@ -104,10 +126,12 @@ struct BuildChangelogView: View {
                 .font(T3Typography.threadBody)
                 .fontWeight(.semibold)
                 .foregroundStyle(T3Colors.textPrimary)
-            Text(entry.summary)
-                .font(T3Typography.supporting)
-                .foregroundStyle(T3Colors.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if let summary = entry.displaySummary {
+                Text(summary)
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             changeLinks(entry, repositoryURL: repositoryURL)
         }
         .padding(16)
@@ -143,10 +167,12 @@ struct BuildChangelogView: View {
                     .font(T3Typography.threadBody)
                     .fontWeight(.semibold)
                     .foregroundStyle(T3Colors.textPrimary)
-                Text(entry.summary)
-                    .font(T3Typography.supporting)
-                    .foregroundStyle(T3Colors.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let summary = entry.displaySummary {
+                    Text(summary)
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(T3Colors.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 changeLinks(entry, repositoryURL: repositoryURL)
             }
             .padding(.bottom, isLast ? 0 : 22)

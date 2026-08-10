@@ -92,7 +92,7 @@ var entries = log.split(separator: recordSeparator).compactMap { record -> Entry
         Range(match.range(at: 1), in: title).flatMap { Int(title[$0]) }
     }
     let pullRequestURL = pullRequest.flatMap { number in repositoryURL.map { "\($0)/pull/\(number)" } }
-    let fallback = body.split(separator: "\n").first.map(String.init) ?? title
+    let fallback = body.split(separator: "\n").first.map(String.init) ?? ""
     return Entry(
         commit: commit,
         title: title,
