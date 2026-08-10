@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "repository": "https://github.com/pingdotgg/t3code.git",
+    "remote": "upstream",
+    "branch": "main",
+    "commit": "9a1472d9558ec74b5ed419bd7b87b2aa0e6be1e6"
+  },
+  "selection": {
+    "selectedOn": "2026-08-10",
+    "previousForkCommit": "1a003e383ac6b10258b8100c2617d938c4f06c69",
+    "before": {
+      "ahead": 0,
+      "behind": 12
+    },
+    "after": {
+      "ahead": 0,
+      "behind": 0
+    },
+    "upstreamChangedPaths": [
+      "apps/desktop/src/shell/DesktopShellEnvironment.test.ts",
+      "apps/desktop/src/shell/DesktopShellEnvironment.ts",
+      "apps/mobile/src/components/ControlPill.tsx",
+      "apps/server/src/http.test.ts",
+      "apps/server/src/http.ts",
+      "apps/server/src/project/ProjectFaviconResolver.test.ts",
+      "apps/server/src/project/ProjectFaviconResolver.ts",
+      "apps/server/src/usage/usageScanCache.ts",
+      "apps/server/src/usage/usageTranscripts.test.ts",
+      "apps/server/src/usage/usageTranscripts.ts",
+      "apps/web/src/components/chat/ChatHeader.tsx",
+      "apps/web/src/components/clerk/authRedirect.test.ts",
+      "apps/web/src/components/clerk/authRedirect.ts",
+      "apps/web/src/components/settings/SettingsSidebarNav.tsx",
+      "apps/web/src/components/settings/ThemeSettings.tsx",
+      "apps/web/src/components/usage/UsagePage.tsx",
+      "packages/shared/src/composerInlineTokens.test.ts",
+      "packages/shared/src/composerInlineTokens.ts",
+      "packages/shared/src/shell.test.ts",
+      "packages/shared/src/shell.ts"
+    ]
+  },
+  "classification": {
+    "additiveMarketingRoots": [
+      "apps/auldric-marketing/",
+      "apps/auldric-site/",
+      "docs/auldric/",
+      "packages/auldric-"
+    ],
+    "distributionConfigurationPaths": [
+      ".auldric/shared-core-allowlist.json",
+      ".auldric/t3-baseline.json",
+      ".github/workflows/auldric-t3-baseline.yml",
+      "docs/operations/auldric-t3-baseline.md",
+      "scripts/auldric/check-t3-baseline.test.ts",
+      "scripts/auldric/check-t3-baseline.ts"
+    ],
+    "sharedCoreAllowlist": ".auldric/shared-core-allowlist.json"
+  }
+}
