@@ -18,7 +18,7 @@ import * as WorkspacePaths from "./WorkspacePaths.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...actual, readdir: vi.fn(actual.readdir) };
+  return { ...actual, readdir: vi.fn(actual.readdir), stat: vi.fn(actual.stat) };
 });
 
 const TestLayer = Layer.empty.pipe(
@@ -655,6 +655,48 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
             { name: "alpine", fullPath: path.join(cwd, "alpine") },
           ],
         });
+      }),
+    );
+
+    it.effect("sorts directories by their own modified time when requested", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-modified-" });
+        yield* writeTextFile(cwd, "alpha/index.ts", "export {};\n");
+        yield* writeTextFile(cwd, "beta/index.ts", "export {};\n");
+        yield* writeTextFile(cwd, "zulu/index.ts", "export {};\n");
+        const older = new Date("2025-01-01T00:00:00.000Z");
+        const newer = new Date("2025-02-01T00:00:00.000Z");
+        yield* fileSystem.utimes(path.join(cwd, "alpha"), older, older);
+        yield* fileSystem.utimes(path.join(cwd, "beta"), newer, newer);
+        yield* fileSystem.utimes(path.join(cwd, "zulu"), newer, newer);
+
+        const result = yield* workspaceEntries.browse({
+          partialPath: yield* appendSeparator(cwd),
+          sortOrder: "modified",
+        });
+
+        expect(result.entries.map((entry) => entry.name)).toEqual(["beta", "zulu", "alpha"]);
+      }),
+    );
+
+    it.effect("does not stat directories for the default name order", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-name-" });
+        yield* writeTextFile(cwd, "zulu/index.ts", "export {};\n");
+        yield* writeTextFile(cwd, "alpha/index.ts", "export {};\n");
+        const stat = vi.mocked(NodeFSP.stat);
+        stat.mockClear();
+
+        const result = yield* workspaceEntries.browse({
+          partialPath: yield* appendSeparator(cwd),
+        });
+
+        expect(result.entries.map((entry) => entry.name)).toEqual(["alpha", "zulu"]);
+        expect(stat).not.toHaveBeenCalled();
       }),
     );
 

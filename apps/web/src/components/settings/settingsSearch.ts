@@ -135,6 +135,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "folder-sort-order",
+    title: "Folder sort order",
+    to: "/settings/general",
+  },
+  {
     id: "archive-confirmation",
     title: "Archive confirmation",
     to: "/settings/general",

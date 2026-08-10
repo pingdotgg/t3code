@@ -1,7 +1,25 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { FilesystemBrowseError } from "./filesystem.ts";
+import { FilesystemBrowseError, FilesystemBrowseInput } from "./filesystem.ts";
+
+describe("FilesystemBrowseInput", () => {
+  const decodeInput = Schema.decodeUnknownSync(FilesystemBrowseInput);
+
+  it("keeps name ordering compatible with clients that omit a sort order", () => {
+    expect(decodeInput({ partialPath: "~/projects/" })).toEqual({
+      partialPath: "~/projects/",
+    });
+  });
+
+  it.each(["name", "modified"] as const)("accepts the %s sort order", (sortOrder) => {
+    expect(decodeInput({ partialPath: "~/projects/", sortOrder }).sortOrder).toBe(sortOrder);
+  });
+
+  it("rejects unsupported sort orders", () => {
+    expect(() => decodeInput({ partialPath: "~/projects/", sortOrder: "size" })).toThrow();
+  });
+});
 
 describe("FilesystemBrowseError", () => {
   it("derives a stable message from browse context while retaining the cause", () => {

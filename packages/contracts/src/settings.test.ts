@@ -16,6 +16,27 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 
+describe("ClientSettings add project folder order", () => {
+  it("defaults to name order", () => {
+    expect(decodeClientSettings({}).addProjectFolderSortOrder).toBe("name");
+  });
+
+  it("accepts last-modified order in settings and patches", () => {
+    expect(
+      decodeClientSettings({ addProjectFolderSortOrder: "modified" }).addProjectFolderSortOrder,
+    ).toBe("modified");
+    expect(
+      decodeClientSettingsPatch({ addProjectFolderSortOrder: "modified" })
+        .addProjectFolderSortOrder,
+    ).toBe("modified");
+  });
+
+  it("rejects unsupported folder orders", () => {
+    expect(() => decodeClientSettings({ addProjectFolderSortOrder: "size" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ addProjectFolderSortOrder: "size" })).toThrow();
+  });
+});
+
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
     expect(decodeClientSettings({}).wordWrap).toBe(true);
